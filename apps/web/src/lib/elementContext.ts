@@ -3,6 +3,7 @@ import type {
   PickedElementStackFrame,
   PreviewAnnotationPayload,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 
 const ELEMENT_CONTEXT_HTML_PREVIEW_LIMIT = 4000;
 const ELEMENT_CONTEXT_STYLES_LIMIT = 4000;
@@ -20,7 +21,8 @@ export interface ElementContextSelection {
 
 function truncateString(value: string, limit: number): string {
   if (value.length <= limit) return value;
-  return `${value.slice(0, Math.max(0, limit - 1))}…`;
+  const cut = Math.max(0, limit - 1);
+  return `${value.slice(0, splitsSurrogatePair(value, cut) ? cut - 1 : cut)}…`;
 }
 
 function normalizeText(value: string): string {

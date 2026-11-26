@@ -2,7 +2,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UsageSource } from "@t3tools/contracts";
 
-import { formatHourShort, formatTokens, makeWindow, usageSourceMessages } from "./usageFormat.ts";
+import {
+  formatDateTimeShort,
+  formatHourShort,
+  formatTokens,
+  makeWindow,
+  usageSourceMessages,
+} from "./usageFormat.ts";
+import { usageSourceMessages as localizedUsageSourceMessages } from "./usageFormatCopy.ts";
 
 function malformedSource(count: number, overrides: Partial<UsageSource> = {}): UsageSource {
   return {
@@ -152,6 +159,15 @@ describe("hourly usage formatting", () => {
     );
   });
 
+  it("uses a 12-hour clock in locales that default to 24-hour", () => {
+    const instant = "2026-11-24T18:03:00.000Z";
+    for (const locale of ["fr", "de", "es"]) {
+      expect(formatHourShort(instant, "UTC", true, locale)).not.toContain("18");
+    }
+    expect(formatDateTimeShort(instant, "UTC", true, "fr")).not.toContain("18");
+    expect(formatHourShort(instant, "UTC", false, "es")).toBe("18:00");
+  });
+
   it("builds an exact minute-aligned 24-hour request", () => {
     const window = makeWindow(1, new Date("2026-08-11T12:37:42.123Z"), "hour");
 
@@ -182,5 +198,16 @@ describe("token formatting", () => {
     expect(formatTokens(999_999)).toBe("1M");
     expect(formatTokens(999_999_999)).toBe("1B");
     expect(formatTokens(-999_999)).toBe("-1M");
+  });
+});
+
+describe("localized usage source messages", () => {
+  it("uses singular and plural copy for skipped malformed records", () => {
+    expect(localizedUsageSourceMessages([malformedSource(1)])).toEqual([
+      "1 malformed or inconsistent usage record was skipped; usage may be incomplete.",
+    ]);
+    expect(localizedUsageSourceMessages([malformedSource(2)])).toEqual([
+      "2 malformed or inconsistent usage records were skipped; usage may be incomplete.",
+    ]);
   });
 });

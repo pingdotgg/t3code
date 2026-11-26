@@ -16,7 +16,12 @@ import { threadSelectionDeferral } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
+import {
+  CommonActions,
+  NavigationContext,
+  NavigationRouteContext,
+  useNavigation,
+} from "@react-navigation/native";
 import {
   use,
   useEffect,
@@ -637,23 +642,27 @@ function AdaptiveWorkspaceLayoutContent(
         .filter((environment) => environment.connectionState === "connected")
         .map((environment) => environment.environmentId),
     );
-    handleSelectThreadRoute(
-      newTaskDestination({
-        projects,
-        requestId: uuidv4(),
-        useLastProject: saved?.useLastProjectForNewThreads,
-        currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
-        filteredProject: filteredScope
-          ? newTaskFilteredProject(
-              filteredScope,
-              listEnvironmentId,
-              connectedEnvironmentIds,
-              saved?.lastThreadProject,
-            )
-          : undefined,
-        lastProject: saved?.lastThreadProject,
-      }),
-    );
+    const destination = newTaskDestination({
+      projects,
+      requestId: uuidv4(),
+      useLastProject: saved?.useLastProjectForNewThreads,
+      currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
+      filteredProject: filteredScope
+        ? newTaskFilteredProject(
+            filteredScope,
+            listEnvironmentId,
+            connectedEnvironmentIds,
+            saved?.lastThreadProject,
+          )
+        : undefined,
+      lastProject: saved?.lastThreadProject,
+    });
+    // Without a project the draft would only push the picker over itself a frame later; open it directly.
+    if (destination.draft.projectId === undefined) {
+      navigation.dispatch(CommonActions.navigate("NewTaskProject"));
+      return;
+    }
+    handleSelectThreadRoute(destination);
   };
 
   useHardwareKeyboardCommand("newTask", () => {

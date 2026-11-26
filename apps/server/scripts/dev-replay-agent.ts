@@ -69,6 +69,9 @@ export const SCENARIOS = [
     name: "Command output",
     file: "./dev-replay/command_output_transcript.ndjson",
   },
+  // scripts/metrics/web/client-metrics.ts: a heavy timeline that seeds fast, and a turn that streams for minutes.
+  { id: "bench-heavy", name: "Heavy turn", file: "./dev-replay/bench_heavy_transcript.ndjson" },
+  { id: "bench-stream", name: "Long stream", file: "./dev-replay/bench_stream_transcript.ndjson" },
 ] as const;
 
 // Session setup and vendor state stay out: they would replace the replay agent's own models.

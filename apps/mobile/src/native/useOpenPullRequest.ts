@@ -7,7 +7,7 @@ import {
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
-import { tryOpenExternalUrl } from "../lib/openExternalUrl";
+import { tryOpenWebLink } from "../lib/openExternalUrl";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { issueTrackerEnvironment } from "../state/issueTrackers";
@@ -59,7 +59,7 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
               trackers: connections?._tag === "Success" ? connections.value : undefined,
             })
           : null;
-      if (!issue || !environmentId) return tryOpenExternalUrl(url, "pull-request");
+      if (!issue || !environmentId) return tryOpenWebLink(url, "pull-request");
       const candidate = pullRequestCandidateForIssueLink(url, issue.ref);
       if (candidate) {
         const preview = await readPreview({ environmentId, input: candidate.target });
@@ -76,7 +76,7 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
           return true;
         }
         // A dropped connection says nothing about what the link names; the browser knows.
-        if (isAtomCommandInterrupted(preview)) return tryOpenExternalUrl(url, "pull-request");
+        if (isAtomCommandInterrupted(preview)) return tryOpenWebLink(url, "pull-request");
       }
       const issueParams = {
         environmentId,

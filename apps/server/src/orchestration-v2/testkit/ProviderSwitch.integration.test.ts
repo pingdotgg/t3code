@@ -19,6 +19,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
@@ -119,6 +120,7 @@ function makeTestAdapter(input: {
   readonly rejectedNativeThreads?: Ref.Ref<ReadonlySet<string>>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
   readonly promptDroppedRunOrdinals?: ReadonlySet<number>;
+  readonly nativeTurnKept?: (nativeTurnId: string) => boolean;
   readonly brokenRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly cancelledRunOrdinals?: ReadonlySet<number>;
@@ -200,6 +202,12 @@ function makeTestAdapter(input: {
           ...(input.canReuseContextUsage === undefined
             ? {}
             : { canReuseContextUsage: input.canReuseContextUsage }),
+          ...(input.nativeTurnKept === undefined
+            ? {}
+            : {
+                nativeTurnKept: ({ nativeTurnId }) =>
+                  Effect.succeed(input.nativeTurnKept!(nativeTurnId)),
+              }),
           ...(input.backgroundWork === undefined
             ? {}
             : {
@@ -2792,6 +2800,17 @@ describe("orchestration v2 provider switching", () => {
       new ProviderAdapter.ProviderAdapterProtocolError({
         driver: CLAUDE_DRIVER,
         detail: "Claude provider query ended before the turn could start.",
+      }),
+    ],
+    // ACP rejects a model it cannot select before sending the prompt.
+    [
+      "an ACP start that rejected the model",
+      new ProviderAdapter.ProviderAdapterTurnStartError({
+        driver: GROK_DRIVER,
+        threadId,
+        providerThreadId: ProviderThreadId.make("provider-thread:acp-refused-start"),
+        runId: RunId.make("run:acp-refused-start"),
+        refusedBeforePrompt: true,
       }),
     ],
     // Injected history is text only, so a refusal after injection must not settle the image.
@@ -6532,14 +6551,17 @@ describe("orchestration v2 provider switching", () => {
   it.effect.each([
     "same-provider-retry",
     "cancelled-dropped",
+    "cancelled-by-restart",
     "switch-away-and-return",
     "persisted-failure",
   ] as const)("handles an inline context handoff after a failed returning turn (%s)", (variant) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`dropped-handoff-${variant}`);
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-      const dropped = variant !== "persisted-failure";
-      const cancelled = variant === "cancelled-dropped";
+      // A restart cancels the turn with no adapter left to report the drop.
+      const cutByRestart = variant === "cancelled-by-restart";
+      const dropped = variant !== "persisted-failure" && !cutByRestart;
+      const cancelled = variant === "cancelled-dropped" || cutByRestart;
       const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
         makeTestAdapter({
           instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -6557,6 +6579,9 @@ describe("orchestration v2 provider switching", () => {
             ? { cancelledRunOrdinals: new Set([3]) }
             : { failedRunOrdinals: new Set([3]) }),
           ...(dropped ? { promptDroppedRunOrdinals: new Set([3]) } : {}),
+          ...(cutByRestart
+            ? { nativeTurnKept: (nativeTurnId: string) => !nativeTurnId.endsWith(":3") }
+            : {}),
         }),
         makeTestAdapter({
           instanceId: CLAUDE_MODEL_SELECTION.instanceId,
@@ -6638,7 +6663,7 @@ describe("orchestration v2 provider switching", () => {
           assert.equal(run3Handoff?.delivery?.status, "inline");
         }
 
-        if (variant === "same-provider-retry" || variant === "cancelled-dropped") {
+        if (variant === "same-provider-retry" || variant === "cancelled-dropped" || cutByRestart) {
           // Run 4: stay on Codex; must re-deliver run 2's handoff.
           const afterRun4 = yield* send("Resume", CODEX_MODEL_SELECTION);
           const turns = yield* Ref.get(capturedTurns);
@@ -6650,6 +6675,10 @@ describe("orchestration v2 provider switching", () => {
             (handoff) => handoff.id === run3Handoff!.id,
           );
           assert.equal(updatedHandoff?.delivery?.status, "inline");
+          const run3Turn = afterRun4.providerTurns.find(
+            (turn) => turn.runAttemptId === run3.activeAttemptId,
+          );
+          assert.equal(run3Turn?.promptDropped, true);
         } else if (variant === "switch-away-and-return") {
           // Run 4: bounce back to Claude, then Run 5: return to Codex.
           yield* send("Continue on Claude", CLAUDE_MODEL_SELECTION);
@@ -6674,6 +6703,123 @@ describe("orchestration v2 provider switching", () => {
           ProviderReplayHarness.layerWithRegistry(
             {
               name: `dropped-handoff-${variant}`,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("restores a handoff that a turn cut by a restart carried from an earlier run", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("carried-handoff-cut-by-restart");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const refuseStarts = yield* Ref.make(0);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: { 1: "Morning Codex summary.", 4: "", 5: "Recovered." },
+          capturedTurns,
+          refuseStarts,
+          // A restart cancels run 4 before the provider keeps its request.
+          cancelledRunOrdinals: new Set([4]),
+          nativeTurnKept: (nativeTurnId) => !nativeTurnId.endsWith(":4"),
+        }),
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: { 2: "Afternoon Claude shipped b63 live draft." },
+          capturedTurns,
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make("thread:carried-handoff-cut-by-restart");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:carried-handoff-cut:create"),
+          threadId: testThreadId,
+          projectId,
+          title: "Carried handoff cut by restart",
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string, modelSelection: ModelSelection) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:carried-handoff-cut:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:carried-handoff-cut:${step}`),
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        yield* send("Morning task", CODEX_MODEL_SELECTION);
+        yield* send("Build live draft b63", CLAUDE_MODEL_SELECTION);
+        // Codex refuses run 3 before its prompt, so run 4 carries the handoff made for run 3.
+        yield* Ref.set(refuseStarts, 1);
+        const afterRun3 = yield* send("Resume after failure", CODEX_MODEL_SELECTION);
+        const run3 = afterRun3.runs.find((run) => run.ordinal === 3)!;
+        assert.equal(run3.status, "failed");
+        const afterRun4 = yield* send("Carry the draft forward", CODEX_MODEL_SELECTION);
+        const run4 = afterRun4.runs.find((run) => run.ordinal === 4)!;
+        assert.equal(run4.status, "cancelled");
+        const carried = afterRun4.contextHandoffs.find(
+          (handoff) => handoff.targetRunId === run3.id,
+        );
+        assert.equal(carried?.delivery?.status, "inline");
+        assert.include(
+          (yield* Ref.get(capturedTurns)).at(-1)!.text,
+          "Afternoon Claude shipped b63 live draft.",
+        );
+
+        const afterRun5 = yield* send("Resume", CODEX_MODEL_SELECTION);
+        const run5Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+        assert.include(run5Turn.text, "Afternoon Claude shipped b63 live draft.");
+        assert.include(run5Turn.text, "Carry the draft forward");
+        const run4Turn = afterRun5.providerTurns.find(
+          (turn) => turn.runAttemptId === run4.activeAttemptId,
+        );
+        assert.equal(run4Turn?.promptDropped, true);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "carried-handoff-cut-by-restart",
               runtimePolicyOverride: {
                 cwd,
                 approvalPolicy: "never",
