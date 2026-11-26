@@ -54,7 +54,7 @@
   "929a11e234f6e5d9": "Azure のコマンドラインツール ({cli}) をインストールしてから、{command} で Azure DevOps のサポートを有効にしてください。",
   "ad599e9de33538dd": "設定 → ソース管理と Issue で Bitbucket のトークンを追加してください。",
   "d810ecd91e8cf9d0": "{install} で Origin CLI をインストールしてから、{login} を実行してください。",
-  "eb0f60ef4f92ab7d": "Forgejo または Gitea のサーバーごとに、{fjUrl} から {fj} 0.6 以降をインストールして {fjLogin} を実行するか、{teaUrl} から {tea} 0.16 以降をインストールして {teaLogin} を実行してください。",
+  "1a04c8d36a7b29d3": "Forgejo または Gitea のサーバーごとに、{fjUrl} から {fj} 0.6 以降をインストールして {fjLogin} を実行するか、{gtUrl} から {gt} 2.0 以降をインストールして {gtLogin} を実行してください。",
   "d026a85e2e50e675": "{install} で GitCafe CLI をインストールしてから、{login} を実行するか、設定にトークンを保存するか、サーバーで {variable} を設定してください。",
   "22d3c0c48a34b5b3": "{install} で TanStack Source CLI をインストールしてから、{login} を実行するか、設定にトークンを保存するか、サーバーで {variable} を設定してください。",
   "756c80ad262ef315": "元のスレッドで待機中",

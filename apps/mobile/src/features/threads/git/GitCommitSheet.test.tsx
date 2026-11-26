@@ -9,7 +9,7 @@ type PressProps = {
   onPress: () => void;
 };
 const state = vi.hoisted(() => ({
-  refName: "main",
+  refName: "main" as string | null,
   result: null as object | null,
   pressables: [] as PressProps[],
   buttons: [] as PressProps[],
@@ -96,13 +96,17 @@ function openSheet() {
       await act(async () => state.buttons.findLast((b) => b.label === "Commit changes")!.onPress());
       act(() => root.unmount());
     },
+    close: () => act(() => root.unmount()),
   };
 }
 
 it("keeps excluded files after a failed commit until a commit succeeds", async () => {
+  state.refName = "main";
+  state.result = null;
+  state.ran = [];
+
   const first = openSheet();
   first.toggle("later.ts");
-  state.result = null;
   await first.commit();
 
   const retry = openSheet();
@@ -115,5 +119,34 @@ it("keeps excluded files after a failed commit until a commit succeeds", async (
     { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
   ]);
 
-  expect(openSheet().isIncluded("later.ts")).toBe(true);
+  const afterSuccess = openSheet();
+  expect(afterSuccess.isIncluded("later.ts")).toBe(true);
+  afterSuccess.close();
+});
+
+it("resets excluded files when moving from detached HEAD to a named branch", async () => {
+  state.refName = null;
+  state.result = null;
+  state.ran = [];
+
+  const detached = openSheet();
+  detached.toggle("later.ts");
+  await detached.commit();
+
+  const retryDetached = openSheet();
+  expect(retryDetached.isIncluded("later.ts")).toBe(false);
+  expect(retryDetached.isIncluded("include.ts")).toBe(true);
+  retryDetached.close();
+
+  state.refName = "feature";
+  const onBranch = openSheet();
+  expect(onBranch.isIncluded("include.ts")).toBe(true);
+  expect(onBranch.isIncluded("later.ts")).toBe(true);
+
+  state.result = { commit: { status: "created" } };
+  await onBranch.commit();
+  expect(state.ran).toEqual([
+    { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
+    { action: "commit", featureBranch: false },
+  ]);
 });
