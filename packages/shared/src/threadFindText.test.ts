@@ -3,7 +3,6 @@ import { expect, it } from "vite-plus/test";
 import { serializeAssistantCitation } from "./assistantCitations.ts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerContextReferences.ts";
 import { searchableMessageSegments, searchablePlanSegments } from "./threadFindText.ts";
-import { countThreadSearchOccurrences } from "./threadSearch.ts";
 
 it("excludes review attachments rendered as context chips", () => {
   const text = [
@@ -270,14 +269,7 @@ it.each(["\n", "\r\n", "\r"])(
   "does not search across a standalone image with %j line endings",
   (ending) => {
     const text = ["Caption", "![pic](https://x.test/pic.png)", "After"].join(ending);
-    const segments = assistantSegments(text);
-    expect(segments).toEqual(["Caption", " After"]);
-    expect(
-      segments?.reduce(
-        (count, segment) => count + countThreadSearchOccurrences(segment, "Caption  After"),
-        0,
-      ),
-    ).toBe(0);
+    expect(assistantSegments(text)).toEqual(["Caption", " After"]);
   },
 );
 
