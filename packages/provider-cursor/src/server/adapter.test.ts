@@ -961,6 +961,7 @@ describe("CursorAdapterV2", () => {
         readonly mcpServers: Record<string, unknown> | undefined;
         readonly text: string;
       }> = [];
+      let outage = true;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-blocked-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -1018,6 +1019,15 @@ describe("CursorAdapterV2", () => {
                 // Like the SDK, the policy covers the agent's own servers as well as the turn's.
                 if ([openInput.options.mcpServers, mcpServers].some((set) => set?.["t3-code"])) {
                   return Effect.fail(policyRejection());
+                }
+                if (outage) {
+                  outage = false;
+                  return Effect.fail(
+                    new CursorAgentSdk.CursorAgentSdkRunnerError({
+                      method: "run.start",
+                      cause: new Error("network unreachable"),
+                    }),
+                  );
                 }
                 const runId = `native-cursor-blocked-run-${attempts.length}`;
                 return Effect.succeed({
@@ -1102,21 +1112,25 @@ describe("CursorAdapterV2", () => {
         );
       });
 
-      const firstNotices = yield* send(1);
+      // A retry that fails for another reason leaves the block to be found, and told, next turn.
+      yield* Effect.flip(send(1));
       assert.lengthOf(attempts, 2);
-      assert.property(attempts[0]!.mcpServers, "t3-code");
-      assert.include(attempts[0]!.text, "## T3 Code orchestration");
-      assert.isUndefined(attempts[1]!.mcpServers);
-      assert.notInclude(attempts[1]!.text, "## T3 Code orchestration");
-      assert.notInclude(attempts[1]!.text, "## T3 Code devices");
+
+      const firstNotices = yield* send(2);
+      assert.lengthOf(attempts, 4);
+      assert.property(attempts[2]!.mcpServers, "t3-code");
+      assert.include(attempts[2]!.text, "## T3 Code devices");
+      assert.isUndefined(attempts[3]!.mcpServers);
+      assert.notInclude(attempts[3]!.text, "## T3 Code orchestration");
+      assert.notInclude(attempts[3]!.text, "## T3 Code devices");
       assert.lengthOf(firstNotices, 1);
       assert.equal(firstNotices[0]!.level, "warning");
 
       // Later turns skip the blocked server up front, without another notice.
-      const secondNotices = yield* send(2);
-      assert.lengthOf(attempts, 3);
-      assert.isUndefined(attempts[2]!.mcpServers);
-      assert.notInclude(attempts[2]!.text, "## T3 Code orchestration");
+      const secondNotices = yield* send(3);
+      assert.lengthOf(attempts, 5);
+      assert.isUndefined(attempts[4]!.mcpServers);
+      assert.notInclude(attempts[4]!.text, "## T3 Code orchestration");
       assert.lengthOf(secondNotices, 0);
     }).pipe(
       Effect.scoped,

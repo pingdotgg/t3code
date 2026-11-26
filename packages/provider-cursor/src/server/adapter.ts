@@ -3175,16 +3175,22 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               Effect.catch((error) => {
                 const servers = CursorAgentSdk.blockedInlineMcpServers(error);
                 if (servers.length === 0) return Effect.fail(error);
-                noticeServers = servers;
                 const blocked = new Set([...skipped, ...servers]);
-                return Ref.set(blockedMcpServers, blocked).pipe(
-                  Effect.andThen(
-                    Effect.logWarning("orchestration-v2.cursor-mcp-servers-blocked", {
-                      providerSessionId: input.providerSessionId,
-                      servers,
-                    }),
-                  ),
+                return Effect.logWarning("orchestration-v2.cursor-mcp-servers-blocked", {
+                  providerSessionId: input.providerSessionId,
+                  servers,
+                }).pipe(
                   Effect.andThen(sendWithout(blocked)),
+                  // Kept only once a turn starts without them, so a failed retry still warns next time.
+                  Effect.tap(() =>
+                    Ref.set(blockedMcpServers, blocked).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          noticeServers = servers;
+                        }),
+                      ),
+                    ),
+                  ),
                   Effect.mapError((retryError) => {
                     const stillBlocked = CursorAgentSdk.blockedInlineMcpServers(retryError);
                     return stillBlocked.length === 0
