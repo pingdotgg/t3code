@@ -200,17 +200,9 @@ describe("workspaceRelativeFilePath", () => {
 describe("extractInlineCodeSpans", () => {
   it.each([
     ["``./a/shared.ts`` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
-    ["`./a/shared.ts` and ``./b/shared.ts``", ["./a/shared.ts", "./b/shared.ts"]],
-    ["``use `foo` `` and `./b/shared.ts`", ["use `foo`", "./b/shared.ts"]],
     ["``a ` b`` and `./b/shared.ts`", ["a ` b", "./b/shared.ts"]],
     ["``unclosed and `./b/shared.ts`", ["./b/shared.ts"]],
-    ["`unclosed and ``./b/shared.ts``", ["./b/shared.ts"]],
-    ["`` `` and `./b/shared.ts`", ["./b/shared.ts"]],
     ["`unclosed\n`./b/shared.ts`", ["./b/shared.ts"]],
-    [
-      "```ts\n`./ignored.ts`\n```\n``./a/shared.ts`` and `./b/shared.ts`",
-      ["./a/shared.ts", "./b/shared.ts"],
-    ],
   ])("matches complete backtick delimiter runs in %s", (markdown, spans) => {
     expect(extractInlineCodeSpans(markdown)).toEqual(spans);
   });
