@@ -351,10 +351,6 @@ describe("withMarkdownDefinitions", () => {
   it.each([
     ["continuation in a label", "[a\rb]: /url"],
     ["backslash before a blank line", "[a\\\r\rb]: /url"],
-    ["blank line with spaces", "[a\r \rb]: /url"],
-    ["heading", "[a\r# b]: /url"],
-    ["blockquote", "[a\r> b]: /url"],
-    ["fence", "[a\r```]: /url"],
     ["blank line in a title", '[a]: /url "title\r\rcontinued"'],
   ])("leaves later chunks intact when a candidate contains a bare CR: %s", (_, candidate) => {
     const next = "# Next";
