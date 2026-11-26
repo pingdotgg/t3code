@@ -230,21 +230,27 @@ describe("Claude model catalog", () => {
   });
 
   it.each([
-    { configured: true, resolvedModel: "gateway/current", hasNonCatalogModels: true },
-    { configured: false, resolvedModel: "gateway/current", hasNonCatalogModels: false },
-    { configured: true, resolvedModel: "", hasNonCatalogModels: false },
-    { configured: true, resolvedModel: "SYNTHETIC[1m]", hasNonCatalogModels: false },
-    { configured: true, resolvedModel: "claude-synthetic-next", hasNonCatalogModels: false },
+    ["synthetic", "gateway/current", ["synthetic"], true],
+    ["synthetic", "gateway/current", ["gateway/current"], true],
+    ["synthetic", "gateway/current", [], false],
+    ["synthetic", "", ["synthetic"], false],
+    ["synthetic", "SYNTHETIC[1m]", ["synthetic"], false],
+    ["synthetic", "claude-synthetic-next", ["synthetic"], false],
+    ["synthetic", "global.anthropic.claude-synthetic-next-v1:0[1m]", ["synthetic"], false],
+    ["sonnet", "gateway/current", ["sonnet"], false],
+    ["sonnet", "gateway/current", ["gateway/current"], false],
+    ["sonnet", "global.anthropic.claude-sonnet-5-5[1m]", ["sonnet"], false],
   ])(
-    "checks gateway inventory for a catalog alias (configured=$configured, target=$resolvedModel)",
-    ({ configured, resolvedModel, hasNonCatalogModels }) => {
-      const catalog = catalogFromManifest(manifest());
-      const reported = [{ value: "synthetic", resolvedModel, displayName: "", description: "" }];
+    "checks gateway inventory for %s resolving to %s with custom models %j",
+    (value, resolvedModel, customModels, hasNonCatalogModels) => {
+      const catalog =
+        value === "sonnet" ? BUNDLED_CLAUDE_MODEL_CATALOG : catalogFromManifest(manifest());
+      const reported = [{ value, resolvedModel, displayName: "", description: "" }];
 
-      assert.deepStrictEqual(
-        claudeReportedModels(catalog, configured ? ["synthetic"] : [], reported),
-        { models: [], hasNonCatalogModels },
-      );
+      assert.deepStrictEqual(claudeReportedModels(catalog, customModels, reported), {
+        models: [],
+        hasNonCatalogModels,
+      });
     },
   );
 

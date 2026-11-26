@@ -202,12 +202,14 @@ export function claudeReportedModels(
     const resolvedId = stripClaudeContextWindowSuffix(info.resolvedModel ?? "").toLowerCase();
     const ids = [valueId, resolvedId].filter((id) => id.length > 0);
     const gatewayValue = !catalogIds.has(valueId);
-    const gatewayTarget = resolvedId !== "" && !catalogIds.has(resolvedId);
-    if (
-      customIds.has(valueId)
-        ? gatewayValue || gatewayTarget
-        : gatewayValue && !catalogIds.has(resolvedId)
-    ) {
+    // Claude Code can report family routes from environment settings even on a gateway cache miss.
+    const reportsGatewayModel = gatewayValue
+      ? customIds.has(valueId) || !catalogIds.has(resolvedId)
+      : resolvedId !== "" &&
+        (customIds.has(valueId) || customIds.has(resolvedId)) &&
+        !catalogIds.has(resolvedId) &&
+        !catalogIds.has(stripClaudeBackendDecoration(resolvedId));
+    if (reportsGatewayModel && !CLAUDE_CODE_FAMILY_ALIASES.has(valueId)) {
       hasNonCatalogModels = true;
     }
     if (ids.some((id) => known.has(id))) continue;
