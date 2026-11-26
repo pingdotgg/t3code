@@ -16,8 +16,8 @@ const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
 const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
-// CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const DISPLAY_MATH_OPEN = /^ {0,3}\$\$/;
+// CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
   // "<!-->" and "<!--->" close themselves, so the closer is searched from just after "<!".
@@ -101,7 +101,7 @@ const FRONTMATTER_MAX_LINES = 1000;
 const hasFrontmatterClose = (lines: readonly string[]) =>
   lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
 
-// Footnotes stay in their own chunks.
+// Footnotes are left alone so each piece does not grow a footnote section.
 const LINK_DEFINITION_START = /^ {0,3}\[(?!\^)/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
