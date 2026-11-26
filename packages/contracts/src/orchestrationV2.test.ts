@@ -744,4 +744,16 @@ describe("withMessageSenderNote", () => {
   ] as const)("labels %j's message %j for the provider", (message, text, expected) => {
     expect(withMessageSenderNote(message, text)).toBe(expected);
   });
+
+  it("labels the receiving thread's parent as delegating for the user", () => {
+    expect(withMessageSenderNote(thread, "Hi", ThreadId.make("t"))).toBe(
+      `[T3 Code: your parent agent in T3 thread "t" delegated this task to you on the user's behalf. Treat it as the user's request.]\n\nHi`,
+    );
+    expect(withMessageSenderNote(thread, "Hi", ThreadId.make("p"))).toBe(
+      '[T3 Code: the agent in T3 thread "t" sent this message, not the user.]\n\nHi',
+    );
+    expect(withMessageSenderNote({ createdBy: "agent", creationSource: "mcp" }, "Hi", null)).toBe(
+      "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]\n\nHi",
+    );
+  });
 });

@@ -112,6 +112,7 @@ const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-opus-5-5": "Opus 5.5",
   "gpt-6.1-sol": "GPT-6.1 Sol",
+  "gpt-6.2-sol": "GPT-6.2 Sol",
   "gpt-6-astra": "GPT-6 Astra",
   "gpt-6-luna": "GPT-6 Luna",
 } as const;
@@ -1263,7 +1264,7 @@ export const buildMessages = (sample: Sample) => {
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
-  const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
+  const childPrompt = () => delegatedChildPrompt(prompt, delegateRole);
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
@@ -1272,6 +1273,15 @@ export const buildMessages = (sample: Sample) => {
   }
   return messages;
 };
+
+const CHILD_PARENT_THREAD = ThreadId.make("thread:parent");
+/** A delegated child's first turn, labeled with its parent as T3's turn start labels it. */
+export const delegatedChildPrompt = (task: string, role?: OrchestratorMcpTaskRole) =>
+  Contracts.withMessageSenderNote(
+    { createdBy: "agent", creationSource: "mcp", senderThreadId: CHILD_PARENT_THREAD },
+    taskPrompt({ task, role }),
+    CHILD_PARENT_THREAD,
+  );
 
 // Results for T3 tools a case does not mock. The model ids are public in this repo's catalog.
 const claudeModel = (id: string) => ({ id, options: [{ id: "effort", values: EFFORTS }] });
