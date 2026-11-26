@@ -204,7 +204,9 @@ interface AntigravityProviderOptions {
     EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
-  readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
+  readonly resolveMaintenance?: Effect.Effect<ProviderMaintenanceCapabilities>;
+  /** Republishes the snapshot when something `stampIdentity` reads besides the draft changes. */
+  readonly snapshotInputChanges?: Stream.Stream<unknown>;
   readonly auth?: { readonly type: string; readonly label: string };
   /** Modes the last session advertised, saved because initialize alone does not report them. */
   readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
@@ -386,21 +388,28 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     return yield* options.stampIdentity(next.draft);
   });
 
-  const maintenanceCapabilities =
-    options.maintenanceCapabilities ??
-    makeManualOnlyProviderMaintenanceCapabilities({
-      provider: ProviderDriverKind.make("antigravity"),
-      packageName: null,
-    });
+  const resolveMaintenance =
+    options.resolveMaintenance ??
+    Effect.succeed(
+      makeManualOnlyProviderMaintenanceCapabilities({
+        provider: ProviderDriverKind.make("antigravity"),
+        packageName: null,
+      }),
+    );
   const managed = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+    resolveMaintenance: () => resolveMaintenance,
     getSettings: Effect.succeed(settings),
     streamSettings: Stream.empty,
     haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
     enrichSnapshot: ({ publishSnapshot }) =>
-      SubscriptionRef.changes(metadata).pipe(
+      Stream.merge(
+        SubscriptionRef.changes(metadata),
+        Stream.mapEffect(options.snapshotInputChanges ?? Stream.empty, () =>
+          SubscriptionRef.get(metadata),
+        ),
+      ).pipe(
         Stream.runForEach((state) =>
           options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
         ),

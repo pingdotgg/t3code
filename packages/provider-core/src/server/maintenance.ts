@@ -19,6 +19,14 @@ export interface ProviderMaintenanceCapabilities {
   readonly installPath?: string;
   /** Displayed for manual updates; never executed by T3 Code. */
   readonly manualCommand?: string;
+  /** Updates a runtime T3 Code installed itself, used when there is no `update` command. */
+  readonly managedUpdate?: ProviderMaintenanceManagedAction;
+}
+
+export interface ProviderMaintenanceManagedAction {
+  readonly lockKey: string;
+  /** Completes once the new runtime is installed. */
+  readonly run: Effect.Effect<void, Error>;
 }
 
 export interface ProviderMaintenanceCommandAction {

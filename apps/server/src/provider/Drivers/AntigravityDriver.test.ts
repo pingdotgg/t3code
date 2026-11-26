@@ -68,6 +68,18 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+const noManagedRuntime: ProviderInstallState = {
+  driver: ProviderDriverKind.make("antigravity"),
+  operationId: null,
+  phase: "idle",
+  downloadedBytes: 0,
+  totalBytes: null,
+  version: null,
+  installedVersion: null,
+  canRemove: false,
+  message: null,
+};
+
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   options: {
     readonly config?: Partial<AntigravitySettings>;
@@ -163,15 +175,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
 
+  const installState = options.installState ?? noManagedRuntime;
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
-    ...(options.installState === undefined
-      ? {}
-      : {
-          state: Effect.succeed(options.installState),
-          changes: Stream.make(options.installState),
-          checkForUpdate: Effect.void,
-        }),
+    state: Effect.succeed(installState),
+    changes: Stream.make(installState),
+    checkForUpdate: Effect.void,
     compatibility: (version) =>
       Effect.succeed(
         resolveProviderCompatibility(
@@ -761,6 +770,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           Effect.provide(
             Layer.mock(AntigravityInstallation.AntigravityInstallation)({
               managedDirectory: config.stateDir,
+              state: Effect.succeed(noManagedRuntime),
+              changes: Stream.make(noManagedRuntime),
               resolve: () => Effect.die("unused"),
               acquire: () => Effect.die("unused"),
             }),

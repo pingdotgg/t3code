@@ -2,10 +2,17 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import {
   AntigravitySettings,
   ProviderDriverKind,
+  type ProviderInstallState,
   ProviderSetupError,
   RuntimeMode,
+  type ServerProvider,
   settingsSecretLiteral,
 } from "@t3tools/contracts";
+import {
+  createProviderVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -102,6 +109,50 @@ const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
 const PYTHON_SOCKS_REQUIRED = "python-socks is required to use a SOCKS proxy";
 
+const INSTALLING_PHASES: ReadonlySet<ProviderInstallState["phase"]> = new Set([
+  "downloading",
+  "extracting",
+  "verifying",
+]);
+
+/**
+ * The managed runtime can only move to the release the installation offers, so any other
+ * version is behind it, the same rule as the setup section's update button.
+ */
+function antigravityMaintenanceCapabilities(
+  state: ProviderInstallState | undefined,
+  managedUpdate: Effect.Effect<void, Error>,
+): ProviderMaintenanceCapabilities {
+  const manual = makeManualOnlyProviderMaintenanceCapabilities({
+    provider: DRIVER,
+    packageName: null,
+  });
+  if (state?.installedVersion == null) return manual;
+  return {
+    ...manual,
+    latestVersion: state.version,
+    compareVersions: (current, latest) => (current === latest ? 0 : -1),
+    managedUpdate: { lockKey: `${DRIVER}-managed`, run: managedUpdate },
+  };
+}
+
+function withVersionAdvisory(
+  snapshot: ServerProvider,
+  capabilities: ProviderMaintenanceCapabilities,
+): ServerProvider {
+  if (capabilities.latestVersion == null) return snapshot;
+  return {
+    ...snapshot,
+    versionAdvisory: createProviderVersionAdvisory({
+      driver: DRIVER,
+      currentVersion: snapshot.version,
+      latestVersion: capabilities.latestVersion,
+      checkedAt: snapshot.checkedAt,
+      maintenanceCapabilities: capabilities,
+    }),
+  };
+}
+
 // Keep upstream diagnostics in cause; only recognized, fixed text reaches clients.
 function refreshFailureDetail(cause: unknown) {
   return isAcpRequestError(cause) &&
@@ -150,6 +201,7 @@ export const AntigravityDriver: ProviderDriver<
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const host = yield* ProviderHost.ProviderHost;
     const selfInvocation = yield* resolveSelfInvocation();
+    const driverScope = yield* Effect.scope;
     const installation = yield* AntigravityInstallation.AntigravityInstallation;
     const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
@@ -221,9 +273,46 @@ export const AntigravityDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
+    // A custom executable path takes precedence over the managed runtime.
+    const usesManagedRuntime = settings.binaryPath.trim() === "";
+    const updateManagedRuntime = Effect.gen(function* () {
+      const started = yield* installation.start;
+      const finished =
+        started.operationId === null
+          ? started
+          : Option.getOrElse(
+              yield* installation.changes.pipe(
+                Stream.filter(
+                  (state) =>
+                    state.operationId !== started.operationId ||
+                    !INSTALLING_PHASES.has(state.phase),
+                ),
+                Stream.runHead,
+              ),
+              () => started,
+            );
+      if (finished.phase !== "succeeded") {
+        return yield* new AntigravityInstallation.AntigravityInstallationError({
+          operation: "update",
+          detail: finished.message ?? "Could not update the Antigravity runtime.",
+        });
+      }
+    });
+    const resolveMaintenance = installation.state.pipe(
+      Effect.map((state) =>
+        antigravityMaintenanceCapabilities(
+          usesManagedRuntime ? state : undefined,
+          updateManagedRuntime,
+        ),
+      ),
+    );
     const classifyModels = (draft: ServerProviderDraft) =>
-      currentCatalog.pipe(
-        Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
+      Effect.zipWith(
+        currentCatalog.pipe(
+          Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
+        ),
+        resolveMaintenance,
+        withVersionAdvisory,
       );
 
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
@@ -607,6 +696,10 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      // Rate-limited and gated on the update-checks setting inside the installation.
+      if (executable.source === "managed") {
+        yield* Effect.forkIn(installation.checkForUpdate, driverScope);
+      }
       const previousRejection = rejectedExternalRuntime;
       const identity =
         executable.version === null && previousRejection
@@ -653,6 +746,14 @@ export const AntigravityDriver: ProviderDriver<
     const provider = yield* makeAntigravityProvider(settings, {
       environment: processEnvironment,
       stampIdentity: classifyModels,
+      resolveMaintenance,
+      snapshotInputChanges: installation.changes.pipe(
+        Stream.changesWith(
+          (previous, next) =>
+            previous.version === next.version &&
+            previous.installedVersion === next.installedVersion,
+        ),
+      ),
       probe,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
       ...(rememberedRuntimeModes ? { rememberedRuntimeModes } : {}),
