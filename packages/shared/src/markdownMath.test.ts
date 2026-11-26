@@ -5,6 +5,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
+import { composerMathRanges } from "./composerInlineTokens.ts";
 import { mathKind } from "./markdownMath.ts";
 import { markdownMathRanges, parseMarkdownWithMath } from "./markdownMath.ts";
 
@@ -33,6 +34,21 @@ function text(markdown: string) {
 }
 
 describe("chat math parsing", () => {
+  it.each([
+    ["See $x$ now", 4, 7],
+    ["\uFEFFSee $x$ now", 5, 8],
+    ["See \uFEFF$x$ now", 5, 8],
+  ] as const)(
+    "preserves original source offsets around a byte-order mark: %j",
+    (source, start, end) => {
+      const expected = [{ start, end, source: "$x$" }];
+      expect(composerMathRanges(source, markdownMathRanges)).toEqual(expected);
+      for (const tree of [undefined, parse(source)]) {
+        expect(markdownMathRanges(source, tree)).toMatchObject(expected);
+      }
+    },
+  );
+
   it("keeps GFM autolink destinations intact while restoring literal dollars", () => {
     const source = "Query www.example.com/?$select=id and $x$.";
     const link = collect(parse(source)).find((node) => node.type === "link");
