@@ -2,6 +2,7 @@ import { useGT } from "gt-react-native";
 import { createContext, useContext, useState } from "react";
 import {
   pullRequestMediaSource,
+  pullRequestImageRequest,
   pullRequestImageSource,
   type PullRequestMediaLocation,
 } from "./pullRequestMediaSource";
@@ -56,18 +57,15 @@ export function usePullRequestImageSource(
   const connection = usePreparedConnection(context?.environmentId ?? null);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
-  return async (image) => {
-    const source = pullRequestMediaSource(resolveUrl(image.href), context);
-    const resource = "resource" in source ? source.resource : undefined;
-    if (context === null || resource === undefined) return null;
-    if (httpBaseUrl === null) throw new Error("Pull request image is unavailable");
-    const state = assetUrlStateFromResult(
-      await createUrl({ environmentId: context.environmentId, input: { resource } }),
-      httpBaseUrl,
-    );
-    if (state._tag !== "Success") throw new Error("Could not authorize pull request image");
-    return { uri: state.url };
-  };
+  return (image) =>
+    pullRequestImageRequest(resolveUrl(image.href), context, async (environmentId, resource) => {
+      if (httpBaseUrl === null) return null;
+      const state = assetUrlStateFromResult(
+        await createUrl({ environmentId, input: { resource } }),
+        httpBaseUrl,
+      );
+      return state._tag === "Success" ? state.url : null;
+    });
 }
 
 export function PullRequestMedia(props: {
