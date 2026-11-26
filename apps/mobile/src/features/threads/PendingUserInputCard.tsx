@@ -24,6 +24,7 @@ import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
 import { questionPreviewMarkdown } from "../../lib/markdownDocument";
+import { resolveMarkdownFontSizes } from "../../lib/appearancePreferences";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
@@ -88,6 +89,7 @@ function QuestionText(props: {
   readonly monospace?: boolean;
 }) {
   const styles = useMarkdownPreviewStyles();
+  const monospaceSizes = resolveMarkdownFontSizes(styles.nativeTextStyle.fontSize);
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
@@ -116,6 +118,9 @@ function QuestionText(props: {
           ? {
               ...styles.nativeTextStyle,
               fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+              // 13 at the default size, as web previews use text-xs: a 40-column mockup fits a phone unwrapped.
+              fontSize: monospaceSizes.codeBlockFontSize,
+              lineHeight: monospaceSizes.codeBlockLineHeight,
             }
           : styles.nativeTextStyle
       }
