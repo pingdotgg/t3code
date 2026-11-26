@@ -106,7 +106,7 @@ function ComboboxInput({
 
 function ComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) {
   return (
-    <div className="min-w-0 shrink-0 px-3 pt-2.5">
+    <label className="block min-w-0 shrink-0 cursor-text px-3 pt-2.5">
       <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
         <SearchIcon
           aria-hidden="true"
@@ -120,7 +120,7 @@ function ComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) 
           unstyled
         />
       </div>
-    </div>
+    </label>
   );
 }
 
@@ -229,9 +229,16 @@ function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   );
 }
 
-function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
+function ComboboxList({
+  className,
+  scrollAreaClassName,
+  ...props
+}: ComboboxPrimitive.List.Props & {
+  /** Put height caps here, not on `className`: a capped list never resizes, so the scrollbar goes stale. */
+  scrollAreaClassName?: string;
+}) {
   return (
-    <ScrollArea scrollbarGutter scrollFade>
+    <ScrollArea className={scrollAreaClassName} observeContent scrollbarGutter scrollFade>
       <ComboboxPrimitive.List
         className={cn("not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1", className)}
         data-slot="combobox-list"

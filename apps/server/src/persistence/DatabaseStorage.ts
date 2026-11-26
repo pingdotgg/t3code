@@ -117,22 +117,30 @@ const make = Effect.gen(function* () {
     Effect.catch((cause) => Effect.logWarning("Database storage inspection failed", { cause })),
   );
 
-  const reclaim = Effect.gen(function* () {
-    if (!(yield* readLayout).incrementalVacuum) return;
-    // The driver steps once per statement; incremental_vacuum frees one page per step. Yield between pages.
-    for (let page = 0; page < RECLAIM_PAGES_PER_PASS; page++) {
-      const free = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
-      if ((free[0]?.freelist_count ?? 0) === 0) break;
-      yield* sql`PRAGMA incremental_vacuum(1)`;
-      yield* Effect.yieldNow;
-    }
-  }).pipe(
-    Effect.catch((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
-  );
+  const reclaim = Effect.suspend(() => {
+    let page = 0;
+    return Effect.gen(function* () {
+      if (!(yield* readLayout).incrementalVacuum) return;
+      // The driver steps once per statement; incremental_vacuum frees one page per step. Yield between pages.
+      for (; page < RECLAIM_PAGES_PER_PASS; page++) {
+        const free = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
+        if ((free[0]?.freelist_count ?? 0) === 0) break;
+        yield* sql`PRAGMA incremental_vacuum(1)`;
+        yield* Effect.yieldNow;
+      }
+    }).pipe(
+      Effect.ensuring(Effect.suspend(() => Effect.annotateCurrentSpan("db.reclaimed_pages", page))),
+      Effect.catch((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
+      // The pass owns the span; tracing each page's two PRAGMAs floods the server trace.
+      Effect.withTracerEnabled(false),
+      Effect.withSpan("DatabaseStorage.reclaim"),
+    );
+  });
 
   // Even a pass that deletes nothing scans the event store. Persist completion
   // so restarting does not trigger another scan before the six-hour interval.
-  const compactedAtPath = path.join(path.dirname(config.dbPath), "compacted-at");
+  // Versioned: a stamp from before passes purged deleted threads must not delay the first purge.
+  const compactedAtPath = path.join(path.dirname(config.dbPath), "compacted-at-v2");
   const compact = Effect.gen(function* () {
     let sliceStarted = yield* Clock.monotonicTimeNanos;
     const betweenPages = Effect.gen(function* () {
@@ -145,7 +153,11 @@ const make = Effect.gen(function* () {
     const result = yield* maintenance.pruneEventStore(betweenPages);
     const completedAt = yield* Clock.currentTimeMillis;
     yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
-    if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
+    if (
+      result.deletedEventCount > 0 ||
+      result.deletedReceiptCount > 0 ||
+      result.purgedRowCount > 0
+    ) {
       yield* Effect.logInfo("Compacted orchestration history", result);
     }
   }).pipe(

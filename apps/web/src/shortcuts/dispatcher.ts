@@ -57,22 +57,43 @@ function isInsideConfirmation(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('[role="alertdialog"]') !== null;
 }
 
-function runScope(scope: CommandScope, event: KeyboardEvent): boolean {
+function isInsideKeybindingCapture(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-keybinding-capture]") !== null;
+}
+
+function scopeCommandHandler(scope: CommandScope, event: KeyboardEvent) {
   const { commands, options } = scope;
-  if (options.when && !options.when(event)) return false;
-  if (options.onKeyDown && options.onKeyDown(event) !== false) return true;
   const command = resolveShortcutCommand(
     event,
     options.keybindings?.() ?? appAtomRegistry.get(primaryServerKeybindingsAtom),
     { context: { ...readFocusContext(event), ...options.context?.() } },
   );
-  const handler = command === null ? undefined : commands[command];
+  return command === null ? undefined : commands[command];
+}
+
+function runScope(scope: CommandScope, event: KeyboardEvent): boolean {
+  const { options } = scope;
+  if (options.when && !options.when(event)) return false;
+  if (options.onKeyDown && options.onKeyDown(event) !== false) return true;
+  const handler = scopeCommandHandler(scope, event);
   if (handler === undefined) return false;
   if (isInsideConfirmation(event.target)) {
     event.preventDefault();
     return true;
   }
   return handler(event) !== false;
+}
+
+/**
+ * Whether a bubble-phase command is bound to this keydown, for widgets that would otherwise
+ * consume it. Capture scopes have already run (and declined) by the time a widget sees it.
+ */
+export function hasCommandForKeyDown(event: KeyboardEvent): boolean {
+  return globalScopes.some(
+    (scope) =>
+      (!scope.options.when || scope.options.when(event)) &&
+      scopeCommandHandler(scope, event) !== undefined,
+  );
 }
 
 function runScopes(scopes: readonly CommandScope[], event: KeyboardEvent): boolean {
@@ -85,6 +106,7 @@ function runScopes(scopes: readonly CommandScope[], event: KeyboardEvent): boole
 }
 
 function dispatchCaptureKeyDown(event: KeyboardEvent): void {
+  if (isInsideKeybindingCapture(event.target)) return;
   runScopes(captureScopes, event);
 }
 

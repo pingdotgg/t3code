@@ -1,4 +1,7 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, ContextMenuSource } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "./i18n/messages";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -242,6 +245,7 @@ export function dismissContextMenu(restoreFocus = true): void {
 export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
+  source?: ContextMenuSource,
 ): Promise<T | null> {
   dismissContextMenu();
   return new Promise<T | null>((resolve) => {
@@ -395,7 +399,7 @@ export function showContextMenuFallback<T extends string>(
       menu.dataset.level = String(level);
       menu.dataset.contextMenu = "true";
       menu.setAttribute("role", "menu");
-      menu.setAttribute("aria-label", parentTrigger?.textContent ?? "Context menu");
+      menu.setAttribute("aria-label", parentTrigger?.textContent ?? m(msg("Context menu")));
       menu.tabIndex = -1;
 
       const inner = document.createElement("div");
@@ -465,6 +469,12 @@ export function showContextMenuFallback<T extends string>(
             spacer.setAttribute("aria-hidden", "true");
             button.appendChild(spacer);
           }
+        } else if (typeof item.iconImage === "string") {
+          const image = document.createElement("img");
+          image.src = item.iconImage;
+          image.alt = "";
+          image.className = "size-4.5 shrink-0 sm:size-4";
+          button.appendChild(image);
         } else if (typeof item.icon === "string") {
           const icon = createIconElement(item.icon, isLeafDestructive ? "destructive" : "neutral");
           if (icon) {
@@ -551,10 +561,6 @@ export function showContextMenuFallback<T extends string>(
               if (!childMenu) {
                 return;
               }
-              const childRect = childMenu.getBoundingClientRect();
-              if (childRect.right > window.innerWidth) {
-                clampMenuPosition(childMenu, rect.left - childRect.width - 4, rect.top);
-              }
               if (focusFirstItem) {
                 [...childMenu.querySelectorAll<HTMLButtonElement>("button")]
                   .find((childButton) => !childButton.disabled)
@@ -586,13 +592,31 @@ export function showContextMenuFallback<T extends string>(
       menu.addEventListener("mouseenter", () => {
         closeMenusFromLevel(level + 1);
       });
+      // Like a native menu, take thumb Back/Forward presses instead of letting Chromium
+      // run the app router's history underneath.
+      const swallowThumbButton = (event: MouseEvent) => {
+        if (event.button === 3 || event.button === 4) event.preventDefault();
+      };
+      menu.addEventListener("mousedown", swallowThumbButton);
+      menu.addEventListener("mouseup", swallowThumbButton);
 
       document.body.appendChild(menu);
       menuStack[level] = menu;
       submenuTriggerStack[level] = parentTrigger;
 
       requestAnimationFrame(() => {
-        clampMenuPosition(menu, preferredLeft, preferredTop);
+        if (!parentTrigger) {
+          clampMenuPosition(menu, preferredLeft, preferredTop);
+          return;
+        }
+        // A fixed menu near the right edge shrinks to the space left; measure its real width.
+        menu.style.width = "max-content";
+        menu.style.maxWidth = "min(24rem, calc(100vw - 0.5rem))";
+        const { width } = menu.getBoundingClientRect();
+        const roomLeft = parentTrigger.getBoundingClientRect().left - 4;
+        const roomRight = window.innerWidth - preferredLeft;
+        const flipLeft = width > roomRight && roomLeft > roomRight;
+        clampMenuPosition(menu, flipLeft ? roomLeft - width : preferredLeft, preferredTop);
       });
     };
 
@@ -602,12 +626,15 @@ export function showContextMenuFallback<T extends string>(
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
     activeContextMenuDismiss = dismiss;
     // A keyboard-opened menu starts on its first action, a pointer-opened one on the menu itself.
+    // Without a source, guess from :focus-visible, which screen reader browse mode does not set.
     // Text fields always match :focus-visible, so they say nothing about how the menu opened.
-    const firstAction =
-      previouslyFocusedElement?.matches(":focus-visible") &&
-      !previouslyFocusedElement.matches('input, textarea, select, [contenteditable="true"]')
-        ? menuStack[0]?.querySelector<HTMLButtonElement>("button:not(:disabled)")
-        : null;
+    const openedFromKeyboard =
+      source === "keyboard" ||
+      (previouslyFocusedElement?.matches(":focus-visible") &&
+        !previouslyFocusedElement.matches('input, textarea, select, [contenteditable="true"]'));
+    const firstAction = openedFromKeyboard
+      ? menuStack[0]?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      : null;
     (firstAction ?? menuStack[0])?.focus({ preventScroll: true });
     document.addEventListener("focusin", onFocusIn);
     window.addEventListener("blur", onWindowBlur);

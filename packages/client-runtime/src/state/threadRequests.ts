@@ -7,6 +7,7 @@ import type {
   OrchestrationV2UserInputQuestion,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
+  ProviderApprovalPushHooks,
   ProviderApprovalDecision,
   ProviderRequestKind,
   RuntimeRequestId,
@@ -18,6 +19,8 @@ import type { EnvironmentThreadShell } from "./models.ts";
 import * as DateTime from "effect/DateTime";
 import type { AtomCommandResult } from "./runtime.ts";
 import type { ThreadStructure, ThreadStructureVisibleTurnItem } from "./models.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type ApprovalResponder = (
   requestId: RuntimeRequestId,
@@ -57,19 +60,274 @@ export interface ThreadPendingApproval {
   readonly reason?: string;
   readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
   readonly appName?: string;
+  /** Set when T3 Code itself asks to run a repository's push hooks; `detail` is the same in one sentence. */
+  readonly pushHooks?: ProviderApprovalPushHooks;
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
   readonly supportsFeedback?: boolean;
 }
 
-export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
+export interface ApprovalTextPart {
+  readonly text: string;
+  /** Set when `text` names a character a screen would not draw. */
+  readonly named?: true;
+}
+
+// Control, format, separator and ignorable characters draw as nothing or as a blank box, and some
+// reorder the text beside them. A line feed and a tab draw as themselves and are not in the set.
+const UNDRAWN = /[\0-\x08\x0B-\x1F\x7F-\x9F\p{Zl}\p{Zp}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
+const UNDRAWN_NAMES: Readonly<Record<string, string>> = {
+  "\r": "\\r",
+  "\b": "\\b",
+  "\u001B": "\\e",
+};
+const PICTOGRAPH = /^\p{Extended_Pictographic}$/u;
+// The pictographic range also holds code points reserved for emoji that do not exist yet.
+const EMOJI = /^\p{Emoji}$/u;
+const SKIN_TONE_BASE = /^\p{Emoji_Modifier_Base}$/u;
+const JOINER = 0x200d;
+const TEXT_SELECTOR = 0xfe0e;
+const EMOJI_SELECTOR = 0xfe0f;
+const KEYCAP = 0x20e3;
+
+const isSkinTone = (codePoint: number) => codePoint >= 0x1f3fb && codePoint <= 0x1f3ff;
+// An emoji that is not a skin tone, which only colours the emoji before it.
+const isPicture = (codePoint: number) => {
+  if (codePoint < 0 || isSkinTone(codePoint)) return false;
+  const character = String.fromCodePoint(codePoint);
+  return PICTOGRAPH.test(character) && EMOJI.test(character);
+};
+// A digit, # or *.
+const isKeycapBase = (codePoint: number) =>
+  (codePoint >= 0x30 && codePoint <= 0x39) || codePoint === 0x23 || codePoint === 0x2a;
+
+/** The code point that ends at `end`, or -1 at the start of the text. */
+function codePointBefore(text: string, end: number): number {
+  if (end <= 0) return -1;
+  const unit = text.charCodeAt(end - 1);
+  if (unit >= 0xdc00 && unit <= 0xdfff && end >= 2) {
+    const lead = text.charCodeAt(end - 2);
+    if (lead >= 0xd800 && lead <= 0xdbff) return text.codePointAt(end - 2) ?? unit;
+  }
+  return unit;
+}
+
+/**
+ * Whether the undrawn character at `index` is part of an emoji: a joiner directly between two
+ * emoji, or a presentation selector directly after an emoji or in a keycap. It reads at most two
+ * code points before the character and one after it.
+ */
+function isInsideEmoji(text: string, index: number, codePoint: number): boolean {
+  if (codePoint !== JOINER && codePoint !== EMOJI_SELECTOR && codePoint !== TEXT_SELECTOR) {
+    return false;
+  }
+  const before = codePointBefore(text, index);
+  const after = text.codePointAt(index + 1) ?? -1;
+  if (codePoint !== JOINER) {
+    return (
+      isPicture(before) ||
+      (codePoint === EMOJI_SELECTOR && isKeycapBase(before) && after === KEYCAP)
+    );
+  }
+  if (!isPicture(after)) return false;
+  if (isPicture(before)) return true;
+  // The emoji before the joiner may end in its emoji selector or its skin tone.
+  const base = codePointBefore(text, index - (before > 0xffff ? 2 : 1));
+  if (before === EMOJI_SELECTOR) return isPicture(base);
+  return isSkinTone(before) && base >= 0 && SKIN_TONE_BASE.test(String.fromCodePoint(base));
+}
+
+export interface ApprovalTextLimit {
+  /** UTF-16 units of the text a card shows at most, its beginning and its end together. */
+  readonly length: number;
+  /** Runs of named characters, each one element in a card, shown at most in the beginning. */
+  readonly namedRuns: number;
+  /** UTF-16 units of the end of the text shown at most when the text is cut. */
+  readonly tailLength: number;
+  /** Runs of named characters shown at most in the end. */
+  readonly tailNamedRuns: number;
+}
+
+// A card draws one element per run of named characters and lays the whole text out at once, so
+// both are bounded: measured in Chromium, the web card at these limits renders in about 100 ms,
+// and past them the time grows in step with the text. The end comes out of the same 100,000
+// units (some 1,250 full lines, 50 of them the end) and adds at most a tenth to the elements.
+export const APPROVAL_TEXT_LIMIT: ApprovalTextLimit = {
+  length: 100_000,
+  namedRuns: 2_000,
+  tailLength: 4_000,
+  tailNamedRuns: 200,
+};
+
+export interface ApprovalTextScan {
+  /** The text, or its shown beginning when it is cut. A run of named characters is one part. */
+  readonly parts: ReadonlyArray<ApprovalTextPart>;
+  /** The shown end of a cut text. Empty when the text is not cut. */
+  readonly tail: ReadonlyArray<ApprovalTextPart>;
+  /** UTF-16 units of the text that `parts` covers. */
+  readonly shownLength: number;
+  /** UTF-16 units between the beginning and the end that no part covers. 0 when not cut. */
+  readonly hiddenLength: number;
+  /** UTF-16 units of the whole text. */
+  readonly length: number;
+}
+
+const isLowSurrogate = (unit: number) => unit >= 0xdc00 && unit <= 0xdfff;
+const isHighSurrogate = (unit: number) => unit >= 0xd800 && unit <= 0xdbff;
+/** Whether `index` is between the two halves of one code point. */
+const splitsCodePoint = (text: string, index: number) =>
+  index > 0 &&
+  index < text.length &&
+  isLowSurrogate(text.charCodeAt(index)) &&
+  isHighSurrogate(text.charCodeAt(index - 1));
+
+/**
+ * `shown` in parts, each character a screen would not draw replaced by its name, up to
+ * `namedRuns` runs. `starts[i]` is where part `i` begins in `shown` and `stop` where the parts
+ * end. One pass: the work per character does not depend on what surrounds it.
+ */
+function scanApprovalText(shown: string, namedRuns: number) {
+  const parts: ApprovalTextPart[] = [];
+  const starts: number[] = [];
+  let stop = shown.length;
+  let end = 0;
+  let names = "";
+  let namesStart = 0;
+  let runs = 0;
+  for (const match of shown.matchAll(UNDRAWN)) {
+    const [character] = match;
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (isInsideEmoji(shown, match.index, codePoint)) continue;
+    if (match.index > end || names === "") {
+      if (runs === namedRuns) {
+        stop = match.index;
+        break;
+      }
+      if (names !== "") {
+        parts.push({ text: names, named: true });
+        starts.push(namesStart);
+      }
+      if (match.index > end) {
+        parts.push({ text: shown.slice(end, match.index) });
+        starts.push(end);
+      }
+      names = "";
+      namesStart = match.index;
+      runs += 1;
+    }
+    names +=
+      UNDRAWN_NAMES[character] ?? `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
+    end = match.index + character.length;
+  }
+  if (names !== "") {
+    parts.push({ text: names, named: true });
+    starts.push(namesStart);
+  }
+  if (end < stop) {
+    parts.push({ text: shown.slice(end, stop) });
+    starts.push(end);
+  }
+  return { parts, starts, stop };
+}
+
+/**
+ * Approval text in parts, each character a screen would not draw replaced by its name. Text that
+ * passes `limit` is cut in the middle: `parts` is its beginning and `tail` its end, so what the
+ * text ends with is always shown. Only the shown text is read, in one pass, and a cut never falls
+ * inside a code point.
+ */
+export function approvalTextParts(
+  text: string,
+  limit: ApprovalTextLimit = APPROVAL_TEXT_LIMIT,
+): ApprovalTextScan {
+  const { length } = text;
+  const tailLength = Math.max(0, Math.min(limit.tailLength, limit.length));
+  let headEnd = length > limit.length ? Math.max(0, limit.length - tailLength) : length;
+  if (splitsCodePoint(text, headEnd)) headEnd -= 1;
+  const head = scanApprovalText(headEnd < length ? text.slice(0, headEnd) : text, limit.namedRuns);
+  if (head.stop === length) {
+    return { parts: head.parts, tail: [], shownLength: length, hiddenLength: 0, length };
+  }
+
+  let tailStart = Math.max(head.stop, length - tailLength);
+  if (splitsCodePoint(text, tailStart)) tailStart += 1;
+  const end = scanApprovalText(text.slice(tailStart), Number.POSITIVE_INFINITY);
+  // Past its runs the end keeps the last of them: it starts after the run before those.
+  let first = 0;
+  for (let index = end.parts.length - 1, runs = 0; index >= 0; index -= 1) {
+    if (!end.parts[index]?.named) continue;
+    if (runs === limit.tailNamedRuns) {
+      first = index + 1;
+      break;
+    }
+    runs += 1;
+  }
+  const tail = first === 0 ? end.parts : end.parts.slice(first);
+  tailStart += end.starts[first] ?? end.stop;
+
+  // The end begins where the beginning stopped: nothing is hidden, so the text is not cut.
+  if (tailStart === head.stop) {
+    return {
+      parts: [...head.parts, ...tail],
+      tail: [],
+      shownLength: length,
+      hiddenLength: 0,
+      length,
+    };
+  }
+  return {
+    parts: head.parts,
+    tail,
+    shownLength: head.stop,
+    hiddenLength: tailStart - head.stop,
+    length,
+  };
+}
+
+export const PUSH_HOOKS_APPROVAL_LABEL = msg("Push hooks approval");
+export const PUSH_HOOKS_APPROVAL_QUESTION = msg("Run this repository's push hooks?");
+
+export interface ApprovalDetailRow {
+  readonly label: string;
+  /** Plain text ahead of the code: a configured hook's name. */
+  readonly name?: string;
+  /** A branch, file path or command. */
+  readonly code: string;
+}
+
+/** What a push hooks approval names: the branch, then each hook the push would run. */
+export function pushHooksApprovalRows(
+  pushHooks: ProviderApprovalPushHooks,
+  resolve: MFunctionType = mFallback,
+): ReadonlyArray<ApprovalDetailRow> {
+  return [
+    { label: resolve(msg("Branch", { $context: "field label" })), code: pushHooks.branch },
+    ...pushHooks.files.map((file) => ({ label: resolve(msg("Hook file")), code: file })),
+    ...pushHooks.commands.map(({ name, command }) => ({
+      label: resolve(msg("Configured hook", { $context: "a hook Git's configuration defines" })),
+      name,
+      code: command,
+    })),
+  ];
+}
+
+export const FULL_ACCESS_OVERRIDE_QUESTION = msg("Why am I being asked this?");
 
 export function fullAccessOverrideExplanation(
   override: ProviderApprovalFullAccessOverride,
+  resolve: MFunctionType = mFallback,
 ): string {
   return override === "ask_rule"
-    ? "Full access skips approvals, but an ask rule in the agent's own settings matches this action, so it still asks. Remove or narrow that rule to stop these prompts."
-    : "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.";
+    ? resolve(
+        msg(
+          "Full access skips approvals, but an ask rule in the agent's own settings matches this action, so it still asks. Remove or narrow that rule to stop these prompts.",
+        ),
+      )
+    : resolve(
+        msg(
+          "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.",
+        ),
+      );
 }
 
 export interface ThreadUserInputQuestion extends Omit<
@@ -168,6 +426,8 @@ export interface ThreadRequestsResolved {
   readonly threadId: ThreadId;
   /** Every request the thread still waits on; drafts for any other request are stale. */
   readonly pendingRequestIds: ReadonlyArray<RuntimeRequestId>;
+  /** Requests that closed without an answer (cancelled or expired), so typed drafts were never sent. */
+  readonly unansweredRequestIds: ReadonlyArray<RuntimeRequestId>;
 }
 
 const threadRequestsResolvedListeners = new Set<(event: ThreadRequestsResolved) => void>();
@@ -198,8 +458,8 @@ function notifyThreadRequestsResolved(event: ThreadRequestsResolved): void {
 }
 
 /**
- * Tracks one thread's announced pending requests. Feed it the pending ids of
- * each authoritative projection; it notifies on the first one and whenever an
+ * Tracks one thread's announced pending requests. Feed it the runtime requests
+ * of each authoritative projection; it notifies on the first one and whenever an
  * announced request is no longer pending. New requests alone stay quiet.
  */
 export function makeThreadRequestsResolvedAnnouncer(
@@ -207,20 +467,28 @@ export function makeThreadRequestsResolvedAnnouncer(
   threadId: ThreadId,
 ) {
   let announced: ReadonlySet<RuntimeRequestId> | null = null;
-  return (pendingRequestIds: ReadonlyArray<RuntimeRequestId>) => {
+  return (
+    runtimeRequests: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["runtimeRequests"][number], "id" | "status">
+    >,
+  ) => {
+    const pendingRequestIds = runtimeRequests.flatMap((request) =>
+      request.status === "pending" ? [request.id] : [],
+    );
     const pending = new Set(pendingRequestIds);
     const resolvedSome = announced === null || [...announced].some((id) => !pending.has(id));
     announced = pending;
-    if (resolvedSome) notifyThreadRequestsResolved({ environmentId, threadId, pendingRequestIds });
+    if (!resolvedSome) return;
+    const unansweredRequestIds = runtimeRequests.flatMap((request) =>
+      request.status === "cancelled" || request.status === "expired" ? [request.id] : [],
+    );
+    notifyThreadRequestsResolved({
+      environmentId,
+      threadId,
+      pendingRequestIds,
+      unansweredRequestIds,
+    });
   };
-}
-
-export function pendingRuntimeRequestIds(
-  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests">,
-): RuntimeRequestId[] {
-  return projection.runtimeRequests.flatMap((request) =>
-    request.status === "pending" ? [request.id] : [],
-  );
 }
 
 export function derivePendingThreadRequests(
@@ -268,6 +536,7 @@ export function derivePendingThreadRequests(
         ? { fullAccessOverride: item.fullAccessOverride }
         : {}),
       ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
+      ...(item?.type === "approval_request" && item.pushHooks ? { pushHooks: item.pushHooks } : {}),
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
         : {}),

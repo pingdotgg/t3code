@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   createChatCanvasStore,
+  selectCanvasMeasurements,
   resolveChatCanvasModel,
   type ChatCanvasMeasurements,
 } from "./canvasStore";
@@ -17,6 +18,7 @@ const measurements = (width: number, height = 900): ChatCanvasMeasurements => ({
   height,
   padding: 48,
   maxChatWidth: 768,
+  maxHtmlPreviewWidth: 768,
   minChatWidth: 640,
   composerHeight: 180,
   timelineGutter: 0,
@@ -31,9 +33,9 @@ const preview: ChatCanvasPreview = {
 
 describe("chat canvas model", () => {
   it("shows the details card inline only where the canvas fits it beside the chat", () => {
-    const resolve = (width: number) =>
+    const resolve = (width: number, narrowestWidth = width) =>
       resolveChatCanvasModel({
-        measurements: measurements(width),
+        measurements: { ...measurements(width), narrowestWidth },
         detailsCardMeasurement: null,
         threadRef,
         preview: null,
@@ -41,6 +43,7 @@ describe("chat canvas model", () => {
       }).detailsCardMode;
     expect(resolve(1400)).toBe("inline");
     expect(resolve(900)).toBe("popover");
+    expect(resolve(1400, 900)).toBe("popover");
   });
 
   it("moves the card into a popover when a preview below it leaves too little height", () => {
@@ -71,13 +74,30 @@ describe("chat canvas model", () => {
 
   it("keeps state identity when a measurement repeats", () => {
     const store = createChatCanvasStore();
-    store.getState().setMeasurements(measurements(1400));
+    store.getState().setMeasurements(measurements(1400), false);
     const before = store.getState();
-    store.getState().setMeasurements(measurements(1400));
+    store.getState().setMeasurements(measurements(1400), false);
     store.getState().measureDetailsCard({ threadRef, width: 280, fullContentHeight: 300 });
     const measured = store.getState();
     store.getState().measureDetailsCard({ threadRef, width: 280, fullContentHeight: 300 });
     expect(measured.measurements).toBe(before.measurements);
     expect(store.getState()).toBe(measured);
+    store.getState().setMeasurements({ ...measurements(1400), narrowestWidth: 900 }, false);
+    expect(store.getState().measurements.narrowestWidth).toBe(900);
+    expect(store.getState()).not.toBe(measured);
+  });
+
+  it("lays out with the width last measured for the right panel's state", () => {
+    const store = createChatCanvasStore();
+    store.getState().setMeasurements(measurements(1400), false);
+    expect(selectCanvasMeasurements(store.getState(), true).width).toBe(1400);
+    store.getState().setMeasurements(measurements(860), true);
+    store.getState().setMeasurements(measurements(1400), false);
+    const closed = store.getState();
+    expect(selectCanvasMeasurements(closed, true).width).toBe(860);
+    store.getState().setMeasurements(measurements(860), true);
+    expect(selectCanvasMeasurements(store.getState(), true)).toBe(
+      selectCanvasMeasurements(closed, true),
+    );
   });
 });
