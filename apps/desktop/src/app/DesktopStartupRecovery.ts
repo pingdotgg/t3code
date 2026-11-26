@@ -1,3 +1,4 @@
+import { localeDirection } from "@t3tools/client-runtime/locales";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,7 +14,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { m } from "../i18n/messages.ts";
+import { activeUiLocale, m } from "../i18n/messages.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -150,7 +151,8 @@ function buildStartupRecoveryHtml(input: {
   const offer = describeOffer(input.offer);
   const output = input.failure.output.trim();
   const title = escapeHtml(m(msg("T3 Code could not start")));
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${title}</title><style>
+  const locale = activeUiLocale();
+  return `<!doctype html><html lang="${escapeHtml(locale)}" dir="${localeDirection(locale)}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${title}</title><style>
 :root{color-scheme:light dark;--bg:#fff;--fg:#111;--muted:#666;--line:#ddd;--code:#f4f4f4}
 @media (prefers-color-scheme:dark){:root{--bg:#000;--fg:#fff;--muted:#999;--line:#333;--code:#111}}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--fg)}
@@ -165,7 +167,7 @@ pre{flex:1;min-height:60px;margin:0;overflow:auto;background:var(--code);border:
 <p>${escapeHtml(input.failure.reason)}</p>
 <p>${escapeHtml(offer.text)}</p>
 <div class="actions">${offer.action}${actionLink("copy", m(msg("Copy details")))}${actionLink("quit", m(msg("Quit", { $context: "button, quits the app" })))}</div>
-<pre>${escapeHtml(output.length > 0 ? output : m(msg("The server wrote no output.")))}</pre>
+<pre dir="ltr">${escapeHtml(output.length > 0 ? output : m(msg("The server wrote no output.")))}</pre>
 <p class="muted">${escapeHtml(m(msg("Version {version}. T3 Code tries again in the background. Logs: {logDir}"), { version: input.appVersion, logDir: input.logDir }))}</p>
 </body></html>`;
 }

@@ -15,9 +15,15 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import { vi } from "vite-plus/test";
 
 import { createInitialDesktopUpdateState } from "../updates/updateMachine.ts";
 import { listen, resolveStartupRecoveryOffer } from "./DesktopStartupRecovery.ts";
+
+vi.mock("../i18n/messages.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../i18n/messages.ts")>()),
+  activeUiLocale: () => "he",
+}));
 
 const updateState = (patch: Partial<DesktopUpdateState>): DesktopUpdateState => ({
   ...createInitialDesktopUpdateState(
@@ -187,7 +193,9 @@ it.effect.each([
       yield* Deferred.await(checked);
       expect(loaded.length).toBe(shouldRecover ? 1 : 0);
       if (shouldRecover) {
-        expect(decodeURIComponent(loaded[0]!)).toContain("Failure details");
+        const html = decodeURIComponent(loaded[0]!);
+        expect(html).toContain('<html lang="he" dir="rtl">');
+        expect(html).toContain('<pre dir="ltr">Failure details</pre>');
         if (closeMain) yield* Ref.set(mainRef, Option.none());
         yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
         yield* Deferred.await(remembered);
