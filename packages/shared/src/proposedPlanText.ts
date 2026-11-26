@@ -1,8 +1,8 @@
 function headingText(line: string): string | null {
-  const heading = line.match(/^ {0,3}#{1,6}(?:[ \t]+(.*))?$/);
+  const heading = line.match(/^ {0,3}#{1,6}([ \t].*)?$/);
   if (!heading) return null;
   const text = heading[1] ?? "";
-  return /[^\s#]/.test(text) ? text.trim() : "";
+  return text.replace(/[ \t]#+[ \t]*$/, "").trim();
 }
 
 export function proposedPlanTitle(planMarkdown: string): string | null {

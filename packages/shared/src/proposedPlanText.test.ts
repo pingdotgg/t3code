@@ -20,9 +20,18 @@ it("skips empty plan headings without reading into the next line", () => {
   expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
 });
 
-it.each(["## ###", "## # #", "## ###\t###"])("skips the marker-only plan heading %j", (heading) => {
-  const markdown = heading + "\n\n## Release checklist\n\n## Summary\n\nUpdate the notes.";
+it("skips a heading with only closing hashes before the plan title", () => {
+  const markdown = "## ###\n\n## Release checklist\n\n## Summary\n\nUpdate the notes.";
   expect(proposedPlanTitle(markdown)).toBe("Release checklist");
+  expect(stripDisplayedPlanMarkdown(markdown)).toBe("Update the notes.");
+});
+
+it.each([
+  ["## # #", "#"],
+  ["## ###\t###", "###"],
+])("keeps the title before the closing hashes in %j", (heading, title) => {
+  const markdown = heading + "\n\n## Summary\n\nUpdate the notes.";
+  expect(proposedPlanTitle(markdown)).toBe(title);
   expect(stripDisplayedPlanMarkdown(markdown)).toBe("Update the notes.");
 });
 
