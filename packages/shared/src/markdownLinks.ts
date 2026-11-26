@@ -356,22 +356,36 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   if (!destination) return false;
   const normalize = (path: string) =>
     path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
-  const labelPosition = splitFilePathPosition(label.trim());
-  if (
-    (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
-    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
-  ) {
-    return false;
+  const trimmed = label.trim();
+  const isWindowsDestination = isWindowsAbsolutePath(destination.path);
+  const destinationPath = isWindowsDestination
+    ? normalize(destination.path).toLowerCase()
+    : normalize(destination.path);
+  const matchesLabelPosition = (labelPosition: FilePathPosition): boolean => {
+    if (
+      (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
+      (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
+      (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
+    ) {
+      return false;
+    }
+    let labelPath = normalize(labelPosition.path);
+    if (labelPath.length === 0) return true;
+    if (isWindowsDestination) {
+      labelPath = labelPath.toLowerCase();
+    }
+    return destinationPath === labelPath || destinationPath.endsWith(`/${labelPath}`);
+  };
+  const hashIndex = trimmed.lastIndexOf("#");
+  if (hashIndex >= 0) {
+    const path = trimmed.slice(0, hashIndex);
+    const anchored = splitFilePathPosition(path, trimmed.slice(hashIndex));
+    // A `:line` suffix before the hash wins in splitFilePathPosition; only a position from the anchor counts here.
+    if (anchored.line !== undefined && anchored.path === path && matchesLabelPosition(anchored)) {
+      return true;
+    }
   }
-  let labelPath = normalize(labelPosition.path);
-  let destinationPath = normalize(destination.path);
-  if (labelPath.length === 0) return true;
-  if (isWindowsAbsolutePath(destination.path)) {
-    labelPath = labelPath.toLowerCase();
-    destinationPath = destinationPath.toLowerCase();
-  }
-  return destinationPath === labelPath || destinationPath.endsWith(`/${labelPath}`);
+  return matchesLabelPosition(splitFilePathPosition(trimmed));
 }
 
 export function isRelativeFilePath(path: string): boolean {
