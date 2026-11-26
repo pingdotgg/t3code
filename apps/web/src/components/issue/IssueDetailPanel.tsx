@@ -250,7 +250,7 @@ function IssueAssigneePicker({
     open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const needle = query.toLowerCase();
+  const needle = query.trim().toLowerCase();
   const candidates = (candidatesQuery.data?.assignees ?? []).filter(
     (candidate) =>
       needle.length === 0 ||
