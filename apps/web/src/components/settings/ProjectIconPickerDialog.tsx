@@ -386,7 +386,7 @@ function DashboardIconGrid({
     selected && !query.trim() && !found.some((icon) => icon.name === selected.name)
       ? [selected, ...found]
       : found
-  ).filter((icon) => !failed.has(icon.name));
+  ).filter((icon) => !failed.has(dashboardIconUrl(icon, appearance)));
 
   if (AsyncResult.isFailure(result)) {
     return (
@@ -439,7 +439,9 @@ function DashboardIconGrid({
               loading="lazy"
               referrerPolicy="no-referrer"
               className="size-6 object-contain"
-              onError={() => setFailed((current) => new Set(current).add(icon.name))}
+              onError={() =>
+                setFailed((current) => new Set(current).add(dashboardIconUrl(icon, appearance)))
+              }
             />
           </PickerGridButton>
         ))}

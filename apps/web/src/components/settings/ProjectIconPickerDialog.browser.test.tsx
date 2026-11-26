@@ -78,6 +78,7 @@ it("suggests loadable dashboard icons from the project name and saves the pick",
     expect(fetchMock).not.toHaveBeenCalled();
     await userEvent.type(page.getByRole("searchbox"), "folder");
     await userEvent.click(page.getByRole("button", { name: "Logos" }));
+    await expect.element(page.getByRole("button", { name: "plex", exact: true })).toBeVisible();
     await expect.element(page.getByRole("button", { name: "plexamp" })).not.toBeInTheDocument();
     await userEvent.click(page.getByRole("button", { name: "plex" }));
     await userEvent.click(page.getByRole("button", { name: "Save icon" }));
