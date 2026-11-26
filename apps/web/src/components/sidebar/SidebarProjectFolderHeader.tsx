@@ -101,13 +101,13 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         {/* Widens to the new-thread button while it shows; empty, it also gives back its flex gap. */}
         <span
           className={cn(
-            "flex min-w-0 shrink-0 justify-end transition-[margin,min-width] motion-reduce:transition-none group-hover/project-folder:min-w-4 group-has-[[data-sidebar-action-for]:focus]/project-folder:min-w-4 pointer-coarse:min-w-4",
+            "flex min-w-0 shrink-0 justify-end group-hover/project-folder:min-w-4 group-has-[[data-sidebar-action-for]:focus]/project-folder:min-w-4 pointer-coarse:min-w-4",
             !hasCount &&
               "-ml-2.5 group-hover/project-folder:ml-0 group-has-[[data-sidebar-action-for]:focus]/project-folder:ml-0 pointer-coarse:ml-0",
           )}
         >
           {hasCount ? (
-            <span className="text-xs tabular-nums text-sidebar-muted-foreground transition-opacity group-hover/project-folder:opacity-0 group-has-[[data-sidebar-action-for]:focus]/project-folder:opacity-0 pointer-coarse:opacity-0">
+            <span className="text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
               {hiddenThreads.length}
             </span>
           ) : null}
@@ -120,8 +120,8 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           )}
         />
       </button>
-      {/* Sits over the count, which fades out on hover or focus, and left of the chevron. */}
-      <span className="absolute inset-y-0 right-6 flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/project-folder:opacity-100 pointer-coarse:opacity-100">
+      {/* Sits over the count, which hides on hover or focus, and left of the chevron. */}
+      <span className="absolute inset-y-0 right-6 flex items-center opacity-0 focus-within:opacity-100 group-hover/project-folder:opacity-100 pointer-coarse:opacity-100">
         <SharedTooltipTrigger
           render={
             <Button
