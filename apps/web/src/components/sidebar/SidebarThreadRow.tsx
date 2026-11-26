@@ -1171,7 +1171,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         status={prStatus}
         onOpenList={openLinkedItems}
         onOpenPullRequest={handlePrClick}
-        side="right"
+        side="inline-end"
       />
     ) : null;
   const firstIssue = thread.issues?.[0];
@@ -1208,7 +1208,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       Icon={issueStatus?.Icon ?? IssueGlyph.issue}
       toneClassName={issueStatus?.toneClassName ?? "text-muted-foreground"}
       text={issueCount === 1 ? firstIssue.displayKey.replace(/^#/, "") : issueCount}
-      side="right"
+      side="inline-end"
     >
       <ThreadDetailsIssueRows
         links={(thread.issues ?? []).slice(0, LINKED_ITEMS_PREVIEW_LIMIT)}
@@ -1521,7 +1521,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   )
                 ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
                   <SharedTooltipTrigger
-                    side="right"
+                    side="inline-end"
                     render={
                       <button
                         type="button"
@@ -1544,7 +1544,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   </SharedTooltipTrigger>
                 ) : (
                   <SharedTooltipTrigger
-                    side="right"
+                    side="inline-end"
                     render={
                       <button
                         type="button"
@@ -1756,7 +1756,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     ) : null}
                     {props.settlementSupported ? (
                       <SharedTooltipTrigger
-                        side="right"
+                        side="inline-end"
                         render={
                           <button
                             type="button"

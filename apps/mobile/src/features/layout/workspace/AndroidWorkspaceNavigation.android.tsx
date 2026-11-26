@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAndroidControlSizing } from "../../../components/ui/useAndroidControlSizing";
+import { useStartSafeAreaInset } from "../../../i18n/direction";
 import { useToolbarLayout } from "../../../components/ui/useToolbarLayout";
 import { rootNavigationRef } from "../../../lib/rootNavigation";
 import { useWorkspaceConnectionState } from "../../../state/workspace";
@@ -94,6 +95,7 @@ export function AndroidWorkspaceNavigation(props: {
   const root = useAndroidWorkspaceRoot();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const startInset = useStartSafeAreaInset();
   const toolbar = useToolbarLayout();
   const connectionState = useWorkspaceConnectionState();
   const keyboardVisible = useSoftKeyboardShowing();
@@ -113,10 +115,10 @@ export function AndroidWorkspaceNavigation(props: {
     hidden,
     rail ? 5 : 4,
   );
-  // FloatingWorkspaceTabs starts the bar at the left inset, so a cutout narrows the room.
+  // FloatingWorkspaceTabs starts the bar at the start inset, so a cutout narrows the room.
   const barWidth =
     (props.paneWidth ?? window.width) -
-    (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
+    (Math.max(startInset, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
   if (!rail && keyboardVisible) return null;
 
@@ -197,12 +199,13 @@ export function FloatingWorkspaceTabs(props: {
   readonly onSelect?: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const startInset = useStartSafeAreaInset();
   return (
     <View
       pointerEvents="box-none"
       style={{
         position: "absolute",
-        start: Math.max(insets.left, insets.right, FLOATING_TABS.edge) - FLOATING_TABS.shadow,
+        start: Math.max(startInset, FLOATING_TABS.edge) - FLOATING_TABS.shadow,
         end: 0,
         bottom: insets.bottom + FLOATING_TABS.bottom - FLOATING_TABS.shadow,
         alignItems: "flex-start",

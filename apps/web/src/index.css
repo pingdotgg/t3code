@@ -138,6 +138,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-gutter: 0.75rem;
   --workspace-gutter-start: calc(env(safe-area-inset-left) + var(--workspace-gutter));
   --workspace-gutter-end: calc(env(safe-area-inset-right) + var(--workspace-gutter));
+  --workspace-page-header-end: max(var(--workspace-gutter-start), var(--workspace-controls-left));
 
   @variant sm {
     --workspace-gutter: 1.25rem;

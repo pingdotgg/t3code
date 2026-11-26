@@ -15,6 +15,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { FabScrollContext, FabTopContext } from "./FabScrollContext";
 import { updateFabScroll } from "./fab-scroll";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { useStartSafeAreaInset } from "../../i18n/direction";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { FLOATING_TABS, floatingTabsMetrics } from "../layout/workspace/floating-workspace-tabs";
 import { useEnabledNavigationTabs } from "../layout/workspace/navigation-tabs";
@@ -26,6 +27,7 @@ import {
 export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidHomeFabLayout>) {
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const insets = useSafeAreaInsets();
+  const startInset = useStartSafeAreaInset();
   const { appearance } = useAppearancePreferences();
   const { fontScale } = useWindowDimensions();
   const [layoutWidth, setLayoutWidth] = useState<number | null>(null);
@@ -36,7 +38,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   const barWidth =
     layoutWidth === null
       ? undefined
-      : layoutWidth - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
+      : layoutWidth - (Math.max(startInset, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   const size = floatingTabsEnabled
     ? floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize, barWidth).height
     : fabSize;

@@ -22,7 +22,7 @@ function Harness(props: {
   return (
     <SidebarProvider defaultOpen>
       <Sidebar
-        side={props.side}
+        {...(props.side ? { side: props.side } : {})}
         collapsible="offcanvas"
         resizable={{
           collapseOnResize: true,

@@ -32,7 +32,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { cn, isMacPlatform } from "../lib/utils";
+import { cn } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
 import {
@@ -68,8 +68,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { SharedTooltipTrigger } from "./ui/shared-tooltip";
-
-const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
+import { useWindowControlsInsetStyle } from "../windowControlsInset";
 
 function subscribeToViewportWidth(onChange: () => void): () => void {
   window.addEventListener("resize", onChange);
@@ -78,43 +77,6 @@ function subscribeToViewportWidth(onChange: () => void): () => void {
 
 function readViewportWidth(): number {
   return window.innerWidth;
-}
-
-// Cache the synchronous fullscreen IPC read until subscription.
-let windowFullscreenSnapshot: boolean | null = null;
-
-function macosDesktopBridge() {
-  if (!isElectron || !isMacPlatform(navigator.platform)) return null;
-  return window.desktopBridge ?? null;
-}
-
-function subscribeToWindowFullscreen(onChange: () => void): () => void {
-  const bridge = macosDesktopBridge();
-  if (
-    typeof bridge?.getWindowFullscreenState !== "function" ||
-    typeof bridge.onWindowFullscreenStateChange !== "function"
-  ) {
-    return () => {};
-  }
-  const unsubscribe = bridge.onWindowFullscreenStateChange((fullscreen) => {
-    windowFullscreenSnapshot = fullscreen;
-    onChange();
-  });
-  // The window may have changed state between the first render and this subscription.
-  windowFullscreenSnapshot = bridge.getWindowFullscreenState();
-  return () => {
-    unsubscribe();
-    windowFullscreenSnapshot = null;
-  };
-}
-
-function readWindowFullscreen(): boolean {
-  if (windowFullscreenSnapshot === null) {
-    const getWindowFullscreenState = macosDesktopBridge()?.getWindowFullscreenState;
-    windowFullscreenSnapshot =
-      typeof getWindowFullscreenState === "function" ? getWindowFullscreenState() : false;
-  }
-  return windowFullscreenSnapshot;
 }
 
 function readInitialThreadSidebarWidth(): number {
@@ -436,7 +398,6 @@ export function AppSidebarLayout({
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
-  const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // A clamped drag may not change width, so viewport changes need a separate subscription.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
@@ -451,15 +412,7 @@ export function AppSidebarLayout({
     }
     setSidebarWidth(resolveInitialThreadSidebarWidth(null));
   };
-  const isWindowFullscreen = useSyncExternalStore(
-    subscribeToWindowFullscreen,
-    readWindowFullscreen,
-  );
-  const windowControlsInsetStyle = (
-    isMacosDesktop && !isWindowFullscreen
-      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
-      : {}
-  ) as CSSProperties;
+  const windowControlsInsetStyle = useWindowControlsInsetStyle();
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,

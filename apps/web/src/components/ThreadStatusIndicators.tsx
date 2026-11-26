@@ -514,7 +514,7 @@ function PullRequestBadge({
   );
 }
 
-type ThreadLinkBadgeSide = "top" | "right";
+type ThreadLinkBadgeSide = "top" | "inline-end";
 
 export function ThreadLinkBadge({
   control,
@@ -536,7 +536,7 @@ export function ThreadLinkBadge({
     <SharedTooltipTrigger
       render={control}
       side={side}
-      {...(side === "right" ? { align: "start" as const } : {})}
+      {...(side === "inline-end" ? { align: "start" as const } : {})}
       sideOffset={0}
       variant="glass"
       className="w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
