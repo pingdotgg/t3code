@@ -41,6 +41,8 @@ export interface AgentScopeCommand {
   readonly args: ReadonlyArray<string>;
   /** The systemd scope the command runs in, for `stop`. */
   readonly unit?: string | undefined;
+  /** The POSIX shell executing the command, when resolved outside `/bin/sh`. */
+  readonly shell?: string | undefined;
 }
 
 export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/AgentScope", {
@@ -81,12 +83,18 @@ export interface AgentSystemdScope {
   readonly options: ReadonlyArray<string>;
 }
 
+const DEFAULT_SHELL = "/bin/sh";
+
 const quoteShell = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
+const isShebangPath = (value: string | undefined): value is string =>
+  value !== undefined && value.startsWith("/") && !/[\s\0]/.test(value);
 
 /** An executable file for launchers that take a path, not a command line, such as Playwright. */
 export function agentScopeLauncherScript(launch: AgentScopeCommand): string {
+  const shebang = isShebangPath(launch.shell) ? launch.shell : DEFAULT_SHELL;
   const command = [launch.command, ...launch.args].map(quoteShell).join(" ");
-  return `#!/bin/sh\nexec ${command} "$@"\n`;
+  return `#!${shebang}\nexec ${command} "$@"\n`;
 }
 
 /** Exec at every step preserves the agent PID, stdio, and signals; systemd-run places it and descendants in the scope. */
@@ -96,9 +104,14 @@ export function agentScopeCommand(input: {
   readonly scope?: AgentSystemdScope | undefined;
   readonly shell?: string | undefined;
 }): AgentScopeCommand {
-  const { command, args, scope, shell = "/bin/sh" } = input;
+  const { command, args, scope, shell = DEFAULT_SHELL } = input;
+  const resolvedShell = shell === DEFAULT_SHELL ? undefined : { shell };
   if (scope === undefined) {
-    return { command: shell, args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args] };
+    return {
+      command: shell,
+      args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args],
+      ...resolvedShell,
+    };
   }
   return {
     command: shell,
@@ -118,5 +131,6 @@ export function agentScopeCommand(input: {
       command,
       ...args,
     ],
+    ...resolvedShell,
   };
 }
