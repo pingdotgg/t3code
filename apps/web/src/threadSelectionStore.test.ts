@@ -57,17 +57,31 @@ describe("threadSelectionStore", () => {
     });
   });
 
-  describe("setAnchor", () => {
-    it("enables range select from a plain-click anchor", () => {
+  describe("starting from the open thread", () => {
+    it("Cmd-click and Shift-click select the same threads", () => {
       const store = useThreadSelectionStore.getState();
-      store.setAnchor(THREAD_B);
-      store.rangeSelectTo(THREAD_D, ORDERED);
+      store.toggleThread(THREAD_C, THREAD_B);
+      store.toggleThread(THREAD_D, THREAD_B);
+      const toggled = [...useThreadSelectionStore.getState().selectedThreadKeys].toSorted();
 
-      const state = useThreadSelectionStore.getState();
-      expect(state.selectedThreadKeys.has(THREAD_B)).toBe(true);
-      expect(state.selectedThreadKeys.has(THREAD_C)).toBe(true);
-      expect(state.selectedThreadKeys.has(THREAD_D)).toBe(true);
-      expect(state.selectedThreadKeys.size).toBe(3);
+      store.clearSelection();
+      store.rangeSelectTo(THREAD_D, ORDERED, THREAD_B);
+      const ranged = [...useThreadSelectionStore.getState().selectedThreadKeys].toSorted();
+
+      expect(toggled).toEqual([THREAD_B, THREAD_C, THREAD_D]);
+      expect(ranged).toEqual(toggled);
+    });
+
+    it("ignores the open thread once a selection exists", () => {
+      const store = useThreadSelectionStore.getState();
+      store.toggleThread(THREAD_D, THREAD_B);
+      store.toggleThread(THREAD_B, THREAD_B);
+      store.toggleThread(THREAD_E, THREAD_B);
+
+      expect([...useThreadSelectionStore.getState().selectedThreadKeys]).toEqual([
+        THREAD_D,
+        THREAD_E,
+      ]);
     });
   });
 
