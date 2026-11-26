@@ -7266,6 +7266,7 @@
   ],
   "7d160729d1afcd58": "Associer une pull request",
   "2b82c15cd4dc73c6": "Impossible de mettre à jour les fichiers vus",
+  "638700987b3f33ac": "Checkout finished without attaching to the draft",
   "f85cd11cb736771c": "Récupérée, mais non confirmée sur le dernier commit",
   "406f2d0ee4df0b37": "Cette extraction n’a pas pu être confirmée sur le dernier commit de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}, son code peut donc différer. Les commits locaux ou le travail non commité maintiennent une extraction là où elle est.",
   "739e53cc339ac41c": "Merge",

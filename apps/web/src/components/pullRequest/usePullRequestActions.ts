@@ -43,7 +43,10 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { m } from "~/i18n/messages";
 
 import { toastManager } from "../ui/toast";
-import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
+import {
+  offHeadPullRequestCheckoutToast,
+  unattachedPullRequestCheckoutToast,
+} from "./pullRequestCheckoutToast";
 import {
   checkoutFailureDescription,
   appendHandoff,
@@ -354,9 +357,9 @@ export function prepareDraftCheckout(
   projectRef: ScopedProjectRef,
   checkout: Promise<PreparedCheckout>,
   isCancelled: () => boolean = () => false,
-): Promise<PreparedCheckout> {
+) {
   return trackPendingDraftCheckout(draftId, projectRef, checkout, (prepared) => {
-    if (isCancelled() || prepared._tag === "Failure") return;
+    if (isCancelled() || prepared._tag === "Failure") return false;
     const { branch, worktreePath, pullRequest } = prepared.value;
     // A waiting send resumes right after this and must render the checkout first.
     flushSync(() =>
@@ -369,6 +372,7 @@ export function prepareDraftCheckout(
         checkoutPullRequest: { url: pullRequest.url, branch },
       }),
     );
+    return true;
   });
 }
 
@@ -489,7 +493,7 @@ export function usePullRequestHandoffs({
       });
       return;
     }
-    const prepared = await prepareDraftCheckout(
+    const { prepared, applied } = await prepareDraftCheckout(
       opened.draftId,
       projectRef,
       prepareThread.run({
@@ -520,6 +524,10 @@ export function usePullRequestHandoffs({
       return;
     }
     setHandoff(null);
+    if (!applied) {
+      toastManager.update(toastId, unattachedPullRequestCheckoutToast());
+      return;
+    }
     if (task === null) {
       toastManager.update(
         toastId,

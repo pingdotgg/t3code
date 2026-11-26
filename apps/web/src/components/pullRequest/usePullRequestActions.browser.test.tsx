@@ -1,4 +1,4 @@
-import { scopedProjectKey } from "@t3tools/client-runtime/environment";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ThreadId, type PullRequestRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { expect, it, vi } from "vite-plus/test";
@@ -243,4 +243,72 @@ it("moves the draft the user typed into during a checkout onto the checkout", as
     worktreePath: "/repo-worktrees/pr-1",
   });
   expect(readPendingWorkspaceDefault(opened)).toBeNull();
+});
+
+it("releases a waiting send and skips the task when checkout succeeds after a move", async () => {
+  setup();
+  const draftId = DraftId.make("draft-moved-during-checkout");
+  const threadId = ThreadId.make("thread-moved-during-checkout");
+  const store = useComposerDraftStore.getState();
+  const prepared = Promise.withResolvers<{
+    _tag: "Success";
+    value: {
+      branch: string;
+      worktreePath: string;
+      isOnPullRequestHead: boolean;
+      pullRequest: { url: string };
+    };
+  }>();
+  state.newThread.mockImplementation(async (projectRef) => {
+    store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId, {
+      threadId,
+    });
+    return { draftId, threadId };
+  });
+  state.prepareThread.mockReturnValueOnce(prepared.promise);
+  await using screen = await render(
+    <ToastProvider>
+      <FixChecksButton />
+    </ToastProvider>,
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Fix" }));
+  await expect.poll(() => state.prepareThread.mock.calls.length).toBe(1);
+  store.setPrompt(draftId, "My draft");
+  const waitingSend = readPendingWorkspaceDefault(draftId);
+  expect(waitingSend).not.toBeNull();
+
+  const destination = scopeProjectRef(EnvironmentId.make("environment"), ProjectId.make("other"));
+  store.setLogicalProjectDraftThreadId(scopedProjectKey(destination), destination, draftId, {
+    branch: "destination",
+  });
+  let waitResult: void | false;
+  void waitingSend?.then((result) => {
+    waitResult = result;
+  });
+  await expect.poll(() => waitResult).toBe(false);
+
+  await act(async () => {
+    prepared.resolve({
+      _tag: "Success",
+      value: {
+        branch: "pr-1",
+        worktreePath: "/repo-worktrees/pr-1",
+        isOnPullRequestHead: true,
+        pullRequest: { url: "https://github.com/owner/repo/pull/1" },
+      },
+    });
+    await prepared.promise;
+  });
+  await expect
+    .element(
+      screen.getByRole("dialog", { name: "Checkout finished without attaching to the draft" }),
+    )
+    .toBeVisible();
+  expect(store.getComposerDraft(draftId)?.prompt).toBe("My draft");
+  expect(store.getDraftSession(draftId)).toMatchObject({
+    projectId: destination.projectId,
+    branch: "destination",
+    worktreePath: null,
+  });
 });

@@ -64,7 +64,10 @@ import {
   usePullRequestDefaultMergeMethodResolver,
   writeHandoffToComposer,
 } from "./usePullRequestActions";
-import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
+import {
+  offHeadPullRequestCheckoutToast,
+  unattachedPullRequestCheckoutToast,
+} from "./pullRequestCheckoutToast";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -1149,7 +1152,7 @@ export function PullRequestDetailPanel({
       });
       return;
     }
-    const prepared = await prepareDraftCheckout(
+    const { prepared, applied } = await prepareDraftCheckout(
       opened.draftId,
       projectRef,
       prepareThread.run({
@@ -1175,6 +1178,10 @@ export function PullRequestDetailPanel({
       return;
     }
     setHandoff(null);
+    if (!applied) {
+      toastManager.update(toastId, unattachedPullRequestCheckoutToast());
+      return;
+    }
     if (task === null) {
       toastManager.update(
         toastId,

@@ -7279,6 +7279,7 @@
   ],
   "7d160729d1afcd58": "关联 PR",
   "2b82c15cd4dc73c6": "无法更新已查看的文件",
+  "638700987b3f33ac": "Checkout finished without attaching to the draft",
   "f85cd11cb736771c": "已检出，但未确认是否为最新提交",
   "406f2d0ee4df0b37": "无法确认此工作副本位于该 {term, select, mr {merge request} cr {change request} other {pull request}} 的最新提交，因此其代码可能不同。本地提交或未提交的工作会使工作副本保持在原位置。",
   "739e53cc339ac41c": "合并",

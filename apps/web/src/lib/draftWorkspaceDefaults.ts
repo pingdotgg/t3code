@@ -39,44 +39,52 @@ function acceptsWorkspaceDefault(
   );
 }
 
-const pendingCheckouts = new Map<DraftId, Promise<void>>();
+interface PendingDraftCheckout {
+  readonly settled: Promise<void | false>;
+  readonly invalidate: () => void;
+}
+
+const pendingCheckouts = new Map<DraftId, PendingDraftCheckout>();
 
 /** A checkout can point its draft and delay sends only while the draft stays in its project. */
 export function trackPendingDraftCheckout<T>(
   draftId: DraftId,
   projectRef: ScopedProjectRef,
   checkout: Promise<T>,
-  apply: (result: T) => void,
-): Promise<T> {
+  apply: (result: T) => boolean,
+): Promise<{ prepared: T; applied: boolean }> {
   const { getDraftSession } = useComposerDraftStore.getState();
   const staysInProject = () => isInProject(getDraftSession(draftId), projectRef);
-  if (!staysInProject()) return checkout;
+  if (!staysInProject()) return checkout.then((prepared) => ({ prepared, applied: false }));
 
-  const clear = () => {
+  const { promise: settled, resolve } = Promise.withResolvers<void | false>();
+  const finish = (status: void | false) => {
     unsubscribe();
-    if (pendingCheckouts.get(draftId) === settled) pendingCheckouts.delete(draftId);
+    if (pendingCheckouts.get(draftId) === pending) pendingCheckouts.delete(draftId);
+    resolve(status);
   };
+  const pending = { settled, invalidate: () => finish(false) };
   // Moving away invalidates the checkout even if the draft moves back before it finishes.
   const unsubscribe = useComposerDraftStore.subscribe(() => {
-    if (!staysInProject()) clear();
+    if (!staysInProject()) pending.invalidate();
   });
-  const pointed = checkout.then((result) => {
-    if (pendingCheckouts.get(draftId) === settled) apply(result);
-    return result;
-  });
-  const settled = pointed
-    .then(
-      () => {},
-      () => {},
-    )
-    .finally(clear);
-  pendingCheckouts.set(draftId, settled);
+  pendingCheckouts.get(draftId)?.invalidate();
+  pendingCheckouts.set(draftId, pending);
+  const pointed = checkout.then((prepared) => ({
+    prepared,
+    applied: pendingCheckouts.get(draftId) === pending && apply(prepared),
+  }));
+  void pointed.then(
+    () => finish(undefined),
+    () => finish(undefined),
+  );
   return pointed;
 }
 
-export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | null {
+/** A false result means the send was waiting on a checkout that no longer owns this draft. */
+export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void | false> | null {
   const checkout = pendingCheckouts.get(draftId);
-  if (checkout) return checkout;
+  if (checkout) return checkout.settled;
   const pending = pendingDefaults.get(draftId);
   if (!pending) return null;
   const draft = useComposerDraftStore.getState().getDraftSession(draftId);
