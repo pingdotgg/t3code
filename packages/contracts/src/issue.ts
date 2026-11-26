@@ -256,6 +256,13 @@ export const IssueDetail = Schema.Struct({
 });
 export type IssueDetail = typeof IssueDetail.Type;
 
+export const IssueDetailInput = Schema.Struct({
+  ...IssueRef.fields,
+  /** An explicit refresh reads the tracker instead of a recently shared read. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type IssueDetailInput = typeof IssueDetailInput.Type;
+
 /** Older comments, one page past a cursor the detail or a previous page handed over. */
 export const IssueCommentsPageInput = Schema.Struct({
   ...IssueRef.fields,
