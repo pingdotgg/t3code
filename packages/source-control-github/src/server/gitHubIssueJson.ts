@@ -120,7 +120,7 @@ function toIssueState(
 type IssueStatusRead = NonNullable<Issues.IssueStatuses.Result["repository"]>;
 
 function toSummary(
-  raw: Omit<Issues.IssueSearchSearchNodesIssue, "__typename"> & {
+  raw: Omit<Issues.IssueSearchRow, "__typename"> & {
     readonly status?: Issues.PlanningStatusFields | null;
   },
 ): TrackerIssueSummary {
@@ -360,6 +360,19 @@ export function toIssueSearch({
       node !== null && node.__typename === "Issue" ? [toSummary(node)] : [],
     ),
     nextCursor: search.pageInfo.hasNextPage ? search.pageInfo.endCursor : null,
+  };
+}
+
+export function toRepositoryIssues(
+  repository: (
+    | Issues.RepositoryIssues.Result
+    | Issues.RepositoryIssuesWithStatus.Result
+  )["repository"],
+) {
+  const page = repository?.issues;
+  return {
+    items: (page?.nodes ?? []).flatMap((node) => (node === null ? [] : [toSummary(node)])),
+    nextCursor: page?.pageInfo.hasNextPage === true ? page.pageInfo.endCursor : null,
   };
 }
 

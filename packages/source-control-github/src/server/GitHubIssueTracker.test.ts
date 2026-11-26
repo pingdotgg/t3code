@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -146,7 +147,7 @@ const decodeVariables = Schema.decodeUnknownSync(
   ),
 );
 
-function transport(httpClient: HttpClient.HttpClient) {
+function transport(httpClient: HttpClient.HttpClient, appToken?: string) {
   return GitHubRest.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -154,6 +155,7 @@ function transport(httpClient: HttpClient.HttpClient) {
         SourceControlRateLimit.layer,
         Layer.mock(GitHubCredentials.GitHubCredentials)({
           saved: () => Effect.succeedNone,
+          fingerprint: () => Effect.succeed("app-fingerprint"),
           get: (host) =>
             Effect.succeed({
               host,
@@ -163,8 +165,8 @@ function transport(httpClient: HttpClient.HttpClient) {
             }),
         }),
         Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
-          enabled: false,
-          token: () => Effect.succeedNone,
+          enabled: appToken !== undefined,
+          token: () => Effect.succeed(Option.fromUndefinedOr(appToken)),
           invalidate: () => Effect.void,
         }),
         Layer.succeed(HttpClient.HttpClient, httpClient),
@@ -235,6 +237,145 @@ const decodeBody = Schema.decodeUnknownSync(
 );
 
 describe("GitHubIssueTracker", () => {
+  it.effect("keeps repository and search issue pages on their own connections", () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const makeApi = (appToken?: string) =>
+        GitHubIssueTracker.make.pipe(
+          Effect.provide(
+            transport(
+              HttpClient.make((request) => {
+                if (request.body._tag !== "Uint8Array")
+                  return Effect.die("Expected a GraphQL JSON request.");
+                const { query, variables } = decodeVariables(
+                  new TextDecoder().decode(request.body.body),
+                );
+                const withStatus = query.startsWith("query RepositoryIssuesWithStatus(");
+                const direct = withStatus || query.startsWith("query RepositoryIssues(");
+                requests.push(direct ? "repository" : "search");
+                if (withStatus && variables.name === "no-status") {
+                  return Effect.succeed(
+                    HttpClientResponse.fromWeb(
+                      request,
+                      Response.json({
+                        data: null,
+                        errors: [{ message: "Field 'status' doesn't exist on type 'Issue'" }],
+                      }),
+                    ),
+                  );
+                }
+                const issueNumber = variables.cursor === undefined ? 42 : 43;
+                const base = {
+                  nodes: direct
+                    ? [
+                        {
+                          number: issueNumber,
+                          title: "A listed issue",
+                          url: `https://github.com/acme/web/issues/${issueNumber}`,
+                          state: "OPEN",
+                          stateReason: null,
+                          createdAt: "2026-11-18T00:00:00Z",
+                          updatedAt: "2026-11-19T00:00:00Z",
+                          closedAt: null,
+                          author: null,
+                          assignees: { nodes: [] },
+                          labels: { nodes: [] },
+                          comments: { totalCount: 2 },
+                          ...(withStatus
+                            ? {
+                                status: {
+                                  id: "IS_1",
+                                  name: "In review",
+                                  category: { key: "started", state: "OPEN", stateReason: null },
+                                },
+                              }
+                            : {}),
+                        },
+                      ]
+                    : [],
+                  pageInfo: {
+                    hasNextPage: direct && variables.cursor === undefined,
+                    endCursor: "page-2",
+                  },
+                };
+                const absent = variables.name === "missing";
+                const nested = variables.name === "broken";
+                const payload = direct
+                  ? absent || nested
+                    ? {
+                        data: { repository: null },
+                        errors: [
+                          {
+                            type: "NOT_FOUND",
+                            message: "Cannot resolve",
+                            path: nested ? ["repository", "issues"] : ["repository"],
+                          },
+                        ],
+                      }
+                    : { data: { repository: { issues: base } } }
+                  : { data: { search: base } };
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(JSON.stringify(payload), {
+                      headers: { "content-type": "application/json" },
+                    }),
+                  ),
+                );
+              }),
+              appToken,
+            ),
+          ),
+        );
+      const input = {
+        scope: "acme/web",
+        host: "github.com",
+        cwd: "/fixture",
+        state: "open",
+        involvement: "all",
+        sort: "updated",
+        limit: 50,
+      } as const;
+      const api = yield* makeApi();
+      const page = yield* api.listIssues(input);
+      expect(page.items).toMatchObject([{ key: "42", title: "A listed issue", commentCount: 2 }]);
+      expect(page.items[0]?.state.name).toBe("In review");
+      expect(page.nextCursor).not.toBeNull();
+      const next = yield* api.listIssues({ ...input, cursor: page.nextCursor! });
+      expect(next.items).toMatchObject([{ key: "43" }]);
+      expect(next.nextCursor).toBeNull();
+      yield* api.listIssues({ ...input, cursor: "legacy-search-page" });
+      yield* api.listIssues({ ...input, query: "filter" });
+      yield* api.listIssues({ ...input, host: "github.example.test" });
+      expect(yield* api.listIssues({ ...input, scope: "acme/missing" })).toEqual({
+        items: [],
+        nextCursor: null,
+      });
+      yield* Effect.flip(api.listIssues({ ...input, scope: "acme/broken" }));
+      const noStatus = yield* api.listIssues({ ...input, scope: "acme/no-status" });
+      expect(noStatus.items[0]?.state.name).toBe("Open");
+
+      const app = yield* makeApi("app-token");
+      yield* app.listIssues(input);
+      const incompatible = yield* Effect.flip(
+        app.listIssues({ ...input, cursor: page.nextCursor! }),
+      );
+      expect(incompatible.detail).toContain("Refresh");
+      expect(requests).toEqual([
+        "repository",
+        "repository",
+        "search",
+        "search",
+        "search",
+        "repository",
+        "repository",
+        "repository",
+        "repository",
+        "search",
+      ]);
+    }),
+  );
+
   it.effect("reads only the fields needed to link a GitHub issue and rejects missing issues", () =>
     Effect.gen(function* () {
       const requests: unknown[] = [];
@@ -601,6 +742,7 @@ describe("GitHubIssueTracker", () => {
         involvement: "all",
         sort: "updated",
         limit: 10,
+        query: "fixture",
       });
       expect(listing.items).toEqual([]);
       expect(operations).toEqual(["IssueSearchWithStatus", "IssueSearch"]);

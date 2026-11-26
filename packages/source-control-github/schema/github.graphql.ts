@@ -87,6 +87,16 @@ export const FileViewedState = Schema.Literals(["DISMISSED", "UNVIEWED", "VIEWED
 export type FileViewedState = typeof FileViewedState.Type
 
 /**
+ * Properties by which issue connections can be ordered.
+ *
+ * - `COMMENTS`: Order issues by comment count
+ * - `CREATED_AT`: Order issues by creation time
+ * - `UPDATED_AT`: Order issues by update time
+ */
+export const IssueOrderField = Schema.Literals(["COMMENTS", "CREATED_AT", "UPDATED_AT"])
+export type IssueOrderField = typeof IssueOrderField.Type
+
+/**
  * The possible states of an issue.
  *
  * - `CLOSED`: An issue that has been closed
