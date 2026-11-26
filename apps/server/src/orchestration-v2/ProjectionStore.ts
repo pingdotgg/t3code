@@ -2440,7 +2440,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         THEN json_set(
           ${payload},
           ${path},
-          json_extract(orchestration_v2_projection_runs.payload_json, ${path})
+          orchestration_v2_projection_runs.payload_json -> ${path}
         )
         ELSE ${payload}
       END
