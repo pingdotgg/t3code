@@ -1,4 +1,13 @@
+import type { AgentFeedbackMode } from "@t3tools/contracts";
+
 import type { ProviderAdapterV2RuntimePolicy } from "./ProviderAdapter.ts";
+
+/** None while agent feedback is off, so users who never opt in pay no context for it. */
+export const AGENT_FEEDBACK_INSTRUCTIONS = {
+  off: "",
+  "on-request": "Use `t3_feedback` only when the user asks you to send T3 feedback.",
+  auto: "`t3_feedback` reports are wanted and cheap. Send one, then continue, when a T3 tool or `t3` command fails or gives a wrong result, the user corrects how you use T3 Code, or a T3 capability you looked for is missing. Once per problem; also when the user asks. Only about T3 Code, never the user's code or other tools.",
+} satisfies Record<AgentFeedbackMode, string>;
 
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
 export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
@@ -17,6 +26,7 @@ Read pull requests through T3. pull_request_status returns head, checks, reviews
 /** Omit model and effort when the harness manages them dynamically. */
 export function buildRuntimeInstructions(runtime: {
   readonly harness: string;
+  readonly agentFeedback?: AgentFeedbackMode;
   readonly model?: string | undefined;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
@@ -34,10 +44,12 @@ export function buildRuntimeInstructions(runtime: {
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
   const runtimeInfo = `<runtime_info>If asked: you're running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. Embed media (images/video/audio) as Markdown images with absolute paths. Link every other file you cite or produce by absolute path, e.g. [http.ts:42](/abs/path/http.ts:42), for T3 Code's files viewer.</runtime_info>`;
+  const feedbackLine = AGENT_FEEDBACK_INSTRUCTIONS[runtime.agentFeedback ?? "off"];
+  const feedback = feedbackLine ? `\n${feedbackLine}` : "";
   const workspace =
     runtime.runtimePolicy === undefined ? "" : buildWorkspaceInstructions(runtime.runtimePolicy);
   return [
-    runtimeInfo,
+    runtimeInfo + feedback,
     ...(runtime.pullRequestLinking === false ? [] : [PULL_REQUEST_LINKING_INSTRUCTIONS]),
     GITHUB_READS_INSTRUCTIONS,
     ...(workspace === "" ? [] : [workspace]),

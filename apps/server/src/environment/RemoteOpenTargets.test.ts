@@ -65,6 +65,7 @@ const layerNet = (input: {
 }) =>
   Layer.succeed(NetService.NetService, {
     canListenOnHost: () => Effect.succeed(true),
+    probeListenOnHost: () => Effect.succeed(true),
     isPortAvailableOnLoopback: () => Effect.succeed(true),
     hasListenerOnHost: (_port, host) =>
       Effect.succeed(

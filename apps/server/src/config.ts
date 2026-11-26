@@ -45,6 +45,8 @@ export interface ServerDerivedPaths {
   readonly environmentThemesDir: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
+  /** Where workflow definition files live. In the home itself: they are the user's own code. */
+  readonly workflowsDir: string;
   readonly worktreeCheckoutCacheDir: string;
   readonly attachmentsDir: string;
   readonly codeIndexDir: string;
@@ -101,6 +103,7 @@ export class ServerConfig extends Context.Service<
     readonly startupPresentation: StartupPresentation;
     readonly desktopBootstrapToken: string | undefined;
     readonly desktopBootstrapSecret?: string | undefined;
+    readonly desktopReadinessSecret?: string | undefined;
     readonly shellEnvironmentPrepared?: boolean | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
@@ -164,6 +167,7 @@ export const deriveServerPaths = Effect.fn(function* (
     environmentThemesDir: join(stateDir, "themes"),
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
+    workflowsDir: join(baseDir, "workflows"),
     worktreeCheckoutCacheDir: join(providerStatusCacheDir, "worktree-checkouts"),
     attachmentsDir,
     codeIndexDir: join(stateDir, "code-index"),

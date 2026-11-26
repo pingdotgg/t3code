@@ -184,9 +184,9 @@ export type PreviewAnnotationContextRecord = typeof PreviewAnnotationContextReco
 export const ReviewCommentContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("review-comment"),
-  sectionId: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  sectionId: Schema.NonEmptyString.check(Schema.isMaxLength(255)),
   sectionTitle: ShortString,
-  filePath: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  filePath: Schema.NonEmptyString.check(Schema.isMaxLength(2_048)),
   startIndex: NonNegativeInt,
   endIndex: NonNegativeInt,
   rangeLabel: ShortString,
@@ -200,7 +200,7 @@ export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;
 export const MentionContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("mention"),
-  path: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  path: Schema.NonEmptyString.check(Schema.isMaxLength(2_048)),
 });
 export type MentionContextRecord = typeof MentionContextRecord.Type;
 

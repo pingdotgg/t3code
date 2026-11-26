@@ -488,108 +488,125 @@ it.effect("schedules assisted learning for a run the restart interrupted", () =>
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("recovery closes a secret card but leaves a link card and an unread steer open", () => {
-  const threadId = ThreadId.make("thread_secret_recovery");
-  const runId = RunId.make("run_secret_recovery");
-  let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
-    null;
-  const projection = {
-    thread: { id: threadId },
-    runtimeRequests: [],
-    providerSessions: [],
-    providerThreads: [],
-    providerTurns: [
-      { runAttemptId: RunAttemptId.make("attempt_secret_recovery"), status: "running" },
-    ],
-    runs: [
-      {
-        id: runId,
-        status: "running",
-        activeAttemptId: RunAttemptId.make("attempt_secret_recovery"),
-        providerInstanceId: ProviderInstanceId.make("codex"),
-      },
-    ],
-    attempts: [],
-    nodes: [],
-    subagents: [],
-    messages: [],
-    turnItems: [
-      {
-        id: "turn-item:secret-request:recovery",
-        threadId,
-        runId,
-        nodeId: null,
-        type: "secret_request",
-        status: "waiting",
-        secretStatus: "pending",
-        label: "GitHub token",
-        reason: "Used as GH_TOKEN.",
-      },
-      {
-        id: "turn-item:link-request:recovery",
-        threadId,
-        runId,
-        nodeId: null,
-        type: "link_request",
-        status: "waiting",
-        linkStatus: "pending",
-        url: "https://box.example.ts.net",
-        reason: "Run the suite there.",
-      },
-      {
-        id: "turn-item:steer:recovery",
-        threadId,
-        runId,
-        nodeId: null,
-        type: "user_message",
-        status: "pending",
-        inputIntent: "steer",
-        messageId: "message:steer:recovery",
-      },
-    ],
-  } as unknown as OrchestrationV2ThreadProjection;
-  const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getRecoveryThreadIds: () => Effect.succeed([threadId]),
-          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
-        }),
-        Layer.mock(EventSink.EventSinkV2)({
-          commitCommand: (input) => {
-            committedInput = input;
-            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
-          },
-        }),
-        IdAllocator.layer,
-        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
-          runRecoveryOnce: Effect.succeed(false),
-        }),
-        Layer.mock(EffectOutbox.EffectOutboxV2)({
-          listByCommandId: () => Effect.succeed([]),
-          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
-        }),
+it.effect(
+  "recovery closes a secret card but leaves link and feedback cards and an unread steer open",
+  () => {
+    const threadId = ThreadId.make("thread_secret_recovery");
+    const runId = RunId.make("run_secret_recovery");
+    let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+      null;
+    const projection = {
+      thread: { id: threadId },
+      runtimeRequests: [],
+      providerSessions: [],
+      providerThreads: [],
+      providerTurns: [
+        { runAttemptId: RunAttemptId.make("attempt_secret_recovery"), status: "running" },
+      ],
+      runs: [
+        {
+          id: runId,
+          status: "running",
+          activeAttemptId: RunAttemptId.make("attempt_secret_recovery"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+      ],
+      attempts: [],
+      nodes: [],
+      subagents: [],
+      messages: [],
+      turnItems: [
+        {
+          id: "turn-item:secret-request:recovery",
+          threadId,
+          runId,
+          nodeId: null,
+          type: "secret_request",
+          status: "waiting",
+          secretStatus: "pending",
+          label: "GitHub token",
+          reason: "Used as GH_TOKEN.",
+        },
+        {
+          id: "turn-item:link-request:recovery",
+          threadId,
+          runId,
+          nodeId: null,
+          type: "link_request",
+          status: "waiting",
+          linkStatus: "pending",
+          url: "https://box.example.ts.net",
+          reason: "Run the suite there.",
+        },
+        {
+          id: "turn-item:feedback-request:recovery",
+          threadId,
+          runId,
+          nodeId: null,
+          type: "feedback_request",
+          status: "waiting",
+          feedbackStatus: "pending",
+        },
+        {
+          id: "turn-item:steer:recovery",
+          threadId,
+          runId,
+          nodeId: null,
+          type: "user_message",
+          status: "pending",
+          inputIntent: "steer",
+          messageId: "message:steer:recovery",
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layer = ProviderRuntimeRecovery.layer.pipe(
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              committedInput = input;
+              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            listByCommandId: () => Effect.succeed([]),
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  return Effect.gen(function* () {
-    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
-    const cards = (committedInput?.events ?? []).flatMap((event) =>
-      event.type === "turn-item.updated" ? [event.payload] : [],
-    );
-    const secret = cards.find((card) => card.type === "secret_request");
-    assert.equal(secret?.status, "cancelled");
-    assert.equal(secret?.type === "secret_request" ? secret.secretStatus : null, "cancelled");
-    // Nothing in memory waits on a link card; the user can still answer it.
-    // Claude never reported reading the steer, so the orchestrator queues it.
-    assert.deepEqual(
-      cards.filter((card) => card.type === "link_request" || card.type === "user_message"),
-      [],
-    );
-  }).pipe(Effect.provide(layer));
-});
+    return Effect.gen(function* () {
+      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+      const cards = (committedInput?.events ?? []).flatMap((event) =>
+        event.type === "turn-item.updated" ? [event.payload] : [],
+      );
+      const secret = cards.find((card) => card.type === "secret_request");
+      assert.equal(secret?.status, "cancelled");
+      assert.equal(secret?.type === "secret_request" ? secret.secretStatus : null, "cancelled");
+      // Nothing in memory waits on a link or feedback card; the user can still answer it.
+      // Claude never reported reading the steer, so the orchestrator queues it.
+      assert.deepEqual(
+        cards.filter(
+          (card) =>
+            card.type === "link_request" ||
+            card.type === "feedback_request" ||
+            card.type === "user_message",
+        ),
+        [],
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect.each([
   "queued",

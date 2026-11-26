@@ -14,6 +14,7 @@
     "conversation-summaries": "node --env-file-if-exists=../.env conversation-summaries/run.ts",
     "voice-cleanup": "node --env-file-if-exists=../.env voice-cleanup/run.ts",
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
+    "workflow-authoring": "node --env-file-if-exists=../.env workflow-authoring/run.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir .",
     "memory-capture": "node --env-file-if-exists=../.env memory-capture/run.ts",

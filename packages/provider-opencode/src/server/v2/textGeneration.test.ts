@@ -111,6 +111,7 @@ const client = {
 const sharedServer = OpenCode2Server.OpenCode2Server.of({
   withConnection: () => Effect.die(new Error("A shared server must not be used")),
   forget: Effect.void,
+  connections: Stream.empty,
 });
 
 const layer = Layer.mergeAll(

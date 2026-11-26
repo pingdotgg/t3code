@@ -1709,7 +1709,12 @@ it.effect("the raw arm drops T3's forge tools and text; both arms meet T3's refu
     const mocks = { ci_rerun: { $error: "GitHub API rate limit exceeded." } };
     const setup = { ...childCase.setup, role: "top" as const, priorTurns: [], world, mocks };
     const sample = makeSample({ ...childCase, setup }, tools);
-    for (const name of ["pull_request_create", "pull_request_merge", "ci_rerun"]) {
+    for (const name of [
+      "pull_request_create",
+      "pull_request_merge",
+      "pull_request_review",
+      "ci_rerun",
+    ]) {
       sample.tools.push({ name: `mcp__t3-code__${name}` });
     }
     const config = {
@@ -1754,6 +1759,20 @@ it.effect("the raw arm drops T3's forge tools and text; both arms meet T3's refu
     assert.include(String(short.content), `The head is now ${head}`);
     const full = yield* call("d", "pull_request_merge", { number: 7, expectedHeadSha: head });
     assert.isNotTrue(full.is_error);
+
+    const unpinned = yield* call("e", "pull_request_review", { number: 7, verdict: "approve" });
+    assert.include(String(unpinned.content), "Approving needs expectedHeadSha");
+    const stale = { number: 7, verdict: "approve", expectedHeadSha: "c3a91f2" };
+    assert.isTrue((yield* call("f", "pull_request_review", stale)).is_error);
+    const pinned = { number: 7, verdict: "approve", expectedHeadSha: head };
+    assert.isNotTrue((yield* call("g", "pull_request_review", pinned)).is_error);
+    assert.isNotTrue(
+      (yield* call("h", "pull_request_review", {
+        number: 7,
+        verdict: "comment",
+        body: "A question.",
+      })).is_error,
+    );
 
     // Without headRefOid, the branch's own PR is at the checkout's latest commit, as reads say.
     const ownSetup = {
@@ -1969,7 +1988,7 @@ const deviceCases = () =>
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
     const cases = deviceCases();
-    assert.equal(new Set(cases.map((c) => c.id)).size, 16);
+    assert.equal(new Set(cases.map((c) => c.id)).size, 18);
     const base = buildBase(
       {
         ...template,
@@ -1987,7 +2006,7 @@ it.effect("builds device cases from product-backed worlds and synthetic prior tu
       // would have opened the app, so its world starts that session. OWN seeds another owner.
       assert.deepEqual(
         [...(sample.devices?.sessions(sample.shell).values() ?? [])],
-        ["FAIL-AFTER-hub", "OWN-01", "OWN-02", "OWN-03"].includes(testCase.id)
+        ["FAIL-AFTER-hub", "OWN-01", "OWN-02", "OWN-03", "OWN-04"].includes(testCase.id)
           ? [{ app: true }]
           : [],
         testCase.id,
@@ -2927,8 +2946,28 @@ it("shares failed device attempts across tools and launcher steps, resetting onl
   );
 });
 
+it("credits USER-01's screenshot script only when it runs, not when it is printed", () => {
+  const [pattern] = deviceCases().find((c) => c.id === "USER-01")?.expect.shellMust ?? [];
+  assert.isDefined(pattern);
+  const runs = (command: string) => new RegExp(pattern).test(command);
+  for (const command of [
+    "make screenshots_ios",
+    "cd /Users/user/acme/app && make screenshots_ios",
+    "ssh build-mac 'cd /Users/user/acme/app && make screenshots_ios'",
+    "echo ok; ssh build-mac 'cd /Users/user/acme/app && make screenshots_ios'",
+  ])
+    assert.isTrue(runs(command), command);
+  for (const command of [
+    "echo make screenshots_ios",
+    "echo 'cd /Users/user/acme/app && make screenshots_ios'",
+    `printf '%s\\n' "cd /Users/user/acme/app && make screenshots_ios"`,
+  ])
+    assert.isFalse(runs(command), command);
+});
+
 it("applies device shell checks to decoded cases and stops raw UI early", () => {
-  for (const testCase of deviceCases()) {
+  // In USER-01 the user picks the project's own simctl script, so raw UI is the right route.
+  for (const testCase of deviceCases().filter((c) => c.id !== "USER-01")) {
     const run = {
       calls: [
         {

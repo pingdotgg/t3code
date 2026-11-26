@@ -7,6 +7,8 @@ import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext, HiddenThreadContext } from "./backgroundThread";
 import {
+  draftRuntimeModeLimitsInstance,
+  draftSupportedRuntimeModes,
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
   resolveRuntimeModeOptions,
@@ -225,6 +227,7 @@ import {
 } from "./ComposerCommandMenu";
 import {
   ComposerAttachButton,
+  ComposerAttachInput,
   ComposerAttachmentFileList,
   ComposerAttachmentMediaRow,
   ComposerFilePreviewDialog,
@@ -313,9 +316,17 @@ import { usePanelAnimationSettings } from "../../panelAnimations";
 import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useComposerRestingTransition } from "./useComposerRestingTransition";
-import { ComposerCommandMenuLayer } from "./ComposerCommandMenuLayer";
+import {
+  ComposerCommandMenuLayer,
+  DeferredComposerCommandMenuLayer,
+} from "./ComposerCommandMenuLayer";
 import { useRestingComposerControlsLayout } from "./useRestingComposerControlsLayout";
 import { useProviderWorkspaceSnapshotRefresh } from "./useProviderWorkspaceSnapshotRefresh";
+import {
+  RuntimeModeLimitsTargetContext,
+  runtimeModeLimitsTarget,
+  useProviderRuntimeModeLimits,
+} from "../../state/runtimeModeLimits";
 import { useComposerProviderModel } from "./useComposerProviderModel";
 import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
@@ -1073,16 +1084,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Called before the derivation below: a hook between it and its uses stops React Compiler
   // from caching the mode options, and the footer then re-renders on every keystroke.
   const managedPolicy = useManagedPolicy(environmentId);
+  const runtimeModeLimitsFor = runtimeModeLimitsTarget(
+    environmentId,
+    draftRuntimeModeLimitsInstance(selectedProviderEntry?.instanceId, multipleModelSelections),
+    gitCwd,
+  );
+  const runtimeModeLimits = useProviderRuntimeModeLimits(runtimeModeLimitsFor);
   const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
-      selectedProviderEntry?.snapshot.supportedRuntimeModes,
+      draftSupportedRuntimeModes(
+        selectedProviderEntry?.snapshot.supportedRuntimeModes,
+        multipleModelSelections,
+        providerStatuses,
+      ),
     );
-  // Modes above an administrator's ceiling stay listed, disabled with the reason.
+  // Modes above an administrator's ceiling, or that the provider cannot run in this folder,
+  // stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
     compatibleRuntimeModes,
     managedPolicy,
     m,
+    runtimeModeLimits,
   );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
   const runtimeModeCeilingDenial = runtimeModeDenial(managedPolicy, compatibleRuntimeMode, m);
@@ -1217,6 +1240,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const composerFormRef = useRef<HTMLFormElement>(null);
+  const composerAttachInputRef = useRef<HTMLInputElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
@@ -2803,7 +2827,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // The collapsed mobile web composer keeps a second controls row inside the card.
   const showInlineRestingControls = isComposerCollapsedMobile;
   const composerControlsHidden = showInlineRestingControls && !restingControlsVisible;
-  if (composerControlsHidden && isComposerModelPickerOpen) {
+  // Popovers and menus stack above app modals, so one left open would cover Settings or Usage.
+  const composerMenusClosed = composerControlsHidden || hiddenThread;
+  if (composerMenusClosed && isComposerModelPickerOpen) {
     setIsComposerModelPickerOpen(false);
   }
   const collapsedComposerImagePreviews =
@@ -2837,58 +2863,60 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? 0
       : expandedControlsIconOnlyBlockCount;
   const composerControls = (
-    <ComposerControlsBar
-      environmentId={environmentId}
-      workspaceCwd={gitCwd}
-      routeKind={routeKind}
-      routeThreadRef={routeThreadRef}
-      draftId={draftId}
-      selectedProvider={selectedProvider}
-      selectedInstanceId={selectedInstanceId}
-      selectedModel={selectedModel}
-      selectedProviderModels={selectedProviderModels}
-      hostedModelCatalog={hostedModelCatalog}
-      composerModelOptions={composerModelOptions}
-      reportedModelSelection={reportedModelSelection}
-      promptUltrathink={promptUltrathink}
-      onPromptEdit={editPromptFromTraitsStable}
-      planModeEnabled={settings.planModeEnabled}
-      planModeUiEnabled={planModeUiEnabled}
-      interactionMode={interactionMode}
-      compatibleRuntimeMode={compatibleRuntimeMode}
-      defaultRuntimeMode={props.defaultRuntimeMode}
-      compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
-      toggleInteractionMode={toggleInteractionMode}
-      handleRuntimeModeChange={handleRuntimeModeChange}
-      composerControlsCollapsed={composerControlsCollapsed}
-      effortDisplay={settings.effortDisplay}
-      permissionsShownInStrip={props.permissionsShownInStrip}
-      composerControlsHidden={composerControlsHidden}
-      restingHiddenBlockCount={restingHiddenBlockCount}
-      iconOnlyBlockCount={iconOnlyBlockCount}
-      showProviderUnavailable={showProviderUnavailable}
-      providerSetupInstanceId={providerSetupInstanceId}
-      onOpenProviderSetup={onOpenProviderSetup}
-      providerCatalogPending={providerCatalogPending}
-      isSendBusy={isSendBusy}
-      multipleModelsEnabled={routeKind === "draft" && supportsMultipleModels}
-      multipleModelSelections={multipleModelSelections}
-      onMultipleModelSelectionsChange={handleMultipleModelSelectionsChangeStable}
-      selectedModelSelection={selectedModelSelection}
-      onProviderModelSelect={onProviderModelSelect}
-      activeThreadModelSelection={activeThreadModelSelection}
-      selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
-      lockedProvider={lockedProvider}
-      lockedContinuationGroupKey={lockedContinuationGroupKey}
-      providerInstanceEntries={providerInstanceEntries}
-      keybindings={keybindings}
-      modelOptionsByInstance={modelOptionsByInstance}
-      terminalOpen={terminalOpen}
-      modelPickerOpen={isComposerModelPickerOpen}
-      onModelPickerOpenChange={setIsComposerModelPickerOpen}
-      modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
-      getModelDisabledReason={getModelDisabledReason}
-    />
+    <RuntimeModeLimitsTargetContext value={runtimeModeLimitsFor}>
+      <ComposerControlsBar
+        hostedModelCatalog={hostedModelCatalog}
+        planModeEnabled={settings.planModeEnabled}
+        planModeUiEnabled={planModeUiEnabled}
+        interactionMode={interactionMode}
+        toggleInteractionMode={toggleInteractionMode}
+        environmentId={environmentId}
+        workspaceCwd={gitCwd}
+        routeKind={typeof composerDraftTarget === "string" ? "draft" : routeKind}
+        routeThreadRef={routeThreadRef}
+        draftId={typeof composerDraftTarget === "string" ? composerDraftTarget : draftId}
+        selectedProvider={selectedProvider}
+        selectedInstanceId={selectedInstanceId}
+        selectedModel={selectedModel}
+        selectedProviderModels={selectedProviderModels}
+        composerModelOptions={composerModelOptions}
+        reportedModelSelection={reportedModelSelection}
+        promptUltrathink={promptUltrathink}
+        onPromptEdit={editPromptFromTraitsStable}
+        compatibleRuntimeMode={compatibleRuntimeMode}
+        defaultRuntimeMode={props.defaultRuntimeMode}
+        compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
+        handleRuntimeModeChange={handleRuntimeModeChange}
+        composerControlsCollapsed={composerControlsCollapsed}
+        effortDisplay={settings.effortDisplay}
+        permissionsShownInStrip={props.permissionsShownInStrip}
+        composerControlsHidden={composerControlsHidden}
+        restingHiddenBlockCount={restingHiddenBlockCount}
+        iconOnlyBlockCount={iconOnlyBlockCount}
+        showProviderUnavailable={showProviderUnavailable}
+        providerSetupInstanceId={providerSetupInstanceId}
+        onOpenProviderSetup={onOpenProviderSetup}
+        providerCatalogPending={providerCatalogPending}
+        isSendBusy={isSendBusy}
+        multipleModelsEnabled={routeKind === "draft" && supportsMultipleModels}
+        multipleModelSelections={multipleModelSelections}
+        onMultipleModelSelectionsChange={handleMultipleModelSelectionsChangeStable}
+        selectedModelSelection={selectedModelSelection}
+        onProviderModelSelect={onProviderModelSelect}
+        activeThreadModelSelection={activeThreadModelSelection}
+        selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
+        lockedProvider={lockedProvider}
+        lockedContinuationGroupKey={lockedContinuationGroupKey}
+        providerInstanceEntries={providerInstanceEntries}
+        keybindings={keybindings}
+        modelOptionsByInstance={modelOptionsByInstance}
+        terminalOpen={terminalOpen}
+        modelPickerOpen={isComposerModelPickerOpen}
+        onModelPickerOpenChange={setIsComposerModelPickerOpen}
+        modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
+        getModelDisabledReason={getModelDisabledReason}
+      />
+    </RuntimeModeLimitsTargetContext>
   );
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
@@ -3790,10 +3818,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       />
     ) : null;
   const composerAttachButton = showComposerAttachAction ? (
-    <ComposerAttachButton
-      addComposerAttachments={addComposerAttachments}
-      focusComposer={focusComposer}
-    />
+    <ComposerAttachButton onOpenPicker={() => composerAttachInputRef.current?.click()} />
   ) : null;
   return (
     <form
@@ -3904,6 +3929,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           onToggleMenu={toggleStashMenuStable}
         />
       </ComposerBanner.Dock>
+      {showComposerAttachAction ? (
+        <ComposerAttachInput
+          ref={composerAttachInputRef}
+          addComposerAttachments={addComposerAttachments}
+          focusComposer={focusComposer}
+        />
+      ) : null}
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
@@ -4046,21 +4078,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     : composerMenuEmptyState
                   : ""}
               </div>
-              {composerSuggestionsVisible && (
-                <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
-                  <ComposerCommandMenu
-                    listId={composerSuggestionListId}
-                    items={composerMenuItems}
-                    resolvedTheme={resolvedTheme}
-                    isLoading={isComposerMenuLoading}
-                    triggerKind={composerTriggerKind}
-                    emptyStateText={composerMenuEmptyState}
-                    activeItemId={activeComposerMenuItem?.id ?? null}
-                    onHighlightedItemChange={onComposerMenuItemHighlightedStable}
-                    onSelect={onSelectComposerItemStable}
-                  />
-                </ComposerCommandMenuLayer>
-              )}
+              <DeferredComposerCommandMenuLayer
+                open={composerSuggestionsVisible}
+                anchor={composerMenuAnchor}
+              >
+                <ComposerCommandMenu
+                  listId={composerSuggestionListId}
+                  items={composerMenuItems}
+                  resolvedTheme={resolvedTheme}
+                  isLoading={isComposerMenuLoading}
+                  triggerKind={composerTriggerKind}
+                  emptyStateText={composerMenuEmptyState}
+                  activeItemId={activeComposerMenuItem?.id ?? null}
+                  onHighlightedItemChange={onComposerMenuItemHighlightedStable}
+                  onSelect={onSelectComposerItemStable}
+                />
+              </DeferredComposerCommandMenuLayer>
 
               {!isComposerCollapsedMobile &&
                 activeEditingQueuedAttachments !== null &&

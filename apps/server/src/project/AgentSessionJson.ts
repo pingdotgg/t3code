@@ -52,6 +52,8 @@ export function createTranscriptJsonReader(
   options?: {
     readonly maxDepth?: number;
     readonly onArrayItem?: (index: number, value: unknown) => boolean;
+    // Reports each selected top-level string field as soon as it ends, before the record does.
+    readonly onTopLevelString?: (key: string, value: string) => void;
   },
 ) {
   // 3.6.0 omits the synchronous tokenizer from types; parser() adds an unnecessary async generator.
@@ -145,7 +147,13 @@ export function createTranscriptJsonReader(
         return;
       case "endString":
       case "endNumber":
-        if (selectedValue) assemble(token);
+        if (selectedValue) {
+          const parent = stack[0];
+          if (token.name === "endString" && stack.length === 1 && typeof parent?.key === "string") {
+            options?.onTopLevelString?.(parent.key, value);
+          }
+          assemble(token);
+        }
         endValue();
         return;
       case "nullValue":

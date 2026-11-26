@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
+import { resolveLocalOrigin } from "../startupAccess.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
@@ -50,7 +51,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     instanceId: options.instanceId,
     defaultReturnUrl: new URL(
       "/welcome",
-      config.devUrl ?? `http://localhost:${config.port}`,
+      config.devUrl ?? resolveLocalOrigin(config.host, config.port),
     ).toString(),
   });
   const homeLayout = yield* resolveManagedCodexHomeLayout(

@@ -281,7 +281,7 @@ describe("Pi MCP tool exposure", () => {
       "read",
       "tool_search",
       ...publicDirect,
-      ...aliases,
+      "mcp__t3_code__preview_snapshot",
     ]);
     assert.deepEqual(bridge.declaredTools(), publicDirect);
     assert.deepEqual(
@@ -328,9 +328,6 @@ describe("Pi MCP tool exposure", () => {
       "tool_search",
       "mcp__t3-code__orchestrator_capabilities",
       "mcp__t3-code__preview_snapshot",
-      "mcp__t3_code__orchestrator_capabilities",
-      "mcp__t3_code__task_status",
-      "mcp__t3_code__preview_snapshot",
     ]);
     await bridge.handlers.get("model_select")!(event, discoveryContext);
     assert.equal(
@@ -474,6 +471,37 @@ describe("Pi MCP tool schemas", () => {
     for (const tool of bridge.tools) {
       assert.deepEqual(tool.parameters, inputSchema);
     }
+  });
+
+  it("records each T3 schema once on Pi, which keeps hidden alias declarations in the transcript", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: { depth: { type: "number", description: "Snapshot depth" } },
+      required: ["depth"],
+    };
+    const bridge = await loadMcpBridge({
+      modern: true,
+      inputSchema,
+      activatesOnRegistration: true,
+    });
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+    );
+    const aliases = bridge.tools.filter((tool) => tool.name.startsWith("mcp__t3_code__"));
+    assert.isAbove(aliases.length, 0);
+    for (const alias of aliases) {
+      const label = alias.name.slice("mcp__t3_code__".length);
+      const publicTool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__" + label)!;
+      assert.deepEqual(publicTool.parameters, inputSchema);
+      assert.deepEqual(alias.parameters, { type: "object", properties: {} });
+      assert.equal(alias.description, "Same as mcp__t3-code__" + label + ".");
+    }
+    await bridge.callModelTool("mcp__t3_code__preview_snapshot", { depth: 2 });
+    assert.deepEqual(JSON.parse(JSON.stringify(bridge.requests.at(-1))).params, {
+      name: "preview_snapshot",
+      arguments: { depth: 2 },
+    });
   });
 });
 

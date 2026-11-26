@@ -238,37 +238,79 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("can leave an archive folder with a repeated separator", async () => {
+  it("names archive folders whose paths have leading or repeated slashes", async () => {
     const bytes = new Uint8Array(2048);
     const write = (offset: number, value: string) =>
       bytes.set(new TextEncoder().encode(value), offset);
-    write(0, "a//hello.txt");
-    write(124, "00000000014\0");
-    bytes.fill(32, 148, 156);
-    write(156, "0");
-    write(
-      148,
-      bytes
-        .subarray(0, 512)
-        .reduce((sum, byte) => sum + byte, 0)
-        .toString(8)
-        .padStart(6, "0") + "\0 ",
-    );
-    write(512, "nested hello");
+    const member = (offset: number, name: string, content: string) => {
+      write(offset, name);
+      write(offset + 124, content.length.toString(8).padStart(11, "0") + "\0");
+      bytes.fill(32, offset + 148, offset + 156);
+      write(offset + 156, "0");
+      write(
+        offset + 148,
+        bytes
+          .subarray(offset, offset + 512)
+          .reduce((sum, byte) => sum + byte, 0)
+          .toString(8)
+          .padStart(6, "0") + "\0 ",
+      );
+      write(offset + 512, content);
+    };
+    member(0, "/a//hello.txt", "nested hello");
+    member(1024, "a/hello.txt", "plain hello");
     const src = URL.createObjectURL(new Blob([bytes]));
     try {
       await using screen = await render(<BinaryViewer src={src} name="paths.tar" kind="archive" />);
-      const child = () => screen.container.querySelector<HTMLButtonElement>("tbody button");
-      await vi.waitFor(() => expect(child()?.textContent).toBe("a"), 10_000);
-      await act(() => child()!.click());
-      await act(() => child()!.click());
-      await vi.waitFor(() => expect(child()?.textContent).toBe("hello.txt"));
+      const buttons = () => [
+        ...screen.container.querySelectorAll<HTMLButtonElement>("tbody button"),
+      ];
+      const rows = () => buttons().map((button) => button.textContent);
+      const back = () =>
+        screen.container.querySelector<HTMLButtonElement>('[aria-label="Back to archive"]')!;
+      const preview = () => screen.container.querySelector("pre")?.textContent;
+      await vi.waitFor(() => expect(rows()).toEqual(["a"]), 10_000);
+      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
+      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(preview()).toContain("nested hello"), 10_000);
+      await act(() => back().click());
+      await act(() => buttons()[1]!.click());
+      await vi.waitFor(() => expect(preview()).toContain("plain hello"), 10_000);
+      await act(() => back().click());
+      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
       const parent = () =>
         screen.container.querySelector<HTMLButtonElement>('[aria-label="Parent folder"]')!;
       await act(() => parent().click());
-      await act(() => parent().click());
       expect(parent().disabled).toBe(true);
-      expect(child()?.textContent).toBe("a");
+      expect(rows()).toEqual(["a"]);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
+  it("shows 0 bytes for empty archive entries and folders", async () => {
+    const zip = new JSZip();
+    zip.file("empty.txt", "");
+    zip.folder("empty-dir");
+    zip.file("pkg/__init__.py", "");
+    zip.file("readme.txt", "hello");
+    const bytes = await zip.generateAsync({ type: "arraybuffer" });
+    const src = URL.createObjectURL(new Blob([bytes]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="sizes.zip" kind="archive" />);
+      const rows = () =>
+        [...screen.container.querySelectorAll("tbody tr")].map((row) =>
+          [...row.querySelectorAll("td")].slice(0, 2).map((cell) => cell.textContent?.trim()),
+        );
+      await vi.waitFor(() => {
+        expect(rows()).toEqual([
+          ["empty-dir", "0 bytes"],
+          ["pkg", "0 bytes"],
+          ["empty.txt", "0 bytes"],
+          ["readme.txt", "1 KB"],
+        ]);
+      }, 10_000);
     } finally {
       URL.revokeObjectURL(src);
     }
@@ -505,55 +547,83 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("keeps WhiteIsZero TIFF brightness and rejects oversized metadata before decoding", async () => {
-    const tags = [
-      [256, 2],
-      [257, 1],
-      [258, 8],
-      [259, 1],
-      [262, 0],
-      [273, 134],
-      [277, 1],
-      [278, 1],
-      [279, 2],
-      [284, 1],
-    ];
-    const bytes = new ArrayBuffer(136);
-    const view = new DataView(bytes);
-    view.setUint16(0, 0x4949);
-    view.setUint16(2, 42, true);
-    view.setUint32(4, 8, true);
-    view.setUint16(8, tags.length, true);
-    tags.forEach(([tag, value], index) => {
-      const offset = 10 + index * 12;
-      view.setUint16(offset, tag!, true);
-      view.setUint16(offset + 2, 4, true);
-      view.setUint32(offset + 4, 1, true);
-      view.setUint32(offset + 8, value!, true);
-    });
-    view.setUint8(135, 255);
-    const src = URL.createObjectURL(new Blob([bytes]));
-    try {
-      const blob = await decodeImagePreview(src, false, new AbortController().signal);
-      const bitmap = await createImageBitmap(blob);
-      const canvas = new OffscreenCanvas(2, 1);
-      const context = canvas.getContext("2d")!;
-      context.drawImage(bitmap, 0, 0);
-      expect([...context.getImageData(0, 0, 2, 1).data]).toEqual([
-        255, 255, 255, 255, 0, 0, 0, 255,
-      ]);
-      bitmap.close();
-    } finally {
-      URL.revokeObjectURL(src);
+  it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs and type-13 ExifIFD pointers and rejects invalid metadata before decoding", async () => {
+    let bytes = new ArrayBuffer(0);
+    let exifEntry = 0;
+    for (const { pixels, expected } of [
+      { pixels: [0, 255], expected: [255, 255, 255, 255, 0, 0, 0, 255] },
+      { pixels: [0, 255, 255, 0], expected: [255, 255, 255, 255, 0, 0, 0, 0] },
+    ]) {
+      const samples = pixels.length / 2;
+      const start = samples === 2 ? 170 : 158;
+      const exif = start + pixels.length;
+      const tags = [
+        [256, 2],
+        [257, 1],
+        [258, 8],
+        [259, 1],
+        [262, 0],
+        [273, start],
+        [277, samples],
+        [278, 1],
+        [279, pixels.length],
+        [284, 1],
+        [330, 0, 13],
+        ...(samples === 2 ? [[338, 2]] : []),
+        [34665, exif, 13],
+      ];
+      exifEntry = 10 + (tags.length - 1) * 12;
+      bytes = new ArrayBuffer(exif + 8);
+      const view = new DataView(bytes);
+      view.setUint16(0, 0x4949);
+      view.setUint16(2, 42, true);
+      view.setUint32(4, 8, true);
+      view.setUint16(8, tags.length, true);
+      tags.forEach(([tag, value, type = 4], index) => {
+        const offset = 10 + index * 12;
+        view.setUint16(offset, tag!, true);
+        view.setUint16(offset + 2, type, true);
+        view.setUint32(offset + 4, 1, true);
+        view.setUint32(offset + 8, value!, true);
+      });
+      new Uint8Array(bytes, start).set(pixels);
+      const src = URL.createObjectURL(new Blob([bytes]));
+      try {
+        const blob = await decodeImagePreview(src, false, new AbortController().signal);
+        const bitmap = await createImageBitmap(blob);
+        const canvas = new OffscreenCanvas(2, 1);
+        const context = canvas.getContext("2d")!;
+        context.drawImage(bitmap, 0, 0);
+        expect([...context.getImageData(0, 0, 2, 1).data]).toEqual(expected);
+        bitmap.close();
+      } finally {
+        URL.revokeObjectURL(src);
+      }
     }
-    view.setUint32(14, 1_000_000, true);
-    const invalid = URL.createObjectURL(new Blob([bytes]));
-    try {
-      await expect(
-        decodeImagePreview(invalid, false, new AbortController().signal),
-      ).rejects.toThrow("metadata");
-    } finally {
-      URL.revokeObjectURL(invalid);
+    for (const [mutate, message] of [
+      [
+        (view: DataView) => view.setUint16(exifEntry + 2, 3, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(exifEntry + 4, 2, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(14, 1_000_000, true),
+        "This TIFF has too much or truncated metadata.",
+      ],
+    ] as const) {
+      const copy = bytes.slice(0);
+      mutate(new DataView(copy));
+      const invalid = URL.createObjectURL(new Blob([copy]));
+      try {
+        await expect(
+          decodeImagePreview(invalid, false, new AbortController().signal),
+        ).rejects.toThrow(message);
+      } finally {
+        URL.revokeObjectURL(invalid);
+      }
     }
   });
 });
@@ -588,8 +658,14 @@ describe("large text preview recovery", () => {
           environmentId={EnvironmentId.make("test")}
           threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
           absolutePath="/repo/large.txt"
+          draftCwd={null}
           name="large.txt"
           delimiter={null}
+          markdownCwd={null}
+          copyContents={{ current: null }}
+          preview=""
+          // Past the highlighted-source cap, so the worker-backed viewer under test renders.
+          sizeBytes={128 * 1024 * 1024}
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}
@@ -1078,6 +1154,25 @@ describe("large text preview recovery", () => {
     );
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   });
+
+  it.each([
+    [1024, false],
+    [1025, true],
+  ] as const)(
+    "shows the column truncation banner only when a CSV exceeds 1,024 columns (%i columns)",
+    async (columnCount, truncated) => {
+      const row = Array.from({ length: columnCount }, (_, i) => i).join(",");
+      await using screen = await render(
+        <LargeTextViewer name="wide.csv" text={`${row}\n${row}\n`} delimiter="," />,
+      );
+      const hasBanner = () =>
+        screen.container.textContent?.includes("Showing the first 1,024 columns") ?? false;
+      expect(hasBanner()).toBe(truncated);
+      const status = () => screen.container.querySelector('[role="status"]')?.textContent ?? "";
+      await vi.waitFor(() => expect(status()).toContain("1 row · 1,024 columns"), 10_000);
+      expect(hasBanner()).toBe(truncated);
+    },
+  );
 
   it("reloads a partial page when the indexed row count grows", async () => {
     const load = vi.fn();
@@ -1620,7 +1715,7 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
     expect(image?.alt).toBe("Mermaid diagram");
     expect(image?.naturalWidth).toBeGreaterThan(0);
   });
-  await page.getByRole("button", { name: "Back, close image preview" }).click();
+  await page.getByRole("button", { name: "Close image preview" }).click();
   await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   await screen.getByRole("button", { name: "Show Mermaid source" }).click();
   await vi.waitFor(() => expect(screen.container.querySelector("pre")?.textContent).toBe(text));
@@ -2392,3 +2487,22 @@ it.each([
     `Unsupported PDF ${directory} asset.`,
   );
 });
+
+it.each([
+  ["firmware", "Save it to open in an app that supports this format."],
+  [".cache", "Save it to open in an app that supports this format."],
+  ["a.dir/firmware", "Save it to open in an app that supports this format."],
+  ["blob.foo", "Save it to open in an app that supports foo files."],
+] as const)(
+  "describes unsupported binary attachment %s without misreading its name as an extension",
+  async (name, expected) => {
+    const file = new Blob([new Uint8Array([0, 1, 2, 3])], { type: "application/octet-stream" });
+    await using screen = await render(
+      <AttachmentFilePreview name={name} mimeType={file.type} sizeBytes={file.size} file={file} />,
+    );
+    await expect
+      .element(screen.getByText("No preview for this file", { exact: true }))
+      .toBeVisible();
+    await expect.element(screen.getByText(expected, { exact: true })).toBeVisible();
+  },
+);

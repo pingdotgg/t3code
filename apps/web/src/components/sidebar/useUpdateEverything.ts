@@ -2,6 +2,7 @@ import { useContext, useEffect } from "react";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { msg, useMessages } from "gt-react";
+import { connectionErrorText } from "@t3tools/client-runtime/connection";
 
 import { APP_VERSION } from "~/branding";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
@@ -70,6 +71,8 @@ export function useUpdateEverything(
     label: environment.label,
     serverConfig: environment.serverConfig,
     connected: environment.connection.phase === "connected",
+    connectionError: connectionErrorText(environment.connection, resolve),
+    turnedOff: !environment.entry.enabled,
     hostedByThisApp: isHostedByThisApp(environment),
     canMaintain: canUpdateServer(sessionStates[index]!),
     updateState: updateStates[index]!,
@@ -144,6 +147,7 @@ export function useUpdateEverything(
   return {
     hasUpdates: servers.length > 0 || providerMachines.length > 0,
     refreshProxyUpdates,
+    machines,
     ...view,
     restarts,
     run: async ({

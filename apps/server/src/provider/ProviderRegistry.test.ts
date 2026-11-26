@@ -22,6 +22,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -81,6 +82,7 @@ import {
 } from "./providerStatusCache.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 import type {
+  AnyProviderDriver,
   ProviderInstance,
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
@@ -91,6 +93,10 @@ import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { fromRunner } from "@t3tools/provider-core/server/textGenerationOperations";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as ProviderHostPathWatcher from "./ProviderHostPathWatcher.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import { providerHostEnvironment } from "../policy/managedProviders.ts";
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const decodeServerProvider = Schema.decodeSync(ServerProvider);
@@ -249,7 +255,11 @@ const makeWorkspaceRescanHarness = Effect.gen(function* () {
   const nextScan = Effect.fnUntraced(function* (cwd: string) {
     const scan = yield* Queue.take(scans);
     assert.equal(scan.cwd, cwd);
-    return (name: string) => Deferred.succeed(scan.result, snapshot(name));
+    return (name: string, workspaceModels?: ProviderWorkspaceSnapshot["workspaceModels"]) =>
+      Deferred.succeed(scan.result, {
+        ...snapshot(name),
+        ...(workspaceModels ? { workspaceModels } : {}),
+      });
   });
   const refresh = (cwd: string, fresh = false) =>
     registry.refreshWorkspaceSnapshot({ instanceId, cwd, fresh });
@@ -1898,6 +1908,7 @@ it.layer(
           ...previousProvider,
           checkedAt: "2026-10-30T00:01:00.000Z",
           models: [previousProvider.models[0]],
+          ...(driver === "claudeAgent" ? { modelsIncomplete: true } : {}),
         } satisfies ServerProvider;
 
         assert.deepStrictEqual(
@@ -1906,6 +1917,49 @@ it.layer(
         );
       },
     );
+
+    it("drops a Claude gateway model the same gateway no longer lists (#43603)", () => {
+      const auth = {
+        status: "authenticated",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+        endpoint: "http://127.0.0.1:15721",
+      } as const;
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth,
+        checkedAt: "2026-11-25T00:00:00.000Z",
+        version: "2.1.332",
+        models: [
+          { slug: "claude-sonnet-5-5", name: "Sonnet 5.5", isCustom: false, capabilities: null },
+          {
+            slug: "gw--model:free[1m]",
+            name: "gw--model:free",
+            isCustom: false,
+            capabilities: null,
+          },
+          { slug: "gw--model:free", name: "gw--model:free", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        checkedAt: "2026-11-26T00:00:00.000Z",
+        models: [previousProvider.models[0], previousProvider.models[1]],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models.map(
+          (model) => model.slug,
+        ),
+        ["claude-sonnet-5-5", "gw--model:free[1m]"],
+      );
+    });
 
     it("retains stale OpenCode models when a refresh fails or lists none", () => {
       const previousProvider = {
@@ -2160,6 +2214,177 @@ it.layer(
           ),
       );
     });
+
+    it.effect.each([
+      "replay",
+      "in-flight missing",
+      "in-flight installed",
+      "installed error",
+    ] as const)("recovers a copied driver environment after late PATH (%s)", (mode) =>
+      Effect.gen(function* () {
+        // "installed error": the CLI is found on the early PATH but its check fails until the late
+        // PATH. Installed instances may hold live sessions, so it must not be rebuilt.
+        const failsEarly = mode === "installed error";
+        const replay = mode === "replay" || failsEarly;
+        const host = { PATH: "/early/bin", T3CODE_CODEX_LAUNCH_ARGS: "hidden" };
+        const environment = providerHostEnvironment(
+          { organization: "PATH test", lockedSettings: [] },
+          host,
+        );
+        const updates = yield* DesktopTelemetryReceiver.makeDesktopShellEnvironmentUpdates(
+          host,
+          "linux",
+        );
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const finished = yield* Deferred.make<void>();
+        const paths: Array<string | undefined> = [];
+        let first = true;
+        const driverKind = ProviderDriverKind.make("pi");
+        const instanceId = ProviderInstanceId.make("late-path");
+        const driver: AnyProviderDriver = {
+          driverKind,
+          metadata: { displayName: "PATH fixture" },
+          configSchema: Schema.Unknown,
+          defaultConfig: () => ({}),
+          create: (input) =>
+            Effect.gen(function* () {
+              const copied = { ...environment };
+              paths.push(copied.PATH);
+              const late = copied.PATH?.includes("/late/bin") === true;
+              const installed = mode === "in-flight installed" || failsEarly || late;
+              const ready = failsEarly ? late : installed;
+              const snapshot: ServerProvider = {
+                instanceId,
+                driver: driverKind,
+                enabled: true,
+                installed: false,
+                status: "warning",
+                auth: { status: "unknown" },
+                version: null,
+                checkedAt: "2026-10-03T00:00:00.000Z",
+                models: [],
+                slashCommands: [],
+                skills: [],
+              };
+              const current = yield* Ref.make(snapshot);
+              return {
+                instanceId: input.instanceId,
+                driverKind,
+                enabled: true,
+                displayName: undefined,
+                continuationIdentity: { driverKind, continuationKey: `${driverKind}:late-path` },
+                snapshot: {
+                  markLimited: () => Effect.void,
+                  resolveMaintenance: () =>
+                    Effect.succeed(
+                      makeManualOnlyProviderMaintenanceCapabilities({
+                        provider: driverKind,
+                        packageName: null,
+                      }),
+                    ),
+                  getSnapshot: Ref.get(current),
+                  refresh: Effect.gen(function* () {
+                    if (first && !replay) {
+                      first = false;
+                      yield* Deferred.succeed(entered, undefined);
+                      yield* Deferred.await(release);
+                    }
+                    const checked = {
+                      ...snapshot,
+                      installed,
+                      status: ready ? ("ready" as const) : ("error" as const),
+                      ...(ready
+                        ? {}
+                        : {
+                            message: "Provider probe failed: transport failed.",
+                          }),
+                    };
+                    yield* Ref.set(current, checked);
+                    return checked;
+                  }),
+                  streamChanges: Stream.empty,
+                  applyUsageLimits: () => Effect.void,
+                },
+                orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+                textGeneration: {} as ProviderInstance["textGeneration"],
+              } satisfies ProviderInstance;
+            }),
+        };
+        const built = yield* ProviderInstanceRegistry.makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: { driver: driverKind, enabled: true } },
+        }).pipe(Effect.provide(Layer.mock(SecretResolver.SecretResolver)({})));
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const running = replay ? undefined : yield* registry.refresh().pipe(Effect.forkScoped);
+          if (running) yield* Deferred.await(entered);
+          yield* updates.apply({
+            version: 1,
+            type: "shellEnvironment",
+            platform: "linux",
+            discovered: true,
+            environment: { PATH: "/early/bin:/late/bin" },
+          });
+          expect(paths).toEqual(["/early/bin"]);
+          if (replay) {
+            yield* Layer.build(
+              ProviderHostPathWatcher.layer.pipe(
+                Layer.provide(
+                  DesktopTelemetryReceiver.layerTest({ pathChanges: updates.pathChanges }),
+                ),
+                Layer.provide(
+                  Layer.succeed(ProviderRegistry.ProviderRegistry, {
+                    ...registry,
+                    rebuildMissingAndRefresh: registry.rebuildMissingAndRefresh.pipe(
+                      Effect.tap(() => Deferred.succeed(finished, undefined)),
+                    ),
+                  }),
+                ),
+              ),
+            );
+          } else {
+            yield* registry.rebuildMissingAndRefresh.pipe(
+              Effect.tap(() => Deferred.succeed(finished, undefined)),
+              Effect.forkScoped({ startImmediately: true }),
+            );
+            expect(paths).toEqual(["/early/bin"]);
+          }
+          yield* Deferred.succeed(release, undefined);
+          if (running) yield* Fiber.join(running);
+          yield* Deferred.await(finished);
+          expect(
+            (yield* registry.getProviders).find((row) => row.instanceId === instanceId)?.installed,
+          ).toBe(true);
+          expect(paths).toEqual(
+            mode === "in-flight installed" || mode === "installed error"
+              ? ["/early/bin"]
+              : ["/early/bin", "/early/bin:/late/bin"],
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderRegistry.layer.pipe(
+              Layer.provide(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, built.registry),
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+                  built.mutator,
+                ),
+              ),
+            ),
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-late-path-" }).pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+      ),
+    );
 
     describe("Codex model inventories", () => {
       const cachedProvider = {
@@ -3128,6 +3353,104 @@ it.layer(
       }),
     );
 
+    it.effect("publishes a new label for an instance the registry kept live", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("antigravity");
+        const instanceId = ProviderInstanceId.make("account-a");
+        let displayName = "Account A";
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "antigravity:account-a" },
+          get displayName() {
+            return displayName;
+          },
+          enabled: true,
+          snapshot: {
+            markLimited: () => Effect.void,
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.sync(() => ({
+              instanceId,
+              driver,
+              displayName,
+              status: "ready" as const,
+              enabled: true,
+              installed: true,
+              auth: { status: "authenticated" as const },
+              checkedAt: "1970-01-01T00:00:00.000Z",
+              version: "1.0.0",
+              models: [],
+              slashCommands: [],
+              skills: [],
+            })),
+            refresh: Effect.die("unused"),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const changes = yield* PubSub.unbounded<void>();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const services = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(
+              Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                getInstance: () => Effect.succeed(instance),
+                listInstances: Effect.succeed([instance]),
+                listUnavailable: Effect.succeed([]),
+                streamChanges: Stream.fromPubSub(changes),
+                subscribeChanges: PubSub.subscribe(changes),
+              }),
+            ),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-label-" }),
+            ),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ).pipe(Scope.provide(scope));
+        const registry = yield* ProviderRegistry.ProviderRegistry.pipe(Effect.provide(services));
+        const relabelled = yield* registry.streamChanges.pipe(
+          Stream.filter((providers) => providers[0]?.displayName === "Account B"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        displayName = "Account B";
+        yield* PubSub.publish(changes, undefined);
+        assert.isTrue(Option.isSome(yield* Fiber.join(relabelled)));
+      }),
+    );
+
+    it.effect("reports a provider's mode limits, and none where it has no say", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        const limitsOf = (id: ProviderInstanceId) =>
+          h.registry.runtimeModeLimits({ instanceId: id, scanCwd: "/workspace" });
+        assert.deepEqual(yield* limitsOf(h.first.instance.instanceId), []);
+        assert.deepEqual(yield* limitsOf(ProviderInstanceId.make("removed")), []);
+        yield* Ref.set(h.instances, [
+          {
+            ...h.first.instance,
+            runtimeModeLimitsForCwd: (cwd) =>
+              Effect.succeed(
+                cwd === "/workspace" ? [{ mode: "auto", reason: "project-settings" }] : [],
+              ),
+          },
+        ]);
+        assert.deepEqual(yield* limitsOf(h.first.instance.instanceId), [
+          { mode: "auto", reason: "project-settings" },
+        ]);
+      }),
+    );
+
     it.effect("rescans a requested cwd whose snapshot is still current", () =>
       Effect.gen(function* () {
         const h = yield* makeWorkspaceRescanHarness;
@@ -3163,6 +3486,21 @@ it.layer(
         yield* Fiber.join(ordinary);
         const completeRescan = yield* h.nextScan("/workspace");
         yield* completeRescan("hook");
+        yield* h.drainRescans;
+        assert.isString(yield* h.rescannedAtOf);
+      }),
+    );
+
+    it.effect("stamps a rescan that changed only the directory's models", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* h.seed("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        const complete = yield* h.nextScan("/workspace");
+        yield* complete("initial", [
+          { slug: "vendor/live", name: "Live", isCustom: false, capabilities: null },
+        ]);
         yield* h.drainRescans;
         assert.isString(yield* h.rescannedAtOf);
       }),
@@ -4944,6 +5282,7 @@ it.layer(
             ["gateway/kimi-3[1m]", "Kimi (mine)", true],
           ],
         );
+        assert.strictEqual(status.modelsIncomplete, undefined);
         assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
         assert.deepStrictEqual(added[1]?.capabilities?.optionDescriptors, [
           {
@@ -5156,6 +5495,7 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.label, "Custom API endpoint");
+        assert.strictEqual(status.modelsIncomplete, true);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {

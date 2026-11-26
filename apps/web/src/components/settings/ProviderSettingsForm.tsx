@@ -162,8 +162,10 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
     ),
   ],
   [
-    "Google accounts use your subscription; API keys and Agent Platform bill usage.",
-    msg("Google accounts use your subscription; API keys and Agent Platform bill usage."),
+    "Google account and Gemini Enterprise use your existing plan. Gemini API key and Agent Platform charge per use to your key or Google Cloud project.",
+    msg(
+      "Google account and Gemini Enterprise use your existing plan. Gemini API key and Agent Platform charge per use to your key or Google Cloud project.",
+    ),
   ],
   [
     "Gemini or Vertex AI express key. Stored separately on the host.",
@@ -259,6 +261,25 @@ function packageFieldText(text: string, resolve: MessageResolver): string {
   return entry === undefined ? text : resolve(entry);
 }
 
+/** An unset select shows, and acts as, its first option. */
+function readSelectValue(
+  config: unknown,
+  key: string,
+  options: ReadonlyArray<ProviderSettingsFormOption> | undefined,
+): string {
+  return readProviderConfigString(config, key) || (options?.[0]?.value ?? "");
+}
+
+function hasConfiguredValue(config: unknown, key: string): boolean {
+  if (config === null || typeof config !== "object") return false;
+  const value = (config as Record<string, unknown>)[key];
+  return value !== undefined && value !== "";
+}
+
+/**
+ * Without a `value`, lists every field. With one, a `visibleWhen` field is hidden only while empty:
+ * a leftover value still reaches the server, so it stays visible and clearable.
+ */
 export function deriveProviderSettingsFields(
   definition: SettingsFormDefinition,
   value?: unknown,
@@ -297,6 +318,23 @@ export function deriveProviderSettingsFields(
           (readProviderConfigString(value, "setupMode") !== "cli" && key === "shareProfile"))
       )
         return [];
+      const visibleWhen = formAnnotation.visibleWhen;
+      const controller =
+        visibleWhen === undefined ? undefined : definition.settingsSchema.fields[visibleWhen.field];
+      if (
+        visibleWhen !== undefined &&
+        value !== undefined &&
+        !hasConfiguredValue(value, key) &&
+        !visibleWhen.values.includes(
+          readSelectValue(
+            value,
+            visibleWhen.field,
+            controller && readProviderSettingsFormAnnotation(controller).options,
+          ),
+        )
+      ) {
+        return [];
+      }
       if (isLocalAcp && key !== "source" && key !== "commandPath") return [];
 
       const annotatedTitle = readFieldAnnotationString(fieldSchema, "title");
@@ -604,7 +642,7 @@ function ProviderSettingsSelect({
 }) {
   const options = field.options ?? [];
   const fallback = options[0]?.value ?? "";
-  const current = readProviderConfigString(value, field.key) || fallback;
+  const current = readSelectValue(value, field.key, options);
   const label = options.find((option) => option.value === current)?.label ?? current;
   return (
     <Select
@@ -913,7 +951,7 @@ export function ProviderSettingsForm({
   environmentId,
 }: ProviderSettingsFormProps) {
   const resolve = useMessages();
-  const fields = deriveProviderSettingsFields(definition, value, resolve);
+  const fields = deriveProviderSettingsFields(definition, value ?? {}, resolve);
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
     readProviderConfigString(value, "source") === "local";

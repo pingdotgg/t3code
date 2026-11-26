@@ -8,23 +8,12 @@ Choose **Settings > Providers > Inference accounts** to sign in on one host and 
 
 ## Connect with ChatGPT sharing
 
-Connect during onboarding or in **Settings → Providers**. For a remote machine,
-select that environment first. T3 Code handles Codex installation; sign in on
-OpenAI and allow sharing of your ChatGPT plan.
+Connect during onboarding or in **Settings → Providers** (select your target environment first for remote machines). T3 Code manages the Codex runtime and signs you in via OpenAI.
 
-Manage shared usage and credits in ChatGPT through **Manage usage** in T3 Code.
-If a request uses a feature that ChatGPT sharing does not support, use another
-provider for that request.
-
-Fast and Ultrafast speeds are unavailable with this connection. To use the speed
-options your account supports, [use an existing Codex login](#use-an-existing-codex-login).
-
-When reconnecting, choose the same account in T3 Code and on OpenAI's sign-in
-page. Disconnecting stops running threads but keeps their history and lets you
-reconnect later.
-
-If remote sign-in cannot return automatically, paste the full URL from the final
-localhost page into the sign-in panel, even if that page could not load.
+- Manage shared usage and credits through **Manage usage** in T3 Code.
+- **Remote sign-in**: If sign-in doesn't return automatically, paste the full `localhost` redirect URL into the sign-in panel.
+- **Speed options**: Fast and Ultrafast speeds are not available through ChatGPT sharing—[use an existing Codex login](#use-an-existing-codex-login) instead.
+- Disconnecting stops running threads while preserving history.
 
 ## Use an existing Codex login
 

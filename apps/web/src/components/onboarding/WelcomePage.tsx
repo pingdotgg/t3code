@@ -110,13 +110,13 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { QRCodeSvg } from "../ui/qr-code";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
 import { toastManager } from "../ui/toast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const SCAN_LIMIT_MESSAGE = msg(
@@ -1932,22 +1932,19 @@ function ImportCandidateRow({
       )}
     >
       <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
-        >
-          {label !== undefined ? (
-            <span className="truncate text-sm font-medium">{label}</span>
-          ) : null}
-          {path !== undefined ? (
-            <ProjectPathText
-              path={path}
-              className={label === undefined ? "text-xs" : "text-2xs text-muted-foreground"}
-            />
-          ) : null}
-        </TooltipTrigger>
-        <TooltipPopup variant="code">{candidate.path}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
+        label={candidate.path}
+        variant="code"
+      >
+        {label !== undefined ? <span className="truncate text-sm font-medium">{label}</span> : null}
+        {path !== undefined ? (
+          <ProjectPathText
+            path={path}
+            className={label === undefined ? "text-xs" : "text-2xs text-muted-foreground"}
+          />
+        ) : null}
+      </SharedTooltipTrigger>
       <ImportRowMeta
         sources={nested ? null : candidate.sources}
         threadCount={candidate.threadCount}

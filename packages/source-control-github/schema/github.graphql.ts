@@ -202,12 +202,13 @@ export type ReactionContent = typeof ReactionContent.Type
  *
  * - `ADMIN`: Can read, clone, and push to this repository. Can also manage issues, pull requests, and repository settings, including adding collaborators
  * - `MAINTAIN`: Can read, clone, and push to this repository. They can also manage issues, pull requests, and some repository settings
+ * - `MODERATE`: Can read and clone this repository. Can also moderate and edit issues and manage pull requests without write access
  * - `READ`: Can read and clone this repository. Can also open and comment on issues and pull requests
  * - `TRIAGE`: Can read and clone this repository. Can also manage issues and pull requests
- * - `TRIAGE_PLUS`: Can read and clone this repository. Can also manage issues and pull requests, plus additional triage abilities
+ * - `TRIAGE_PLUS`: Can read and clone this repository. Can also moderate and edit issues and manage pull requests without write access Deprecated: TRIAGE_PLUS has been renamed to MODERATE. Use MODERATE instead. Removal on 2027-04-01 UTC.
  * - `WRITE`: Can read, clone, and push to this repository. Can also manage issues and pull requests
  */
-export const RepositoryPermission = Schema.Literals(["ADMIN", "MAINTAIN", "READ", "TRIAGE", "TRIAGE_PLUS", "WRITE"])
+export const RepositoryPermission = Schema.Literals(["ADMIN", "MAINTAIN", "MODERATE", "READ", "TRIAGE", "TRIAGE_PLUS", "WRITE"])
 export type RepositoryPermission = typeof RepositoryPermission.Type
 
 /**
@@ -242,6 +243,12 @@ export const EnablePullRequestAutoMergeInput = Schema.Struct({
   commitHeadline: Schema.optional(Schema.NullOr(Schema.String)),
   /** The expected head OID of the pull request. */
   expectedHeadOid: Schema.optional(Schema.NullOr(GitObjectID)),
+  /**
+   * Enable auto-merge for this pull request and any eligible pull requests below it in the stack.
+   *
+   * @default false
+   */
+  includeStack: Schema.optional(Schema.NullOr(Schema.Boolean)),
   /**
    * The merge method to use. If omitted, defaults to `MERGE`. NOTE: when merging
    * with a merge queue any input value for merge method is ignored.
@@ -372,7 +379,7 @@ export declare namespace Typename {
     | "OrganizationInvitation" | "OrganizationMigration" | "Package" | "PackageFile" | "PackageTag" | "PackageVersion"
     | "ParentIssueAddedEvent" | "ParentIssueRemovedEvent" | "PendingAssigneeSuggestion" | "PendingCloseSuggestion"
     | "PendingFieldSuggestion" | "PendingLabelSuggestion" | "PendingTypeSuggestion" | "PinnedDiscussion"
-    | "PinnedEnvironment" | "PinnedEvent" | "PinnedIssue" | "PinnedIssueComment"
+    | "PinnedEnvironment" | "PinnedEvent" | "PinnedIssue" | "PinnedIssueComment" | "PlanningStatus"
     | "PrivateRepositoryForkingDisableAuditEntry" | "PrivateRepositoryForkingEnableAuditEntry" | "Project"
     | "ProjectCard" | "ProjectColumn" | "ProjectV2" | "ProjectV2Field" | "ProjectV2Item" | "ProjectV2ItemFieldDateValue"
     | "ProjectV2ItemFieldIterationValue" | "ProjectV2ItemFieldMultiSelectValue" | "ProjectV2ItemFieldNumberValue"

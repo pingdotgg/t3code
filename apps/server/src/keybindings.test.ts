@@ -52,6 +52,17 @@ const readKeybindingsConfig = (configPath: string) =>
     return yield* decodeKeybindingsConfigJson(rawConfig);
   });
 
+function scriptBindingsAtChatNewCutoff(hiddenChatNewBindings: 0 | 1) {
+  const defaults = SharedKeybindings.DEFAULT_RESOLVED_KEYBINDINGS;
+  const firstChatNew = defaults.findIndex((binding) => binding.command === "chat.new");
+  assert.isAtLeast(firstChatNew, 0);
+  const visibleDefaults = defaults.length - firstChatNew - hiddenChatNewBindings;
+  return Array.from({ length: MAX_KEYBINDINGS_COUNT - visibleDefaults }, (_, index) => ({
+    key: "mod+alt+f1",
+    command: `script.filler-${index}.run` as const,
+  }));
+}
+
 it.layer(NodeServices.layer)("keybindings", (it) => {
   it.effect("parses shortcuts including plus key", () =>
     Effect.sync(() => {
@@ -182,6 +193,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           { key: "mod+j", command: "terminal.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },
           { key: "mod+x", command: "invalid.command" },
+          { key: "mod+", command: "sidebar.toggle" },
+          { key: "mod+a+++", command: "sidebar.toggle" },
         ]),
       );
 
@@ -204,6 +217,16 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           kind: "keybindings.invalid-entry",
           index: 2,
           message: configState.issues[1]?.message ?? "",
+        },
+        {
+          kind: "keybindings.invalid-entry",
+          index: 3,
+          message: configState.issues[2]?.message ?? "",
+        },
+        {
+          kind: "keybindings.invalid-entry",
+          index: 4,
+          message: configState.issues[3]?.message ?? "",
         },
       ]);
     }).pipe(Effect.provide(layerKeybindings())),
@@ -522,19 +545,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       const keybindings = yield* Keybindings.Keybindings;
       const target = { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" } as const;
-      const targetIndex = SharedKeybindings.DEFAULT_KEYBINDINGS.findIndex(
-        (rule) => rule.command === target.command && rule.key === target.key,
-      );
-      assert.isAtLeast(targetIndex, 0);
-      const fillerCount =
-        MAX_KEYBINDINGS_COUNT - SharedKeybindings.DEFAULT_KEYBINDINGS.length + targetIndex;
-      yield* writeKeybindingsConfig(
-        keybindingsConfigPath,
-        Array.from({ length: fillerCount }, (_, index) => ({
-          key: "mod+alt+f1",
-          command: `script.filler-${index}.run` as const,
-        })),
-      );
+      yield* writeKeybindingsConfig(keybindingsConfigPath, scriptBindingsAtChatNewCutoff(1));
 
       const local = { ...target, key: "mod+shift+n", command: "chat.newLocal" } as const;
       const relevant = (rule: { readonly command: KeybindingCommand }) =>
@@ -561,19 +572,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
         const keybindings = yield* Keybindings.Keybindings;
         const target = { key: "mod+n", command: "chat.new", when: "!terminalFocus" } as const;
-        const targetIndex = SharedKeybindings.DEFAULT_KEYBINDINGS.findIndex(
-          (rule) => rule.command === target.command && rule.key === target.key,
-        );
-        assert.isAtLeast(targetIndex, 0);
-        const fillerCount =
-          MAX_KEYBINDINGS_COUNT - SharedKeybindings.DEFAULT_KEYBINDINGS.length + targetIndex;
-        yield* writeKeybindingsConfig(
-          keybindingsConfigPath,
-          Array.from({ length: fillerCount }, (_, index) => ({
-            key: "mod+alt+f1",
-            command: `script.filler-${index}.run` as const,
-          })),
-        );
+        yield* writeKeybindingsConfig(keybindingsConfigPath, scriptBindingsAtChatNewCutoff(0));
 
         const sibling = { ...target, key: "mod+shift+o" };
         const isChatNew = (binding: { readonly command: KeybindingCommand }) =>

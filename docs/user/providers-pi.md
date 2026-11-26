@@ -1,37 +1,28 @@
 # Pi
 
-T3 Code can use your existing Pi coding agent installation while keeping Pi's models, auth,
-extensions, skills, context files, and native session history.
+Run your existing [Pi](https://pi.dev) (**0.84.3+**, Node.js **22.19+**) installation in T3 Code while keeping Pi's models, auth, extensions, skills, and native session history.
 
-## Set Up Pi
+## Set up Pi
 
-1. Install [Pi](https://pi.dev) on the machine running the T3 Code server. Pi requires Node.js
-   22.19 or newer; its platform installers can install Node if needed. T3 Code supports Pi
-   0.84.3 or newer.
-2. Run `pi` in a terminal, then `/login` to connect your model provider or configure its API key.
-3. Open T3 Code Settings, enable Pi, and refresh the provider.
+1. Install Pi on the server machine (via Pi's installer or `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`).
+2. Run `pi` and `/login` in a terminal on the server (over SSH for remote hosts, or set your model provider's API key in the Pi instance's environment variables).
+3. Open **Settings → Providers**, enable **Pi**, and refresh. Set **Binary path** if `pi` isn't on `PATH`.
 
-For an npm installation, use:
+- In **Launch arguments**, `--provider` must be paired with `--model`. Flags that alter Pi's execution mode or session selection are rejected because T3 Code manages them.
+- Update installer-managed Pi with `pi update`, or via your package manager (e.g. `nix profile upgrade pi`).
 
-```sh
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-```
+## Features and extensions
 
-If `pi` is not on the server's `PATH`, set Pi's binary path to the executable. Provider environment
-variables and launch arguments are also available for installations that need a custom agent
-directory, endpoint, or model configuration. `--provider` must be paired with `--model`. T3 Code
-rejects launch arguments that change Pi's execution mode or select a session because T3 owns those
-parts of the process lifecycle.
+- **Models, thinking & speed**: Discovers Pi models, thinking levels, and `serviceTiers` (exposed as a speed picker).
+- **Native sessions**: Resume, rollback, and same-instance forks use Pi's native session files; switching providers uses a [portable handoff](./portable-handoffs.md).
+- **Skills & extensions**: Pi user and trusted project skills appear in `$`. Extension `select`, `confirm`, `input`, and `editor` dialogs render in the composer, notifications appear in the activity log, and status text appears near the composer.
+- **Subagents**: T3 Code's `delegate_task` creates full child threads; Pi's example `subagent` extension also displays task progress/results (read-only).
 
-On a remote or headless server, connect to that machine over SSH and run `pi`, then `/login`.
-Open the authorization URL on your own computer. If the callback cannot reach the server,
-paste the final redirect URL or authorization code back into Pi when prompted. You can also
-set your model provider's API-key environment variable in the Pi instance's settings; mark
-secret values as sensitive.
+## Permission modes
 
-Update installer-managed Pi with `pi update`. If another package manager owns the installation,
-update it through that manager instead. For example, a Nix profile installation uses
-`nix profile upgrade pi`.
+- **Supervised**: Asks before commands, file edits, and extension tools (reads proceed).
+- **Auto-accept edits**: Allows Pi's edit/write tools; asks for commands and extension tools.
+- **Full access**: Allows all tool calls without prompts.
 
 ## Shared Inference Accounts
 
@@ -105,17 +96,6 @@ child integration; showing a child's progress in T3 Code does not mount its tool
 
 ## Troubleshooting
 
-- If Pi is unavailable, confirm that the configured binary runs on the server machine, then refresh
-  the provider in Settings.
-- If no models appear, open Pi directly and confirm its authentication and model configuration.
-- If discovery cannot complete, T3 Code keeps Pi available with the `Pi default` model. Start a
-  thread to let the interactive Pi session handle any startup prompt.
-- If Pi skips project settings, extensions, skills, prompts, MCP servers, or system prompt files
-  because the folder is not trusted, the thread shows a notice on the first turn of the Pi session.
-  Run the configured Pi binary in that folder on the server machine, using the same provider
-  environment, including `PI_CODING_AGENT_DIR` if set. Trust the folder or its parent with `/trust`,
-  then start a new thread using that same worktree. Launch arguments with `--no-approve` keep
-  project files off without the notice.
-- To see context usage on web and desktop, turn on **Context window** in **Settings → Appearance →
-  Thread details**. It appears once Pi reports usage for the thread. Some model providers only
-  report usage when a response completes, so it can wait for the first reply.
+- **Untrusted project folder**: If Pi skips project extensions/skills/MCP, run `pi` in that folder on the server (with the same `PI_CODING_AGENT_DIR` if set), run `/trust`, and start a new thread in that worktree. Add `--no-approve` to launch arguments to keep project files disabled without the notice.
+- **Discovery fails**: T3 Code keeps Pi usable with `Pi default` so an interactive session can handle startup prompts.
+- **Context window**: Enable **Settings → Appearance → Thread details → Context window** (some model providers report usage only after the first reply completes).

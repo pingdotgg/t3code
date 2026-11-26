@@ -32,6 +32,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { Tool } from "effect/ai";
@@ -63,6 +64,15 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { ConversationSummariesToolkit } from "../../apps/server/src/mcp/toolkits/conversationSummaries/tools.ts";
 import { ExternalHistoryToolkit } from "../../apps/server/src/mcp/toolkits/externalHistory/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
+import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
+import {
+  FEEDBACK_AWAITING_APPROVAL_NOTE,
+  FEEDBACK_SUBJECT_MESSAGE,
+  FeedbackInput,
+  FeedbackNotRequestedError,
+  resolveFeedbackSubject,
+} from "../../apps/server/src/feedback/FeedbackReport.ts";
+import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
 import { IssuesToolkit } from "../../apps/server/src/mcp/toolkits/issues/tools.ts";
@@ -338,6 +348,8 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceAgentAccess: Schema.optional(Schema.Boolean),
     /** false: agent browser access is off. T3 denies every preview call and drops its browser text. */
     browserAgentAccess: Schema.optional(Schema.Boolean),
+    /** The Agent feedback mode; absent is off. On, T3 lists its tools and its text has the mode's line. */
+    agentFeedback: Schema.optional(Contracts.AgentFeedbackMode),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -534,6 +546,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   ProjectCodeToolkit,
   EnvironmentToolkit,
   ThemeToolkit,
+  FeedbackToolkit,
   PreviewControlsToolkit,
   WorktreeToolkit,
   PullRequestsToolkit,
@@ -597,6 +610,8 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
+// Agent feedback starts off, and T3 lists its tools only while it is on.
+const hiddenWhileFeedbackOff = enabledWhen(McpInvocationContext.hiddenWhileFeedbackOff);
 // T3 lists PR and CI tools only to a thread whose project is on a forge it reads.
 const hiddenWithoutForge = enabledWhen(McpInvocationContext.hiddenWithoutForge);
 /**
@@ -617,12 +632,14 @@ const visibleT3Tools = (options: {
   readonly subagent?: boolean;
   readonly links?: boolean;
   readonly forge?: boolean;
+  readonly agentFeedback?: Contracts.AgentFeedbackMode;
   readonly arm?: Arm;
 }) =>
   t3Tools.filter(
     (tool) =>
       !(options.arm === "raw" && forgeToolNames.has(tool.name)) &&
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      ((options.agentFeedback ?? "off") !== "off" || !hiddenWhileFeedbackOff.has(tool.name)) &&
       (options.forge !== false || !hiddenWithoutForge.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
@@ -632,7 +649,12 @@ const visibleT3Tools = (options: {
  * `browser` say whether the thread holds the `device` and `preview` capabilities, as agent device
  * and browser access decide.
  */
-const claudeQueryOptions = (model: Model, device = true, browser = true) => {
+const claudeQueryOptions = (
+  model: Model,
+  device = true,
+  browser = true,
+  agentFeedback: Contracts.AgentFeedbackMode = "off",
+) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -644,6 +666,7 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
+    agentFeedback,
     deviceToolsAvailable: device,
     browserToolsAvailable: browser,
   };
@@ -651,8 +674,13 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true, browser = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser);
+export const t3SystemAppend = (
+  model: Model,
+  device = true,
+  browser = true,
+  agentFeedback: Contracts.AgentFeedbackMode = "off",
+) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, agentFeedback);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -742,6 +770,8 @@ export const buildBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
+    readonly agentFeedback?: Contracts.AgentFeedbackMode;
     readonly arm?: Arm;
   },
 ) => {
@@ -768,7 +798,10 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : forArm(t3SystemAppend(model, options.deviceAccess, options.browserAccess), options.arm);
+    : forArm(
+        t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.agentFeedback),
+        options.arm,
+      );
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -844,6 +877,8 @@ const buildCodexBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
+    readonly agentFeedback?: Contracts.AgentFeedbackMode;
     readonly arm?: Arm;
   },
 ): Base => {
@@ -874,7 +909,11 @@ const buildCodexBase = (
     return [JSON.parse(clean(JSON.stringify(item))) as Block];
   });
   const context = buildCodexAdditionalContext(
-    { model: options.model, reasoningEffort: effort },
+    {
+      model: options.model,
+      reasoningEffort: effort,
+      agentFeedback: options.agentFeedback ?? "off",
+    },
     { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
   );
   input.push(
@@ -2231,6 +2270,8 @@ const savedSecretFile = (
   }
 };
 
+const decodeFeedbackInput = Schema.decodeUnknownResult(FeedbackInput);
+
 /** The result for one tool call. */
 const FORGE_WRITE_TOOLS = new Set([
   "pull_request_create",
@@ -2292,7 +2333,17 @@ const productRefusal = (sample: Sample, name: string, input: Readonly<Record<str
   ) {
     return "Current branch has not been pushed. Push before creating a PR.";
   }
-  if (name === "pull_request_merge" && typeof input.expectedHeadSha === "string") {
+  if (
+    name === "pull_request_review" &&
+    input.verdict === "approve" &&
+    typeof input.expectedHeadSha !== "string"
+  ) {
+    return "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.";
+  }
+  if (
+    (name === "pull_request_merge" || name === "pull_request_review") &&
+    typeof input.expectedHeadSha === "string"
+  ) {
     const own = branchPullRequest(sample);
     const number = input.number ?? own.number;
     const pr = worldPullRequests(sample).find((candidate) => Number(candidate.number) === number);
@@ -2386,6 +2437,39 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isT3Name(call.name)) {
     const refused = productRefusal(sample, name, input);
     if (refused !== undefined) return failed(refused);
+  }
+  if (isT3Name(call.name) && name === "t3_feedback" && (mock === undefined || mock === "default")) {
+    const decoded = decodeFeedbackInput(input);
+    if (Result.isFailure(decoded)) return failed(decoded.failure.message);
+    const report = decoded.success;
+    // The same refusals as FeedbackService, in its order.
+    if (sample.testCase.setup.world?.agentFeedback === "on-request" && !report.userRequested)
+      return failed(new FeedbackNotRequestedError({ source: "mcp" }).message);
+    const subject = resolveFeedbackSubject(
+      report.subject,
+      t3SourceTools.map((tool) => tool.name),
+    );
+    if (subject === undefined) return failed(FEEDBACK_SUBJECT_MESSAGE);
+    // T3 shows a requested report to the user in a card and answers at once.
+    if (report.userRequested) {
+      return toolResult(call.id, {
+        status: "awaiting_approval",
+        note: FEEDBACK_AWAITING_APPROVAL_NOTE,
+      });
+    }
+    return toolResult(call.id, {
+      ...report,
+      subject,
+      trace: null,
+      expected: scrubFeedback(report.expected, []),
+      actual: scrubFeedback(report.actual, []),
+      workaround: scrubFeedback(report.workaround, []),
+      id: "019a7b3c-0000-7000-8000-000000000001",
+      threadId: "thread-1",
+      createdAt: `${base.environment.date ?? "2026-01-01"}T12:00:00.000Z`,
+      source: "mcp",
+      sent: true,
+    });
   }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
@@ -3365,6 +3449,7 @@ const main = Effect.gen(function* () {
     browserAccess: boolean,
     links: boolean,
     forge: boolean,
+    agentFeedback: Contracts.AgentFeedbackMode = "off",
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -3378,6 +3463,7 @@ const main = Effect.gen(function* () {
               forge,
               deviceAccess,
               browserAccess,
+              agentFeedback,
               arm: flags.arm,
             }),
           ),
@@ -3393,6 +3479,7 @@ const main = Effect.gen(function* () {
               forge,
               deviceAccess,
               browserAccess,
+              agentFeedback,
               arm: flags.arm,
             });
             return role === "native-subagent"
@@ -3404,14 +3491,15 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}`;
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.world?.agentFeedback ?? "off"}`;
   const base = yield* buildFor("top", true, true, false, true);
-  const bases = new Map<string, Base>([["top:true:true:false:true", base]]);
+  const bases = new Map<string, Base>([["top:true:true:false:true:off", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links, forge] = key.split(":") as [
+    const [role = "top", device, browser, links, forge, feedback] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
+      string,
       string,
       string,
       string,
@@ -3425,6 +3513,7 @@ const main = Effect.gen(function* () {
         browser === "true",
         links === "true",
         forge === "true",
+        feedback as Contracts.AgentFeedbackMode,
       ),
     );
   }

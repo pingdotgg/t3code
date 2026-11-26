@@ -641,8 +641,11 @@ function SpreadsheetGrid(props: {
         });
     };
     const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && resizing) {
+      if (event.key === "Escape" && (resizing || event.repeat)) {
         event.preventDefault();
+        event.stopPropagation();
+        if (!resizing) return;
+        root.releasePointerCapture(resizing.pointerId);
         resizing = undefined;
         root.style.cursor = "";
         schedule();

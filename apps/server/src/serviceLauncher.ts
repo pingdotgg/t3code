@@ -8,6 +8,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
+import { RESTORE_OOMD_WATCH_SCRIPT } from "./cloud/userManagerOom.ts";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import { isNoCopyOnWrite, markNoCopyOnWrite } from "./noCopyOnWrite.ts";
 
 import type {
@@ -137,8 +139,10 @@ export interface ServiceUnit {
   readonly reload: () => Promise<void>;
 }
 
+const SCHTASKS = () => windowsSystem32Path(process.env, "schtasks.exe");
+
 const runSchtasks = (...args: ReadonlyArray<string>) =>
-  NodeUtil.promisify(NodeChildProcess.execFile)("schtasks", args, {
+  NodeUtil.promisify(NodeChildProcess.execFile)(SCHTASKS(), args, {
     windowsHide: true,
     timeout: 30_000,
   });
@@ -227,8 +231,8 @@ async function serviceUnitFromEnvironment(
     );
   return {
     path: NodePath.join(unitDir, unitName),
-    reload: () =>
-      new Promise((resolve, reject) => {
+    reload: async () => {
+      await new Promise<void>((resolve, reject) => {
         NodeChildProcess.spawn("systemctl", ["--user", "daemon-reload"], {
           stdio: "ignore",
           timeout: 30_000,
@@ -239,7 +243,16 @@ async function serviceUnitFromEnvironment(
               ? resolve()
               : reject(new Error(`systemctl --user daemon-reload exited with ${code ?? signal}`)),
           );
-      }),
+      });
+      await new Promise<void>((resolve) => {
+        NodeChildProcess.spawn("/bin/sh", ["-c", RESTORE_OOMD_WATCH_SCRIPT], {
+          stdio: "ignore",
+          timeout: 30_000,
+        })
+          .once("error", () => resolve())
+          .once("exit", () => resolve());
+      });
+    },
   };
 }
 
@@ -740,6 +753,73 @@ async function replaceFileDurably(filePath: string, contents: string | Uint8Arra
   }
 }
 
+async function readStateContents(statePath: string): Promise<string | undefined> {
+  return NodeFSP.readFile(statePath, "utf8").catch((cause: NodeJS.ErrnoException) => {
+    if (cause.code === "ENOENT") return undefined;
+    throw cause;
+  });
+}
+
+/** The runtime the service unit starts, else the newest complete one. */
+async function installedRuntimeVersion(
+  baseDir: string,
+  serviceUnit: ServiceUnit | undefined,
+): Promise<string | undefined> {
+  const unit =
+    serviceUnit &&
+    (await NodeFSP.readFile(serviceUnit.path)
+      .then(decodeServiceUnit)
+      .catch(() => undefined));
+  const unitVersion =
+    unit === undefined
+      ? undefined
+      : SERVICE_UNIT_PROGRAMS.map((program) => program.exec(unit)?.[2]).find(
+          (version) => version !== undefined,
+        );
+  if (
+    unitVersion !== undefined &&
+    isExactServiceVersion(unitVersion) &&
+    (await runtimeExists(baseDir, unitVersion))
+  ) {
+    return unitVersion;
+  }
+  const entries = await NodeFSP.readdir(NodePath.join(baseDir, "runtime", "versions")).catch(
+    () => [],
+  );
+  let newest: string | undefined;
+  for (const version of entries) {
+    if (
+      isExactServiceVersion(version) &&
+      (newest === undefined || compareExactServiceVersions(version, newest) > 0) &&
+      (await runtimeExists(baseDir, version))
+    ) {
+      newest = version;
+    }
+  }
+  return newest;
+}
+
+// Without the state file every start would fail; select the installed runtime again.
+async function recoverServiceState(
+  baseDir: string,
+  statePath: string,
+  serviceUnit: ServiceUnit | undefined,
+): Promise<string> {
+  const release = await acquireServiceSelectionLock(statePath);
+  try {
+    const written = await readStateContents(statePath);
+    if (written !== undefined) return written;
+    const activeVersion = await installedRuntimeVersion(baseDir, serviceUnit);
+    if (activeVersion === undefined) {
+      throw new Error("Service state is missing and no installed runtime was found.");
+    }
+    await writeServiceState(statePath, { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion });
+    return NodeFSP.readFile(statePath, "utf8");
+  } finally {
+    release();
+  }
+}
+
 async function runtimeExists(baseDir: string, version: string): Promise<boolean> {
   const paths = runtimePaths(baseDir, version);
   try {
@@ -884,7 +964,7 @@ export async function stateDirOwned(baseDir: string): Promise<boolean> {
   if (!Number.isFinite(recordedAt)) return true;
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
-  const { command, args, env } = legacyOwnerStartTimeCommand(pid, platform);
+  const { command, args, env } = legacyOwnerStartTimeCommand(pid, platform, process.env);
   const output = await new Promise<string | undefined>((resolve) =>
     NodeChildProcess.execFile(
       command,
@@ -1393,10 +1473,12 @@ export class Launcher {
     };
     await this.#selectState(next);
     child.role = "active";
-    await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
+    // The commit is already durable, so answer before the cleanup: the trial waits only
+    // 30 seconds for this reply, and dropping the backup can take longer than that.
     try {
       await sendMessage(child.process, { type: "committed", updateId: committed.id });
     } finally {
+      await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
       await this.#repointServiceUnit(committed.targetVersion);
     }
   }
@@ -1420,9 +1502,10 @@ export class Launcher {
         }
         const contents = decodeServiceUnit(await NodeFSP.readFile(unit.path));
         const installedBaseDir = serviceUnitBaseDirOf(contents);
+        const real = (dir: string) => NodeFSP.realpath(dir).catch(() => NodePath.resolve(dir));
         if (
           installedBaseDir === undefined ||
-          NodePath.resolve(installedBaseDir) !== NodePath.resolve(this.#baseDir)
+          (await real(installedBaseDir)) !== (await real(this.#baseDir))
         ) {
           return;
         }
@@ -1606,7 +1689,10 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     };
     const environment = await readServiceEnvironment(baseDir, managerEnvironment);
     const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
-    const contents = await NodeFSP.readFile(statePath, "utf8");
+    const serviceUnit = await serviceUnitFromEnvironment(managerEnvironment);
+    const contents =
+      (await readStateContents(statePath)) ??
+      (await recoverServiceState(baseDir, statePath, serviceUnit));
     let state = parseServiceState(contents);
     if (state === undefined) {
       state = adoptLegacyServiceState(contents);
@@ -1615,7 +1701,6 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
         throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);
       }
     }
-    const serviceUnit = await serviceUnitFromEnvironment(managerEnvironment);
     const logPath = await serviceLogPath(options, serviceUnit);
     if (logPath !== undefined) {
       await boundServiceLog(logPath);
@@ -1657,7 +1742,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     // lets the next repeating trigger start the service again.
     if (windows && options.serviceUnit !== undefined) {
       const taskName = serviceTaskName(process.env.USERDOMAIN ?? "", process.env.USERNAME ?? "");
-      NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", taskName], {
+      NodeChildProcess.spawnSync(SCHTASKS(), ["/End", "/TN", taskName], {
         stdio: "ignore",
         windowsHide: true,
       });

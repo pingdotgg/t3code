@@ -70,6 +70,8 @@ export interface GitHubRestInput {
   /** Revalidate cached answers; 304 returns successfully without spending quota. */
   readonly ifNoneMatch?: string;
   readonly maxResponseBytes?: number;
+  /** Use the status and headers for a success, but still read error bodies. */
+  readonly discardSuccessBody?: boolean;
   /** Defaults to 30 seconds; a whole pull request's patch may need longer. */
   readonly timeout?: Duration.Input;
   /** Overrides `SourceControlRateLimit.Interactive` for this one request. */
@@ -158,6 +160,7 @@ function classify(input: {
 /** @public */
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
+  const scopedClient = HttpClient.withScope(httpClient);
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
 
   const send = Effect.fn("GitHubRest.send")(function* (input: {
@@ -170,6 +173,7 @@ export const make = Effect.gen(function* () {
     readonly acceptNotModified: boolean;
     readonly followRedirect?: "unauthenticated" | undefined;
     readonly readBody?: GitHubRestInput["readBody"] | undefined;
+    readonly discardSuccessBody: boolean;
   }) {
     const host = normalizeHost(input.host);
     // Query strings can expose SHAs or branches in traces.
@@ -189,7 +193,7 @@ export const make = Effect.gen(function* () {
       },
       (headers) =>
         Effect.gen(function* () {
-          const execute = httpClient
+          const execute = (input.discardSuccessBody ? scopedClient : httpClient)
             .execute(input.request.pipe(HttpClientRequest.setHeaders(headers)))
             .pipe(
               // Client spans expose SHAs and branches through url.full/url.query.
@@ -199,13 +203,17 @@ export const make = Effect.gen(function* () {
           undefined
             ? execute
             : Effect.provideService(execute, FetchHttpClient.RequestInit, MANUAL_REDIRECT);
-          const collected = yield* readResponseBody(input, response).pipe(
-            Effect.catchIf(
-              (error) => error.reason._tag === "EmptyBodyError",
-              () => Effect.succeed<RestBody>({ text: "", truncated: false, invalidUtf8: false }),
-            ),
-          );
           const { status, headers: responseHeaders } = response;
+          const collected: RestBody =
+            input.discardSuccessBody && status >= 200 && status < 300
+              ? { text: "", truncated: false, invalidUtf8: false }
+              : yield* readResponseBody(input, response).pipe(
+                  Effect.catchIf(
+                    (error) => error.reason._tag === "EmptyBodyError",
+                    () =>
+                      Effect.succeed<RestBody>({ text: "", truncated: false, invalidUtf8: false }),
+                  ),
+                );
           const answer = {
             status,
             headers: responseHeaders,
@@ -220,6 +228,7 @@ export const make = Effect.gen(function* () {
             acceptRedirect: input.followRedirect !== undefined,
           });
         }).pipe(
+          Effect.scoped,
           Effect.mapError(
             (cause) =>
               new GitHubRequestPolicy.GitHubApiRequestError({
@@ -257,6 +266,7 @@ export const make = Effect.gen(function* () {
           acceptNotModified: input.ifNoneMatch !== undefined,
           followRedirect: input.followRedirect,
           readBody: input.readBody,
+          discardSuccessBody: input.discardSuccessBody === true,
         }),
       ),
       Effect.flatMap(

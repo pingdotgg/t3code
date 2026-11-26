@@ -71,6 +71,8 @@ export interface ComposerEditorProps {
   readonly readResetGeneration?: () => number;
   readonly onSelectionChange?: (selection: ComposerEditorSelection) => void;
   readonly onPasteImages?: (uris: ReadonlyArray<string>) => void;
+  /** iOS: change in pasted images still loading natively, +n on paste and -n once they settle. */
+  readonly onPasteImagesPending?: (delta: number) => void;
   readonly onContextPress?: (reference: {
     readonly source: string;
     readonly start: number;

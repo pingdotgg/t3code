@@ -7,6 +7,7 @@ import { expect, vi } from "vite-plus/test";
 import {
   AuthSessionId,
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   CloudSpeechError,
@@ -37,17 +38,18 @@ import { speechHttpApiLayer } from "./http.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
 
-const principal = (...scopes: AuthEnvironmentScope[]) =>
+const principalWith = (scopes: ReadonlySet<AuthEnvironmentScope>) =>
   Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
     effect.pipe(
       Effect.provideService(EnvironmentAuthenticatedPrincipal, {
         sessionId: decodeSessionId("voice-test"),
         subject: "test",
         method: "bearer-access-token",
-        scopes: new Set(scopes),
+        scopes,
       }),
     ),
   );
+const principal = (...scopes: AuthEnvironmentScope[]) => principalWith(new Set(scopes));
 
 const dependencies = Layer.mergeAll(
   Layer.mock(CloudSpeech.CloudSpeech)({}),
@@ -151,6 +153,10 @@ effectIt.effect(
     Effect.gen(function* () {
       let stored = false;
       const reference = { provider: "work", reference: "op://Work/Voice/key" };
+      const scopes = new Set<AuthEnvironmentScope>([
+        AuthOrchestrationOperateScope,
+        AuthSettingsWriteScope,
+      ]);
       const save = vi.fn();
       const transcribe = vi.fn();
       const cloud = Layer.mock(CloudSpeech.CloudSpeech)({
@@ -188,7 +194,7 @@ effectIt.effect(
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
+          Layer.provide(principalWith(scopes)),
           Layer.provide(
             Layer.mock(SpeechService.SpeechService)({
               models: () => Effect.succeed({ models: [linkedModel] }),
@@ -226,6 +232,14 @@ effectIt.effect(
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ key }),
         });
+      // A reference needs the scope that saving it through settings would.
+      const refused = yield* setReference(reference);
+      expect(refused.status).toBe(403);
+      expect(yield* Effect.promise(() => refused.json())).toMatchObject({
+        requiredPermission: AuthProvidersManageScope,
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      scopes.add(AuthProvidersManageScope);
       expect((yield* setReference(reference)).status).toBe(204);
       expect(save).toHaveBeenLastCalledWith("xai", reference);
       expect((yield* setReference(reference.reference)).status).toBe(400);

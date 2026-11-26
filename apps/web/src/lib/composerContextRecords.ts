@@ -273,7 +273,7 @@ export function previewAnnotationContextLabel(
     const previous = comment.charCodeAt(end - 1);
     const next = comment.charCodeAt(end);
     if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1;
-    return `${comment.slice(0, end)}…`;
+    return `${comment.slice(0, end).trimEnd()}…`;
   }
   const fallback = msg("Preview annotation");
   return annotation.pageTitle?.trim() || (resolve ? resolve(fallback) : decodeMsg(fallback));

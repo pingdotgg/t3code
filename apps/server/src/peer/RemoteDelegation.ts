@@ -42,15 +42,18 @@ import { requestIdentity } from "../mcp/requestIdentity.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
+  providerOptionDescriptors,
   resolveInteractionMode,
   resolveRuntimeMode,
   taskPrompt,
+  withoutAgentModePicks,
 } from "../mcp/delegatedTaskModes.ts";
 import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
@@ -154,6 +157,7 @@ const make = Effect.gen(function* () {
   const followRetry = yield* FollowRetrySchedule;
   const forwarding = yield* PeerForwarding.PeerForwarding;
   const links = yield* PeerLinks.PeerLinks;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectService.ProjectService;
@@ -356,11 +360,29 @@ const make = Effect.gen(function* () {
         message: "Pass target.model from orchestrator_capabilities with this environmentId.",
       });
     }
+    const inheritedOptions =
+      instanceId === inherited.instanceId && model === inherited.model
+        ? inherited.options
+        : undefined;
+    // Only full access may pick an agent's own mode there, and the other side cannot see
+    // that this thread already runs in one. Below that the task starts in the agent's default.
     const options =
       target.options ??
-      (instanceId === inherited.instanceId && model === inherited.model
-        ? inherited.options
-        : undefined);
+      (inheritedOptions === undefined ||
+      (parent.thread.runtimeMode === "full-access" &&
+        (yield* links.get(target.environmentId).pipe(
+          Effect.map((link) => Option.getOrUndefined(link)?.access === "full-access"),
+          Effect.orElseSucceed(() => false),
+        )))
+        ? inheritedOptions
+        : withoutAgentModePicks(
+            inheritedOptions,
+            providerOptionDescriptors(
+              (yield* providerRegistry.getProviders).find(
+                (provider) => provider.instanceId === instanceId,
+              ),
+            ),
+          ));
     const projectId = yield* resolveRemoteProject(
       scope,
       target.environmentId,
@@ -573,8 +595,10 @@ const make = Effect.gen(function* () {
   ) {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
-    // Linked peers read newest first without a cursor; this scan runs forward.
-    let afterPosition = -1;
+    // Linked peers read newest first without a cursor, so this scan runs forward. It starts
+    // after position 0, the message that started the thread, which no run's reply can precede;
+    // older peers refuse -1.
+    let afterPosition = 0;
     let run: OrchestratorMcpThreadRun | undefined;
     let remainingItems = 0;
     let tailProbed = false;

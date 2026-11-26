@@ -17,6 +17,10 @@
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
+    "evals": {
+      // The grader loads these answers by path, as the server loads a definitions file.
+      "entry": ["workflow-authoring/fixtures/*.ts"],
+    },
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
       // worktree setup (from t3.json) run directly. release-desktop.yml bundles the
@@ -54,6 +58,7 @@
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
         "src/project/knowledge/codeIntelligenceWorkerThread.ts!",
+        "src/process-launcher.ts!",
         "scripts/cli.ts",
         "scripts/fetch-expo-schema.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
@@ -73,7 +78,6 @@
       "ignoreDependencies": [
         "@effect/platform-node-shared",
         "@t3tools/web",
-        "@napi-rs/keyring",
         "ffi-rs",
         "transcribe-cpp",
       ],
@@ -82,6 +86,7 @@
       // Electron loads these bundles by filename rather than importing them.
       "entry": [
         "gnome-extension/extension.js!",
+        "src/backend/DesktopBackendRecoveryWorker.ts!",
         "src/electron/WindowsForegroundFocusWorker.ts!",
         "src/snapShot/GlobalShiftShortcutWorker.ts!",
         "src/snapShot/RegionSnapShotWorker.ts!",

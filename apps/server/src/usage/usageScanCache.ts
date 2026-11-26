@@ -44,8 +44,8 @@ export interface CachedFile {
   readonly records: readonly UsageRecord[];
   /** Unterminated tail records stay separate because incremental parsing rereads them. */
   readonly tailRecords: readonly UsageRecord[];
-  /** Whole-file count, including diagnostics from the tentative tail. */
-  readonly malformedRecords: number;
+  /** Whole-file timestamps, including diagnostics from the tentative tail. */
+  readonly malformedRecords: readonly number[];
   readonly position: TranscriptParsePosition;
 }
 
@@ -75,6 +75,7 @@ interface SerializedFile {
   readonly r: readonly SerializedRecord[];
   readonly t: readonly SerializedRecord[];
   readonly mr: number;
+  readonly mt?: readonly number[];
   readonly o: number;
   readonly gl: number;
   readonly gh: number;
@@ -136,7 +137,8 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     p: entry.provider,
     r: entry.records.map(serializeRecord),
     t: entry.tailRecords.map(serializeRecord),
-    mr: entry.malformedRecords,
+    mr: entry.malformedRecords.length,
+    ...(entry.malformedRecords.length === 0 ? {} : { mt: entry.malformedRecords }),
     o: entry.position.resumeOffset,
     gl: entry.position.guardLength,
     gh: entry.position.guardHash,
@@ -288,8 +290,18 @@ export function decodeScanCache(
     const format = formats.get(entry.p);
     if (format === undefined) continue;
     if (!isRecordArray(entry.r) || !isRecordArray(entry.t)) continue;
-    const malformedRecords = entry.mr === undefined ? 0 : entry.mr;
-    if (!Number.isSafeInteger(malformedRecords) || malformedRecords < 0) continue;
+    const malformedCount = entry.mr === undefined ? 0 : entry.mr;
+    if (!Number.isSafeInteger(malformedCount) || malformedCount < 0) continue;
+    const malformedRecords = entry.mt ?? (malformedCount === 0 ? [] : undefined);
+    if (
+      malformedRecords !== undefined &&
+      (!Array.isArray(malformedRecords) ||
+        malformedRecords.length !== malformedCount ||
+        !malformedRecords.every(Number.isFinite))
+    )
+      continue;
+    // A count saved without dates cannot be limited to a window, so the file re-parses whole.
+    const undated = malformedRecords === undefined;
     // Position fields feed byte offsets and a Buffer allocation in the reader,
     // so anything outside their real ranges must reject the entry: a bogus
     // guard length would otherwise fail every parse of the file, silently
@@ -317,14 +329,14 @@ export function decodeScanCache(
       (entry.p === "grok" && version < 17) ||
       (format.state !== undefined &&
         (version < 6 ||
-          (entry.p === "codex" && (version < 14 || (version < 15 && malformedRecords > 0)))));
+          (entry.p === "codex" && (version < 14 || (version < 15 && malformedCount > 0)))));
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
     // Before v16 a Codex baseline can lack the time of its latest move, or carry an older one,
     // and that time keeps a re-emitted older snapshot from billing twice. A grown file re-parses
     // whole instead of resuming.
-    const resumable = !legacy && !(entry.p === "codex" && version < 16);
+    const resumable = !legacy && !undated && !(entry.p === "codex" && version < 16);
 
     const provider = entry.p;
     const records = decodeRecords(entry.r, provider);
@@ -332,12 +344,12 @@ export function decodeScanCache(
     if (records === null || tailRecords === null) continue;
 
     cache.set(path, {
-      size: legacy ? -1 : entry.s,
+      size: legacy || undated ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      malformedRecords,
+      malformedRecords: malformedRecords ?? [],
       position: resumable
         ? {
             resumeOffset: entry.o,

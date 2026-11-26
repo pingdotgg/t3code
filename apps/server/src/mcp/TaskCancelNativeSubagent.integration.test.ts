@@ -380,7 +380,7 @@ const cancelBackgroundOnlyTask = (
           (event) =>
             event.type === "run.updated" &&
             event.payload.id === child.turn.runId &&
-            event.payload.status === "waiting",
+            event.payload.status === "completed",
         );
         const nativeSubagentEvents = [
           {
@@ -562,7 +562,8 @@ const cancelBackgroundOnlyTask = (
         }
         const before = yield* service.taskStatus(scope, task.id);
         assert.equal(before.status, "running");
-        assert.equal(before.workState, turnSettled ? "waiting_for_children" : "working");
+        // The child's run completes when its turn ends, before its checkpoint capture runs.
+        assert.equal(before.workState, cancelAt === "turn" ? "working" : "waiting_for_children");
 
         const parentTask = Effect.map(orchestrator.getThreadProjection(parentThreadId), (parent) =>
           parent.subagents.find((entry) => entry.id === task.id),
@@ -594,7 +595,8 @@ const cancelBackgroundOnlyTask = (
                 event.payload.type === "run_interrupt_request",
             ),
           );
-          assert.equal((yield* parentTask)?.status, "running");
+          // The child's turn already ended, so the cancel settles its finished run in this commit.
+          assert.equal((yield* parentTask)?.status, "interrupted");
           return { scope, taskId: task.id, settled: undefined };
         }
         if (cancelAt === "refused") {
@@ -653,7 +655,11 @@ const cancelBackgroundOnlyTask = (
         // Stop reached the provider turn that owns the shell.
         if (background === "command") assert.deepEqual(interrupted, [["bg-sleep"]]);
         assert.equal(childAfter.runs.length, cancelAt === "monitor" || cancelAt === "turn" ? 2 : 1);
-        assert.equal(childAfter.runs[0]!.status, "completed");
+        // A Stop accepted before the run's checkpoint settled it ends that run as interrupted.
+        assert.equal(
+          childAfter.runs.find((run) => run.id === child.turn.runId)?.status,
+          cancelAt === "checkpoint" || cancelAt === "turn" ? "interrupted" : "completed",
+        );
         assert.deepEqual(
           childAfter.runtimeRequests.map((request) => [request.id, request.status]),
           [

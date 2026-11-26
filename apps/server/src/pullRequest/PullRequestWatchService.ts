@@ -14,7 +14,6 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import {
   type PullRequestTarget,
@@ -82,7 +81,6 @@ export class PullRequestWatchService extends Context.Service<
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
-  const projects = yield* ProjectService.ProjectService;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const random = yield* SecureRandom.SecureRandom;
 
@@ -107,12 +105,9 @@ const make = Effect.gen(function* () {
   }) {
     const { watching } = input;
     const thread = yield* requireThread(input.threadId);
-    const project = yield* projects
-      .listShells({ projectIds: [thread.projectId], resolveRepositoryIdentity: true })
-      .pipe(
-        Effect.map((shells) => shells.find((project) => project.id === thread.projectId)),
-        Effect.mapError((cause) => new PullRequestWatchFailedError({ cause })),
-      );
+    const project = yield* pullRequests
+      .addressedProject(thread.projectId)
+      .pipe(Effect.mapError((cause) => new PullRequestWatchFailedError({ cause })));
     const target = yield* resolvePullRequestTarget(input.target, project);
     const watchedLink = (shell: OrchestrationV2ThreadShell) =>
       threadPullRequestsOf(shell).find(

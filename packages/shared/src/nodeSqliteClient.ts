@@ -286,6 +286,8 @@ parentPort.on("message", (request) => {
       if (pendingBatch) Atomics.wait(received, 0, 0);
       parentPort.postMessage({ id, rows });
     } else {
+      // A discarded result is read as BigInt: see the same line in the in-process client.
+      if (!raw) statement.setReadBigInts(true);
       const rows = raw ? statement.run(...params) : statement.all(...params);
       parentPort.postMessage({ id, rows });
     }
@@ -883,6 +885,10 @@ const make = Effect.fn("makeWithDatabase")(function* (
             if (arrays) statement.setReturnArrays(true);
             result = Exit.succeed(statement.all(...(params as any)));
           } else {
+            // `run` reports the connection's last insert rowid even for BEGIN. One above 2^53
+            // throws on conversion after the statement already took effect, so a discarded
+            // result is read as BigInt.
+            if (mode !== "raw") statement.setReadBigInts(true);
             result = Exit.succeed(
               mode === "raw"
                 ? (statement.run(...(params as any)) as unknown as ReadonlyArray<unknown>)

@@ -188,6 +188,28 @@ describe("ComposerContextRecord", () => {
       }).records,
     ).toEqual([{ ...knownRecords.skill, contextId: "ctx_skill" }]);
   });
+
+  it("preserves leading and trailing whitespace in review comment and mention paths", () => {
+    const encodeContext = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext));
+    const records = [
+      {
+        ...knownRecords["review-comment"],
+        contextId: "ctx_1",
+        sectionId: "file:trailing.txt ",
+        filePath: " leading.txt",
+      },
+      { ...knownRecords.mention, contextId: "ctx_2", path: "trailing.txt " },
+    ];
+
+    const decoded = decodeContext({ version: 1, records });
+
+    expect(decoded.records).toEqual(records);
+    expect(decodeContext(encodeContext(decoded)).records).toEqual(records);
+    expect(Option.isNone(decodeRecord({ ...knownRecords["review-comment"], filePath: "" }))).toBe(
+      true,
+    );
+    expect(Option.isNone(decodeRecord({ ...knownRecords.mention, path: "" }))).toBe(true);
+  });
 });
 
 describe("OrchestrationMessageContext", () => {

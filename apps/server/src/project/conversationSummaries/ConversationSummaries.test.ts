@@ -2927,6 +2927,7 @@ it.effect("does not admit later ancestor history through a portable fork handoff
       projections,
       source,
       throughRun,
+      source.thread,
     );
     assert.isFalse(sourceItems.some((entry) => entry.id === itemId(1)));
     const covered = ContextHandoffService.visibleDeltaRunOrdinals(source, sourceItems);

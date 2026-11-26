@@ -1,4 +1,8 @@
-import type { AssetResource, OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type {
+  AssetResource,
+  OrchestrationV2FileSearchResult,
+  OrchestrationV2TurnItem,
+} from "@t3tools/contracts";
 import { commandItemOutput } from "@t3tools/shared/commandOutput";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import {
@@ -205,6 +209,40 @@ function dynamicToolOutputText(
   return formatToolValue(isRecord(result) ? mcpToolResultOutput(result) : result, false, []);
 }
 
+export interface FileSearchResultGroup {
+  readonly fileName: string;
+  readonly results: ReadonlyArray<OrchestrationV2FileSearchResult>;
+}
+
+/** Results under one heading per file, in first-seen order, the way `rg --heading` prints them. */
+export function groupFileSearchResults(
+  results: ReadonlyArray<OrchestrationV2FileSearchResult>,
+): ReadonlyArray<FileSearchResultGroup> {
+  const groups = new Map<string, OrchestrationV2FileSearchResult[]>();
+  for (const result of results) {
+    const group = groups.get(result.fileName);
+    if (group) group.push(result);
+    else groups.set(result.fileName, [result]);
+  }
+  return Array.from(groups, ([fileName, grouped]) => ({ fileName, results: grouped }));
+}
+
+function fileSearchResultsText(results: ReadonlyArray<OrchestrationV2FileSearchResult>): string {
+  const groups = groupFileSearchResults(results).map((group) => [
+    group.fileName,
+    ...group.results.flatMap((result) => {
+      const preview = result.preview?.trimEnd() ?? "";
+      if (result.line === undefined) return preview.trim() ? [preview] : [];
+      const position = `${result.line}${result.column === undefined ? "" : `:${result.column}`}`;
+      return [`${position}: ${preview}`.trimEnd()];
+    }),
+  ]);
+  // A plain file list stays one path per line; files with matches get a blank line between them.
+  return groups.every((lines) => lines.length === 1)
+    ? groups.map(([fileName]) => fileName).join("\n")
+    : groups.map((lines) => lines.join("\n")).join("\n\n");
+}
+
 export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "command_execution": {
@@ -214,18 +252,7 @@ export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null
     case "dynamic_tool":
       return item.outputOmitted === true ? null : dynamicToolOutputText(item);
     case "file_search":
-      return item.results?.length
-        ? item.results
-            .map((result) =>
-              [
-                `${result.fileName}${result.line === undefined ? "" : `:${result.line}`}`,
-                result.preview?.trim(),
-              ]
-                .filter(Boolean)
-                .join("\n"),
-            )
-            .join("\n")
-        : null;
+      return item.results?.length ? fileSearchResultsText(item.results) : null;
     case "web_search":
       return item.results?.length
         ? item.results

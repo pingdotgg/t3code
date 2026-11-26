@@ -51,9 +51,12 @@ import {
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
+  ProviderDriverKind,
   type ScheduledTaskListResult,
+  WorkflowRequestError,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -79,6 +82,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   CLIENT_CAPABILITIES_QUERY_PARAM,
+  HTTP_USAGE_LIMIT_SOURCES_CAPABILITY,
   SETTINGS_SECRET_REFERENCES_CAPABILITY,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2DispatchCommandError,
@@ -154,7 +158,10 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as Workflows from "./workflows/Workflows.ts";
+import * as WorkflowRuntime from "./workflows/WorkflowRuntime.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as FeedbackStore from "./feedback/FeedbackStore.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
   bufferShellLiveStream,
@@ -215,9 +222,11 @@ import * as ProviderAccountTransfer from "./provider/ProviderAccountTransfer.ts"
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
+import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as ManagedProviders from "./policy/managedProviders.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
@@ -241,6 +250,7 @@ import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/Atta
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
+import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -982,7 +992,10 @@ function hasCompatibleOrchestrationProtocol(url: URL): boolean {
 
 function readSettingsClient(url: URL) {
   const capabilities = url.searchParams.get(CLIENT_CAPABILITIES_QUERY_PARAM)?.split(",") ?? [];
-  return { secretReferences: capabilities.includes(SETTINGS_SECRET_REFERENCES_CAPABILITY) };
+  return {
+    secretReferences: capabilities.includes(SETTINGS_SECRET_REFERENCES_CAPABILITY),
+    httpUsageLimitSources: capabilities.includes(HTTP_USAGE_LIMIT_SOURCES_CAPABILITY),
+  };
 }
 
 function shouldUseBoundedThreadSnapshot(input: {
@@ -1298,7 +1311,11 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       ) {
         return yield* snapshotThenLive();
       }
-      const replay = coalesceLiveUpdatedEvents(replayed);
+      // A deleted thread reads as gone: its replay starts at the deletion.
+      const deletion = replayed.findLastIndex((item) => item.event.type === "thread.deleted");
+      const replay = coalesceLiveUpdatedEvents(
+        deletion === -1 ? replayed : replayed.slice(deletion),
+      );
       const plan = decideThreadResume({
         afterSequence: input.afterSequence,
         highWater,
@@ -1615,7 +1632,7 @@ export const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
-  settingsClient: { readonly secretReferences: boolean },
+  settingsClient: ServerSettings.SettingsClient,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -1666,7 +1683,13 @@ export const layerWsRpc = (
       const threadViewers = yield* ThreadViewers.ThreadViewers;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const workflows = yield* Workflows.Workflows;
+      const workflowDefinitions = yield* WorkflowRuntime.WorkflowDefinitions;
+      // The service's messages are built from its own attributes, so they are safe to send.
+      const toWorkflowRequestError = (error: Workflows.WorkflowError) =>
+        new WorkflowRequestError({ message: error.message });
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const feedbackStore = yield* FeedbackStore.FeedbackStore;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const issues = yield* IssueService.IssueService;
@@ -1743,6 +1766,7 @@ export const layerWsRpc = (
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const pstack = yield* PstackPack.PstackPack;
+      const hostEnvironment = yield* HostProcess.Environment;
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
@@ -1752,6 +1776,8 @@ export const layerWsRpc = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
       const taskFolders = yield* TaskFolders.TaskFolders;
+      const layoutCommandApprovalWrites =
+        yield* LayoutCommandApprovalWrites.LayoutCommandApprovalWrites;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -1798,6 +1824,13 @@ export const layerWsRpc = (
               ...result,
               tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
             };
+      // A project's layout command is its owner's code: only a session that may already run
+      // commands on the host has it run from a worktree request.
+      const projectCommands: TaskFolders.ProjectCommands =
+        currentSession.scopes.includes(AuthOrchestrationOperateScope) ||
+        currentSession.scopes.includes(AuthTerminalOperateScope)
+          ? "permitted"
+          : "request-not-permitted";
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
@@ -1811,6 +1844,14 @@ export const layerWsRpc = (
       ) {
         const project = yield* acpRegistrySessions.project(input.projectId);
         const { instance, manager } = yield* acpRegistrySessions.sessionManager(input.instanceId);
+        // Only a probed agent advertises listing, so a read never installs or first-starts one.
+        const snapshot = yield* instance.snapshot.getSnapshot;
+        if (snapshot.nativeSessions?.canList !== true) {
+          return yield* new AcpRegistryOperationError({
+            reason: "session_list_unsupported",
+            message: "The ACP agent does not advertise session listing.",
+          });
+        }
         const listed = yield* manager.listSessions({
           cwd: project.workspaceRoot,
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
@@ -2087,6 +2128,10 @@ export const layerWsRpc = (
                 }
               : {}),
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
+            relayTracingAllowed: RelayTracing.allowedFor(
+              hostEnvironment,
+              serverSettings.managedPolicy,
+            ),
           },
           settings,
           ...(serverSettings.managedPolicy === undefined
@@ -2544,6 +2589,44 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
+        [WS_METHODS.workflowsSubscribe]: (input) =>
+          input.changes === true ? workflows.watch : Workflows.wholeLists(workflows.watch),
+        [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
+        [WS_METHODS.workflowsGet]: (input) =>
+          workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsAbout]: (input) =>
+          workflows.about(input).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsAnswer]: (input) =>
+          serverAuth.listClientSessions(currentSessionId).pipe(
+            Effect.map((sessions) =>
+              EnvironmentAuth.clientSessionLabel(
+                sessions.find((session) => session.current)?.client,
+              ),
+            ),
+            Effect.orElseSucceed(() => EnvironmentAuth.clientSessionLabel(undefined)),
+            // The label names it to others; the session tells its own client the answer is its own.
+            Effect.map((label) => ({ label, sessionId: currentSessionId })),
+            Effect.flatMap((answeredBy) =>
+              workflows.answer(
+                input.runId,
+                input.name,
+                {
+                  choice: input.choice,
+                  ...(input.reason === undefined ? {} : { reason: input.reason }),
+                },
+                answeredBy,
+              ),
+            ),
+            Effect.mapError(toWorkflowRequestError),
+          ),
+        [WS_METHODS.workflowsResume]: (input) =>
+          workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsCancel]: (input) =>
+          workflows.cancel(input.runId, input.reason).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsGetDefinition]: (_input) => workflowDefinitions.read,
+        [WS_METHODS.workflowsSaveDefinition]: (input) =>
+          workflowDefinitions.save(input.name, input.source),
+        [WS_METHODS.workflowsDeleteDefinition]: (input) => workflowDefinitions.remove(input.name),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
@@ -2571,6 +2654,7 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),
           ),
+        [WS_METHODS.agentFeedbackAnswerRequest]: (input) => feedbackStore.answer(input),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.listWebhookDeliveries(input)),
@@ -2579,7 +2663,8 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
-        [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
+        [WS_METHODS.serverProbe]: (_input) =>
+          Effect.map(DateTime.now, (now) => ({ serverTime: DateTime.formatIso(now) })),
         [WS_METHODS.serverGetConfig]: (_input) =>
           loadServerConfig({
             usageLimitsCommand: false,
@@ -2593,9 +2678,19 @@ export const layerWsRpc = (
         [WS_METHODS.serverPrepareAcpRegistryAgent]: (input) =>
           Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
             Effect.andThen(
-              acpRegistryCatalog
-                .prepare(input)
-                .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
+              Effect.suspend(() => {
+                const blocked = ManagedProviders.disallowedDriverReason(
+                  serverSettings.managedPolicy,
+                  ProviderDriverKind.make("acpRegistry"),
+                );
+                return blocked === undefined
+                  ? acpRegistryCatalog
+                      .prepare(input)
+                      .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError))
+                  : Effect.fail(
+                      new AcpRegistryOperationError({ reason: "install_failed", message: blocked }),
+                    );
+              }),
             ),
           ),
         [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: (input) =>
@@ -2785,6 +2880,14 @@ export const layerWsRpc = (
                 }),
             };
           }),
+        [WS_METHODS.serverGetProviderRuntimeModeLimits]: Effect.fnUntraced(function* (input) {
+          return {
+            limits: yield* providerRegistry.runtimeModeLimits({
+              instanceId: input.instanceId,
+              scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
+            }),
+          };
+        }),
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),
@@ -3302,6 +3405,16 @@ export const layerWsRpc = (
         [WS_METHODS.workspaceTaskFolder]: (input) =>
           taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
         [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
+        [WS_METHODS.workspaceLayoutCommands]: (input) =>
+          taskFolders.layoutCommands(input.projectId),
+        // The one place an approval is recorded: a person's client session, behind the scope.
+        [WS_METHODS.workspaceApproveLayoutCommands]: (input) =>
+          Effect.forEach(
+            input.approvals,
+            (approval) =>
+              layoutCommandApprovalWrites.set({ projectId: input.projectId, ...approval }),
+            { discard: true },
+          ).pipe(Effect.andThen(taskFolders.layoutCommands(input.projectId))),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
@@ -3469,7 +3582,7 @@ export const layerWsRpc = (
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           // A project that tracks repositories gets a task folder, as its new worktree threads do.
-          taskFolders.createForProjectFolder(input).pipe(
+          taskFolders.createForProjectFolder(input, { projectCommands }).pipe(
             Effect.mapError(
               (cause) =>
                 new GitCommandError({
@@ -3487,28 +3600,30 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           // A thread's worktree may be a task folder: its repositories' worktrees go with it.
-          taskFolders.removeIfTaskFolder({ path: input.path, force: input.force === true }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitCommandError({
-                  operation: "TaskFolders.remove",
-                  command: "git worktree remove",
-                  cwd: input.cwd,
-                  detail: cause.detail,
-                }),
+          taskFolders
+            .removeIfTaskFolder({ path: input.path, force: input.force === true, projectCommands })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitCommandError({
+                    operation: "TaskFolders.remove",
+                    command: "git worktree remove",
+                    cwd: input.cwd,
+                    detail: cause.detail,
+                  }),
+              ),
+              Effect.flatMap((removed) =>
+                removed ? Effect.void : gitWorkflow.removeWorktree(input),
+              ),
+              // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
+              // second refresh would queue behind this one and reread an unchanged repository.
+              // Subscribers of the removed checkout learn it is no longer a repository.
+              Effect.tap(() =>
+                vcsStatusBroadcaster
+                  .refreshLocalStatus(input.path)
+                  .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
+              ),
             ),
-            Effect.flatMap((removed) =>
-              removed ? Effect.void : gitWorkflow.removeWorktree(input),
-            ),
-            // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
-            // second refresh would queue behind this one and reread an unchanged repository.
-            // Subscribers of the removed checkout learn it is no longer a repository.
-            Effect.tap(() =>
-              vcsStatusBroadcaster
-                .refreshLocalStatus(input.path)
-                .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
-            ),
-          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           (input.switchRef
             ? assertCheckoutIdle("GitWorkflowService.createRef", input.cwd)
@@ -3917,6 +4032,7 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
     const npmRelease = yield* NpmRelease.NpmRelease;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const issues = yield* IssueService.IssueService;
@@ -4009,7 +4125,13 @@ export const layer = Layer.unwrap(
               Layer.provide(DefectReporter.layer),
               Layer.provide(AcpRegistrySessions.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
-              Layer.provide(ProviderMaintenanceRunner.layer),
+              // Installs outlive the connection that started them and lock across clients.
+              Layer.provide(
+                Layer.succeed(
+                  ProviderMaintenanceRunner.ProviderMaintenanceRunner,
+                  providerMaintenanceRunner,
+                ),
+              ),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.

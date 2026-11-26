@@ -130,6 +130,29 @@ describe("environmentToken", () => {
 });
 
 describe("GitHubRest", () => {
+  it.effect("acknowledges workflow approval without waiting for an unused body", () => {
+    const { layer } = harness(
+      () =>
+        new Response(
+          new ReadableStream({
+            start: (controller) => controller.error(new Error("Response body interrupted")),
+          }),
+          { status: 201 },
+        ),
+    );
+    return Effect.gen(function* () {
+      const api = yield* GitHubRest.GitHubRest;
+      const response = yield* api.rest({
+        host: "github.com",
+        operation: "approveWorkflowRun",
+        method: "POST",
+        path: "repos/acme/web/actions/runs/10/approve",
+        discardSuccessBody: true,
+      });
+      expect(response).toMatchObject({ status: 201, body: "" });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("routes REST and GraphQL through gh's plain HTTP Unix socket", () =>
     Effect.gen(function* () {
       const directory = yield* Effect.acquireRelease(

@@ -11,6 +11,7 @@ import type {
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { msg, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
@@ -240,7 +241,7 @@ const CommandRow = memo(function CommandRow(props: {
         {props.isSlashSkill && props.item.type === "skill" ? (
           <>
             <Text className="text-foreground-muted">skill:</Text>
-            {props.item.skill.name}
+            {formatProviderSkillDisplayName(props.item.skill)}
           </>
         ) : (
           props.item.label

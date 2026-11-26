@@ -1,16 +1,15 @@
 # Context in portable handoffs
 
-T3 Code transfers conversation context when you switch providers, continue through a portable
-restart, or use a fork that the provider cannot resume itself.
+When you switch providers mid-thread, continue after a portable restart, or fork a thread the provider cannot resume natively, T3 Code transfers a budgeted selection of conversation history to the new provider session.
 
-Short conversations transfer intact. For longer conversations, T3 Code favors recent requests and
-answers, the original request, and relevant activity such as command outcomes. Selected messages
-keep their full text, order, and user or assistant role, including partial work from failed or
-interrupted turns. Your new request stays separate and is never shortened to make history fit.
+## What transfers
 
-Codex receives historical messages directly when its installed version supports that operation.
-Other providers receive the same selection as attributed conversation context. A handoff does not
-copy the outgoing provider's reasoning, tool-call state, or attachments.
+- Short conversations transfer intact.
+- Longer conversations prioritize the original request, recent user/assistant turns (including partial work from interrupted turns), and key activity like command outcomes.
+- Your new prompt is never shortened to make history fit.
+- Codex receives historical messages directly when supported; other providers receive attributed conversation context.
+- Reasoning traces, raw tool-call state, and attachments are not copied.
+- Omitted history is referenced so the agent can retrieve saved messages on demand using T3 Code's thread-reading tool. Still, repeat any critical constraint in your next message if you want to be sure.
 
 Project knowledge referenced in an earlier message travels with that message exactly as it was
 sent, even if the fact has since been edited. Forgotten facts are removed, and excerpts whose
@@ -85,7 +84,7 @@ restart returns to the earlier provider conversation.
 
 Other providers are not affected. Claude keeps its own [idle compaction](./providers-claude.md#compact-long-conversations).
 
-## Context limits
+If the target session doesn't have enough context room, T3 Code automatically starts a fresh provider session with a bounded history selection and sends your request—no manual `/compact` needed. If your request and attachments alone exceed the model's window, shorten the message or choose a larger-context model.
 
 A handoff must leave room for existing provider context, your request and attachments, instructions,
 tools, and subsequent work. If the target conversation has no room for the handoff, T3 Code starts

@@ -100,4 +100,14 @@ it("acts at an administrator's ceiling for a client approved above it", () => {
   ).toEqual({ runtimeMode: "approval-required", interactionMode: "plan" });
   expect(modes(scope("auto-accept-edits"), "auto").runtimeMode).toBe("auto-accept-edits");
   expect(modes(scope("full-access")).runtimeMode).toBe("full-access");
+  // The scope says what the ceiling is, for a thread caller too.
+  expect(
+    McpInvocationContext.withRuntimeModeCeiling(scope("full-access"), "auto").runtimeModeCeiling,
+  ).toBe("auto");
+  expect(
+    McpInvocationContext.withRuntimeModeCeiling(
+      { ...scope("full-access"), client: undefined },
+      "auto",
+    ).runtimeModeCeiling,
+  ).toBe("auto");
 });

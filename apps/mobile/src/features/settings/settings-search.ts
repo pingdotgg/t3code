@@ -194,6 +194,7 @@ const SETTINGS_SEARCH_TERMS = {
     msg("work log", { $context: "settings search keyword" }),
     msg("zen", { $context: "settings search keyword" }),
     msg("final answers only", { $context: "settings search keyword" }),
+    msg("agent feedback", { $context: "settings search keyword" }),
   ],
   SettingsEnvironmentMaintenance: [
     msg("updates", { $context: "settings search keyword" }),

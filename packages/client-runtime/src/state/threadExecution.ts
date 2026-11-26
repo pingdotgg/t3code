@@ -12,6 +12,8 @@ import {
   latestProviderTurnForAttempt,
   PROVIDER_DISPLAY_NAMES,
   type ModelSelection,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
@@ -113,28 +115,97 @@ function latestMatchingRun(
   );
 }
 
-function providerStarting(
-  projection: ThreadStructure,
-  run: OrchestrationV2ThreadProjection["runs"][number],
-): Pick<ThreadRunSummary, "providerStartingLabel" | "providerStartingLabelMsg"> {
-  const driver = projection.providerSessions.findLast(
-    (session) => session.providerInstanceId === run.providerInstanceId,
-  )?.driver;
-  const name = driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[driver];
+// Phases a provider can report while it prepares a turn; an unknown one keeps the plain label.
+function providerStartingPhase(phase: string | undefined, provider: string) {
+  switch (phase) {
+    case "plugins":
+      return msg("Loading {provider} plugins", { provider });
+    case "mcp":
+      return msg("Starting {provider} MCP servers", { provider });
+    case "hooks":
+      return msg("Loading {provider} hooks", { provider });
+    case "skills":
+      return msg("Loading {provider} rules and skills", { provider });
+    case "resume":
+      return msg("Resuming {provider} session", { provider });
+    case "connecting":
+      return msg("Connecting to {provider}", { provider });
+    default:
+      return msg("Starting {provider}", { provider });
+  }
+}
+
+/** The instances a client knows, so a run names its provider before the provider session exists. */
+export type ProviderDrivers = ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>;
+
+/** A provider that has not produced output yet: its logo, and the step it reports. */
+export function presentProviderStarting(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind | undefined;
+  readonly phase?: string | undefined;
+}): Pick<
+  ThreadRunSummary,
+  "providerStartingLabel" | "providerStartingLabelMsg" | "providerStarting"
+> {
+  const name = input.driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[input.driver];
   const label =
     name === undefined
       ? msg("Starting", { $context: "a provider is launching" })
-      : msg("Starting {provider}", { provider: name });
-  return { providerStartingLabel: markedTextEnglish([label]), providerStartingLabelMsg: label };
+      : providerStartingPhase(input.phase, name);
+  return {
+    providerStartingLabel: markedTextEnglish([label]),
+    providerStartingLabelMsg: label,
+    ...(input.driver === undefined
+      ? {}
+      : { providerStarting: { instanceId: input.instanceId, driver: input.driver } }),
+  };
+}
+
+// A session shared by several threads names the one thread its phase describes.
+function startupPhaseFor(
+  projection: ThreadStructure,
+  session: OrchestrationV2ProviderSession | undefined,
+) {
+  return session?.startupPhaseThreadId === undefined ||
+    session.startupPhaseThreadId === projection.thread.id
+    ? session?.startupPhase
+    : undefined;
+}
+
+function providerStarting(
+  run: OrchestrationV2ThreadProjection["runs"][number],
+  session: OrchestrationV2ProviderSession | undefined,
+  phase: string | undefined,
+  providers: ProviderDrivers | undefined,
+) {
+  return presentProviderStarting({
+    instanceId: run.providerInstanceId,
+    driver:
+      session?.driver ??
+      providers?.find((provider) => provider.instanceId === run.providerInstanceId)?.driver,
+    phase,
+  });
+}
+
+// A phase only describes a run that has not answered yet.
+function runHasProviderOutput(projection: ThreadStructure, runId: RunId) {
+  return projection.turnItems.some(
+    (item) => item.runId === runId && item.providerTurnId !== null && item.type !== "user_message",
+  );
 }
 
 function summarizeThreadRun(
   projection: ThreadStructure,
   run: OrchestrationV2ThreadProjection["runs"][number],
+  providers?: ProviderDrivers,
 ): ThreadRunSummary {
   const turnStatus = ACTIVITY_RUN_STATUSES.has(run.status)
     ? latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId)?.status
     : undefined;
+  const session = projection.providerSessions.findLast(
+    (candidate) => candidate.providerInstanceId === run.providerInstanceId,
+  );
+  const phase = startupPhaseFor(projection, session);
   return {
     runId: run.id,
     status: run.status,
@@ -146,13 +217,16 @@ function summarizeThreadRun(
         (message) => message.runId === run.id && message.role === "assistant",
       )?.id ?? null,
     // A run counts as running before its provider opens; until a turn appears,
-    // the provider can still be launching for minutes.
+    // the provider can still be launching for minutes. Some providers keep
+    // preparing after their turn opens and report that step until the first output.
     ...(turnStatus === undefined
       ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
-        ? providerStarting(projection, run)
+        ? providerStarting(run, session, phase, providers)
         : {}
       : turnStatus === "pending" || turnStatus === "running"
-        ? {}
+        ? phase === undefined || runHasProviderOutput(projection, run.id)
+          ? {}
+          : providerStarting(run, session, phase, providers)
         : { turnEnded: true }),
     ...(run.sourcePlanRef === undefined ? {} : { sourcePlanRef: run.sourcePlanRef }),
   };
@@ -182,11 +256,14 @@ export function deriveLatestThreadRun(projection: ThreadStructure): ThreadRunSum
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
-export function deriveThreadActivityRun(projection: ThreadStructure): ThreadRunSummary | null {
+export function deriveThreadActivityRun(
+  projection: ThreadStructure,
+  providers?: ProviderDrivers,
+): ThreadRunSummary | null {
   const run =
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
     presentedLatestRun(projection);
-  return run === null ? null : summarizeThreadRun(projection, run);
+  return run === null ? null : summarizeThreadRun(projection, run, providers);
 }
 
 /**

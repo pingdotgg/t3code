@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  AGENT_FEEDBACK_INSTRUCTIONS,
   buildRuntimeInstructions,
   PULL_REQUEST_LINKING_INSTRUCTIONS,
 } from "./runtimeInstructions.ts";
@@ -67,6 +68,22 @@ describe("buildRuntimeInstructions", () => {
     assert.include(instructions, "stop all GitHub reads, gh included, until the time it names");
   });
 
+  it("carries the feedback line of the agent feedback mode, and none while it is off", () => {
+    assert.notInclude(buildRuntimeInstructions({ harness: "Codex" }), "t3_feedback");
+    assert.notInclude(
+      buildRuntimeInstructions({ harness: "Codex", agentFeedback: "off" }),
+      "t3_feedback",
+    );
+    for (const agentFeedback of ["on-request", "auto"] as const) {
+      for (const pullRequestLinking of [true, false]) {
+        assert.include(
+          buildRuntimeInstructions({ harness: "Codex", agentFeedback, pullRequestLinking }),
+          AGENT_FEEDBACK_INSTRUCTIONS[agentFeedback],
+        );
+      }
+    }
+  });
+
   it("lists a multi-folder thread's folders and leaves single-folder text unchanged", () => {
     const base = { runtimeMode: "full-access", interactionMode: "default" } as const;
     const single = buildRuntimeInstructions({ harness: "Codex" });
@@ -96,6 +113,21 @@ describe("buildRuntimeInstructions", () => {
       },
     });
     assert.isTrue(listed.startsWith(`${single}\n\n<workspace_folders>\n`));
+    const withFeedback = buildRuntimeInstructions({ harness: "Codex", agentFeedback: "auto" });
+    assert.isTrue(
+      buildRuntimeInstructions({
+        harness: "Codex",
+        agentFeedback: "auto",
+        runtimePolicy: {
+          ...base,
+          cwd: "/work/app",
+          workspace: {
+            folders: [{ name: "api", path: "/work/api", isGitRepository: true }],
+            extraRoots: [],
+          },
+        },
+      }).startsWith(`${withFeedback}\n\n<workspace_folders>\n`),
+    );
     assert.deepEqual(
       listed
         .slice(single.length + 2)

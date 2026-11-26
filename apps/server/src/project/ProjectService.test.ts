@@ -20,6 +20,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
@@ -352,13 +353,14 @@ it.layer(layerTest)("ProjectService", (it) => {
       const service = yield* ProjectService.ProjectService;
       const projectId = ProjectId.make("project:tracked-folders");
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const work = yield* fileSystem.realPath(
         yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-tracked-" }),
       );
       yield* fileSystem.makeDirectory(`${work}/app/packages/web`, { recursive: true });
       yield* fileSystem.makeDirectory(`${work}/api`);
       yield* fileSystem.writeFileString(`${work}/notes.txt`, "not a folder\n");
-      const folder = (path: string) => ({ path, name: "Folder" });
+      const folder = (folderPath: string) => ({ path: folderPath, name: "Folder" });
       const invalid = [
         ["relative", [folder("sibling")]],
         ["own-folder", [folder(`${work}/app/`)]],
@@ -389,7 +391,7 @@ it.layer(layerTest)("ProjectService", (it) => {
           "ProjectInvalidError",
         );
       }
-      const tracked = [folder(`${work}/api`), folder(`${work}/app/packages/web`)];
+      const tracked = [folder(path.join(work, "api")), folder(path.join(work, "app/packages/web"))];
       const created = yield* create("valid", [folder(`${work}/api/`), tracked[1]!]);
       assert.deepEqual(created.trackedFolders, tracked);
 
@@ -433,7 +435,7 @@ it.layer(layerTest)("ProjectService", (it) => {
       );
       yield* fileSystem.makeDirectory(`${moved}/web/.git`, { recursive: true });
       assert.deepEqual((yield* update("move", { workspaceRoot: moved })).trackedFolders, [
-        { path: `${moved}/web`, name: "web", discovered: true },
+        { path: path.join(moved, "web"), name: "web", discovered: true },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -576,6 +578,90 @@ it.layer(layerTest)("ProjectService", (it) => {
       `;
       assert.deepEqual(events, []);
       assert.deepEqual(Option.getOrThrow(yield* service.getById(projectId)).scripts, []);
+    }),
+  );
+
+  it.effect("saves a project's actions where Settings reads them", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:actions");
+      const script = {
+        id: "likec4-start",
+        name: "LikeC4 podgląd",
+        command: "npx -y likec4@latest start",
+        icon: "play" as const,
+        runOnWorktreeCreate: false,
+      };
+      yield* service.create({
+        commandId: CommandId.make("command:actions:create"),
+        projectId,
+        title: "Actions",
+        workspaceRoot: "/work/actions",
+        scripts: [script],
+      });
+      assert.deepEqual(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.defaultProjectScripts,
+        [script],
+      );
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: { defaultProjectScripts: [script], defaultThreadEnvMode: "worktree" },
+        },
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:actions:update"),
+        projectId,
+        scripts: [],
+      });
+      assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+        defaultProjectScripts: [],
+        defaultThreadEnvMode: "worktree",
+      });
+      // A retried command must not put its old actions back over a later edit.
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { defaultProjectScripts: [script] } },
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:actions:update"),
+        projectId,
+        scripts: [],
+      });
+      assert.deepEqual(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.defaultProjectScripts,
+        [script],
+      );
+    }),
+  );
+
+  it.effect("saves a project's default model in its Settings overrides", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:default-model");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-5-5",
+        options: [{ id: "effort", value: "medium" }],
+      };
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "worktree" } },
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:default-model:create"),
+        projectId,
+        title: "Default model",
+        workspaceRoot: "/work/default-model",
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:default-model:update"),
+        projectId,
+        defaultModelSelection: modelSelection,
+      });
+      assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+        defaultThreadEnvMode: "worktree",
+        defaultModelSelection: modelSelection,
+      });
     }),
   );
 
@@ -1034,6 +1120,7 @@ it.effect("serializes two projects claiming the same workspace root", () =>
 it.effect("keeps a folder added while a scan of the project folder waited to commit", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const root = yield* fileSystem.realPath(
       yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-folder-sync-" }),
     );
@@ -1084,7 +1171,7 @@ it.effect("keeps a folder added while a scan of the project folder waited to com
     yield* Fiber.join(update);
     yield* Deferred.await(synced);
     assert.deepEqual(Option.getOrThrow(yield* service.getById(projectId)).trackedFolders, [
-      { path: `${root}/api`, name: "api", discovered: true },
+      { path: path.join(root, "api"), name: "api", discovered: true },
       added,
     ]);
   }).pipe(Effect.provide(layerProjectServiceDependencies)),

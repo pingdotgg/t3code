@@ -18,6 +18,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  findPosixLauncher,
   isVersionExecutable,
   ensurePinnedRuntimeInstalled,
   isUnpublishedRelease,
@@ -25,7 +26,9 @@ import {
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
   type PinnedRuntimeProgress,
+  posixLauncherScript,
   prunePinnedRuntimes,
+  resolveLauncherPath,
 } from "./pinnedRuntime.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
@@ -996,5 +999,69 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         );
         assert.deepEqual(removed, ["1.1.0"]);
       }),
+  );
+});
+
+// NTFS reports no exec bits, and these lookups pass over files without them.
+const posixHost = HostProcess.Platform.defaultValue() !== "win32";
+
+it.layer(NodeServices.layer)("launcher lookup on PATH", (it) => {
+  it.effect.skipIf(!posixHost)(
+    "resolves an empty entry of a nonempty PATH against the working directory",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-path-" });
+        const launcher = path.join(root, "t3");
+        yield* fs.writeFileString(launcher, "", { mode: 0o755 });
+        const missing = path.join(root, "missing");
+        const lookup = (platform: NodeJS.Platform, searchPath: string) =>
+          resolveLauncherPath.pipe(
+            Effect.provideService(HostProcess.InvokedAs, "t3"),
+            Effect.provideService(HostProcess.Platform, platform),
+            Effect.provideService(HostProcess.Environment, { PATH: searchPath }),
+            Effect.provideService(HostProcess.WorkingDirectory, root),
+          );
+
+        assert.equal(yield* lookup("linux", `:${missing}`), launcher);
+        assert.equal(yield* lookup("linux", `${missing}:`), launcher);
+        assert.equal(yield* lookup("linux", `${missing}::${missing}`), launcher);
+        // An empty PATH searches nothing, and Windows has no such rule.
+        assert.isUndefined(yield* lookup("linux", ""));
+        assert.isUndefined(yield* lookup("win32", `;${missing}`));
+      }),
+  );
+
+  it.effect.skipIf(!posixHost)("finds a launcher script through an empty PATH entry", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-path-" });
+      const versionsDir = path.join(root, ".t3", "runtime", "versions");
+      const executable = path.join(versionsDir, "1.0.0", "t3");
+      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+      yield* fs.writeFileString(executable, "", { mode: 0o755 });
+      const bin = path.join(root, "bin");
+      yield* fs.makeDirectory(bin);
+      yield* fs.writeFileString(path.join(bin, "t3"), posixLauncherScript(executable), {
+        mode: 0o755,
+      });
+      const script = yield* fs.realPath(path.join(bin, "t3"));
+      const missing = path.join(root, "missing");
+      const lookup = (searchPath: string) =>
+        findPosixLauncher({ launchedAs: executable, versionsDir }).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            PATH: searchPath,
+            T3CODE_INSTALL_BIN_DIR: missing,
+          }),
+          Effect.provideService(HostProcess.WorkingDirectory, bin),
+        );
+
+      assert.equal(yield* lookup(`:${missing}`), script);
+      assert.equal(yield* lookup(`${missing}:`), script);
+      // An empty PATH searches nothing, not even the working directory.
+      assert.isUndefined(yield* lookup(""));
+    }),
   );
 });

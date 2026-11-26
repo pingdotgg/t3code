@@ -26,6 +26,7 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -186,6 +187,7 @@ const layerRuntime = (dbPath: string) => {
         pruneWorktrees: () => Effect.void,
       }),
     ),
+    Layer.provide(Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({})),
     Layer.provide(layerNoTaskFolders),
     Layer.provide(layerPlatform),
   );

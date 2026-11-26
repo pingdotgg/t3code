@@ -21,7 +21,7 @@ import {
 } from "../pullRequest/PullRequestListRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
 import { ThreadDetailsControl, ThreadDetailsMoreButton } from "./ThreadDetailsControl";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 function LinkedIssueRow({
   link,
@@ -107,22 +107,20 @@ function LinkedIssueRow({
   );
   return compact ? (
     <div className="pb-1.5">
-      <Tooltip>
-        <TooltipTrigger
-          render={<ThreadDetailsControl part="title" render={<a {...anchorProps} />} />}
-        >
-          {glyph}
-          <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal leading-4.5">{title}</span>
-        </TooltipTrigger>
-        <TooltipPopup
-          side="top"
-          align="start"
-          variant="glass"
-          className="w-80 max-w-[calc(100vw-2rem)]"
-        >
-          <div className="flex min-w-0 items-center gap-2">{lines}</div>
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<ThreadDetailsControl part="title" render={<a {...anchorProps} />} />}
+        label={
+          <>
+            <div className="flex min-w-0 items-center gap-2">{lines}</div>
+          </>
+        }
+        align="start"
+        variant="glass"
+        className="w-80 max-w-[calc(100vw-2rem)]"
+      >
+        {glyph}
+        <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal leading-4.5">{title}</span>
+      </SharedTooltipTrigger>
       <div className="flex h-5 min-w-0 items-center gap-1.5 ps-9 pe-2.5 text-xs text-muted-foreground">
         <span aria-hidden className="shrink-0 tabular-nums">
           {link.displayKey}
@@ -160,27 +158,31 @@ export function ThreadDetailsIssueRows({
   const [expandedThread, setExpandedThread] = useState<string | null>(null);
   const threadKey = scopedThreadKey(threadRef);
   const expanded = expandedThread === threadKey;
-  const hasMore = compact && links.length > 1;
-  const visibleLinks = hasMore && !expanded ? links.slice(0, 1) : links;
+  const row = (link: ThreadIssueLink) => (
+    <LinkedIssueRow
+      key={threadIssueKeyOf(link)}
+      link={link}
+      threadRef={threadRef}
+      compact={compact}
+      mountScope={mountScope}
+      onOpen={onOpen}
+    />
+  );
+  const [first, ...rest] = links;
+  if (first === undefined || !compact || rest.length === 0) return <>{links.map(row)}</>;
   return (
     <>
-      {visibleLinks.map((link) => (
-        <LinkedIssueRow
-          key={threadIssueKeyOf(link)}
-          link={link}
-          threadRef={threadRef}
-          compact={compact}
-          mountScope={mountScope}
-          onOpen={onOpen}
-        />
-      ))}
-      {hasMore ? (
-        <ThreadDetailsMoreButton
-          expanded={expanded}
-          remaining={links.length - 1}
-          onToggle={() => setExpandedThread(expanded ? null : threadKey)}
-        />
+      {row(first)}
+      {expanded ? (
+        <div data-thread-details-issue-list className="flex flex-col">
+          {rest.map(row)}
+        </div>
       ) : null}
+      <ThreadDetailsMoreButton
+        expanded={expanded}
+        remaining={rest.length}
+        onToggle={() => setExpandedThread(expanded ? null : threadKey)}
+      />
     </>
   );
 }

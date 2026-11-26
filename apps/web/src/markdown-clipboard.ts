@@ -436,14 +436,11 @@ export function mathWrapperOf(element: Element | null): Element | null {
   return element?.closest(MATH_SELECTOR) ?? null;
 }
 
-/** A cell's text, with each formula as its TeX. */
+/** A cell's text on one line, with each formula as its TeX. */
 function csvCellText(cell: Element): string {
-  if (!cell.querySelector(MATH_SELECTOR)) return cell.textContent ?? "";
-  const copy = cell.cloneNode(true) as Element;
-  for (const wrapper of copy.querySelectorAll(MATH_SELECTOR)) {
-    wrapper.replaceWith(wrapper.getAttribute("data-markdown-copy")?.trim() ?? "");
-  }
-  return copy.textContent ?? "";
+  const parts: string[] = [];
+  collectHtmlCellText(cell, parts, false);
+  return parts.join("").replace(/[\u0001\u0002]+/g, " ");
 }
 
 function csvCell(value: string): string {

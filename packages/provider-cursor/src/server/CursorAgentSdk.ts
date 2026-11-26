@@ -9,6 +9,7 @@ import type {
   SendOptions,
   SteerAckOutcome,
 } from "@cursor/sdk";
+import * as NodeAsyncHooks from "node:async_hooks";
 import {
   NonNegativeInt,
   type OrchestrationV2ProviderSession,
@@ -106,6 +107,8 @@ export interface CursorAgentSdkSendInput<Error> {
    * ends, which is often long after the run.
    */
   readonly onBackgroundShell?: (event: CursorBackgroundShellEvent) => Effect.Effect<void>;
+  /** Runs as the SDK enters each slow step of preparing the run, before the run starts. */
+  readonly onStartupPhase?: (phase: string) => Effect.Effect<void>;
 }
 
 interface CursorBackgroundShellRef {
@@ -456,31 +459,6 @@ export function makeCursorAgentSdkProtocolLogger(input: {
       .pipe(Effect.ignore);
 }
 
-interface CursorShellStreamOutput {
-  readonly conversationId?: unknown;
-  readonly toolCallId?: unknown;
-  readonly event: {
-    readonly case: "stdout" | "stderr";
-    readonly value: { readonly data: unknown };
-  };
-}
-
-// The SDK reports shell-output-delta only for user-started shell commands, so
-// patches/@cursor__sdk@1.2.0.patch publishes agent shell output on this hook.
-const SHELL_STREAM_OUTPUT_HOOK = Symbol.for("@cursor/sdk.shellStreamOutput");
-const shellStreamListeners = new Set<(output: CursorShellStreamOutput) => void>();
-
-function subscribeShellStreamOutput(listener: (output: CursorShellStreamOutput) => void) {
-  const hooks = globalThis as Record<symbol, unknown>;
-  hooks[SHELL_STREAM_OUTPUT_HOOK] ??= (output: CursorShellStreamOutput) => {
-    for (const notify of shellStreamListeners) notify(output);
-  };
-  shellStreamListeners.add(listener);
-  return () => {
-    shellStreamListeners.delete(listener);
-  };
-}
-
 type CursorLocalStore = NonNullable<NonNullable<AgentOptions["local"]>["store"]>;
 
 interface DisposableCursorLocalStore extends CursorLocalStore {
@@ -500,41 +478,6 @@ function isDisposableCursorLocalStore(value: unknown): value is DisposableCursor
   );
 }
 
-// T3 persists its own event log and never tails SDK run_events; skipping per-delta SQLite
-// run_events writes avoids synchronous BEGIN IMMEDIATE write locks and multi-GB index.db bloat.
-export function withNoopCursorRunEvents(store: CursorLocalStore): CursorLocalStore {
-  if (
-    typeof store !== "object" ||
-    store === null ||
-    typeof store.runEvents?.append !== "function"
-  ) {
-    return store;
-  }
-  let seq = 0;
-  return {
-    agents: store.agents,
-    runs: store.runs,
-    checkpoints: store.checkpoints,
-    runEvents: {
-      append: async (event) => {
-        seq += 1;
-        return {
-          runId: event.runId,
-          seq,
-          offset: String(seq),
-          eventType: event.eventType,
-          payload: event.payload ?? null,
-          payloadRef: event.payloadRef ?? null,
-          idempotencyKey: event.idempotencyKey ?? null,
-          createdAt: 0,
-        };
-      },
-      list: async () => ({ items: [] }),
-      delete: async () => {},
-    },
-  };
-}
-
 interface CursorBackgroundShell {
   readonly conversationId?: unknown;
   readonly command?: unknown;
@@ -550,6 +493,19 @@ interface CursorBackgroundShell {
       }) => void,
     ) => void;
   };
+}
+
+// The SDK names no step while it prepares a run, which can take minutes, so the @cursor/sdk patch
+// calls this hook as it enters each one. The hook is global: async context finds the send.
+const STARTUP_PHASE_HOOK = Symbol.for("@cursor/sdk.startupPhase");
+const startupPhaseListener = new NodeAsyncHooks.AsyncLocalStorage<(phase: string) => void>();
+
+function listeningForStartupPhases<A>(listener: (phase: string) => void, start: () => A): A {
+  const hooks = globalThis as Record<symbol, unknown>;
+  hooks[STARTUP_PHASE_HOOK] ??= (phase: unknown) => {
+    if (typeof phase === "string") startupPhaseListener.getStore()?.(phase);
+  };
+  return startupPhaseListener.run(listener, start);
 }
 
 // The SDK kills an agent's background shells when its run ends and reports their exit to no one.
@@ -624,7 +580,6 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
   // index.db handle while still disposing handles, page caches, and FDs once the last one closes.
   interface WorkspaceStoreLease {
     readonly store: DisposableCursorLocalStore;
-    readonly wrapped: CursorLocalStore;
     users: number;
   }
   const workspaceStores = new Map<string, WorkspaceStoreLease>();
@@ -647,8 +602,8 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           Effect.map((opened) => {
             if (opened === undefined) return undefined;
             const lease: WorkspaceStoreLease = {
-              store: opened,
-              wrapped: withNoopCursorRunEvents(opened),
+              // T3 persists its own event log and does not tail SDK run events.
+              store: Object.assign(opened, { persistRunEvents: false }),
               users: 1,
             };
             workspaceStores.set(workspaceRef, lease);
@@ -718,7 +673,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               return releaseWorkspaceStore(storeWorkspace, ownedStoreLease);
             });
       const effectiveStore =
-        ownedStoreLease === undefined ? input.options.local?.store : ownedStoreLease.wrapped;
+        ownedStoreLease === undefined ? input.options.local?.store : ownedStoreLease.store;
       const effectiveOptions: AgentOptions =
         effectiveStore === undefined || effectiveStore === input.options.local?.store
           ? input.options
@@ -835,26 +790,33 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             return callbackChain;
           };
 
+          const startSdkRun = () => {
+            if (sendInput.summarize === true) return agent.summarize();
+            const options: SendOptions = {
+              ...sendInput.options,
+              onDelta: async ({ update }) => {
+                if (!callbacksReady) {
+                  pendingUpdates.push(update);
+                  return;
+                }
+                await dispatchUpdate(update);
+              },
+            };
+            if (sendInput.resume !== true) return agent.send(sendInput.message, options);
+            if (agent.resume === undefined) {
+              throw new Error("This Cursor SDK agent cannot resume.");
+            }
+            return agent.resume(options);
+          };
+          const onStartupPhase = sendInput.onStartupPhase;
           const startRun = () =>
             Effect.tryPromise({
-              try: () => {
-                if (sendInput.summarize === true) return agent.summarize();
-                const options: SendOptions = {
-                  ...sendInput.options,
-                  onDelta: async ({ update }) => {
-                    if (!callbacksReady) {
-                      pendingUpdates.push(update);
-                      return;
-                    }
-                    await dispatchUpdate(update);
-                  },
-                };
-                if (sendInput.resume !== true) return agent.send(sendInput.message, options);
-                if (agent.resume === undefined) {
-                  throw new Error("This Cursor SDK agent cannot resume.");
-                }
-                return agent.resume(options);
-              },
+              try: () =>
+                onStartupPhase === undefined
+                  ? startSdkRun()
+                  : listeningForStartupPhases((phase) => {
+                      void Effect.runPromiseWith(context)(onStartupPhase(phase));
+                    }, startSdkRun),
               catch: (cause) =>
                 runnerError(cause, sendInput.resume === true ? "run.resume" : "run.start"),
             });
@@ -918,15 +880,6 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             },
           });
           callbacksReady = true;
-          const unsubscribeShellOutput = subscribeShellStreamOutput((output) => {
-            if (output.conversationId !== agent.agentId || typeof output.toolCallId !== "string") {
-              return;
-            }
-            void dispatchUpdate({
-              type: "shell-output-delta",
-              event: { ...output.event, toolCallId: output.toolCallId },
-            });
-          });
           for (const update of pendingUpdates) {
             yield* Effect.tryPromise({
               try: () => dispatchUpdate(update),
@@ -948,7 +901,6 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               },
               catch: (cause) => runnerError(cause, "run.wait"),
             }).pipe(
-              Effect.ensuring(Effect.sync(unsubscribeShellOutput)),
               Effect.tap((result) =>
                 log({
                   direction: "incoming",

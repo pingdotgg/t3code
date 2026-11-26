@@ -74,7 +74,6 @@ import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildFleetGraph,
   anchorFleetView,
@@ -136,6 +135,7 @@ import { LinkEnvironmentDialog, type LinkEnvironmentPrefill } from "./LinkedEnvi
 import { LinkSeveralEnvironmentsDialog } from "./LinkSeveralEnvironments";
 import { savedBackendStatus } from "./SavedEnvironmentRows";
 import { SettingsSearchTarget } from "./settingsLayout";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 type GT = ReturnType<typeof useGT>;
 type Messages = ReturnType<typeof useMessages>;
@@ -863,8 +863,11 @@ function FleetCanvas({
     if (event.key === "+" || event.key === "=") zoom(1.25);
     else if (event.key === "-") zoom(0.8);
     else if (event.key === "0") fit();
-    else if (event.key === "Escape") onSelect(null);
-    else return;
+    else if (event.key === "Escape" && selection !== null) {
+      // Base UI's dialog closes on a document Esc listener.
+      event.stopPropagation();
+      onSelect(null);
+    } else return;
     event.preventDefault();
   };
 
@@ -885,9 +888,12 @@ function FleetCanvas({
             <InputGroupAddon>
               <SearchIcon aria-hidden />
             </InputGroupAddon>
+            {/* Native search inputs clear on Escape even during IME composition. */}
             <InputGroupInput
               size="sm"
-              type="search"
+              type="text"
+              role="searchbox"
+              enterKeyHint="search"
               value={query}
               aria-label={gt("Find a machine on the map")}
               placeholder={gt("Find a machine")}
@@ -895,10 +901,16 @@ function FleetCanvas({
               autoComplete="off"
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
+                // Enter and Escape that belong to an IME must not drive the map or close Settings.
+                if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                  event.stopPropagation();
+                  return;
+                }
                 if (event.key === "Enter") {
                   event.preventDefault();
                   goToFirstMatch();
                 } else if (event.key === "Escape" && query !== "") {
+                  event.preventDefault();
                   event.stopPropagation();
                   setQuery("");
                 }
@@ -931,32 +943,28 @@ function FleetCanvas({
             </span>
           ) : null}
           {sources.length === 0 ? null : source !== undefined ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button size="xs" variant="outline" onClick={() => onLinkSeveral(source.id)}>
-                    {gt("Link several…")}
-                  </Button>
-                }
-              />
-              <TooltipPopup>{selectSeveral}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Button size="xs" variant="outline" onClick={() => onLinkSeveral(source.id)}>
+                  {gt("Link several…")}
+                </Button>
+              }
+              label={selectSeveral}
+            />
           ) : (
             <Menu>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <MenuTrigger
-                      render={
-                        <Button size="xs" variant="outline">
-                          {gt("Link several…")}
-                        </Button>
-                      }
-                    />
-                  }
-                />
-                <TooltipPopup>{selectSeveral}</TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={
+                      <Button size="xs" variant="outline">
+                        {gt("Link several…")}
+                      </Button>
+                    }
+                  />
+                }
+                label={selectSeveral}
+              />
               <MenuPopup align="end">
                 {sources.map((node) => (
                   <MenuItem key={node.id} onClick={() => onLinkSeveral(node.id)}>
@@ -1020,6 +1028,12 @@ function FleetCanvas({
         onPointerUp={(event) => endDrag(event, false)}
         onPointerCancel={(event) => endDrag(event, true)}
         onLostPointerCapture={(event) => endDrag(event, true)}
+        // Safari does not focus a clicked button, so its keys would skip the map.
+        onClick={(event) =>
+          (event.target as Element)
+            .closest<HTMLElement>("button[data-fleet-item]")
+            ?.focus({ preventScroll: true })
+        }
         onKeyDown={onKeyDown}
       >
         {view === null ? null : (
@@ -1044,7 +1058,7 @@ function FleetCanvas({
         )}
       </div>
       {/* Below the canvas, not over it: nothing on the map can end up under the controls. */}
-      <div className="flex items-end justify-between gap-3 bg-background/50 px-3 pb-2">
+      <div className="flex items-center justify-between gap-3 bg-background/50 px-3 py-1">
         <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
         <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/60 bg-popover/90 p-0.5 shadow-xs/5">
           <Button
@@ -1094,7 +1108,7 @@ function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
   return (
     <ul
       aria-label={gt("How to read the lines")}
-      className="flex min-w-0 items-center gap-x-3 overflow-clip pb-1 text-2xs whitespace-nowrap text-muted-foreground"
+      className="flex min-w-0 items-center gap-x-3 overflow-clip text-2xs whitespace-nowrap text-muted-foreground"
     >
       <li className="flex items-center gap-1.5">
         {sample("in-use")}

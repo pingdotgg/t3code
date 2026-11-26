@@ -37,6 +37,22 @@ import type {
 } from "./gitHubPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
+/**
+ * `review-requested:<viewer>` search rows include the viewer's team requests, which name no login,
+ * so record the viewer as requested. Search rows only: the listing fallback cannot tell whether the
+ * viewer belongs to a requested team.
+ */
+function withViewerRequested<T extends { readonly reviewRequestLogins: ReadonlyArray<string> }>(
+  item: T,
+  input: { readonly involvement: string; readonly viewer: string },
+): T {
+  const viewer = input.viewer.toLowerCase();
+  return input.involvement === "reviewing" &&
+    !item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer)
+    ? { ...item, reviewRequestLogins: [...item.reviewRequestLogins, input.viewer] }
+    : item;
+}
+
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
@@ -60,6 +76,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
+  stackAutoMerge: true,
   labels: true,
   // Statuses and check runs land on the head commit itself and are read whole, so an empty list
   // after a push is CI that never started rather than a read that saw nothing.
@@ -393,7 +410,7 @@ export const make = Effect.gen(function* () {
   ) =>
     read.pipe(
       Effect.flatMap((pullRequest) =>
-        (pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+        (pullRequest.state !== "open"
           ? Effect.succeed({
               runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
               unavailable: false,
@@ -409,7 +426,7 @@ export const make = Effect.gen(function* () {
                   headSha: pullRequest.headSha,
                   headBranch: pullRequest.headBranch,
                   headRepositoryOwner: pullRequest.headRepositoryOwner,
-                  isCrossRepository: true,
+                  isCrossRepository: pullRequest.isCrossRepository === true,
                 })
                 .pipe(
                   Effect.matchEffect({
@@ -530,6 +547,9 @@ export const make = Effect.gen(function* () {
           return {
             state: detail.value.state,
             checks: detail.value.checks,
+            ...(detail.value.workflowApprovalsRequired === undefined
+              ? {}
+              : { workflowApprovalsRequired: detail.value.workflowApprovalsRequired }),
             ...(detail.value.headSha == null ? {} : { headSha: detail.value.headSha }),
             observedAt: detail.value.observedAt,
           };
@@ -618,7 +638,7 @@ export const make = Effect.gen(function* () {
           Effect.map((page) => ({
             ...page,
             items: page.items.map((item) => ({
-              ...item,
+              ...(page.continues ? withViewerRequested(item, input) : item),
               author: withAvatar(item.author, new Map<string, string>(), input.host),
             })),
           })),
@@ -644,7 +664,7 @@ export const make = Effect.gen(function* () {
             Effect.map(unresolvedBySearch(input, batch), (unresolved) => ({
               truncated: batch.truncated,
               items: batch.items.map((item) => ({
-                ...item,
+                ...withViewerRequested(item, input),
                 author: withAvatar(item.author, new Map<string, string>(), input.host),
               })),
               unresolved,
@@ -694,6 +714,9 @@ export const make = Effect.gen(function* () {
           ...("observedAt" in value ? { observedAt: value.observedAt } : {}),
           state: value.state,
           checks: value.checks,
+          ...(value.workflowApprovalsRequired === undefined
+            ? {}
+            : { workflowApprovalsRequired: value.workflowApprovalsRequired }),
           ...(value.headSha == null ? {} : { headSha: value.headSha }),
         })),
         Effect.mapError(fail("getChangeRequestChecks")),
@@ -992,6 +1015,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           body: input.body,
         })
@@ -1018,6 +1042,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           resolved: input.resolved,
         })

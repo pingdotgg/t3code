@@ -82,6 +82,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
               { platform: "android", available: false },
             ],
             hubPort: 1234,
+            hubToken: "hub-token",
             helpers: { serveSimAxSettings: null, serveSimCli: null },
             ...(mode === "agent-start"
               ? { daemonPort: 1235, token: "fixture", entryPath: "/agent.mjs" }
@@ -243,6 +244,7 @@ it.effect("releases the forward of a bootstrap interrupted before its hub answer
               nodePath: "/node",
               platforms: [{ platform: "ios", available: true }],
               hubPort: 1234,
+              hubToken: "hub-token",
               helpers: { serveSimAxSettings: null, serveSimCli: null },
             });
         return ChildProcessSpawner.makeHandle({
@@ -345,6 +347,7 @@ it.effect("lists Android devices without probing the host again once it reports 
                     { platform: "android", available: androidInstalled },
                   ],
                   hubPort: 1234,
+                  hubToken: "hub-token",
                   helpers: { serveSimAxSettings: null, serveSimCli: null },
                 });
         }
@@ -443,6 +446,7 @@ it.effect(
             nodePath: "/node",
             platforms: [{ platform: "ios", available: true }],
             hubPort: 1234,
+            hubToken: "hub-token",
             helpers: { serveSimAxSettings: null, serveSimCli: null },
           });
           return ChildProcessSpawner.makeHandle({

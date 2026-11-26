@@ -1507,3 +1507,39 @@ it.effect("skips restart discovery when no project enables continuation", () =>
     yield* recovery.prepareForShutdown;
   }),
 );
+
+it("does not continue a settled run whose only open subagent is a remote delegated task", () => {
+  const base = makeProjection();
+  for (const status of ["completed", "waiting"] as const) {
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status }],
+      providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+      turnItems: [
+        {
+          id: "item:remote-delegated",
+          threadId,
+          runId,
+          nodeId: NodeId.make("task:remote"),
+          providerThreadId,
+          type: "subagent",
+          subagentId: NodeId.make("task:remote"),
+          origin: "app_owned",
+          driver,
+          providerInstanceId: instanceId,
+          childThreadId: null,
+          remoteChild: {
+            environmentId: "env:box",
+            threadId: ThreadId.make("thread:remote-child"),
+            label: "Box",
+          },
+          status: "running",
+          title: "Remote task",
+          prompt: "Check remote tests",
+          result: null,
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.isUndefined(restartContinuationRun(projection, now), status);
+  }
+});
