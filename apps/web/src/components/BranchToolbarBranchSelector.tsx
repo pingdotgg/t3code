@@ -470,12 +470,8 @@ export function BranchToolbarBranchSelector({
       ? null
       : (draftId ?? useComposerDraftStore.getState().getDraftIdByRef(threadRef));
 
-  const applyBranchSelection = async (
-    listedRef: VcsRef,
-    branchCwd: string,
-    activeProjectCwd: string,
-    commit: () => void,
-  ) => {
+  const applyBranchSelection = async (listedRef: VcsRef, commit: () => void) => {
+    if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
     const selectionId = ++latestSelectionIdRef.current;
 
     let latest = readLatestThreadState();
@@ -589,14 +585,13 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const selectBranch = (listedRef: VcsRef) => {
-    if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
-    void withDraftBranchChoice(selectedDraftId(), (commit) =>
-      applyBranchSelection(listedRef, branchCwd, activeProjectCwd, commit),
-    );
-  };
+  const selectBranch = (listedRef: VcsRef) =>
+    withDraftBranchChoice(selectedDraftId(), (commit) => applyBranchSelection(listedRef, commit));
 
-  const applyNewRef = async (name: string, cwd: string, commit: () => void) => {
+  const applyNewRef = async (rawName: string, commit: () => void) => {
+    if (!canChangeThreadBranch) return;
+    const name = sanitizeNewRefName(rawName);
+    if (!branchCwd || !name || isBranchActionPending) return;
     latestSelectionIdRef.current++;
 
     setIsBranchMenuOpen(false);
@@ -605,12 +600,12 @@ export function BranchToolbarBranchSelector({
     return runBranchAction(async () => {
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
-      const checkoutKey = pickerCheckoutKey(environmentId, cwd);
+      const checkoutKey = pickerCheckoutKey(environmentId, branchCwd);
       pickerCheckouts.set(checkoutKey, null);
       const createBranchResult = await createRefMutation({
         environmentId,
         input: {
-          cwd: cwd,
+          cwd: branchCwd,
           refName: name,
           switchRef: true,
         },
@@ -624,7 +619,7 @@ export function BranchToolbarBranchSelector({
           setBranchHold({
             branch: nextBranchName,
             environmentId,
-            checkouts: [{ cwd: cwd, replaces: canonicalActiveBranch }],
+            checkouts: [{ cwd: branchCwd, replaces: canonicalActiveBranch }],
           });
         }
         setOptimisticBranch(applied ? nextBranchName : previousBranch);
@@ -644,12 +639,8 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const createRef = (rawName: string) => {
-    if (!canChangeThreadBranch) return;
-    const name = sanitizeNewRefName(rawName);
-    if (!branchCwd || !name || isBranchActionPending) return;
-    void withDraftBranchChoice(selectedDraftId(), (commit) => applyNewRef(name, branchCwd, commit));
-  };
+  const createRef = (rawName: string) =>
+    void withDraftBranchChoice(selectedDraftId(), (commit) => applyNewRef(rawName, commit));
 
   const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
     ? null
