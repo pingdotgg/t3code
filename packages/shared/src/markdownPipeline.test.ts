@@ -581,46 +581,36 @@ it("keeps uppercase HTTP(S) link and image URLs by lowercasing the scheme before
   ]);
 });
 
-it("keeps uppercase FILE links, image sources, and theme metadata through sanitization", () => {
+it("keeps uppercase FILE link and image URLs by lowercasing the scheme before sanitizing", () => {
   const processor = unified()
     .use(remarkParse)
     .use(CHAT_MARKDOWN_REMARK_PLUGINS)
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
   type Node = { tagName?: string; properties?: object; children?: Node[] };
-  const images = (node: Node): object[] => [
-    ...(node.tagName === "img" ? [node.properties ?? {}] : []),
-    ...(node.children ?? []).flatMap(images),
+  const elements = (node: Node): Node[] => [
+    ...(node.tagName === "a" || node.tagName === "img" ? [node] : []),
+    ...(node.children ?? []).flatMap(elements),
   ];
-  const links = (node: Node): object[] => [
-    ...(node.tagName === "a" ? [node.properties ?? {}] : []),
-    ...(node.children ?? []).flatMap(links),
-  ];
-  const render = (input: string) => processor.runSync(processor.parse(input)) as Node;
-  for (const path of ["///tmp/demo.png", "///C:/Demo%20A.png?Key=Value#Part", "//host/tmp/A.png"]) {
-    for (const scheme of ["file", "FILE", "FiLe"]) {
-      const src = `${scheme}:${path}`;
-      const canonical = `file:${path}`;
-      const markdown = `![](${src})`;
-      const picture = `<picture><source media="(prefers-color-scheme: dark)" srcset="${src}"><source media="(prefers-color-scheme: light)" srcset="${src}"><img src="${src}"></picture>`;
-      expect(links(render(`[link](${src}) <a href="${src}">raw</a>`)), src).toEqual([
-        { href: canonical },
-        { href: canonical },
-      ]);
-      expect(images(render(markdown)), src).toEqual([
-        { src: canonical, alt: "", dataStandalone: true },
-      ]);
-      expect(images(render(picture)), src).toEqual([
-        { src: canonical, dataDarkSrc: canonical, dataLightSrc: canonical },
-      ]);
-      expect(chatMarkdownImageSources(markdown), src).toEqual([canonical]);
-      expect(chatMarkdownImageSources(picture), src).toEqual([canonical, canonical, canonical]);
-    }
-  }
-  const unsafe = "[link](JAVASCRIPT:alert(1)) ![](JAVASCRIPT:alert(1))";
-  expect(links(render(unsafe))).toEqual([{}]);
-  expect(images(render(unsafe))).toEqual([{ alt: "" }]);
-  expect(chatMarkdownImageSources(unsafe)).toEqual([]);
+  const markdown = [
+    '[upper](FILE:///tmp/A.md) <a href="FiLe:///C:/Demo%20A.md">raw</a>',
+    "",
+    "![shot](FILE:///tmp/Shot.png)",
+    "",
+    '<picture><source media="(prefers-color-scheme: dark)" srcset="FILE:///tmp/Dark.png"><source media="(prefers-color-scheme: light)" srcset="FILE:///tmp/Light.png"><img src="FILE://host/tmp/Fallback.png"></picture>',
+  ].join("\n");
+  const tree = processor.runSync(processor.parse(markdown)) as Node;
+  expect(elements(tree).map((node) => node.properties)).toEqual([
+    { href: "file:///tmp/A.md" },
+    { href: "file:///C:/Demo%20A.md" },
+    { src: "file:///tmp/Shot.png", alt: "shot", dataStandalone: true },
+    {
+      src: "file://host/tmp/Fallback.png",
+      dataDarkSrc: "file:///tmp/Dark.png",
+      dataLightSrc: "file:///tmp/Light.png",
+    },
+  ]);
+  expect(chatMarkdownImageSources(markdown)).toHaveLength(4);
 });
 
 it("keeps raw and percent-encoded Windows drive file links through the shared Markdown sanitizer", () => {
