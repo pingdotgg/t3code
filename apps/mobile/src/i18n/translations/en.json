@@ -2461,7 +2461,6 @@
   "a6eeff30440d26a2": "Issue {key}",
   "c0e2d952114e7d59": "by {author}",
   "2195cdd7774c1c23": "unknown author",
-  "093394ace72dbd79": "{count, plural, other {{count} comments}}",
   "217e1e7b60469736": "Issue state, {state}",
   "5fd6c9c736b80b62": "Issue state",
   "a749275f1ad66618": "Unknown author",
