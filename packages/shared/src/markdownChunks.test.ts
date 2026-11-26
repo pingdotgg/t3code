@@ -231,8 +231,6 @@ describe("splitMarkdown", () => {
       "",
       "[bs]: /docs/example\\\\)",
       "",
-      `[deep]: /docs/${"(".repeat(33)}${")".repeat(33)}`,
-      "",
       "[balanced]: /docs/example(a(b))",
       "[escaped]: /docs/example\\)",
       "[angle]: </docs/example)>",

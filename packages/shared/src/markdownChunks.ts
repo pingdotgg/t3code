@@ -89,8 +89,6 @@ const FRONTMATTER_MAX_LINES = 1000;
 // a footnote section.
 const LINK_DEFINITION =
   /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
-// CommonMark parsers cap balanced parenthesis nesting in bare link destinations at 32.
-const MAX_DESTINATION_PAREN_DEPTH = 32;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 
@@ -105,7 +103,7 @@ function isLinkDefinition(line: string): boolean {
     if (ch === "\\") {
       i++;
     } else if (ch === "(") {
-      if (++depth > MAX_DESTINATION_PAREN_DEPTH) return false;
+      depth++;
     } else if (ch === ")" && --depth < 0) {
       return false;
     }
