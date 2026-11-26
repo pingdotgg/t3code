@@ -459,12 +459,12 @@ const handlers: Record<string, (input: never) => unknown> = {
     Effect.suspend(() => {
       dispatched.push(command);
       if (acceptCommands && !holdCommand(command)) {
-        if (command.type !== "thread.fork" || !command.sideChat || shellSubscriber === null)
+        if (command.type !== "thread.fork" || shellSubscriber === null)
           return Effect.succeed({ sequence: sequence + 1 });
         const fork: FakeThread = {
           id: command.targetThreadId,
-          title: command.title ?? "Side chat",
-          sideChatOf: command.sourceThreadId,
+          title: command.title ?? (command.sideChat ? "Side chat" : "Fork"),
+          ...(command.sideChat ? { sideChatOf: command.sourceThreadId } : {}),
           runs: [],
           items: [],
         };
