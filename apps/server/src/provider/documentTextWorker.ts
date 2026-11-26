@@ -646,11 +646,14 @@ function* notebook(source: string): Generator<string, void> {
           output.data &&
           typeof output.data === "object" &&
           ("text/plain" in output.data || "text/markdown" in output.data)
-        )
-          yield outputText(
-            "text/plain" in output.data ? output.data["text/plain"] : output.data["text/markdown"],
+        ) {
+          const plain = outputText(
+            "text/plain" in output.data ? output.data["text/plain"] : undefined,
           );
-        else if ("output_type" in output && output.output_type === "error") {
+          yield "text/markdown" in output.data && !plain.replaceAll("\0", "").trim()
+            ? outputText(output.data["text/markdown"])
+            : plain;
+        } else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {
             yield ": ";
