@@ -198,22 +198,37 @@ const authorizeParams = (clientId: string, redirect = "http://localhost:51234/ca
 it.effect("derives discovery metadata from the origin the client reached", () =>
   withRoutes((handler) =>
     Effect.gen(function* () {
-      const resource = yield* handler(at("/.well-known/oauth-protected-resource/mcp"));
-      expect(yield* json<unknown>(resource)).toMatchObject({
-        resource: `${ORIGIN}/mcp`,
-        authorization_servers: [ORIGIN],
-      });
-      const server = yield* json<unknown>(
-        yield* handler(at("/.well-known/oauth-authorization-server")),
-      );
-      expect(server).toMatchObject({
-        issuer: ORIGIN,
-        authorization_endpoint: `${ORIGIN}/oauth/mcp/authorize`,
-        token_endpoint: `${ORIGIN}/oauth/mcp/token`,
-        registration_endpoint: `${ORIGIN}/oauth/mcp/register`,
-        revocation_endpoint: `${ORIGIN}/oauth/mcp/revoke`,
-        code_challenge_methods_supported: ["S256"],
-      });
+      for (const [forwardedProto, protocol] of [
+        ["https", "https"],
+        ["https, http", "https"],
+        ["https, https", "https"],
+        ["HTTPS", "https"],
+        ["  HtTpS \t, http", "https"],
+        ["http, https", "http"],
+        ["", "http"],
+        ["ftp", "http"],
+      ] as const) {
+        const origin = `${protocol}://box.example.ts.net`;
+        const headers = { "x-forwarded-proto": forwardedProto };
+        const resource = yield* handler(
+          at("/.well-known/oauth-protected-resource/mcp", { headers }),
+        );
+        expect(yield* json<unknown>(resource), forwardedProto).toMatchObject({
+          resource: `${origin}/mcp`,
+          authorization_servers: [origin],
+        });
+        const server = yield* json<unknown>(
+          yield* handler(at("/.well-known/oauth-authorization-server", { headers })),
+        );
+        expect(server, forwardedProto).toMatchObject({
+          issuer: origin,
+          authorization_endpoint: `${origin}/oauth/mcp/authorize`,
+          token_endpoint: `${origin}/oauth/mcp/token`,
+          registration_endpoint: `${origin}/oauth/mcp/register`,
+          revocation_endpoint: `${origin}/oauth/mcp/revoke`,
+          code_challenge_methods_supported: ["S256"],
+        });
+      }
     }),
   ),
 );
