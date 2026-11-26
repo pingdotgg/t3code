@@ -411,6 +411,48 @@ describe("RelayClient", () => {
     ),
   );
 
+  it.effect.skipIf(windowsHost)("leaves only the managed binary after cancellation and retry", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cloudflared-test-" });
+      const directory = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64`;
+      const staged = yield* Deferred.make<void>();
+      const acknowledgeRename = yield* Deferred.make<void>();
+      let holdStaging = true;
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: testReleaseAsset,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          rename: (from, to) =>
+            fileSystem
+              .rename(from, to)
+              .pipe(
+                Effect.tap(() =>
+                  holdStaging && to.endsWith(".tmp")
+                    ? Deferred.succeed(staged, undefined).pipe(
+                        Effect.andThen(Deferred.await(acknowledgeRename)),
+                      )
+                    : Effect.void,
+                ),
+              ),
+        }),
+      );
+
+      const installing = yield* manager.install.pipe(Effect.forkChild);
+      yield* Deferred.await(staged);
+      const cancelling = yield* Fiber.interrupt(installing).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(acknowledgeRename, undefined);
+      yield* Fiber.join(cancelling);
+      holdStaging = false;
+      expect(yield* manager.install).toMatchObject({ status: "available" });
+      expect((yield* fileSystem.readDirectory(directory)).sort()).toEqual(["cloudflared"]);
+    }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
+  );
+
   it.effect.skipIf(windowsHost)(
     "downloads, verifies, validates, and atomically installs the managed executable",
     () =>
