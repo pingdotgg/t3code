@@ -5,6 +5,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
+import { page } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   close: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   list: vi.fn<(request: unknown) => Promise<CommandResult>>(),
+  shutdown: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   openDevice: vi.fn(),
   closeSurface: vi.fn(),
 }));
@@ -67,7 +69,7 @@ vi.mock("~/state/device", async () => {
   const Effect = await import("effect/Effect");
   const { AsyncResult, Atom } = await import("effect/reactivity");
   return {
-    deviceEnvironment: { list: "list", open: "open", close: "close" },
+    deviceEnvironment: { list: "list", open: "open", close: "close", shutdown: "shutdown" },
     deviceHostProbeAtom: Atom.family((environmentId: string) =>
       Atom.make(() => Effect.promise(() => mocks.list({ environmentId, input: {} }))),
     ),
@@ -83,7 +85,9 @@ vi.mock("~/state/use-atom-command", () => ({
         ? mocks.close
         : command === "list"
           ? mocks.list
-          : () => Promise.resolve({ _tag: "Success", value: {} }),
+          : command === "shutdown"
+            ? mocks.shutdown
+            : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
 vi.mock("~/rightPanelStore", () => ({
@@ -199,6 +203,35 @@ describe("DevicePanel thread switches", () => {
   });
 });
 
+describe("DevicePanel device headings", () => {
+  it.each([
+    { inventory: "without an emulator", withEmulator: false },
+    { inventory: "alongside an emulator", withEmulator: true },
+  ])("shows Android Devices above a phone $inventory", async ({ withEmulator }) => {
+    setup();
+    const emulator = { ...phone, platform: "android", version: "Android 15" } as const;
+    const usbPhone = {
+      ...emulator,
+      id: "usb",
+      name: "USB Phone",
+      booted: true,
+      physical: true,
+    } as const;
+    currentState = { ...deviceState, devices: withEmulator ? [emulator, usbPhone] : [usbPhone] };
+    await using screen = await render(devicePanel(threadA), { container });
+
+    const section = screen.getByText(usbPhone.name, { exact: true }).element().closest("section");
+    expect(section).toBeInstanceOf(HTMLElement);
+    await expect
+      .element(
+        page
+          .elementLocator(section!)
+          .getByRole("heading", { name: "Android Devices", exact: true }),
+      )
+      .toBeVisible();
+  });
+});
+
 describe("DevicePanel host probe", () => {
   it("probes the hosts once while setup shows inside the panel", async () => {
     setup();
@@ -232,5 +265,57 @@ describe("DevicePanel discovery warning", () => {
     currentState = withCause("second cause");
     await screen.rerender(devicePanel(threadA));
     await expect.element(screen.getByText(warning)).toBeVisible();
+  });
+});
+
+describe("DevicePanel stopping devices", () => {
+  const tablet = { ...phone, id: "tablet", name: "Tablet", booted: true } as const;
+  const usbPhone = {
+    ...phone,
+    id: "usb",
+    name: "USB Phone",
+    booted: true,
+    physical: true,
+  } as const;
+  const shutdownOf = (device: { readonly id: string }) => [
+    {
+      environmentId: threadA.environmentId,
+      input: { hostId: "local", deviceId: device.id, platform: "ios" },
+    },
+  ];
+
+  it("stops one running device, and stop all stops every running simulator", async () => {
+    setup();
+    const runningPhone = { ...phone, booted: true };
+    currentState = { ...deviceState, devices: [runningPhone, tablet, usbPhone] };
+    mocks.shutdown.mockResolvedValue(opened);
+    await using screen = await render(devicePanel(threadA), { container });
+
+    await expect
+      .element(screen.getByRole("button", { name: "Stop USB Phone" }))
+      .not.toBeInTheDocument();
+    await screen.getByRole("button", { name: "Stop Tablet" }).click();
+    await vi.waitFor(() => expect(mocks.shutdown.mock.calls).toEqual([shutdownOf(tablet)]));
+
+    mocks.shutdown.mockClear();
+    await screen.getByRole("button", { name: "Stop all devices" }).click();
+    await vi.waitFor(() =>
+      expect(mocks.shutdown.mock.calls).toEqual([shutdownOf(runningPhone), shutdownOf(tablet)]),
+    );
+  });
+
+  it("hides stop all when nothing is running and reports a failed stop", async () => {
+    setup();
+    await using screen = await render(devicePanel(threadA), { container });
+    await expect
+      .element(screen.getByRole("button", { name: "Stop all devices" }))
+      .not.toBeInTheDocument();
+
+    currentState = { ...deviceState, devices: [tablet] };
+    mocks.shutdown.mockResolvedValue(failed);
+    await screen.rerender(devicePanel(threadA));
+    await screen.getByRole("button", { name: "Stop Tablet" }).click();
+    await expect.element(screen.getByRole("alert")).toHaveTextContent("Device failed");
+    await expect.element(screen.getByRole("button", { name: "Stop Tablet" })).toBeEnabled();
   });
 });
