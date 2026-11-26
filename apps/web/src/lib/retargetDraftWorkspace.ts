@@ -57,16 +57,11 @@ export function readPendingWorkspaceDefault(draftId: DraftId): Promise<boolean> 
   if (!pending) return null;
   const draft = useComposerDraftStore.getState().getDraftSession(draftId);
   if (!keepsProvisionalWorkspace(draft, pending)) return null;
-  const moved = Promise.withResolvers<void>();
-  let targetChanged = false;
+  const moved = Promise.withResolvers<boolean>();
   const unsubscribe = useComposerDraftStore.subscribe((store) => {
-    if (isDraftInProject(store.getDraftSession(draftId), pending.projectRef)) return;
-    targetChanged = true;
-    moved.resolve();
+    if (!isDraftInProject(store.getDraftSession(draftId), pending.projectRef)) moved.resolve(false);
   });
-  return Promise.race([pending.settled, moved.promise])
-    .finally(unsubscribe)
-    .then(() => !targetChanged);
+  return Promise.race([pending.settled.then(() => true), moved.promise]).finally(unsubscribe);
 }
 
 export function clearPendingWorkspaceDefault(draftId: DraftId): void {
