@@ -9705,6 +9705,7 @@
   "9bc60e1d0ef816cf": "Lagringsbyte",
   "85de927f664ee3cb": "Logiska byte",
   "ec1f81bc9b395fb9": "Alla I/O-byte",
+  "9fd31461cee8ff82": "{count, plural, one {{count} process} other {{count} processer}}",
   "7905928d59208450": "Läsning",
   "637254a20a8e24a5": "Skrivning",
   "ab9f29f78275f7bd": "Tillgängligt när sidan körs i skrivbordsappen.",

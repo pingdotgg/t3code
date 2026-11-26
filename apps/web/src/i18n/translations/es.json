@@ -9697,6 +9697,7 @@
   "9bc60e1d0ef816cf": "Bytes de almacenamiento",
   "85de927f664ee3cb": "Bytes lógicos",
   "ec1f81bc9b395fb9": "Todos los bytes de E/S",
+  "9fd31461cee8ff82": "{count, plural, one {{count} proceso} other {{count} procesos}}",
   "7905928d59208450": "Lectura",
   "637254a20a8e24a5": "Escritura",
   "ab9f29f78275f7bd": "Disponible cuando esta página se ejecuta dentro de la app de escritorio.",

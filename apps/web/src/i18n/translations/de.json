@@ -9699,6 +9699,7 @@
   "9bc60e1d0ef816cf": "Speicher-Bytes",
   "85de927f664ee3cb": "Logische Bytes",
   "ec1f81bc9b395fb9": "Alle I/O-Bytes",
+  "9fd31461cee8ff82": "{count, plural, one {{count} Prozess} other {{count} Prozesse}}",
   "7905928d59208450": "Lesen",
   "637254a20a8e24a5": "Schreiben",
   "ab9f29f78275f7bd": "Verfügbar, wenn diese Seite in der Desktop-App läuft.",
