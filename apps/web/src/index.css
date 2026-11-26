@@ -132,7 +132,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   /* The inset content pane on the chrome (pen mSaSF) is centered on the chrome
      row at the top, and keeps that gap from the other window edges and the
      sidebar so the pane sits evenly in the window. */
-  --workspace-pane-header-height: 2.125rem;
+  --workspace-pane-header-height: 2.25rem;
   --workspace-pane-inset-top: max(
     0px,
     calc((var(--workspace-chrome-row-height) - var(--workspace-pane-header-height)) / 2)
@@ -7149,10 +7149,9 @@ body {
   :root:not(.black-chrome)
     [data-slot="sidebar"][data-variant="inset"]
     ~ [data-slot="sidebar-inset"] {
+    --pane-notch-height: var(--workspace-topbar-height);
     --pane-join-ear: 10px;
     --pane-join-radius: 10px;
-    /* The tabs and the bar's controls sit this much lower, centred in the joined tab. */
-    --pane-join-shift: 5px;
     /* The first tab starts at the pane's edge, where the pane clips its ear.
        After the collapsed sidebar's controls (--pane-titlebar-inset) it keeps
        room for the pane's 14px corner, the ear and 2px. */
@@ -7164,17 +7163,12 @@ body {
     --pane-join-tail: 36px;
 
     & [data-pane-header] {
-      padding-block: var(--pane-join-shift)
-        calc(var(--pane-notch-height) - var(--workspace-topbar-height) - var(--pane-join-shift));
-      /* From a tab's foot to the pane's top edge. */
+      /* From a tab's foot to the pane's top edge, matching the rise above it. */
       --pane-join-drop: calc(
-        var(--pane-notch-height) - var(--pane-join-shift) -
-          (var(--workspace-topbar-height) + 1.75rem) / 2
+        var(--pane-notch-height) - (var(--workspace-topbar-height) + 1.75rem) / 2
       );
-      /* Above a tab, up to 2px under the header's top. */
-      --pane-join-rise: calc(
-        var(--pane-join-shift) + (var(--workspace-topbar-height) - 1.75rem) / 2 - 2px
-      );
+      /* Above a tab, to the header's top edge. */
+      --pane-join-rise: calc((var(--workspace-topbar-height) - 1.75rem) / 2);
       --pane-join-h: calc(var(--pane-join-rise) + 1.75rem + var(--pane-join-drop));
       --pane-join-rim-size: 100% calc(var(--pane-join-h) * var(--pane-join-rim-k));
     }
@@ -7189,7 +7183,7 @@ body {
         content: "";
         position: absolute;
         z-index: -1;
-        inset-block-start: calc(var(--pane-join-shift) * -1);
+        inset-block-start: 0;
         inset-inline: -100vw;
         height: var(--pane-notch-height);
         background-color: var(--app-chrome-background);
@@ -7341,17 +7335,6 @@ body {
       --foreground: var(--pane-bar-fg);
     }
 
-    /* The bar's own controls follow the tabs down. */
-    & [data-workspace-titlebar-controls] {
-      translate: 0 var(--pane-join-shift);
-    }
-
-    /* The pane's corner cuts sit at the bar's foot; the end one at the pane's
-       end, where the bar ends. It still paints only while the strip's edge
-       holds it; the bar's own corner rounds the pane at rest. */
-    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut$="notch"] {
-      top: calc(anchor(--pane-notch top) + var(--pane-notch-height) - var(--pane-join-shift));
-    }
     /* PaneTabs.tsx markPaneLit writes --pane-lit-* onto these cuts. */
     & [data-layout-pane-id] > [data-pane-cut$="notch"] {
       --pane-lit-from: min(var(--pane-lit-start, 100000px), var(--pane-lit-panel-start, 100000px));
@@ -7379,7 +7362,7 @@ body {
       display: block;
       position: absolute;
       z-index: -1;
-      inset-block-start: calc(2px - var(--pane-join-shift));
+      inset-block-start: 0;
       inset-inline-start: var(--pane-join-layer-x, 0px);
       width: var(--pane-join-layer-w, 0px);
       height: calc(var(--pane-join-h) + 1px);
@@ -7611,7 +7594,7 @@ body {
         display: block;
         position: absolute;
         z-index: -1;
-        inset-block-start: calc(var(--pane-join-shift) * -1);
+        inset-block-start: 0;
         inset-inline-start: var(--pane-join-foot-x);
         width: var(--pane-join-foot-w);
         height: var(--pane-notch-height);
