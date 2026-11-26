@@ -199,8 +199,6 @@ export class AzureDevOpsRepositoryDecodeError extends Schema.TaggedError<AzureDe
 const AZURE_DEVOPS_ARGUMENT_DETAIL = {
   "unsafe-name": "Azure DevOps names cannot hold quotes or control characters.",
   "shared-stdin": "Only one name or filter in a request can start with @.",
-  "reads-file":
-    "Names or values that start with @ are not supported here: az would read them as a file.",
 } as const;
 
 /** T3 refused a value before running az because az would not take it as plain text. */
@@ -210,7 +208,7 @@ export class AzureDevOpsArgumentError extends Schema.TaggedError<AzureDevOpsArgu
     command: Schema.Literal("az"),
     cwd: Schema.String,
     operation: Schema.String,
-    reason: Schema.Literals(["unsafe-name", "shared-stdin", "reads-file"]),
+    reason: Schema.Literals(["unsafe-name", "shared-stdin"]),
   },
 ) {
   get detail(): string {

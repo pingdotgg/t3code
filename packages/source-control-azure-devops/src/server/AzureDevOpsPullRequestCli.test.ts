@@ -1160,39 +1160,4 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 0);
     }),
   );
-
-  it.effect(
-    "refuses a project or repository az would read as a file, before running anything",
-    () =>
-      Effect.gen(function* () {
-        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-        for (const location of [
-          { project: "platform", repository: "@.env" },
-          { project: "@.env", repository: "web" },
-        ]) {
-          const item = yield* Effect.flip(
-            cli.readItemContent({ cwd: "/w", location, path: "README.md", commit: "a".repeat(40) }),
-          );
-          assert.strictEqual(item._tag, "AzureDevOpsArgumentError");
-          const blobs = yield* Effect.flip(
-            cli.readBlobs({ cwd: "/w", location, objectIds: ["a".repeat(40)] }),
-          );
-          assert.strictEqual(blobs._tag, "AzureDevOpsArgumentError");
-          // What the user sees names the reason, not an unreadable response.
-          expect(item.detail).toContain("start with @");
-        }
-        // A commit value from Azure is a query value az would expand the same way.
-        const commit = yield* Effect.flip(
-          cli.readItemContent({
-            cwd: "/w",
-            location: { project: "platform", repository: "web" },
-            path: "README.md",
-            commit: "@.env",
-          }),
-        );
-        expect(commit.detail).toContain("start with @");
-        assert.strictEqual(mockedExecute.mock.calls.length, 0);
-      }),
-  );
 });

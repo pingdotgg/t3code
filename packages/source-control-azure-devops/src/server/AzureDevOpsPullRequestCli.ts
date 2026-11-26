@@ -279,10 +279,6 @@ function involvementOptions(input: {
   }
 }
 
-// az reads a `key=@value` argument from that file, so a route value cannot start with `@`.
-const readsAFile = (parameters: ReadonlyArray<string>) =>
-  parameters.some((parameter) => parameter.slice(parameter.indexOf("=") + 1).startsWith("@"));
-
 function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
@@ -342,14 +338,6 @@ export const make = Effect.gen(function* () {
       ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
     });
 
-  const namedWithAt = (cwd: string, operation: string) =>
-    new AzureDevOpsCli.AzureDevOpsArgumentError({
-      command: "az",
-      cwd,
-      operation,
-      reason: "reads-file",
-    });
-
   /** Use the extension's credentials; `az rest` uses the default tenant. */
   const invoke = <A>(input: {
     readonly cwd: string;
@@ -360,42 +348,40 @@ export const make = Effect.gen(function* () {
     readonly maxOutputBytes?: number;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
   }): Effect.Effect<A, AzureDevOpsPullRequestCliError> =>
-    readsAFile(input.routeParameters) || readsAFile(input.queryParameters ?? [])
-      ? Effect.fail(namedWithAt(input.cwd, input.operation))
-      : executeJson({
-          cwd: input.cwd,
-          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-          args: [
-            "devops",
-            "invoke",
-            ...detectArgs,
-            "--area",
-            "git",
-            "--resource",
-            input.resource,
-            "--api-version",
-            REST_API_VERSION,
-            "--route-parameters",
-            ...input.routeParameters,
-            ...(input.queryParameters === undefined
-              ? []
-              : ["--query-parameters", ...input.queryParameters]),
-          ],
-        }).pipe(
-          Effect.flatMap((result) => {
-            const decoded = input.decode(result.stdout.trim());
-            return Result.isSuccess(decoded)
-              ? Effect.succeed(decoded.success)
-              : Effect.fail(
-                  new AzureDevOpsPullRequestReadError({
-                    command: "az",
-                    cwd: input.cwd,
-                    operation: input.operation,
-                    cause: decoded.failure,
-                  }),
-                );
-          }),
-        );
+    executeJson({
+      cwd: input.cwd,
+      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+      args: [
+        "devops",
+        "invoke",
+        ...detectArgs,
+        "--area",
+        "git",
+        "--resource",
+        input.resource,
+        "--api-version",
+        REST_API_VERSION,
+        "--route-parameters",
+        ...input.routeParameters,
+        ...(input.queryParameters === undefined
+          ? []
+          : ["--query-parameters", ...input.queryParameters]),
+      ],
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = input.decode(result.stdout.trim());
+        return Result.isSuccess(decoded)
+          ? Effect.succeed(decoded.success)
+          : Effect.fail(
+              new AzureDevOpsPullRequestReadError({
+                command: "az",
+                cwd: input.cwd,
+                operation: input.operation,
+                cause: decoded.failure,
+              }),
+            );
+      }),
+    );
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
@@ -724,9 +710,6 @@ export const make = Effect.gen(function* () {
         if (BLOB_ID.test(id) && !requested.has(key)) requested.set(key, id);
       }
       if (requested.size === 0) return new Map<string, AzureDevOpsItemContent>();
-      if (readsAFile(repositoryRoute(input.location))) {
-        return yield* namedWithAt(input.cwd, "readBlobs");
-      }
       const readFailure = (cause: unknown) =>
         new AzureDevOpsPullRequestReadError({
           command: "az",
