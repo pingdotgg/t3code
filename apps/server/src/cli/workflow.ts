@@ -1,4 +1,5 @@
 import { WorkflowHook, WorkflowRunStatus } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -21,6 +22,11 @@ const RunResult = Schema.Struct({ run: WorkflowRun, steps: Schema.Array(Workflow
 const RunsResult = Schema.Struct({ runs: Schema.Array(WorkflowRun) });
 const QuestionsResult = Schema.Struct({ questions: Schema.Array(Workflows.WorkflowQuestion) });
 const HooksResult = Schema.Struct({ hooks: Schema.Array(WorkflowHook) });
+const WithdrawResult = Schema.Struct({
+  ...RunResult.fields,
+  withdrawal: Schema.Literals(["withdrawn", "not_open"]),
+});
+const ThreadTitleResult = Schema.Struct({ thread: Schema.Struct({ title: Schema.String }) });
 const SignalResult = Schema.Struct({ delivery: Schema.Literals(["delivered", "buffered"]) });
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
@@ -102,6 +108,10 @@ const listCommand = Command.make("list", {
     Flag.withDescription("Only runs their workflow tagged with this."),
     Flag.optional,
   ),
+  subject: Flag.String("subject").pipe(
+    Flag.withDescription("Only runs about this: the web address of their subject, or a thread id."),
+    Flag.optional,
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("List workflow runs, newest first."),
@@ -115,6 +125,7 @@ const listCommand = Command.make("list", {
             action: "list",
             ...(Option.isSome(flags.status) ? { status: flags.status.value } : {}),
             ...(Option.isSome(flags.tag) ? { tag: flags.tag.value } : {}),
+            ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
           },
           RunsResult,
         );
@@ -256,8 +267,24 @@ const signalCommand = Command.make("signal", {
           detail: "Address a signal with --run and --wait, or with --workflow and --channel.",
         });
       }
+      // An agent answers through this command, so its answer is named after its thread.
+      const callingThread = (yield* HostProcess.Environment).T3CODE_THREAD_ID?.trim();
+      const threadTitle =
+        callingThread === undefined || callingThread === ""
+          ? undefined
+          : yield* withThreadTools({ ...flags, json: false }, (tools) =>
+              tools.call(
+                "t3_thread_read",
+                { threadId: callingThread, limit: 1, runLimit: 1 },
+                ThreadTitleResult,
+              ),
+            ).pipe(
+              Effect.map(({ thread }) => thread.title.trim()),
+              Effect.orElseSucceed(() => undefined),
+            );
       yield* withThreadTools(
-        { ...flags, json: false },
+        // Named on the answer to a question it sends.
+        { ...flags, json: false, clientLabel: threadTitle || "t3 workflow signal" },
         Effect.fn("cli.workflow.signal")(function* (tools) {
           const { delivery } = yield* tools.call(
             "t3_workflow",
@@ -278,6 +305,45 @@ const signalCommand = Command.make("signal", {
         }),
       );
     }).pipe(reportThreadErrors),
+  ),
+);
+
+const withdrawCommand = Command.make("withdraw", {
+  ...projectLocationFlags,
+  run: Flag.String("run").pipe(Flag.withDescription("Run id.")),
+  wait: Flag.String("wait").pipe(Flag.withDescription("The question's name in that run.")),
+  reason: Flag.String("reason").pipe(
+    Flag.withDescription("Why, kept on the question's step."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "End a run's open question unanswered. The run goes on as if the question timed out.",
+  ),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.withdraw")(function* (tools) {
+        const { withdrawal, ...result } = yield* tools.call(
+          "t3_workflow",
+          {
+            action: "withdraw",
+            runId: flags.run,
+            wait: flags.wait,
+            ...(Option.isSome(flags.reason) ? { reason: flags.reason.value } : {}),
+          },
+          WithdrawResult,
+        );
+        if (withdrawal === "not_open") {
+          // Stderr, so --json output stays the run alone.
+          yield* Console.error(
+            `Run ${flags.run} has no open question "${flags.wait}"; nothing to withdraw.`,
+          );
+        }
+        yield* printRun(result, flags.json);
+      }),
+    ).pipe(reportThreadErrors),
   ),
 );
 
@@ -419,6 +485,7 @@ export const workflowCommand = Command.make("workflow").pipe(
     resumeCommand,
     cancelCommand,
     signalCommand,
+    withdrawCommand,
     questionsCommand,
     hooksCommand,
     storeCommand,
