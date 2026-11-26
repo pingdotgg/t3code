@@ -97,12 +97,16 @@ const FRONTMATTER_MAX_LINES = 1000;
 const hasFrontmatterClose = (lines: readonly string[]) =>
   lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
 
-// A one-line link reference definition; footnotes are left alone so each piece does not grow
-// a footnote section.
+// A one-line link reference definition; footnotes are collected separately so body pieces do not
+// each render their own footnote section.
 const LINK_DEFINITION =
   /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
+const FOOTNOTE_DEFINITION_START = /^ {0,3}\[\^([^\s[\]]+)\]:/;
+const FOOTNOTE_CONTINUATION_INDENT = /^(?: {4}|\t)/;
+const FOOTNOTE_BLOCK_INTERRUPT = /^ {0,3}(?:>|[-*+](?:[ \t]|\r?$)|\d{1,9}[.)](?:[ \t]|\r?$))/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
+const SHARED_FOOTNOTES_MAX_CHARS = 64 * 1024;
 
 function isLinkDefinition(line: string): boolean {
   const match = LINK_DEFINITION.exec(line);
@@ -123,21 +127,170 @@ function isLinkDefinition(line: string): boolean {
   return depth === 0;
 }
 
+function isSpanningBlockOpen(line: string): boolean {
+  const firstChar = line.trimStart()[0];
+  if (firstChar !== "<" && firstChar !== "$") return false;
+  return SPANNING_BLOCKS.some(([open]) => open.test(line));
+}
+
+function interruptsFootnoteDefinition(line: string): boolean {
+  return (
+    (line.includes("[^") && FOOTNOTE_DEFINITION_START.test(line)) ||
+    ATX_HEADING.test(line) ||
+    THEMATIC_BREAK.test(line) ||
+    FENCE_OPEN.test(line) ||
+    FOOTNOTE_BLOCK_INTERRUPT.test(line) ||
+    HTML_BLOCK_TAG.test(line) ||
+    HTML_STANDALONE_TAG.test(line) ||
+    isSpanningBlockOpen(line)
+  );
+}
+
+const FOOTNOTE_CONTAINER_PREFIX = /^(?:[ \t]*>[ \t]?)* {0,3}$/;
+
+/** Finds matching footnote references in body prose, skipping escapes, code spans, inline math, HTML comments, and link destinations. */
+function extractFootnoteRefs(text: string, definedKeys: ReadonlySet<string>): string[] {
+  if (!text.includes("[^")) return [];
+  const refs: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+    if (ch === "`") {
+      let ticks = 1;
+      while (text[i + ticks] === "`") ticks++;
+      let j = i + ticks;
+      let closed = -1;
+      while (j < text.length) {
+        if (text[j] === "`") {
+          let run = 1;
+          while (text[j + run] === "`") run++;
+          if (run === ticks) {
+            closed = j + run - 1;
+            break;
+          }
+          j += run;
+          continue;
+        }
+        j++;
+      }
+      if (closed !== -1) i = closed;
+      else i += ticks - 1;
+      continue;
+    }
+    if (ch === "$" && text[i + 1] !== "$") {
+      const next = text[i + 1];
+      if (next !== undefined && next !== " " && next !== "\t" && next !== "\n") {
+        let j = i + 1;
+        let closed = -1;
+        while (j < text.length && text[j] !== "\n") {
+          if (text[j] === "\\") {
+            j += 2;
+            continue;
+          }
+          if (
+            text[j] === "$" &&
+            text[j + 1] !== "$" &&
+            text[j - 1] !== " " &&
+            text[j - 1] !== "\t"
+          ) {
+            closed = j;
+            break;
+          }
+          j++;
+        }
+        if (closed !== -1) {
+          i = closed;
+          continue;
+        }
+      }
+    }
+    if (ch === "<" && text.startsWith("<!--", i)) {
+      const close = text.indexOf("-->", i + 4);
+      if (close !== -1) {
+        i = close + 2;
+        continue;
+      }
+    }
+    if (ch === "]" && text[i + 1] === "(") {
+      let j = i + 2;
+      if (text[j] === "<") {
+        const endAngle = text.indexOf(">", j + 1);
+        if (endAngle !== -1) j = endAngle + 1;
+      }
+      let depth = 1;
+      while (j < text.length && depth > 0) {
+        if (text[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        if (text[j] === "(") depth++;
+        else if (text[j] === ")") depth--;
+        j++;
+      }
+      if (depth === 0) {
+        i = j - 1;
+        continue;
+      }
+    }
+    if (ch === "[" && text[i + 1] === "^") {
+      let j = i + 2;
+      while (j < text.length) {
+        const c = text[j]!;
+        if (c === "]" || c === "[" || /\s/.test(c)) break;
+        j++;
+      }
+      if (j > i + 2 && text[j] === "]") {
+        const isDefAtLineStart =
+          text[j + 1] === ":" &&
+          FOOTNOTE_CONTAINER_PREFIX.test(text.slice(text.lastIndexOf("\n", i - 1) + 1, i));
+        if (!isDefAtLineStart) {
+          const label = text.slice(i + 2, j);
+          if (definedKeys.has(label.toLowerCase())) {
+            refs.push(label);
+          }
+        }
+        i = j;
+      }
+    }
+  }
+  return refs;
+}
+
+export interface MarkdownFootnotes {
+  /** One-line stub definitions (`[^id]: .`) so body chunks resolve footnote references. */
+  readonly stubs: string;
+  /** Real footnote definitions in document order for the trailing footnotes section. */
+  readonly definitions: string;
+  /** Referenced footnote labels in document order for each chunk (empty when a chunk has none). */
+  readonly chunkRefs: readonly (readonly string[])[];
+}
+
 export interface SplitMarkdown {
   readonly chunks: readonly MarkdownChunk[];
   readonly definitions: string;
+  readonly footnotes?: MarkdownFootnotes | undefined;
 }
 
 /**
  * Cuts Markdown into pieces of roughly `targetChars`, only at column-0 headings or paragraphs
  * that start a new top-level block. Leading frontmatter stays in the first piece. Link
- * definitions are collected so every piece can resolve them; footnotes resolve only inside their
- * own piece, and duplicate heading slugs restart per piece.
+ * definitions and footnote definitions are collected so references resolve across pieces;
+ * duplicate heading slugs still restart per piece.
  */
 export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): SplitMarkdown {
+  const mayHaveFootnotes = text.includes("[^") && text.includes("]:");
   const chunks: MarkdownChunk[] = [];
+  const chunkLineRanges: Array<readonly [start: number, end: number]> = [];
   const definitions: string[] = [];
+  const capturedFootnoteKeys = new Set<string>();
+  const seenFootnoteKeys = new Set<string>();
+  const capturedFootnoteLabels: string[] = [];
+  const footnoteDefs: string[] = [];
   let lines: string[] = [];
+  let chunkStartLine = 0;
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
@@ -146,16 +299,49 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterHeading = false;
   let openedFence = false;
   let definitionChars = 0;
+  let footnoteChars = 0;
+  let footnoteCapExceeded = false;
   let openWrappers = 0;
   let heldCut = 0;
-  const flush = () => {
+  let inFootnoteDef = false;
+  let activeFootnoteLabel: string | null = null;
+  let activeFootnoteLines: string[] | null = null;
+  let pendingFootnoteBlanks: string[] = [];
+
+  const finishFootnoteDef = () => {
+    if (activeFootnoteLabel !== null && activeFootnoteLines !== null) {
+      const block = activeFootnoteLines.join("\n").trimEnd();
+      if (footnoteChars + block.length < SHARED_FOOTNOTES_MAX_CHARS) {
+        capturedFootnoteKeys.add(activeFootnoteLabel.toLowerCase());
+        capturedFootnoteLabels.push(activeFootnoteLabel);
+        footnoteDefs.push(block);
+        footnoteChars += block.length + 2;
+      } else {
+        footnoteCapExceeded = true;
+      }
+    }
+    inFootnoteDef = false;
+    activeFootnoteLabel = null;
+    activeFootnoteLines = null;
+    pendingFootnoteBlanks = [];
+  };
+
+  const flush = (endLine: number) => {
     chunks.push({ text: lines.join("\n"), lines: lines.length });
+    if (mayHaveFootnotes) chunkLineRanges.push([chunkStartLine, endLine]);
+    chunkStartLine = endLine;
     lines = [];
     chars = 0;
     heldCut = 0;
   };
+
   const sourceLines = text.split("\n");
-  for (const line of sourceLines) {
+  const isBodyLine = mayHaveFootnotes ? new Uint8Array(sourceLines.length) : null;
+
+  for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex++) {
+    const line = sourceLines[lineIndex]!;
+    let handledAsFootnote = false;
+
     if (closes !== null) {
       if (closes(line)) closes = null;
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
@@ -164,26 +350,83 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         return openedFence;
       };
     } else {
-      if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
-      const cutPoint =
-        chars >= targetChars &&
-        ((line.startsWith("#") && ATX_HEADING.test(line)) ||
-          (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
-      if (cutPoint && openWrappers === 0) flush();
-      else if (cutPoint) heldCut = lines.length;
-      closes = blockCloser(line);
-      // Two or more spaces may put a fence in a list item, which this does not track.
-      openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
-      // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
-      // a closing code fence or frontmatter, or another definition.
-      const definition: boolean =
-        (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
-      afterDefinition = definition;
-      if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
-        definitions.push(line.trim());
-        definitionChars += line.length + 1;
+      if (inFootnoteDef) {
+        if (BLANK_LINE.test(line)) {
+          pendingFootnoteBlanks.push(line);
+          handledAsFootnote = true;
+        } else if (pendingFootnoteBlanks.length > 0) {
+          if (FOOTNOTE_CONTINUATION_INDENT.test(line)) {
+            if (activeFootnoteLines !== null) {
+              activeFootnoteLines.push(...pendingFootnoteBlanks, line);
+            }
+            pendingFootnoteBlanks = [];
+            handledAsFootnote = true;
+          } else {
+            finishFootnoteDef();
+            afterBlankLine = true;
+          }
+        } else if (FOOTNOTE_CONTINUATION_INDENT.test(line) || !interruptsFootnoteDefinition(line)) {
+          if (activeFootnoteLines !== null) activeFootnoteLines.push(line);
+          handledAsFootnote = true;
+        } else {
+          finishFootnoteDef();
+          afterDefinition = true;
+        }
+      }
+
+      if (!handledAsFootnote) {
+        if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
+        const cutPoint =
+          chars >= targetChars &&
+          ((line.startsWith("#") && ATX_HEADING.test(line)) ||
+            (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
+        if (cutPoint && openWrappers === 0) flush(lineIndex);
+        else if (cutPoint) heldCut = lines.length;
+
+        const fnMatch =
+          mayHaveFootnotes && line.includes("[^") ? FOOTNOTE_DEFINITION_START.exec(line) : null;
+        if (fnMatch) {
+          const label = fnMatch[1]!;
+          const key = label.toLowerCase();
+          inFootnoteDef = true;
+          if (!seenFootnoteKeys.has(key)) {
+            seenFootnoteKeys.add(key);
+            activeFootnoteLabel = label;
+            activeFootnoteLines = [line];
+          } else {
+            activeFootnoteLabel = null;
+            activeFootnoteLines = null;
+          }
+          pendingFootnoteBlanks = [];
+          afterDefinition = false;
+          openedFence = false;
+          handledAsFootnote = true;
+        } else {
+          closes = blockCloser(line);
+          // Two or more spaces may put a fence in a list item, which this does not track.
+          openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
+          // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
+          // a closing code fence or frontmatter, or another definition.
+          const definition: boolean =
+            (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
+          afterDefinition = definition;
+          if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
+            definitions.push(line.trim());
+            definitionChars += line.length + 1;
+          }
+          if (
+            isBodyLine !== null &&
+            closes === null &&
+            !definition &&
+            !BLANK_LINE.test(line) &&
+            !isSpanningBlockOpen(line)
+          ) {
+            isBodyLine[lineIndex] = 1;
+          }
+        }
       }
     }
+
     if (closes === closesAtBlankLine)
       openWrappers = Math.max(0, openWrappers + openedWrappers(line));
     first = false;
@@ -191,18 +434,58 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     chars += line.length + 1;
     // A piece too large to render goes back to the last cut a wrapper held.
     if (heldCut > 0 && chars - 1 > LARGE_MARKDOWN_CHUNK_MAX_CHARS) {
+      const cutLine = chunkStartLine + heldCut;
       const rest = lines.splice(heldCut);
-      flush();
+      flush(cutLine);
       lines = rest;
       chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
       openWrappers = 0;
     }
     afterBlankLine = BLANK_LINE.test(line);
     afterHeading =
-      closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
+      !handledAsFootnote &&
+      closes === null &&
+      (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
-  flush();
-  return { chunks, definitions: definitions.join("\n") };
+  if (inFootnoteDef) finishFootnoteDef();
+  flush(sourceLines.length);
+
+  let footnotes: MarkdownFootnotes | undefined;
+  if (
+    isBodyLine !== null &&
+    !footnoteCapExceeded &&
+    chunks.length > 1 &&
+    capturedFootnoteKeys.size > 0
+  ) {
+    let anyRef = false;
+    const chunkRefs: string[][] = chunkLineRanges.map(([start, end]) => {
+      const refs: string[] = [];
+      let block: string[] = [];
+      const flushBlock = () => {
+        if (block.length === 0) return;
+        refs.push(...extractFootnoteRefs(block.join("\n"), capturedFootnoteKeys));
+        block = [];
+      };
+      for (let i = start; i < end; i++) {
+        if (isBodyLine[i] === 1) block.push(sourceLines[i]!);
+        else flushBlock();
+      }
+      flushBlock();
+      if (refs.length > 0) anyRef = true;
+      return refs;
+    });
+    if (anyRef) {
+      footnotes = {
+        stubs: capturedFootnoteLabels.map((label) => `[^${label}]: .`).join("\n"),
+        definitions: footnoteDefs.join("\n\n"),
+        chunkRefs,
+      };
+    }
+  }
+
+  return footnotes
+    ? { chunks, definitions: definitions.join("\n"), footnotes }
+    : { chunks, definitions: definitions.join("\n") };
 }
 
 /** Prepends shared definitions in document order; source offsets shift by the prefix length. */
@@ -212,4 +495,103 @@ export function withMarkdownDefinitions(text: string, definitions: string): stri
   return masked.startsWith("\uFEFF")
     ? `\uFEFF${definitions}\n\n${masked.slice(1)}`
     : `${definitions}\n\n${masked}`;
+}
+
+export interface PreparedMarkdownChunk {
+  readonly text: string;
+  readonly offsetShift: number;
+  readonly footnotesMode?: "omit" | "omit-seeded" | undefined;
+}
+
+/**
+ * Prepares one chunk of a split Markdown document with shared link definitions and, when the
+ * chunk references document footnotes, stub definitions plus prior references so footnote numbers
+ * and backref IDs match the whole document.
+ */
+export function prepareMarkdownChunk(
+  chunkText: string,
+  chunkIndex: number,
+  definitions: string,
+  footnotes?: MarkdownFootnotes,
+): PreparedMarkdownChunk {
+  if (!footnotes) {
+    return {
+      text: withMarkdownDefinitions(chunkText, definitions),
+      offsetShift: definitions ? definitions.length + 2 : 0,
+    };
+  }
+  const refsInChunk = footnotes.chunkRefs[chunkIndex];
+  if (!refsInChunk || refsInChunk.length === 0) {
+    return {
+      text: withMarkdownDefinitions(chunkText, definitions),
+      offsetShift: definitions ? definitions.length + 2 : 0,
+      footnotesMode: "omit",
+    };
+  }
+  const priorRefs: string[] = [];
+  for (let i = 0; i < chunkIndex; i++) {
+    const refs = footnotes.chunkRefs[i];
+    if (refs) priorRefs.push(...refs);
+  }
+  const prefixParts: string[] = [];
+  if (definitions) prefixParts.push(definitions);
+  prefixParts.push(footnotes.stubs);
+  if (priorRefs.length > 0) {
+    prefixParts.push(priorRefs.map((label) => `[^${label}]`).join(" "));
+  } else {
+    // An HTML comment closes the last stub footnote so a chunk starting with 4-space indented code
+    // cannot be absorbed as a continuation of that stub.
+    prefixParts.push("<!-- -->");
+  }
+  const prefix = prefixParts.join("\n\n");
+  return {
+    text: withMarkdownDefinitions(chunkText, prefix),
+    offsetShift: prefix.length + 2,
+    footnotesMode: priorRefs.length > 0 ? "omit-seeded" : "omit",
+  };
+}
+
+/** Builds the Markdown source for the single trailing footnotes section of a split document. */
+export function buildMarkdownFootnotesSection(
+  definitions: string,
+  footnotes?: MarkdownFootnotes,
+): string | null {
+  if (!footnotes || !footnotes.definitions) return null;
+  const allRefs = footnotes.chunkRefs.flat();
+  if (allRefs.length === 0) return null;
+  const parts: string[] = [];
+  if (definitions) parts.push(definitions);
+  parts.push(allRefs.map((label) => `[^${label}]`).join(" "));
+  parts.push(footnotes.definitions);
+  return parts.join("\n\n");
+}
+
+/** Maps a footnote backref (`fnref-<fnNumber>` / `fnref-<fnNumber>-<occurrence>`) to its chunk. */
+export function findFootnoteRefChunkIndex(
+  footnotes: MarkdownFootnotes,
+  fnNumber: number,
+  occurrence: number,
+): number | null {
+  if (fnNumber < 1 || occurrence < 1) return null;
+  const numberByKey = new Map<string, number>();
+  const countByNumber = new Map<number, number>();
+  let nextNumber = 1;
+  for (let chunkIndex = 0; chunkIndex < footnotes.chunkRefs.length; chunkIndex++) {
+    const refs = footnotes.chunkRefs[chunkIndex];
+    if (!refs) continue;
+    for (const label of refs) {
+      const key = label.toLowerCase();
+      let num = numberByKey.get(key);
+      if (num === undefined) {
+        num = nextNumber++;
+        numberByKey.set(key, num);
+      }
+      const occ = (countByNumber.get(num) ?? 0) + 1;
+      countByNumber.set(num, occ);
+      if (num === fnNumber && occ === occurrence) {
+        return chunkIndex;
+      }
+    }
+  }
+  return null;
 }
