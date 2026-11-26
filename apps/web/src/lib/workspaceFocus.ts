@@ -152,7 +152,6 @@ export function isReturnedSurfaceFocus() {
 
 export function holdSurfaceFocusOrigin(host: HTMLElement, initialOrigin: Element | null) {
   const doc = host.ownerDocument;
-  let origin = initialOrigin instanceof HTMLElement ? initialOrigin : null;
   // A pane's tab strip is portalled outside its content slot.
   const contains = (target: EventTarget | null) =>
     target instanceof Element &&
@@ -160,6 +159,8 @@ export function holdSurfaceFocusOrigin(host: HTMLElement, initialOrigin: Element
       (host.dataset.layoutTabId !== undefined &&
         target.closest<HTMLElement>("[data-layout-pane-tab]")?.dataset.layoutPaneTab ===
           host.dataset.layoutTabId));
+  let origin =
+    initialOrigin instanceof HTMLElement && !contains(initialOrigin) ? initialOrigin : null;
   let ownsFocus = contains(doc.activeElement);
   const remember = (event: FocusEvent) => {
     const entered = contains(event.target);
@@ -178,7 +179,7 @@ export function holdSurfaceFocusOrigin(host: HTMLElement, initialOrigin: Element
   doc.addEventListener("focusin", remember);
   return () => {
     doc.removeEventListener("focusin", remember);
-    if (!ownsFocus || !origin || !canReturnFocusTo(origin)) {
+    if (!ownsFocus || !origin || contains(origin) || !canReturnFocusTo(origin)) {
       return;
     }
     const tabId = paneId(origin);

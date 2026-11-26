@@ -839,3 +839,84 @@ it.each([
     if (where === "into") expect(file.pane.id).toBe(files.pane.id);
   },
 );
+
+it("keeps a Files split pane intact when opening the first file from it", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const tabFor = (surfaceId: string) =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+    );
+  await using _screen = await render(<SurfaceSync />);
+  await act(() => {
+    requestLayoutSurfacePlacement(pullRequestThreadRef, {
+      kind: "split",
+      paneId: chatPaneId,
+      side: "right",
+    });
+    useRightPanelStore.getState().open(pullRequestThreadRef, "files");
+  });
+  const files = tabFor("files")!;
+  expect(files.pane.id).not.toBe(chatPaneId);
+
+  await act(() => {
+    useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/app.ts");
+  });
+  const file = tabFor("file:src/app.ts")!;
+  expect(tabFor("files")).toBeUndefined();
+  expect(file.pane.id).toBe(files.pane.id);
+  expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(file.tab.id);
+});
+
+it("opening a second file in a reused surface pane does not loop through rightPanelStore.syncFromLayout", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const tabFor = (surfaceId: string) =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+    );
+  await using screen = await renderHost();
+  await act(() => {
+    requestLayoutSurfacePlacement(pullRequestThreadRef, {
+      kind: "pane",
+      paneId: chatPaneId,
+    });
+    useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/first.ts");
+  });
+  const firstTab = tabFor("file:src/first.ts")!;
+  const host = screen.container.querySelector<HTMLElement>(
+    `[data-layout-tab-id="${firstTab.tab.id}"]`,
+  )!;
+  const inner = document.createElement("button");
+  inner.dataset.workspaceArea = "panel";
+  inner.textContent = "tree item";
+  host.prepend(inner);
+  inner.focus();
+  expect(document.activeElement).toBe(inner);
+  expect(inner.getBoundingClientRect().height).toBeGreaterThan(0);
+
+  const focusSequence: Array<string | undefined> = [];
+  const unsub = useLayoutStore.subscribe((state) => {
+    focusSequence.push(selectFocusedTab(state.layout)?.id);
+  });
+  try {
+    await act(() => {
+      useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/second.ts");
+    });
+    expect(document.activeElement).toBe(inner);
+    await act(() => {
+      useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/third.ts");
+    });
+
+    const secondTab = tabFor("file:src/second.ts")!;
+    const thirdTab = tabFor("file:src/third.ts")!;
+    expect(focusSequence).toEqual([secondTab.tab.id, thirdTab.tab.id]);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(thirdTab.tab.id);
+    expect(
+      useRightPanelStore.getState().byThreadKey[scopedThreadKey(pullRequestThreadRef)]
+        ?.activeSurfaceId,
+    ).toBe("file:src/third.ts");
+  } finally {
+    unsub();
+  }
+});

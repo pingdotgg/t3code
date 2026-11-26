@@ -2140,6 +2140,12 @@ function LayoutSurfaceTabSurface({
   } satisfies LayoutPaneState;
   const tab = { id: tabId, content } satisfies LayoutTab;
   const slotRef = useRef<HTMLDivElement | null>(null);
+  const focusOrigin = useRef(document.activeElement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface pane keyboard focus when it leaves.
+  useLayoutEffect(() => {
+    const host = slotRef.current;
+    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
+  }, [slotRef]);
   return (
     <div
       ref={slotRef}
@@ -2189,12 +2195,6 @@ function SurfaceTabFocus({
   slotRef: React.RefObject<HTMLDivElement | null>;
   focused: boolean;
 }) {
-  const focusOrigin = useRef(document.activeElement);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its tab leaves the pane.
-  useLayoutEffect(() => {
-    const host = slotRef.current;
-    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
-  }, [slotRef]);
   usePaneKeyboard(slotRef, focused, surfaceKeyboardTarget);
   return null;
 }

@@ -74,6 +74,25 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(composer.button);
   });
 
+  it("ignores an initial origin already inside the surface host so reusing the host never steals layout focus back", () => {
+    using fixture = setup();
+    const original = useLayoutStore.getState().layout;
+    using _restore = { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+    const ref = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("draft"));
+    useLayoutStore.getState().openTab({ kind: "surface", threadRef: ref, surfaceId: "file:a.ts" });
+    const tabA = selectFocusedTab(useLayoutStore.getState().layout)!;
+    useLayoutStore.getState().openTab({ kind: "surface", threadRef: ref, surfaceId: "file:b.ts" });
+    const tabB = selectFocusedTab(useLayoutStore.getState().layout)!;
+
+    const host = fixture.append(`<div data-layout-tab-id="${tabA.id}"></div>`);
+    const panel = fixture.area("panel", 4, host);
+    panel.button.focus();
+    const release = holdSurfaceFocusOrigin(host, document.activeElement);
+    release();
+
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(tabB.id);
+  });
+
   it("cycles through matching areas in separate panes and remembers each control", () => {
     using fixture = setup();
     const sidebar = fixture.area("sidebar", 0);
