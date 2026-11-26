@@ -14,7 +14,8 @@ const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 // A label stops at any bracket, so a run of unclosed brackets is scanned once, not once per bracket.
 const LABEL = String.raw`[^[\]\n]*`;
 const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
-const QUOTE_PREFIX = new RegExp(String.raw`^([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "gm");
+// Only after `\n`: multiline `^` also follows \r and U+2028, which a link label may contain.
+const QUOTE_PREFIX = new RegExp(String.raw`(?<=^|\n)([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "g");
 // Move inter-marker spacing before the quote so fence depth matches and source offsets stay intact.
 const threadLinkSource = (markdown: string) =>
   markdown.replace(QUOTE_PREFIX, (_source, indent: string, quote: string) => {
