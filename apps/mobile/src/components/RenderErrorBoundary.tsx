@@ -1,4 +1,3 @@
-import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { Observe } from "expo-observe";
 import { T, useGT } from "gt-react-native";
 import { Component, type ReactNode } from "react";
@@ -7,6 +6,7 @@ import { ScrollView, View } from "react-native";
 import { AppText as Text } from "./ui/AppText";
 import { Button } from "./ui/Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { errorDetailsPreview } from "./RenderErrorBoundary.logic";
 
 interface RenderErrorBoundaryProps {
   readonly children: ReactNode;
@@ -98,7 +98,6 @@ export function RenderFailureView(
 ) {
   const gt = useGT();
   const title = props.title ?? gt("This screen couldn't be displayed");
-  const firstLine = props.details.split("\n", 1)[0] ?? "";
   return (
     <ScrollView
       className="flex-1 bg-screen"
@@ -114,7 +113,7 @@ export function RenderFailureView(
         <T>Try again. If it keeps happening, copy the details for a bug report.</T>
       </Text>
       <Text selectable className="text-center font-mono text-xs text-danger-foreground">
-        {firstLine.slice(0, splitsSurrogatePair(firstLine, 300) ? 299 : 300)}
+        {errorDetailsPreview(props.details)}
       </Text>
       <View className="w-full max-w-xs gap-2">
         <Button label={gt("Try again")} onPress={props.retry} tone="primary" fullWidth />
