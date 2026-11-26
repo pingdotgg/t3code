@@ -263,6 +263,7 @@ describe("deriveThreadMap", () => {
           steer("plain-steer", "a"),
           steer("promoted", "a", { inputIntent: "promoted_queued_to_steer" }),
           steer("agent-steer", "a", { senderThreadId: ThreadId.make("helper") }),
+          steer("self-steer", "a", { senderThreadId: threadId }),
           // Queued into the run but never a steer, so not an input.
           steer("queued", "a", { inputIntent: "queued_turn" }),
           prompt("b", "From afar", { linkedSender }),
@@ -281,6 +282,7 @@ describe("deriveThreadMap", () => {
         text: "agent-steer",
         sender: { kind: "local", threadId: "helper" },
       },
+      { kind: "steer", id: "steer:self-steer", text: "self-steer", sender: null },
     ]);
     expect(fromLinked?.sender).toEqual({ kind: "linked", sender: linkedSender });
   });
@@ -364,6 +366,15 @@ describe("deriveThreadMap", () => {
             output: { isError: true, content: [{ type: "text", text: "No such thread" }] },
           }),
           tool("not-a-send", "a", { toolName: "t3_thread_read", input: { threadId: "x" } }),
+          // Sent to this thread itself, by name or by default.
+          tool("to-self", "a", {
+            toolName: "t3_thread_send_attachments",
+            output: { structuredContent: { threadId, messageId: "m" } },
+          }),
+          tool("to-self-by-default", "a", {
+            toolName: "t3_thread_send_attachments",
+            input: { attachments: [] },
+          }),
         ],
       }),
     );
@@ -384,6 +395,7 @@ describe("deriveThreadMap", () => {
           // A provider change hands context over just before the wake's notification.
           {
             ...itemBase("woken-handoff", "woken"),
+            ordinal: 99,
             type: "handoff",
             contextHandoffId: ContextHandoffId.make("handoff"),
             fromProviderThreadIds: [],
@@ -393,13 +405,15 @@ describe("deriveThreadMap", () => {
             strategy: "full_thread_summary",
           },
           {
+            // The server opens a turn at its first ordinal: run ordinal * 100.
             ...itemBase("woken-notification", "woken"),
+            ordinal: 100,
             type: "notification",
             source: { kind: "delegated_task", taskIds: [] },
             outcome: "completed",
             summary: "1 delegated task finished",
           },
-          tool("woken-tool", "woken"),
+          { ...tool("woken-tool", "woken"), ordinal: 101 },
         ],
       }),
     );
@@ -413,21 +427,25 @@ describe("deriveThreadMap", () => {
   });
 
   it("never takes a notification from inside a turn for the prompt that opened it", () => {
-    const notice = (id: string, runId: string): OrchestrationV2TurnItem => ({
+    const notice = (id: string, runId: string, at: number): OrchestrationV2TurnItem => ({
       ...itemBase(id, runId),
+      ordinal: at,
       type: "notification",
       source: { kind: "delegated_task", taskIds: [] },
       outcome: "completed",
       summary: `${id} summary`,
     });
-    const [afterWork, retained] = deriveThreadMap(
+    const [afterWork, atBoundary, retained] = deriveThreadMap(
       projection({
-        runs: [run("after-work", 1), run("retained", 2)],
-        // Both windows start inside the turn, after its prompt.
+        runs: [run("after-work", 1), run("at-boundary", 2), run("retained", 3)],
+        // Each window starts inside the turn, after its prompt.
         items: [
           tool("after-work-tool", "after-work"),
-          notice("after-work-notice", "after-work"),
-          notice("retained-notice", "retained"),
+          notice("after-work-notice", "after-work", 105),
+          // The window starts right at a report that arrived mid-turn.
+          notice("at-boundary-notice", "at-boundary", 205),
+          tool("at-boundary-tool", "at-boundary"),
+          notice("retained-notice", "retained", 305),
         ],
         // The latest turn's prompt is kept even when its row is not.
         messages: [message("retained-prompt", "retained", { text: "Ship it" })],
@@ -435,6 +453,7 @@ describe("deriveThreadMap", () => {
     );
 
     expect(afterWork).toMatchObject({ rowId: null, prompt: "", moreToolCalls: true });
+    expect(atBoundary).toMatchObject({ rowId: null, prompt: "", moreToolCalls: true });
     expect(retained).toMatchObject({ rowId: null, prompt: "Ship it", moreToolCalls: true });
   });
 

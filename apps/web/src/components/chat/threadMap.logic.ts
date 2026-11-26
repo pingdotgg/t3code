@@ -114,12 +114,16 @@ const STEER_INTENTS: ReadonlySet<UserMessageItem["inputIntent"]> = new Set([
   "promoted_queued_to_steer",
 ]);
 
-function senderOf(message: {
-  readonly senderThreadId?: ThreadId | undefined;
-  readonly linkedSender?: OrchestrationV2LinkedSender | undefined;
-}): ThreadMapSender | null {
+function senderOf(
+  message: {
+    readonly senderThreadId?: ThreadId | undefined;
+    readonly linkedSender?: OrchestrationV2LinkedSender | undefined;
+  },
+  selfId: ThreadId,
+): ThreadMapSender | null {
   if (message.linkedSender !== undefined) return { kind: "linked", sender: message.linkedSender };
-  if (message.senderThreadId !== undefined) {
+  // A thread can send to itself; that is not a message from another thread.
+  if (message.senderThreadId !== undefined && message.senderThreadId !== selfId) {
     return { kind: "local", threadId: message.senderThreadId };
   }
   return null;
@@ -135,13 +139,20 @@ const asRecord = (value: unknown): Readonly<Record<string, unknown>> | undefined
 
 const isThreadId = Schema.is(ThreadId);
 
-function sendTarget(item: Extract<Item, { readonly type: "dynamic_tool" }>): ThreadId | null {
+function sendTarget(
+  item: Extract<Item, { readonly type: "dynamic_tool" }>,
+  selfId: ThreadId,
+): ThreadId | null {
   const output = compactDynamicToolOutput(item.output)?.threadId;
   if (isThreadId(output)) return output;
   const input = asRecord(item.input);
   // Historical Cursor items keep the MCP args envelope.
-  const threadId = (typeof input?.toolName === "string" ? asRecord(input.args) : input)?.threadId;
-  return isThreadId(threadId) ? threadId : null;
+  const args = typeof input?.toolName === "string" ? asRecord(input.args) : input;
+  if (isThreadId(args?.threadId)) return args.threadId;
+  // Attachments sent without a target go to the sending thread.
+  return args !== undefined && resolveT3McpToolId(item.toolName) === "t3_thread_send_attachments"
+    ? selfId
+    : null;
 }
 
 function isDeliveredSend(item: Extract<Item, { readonly type: "dynamic_tool" }>): boolean {
@@ -249,16 +260,14 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
     const openingItem = userItemByMessageId.get(run.userMessageId);
     const openingMessage = messageById.get(run.userMessageId);
     const opening = openingItem ?? openingMessage;
-    // A wake's message becomes a notification row, which has no message ID. Only a provider
-    // handoff comes before it; a notification after other work arrived mid-turn.
-    const firstOwnItem = items.find((item) => item.type !== "handoff");
+    // A wake's message becomes a notification row, which has no message ID. The server gives a
+    // turn's opening item the turn's first ordinal (run ordinal * 100); later items sit above it.
     const openingNotification =
-      openingItem === undefined &&
-      firstOwnItem?.type === "notification" &&
-      (openingMessage === undefined ||
-        openingMessage.notification !== undefined ||
-        openingMessage.delegatedCompletion !== undefined)
-        ? firstOwnItem
+      openingItem === undefined
+        ? items.find(
+            (item): item is Extract<Item, { readonly type: "notification" }> =>
+              item.type === "notification" && item.ordinal === run.ordinal * 100,
+          )
         : undefined;
     const prompt =
       openingNotification?.summary ??
@@ -266,7 +275,7 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
         ? ""
         : (openingMessage?.notification?.summary ??
           presentedText({ ...opening, id: run.userMessageId, role: "user" })));
-    const sender = opening === undefined ? null : senderOf(opening);
+    const sender = opening === undefined ? null : senderOf(opening, projection.thread.id);
 
     const inputs: ThreadMapInput[] =
       sender === null ? [] : [{ kind: "incoming", id: `from:${run.id}`, sender }];
@@ -290,7 +299,7 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
           kind: "steer",
           id: `steer:${item.messageId}`,
           text: presentedText({ ...item, id: item.messageId, role: "user" }),
-          sender: senderOf(item),
+          sender: senderOf(item, projection.thread.id),
         });
       } else if (item.type === "assistant_message") {
         firstAssistant ??= item.id;
@@ -306,7 +315,9 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
         THREAD_SEND_TOOLS.has(resolveT3McpToolId(item.toolName) ?? "") &&
         isDeliveredSend(item)
       ) {
-        outputs.push({ kind: "send", id: `send:${item.id}`, threadId: sendTarget(item) });
+        const threadId = sendTarget(item, projection.thread.id);
+        if (threadId !== projection.thread.id)
+          outputs.push({ kind: "send", id: `send:${item.id}`, threadId });
       }
     }
     // Many providers never mark a phase: a finished turn's last message is its answer.
