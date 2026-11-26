@@ -133,6 +133,7 @@ const MODEL_IDS: Record<number, string> = {
   1527: "gemini-4-hydrogen",
   1532: "gemini-4-neon",
   1533: "gemini-4-neon",
+  1535: "gemini-4-neon",
   1537: "gemini-pro-orchestrator-neon",
   1667: "gemini-pro-orchestrator",
   1669: "gemini-4-hydrogen-orchestrator",
@@ -141,7 +142,7 @@ const MODEL_IDS: Record<number, string> = {
 // Effort and routing variants share the base model's price.
 export const antigravityRateModel = (model: string) => {
   const base = model.replace(
-    /-(?:extra-low|low|medium|high|tiered|control|thinking|agent|orchestrator|trial|n|r)$/,
+    /-(?:extra-low|low|medium|high|xhigh|tiered|control|thinking|agent|orchestrator|trial|n|r)$/,
     "",
   );
   return /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/.test(model)
