@@ -3,7 +3,7 @@ import { MCP_APP_DOCUMENT_MESSAGE } from "@t3tools/shared/mcpApp";
 const MAX_UNCONFIRMED_MESSAGES = 256;
 
 interface DocumentLink {
-  // `null` until the frame's first message, `false` once that message was not the document's port.
+  // `null` until the frame hands over its port, `false` once its app spoke without one.
   link: MessagePort | false | null;
   nextProbe: number;
   deliver: (data: unknown) => void;
@@ -18,7 +18,7 @@ const documentLinks = new WeakMap<HTMLIFrameElement, DocumentLink>();
 /**
  * Ties the bridge to the frame's first document. A frame's window outlives its document, so the
  * bridge follows the port that document's bootstrap sends first, not the window. A frame whose
- * first message is anything else was served without the bootstrap and gets no bridge:
+ * app speaks before any handover was served without the bootstrap and gets no bridge:
  * `onMissing` reports it and nothing is delivered or posted.
  */
 export function attachMcpAppDocumentLink(
@@ -41,6 +41,9 @@ export function attachMcpAppDocumentLink(
       if (current.link === null) {
         const port = event.data?.t3 === MCP_APP_DOCUMENT_MESSAGE ? (event.ports[0] ?? null) : null;
         if (port === null) {
+          // A filtering proxy on the user's machine (AdGuard) adds its own scripts ahead of the
+          // bootstrap, and they message the parent first. Only an app message shows it is missing.
+          if (event.data?.jsonrpc !== "2.0") return;
           current.link = false;
           current.onMissing();
           return;
