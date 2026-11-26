@@ -13091,5 +13091,25 @@
   "98f5e5fa1c6b0c62": "Schließe die Anmeldung bei OpenRouter ab und komm dann hierher zurück.",
   "b362d4f1c293a461": "Modell",
   "13682ea76b1efa5d": "Das OpenRouter-Modell, das dein Diktat transkribiert.",
-  "bc5e8f45269a432e": "oder füge einen API-Schlüssel ein"
+  "bc5e8f45269a432e": "oder füge einen API-Schlüssel ein",
+  "1730c80a86d1ceb9": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": [
+        "über ",
+        {
+          "i": 3,
+          "k": "_gt_value_3",
+          "v": "v"
+        }
+      ]
+    }
+  ]
 }

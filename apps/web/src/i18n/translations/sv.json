@@ -13098,5 +13098,25 @@
   "98f5e5fa1c6b0c62": "Slutför inloggningen hos OpenRouter och kom sedan tillbaka hit.",
   "b362d4f1c293a461": "Modell",
   "13682ea76b1efa5d": "OpenRouter-modellen som transkriberar din diktering.",
-  "bc5e8f45269a432e": "eller klistra in en API-nyckel"
+  "bc5e8f45269a432e": "eller klistra in en API-nyckel",
+  "1730c80a86d1ceb9": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": [
+        "via ",
+        {
+          "i": 3,
+          "k": "_gt_value_3",
+          "v": "v"
+        }
+      ]
+    }
+  ]
 }

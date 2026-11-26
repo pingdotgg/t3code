@@ -464,17 +464,24 @@ export function ReadAloudSettingsSection() {
                         <SpeechProviderIcon provider={settings.provider} />
                       )}
                       <span className="truncate">
-                        {settings.provider === "local"
-                          ? (selectedEnvironment?.label ?? gt("Chosen environment (unavailable)"))
-                          : remote
-                            ? gt("{provider} via {environment}", {
-                                provider: READ_ALOUD_LABELS[settings.provider],
-                                environment:
-                                  selectedEnvironment?.label ?? gt("unavailable environment"),
-                              })
-                            : settings.provider === "system"
-                              ? gt("System voices")
-                              : gt("Off", { $context: "read aloud disabled" })}
+                        {settings.provider === "local" ? (
+                          (selectedEnvironment?.label ?? gt("Chosen environment (unavailable)"))
+                        ) : remote ? (
+                          // The environment is muted, as in the transcription picker.
+                          <T>
+                            <Var>{READ_ALOUD_LABELS[settings.provider]}</Var>{" "}
+                            <span className="text-muted-foreground">
+                              via{" "}
+                              <Var>
+                                {selectedEnvironment?.label ?? gt("unavailable environment")}
+                              </Var>
+                            </span>
+                          </T>
+                        ) : settings.provider === "system" ? (
+                          gt("System voices")
+                        ) : (
+                          gt("Off", { $context: "read aloud disabled" })
+                        )}
                       </span>
                     </span>
                   </SelectValue>

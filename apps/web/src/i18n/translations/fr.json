@@ -13091,5 +13091,25 @@
   "98f5e5fa1c6b0c62": "Terminez la connexion sur OpenRouter, puis revenez ici.",
   "b362d4f1c293a461": "Modèle",
   "13682ea76b1efa5d": "Le modèle OpenRouter qui transcrit votre dictée.",
-  "bc5e8f45269a432e": "ou collez une clé d’API"
+  "bc5e8f45269a432e": "ou collez une clé d’API",
+  "1730c80a86d1ceb9": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": [
+        "via ",
+        {
+          "i": 3,
+          "k": "_gt_value_3",
+          "v": "v"
+        }
+      ]
+    }
+  ]
 }
