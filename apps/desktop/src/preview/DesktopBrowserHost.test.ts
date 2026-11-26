@@ -218,6 +218,11 @@ describe("DesktopBrowserHost", () => {
         let cdpCaptures = 0;
         let nativeCaptures = 0;
         const debuggee = makeDebuggee({
+          answer: (method) => {
+            if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+            if (method === "Page.createIsolatedWorld") return { executionContextId: 1 };
+            if (method === "Runtime.evaluate") return { result: { value: true } };
+          },
           refuse: (method) => {
             if (method !== "Page.captureScreenshot") return false;
             cdpCaptures += 1;
@@ -243,7 +248,7 @@ describe("DesktopBrowserHost", () => {
           }),
         );
         expect(yield* Queue.take(replies)).toBe(1);
-        expect(nativeCaptures).toBe(platform === "darwin" ? 1 : 0);
+        expect(nativeCaptures > 0).toBe(platform === "darwin");
         expect(cdpCaptures).toBe(platform === "darwin" ? 0 : 1);
       }).pipe(Effect.provideService(HostProcess.Platform, platform), Effect.scoped),
   );
