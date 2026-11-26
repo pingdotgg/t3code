@@ -23,6 +23,7 @@ import {
   pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
+  withDiffStat,
   partitionPullRequestsWithPriority,
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
@@ -88,6 +89,7 @@ describe("visible pull request line-count targets", () => {
       {
         environmentId: ENV_1,
         projectId: "project-1",
+        repository: "pingdotgg/t3code",
         number: 1,
         additions: 1,
         deletions: 1,
@@ -104,6 +106,56 @@ describe("visible pull request line-count targets", () => {
     expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
       { projectId: "project-1", repository: "pingdotgg/t3code", number: 2 },
     ]);
+  });
+
+  it("keeps diff stats separate across repositories that share a project and PR number", () => {
+    const own = entry({
+      additions: 0,
+      deletions: 0,
+      repository: "pingdotgg/t3code",
+      number: 42,
+    });
+    const ownKey = pullRequestEntryKey(own);
+    const entriesByKey = new Map([[ownKey, own]]);
+    const otherRepoStats = mergePullRequestDiffStats(new Map(), [
+      {
+        environmentId: ENV_1,
+        projectId: "project-1",
+        repository: "other/lib",
+        number: 42,
+        additions: 120,
+        deletions: 35,
+      },
+    ]);
+
+    expect(withDiffStat(own, otherRepoStats)).toEqual(own);
+    expect([
+      ...pullRequestStatsKeysToRequest(entriesByKey, new Set([ownKey]), [], otherRepoStats),
+    ]).toEqual([ownKey]);
+
+    const sameRepoDifferentCaseStats = mergePullRequestDiffStats(otherRepoStats, [
+      {
+        environmentId: ENV_1,
+        projectId: "project-1",
+        repository: "PingDotGG/T3Code",
+        number: 42,
+        additions: 7,
+        deletions: 2,
+      },
+    ]);
+
+    expect(withDiffStat(own, sameRepoDifferentCaseStats)).toMatchObject({
+      additions: 7,
+      deletions: 2,
+    });
+    expect([
+      ...pullRequestStatsKeysToRequest(
+        entriesByKey,
+        new Set([ownKey]),
+        [],
+        sameRepoDifferentCaseStats,
+      ),
+    ]).toEqual([]);
   });
 
   it("keeps every per-environment batch within the stats contract limit", () => {
