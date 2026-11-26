@@ -82,8 +82,11 @@ export interface MarkdownChunk {
 
 const FRONTMATTER_OPEN = /^\uFEFF?---[ \t]*\r?$/;
 const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
-// An opening rule with no closer is a thematic break, not frontmatter; stop waiting for one.
+// Cap the lookahead for a frontmatter closer; a leading rule with none is a thematic break.
 const FRONTMATTER_MAX_LINES = 1000;
+
+const hasFrontmatterClose = (lines: readonly string[]) =>
+  lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
 
 // A one-line link reference definition; footnotes are left alone so each piece does not grow
 // a footnote section.
@@ -123,15 +126,14 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     chars = 0;
     heldCut = 0;
   };
-  for (const line of text.split("\n")) {
+  const sourceLines = text.split("\n");
+  for (const line of sourceLines) {
     if (closes !== null) {
       if (closes(line)) closes = null;
-    } else if (first && FRONTMATTER_OPEN.test(line)) {
-      let seen = 0;
+    } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
       closes = (next) => {
-        // Only a real closer lets a definition follow; an opener with none was a thematic break.
         openedFence = FRONTMATTER_CLOSE.test(next);
-        return openedFence || ++seen >= FRONTMATTER_MAX_LINES;
+        return openedFence;
       };
     } else {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
