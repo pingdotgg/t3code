@@ -49,8 +49,8 @@ export function parseGrepOutput(
     }
     // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
     if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
-    const headingText = line.trimEnd();
-    const colonHeading = headingText.endsWith(":") ? COLON_HEADING.exec(headingText) : null;
+    // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; its next line decides.
+    const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
       colonHeading && OPENCODE_NUMBERED_LINE.test(lines[index + 1] ?? "")
         ? null
