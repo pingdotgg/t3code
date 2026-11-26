@@ -6971,6 +6971,7 @@
   "7074711ac6cc6f5c": "En échec",
   "75b2bb15e4624860": "Indisponible",
   "ff6b088c383bf910": "Rechercher des auteurs",
+  "a766a8ac2670096c": "{count, plural, one {{count} fusion chargée} other {{count} fusions chargées}}",
   "d6179a157948c07c": "Aucun auteur trouvé",
   "353773803bf92ad4": "Impossible de rechercher des auteurs sur l’hôte",
   "e3e2d073449a0289": "Tout le monde",

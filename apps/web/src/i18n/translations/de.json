@@ -6970,6 +6970,7 @@
   "7074711ac6cc6f5c": "Fehlgeschlagen",
   "75b2bb15e4624860": "Nicht verfügbar",
   "ff6b088c383bf910": "Autoren durchsuchen",
+  "a766a8ac2670096c": "{count, plural, one {{count} Merge geladen} other {{count} Merges geladen}}",
   "d6179a157948c07c": "Keine Autoren gefunden",
   "353773803bf92ad4": "Autoren konnten auf dem Host nicht durchsucht werden",
   "e3e2d073449a0289": "Beliebig",

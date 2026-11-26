@@ -6977,6 +6977,7 @@
   "7074711ac6cc6f5c": "Failing",
   "75b2bb15e4624860": "Unavailable",
   "ff6b088c383bf910": "Search authors",
+  "a766a8ac2670096c": "{count, plural, one {{count} merge loaded} other {{count} merges loaded}}",
   "d6179a157948c07c": "No authors found",
   "353773803bf92ad4": "Couldn't search authors on the host",
   "e3e2d073449a0289": "Anyone",

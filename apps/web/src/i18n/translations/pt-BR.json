@@ -6970,6 +6970,7 @@
   "7074711ac6cc6f5c": "Falhando",
   "75b2bb15e4624860": "Indisponível",
   "ff6b088c383bf910": "Pesquisar autores",
+  "a766a8ac2670096c": "{count, plural, one {{count} merge carregado} other {{count} merges carregados}}",
   "d6179a157948c07c": "Nenhum autor encontrado",
   "353773803bf92ad4": "Não foi possível pesquisar autores no host",
   "e3e2d073449a0289": "Qualquer pessoa",

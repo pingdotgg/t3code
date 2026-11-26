@@ -6976,6 +6976,7 @@
   "7074711ac6cc6f5c": "Misslyckade",
   "75b2bb15e4624860": "Inte tillgängligt",
   "ff6b088c383bf910": "Sök författare",
+  "a766a8ac2670096c": "{count, plural, one {{count} merge inläst} other {{count} merges inlästa}}",
   "d6179a157948c07c": "Inga författare hittades",
   "353773803bf92ad4": "Kunde inte söka efter författare på värden",
   "e3e2d073449a0289": "Vem som helst",

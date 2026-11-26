@@ -6970,6 +6970,7 @@
   "7074711ac6cc6f5c": "Fallidas",
   "75b2bb15e4624860": "No disponible",
   "ff6b088c383bf910": "Buscar autores",
+  "a766a8ac2670096c": "{count, plural, one {{count} fusión cargada} other {{count} fusiones cargadas}}",
   "d6179a157948c07c": "No se encontraron autores",
   "353773803bf92ad4": "No se pudieron buscar autores en el host",
   "e3e2d073449a0289": "Cualquiera",
