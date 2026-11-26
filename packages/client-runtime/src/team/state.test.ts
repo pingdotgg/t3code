@@ -1,8 +1,11 @@
 import {
   ALL_TEAM_ROLES,
   EnvironmentId,
+  ProjectId,
+  TeamEnvironmentRecordId,
   TeamId,
   TeamMemberId,
+  TeamThreadNoteId,
   TeamViewId,
   ThreadId,
   type TeamMember,
@@ -20,8 +23,10 @@ import {
   applyTeamStreamEvent,
   canCurrentMemberChangeThreadView,
   canCurrentMemberInterruptThread,
+  canCurrentMemberLeaveThreadNote,
   canCurrentMemberManageQueuedRun,
   canCurrentMemberPromoteQueuedRun,
+  canCurrentMemberResolveThreadNotes,
   canCurrentMemberSteerActiveTurn,
   canCurrentMemberToggleThreadLock,
   countFollowedTeamThreads,
@@ -31,9 +36,15 @@ import {
   isFollowingTeamThread,
   isTeamColleagueThread,
   isTeamThreadLocked,
+  listAccessibleTeamEnvironments,
   listAccessibleTeamViews,
+  resolveProjectTeamAssignment,
   resolveTeamQueuedRunAuthorPseudo,
+  resolveTeamThreadAcceptedNotes,
   resolveTeamThreadCreatorPseudo,
+  resolveTeamThreadEnvironmentAccessForClient,
+  resolveTeamThreadNotes,
+  resolveTeamThreadPendingNotes,
   resolveTeamThreadNotificationDecision,
   resolveTeamThreadPostPermission,
   resolveTeamThreadTurnControls,
@@ -841,5 +852,200 @@ describe("team client-runtime state and presentation", () => {
       canInterrupt: true,
       isExplicitAdminInterrupt: false,
     });
+  });
+
+  it("correlates team projects by repository identity, filters environments by ACL, and tracks live thread notes", () => {
+    const teamProjectId = ProjectId.make("proj-team-1");
+    const localProjectId = ProjectId.make("proj-local-bob");
+    const localEnvId = EnvironmentId.make("env-bob-local");
+    const gpuEnvId = EnvironmentId.make("env-gpu-restricted");
+    const noteId = TeamThreadNoteId.make("note-1");
+
+    let bobState = applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team,
+        currentMember: bob,
+        members: [alice, bob],
+        views: [defaultView],
+        invites: [],
+        threadAttributions: [
+          {
+            threadId: bobThreadId,
+            teamId,
+            creatorMemberId: bobId,
+            creatorPseudo: bob.pseudo,
+            viewId,
+            locked: false,
+            lockedByMemberId: null,
+            executionEnvironmentId: localEnvId,
+            executionEnvironmentLabel: "Bob Laptop",
+            isLocalSynced: true,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        followedThreadIds: [],
+        latestTurnAttributions: [],
+        teamProjects: [],
+        environments: [
+          {
+            id: TeamEnvironmentRecordId.make("env-rec-0"),
+            teamId,
+            environmentId: envId,
+            name: "Default Team Environment",
+            isDefault: true,
+            peerLinkId: null,
+            accessRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        threadNotes: [],
+      },
+    });
+
+    // Assign project & correlate Bob's local clone via RepositoryIdentity canonicalKey.
+    bobState = applyTeamStreamEvent(bobState, {
+      version: 1,
+      type: "projectAssigned",
+      payload: {
+        projectId: teamProjectId,
+        teamId,
+        defaultViewId: viewId,
+        repoIdentityKey: "github.com/acme/repo",
+        assignedByMemberId: aliceId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      },
+    });
+    const teamStates = new Map([[envId, bobState]]);
+    const correlated = resolveProjectTeamAssignment({
+      project: {
+        id: localProjectId,
+        environmentId: localEnvId,
+        repositoryIdentity: {
+          canonicalKey: "github.com/acme/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://github.com/acme/repo.git",
+          },
+        },
+      },
+      teamStates,
+    });
+    expect(correlated?.teamEnvironmentId).toBe(envId);
+    expect(correlated?.assignment.projectId).toBe(teamProjectId);
+
+    // Attach restricted GPU env -> hidden from regular Bob's listAccessibleTeamEnvironments.
+    bobState = applyTeamStreamEvent(bobState, {
+      version: 1,
+      type: "environmentUpserted",
+      payload: {
+        id: TeamEnvironmentRecordId.make("env-rec-1"),
+        teamId,
+        environmentId: gpuEnvId,
+        name: "GPU Runner",
+        isDefault: false,
+        peerLinkId: gpuEnvId,
+        accessRule: { roles: ["owner", "admin"], memberIds: [] },
+        createdAt: "2026-01-01T00:00:02.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+      },
+    });
+    expect(listAccessibleTeamEnvironments(bobState).map((env) => env.environmentId)).toEqual([
+      envId,
+    ]);
+
+    // Notes stream updates + pseudo rename propagation.
+    bobState = applyTeamStreamEvent(bobState, {
+      version: 1,
+      type: "threadNoteUpserted",
+      payload: {
+        id: noteId,
+        threadId: bobThreadId,
+        teamId,
+        authorMemberId: aliceId,
+        authorPseudo: alice.pseudo,
+        authorRole: "owner",
+        originalBody: "Please check edge case X",
+        originalContentHash: "hash-x",
+        editedBody: null,
+        editedContentHash: null,
+        status: "pending",
+        anchorTurnId: "run-1",
+        anchorSeq: 1,
+        includedInTurnId: null,
+        resolvedByMemberId: null,
+        resolvedByPseudo: null,
+        resolvedAt: null,
+        createdAt: "2026-01-01T00:00:03.000Z",
+      },
+    });
+    expect(resolveTeamThreadNotes({ teamState: bobState, threadId: bobThreadId })).toHaveLength(1);
+    expect(
+      resolveTeamThreadPendingNotes({ teamState: bobState, threadId: bobThreadId }),
+    ).toHaveLength(1);
+    expect(
+      resolveTeamThreadAcceptedNotes({ teamState: bobState, threadId: bobThreadId }),
+    ).toHaveLength(0);
+    expect(
+      canCurrentMemberResolveThreadNotes({
+        teamState: bobState,
+        threadId: bobThreadId,
+        viewingOnLocalExecutionEnvironment: true,
+      }),
+    ).toBe(true);
+
+    // Pseudo rename updates cached authorPseudo on notes.
+    bobState = applyTeamStreamEvent(bobState, {
+      version: 1,
+      type: "memberUpserted",
+      payload: { ...alice, pseudo: "alice-lead" as TeamPseudo },
+    });
+    expect(
+      resolveTeamThreadNotes({ teamState: bobState, threadId: bobThreadId })[0]?.authorPseudo,
+    ).toBe("alice-lead");
+
+    // Alice viewing Bob's local thread cannot execute, can leave note.
+    const aliceState = applyTeamStreamEvent(bobState, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team,
+        currentMember: alice,
+        members: [alice, bob],
+        views: [defaultView],
+        invites: [],
+        threadAttributions: bobState.threadAttributions,
+        followedThreadIds: [],
+        latestTurnAttributions: [],
+        teamProjects: bobState.teamProjects,
+        environments: bobState.environments,
+        threadNotes: resolveTeamThreadNotes({ teamState: bobState, threadId: bobThreadId }),
+      },
+    });
+    expect(
+      resolveTeamThreadEnvironmentAccessForClient({
+        teamState: aliceState,
+        threadId: bobThreadId,
+        viewingOnLocalExecutionEnvironment: false,
+      }),
+    ).toMatchObject({ canExecute: false, reason: "other_member_local" });
+    expect(canCurrentMemberLeaveThreadNote({ teamState: aliceState, threadId: bobThreadId })).toBe(
+      true,
+    );
+    expect(
+      canCurrentMemberResolveThreadNotes({ teamState: aliceState, threadId: bobThreadId }),
+    ).toBe(false);
+
+    // Deleting the note removes it from state.
+    bobState = applyTeamStreamEvent(bobState, {
+      version: 1,
+      type: "threadNoteDeleted",
+      payload: { noteId, threadId: bobThreadId },
+    });
+    expect(resolveTeamThreadNotes({ teamState: bobState, threadId: bobThreadId })).toHaveLength(0);
   });
 });

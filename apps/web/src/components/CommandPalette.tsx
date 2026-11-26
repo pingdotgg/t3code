@@ -86,6 +86,9 @@ import {
   WorkflowIcon,
 } from "lucide-react";
 import { useTeamCommandPaletteActions } from "./team/useTeamCommandPaletteActions";
+import { useTeamEnvironmentState } from "../state/team";
+import { canManageTeamProjects } from "@t3tools/contracts";
+import { UsersIcon } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -579,6 +582,14 @@ function OpenCommandPaletteDialog(props: {
     readonly sourcesEnvironmentId: EnvironmentId | null;
   } | null>(null);
   const [newProjectPublishes, setNewProjectPublishes] = useState(false);
+  const [newProjectAssignsToTeam, setNewProjectAssignsToTeam] = useState(true);
+  const newProjectTeamState = useTeamEnvironmentState(newProjectFlow?.environmentId ?? null);
+  const canAssignNewProjectToTeam =
+    newProjectFlow !== null &&
+    newProjectTeamState.team !== null &&
+    newProjectTeamState.currentMember !== null &&
+    newProjectTeamState.currentMember.status === "active" &&
+    canManageTeamProjects(newProjectTeamState.currentMember.role);
   const [newProjectPublishKind, setNewProjectPublishKind] =
     useState<SourceControlProviderKind | null>(null);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
@@ -2177,6 +2188,7 @@ function OpenCommandPaletteDialog(props: {
         environmentId: newProjectFlow.environmentId,
         name: newProjectName,
         publishTo: newProjectPublishes ? newProjectPublishTarget : null,
+        assignToTeam: canAssignNewProjectToTeam && newProjectAssignsToTeam,
       }),
     );
     newProjectSubmittingRef.current = false;
@@ -2539,55 +2551,87 @@ function OpenCommandPaletteDialog(props: {
             },
           ],
         };
+  const newProjectOptionItems: CommandPaletteView["groups"][number]["items"][number][] = [
+    ...(canAssignNewProjectToTeam && newProjectTeamState.team !== null
+      ? [
+          {
+            kind: "action" as const,
+            value: "new-project:assign-to-team",
+            searchTerms: [],
+            title: gt("Assign to team {teamName}", { teamName: newProjectTeamState.team.name }),
+            description: gt(
+              "Enable shared team environments and local-to-team thread syncing for this project",
+            ),
+            icon: <UsersIcon className={ITEM_ICON_CLASS} />,
+            titleTrailingContent: (
+              <span className="ms-auto flex items-center">
+                <span className="pointer-events-none flex">
+                  <Checkbox checked={newProjectAssignsToTeam} tabIndex={-1} aria-hidden />
+                </span>
+              </span>
+            ),
+            ...(isCreatingNewProject ? { disabled: true } : {}),
+            keepOpen: true,
+            checked: newProjectAssignsToTeam,
+            run: async () => {
+              setNewProjectAssignsToTeam((assign) => !assign);
+            },
+          },
+        ]
+      : []),
+    ...(newProjectPublishTarget !== null && newProjectPathPreview !== null
+      ? [
+          {
+            kind: "action" as const,
+            value: newProjectPublishToggleValue,
+            searchTerms: [],
+            title:
+              newProjectPublishTargets.length > 1
+                ? gt("Create private repository")
+                : gt("Create private repository on {host}", {
+                    host: newProjectPublishTarget.definition.label,
+                  }),
+            description:
+              newProjectName.length > 0
+                ? getNewProjectRepository(newProjectPublishTarget, newProjectPathPreview)
+                : (newProjectPublishTarget.owner ??
+                  gt("Your {host} account", {
+                    host: newProjectPublishTarget.definition.label,
+                  })),
+            icon: sourceControlHostIcon(newProjectPublishTarget.definition, ITEM_ICON_CLASS),
+            titleTrailingContent: (
+              <span className="ms-auto flex items-center gap-2">
+                {newProjectPublishTargets.length > 1 ? (
+                  <NewProjectPublishHostPicker
+                    disabled={isCreatingNewProject}
+                    targets={newProjectPublishTargets}
+                    value={newProjectPublishTarget.definition.kind}
+                    onValueChange={setNewProjectPublishKind}
+                  />
+                ) : null}
+                <span className="pointer-events-none flex">
+                  <Checkbox checked={newProjectPublishes} tabIndex={-1} aria-hidden />
+                </span>
+              </span>
+            ),
+            ...(isCreatingNewProject ? { disabled: true } : {}),
+            keepOpen: true,
+            checked: newProjectPublishes,
+            run: async () => {
+              setNewProjectPublishes((publishes) => !publishes);
+            },
+          },
+        ]
+      : []),
+  ];
   const newProjectOptionGroups: CommandPaletteView["groups"] =
-    newProjectPublishTarget === null || newProjectPathPreview === null
+    newProjectOptionItems.length === 0
       ? []
       : [
           {
             value: "new-project-options",
             label: gt("Options"),
-            items: [
-              {
-                kind: "action",
-                value: newProjectPublishToggleValue,
-                searchTerms: [],
-                title:
-                  newProjectPublishTargets.length > 1
-                    ? gt("Create private repository")
-                    : gt("Create private repository on {host}", {
-                        host: newProjectPublishTarget.definition.label,
-                      }),
-                description:
-                  newProjectName.length > 0
-                    ? getNewProjectRepository(newProjectPublishTarget, newProjectPathPreview)
-                    : (newProjectPublishTarget.owner ??
-                      gt("Your {host} account", {
-                        host: newProjectPublishTarget.definition.label,
-                      })),
-                icon: sourceControlHostIcon(newProjectPublishTarget.definition, ITEM_ICON_CLASS),
-                titleTrailingContent: (
-                  <span className="ms-auto flex items-center gap-2">
-                    {newProjectPublishTargets.length > 1 ? (
-                      <NewProjectPublishHostPicker
-                        disabled={isCreatingNewProject}
-                        targets={newProjectPublishTargets}
-                        value={newProjectPublishTarget.definition.kind}
-                        onValueChange={setNewProjectPublishKind}
-                      />
-                    ) : null}
-                    <span className="pointer-events-none flex">
-                      <Checkbox checked={newProjectPublishes} tabIndex={-1} aria-hidden />
-                    </span>
-                  </span>
-                ),
-                ...(isCreatingNewProject ? { disabled: true } : {}),
-                keepOpen: true,
-                checked: newProjectPublishes,
-                run: async () => {
-                  setNewProjectPublishes((publishes) => !publishes);
-                },
-              },
-            ],
+            items: newProjectOptionItems,
           },
         ];
 

@@ -2,6 +2,7 @@ import {
   AuthSessionId,
   OrchestratorMcpFailure,
   type EnvironmentAuthorizationError,
+  type EnvironmentId,
   type TeamMemberId,
   type TeamViewId,
   type ThreadId,
@@ -102,6 +103,9 @@ export const assertCanAccessCallerThread = Effect.fn("TeamMcpAccess.assertCanAcc
       yield* teamService
         .assertActorCanPostInThread(actor, callerThreadId)
         .pipe(Effect.mapError(toMcpForbidden));
+      yield* teamService
+        .assertActorCanExecuteOnThreadEnvironment(actor, callerThreadId)
+        .pipe(Effect.mapError(toMcpForbidden));
     }
   },
 );
@@ -137,6 +141,32 @@ export const assertCanPostInThread = Effect.fn("TeamMcpAccess.assertCanPostInThr
   yield* caller.value.teamService
     .assertActorCanPostInThread(caller.value.actor, threadId)
     .pipe(Effect.mapError(toMcpForbidden));
+  yield* caller.value.teamService
+    .assertActorCanExecuteOnThreadEnvironment(caller.value.actor, threadId)
+    .pipe(Effect.mapError(toMcpForbidden));
+});
+
+export const assertCanAccessEnvironment = Effect.fn("TeamMcpAccess.assertCanAccessEnvironment")(
+  function* (environmentId: EnvironmentId) {
+    const caller = yield* resolveTeamMcpCaller();
+    if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .assertActorCanAccessEnvironment(caller.value.actor, environmentId)
+      .pipe(Effect.mapError(toMcpForbidden));
+  },
+);
+
+export const filterAccessibleEnvironmentIds = Effect.fn(
+  "TeamMcpAccess.filterAccessibleEnvironmentIds",
+)(function* (environmentIds: ReadonlyArray<EnvironmentId>) {
+  const caller = yield* resolveTeamMcpCaller();
+  if (Option.isNone(caller)) {
+    return new Set<EnvironmentId>(environmentIds) as ReadonlySet<EnvironmentId>;
+  }
+  return yield* caller.value.teamService.filterAccessibleEnvironmentIdsForActor(
+    caller.value.actor,
+    environmentIds,
+  );
 });
 
 export const canSteerActiveTurn = Effect.fn("TeamMcpAccess.canSteerActiveTurn")(function* (
@@ -152,6 +182,9 @@ export const assertCanSteerActiveTurn = Effect.fn("TeamMcpAccess.assertCanSteerA
     const caller = yield* resolveTeamMcpCaller();
     if (Option.isNone(caller)) return;
     yield* caller.value.teamService
+      .assertActorCanExecuteOnThreadEnvironment(caller.value.actor, threadId)
+      .pipe(Effect.mapError(toMcpForbidden));
+    yield* caller.value.teamService
       .assertActorCanSteerActiveTurn(caller.value.actor, threadId)
       .pipe(Effect.mapError(toMcpForbidden));
   },
@@ -161,6 +194,9 @@ export const assertCanPromoteQueuedRun = Effect.fn("TeamMcpAccess.assertCanPromo
   function* (threadId: ThreadId) {
     const caller = yield* resolveTeamMcpCaller();
     if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .assertActorCanExecuteOnThreadEnvironment(caller.value.actor, threadId)
+      .pipe(Effect.mapError(toMcpForbidden));
     yield* caller.value.teamService
       .assertActorCanPromoteQueuedRun(caller.value.actor, threadId)
       .pipe(Effect.mapError(toMcpForbidden));
@@ -172,6 +208,9 @@ export const assertCanInterruptThread = Effect.fn("TeamMcpAccess.assertCanInterr
     const caller = yield* resolveTeamMcpCaller();
     if (Option.isNone(caller)) return;
     yield* caller.value.teamService
+      .assertActorCanExecuteOnThreadEnvironment(caller.value.actor, threadId)
+      .pipe(Effect.mapError(toMcpForbidden));
+    yield* caller.value.teamService
       .assertActorCanInterruptThread(caller.value.actor, threadId, runId)
       .pipe(Effect.mapError(toMcpForbidden));
   },
@@ -181,6 +220,9 @@ export const assertCanManageQueuedRun = Effect.fn("TeamMcpAccess.assertCanManage
   function* (threadId: ThreadId, runId: string) {
     const caller = yield* resolveTeamMcpCaller();
     if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .assertActorCanExecuteOnThreadEnvironment(caller.value.actor, threadId)
+      .pipe(Effect.mapError(toMcpForbidden));
     yield* caller.value.teamService
       .assertActorCanManageQueuedRun(caller.value.actor, threadId, runId)
       .pipe(Effect.mapError(toMcpForbidden));
@@ -246,6 +288,12 @@ export const authorizeChildThreadCreation = Effect.fn("TeamMcpAccess.authorizeCh
       if (Option.isSome(parentAttr)) {
         inheritedViewId = parentAttr.value.viewId;
       }
+    }
+    const scopeOption = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+    if (Option.isSome(scopeOption)) {
+      yield* teamService
+        .assertActorCanAccessEnvironment(actor, scopeOption.value.environmentId)
+        .pipe(Effect.mapError(toMcpForbidden));
     }
     yield* teamService
       .assertActorCanCreateThreadInView({

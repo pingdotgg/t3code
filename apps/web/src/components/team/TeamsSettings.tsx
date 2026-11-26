@@ -48,6 +48,7 @@ import { toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settings/settingsLayout";
 import { formatTeamRoleLabel } from "./TeamJoinForm";
 import { openTeamJoinDialog } from "./teamJoinDialogState";
+import { TeamEnvironmentsSettingsSection } from "./TeamEnvironmentsSettingsSection";
 import { TeamMembersSettingsSection } from "./TeamMembersSettingsSection";
 import { TeamViewsSettingsSection } from "./TeamViewsSettingsSection";
 
@@ -756,6 +757,13 @@ export function TeamsSettings() {
 
           {selectedEnvironmentId !== null ? (
             <>
+              <TeamEnvironmentsSettingsSection
+                environmentId={selectedEnvironmentId}
+                currentMember={currentMember}
+                members={teamState.members}
+                memberById={teamState.memberById}
+                environments={teamState.environments}
+              />
               <TeamViewsSettingsSection
                 environmentId={selectedEnvironmentId}
                 currentMember={currentMember}

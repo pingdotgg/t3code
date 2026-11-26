@@ -1,13 +1,21 @@
 import * as Schema from "effect/Schema";
-import { AuthClientMetadataDeviceType, AuthEnvironmentScope } from "../auth.ts";
+import {
+  AuthClientMetadataDeviceType,
+  AuthEnvironmentScope,
+  AuthMcpClientAccess,
+} from "../auth.ts";
 import {
   AuthSessionId,
+  EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
+  ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "../baseSchemas.ts";
+import { ModelSelection } from "../modelSelection.ts";
+import { ProviderInteractionMode, RuntimeMode } from "../providerPolicy.ts";
 
 const makeTeamEntityId = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) =>
   TrimmedNonEmptyString.pipe(Schema.brand<Brand>(brand));
@@ -23,6 +31,12 @@ export type TeamInviteId = typeof TeamInviteId.Type;
 
 export const TeamViewId = makeTeamEntityId("TeamViewId");
 export type TeamViewId = typeof TeamViewId.Type;
+
+export const TeamEnvironmentRecordId = makeTeamEntityId("TeamEnvironmentRecordId");
+export type TeamEnvironmentRecordId = typeof TeamEnvironmentRecordId.Type;
+
+export const TeamThreadNoteId = makeTeamEntityId("TeamThreadNoteId");
+export type TeamThreadNoteId = typeof TeamThreadNoteId.Type;
 
 export const ALL_TEAM_ROLES = ["owner", "admin", "modo", "regular"] as const;
 export const TeamRole = Schema.Literals(ALL_TEAM_ROLES);
@@ -87,6 +101,19 @@ export function canChangeThreadTeamView(role: TeamRole): boolean {
 
 export function canToggleTeamThreadLock(role: TeamRole): boolean {
   return isTeamAdminRole(role);
+}
+
+export function canManageTeamEnvironments(role: TeamRole): boolean {
+  return isTeamAdminRole(role);
+}
+
+export function canManageTeamProjects(role: TeamRole): boolean {
+  return isTeamAdminRole(role);
+}
+
+/** Regular authors require an explicit UI confirmation dialog before note approval/edit-approval. */
+export function requiresTeamNoteApprovalConfirmation(authorRole: TeamRole): boolean {
+  return authorRole === "regular";
 }
 
 export const TeamMemberStatus = Schema.Literals(["active", "suspended", "removed"]);
@@ -172,6 +199,190 @@ export const TeamView = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type TeamView = typeof TeamView.Type;
+
+export const TeamProjectAssignment = Schema.Struct({
+  projectId: ProjectId,
+  teamId: TeamId,
+  defaultViewId: Schema.NullOr(TeamViewId),
+  repoIdentityKey: Schema.NullOr(TrimmedNonEmptyString),
+  assignedByMemberId: TeamMemberId,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type TeamProjectAssignment = typeof TeamProjectAssignment.Type;
+
+export const TeamEnvironment = Schema.Struct({
+  id: TeamEnvironmentRecordId,
+  teamId: TeamId,
+  environmentId: EnvironmentId,
+  name: TrimmedNonEmptyString,
+  isDefault: Schema.Boolean,
+  peerLinkId: Schema.NullOr(TrimmedNonEmptyString),
+  accessRule: TeamAccessRule,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type TeamEnvironment = typeof TeamEnvironment.Type;
+
+export const TeamThreadNoteStatus = Schema.Literals([
+  "pending",
+  "accepted",
+  "rejected",
+  "consumed",
+]);
+export type TeamThreadNoteStatus = typeof TeamThreadNoteStatus.Type;
+
+export const TeamThreadNote = Schema.Struct({
+  id: TeamThreadNoteId,
+  threadId: ThreadId,
+  teamId: TeamId,
+  authorMemberId: TeamMemberId,
+  authorPseudo: TeamPseudo,
+  authorRole: TeamRole,
+  originalBody: Schema.String,
+  originalContentHash: TrimmedNonEmptyString,
+  editedBody: Schema.NullOr(Schema.String),
+  editedContentHash: Schema.NullOr(TrimmedNonEmptyString),
+  status: TeamThreadNoteStatus,
+  anchorTurnId: Schema.NullOr(Schema.String),
+  anchorSeq: NonNegativeInt,
+  includedInTurnId: Schema.NullOr(Schema.String),
+  resolvedByMemberId: Schema.NullOr(TeamMemberId),
+  resolvedByPseudo: Schema.NullOr(TeamPseudo),
+  resolvedAt: Schema.NullOr(IsoDateTime),
+  createdAt: IsoDateTime,
+});
+export type TeamThreadNote = typeof TeamThreadNote.Type;
+
+export const TeamAcceptedNoteRef = Schema.Struct({
+  noteId: TeamThreadNoteId,
+  contentHash: TrimmedNonEmptyString,
+});
+export type TeamAcceptedNoteRef = typeof TeamAcceptedNoteRef.Type;
+
+/** Effective content hash pinned at approval time (`editedContentHash ?? originalContentHash`). */
+export function effectiveTeamThreadNoteHash(
+  note: Pick<TeamThreadNote, "originalContentHash" | "editedContentHash">,
+): string {
+  return note.editedContentHash ?? note.originalContentHash;
+}
+
+/** Effective body that will be passed to the agent when approved (`editedBody ?? originalBody`). */
+export function effectiveTeamThreadNoteBody(
+  note: Pick<TeamThreadNote, "originalBody" | "editedBody">,
+): string {
+  return note.editedBody ?? note.originalBody;
+}
+
+export function formatAcceptedTeamNoteForPrompt(input: {
+  readonly authorPseudo: string;
+  readonly approverPseudo: string;
+  readonly originalBody: string;
+  readonly editedBody: string | null;
+}): string {
+  const body = input.editedBody ?? input.originalBody;
+  if (input.editedBody !== null) {
+    return `[Note from ${input.authorPseudo} (edited & approved by ${input.approverPseudo})]: ${body}`;
+  }
+  return `[Note from ${input.authorPseudo} (approved by ${input.approverPseudo})]: ${body}`;
+}
+
+export function canMemberAccessTeamEnvironment(
+  member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined,
+  environment: Pick<TeamEnvironment, "accessRule"> | null | undefined,
+): boolean {
+  if (!member || member.status !== "active") return false;
+  if (!environment) return false;
+  return matchesTeamAccessRule(environment.accessRule, member);
+}
+
+/**
+ * Evaluates whether a member can leave a note on an inaccessible-environment thread:
+ * requires read access, unlocked (or admin), and post permission under the View's `postRule`.
+ */
+export function canMemberLeaveTeamThreadNote(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly attribution: Pick<TeamThreadAttribution, "creatorMemberId" | "locked">;
+  readonly view: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
+}): boolean {
+  return canMemberPostInTeamThread(input);
+}
+
+export type TeamThreadEnvironmentAccess =
+  | { readonly canExecute: true; readonly reason: "ok" }
+  | {
+      readonly canExecute: false;
+      readonly reason: "other_member_local" | "environment_acl_denied";
+      readonly environmentLabel: string;
+    };
+
+/**
+ * Evaluates whether a member can execute turns on the environment attached to a team thread.
+ * - Local-synced threads execute EXCLUSIVELY on the owner's local machine (never on the Team Server,
+ *   and never by another member—not even owner or admin).
+ * - Remote team environments enforce `team_environments.accessRule`.
+ */
+export function resolveTeamThreadEnvironmentAccess(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly attribution: Pick<
+    TeamThreadAttribution,
+    | "creatorMemberId"
+    | "creatorPseudo"
+    | "executionEnvironmentId"
+    | "executionEnvironmentLabel"
+    | "isLocalSynced"
+  >;
+  readonly environments: ReadonlyArray<
+    Pick<TeamEnvironment, "environmentId" | "name" | "isDefault" | "accessRule">
+  >;
+  /** Set when evaluating on the member's own local execution environment rather than the Team Server. */
+  readonly viewingOnLocalExecutionEnvironment?: boolean;
+}): TeamThreadEnvironmentAccess {
+  const { member, attribution, environments, viewingOnLocalExecutionEnvironment = false } = input;
+  if (!member || member.status !== "active") {
+    return {
+      canExecute: false,
+      reason: "environment_acl_denied",
+      environmentLabel: attribution.executionEnvironmentLabel ?? "Team Environment",
+    };
+  }
+  if (attribution.isLocalSynced === true) {
+    const label =
+      attribution.executionEnvironmentLabel ?? `${attribution.creatorPseudo}'s local environment`;
+    if (viewingOnLocalExecutionEnvironment && attribution.creatorMemberId === member.id) {
+      return { canExecute: true, reason: "ok" };
+    }
+    return {
+      canExecute: false,
+      reason: "other_member_local",
+      environmentLabel: label,
+    };
+  }
+  const targetEnvId = attribution.executionEnvironmentId ?? null;
+  const matchedEnv =
+    targetEnvId !== null
+      ? (environments.find((env) => env.environmentId === targetEnvId) ?? null)
+      : (environments.find((env) => env.isDefault) ?? null);
+  if (matchedEnv === null) {
+    if (targetEnvId !== null) {
+      // Non-admin snapshots omit restricted environments; an unknown remote executionEnvironmentId fails closed.
+      return {
+        canExecute: false,
+        reason: "environment_acl_denied",
+        environmentLabel: attribution.executionEnvironmentLabel ?? targetEnvId,
+      };
+    }
+    return { canExecute: true, reason: "ok" };
+  }
+  if (!canMemberAccessTeamEnvironment(member, matchedEnv)) {
+    return {
+      canExecute: false,
+      reason: "environment_acl_denied",
+      environmentLabel: attribution.executionEnvironmentLabel ?? matchedEnv.name,
+    };
+  }
+  return { canExecute: true, reason: "ok" };
+}
 
 function matchesTeamAccessRule(
   rule: TeamAccessRule,
@@ -326,6 +537,9 @@ export const TeamThreadAttribution = Schema.Struct({
   viewId: TeamViewId,
   locked: Schema.Boolean,
   lockedByMemberId: Schema.NullOr(TeamMemberId),
+  executionEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
+  executionEnvironmentLabel: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  isLocalSynced: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type TeamThreadAttribution = typeof TeamThreadAttribution.Type;
@@ -373,6 +587,22 @@ export const TeamThreadRemovedPayload = Schema.Struct({
 });
 export type TeamThreadRemovedPayload = typeof TeamThreadRemovedPayload.Type;
 
+export const TeamProjectUnassignedPayload = Schema.Struct({
+  projectId: ProjectId,
+});
+export type TeamProjectUnassignedPayload = typeof TeamProjectUnassignedPayload.Type;
+
+export const TeamEnvironmentRemovedPayload = Schema.Struct({
+  environmentId: EnvironmentId,
+});
+export type TeamEnvironmentRemovedPayload = typeof TeamEnvironmentRemovedPayload.Type;
+
+export const TeamThreadNoteDeletedPayload = Schema.Struct({
+  noteId: TeamThreadNoteId,
+  threadId: ThreadId,
+});
+export type TeamThreadNoteDeletedPayload = typeof TeamThreadNoteDeletedPayload.Type;
+
 export const TeamStateSnapshot = Schema.Struct({
   team: Schema.NullOr(TeamWorkspace),
   currentMember: Schema.NullOr(TeamMember),
@@ -382,6 +612,9 @@ export const TeamStateSnapshot = Schema.Struct({
   threadAttributions: Schema.Array(TeamThreadAttribution),
   followedThreadIds: Schema.Array(ThreadId),
   latestTurnAttributions: Schema.Array(TeamTurnAttribution),
+  teamProjects: Schema.optionalKey(Schema.Array(TeamProjectAssignment)),
+  environments: Schema.optionalKey(Schema.Array(TeamEnvironment)),
+  threadNotes: Schema.optionalKey(Schema.Array(TeamThreadNote)),
 });
 export type TeamStateSnapshot = typeof TeamStateSnapshot.Type;
 
@@ -435,6 +668,36 @@ export const TeamStateStreamEvent = Schema.Union([
     version: Schema.Literal(1),
     type: Schema.Literal("threadFollowChanged"),
     payload: TeamThreadFollowChangedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("projectAssigned"),
+    payload: TeamProjectAssignment,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("projectUnassigned"),
+    payload: TeamProjectUnassignedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("environmentUpserted"),
+    payload: TeamEnvironment,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("environmentRemoved"),
+    payload: TeamEnvironmentRemovedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("threadNoteUpserted"),
+    payload: TeamThreadNote,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("threadNoteDeleted"),
+    payload: TeamThreadNoteDeletedPayload,
   }),
 ]);
 export type TeamStateStreamEvent = typeof TeamStateStreamEvent.Type;
@@ -592,6 +855,190 @@ export const TeamRedeemInviteResponse = Schema.Struct({
 });
 export type TeamRedeemInviteResponse = typeof TeamRedeemInviteResponse.Type;
 
+export const TeamAssignProjectInput = Schema.Struct({
+  projectId: ProjectId,
+  defaultViewId: Schema.optionalKey(Schema.NullOr(TeamViewId)),
+  repoIdentityKey: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type TeamAssignProjectInput = typeof TeamAssignProjectInput.Type;
+
+export const TeamUnassignProjectInput = Schema.Struct({
+  projectId: ProjectId,
+});
+export type TeamUnassignProjectInput = typeof TeamUnassignProjectInput.Type;
+
+export const TeamUnassignProjectResult = Schema.Struct({
+  unassigned: Schema.Boolean,
+});
+export type TeamUnassignProjectResult = typeof TeamUnassignProjectResult.Type;
+
+export const TeamAttachEnvironmentInput = Schema.Struct({
+  /** Existing peer environment id when attaching an already-linked peer. */
+  environmentId: Schema.optionalKey(EnvironmentId),
+  /** Remote server URL + pairing code when linking and attaching a remote t3server in one step. */
+  url: Schema.optionalKey(TrimmedNonEmptyString),
+  pairingCode: Schema.optionalKey(TrimmedNonEmptyString),
+  access: Schema.optionalKey(AuthMcpClientAccess),
+  name: Schema.optionalKey(TrimmedNonEmptyString),
+  accessRule: Schema.optionalKey(TeamAccessRule),
+});
+export type TeamAttachEnvironmentInput = typeof TeamAttachEnvironmentInput.Type;
+
+export const TeamUpdateEnvironmentInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  name: Schema.optionalKey(TrimmedNonEmptyString),
+  accessRule: Schema.optionalKey(TeamAccessRule),
+});
+export type TeamUpdateEnvironmentInput = typeof TeamUpdateEnvironmentInput.Type;
+
+export const TeamDetachEnvironmentInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  unlinkPeer: Schema.optionalKey(Schema.Boolean),
+});
+export type TeamDetachEnvironmentInput = typeof TeamDetachEnvironmentInput.Type;
+
+export const TeamDetachEnvironmentResult = Schema.Struct({
+  detached: Schema.Boolean,
+});
+export type TeamDetachEnvironmentResult = typeof TeamDetachEnvironmentResult.Type;
+
+export const TeamSyncedMessageSnapshot = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  role: Schema.Literals(["user", "assistant", "system"]),
+  text: Schema.String,
+  runId: Schema.NullOr(Schema.String),
+  createdAt: IsoDateTime,
+  updatedAt: Schema.optionalKey(IsoDateTime),
+});
+export type TeamSyncedMessageSnapshot = typeof TeamSyncedMessageSnapshot.Type;
+
+export const TeamSyncedRunSnapshot = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  ordinal: NonNegativeInt,
+  status: Schema.Literals([
+    "queued",
+    "starting",
+    "running",
+    "waiting",
+    "completed",
+    "failed",
+    "interrupted",
+    "cancelled",
+    "rolled_back",
+  ]),
+  userMessageId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+});
+export type TeamSyncedRunSnapshot = typeof TeamSyncedRunSnapshot.Type;
+
+export const TeamSyncLocalThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  branch: Schema.NullOr(Schema.String),
+  executionEnvironmentId: EnvironmentId,
+  executionEnvironmentLabel: Schema.optionalKey(TrimmedNonEmptyString),
+  viewId: Schema.optionalKey(TeamViewId),
+  locked: Schema.optionalKey(Schema.Boolean),
+  modelSelection: ModelSelection,
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  runs: Schema.Array(TeamSyncedRunSnapshot),
+  messages: Schema.Array(TeamSyncedMessageSnapshot),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  archivedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+  deletedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+});
+export type TeamSyncLocalThreadInput = typeof TeamSyncLocalThreadInput.Type;
+
+export const TeamSyncLocalThreadResult = Schema.Struct({
+  attribution: TeamThreadAttribution,
+});
+export type TeamSyncLocalThreadResult = typeof TeamSyncLocalThreadResult.Type;
+
+export const TeamCreateThreadNoteInput = Schema.Struct({
+  threadId: ThreadId,
+  body: TrimmedNonEmptyString,
+  anchorTurnId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+export type TeamCreateThreadNoteInput = typeof TeamCreateThreadNoteInput.Type;
+
+export const TeamDeleteThreadNoteInput = Schema.Struct({
+  noteId: TeamThreadNoteId,
+});
+export type TeamDeleteThreadNoteInput = typeof TeamDeleteThreadNoteInput.Type;
+
+export const TeamDeleteThreadNoteResult = Schema.Struct({
+  deleted: Schema.Boolean,
+});
+export type TeamDeleteThreadNoteResult = typeof TeamDeleteThreadNoteResult.Type;
+
+export const TeamResolveThreadNoteInput = Schema.Struct({
+  noteId: TeamThreadNoteId,
+  status: Schema.Literals(["pending", "accepted", "rejected"]),
+  expectedContentHash: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type TeamResolveThreadNoteInput = typeof TeamResolveThreadNoteInput.Type;
+
+export const TeamEditThreadNoteInput = Schema.Struct({
+  noteId: TeamThreadNoteId,
+  editedBody: TrimmedNonEmptyString,
+  expectedOriginalContentHash: Schema.optionalKey(TrimmedNonEmptyString),
+  status: Schema.optionalKey(Schema.Literals(["pending", "accepted"])),
+});
+export type TeamEditThreadNoteInput = typeof TeamEditThreadNoteInput.Type;
+
+export const TeamReserveAcceptedNotesInput = Schema.Struct({
+  threadId: ThreadId,
+  acceptedNotes: Schema.Array(TeamAcceptedNoteRef),
+});
+export type TeamReserveAcceptedNotesInput = typeof TeamReserveAcceptedNotesInput.Type;
+
+export const TeamReserveAcceptedNotesResult = Schema.Struct({
+  reservationToken: TrimmedNonEmptyString,
+  noteIds: Schema.Array(TeamThreadNoteId),
+  formattedPromptPrefix: Schema.String,
+});
+export type TeamReserveAcceptedNotesResult = typeof TeamReserveAcceptedNotesResult.Type;
+
+export const TeamReleaseAcceptedNotesInput = Schema.Struct({
+  threadId: ThreadId,
+  reservationToken: TrimmedNonEmptyString,
+});
+export type TeamReleaseAcceptedNotesInput = typeof TeamReleaseAcceptedNotesInput.Type;
+
+export const TeamReleaseAcceptedNotesResult = Schema.Struct({
+  releasedCount: Schema.Number,
+});
+export type TeamReleaseAcceptedNotesResult = typeof TeamReleaseAcceptedNotesResult.Type;
+
+export const TeamConsumeAcceptedNotesInput = Schema.Struct({
+  threadId: ThreadId,
+  targetTurnId: TrimmedNonEmptyString,
+  acceptedNotes: Schema.Array(TeamAcceptedNoteRef),
+  reservationToken: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type TeamConsumeAcceptedNotesInput = typeof TeamConsumeAcceptedNotesInput.Type;
+
+export const TeamConsumeAcceptedNotesResult = Schema.Struct({
+  consumedNotes: Schema.Array(TeamThreadNote),
+  reanchoredNoteIds: Schema.Array(TeamThreadNoteId),
+  formattedPromptPrefix: Schema.String,
+});
+export type TeamConsumeAcceptedNotesResult = typeof TeamConsumeAcceptedNotesResult.Type;
+
+export const TeamListThreadNotesInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type TeamListThreadNotesInput = typeof TeamListThreadNotesInput.Type;
+
+export const TeamListThreadNotesResult = Schema.Struct({
+  notes: Schema.Array(TeamThreadNote),
+});
+export type TeamListThreadNotesResult = typeof TeamListThreadNotesResult.Type;
+
 export const TeamOperationErrorCode = Schema.Literals([
   "not_configured",
   "already_configured",
@@ -605,6 +1052,12 @@ export const TeamOperationErrorCode = Schema.Literals([
   "last_owner",
   "default_view_protected",
   "view_name_taken",
+  "default_environment_protected",
+  "environment_already_attached",
+  "environment_unavailable",
+  "note_hash_mismatch",
+  "note_not_pending",
+  "note_already_consumed",
   "invalid_input",
   "not_found",
   "internal",

@@ -65,6 +65,12 @@ const makeTeamState = (id: string, name: string, pseudo: string): TeamEnvironmen
     memberById: new Map([[memberId, member]]),
     viewById: new Map([[defaultViewId, defaultView]]),
     attributionByThreadId: new Map(),
+    teamProjects: [],
+    projectAssignmentByProjectId: new Map(),
+    projectAssignmentByRepoKey: new Map(),
+    environments: [],
+    environmentById: new Map(),
+    threadNotesByThreadId: new Map(),
   };
 };
 
@@ -128,6 +134,9 @@ vi.mock(import("../../state/team"), async (original) => ({
     deleteView: { permissionAtom: () => alwaysAllowedAtom },
     setThreadView: { permissionAtom: () => alwaysAllowedAtom },
     setThreadLocked: { permissionAtom: () => alwaysAllowedAtom },
+    attachEnvironment: { permissionAtom: () => alwaysAllowedAtom },
+    updateEnvironment: { permissionAtom: () => alwaysAllowedAtom },
+    detachEnvironment: { permissionAtom: () => alwaysAllowedAtom },
   } as never,
 }));
 

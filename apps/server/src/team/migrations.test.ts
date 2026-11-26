@@ -24,13 +24,18 @@ describe("team sidecar migrations", () => {
         SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'team_%' ORDER BY name
       `;
       expect(tables.map((row) => row.name)).toEqual([
+        "team_environments",
         "team_invites",
         "team_members",
+        "team_pending_remote_revocations",
+        "team_project_meta",
         "team_relay_binding",
         "team_schema_migrations",
         "team_session_meta",
+        "team_thread_env_labels",
         "team_thread_follows",
         "team_thread_meta",
+        "team_thread_notes",
         "team_turn_meta",
         "team_views",
         "team_workspaces",

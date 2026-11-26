@@ -23,11 +23,13 @@ import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
+  effectiveTeamThreadNoteHash,
   type EnvironmentId,
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ResponseContextRecord,
   type ScopedThreadRef,
+  type TeamAcceptedNoteRef,
   type ThreadContextRecord,
   type ThreadId,
   ProviderInteractionMode,
@@ -126,12 +128,19 @@ import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
 import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import {
+  clearPendingLocalThreadViewId,
   clearTeamDraftAccessOptions,
   readTeamDraftAccessOptions,
   readTeamEnvironmentStateFromRegistry,
+  readTeamThreadNoteMode,
+  readTeamThreadNotesForSend,
   readTeamThreadPostPermission,
+  setPendingLocalThreadViewId,
+  setTeamThreadNoteMode,
+  teamEnvironment,
 } from "../../state/team";
 import { canCurrentMemberSteerActiveTurn } from "@t3tools/client-runtime/team";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -208,6 +217,7 @@ type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 
 interface ComposerSendInput {
   readonly environmentId: EnvironmentId;
+  readonly connectedEnvironmentIds: ReadonlyArray<EnvironmentId>;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly draftId: DraftId | null;
@@ -311,6 +321,7 @@ interface ComposerSendInput {
 export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
+    connectedEnvironmentIds,
     routeThreadKey,
     currentRouteThreadKeyRef,
     draftId,
@@ -411,6 +422,18 @@ export function useComposerSend(input: ComposerSendInput) {
     setThreadError,
   });
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  const createTeamThreadNote = useAtomCommand(teamEnvironment.createThreadNote, {
+    reportFailure: false,
+  });
+  const reserveAcceptedTeamNotes = useAtomCommand(teamEnvironment.reserveAcceptedNotes, {
+    reportFailure: false,
+  });
+  const releaseAcceptedTeamNotes = useAtomCommand(teamEnvironment.releaseAcceptedNotes, {
+    reportFailure: false,
+  });
+  const consumeAcceptedTeamNotes = useAtomCommand(teamEnvironment.consumeAcceptedNotes, {
+    reportFailure: false,
+  });
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
@@ -439,6 +462,46 @@ export function useComposerSend(input: ComposerSendInput) {
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     let promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
+    if (isServerThread && activeThread && readTeamThreadNoteMode(routeThreadKey)) {
+      const noteBody = promptAtSend.trim();
+      if (!noteBody) return;
+      const teamCtx = readTeamThreadNotesForSend({
+        environmentId,
+        threadId: activeThread.id,
+        project: activeProject,
+        connectedEnvironmentIds,
+      });
+      if (!teamCtx.teamEnvironmentId) return;
+      sendInFlightRef.current = true;
+      const noteResult = await createTeamThreadNote({
+        environmentId: teamCtx.teamEnvironmentId,
+        input: {
+          threadId: activeThread.id,
+          body: noteBody,
+        },
+      });
+      sendInFlightRef.current = false;
+      if (noteResult._tag === "Success") {
+        clearComposerDraftContent(composerDraftTarget);
+        if (currentRouteThreadKeyRef.current === routeThreadKey) {
+          promptRef.current = "";
+          composerRef.current?.resetCursorState();
+        }
+        setTeamThreadNoteMode(routeThreadKey, false);
+        toastManager.add({
+          type: "success",
+          title: m(msg("Note sent")),
+          description: m(msg("Your note was added to the thread timeline.")),
+        });
+      } else if (!isAtomCommandInterrupted(noteResult)) {
+        const error = squashAtomCommandFailure(noteResult);
+        setThreadError(
+          activeThread.id,
+          thrownErrorMessage(error, m) ?? m(msg("Could not send note.")),
+        );
+      }
+      return;
+    }
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
@@ -966,7 +1029,29 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     // Read once: an arm made while this send is in flight belongs to the next message.
     const freshArm = freshSessionAvailable ? readFreshSessionArm(routeThreadKey) : undefined;
-    if (!hasSendableContent) {
+    const teamNotesSendCtx =
+      isServerThread && activeThread
+        ? readTeamThreadNotesForSend({
+            environmentId,
+            threadId: activeThread.id,
+            project: activeProject,
+            connectedEnvironmentIds,
+          })
+        : null;
+    if (teamNotesSendCtx && !teamNotesSendCtx.envAccess.canExecute && activeThread) {
+      setThreadError(
+        activeThread.id,
+        m(msg("You cannot execute turns on this thread's environment.")),
+      );
+      return;
+    }
+    if (teamNotesSendCtx && teamNotesSendCtx.pendingNotes.length > 0 && activeThread) {
+      setThreadError(activeThread.id, m(msg("Accept or reject pending notes before sending.")));
+      return;
+    }
+    const acceptedTeamNotes = teamNotesSendCtx?.acceptedNotes ?? [];
+    const hasAcceptedTeamNotes = acceptedTeamNotes.length > 0;
+    if (!hasSendableContent && !hasAcceptedTeamNotes) {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
           expiredTerminalContextCount,
@@ -1109,13 +1194,16 @@ export function useComposerSend(input: ComposerSendInput) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    const outgoingMessageText = formatOutgoingPrompt({
-      provider: ctxSelectedProvider,
-      model: ctxSelectedModel,
-      models: ctxSelectedProviderModels,
-      effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-    });
+    const outgoingMessageText =
+      messageTextForSend === "" && hasAcceptedTeamNotes
+        ? ""
+        : formatOutgoingPrompt({
+            provider: ctxSelectedProvider,
+            model: ctxSelectedModel,
+            models: ctxSelectedProviderModels,
+            effort: ctxSelectedPromptEffort,
+            text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          });
     if (
       isCurrentRouteThread() &&
       composerRef.current?.validateProviderInput(outgoingMessageText) === false
@@ -1616,108 +1704,205 @@ export function useComposerSend(input: ComposerSendInput) {
             draftId === null ? null : useComposerDraftStore.getState().getDraftSession(draftId),
           )
         : null;
-      if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
-      const startPromise = startThreadTurn({
-        environmentId,
-        input: {
-          threadId: threadIdForSend,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            attachments: turnAttachmentsResult.value,
-            ...withMessageContext({
-              text: outgoingMessageText,
-              context: buildOutgoingMessageContext(
-                boundAttachmentIds(turnAttachmentsResult.value, composerAttachmentsSnapshot),
-              ),
-            }),
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: title,
-          runtimeMode,
-          interactionMode: DEFAULT_INTERACTION_MODE,
-          dispatchMode: turnDispatchMode,
-          ...(freshArm === undefined ? {} : { freshContext: true }),
-          ...(bootstrap ? { bootstrap } : {}),
-          createdAt: messageCreatedAt,
-        },
-      });
-      if (backgroundThreadRef) {
-        try {
-          backgroundDraftOpened = Boolean(
-            await handleNewThread(
-              scopeProjectRef(activeProject.environmentId, activeProject.id),
-              resolveBackgroundDraftWorkspaceOptions({
-                envMode: sendEnvMode,
-                branch: activeThreadBranch,
-                startFromOrigin,
-              }),
-            ),
-          );
-        } catch (error) {
-          clearBackgroundDraftSubmissionByRef(backgroundThreadRef);
-          toastManager.add(
-            stackedThreadToast({
-              type: "warning",
-              title: m(msg("Could not open a fresh composer")),
-              description: thrownErrorMessage(error, m) ?? undefined,
-            }),
-          );
+      let effectiveOutgoingText = outgoingMessageText;
+      let teamAcceptedNoteRefs: ReadonlyArray<TeamAcceptedNoteRef> | undefined;
+      let localNoteReservation: {
+        readonly teamEnvironmentId: EnvironmentId;
+        readonly reservationToken: string;
+        readonly refs: ReadonlyArray<TeamAcceptedNoteRef>;
+      } | null = null;
+      const shouldFinalizeLocalTeamNotes = Boolean(
+        teamNotesSendCtx?.teamEnvironmentId &&
+        teamNotesSendCtx.isViewingOnLocalExecutionEnvironment &&
+        !isLocalDraftThread,
+      );
+      if (hasAcceptedTeamNotes && teamNotesSendCtx?.teamEnvironmentId) {
+        const refs: ReadonlyArray<TeamAcceptedNoteRef> = acceptedTeamNotes.map((note) => ({
+          noteId: note.id,
+          contentHash: effectiveTeamThreadNoteHash(note),
+        }));
+        if (teamNotesSendCtx.isViewingOnLocalExecutionEnvironment) {
+          const reserved = await reserveAcceptedTeamNotes({
+            environmentId: teamNotesSendCtx.teamEnvironmentId,
+            input: {
+              threadId: threadIdForSend,
+              acceptedNotes: refs,
+            },
+          });
+          if (reserved._tag === "Failure") {
+            failure = reserved;
+          } else {
+            localNoteReservation = {
+              teamEnvironmentId: teamNotesSendCtx.teamEnvironmentId,
+              reservationToken: reserved.value.reservationToken,
+              refs,
+            };
+            const prefix = reserved.value.formattedPromptPrefix;
+            effectiveOutgoingText =
+              effectiveOutgoingText.trim().length > 0
+                ? `${prefix}\n\n${effectiveOutgoingText}`
+                : prefix;
+          }
+        } else {
+          teamAcceptedNoteRefs = refs;
         }
       }
-      const startResult = await startPromise;
-      if (startResult._tag === "Failure") {
-        failure = startResult;
-      } else {
-        turnStartSucceeded = true;
-        if (isLocalDraftThread) {
-          clearTeamDraftAccessOptions(routeThreadKey);
+      const shouldSetPendingLocalDraftView = Boolean(
+        isLocalDraftThread &&
+        teamDraftAccess?.viewId &&
+        readTeamThreadNotesForSend({
+          environmentId,
+          threadId: threadIdForSend,
+          project: activeProject,
+          connectedEnvironmentIds,
+        }).isViewingOnLocalExecutionEnvironment,
+      );
+      if (failure === null) {
+        if (shouldSetPendingLocalDraftView && teamDraftAccess?.viewId) {
+          // Preserve restricted-View selection when TeamLocalThreadSyncCoordinator mirrors a local draft.
+          setPendingLocalThreadViewId(threadIdForSend, teamDraftAccess.viewId);
         }
-        if (checkoutPullRequestUrl) {
-          linkCheckoutPullRequest(
-            scopeThreadRef(environmentId, threadIdForSend),
-            checkoutPullRequestUrl,
-          );
-        }
-        setKeepFullHistory(routeThreadKey, false);
-        if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
-        clearUsageLimitsFor(routeThreadKey);
-        if (turnUsesAttachmentUploads) {
-          releaseDraftAttachments(composerAttachmentsSnapshot);
-        }
-        acknowledgeActiveThreadWoke();
-        // A draft still on screen finalizes once its thread route takes over.
-        if (sentDraftThreadRef) {
-          if (backgroundDraftOpened || currentRouteThreadKeyRef.current !== routeThreadKey) {
-            finalizePromotedDraftThreadByRef(sentDraftThreadRef);
-          } else {
-            clearBackgroundDraftSubmissionByRef(sentDraftThreadRef);
+        if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
+        const startPromise = startThreadTurn({
+          environmentId,
+          input: {
+            threadId: threadIdForSend,
+            message: {
+              messageId: messageIdForSend,
+              role: "user",
+              attachments: turnAttachmentsResult.value,
+              ...withMessageContext({
+                text: effectiveOutgoingText,
+                context: buildOutgoingMessageContext(
+                  boundAttachmentIds(turnAttachmentsResult.value, composerAttachmentsSnapshot),
+                ),
+              }),
+            },
+            modelSelection: ctxSelectedModelSelection,
+            titleSeed: title,
+            runtimeMode,
+            interactionMode: DEFAULT_INTERACTION_MODE,
+            dispatchMode: turnDispatchMode,
+            ...(teamAcceptedNoteRefs ? { teamAcceptedNotes: teamAcceptedNoteRefs } : {}),
+            ...(freshArm === undefined ? {} : { freshContext: true }),
+            ...(bootstrap ? { bootstrap } : {}),
+            createdAt: messageCreatedAt,
+          },
+        });
+        if (backgroundThreadRef) {
+          try {
+            backgroundDraftOpened = Boolean(
+              await handleNewThread(
+                scopeProjectRef(activeProject.environmentId, activeProject.id),
+                resolveBackgroundDraftWorkspaceOptions({
+                  envMode: sendEnvMode,
+                  branch: activeThreadBranch,
+                  startFromOrigin,
+                }),
+              ),
+            );
+          } catch (error) {
+            clearBackgroundDraftSubmissionByRef(backgroundThreadRef);
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: m(msg("Could not open a fresh composer")),
+                description: thrownErrorMessage(error, m) ?? undefined,
+              }),
+            );
           }
         }
-        if (backgroundThreadRef) {
-          if (backgroundDraftOpened) {
-            toastManager.add({
-              type: "success",
-              title: m(msg("Started in background")),
-              timeout: 5_000,
-              actionProps: {
-                children: m(msg("Open", { $context: "verb, opens the background thread" })),
-                onClick: () => {
-                  void navigate({
-                    to: "/$environmentId/$threadId",
-                    params: buildThreadRouteParams(backgroundThreadRef),
-                  });
-                },
+        const startResult = await startPromise;
+        if (startResult._tag === "Failure") {
+          failure = startResult;
+          if (shouldSetPendingLocalDraftView) {
+            clearPendingLocalThreadViewId(threadIdForSend);
+          }
+          if (localNoteReservation !== null) {
+            void releaseAcceptedTeamNotes({
+              environmentId: localNoteReservation.teamEnvironmentId,
+              input: {
+                threadId: threadIdForSend,
+                reservationToken: localNoteReservation.reservationToken,
               },
             });
           }
-        } else if (
-          submissionIntent === "background" &&
-          currentRouteThreadKeyRef.current === routeThreadKey
-        ) {
-          handleNewThreadInActiveProject();
+        } else {
+          turnStartSucceeded = true;
+          if (localNoteReservation !== null) {
+            const consumeInput = {
+              environmentId: localNoteReservation.teamEnvironmentId,
+              input: {
+                threadId: threadIdForSend,
+                targetTurnId: `msg:${messageIdForSend}`,
+                acceptedNotes: localNoteReservation.refs,
+                reservationToken: localNoteReservation.reservationToken,
+              },
+            };
+            const consumed = await consumeAcceptedTeamNotes(consumeInput);
+            if (consumed._tag === "Failure" && !isAtomCommandInterrupted(consumed)) {
+              await consumeAcceptedTeamNotes(consumeInput);
+            }
+          } else if (shouldFinalizeLocalTeamNotes && teamNotesSendCtx?.teamEnvironmentId) {
+            // Re-anchor any pending notes that arrived concurrently with a normal local prompt send.
+            void consumeAcceptedTeamNotes({
+              environmentId: teamNotesSendCtx.teamEnvironmentId,
+              input: {
+                threadId: threadIdForSend,
+                targetTurnId: `msg:${messageIdForSend}`,
+                acceptedNotes: [],
+              },
+            });
+          }
+          if (isLocalDraftThread) {
+            clearTeamDraftAccessOptions(routeThreadKey);
+          }
+          if (checkoutPullRequestUrl) {
+            linkCheckoutPullRequest(
+              scopeThreadRef(environmentId, threadIdForSend),
+              checkoutPullRequestUrl,
+            );
+          }
+          setKeepFullHistory(routeThreadKey, false);
+          if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
+          clearUsageLimitsFor(routeThreadKey);
+          if (turnUsesAttachmentUploads) {
+            releaseDraftAttachments(composerAttachmentsSnapshot);
+          }
+          acknowledgeActiveThreadWoke();
+          // A draft still on screen finalizes once its thread route takes over.
+          if (sentDraftThreadRef) {
+            if (backgroundDraftOpened || currentRouteThreadKeyRef.current !== routeThreadKey) {
+              finalizePromotedDraftThreadByRef(sentDraftThreadRef);
+            } else {
+              clearBackgroundDraftSubmissionByRef(sentDraftThreadRef);
+            }
+          }
+          if (backgroundThreadRef) {
+            if (backgroundDraftOpened) {
+              toastManager.add({
+                type: "success",
+                title: m(msg("Started in background")),
+                timeout: 5_000,
+                actionProps: {
+                  children: m(msg("Open", { $context: "verb, opens the background thread" })),
+                  onClick: () => {
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: buildThreadRouteParams(backgroundThreadRef),
+                    });
+                  },
+                },
+              });
+            }
+          } else if (
+            submissionIntent === "background" &&
+            currentRouteThreadKeyRef.current === routeThreadKey
+          ) {
+            handleNewThreadInActiveProject();
+          }
+          void recordPromptSent(environmentId);
         }
-        void recordPromptSent(environmentId);
       }
     }
 

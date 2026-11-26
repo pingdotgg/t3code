@@ -4,13 +4,25 @@ import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import * as NodeWS from "@effect/platform-node/NodeWS";
+import {
+  ORCHESTRATION_PROTOCOL_VERSION,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  WsRpcGroup,
+  parseTeamJoinLink,
+} from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { test } from "@e2e-dev/web";
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import { Socket } from "effect/socket";
 
 import { TEAM_SCENARIOS_HOME } from "../../e2e.team.config.ts";
 import { rpcClient, runPromise } from "../t3.ts";
@@ -104,13 +116,12 @@ function readProbeRecords(logPath: string): ReadonlyArray<ProbeTurnRecord> {
     .map((line) => JSON.parse(line) as ProbeTurnRecord);
 }
 
-async function createInviteAndJoin(input: {
+async function createInviteLink(input: {
   readonly inviter: TeamMemberHandle;
-  readonly invitee: TeamMemberHandle;
   readonly roleLabel: string;
   readonly pseudo: string;
-}) {
-  const { inviter, invitee, roleLabel, pseudo } = input;
+}): Promise<string> {
+  const { inviter, roleLabel, pseudo } = input;
   await inviter.page.getByTestId("team-invite-role-select").click();
   await inviter.page.getByRole("option", { name: roleLabel }).click();
   await inviter.page.getByTestId("team-invite-pseudo-input").fill(pseudo);
@@ -123,8 +134,17 @@ async function createInviteAndJoin(input: {
       timeout: 15_000,
     })
     .toContain(`pseudo=${encodeURIComponent(pseudo)}`);
+  return await inviter.page.getByTestId("team-invite-weblink").inputValue();
+}
 
-  const webJoinLink = await inviter.page.getByTestId("team-invite-weblink").inputValue();
+async function createInviteAndJoin(input: {
+  readonly inviter: TeamMemberHandle;
+  readonly invitee: TeamMemberHandle;
+  readonly roleLabel: string;
+  readonly pseudo: string;
+}) {
+  const { invitee } = input;
+  const webJoinLink = await createInviteLink(input);
   const parsedUrl = new URL(webJoinLink);
   const joinUrl = `${invitee.origin}${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
 
@@ -137,6 +157,33 @@ async function createInviteAndJoin(input: {
     .getByTestId("team-colleagues-toggle")
     .waitFor({ state: "visible", timeout: 20_000 });
 }
+
+const rpcClientForBearer = Effect.fn("scenario.rpcClientForBearer")(function* (
+  origin: string,
+  bearerToken: string,
+) {
+  const { ticket } = yield* HttpClient.execute(
+    HttpClientRequest.post(`${origin}/api/auth/websocket-ticket`).pipe(
+      HttpClientRequest.bearerToken(bearerToken),
+    ),
+  ).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(Schema.Struct({ ticket: Schema.String }))),
+    Effect.provide(FetchHttpClient.layer),
+  );
+  const protocol = yield* Layer.build(
+    RpcClient.layerProtocolSocket().pipe(
+      Layer.provide(
+        Socket.layerWebSocket(
+          `${origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
+        ),
+      ),
+      Layer.provide(RpcSerialization.layerJson),
+      Layer.provide(NodeWS.layerWebSocketConstructor),
+    ),
+  );
+  return yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+});
 
 interface McpCallResponse {
   readonly status: number;
@@ -301,6 +348,26 @@ test("enforces Milestone 4 mid-turn queueing, creator-only Send now, explicit ow
     roleLabel: "Regular",
     pseudo: "bob",
   });
+
+  // Mint an authenticated Admin bearer token so server.updateSettings runs as a Team Admin.
+  const adminJoinLink = await createInviteLink({
+    inviter: alice,
+    roleLabel: "Admin",
+    pseudo: "admin-ops",
+  });
+  const adminParsed = parseTeamJoinLink(adminJoinLink);
+  expect(adminParsed).not.toBeNull();
+  const adminRedeemRes = await alice.page.request.post(
+    `${topology.teamServer.origin}/api/team/invites/redeem`,
+    {
+      headers: { "content-type": "application/json" },
+      data: { token: adminParsed!.token, pseudo: "admin-ops" },
+    },
+  );
+  expect(adminRedeemRes.status()).toBe(200);
+  const { accessToken: adminBearerToken } = (await adminRedeemRes.json()) as {
+    readonly accessToken: string;
+  };
 
   // Create "Staff Only" View (owner/admin/modo only) for MCP read-containment checks.
   await alice.page.getByTestId("team-view-create-open").click();
@@ -519,7 +586,7 @@ test("enforces Milestone 4 mid-turn queueing, creator-only Send now, explicit ow
   //    and Turn 2 as Bob on the EXACT SAME thread!
   await runPromise(
     Effect.gen(function* () {
-      const client = yield* rpcClient(topology.teamServer.home, topology.teamServer.origin);
+      const client = yield* rpcClientForBearer(topology.teamServer.origin, adminBearerToken);
       yield* client["server.updateSettings"]({
         patch: {
           defaultModelSelection: { instanceId: probeInstanceId, model: "default" },

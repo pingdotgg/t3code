@@ -15,6 +15,8 @@ import {
   type ScopedThreadRef,
   type ServerProviderSkill,
   type RunId,
+  type TeamMember,
+  type TeamThreadNote,
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -107,6 +109,17 @@ export interface TimelineRowSharedState {
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
+  teamNoteContext?: {
+    readonly teamEnvironmentId: EnvironmentId;
+    readonly currentMember: TeamMember | null;
+    readonly canResolveNotes: boolean;
+    readonly isComposerEmpty: boolean;
+    readonly isThreadRunning: boolean;
+    readonly onDispatchAcceptedNote?: (input: {
+      readonly note: TeamThreadNote;
+      readonly queueBehindActive: boolean;
+    }) => Promise<void>;
+  } | null;
 }
 
 export interface TimelineRowActivityState {

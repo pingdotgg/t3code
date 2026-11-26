@@ -46,6 +46,7 @@ const laptop = descriptorOf("environment-laptop", "Laptop");
 const box = descriptorOf("environment-box", "Box", {
   linkClientPairing: true,
   linkPairingForLink: true,
+  linkSubjectScopedClientPairing: true,
 });
 const NoTools = Toolkit.make();
 
@@ -297,4 +298,162 @@ it.effect("a linked environment from before client pairing is never asked", () =
       expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "revokes team-member-bound remote client sessions and pending pairings over a full-access peer link",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveBox();
+        const a = yield* makeLaptop;
+        yield* linkTo(a.links, b, "full-access");
+        const memberClient = yield* a.client([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+        ]);
+        const otherClient = yield* a.client([AuthOrchestrationReadScope]);
+        const memberSubject = "team-member:team-1:member-eve:";
+
+        const memberIssued = yield* a.pairing.request(
+          { environmentId: box.environmentId },
+          {
+            sessionId: memberClient.sessionId,
+            scopes: memberClient.scopes,
+            teamMemberSubject: memberSubject,
+          },
+        );
+        if (memberIssued.type !== "credential") return yield* Effect.die(memberIssued);
+        const memberPending = yield* a.pairing.request(
+          { environmentId: box.environmentId },
+          {
+            sessionId: memberClient.sessionId,
+            scopes: memberClient.scopes,
+            teamMemberSubject: memberSubject,
+          },
+        );
+        if (memberPending.type !== "credential") return yield* Effect.die(memberPending);
+        const otherIssued = yield* a.pairing.request(
+          { environmentId: box.environmentId },
+          {
+            sessionId: otherClient.sessionId,
+            scopes: otherClient.scopes,
+            teamMemberSubject: "team-member:team-1:member-eve2:",
+          },
+        );
+        if (otherIssued.type !== "credential") return yield* Effect.die(otherIssued);
+
+        // Redeem memberIssued with a DPoP proof key (matching real browser/mobile pairing) and
+        // otherIssued with the SAME device proof key to prove:
+        // 1. Revoking a DPoP-bound team session never self-deadlocks connectTrustLock.
+        // 2. Unrelated sessions sharing the same device DPoP key stay authorized.
+        const sharedProofKeyThumbprint = "dpop-thumbprint-shared-device-1";
+        const memberSession = yield* b.auth.exchangeBootstrapCredentialForAccessToken(
+          memberIssued.credential,
+          undefined,
+          metadata,
+          { proofKeyThumbprint: sharedProofKeyThumbprint },
+        );
+        const otherSession = yield* b.auth.exchangeBootstrapCredentialForAccessToken(
+          otherIssued.credential,
+          undefined,
+          metadata,
+          { proofKeyThumbprint: sharedProofKeyThumbprint },
+        );
+        expect(memberSession.access_token).toBeTruthy();
+        expect(memberSession.token_type).toBe("DPoP");
+        expect(otherSession.access_token).toBeTruthy();
+        expect(otherSession.token_type).toBe("DPoP");
+
+        const beforeSessions = yield* b.auth.listSessions();
+        expect(beforeSessions.some((s) => s.subject === memberSubject)).toBe(true);
+        expect(beforeSessions.some((s) => s.subject === "team-member:team-1:member-eve2:")).toBe(
+          true,
+        );
+
+        // Revoking member-eve: kills both her active session AND her unredeemed pending pairing on
+        // box without prefix-colliding with member-eve2:.
+        const revoked = yield* a.pairing.revokeSubject(box.environmentId, memberSubject);
+        expect(revoked.ok).toBe(true);
+        if (revoked.ok) {
+          expect(revoked.revokedSessions).toBeGreaterThanOrEqual(1);
+          expect(revoked.revokedPairingLinks).toBeGreaterThanOrEqual(1);
+        }
+
+        const afterSessions = yield* b.auth.listSessions();
+        expect(afterSessions.some((s) => s.subject === memberSubject)).toBe(false);
+        expect(afterSessions.some((s) => s.subject === "team-member:team-1:member-eve2:")).toBe(
+          true,
+        );
+
+        const pendingRedeem = yield* b.auth
+          .exchangeBootstrapCredentialForAccessToken(memberPending.credential, undefined, metadata)
+          .pipe(Effect.flip);
+        expect(pendingRedeem._tag).toBe("ServerAuthInvalidCredentialError");
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "treats revokeSubject on a non-full-access peer link as a successful no-op without calling the remote",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveBox();
+        const a = yield* makeLaptop;
+        yield* linkTo(a.links, b, "auto");
+
+        const result = yield* a.pairing.revokeSubject(
+          box.environmentId,
+          "team-member:team-1:member-eve:",
+        );
+        expect(result).toEqual({ ok: true, revokedSessions: 0, revokedPairingLinks: 0 });
+        expect(yield* Ref.get(b.bearers)).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "refuses team-member pairing on an older peer lacking linkSubjectScopedClientPairing without calling the remote",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveBox(
+          descriptorOf("environment-box", "Box", {
+            linkClientPairing: true,
+            linkPairingForLink: true,
+          }),
+        );
+        const a = yield* makeLaptop;
+        yield* linkTo(a.links, b, "full-access");
+        const memberClient = yield* a.client([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+        ]);
+
+        expect(
+          yield* a.pairing.request(
+            { environmentId: box.environmentId },
+            {
+              sessionId: memberClient.sessionId,
+              scopes: memberClient.scopes,
+              teamMemberSubject: "team-member:team-1:member-eve:",
+            },
+          ),
+        ).toEqual({
+          type: "unsupported",
+          reason: "version",
+          environmentId: box.environmentId,
+          label: "Box",
+          urls: [b.url],
+        });
+        expect(yield* Ref.get(b.bearers)).toEqual([]);
+
+        // Revoking against an older peer that cannot mint team pairings succeeds as a no-op.
+        expect(
+          yield* a.pairing.revokeSubject(box.environmentId, "team-member:team-1:member-eve:"),
+        ).toEqual({ ok: true, revokedSessions: 0, revokedPairingLinks: 0 });
+        expect(yield* Ref.get(b.bearers)).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

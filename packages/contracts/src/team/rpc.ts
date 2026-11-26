@@ -8,26 +8,51 @@ import {
   EnvironmentAuthorizationError,
 } from "../auth.ts";
 import {
+  TeamAssignProjectInput,
+  TeamAttachEnvironmentInput,
+  TeamConsumeAcceptedNotesInput,
+  TeamConsumeAcceptedNotesResult,
   TeamCreateInviteInput,
+  TeamCreateThreadNoteInput,
   TeamCreateViewInput,
+  TeamDeleteThreadNoteInput,
+  TeamDeleteThreadNoteResult,
   TeamDeleteViewInput,
   TeamDeleteViewResult,
+  TeamDetachEnvironmentInput,
+  TeamDetachEnvironmentResult,
+  TeamEditThreadNoteInput,
+  TeamEnvironment,
   TeamInitializeInput,
   TeamInitializeResult,
   TeamInviteCreatedResult,
   TeamListFollowedThreadsResult,
   TeamListThreadAttributionsResult,
+  TeamListThreadNotesInput,
+  TeamListThreadNotesResult,
   TeamMember,
   TeamOperationError,
+  TeamProjectAssignment,
+  TeamReleaseAcceptedNotesInput,
+  TeamReleaseAcceptedNotesResult,
+  TeamReserveAcceptedNotesInput,
+  TeamReserveAcceptedNotesResult,
+  TeamResolveThreadNoteInput,
   TeamRevokeInviteInput,
   TeamRevokeInviteResult,
   TeamSetThreadLockedInput,
   TeamSetThreadViewInput,
   TeamStateSnapshot,
   TeamStateStreamEvent,
+  TeamSyncLocalThreadInput,
+  TeamSyncLocalThreadResult,
   TeamThreadAttribution,
   TeamThreadFollowInput,
   TeamThreadFollowResult,
+  TeamThreadNote,
+  TeamUnassignProjectInput,
+  TeamUnassignProjectResult,
+  TeamUpdateEnvironmentInput,
   TeamUpdateMemberRoleInput,
   TeamUpdateMemberStatusInput,
   TeamUpdateMyPseudoInput,
@@ -53,6 +78,20 @@ export const TEAM_WS_METHODS = {
   teamFollowThread: "team.followThread",
   teamUnfollowThread: "team.unfollowThread",
   teamListFollowedThreads: "team.listFollowedThreads",
+  teamAssignProject: "team.assignProject",
+  teamUnassignProject: "team.unassignProject",
+  teamAttachEnvironment: "team.attachEnvironment",
+  teamUpdateEnvironment: "team.updateEnvironment",
+  teamDetachEnvironment: "team.detachEnvironment",
+  teamSyncLocalThread: "team.syncLocalThread",
+  teamCreateThreadNote: "team.createThreadNote",
+  teamDeleteThreadNote: "team.deleteThreadNote",
+  teamResolveThreadNote: "team.resolveThreadNote",
+  teamEditThreadNote: "team.editThreadNote",
+  teamReserveAcceptedNotes: "team.reserveAcceptedNotes",
+  teamReleaseAcceptedNotes: "team.releaseAcceptedNotes",
+  teamConsumeAcceptedNotes: "team.consumeAcceptedNotes",
+  teamListThreadNotes: "team.listThreadNotes",
 } as const;
 
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
@@ -69,6 +108,19 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamSetThreadLocked]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamFollowThread]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamUnfollowThread]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamAssignProject]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamUnassignProject]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamAttachEnvironment]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamUpdateEnvironment]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamDetachEnvironment]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamSyncLocalThread]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamCreateThreadNote]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamDeleteThreadNote]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamResolveThreadNote]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamEditThreadNote]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamReserveAcceptedNotes]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamReleaseAcceptedNotes]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamConsumeAcceptedNotes]: AuthOrchestrationOperateScope,
 } as const;
 
 export const TEAM_RPC_REQUIRED_SCOPES = {
@@ -77,6 +129,7 @@ export const TEAM_RPC_REQUIRED_SCOPES = {
   [TEAM_WS_METHODS.teamSubscribeState]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamListThreadAttributions]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamListFollowedThreads]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamListThreadNotes]: AuthOrchestrationReadScope,
 } as const;
 
 const TeamRpcError = Schema.Union([TeamOperationError, EnvironmentAuthorizationError]);
@@ -184,6 +237,90 @@ const WsTeamListFollowedThreadsRpc = Rpc.make(TEAM_WS_METHODS.teamListFollowedTh
   error: TeamRpcError,
 });
 
+const WsTeamAssignProjectRpc = Rpc.make(TEAM_WS_METHODS.teamAssignProject, {
+  payload: TeamAssignProjectInput,
+  success: TeamProjectAssignment,
+  error: TeamRpcError,
+});
+
+const WsTeamUnassignProjectRpc = Rpc.make(TEAM_WS_METHODS.teamUnassignProject, {
+  payload: TeamUnassignProjectInput,
+  success: TeamUnassignProjectResult,
+  error: TeamRpcError,
+});
+
+const WsTeamAttachEnvironmentRpc = Rpc.make(TEAM_WS_METHODS.teamAttachEnvironment, {
+  payload: TeamAttachEnvironmentInput,
+  success: TeamEnvironment,
+  error: TeamRpcError,
+});
+
+const WsTeamUpdateEnvironmentRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateEnvironment, {
+  payload: TeamUpdateEnvironmentInput,
+  success: TeamEnvironment,
+  error: TeamRpcError,
+});
+
+const WsTeamDetachEnvironmentRpc = Rpc.make(TEAM_WS_METHODS.teamDetachEnvironment, {
+  payload: TeamDetachEnvironmentInput,
+  success: TeamDetachEnvironmentResult,
+  error: TeamRpcError,
+});
+
+const WsTeamSyncLocalThreadRpc = Rpc.make(TEAM_WS_METHODS.teamSyncLocalThread, {
+  payload: TeamSyncLocalThreadInput,
+  success: TeamSyncLocalThreadResult,
+  error: TeamRpcError,
+});
+
+const WsTeamCreateThreadNoteRpc = Rpc.make(TEAM_WS_METHODS.teamCreateThreadNote, {
+  payload: TeamCreateThreadNoteInput,
+  success: TeamThreadNote,
+  error: TeamRpcError,
+});
+
+const WsTeamDeleteThreadNoteRpc = Rpc.make(TEAM_WS_METHODS.teamDeleteThreadNote, {
+  payload: TeamDeleteThreadNoteInput,
+  success: TeamDeleteThreadNoteResult,
+  error: TeamRpcError,
+});
+
+const WsTeamResolveThreadNoteRpc = Rpc.make(TEAM_WS_METHODS.teamResolveThreadNote, {
+  payload: TeamResolveThreadNoteInput,
+  success: TeamThreadNote,
+  error: TeamRpcError,
+});
+
+const WsTeamEditThreadNoteRpc = Rpc.make(TEAM_WS_METHODS.teamEditThreadNote, {
+  payload: TeamEditThreadNoteInput,
+  success: TeamThreadNote,
+  error: TeamRpcError,
+});
+
+const WsTeamReserveAcceptedNotesRpc = Rpc.make(TEAM_WS_METHODS.teamReserveAcceptedNotes, {
+  payload: TeamReserveAcceptedNotesInput,
+  success: TeamReserveAcceptedNotesResult,
+  error: TeamRpcError,
+});
+
+const WsTeamReleaseAcceptedNotesRpc = Rpc.make(TEAM_WS_METHODS.teamReleaseAcceptedNotes, {
+  payload: TeamReleaseAcceptedNotesInput,
+  success: TeamReleaseAcceptedNotesResult,
+  error: TeamRpcError,
+});
+
+const WsTeamConsumeAcceptedNotesRpc = Rpc.make(TEAM_WS_METHODS.teamConsumeAcceptedNotes, {
+  payload: TeamConsumeAcceptedNotesInput,
+  success: TeamConsumeAcceptedNotesResult,
+  error: TeamRpcError,
+});
+
+const WsTeamListThreadNotesRpc = Rpc.make(TEAM_WS_METHODS.teamListThreadNotes, {
+  payload: TeamListThreadNotesInput,
+  success: TeamListThreadNotesResult,
+  error: TeamRpcError,
+});
+
 export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamGetStateRpc,
   WsTeamSubscribeStateRpc,
@@ -202,4 +339,18 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamFollowThreadRpc,
   WsTeamUnfollowThreadRpc,
   WsTeamListFollowedThreadsRpc,
+  WsTeamAssignProjectRpc,
+  WsTeamUnassignProjectRpc,
+  WsTeamAttachEnvironmentRpc,
+  WsTeamUpdateEnvironmentRpc,
+  WsTeamDetachEnvironmentRpc,
+  WsTeamSyncLocalThreadRpc,
+  WsTeamCreateThreadNoteRpc,
+  WsTeamDeleteThreadNoteRpc,
+  WsTeamResolveThreadNoteRpc,
+  WsTeamEditThreadNoteRpc,
+  WsTeamReserveAcceptedNotesRpc,
+  WsTeamReleaseAcceptedNotesRpc,
+  WsTeamConsumeAcceptedNotesRpc,
+  WsTeamListThreadNotesRpc,
 );

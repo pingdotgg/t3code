@@ -10,19 +10,25 @@ import {
   AuthSessionId,
   AuthStandardClientScopes,
   CommandId,
+  EnvironmentId,
   MessageId,
   NodeId,
+  ProjectId,
+  ProviderInstanceId,
   RunId,
   RuntimeRequestId,
   TeamMemberId,
   ThreadId,
+  effectiveTeamThreadNoteHash,
   type AuthClientMetadata,
+  type ModelSelection,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type TeamStateStreamEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -37,6 +43,7 @@ import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import { localSyncMirroredMessageId, localSyncMirroredRunId } from "./TeamLocalSyncService.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
 import { recordTeamDispatchEvents, recordTeamThreadLaunch } from "./wsHandlers.ts";
@@ -88,6 +95,9 @@ describe("TeamService", () => {
         threadAttributions: [],
         followedThreadIds: [],
         latestTurnAttributions: [],
+        teamProjects: [],
+        environments: [],
+        threadNotes: [],
       });
 
       const threadId = ThreadId.make("thread-personal-1");
@@ -2058,7 +2068,408 @@ describe("TeamService", () => {
   );
 
   it.effect(
-    "fails closed on TeamRepository errors across read, batch filter, post, and prepare",
+    "enforces Milestone 5 team projects, per-environment ACLs, absolute local-execution boundary, immutable hash-pinned thread notes, empty prompts, and TOCTOU concurrent note re-anchoring",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-m5" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "M5 Team", ownerPseudo: "alice" },
+        });
+        const inviteAndJoin = (pseudo: string, role: "admin" | "modo" | "regular") =>
+          Effect.gen(function* () {
+            const created = yield* team.createInvite({
+              sessionId: aliceSession.sessionId,
+              payload: { role, prefilledPseudo: pseudo },
+            });
+            const redeemed = yield* team.redeemInvite({
+              token: created.token,
+              pseudo,
+              client: testClient,
+            });
+            const verified = yield* sessions.verify(redeemed.accessToken);
+            return { member: redeemed.member, sessionId: verified.sessionId };
+          });
+        const bob = yield* inviteAndJoin("bob", "regular");
+        const charlie = yield* inviteAndJoin("charlie", "modo");
+
+        // 1. Team Projects assignment (owner/admin only) + repo identity correlation.
+        const projectId = ProjectId.make("proj-m5-core");
+        const bobAssignExit = yield* Effect.exit(
+          team.assignProject({
+            sessionId: bob.sessionId,
+            payload: { projectId, defaultViewId: null, repoIdentityKey: "github.com/acme/m5" },
+          }),
+        );
+        expect(bobAssignExit._tag).toBe("Failure");
+        const assigned = yield* team.assignProject({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            projectId,
+            defaultViewId: init.team.defaultViewId,
+            repoIdentityKey: "github.com/acme/m5",
+          },
+        });
+        expect(assigned.projectId).toBe(projectId);
+        expect(assigned.repoIdentityKey).toBe("github.com/acme/m5");
+
+        // 2. Team Environments & per-environment ACLs (Entry 0 default protected; restricted env hidden & blocked for regular Bob).
+        const aliceState0 = yield* team.getState(aliceSession.sessionId);
+        const defaultEnv = (aliceState0.environments ?? []).find((env) => env.isDefault);
+        expect(defaultEnv).toBeDefined();
+        const detachDefaultExit = yield* Effect.exit(
+          team.detachEnvironment({
+            sessionId: aliceSession.sessionId,
+            payload: { environmentId: defaultEnv!.environmentId },
+          }),
+        );
+        expect(detachDefaultExit._tag).toBe("Failure");
+
+        const restrictedEnvId = EnvironmentId.make("env-gpu-m5");
+        const attached = yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: restrictedEnvId,
+            name: "GPU Runner",
+            accessRule: { roles: ["owner", "admin"], memberIds: [] },
+          },
+        });
+        expect(attached.environmentId).toBe(restrictedEnvId);
+
+        // Regular Bob cannot see restrictedEnvId in getState, filterAccessibleEnvironmentIds, or assertCanAccessEnvironment.
+        const bobState = yield* team.getState(bob.sessionId);
+        expect((bobState.environments ?? []).map((e) => e.environmentId)).not.toContain(
+          restrictedEnvId,
+        );
+        expect(
+          (yield* team.filterAccessibleEnvironmentIds(bob.sessionId, [
+            defaultEnv!.environmentId,
+            restrictedEnvId,
+          ])).has(restrictedEnvId),
+        ).toBe(false);
+        expect(
+          (yield* Effect.exit(team.assertCanAccessEnvironment(bob.sessionId, restrictedEnvId)))
+            ._tag,
+        ).toBe("Failure");
+        yield* team.assertCanAccessEnvironment(aliceSession.sessionId, restrictedEnvId);
+
+        // 3. Local-to-Team thread syncing + absolute local-execution boundary (even owner Alice cannot execute on Bob's local thread).
+        const bobLocalThreadId = ThreadId.make("thread-bob-local-1");
+        const bobLaptopEnvId = EnvironmentId.make("env-bob-laptop");
+        const modelSelection: ModelSelection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5",
+          options: [],
+        };
+        const syncedResult = yield* team.syncLocalThread({
+          sessionId: bob.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            projectId,
+            executionEnvironmentId: bobLaptopEnvId,
+            executionEnvironmentLabel: "Bob Laptop",
+            title: "Local debugging",
+            branch: "feat/local",
+            modelSelection,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:01.000Z",
+            runs: [],
+            messages: [],
+          },
+        });
+        expect(syncedResult.attribution.isLocalSynced).toBe(true);
+        expect(syncedResult.attribution.executionEnvironmentId).toBe(bobLaptopEnvId);
+        expect(syncedResult.attribution.creatorMemberId).toBe(bob.member.id);
+
+        // Alice (owner) cannot overwrite Bob's local-synced thread nor dispatch/execute on it!
+        expect(
+          (yield* Effect.exit(
+            team.syncLocalThread({
+              sessionId: aliceSession.sessionId,
+              payload: {
+                threadId: bobLocalThreadId,
+                projectId,
+                executionEnvironmentId: bobLaptopEnvId,
+                executionEnvironmentLabel: "Hijack",
+                title: "Hijack",
+                branch: null,
+                modelSelection,
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:02.000Z",
+                runs: [],
+                messages: [],
+              },
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertCanExecuteOnThreadEnvironment(aliceSession.sessionId, bobLocalThreadId),
+          ))._tag,
+        ).toBe("Failure");
+
+        // 4. Immutable hash-pinned Thread Notes, author delete only while pending, owner Edit preserving originalBody,
+        //    empty prompt dispatch, hash-mismatch rejection, zero implicit injection, and TOCTOU concurrent re-anchoring.
+        const aliceNote = yield* team.createThreadNote({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            body: "Check the null guard in parser.ts",
+          },
+        });
+        expect(aliceNote.status).toBe("pending");
+        expect(aliceNote.authorRole).toBe("owner");
+        expect(aliceNote.originalContentHash.length).toBeGreaterThan(10);
+
+        const charlieNote = yield* team.createThreadNote({
+          sessionId: charlie.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            body: "Temporary note to delete",
+          },
+        });
+        // Non-author (Alice) cannot delete Charlie's note; Charlie can delete while pending.
+        expect(
+          (yield* Effect.exit(
+            team.deleteThreadNote({
+              sessionId: aliceSession.sessionId,
+              payload: { noteId: charlieNote.id },
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        const deletedNote = yield* team.deleteThreadNote({
+          sessionId: charlie.sessionId,
+          payload: { noteId: charlieNote.id },
+        });
+        expect(deletedNote.deleted).toBe(true);
+
+        // Owner Bob edits Alice's note -> preserves originalBody, computes new editedContentHash, marks accepted.
+        const editedNote = yield* team.editThreadNote({
+          sessionId: bob.sessionId,
+          payload: {
+            noteId: aliceNote.id,
+            editedBody: "Check the null guard in parser.ts and add a regression test",
+            status: "accepted",
+          },
+        });
+        expect(editedNote.originalBody).toBe("Check the null guard in parser.ts");
+        expect(editedNote.editedBody).toBe(
+          "Check the null guard in parser.ts and add a regression test",
+        );
+        expect(editedNote.editedContentHash).not.toBeNull();
+        expect(editedNote.editedContentHash).not.toBe(editedNote.originalContentHash);
+
+        // Concurrent note arrives from Charlie right before Bob dispatches!
+        const concurrentNote = yield* team.createThreadNote({
+          sessionId: charlie.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            body: "Wait, also check edge case Z!",
+          },
+        });
+        expect(concurrentNote.status).toBe("pending");
+
+        // Hash mismatch is rejected (e.g., passing stale originalContentHash after edit).
+        const staleHashExit = yield* Effect.exit(
+          team.consumeAcceptedNotes({
+            sessionId: bob.sessionId,
+            payload: {
+              threadId: bobLocalThreadId,
+              targetTurnId: "msg:turn-2",
+              acceptedNotes: [
+                { noteId: editedNote.id, contentHash: editedNote.originalContentHash },
+              ],
+            },
+          }),
+        );
+        expect(staleHashExit._tag).toBe("Failure");
+
+        // Consuming with exact editedContentHash succeeds, builds attributed prompt, consumes ONLY editedNote,
+        // and atomically re-anchors concurrentNote AFTER "msg:turn-2" (still pending, never implicitly injected!).
+        const consumed = yield* team.consumeAcceptedNotes({
+          sessionId: bob.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            targetTurnId: "msg:turn-2",
+            acceptedNotes: [
+              { noteId: editedNote.id, contentHash: effectiveTeamThreadNoteHash(editedNote) },
+            ],
+          },
+        });
+        expect(consumed.consumedNotes.map((n) => n.id)).toEqual([editedNote.id]);
+        expect(consumed.reanchoredNoteIds).toEqual([concurrentNote.id]);
+        expect(consumed.formattedPromptPrefix).toContain(
+          "[Note from alice (edited & approved by bob)]:",
+        );
+        expect(consumed.formattedPromptPrefix).toContain("add a regression test");
+        expect(consumed.formattedPromptPrefix).not.toContain("edge case Z");
+
+        const notesAfterConsume = yield* team.listThreadNotes({
+          sessionId: bob.sessionId,
+          payload: { threadId: bobLocalThreadId },
+        });
+        const consumedRecord = notesAfterConsume.find((n) => n.id === editedNote.id);
+        const reanchoredRecord = notesAfterConsume.find((n) => n.id === concurrentNote.id);
+        expect(consumedRecord?.status).toBe("consumed");
+        expect(consumedRecord?.includedInTurnId).toBe("msg:turn-2");
+        expect(reanchoredRecord?.status).toBe("pending");
+        expect(reanchoredRecord?.anchorTurnId).toBe("msg:turn-2");
+
+        // 5. Remote thread empty prompt ("") dispatch with explicit teamAcceptedNotes succeeds,
+        //    reserves atomically (blocking concurrent double-injection), and releases on failure.
+        const remoteThreadId = ThreadId.make("thread-alice-remote-m5");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: remoteThreadId,
+        });
+        const bobRemoteNote = yield* team.createThreadNote({
+          sessionId: bob.sessionId,
+          payload: {
+            threadId: remoteThreadId,
+            body: "Run the smoke tests",
+          },
+        });
+        const acceptedRemoteNote = yield* team.resolveThreadNote({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            noteId: bobRemoteNote.id,
+            status: "accepted",
+            expectedContentHash: bobRemoteNote.originalContentHash,
+          },
+        });
+        const dispatchCmd = {
+          type: "message.dispatch" as const,
+          commandId: CommandId.make("cmd-empty-with-note"),
+          threadId: remoteThreadId,
+          messageId: MessageId.make("msg-empty-with-note"),
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          text: "",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" as const },
+          teamAcceptedNotes: [
+            {
+              noteId: acceptedRemoteNote.id,
+              contentHash: effectiveTeamThreadNoteHash(acceptedRemoteNote),
+            },
+          ],
+        };
+        const normalized = yield* team.assertAndNormalizeDispatchCommand(
+          aliceSession.sessionId,
+          dispatchCmd,
+        );
+        const prepared = yield* team.prepareNotesForDispatchCommand({
+          sessionId: aliceSession.sessionId,
+          command: normalized,
+        });
+        expect(prepared.reservationToken).not.toBeNull();
+        expect(prepared.command.type).toBe("message.dispatch");
+        if (prepared.command.type === "message.dispatch") {
+          expect(prepared.command.text).toContain("[Note from bob (approved by alice)]:");
+          expect(prepared.command.text).toContain("Run the smoke tests");
+        }
+        // Concurrent second dispatch carrying the same note is rejected while reserved.
+        const doubleDispatchExit = yield* Effect.exit(
+          team.prepareNotesForDispatchCommand({
+            sessionId: aliceSession.sessionId,
+            command: normalized,
+          }),
+        );
+        expect(doubleDispatchExit._tag).toBe("Failure");
+        // Releasing the reservation (e.g. on failed dispatch) restores retryability.
+        yield* team.releaseNoteReservationByToken(prepared.reservationToken!);
+        const retried = yield* team.prepareNotesForDispatchCommand({
+          sessionId: aliceSession.sessionId,
+          command: normalized,
+        });
+        expect(retried.reservationToken).not.toBeNull();
+        yield* team.releaseNoteReservationByToken(retried.reservationToken!);
+
+        // 6. Local-synced threads block execution-capable metadata continuations and thread.settle too.
+        const continuationHijackExit = yield* Effect.exit(
+          team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, {
+            type: "thread.metadata.update",
+            commandId: CommandId.make("cmd-continuation-hijack"),
+            threadId: bobLocalThreadId,
+            continuation: {
+              messageId: MessageId.make("msg-continuation-hijack"),
+              text: "Sneaky continuation execution",
+            },
+          }),
+        );
+        expect(continuationHijackExit._tag).toBe("Failure");
+
+        const settleHijackExit = yield* Effect.exit(
+          team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, {
+            type: "thread.settle",
+            commandId: CommandId.make("cmd-settle-hijack"),
+            threadId: bobLocalThreadId,
+          }),
+        );
+        expect(settleHijackExit._tag).toBe("Failure");
+
+        // Bijective encoding prevents collisions on custom IDs containing `:run:` / `:msg:`.
+        expect(localSyncMirroredRunId(ThreadId.make("a"), "b:run:c")).not.toBe(
+          localSyncMirroredRunId(ThreadId.make("a:run:b"), "c"),
+        );
+        expect(localSyncMirroredMessageId(ThreadId.make("a"), "b:msg:c")).not.toBe(
+          localSyncMirroredMessageId(ThreadId.make("a:msg:b"), "c"),
+        );
+
+        // 7. syncLocalThread rejects spoofing registered team environment IDs or unassigned projects.
+        const spoofedEnvExit = yield* Effect.exit(
+          team.syncLocalThread({
+            sessionId: bob.sessionId,
+            payload: {
+              threadId: ThreadId.make("thread-spoof-env"),
+              projectId,
+              title: "Spoofed env",
+              branch: null,
+              executionEnvironmentId: restrictedEnvId,
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.3-codex",
+                options: [],
+              },
+              runs: [],
+              messages: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          }),
+        );
+        expect(spoofedEnvExit._tag).toBe("Failure");
+
+        const unassignedProjExit = yield* Effect.exit(
+          team.syncLocalThread({
+            sessionId: bob.sessionId,
+            payload: {
+              threadId: ThreadId.make("thread-unassigned-proj"),
+              projectId: ProjectId.make("proj-not-assigned"),
+              title: "Unassigned project",
+              branch: null,
+              executionEnvironmentId: EnvironmentId.make("env-bob-laptop"),
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.3-codex",
+                options: [],
+              },
+              runs: [],
+              messages: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          }),
+        );
+        expect(unassignedProjExit._tag).toBe("Failure");
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "fails closed on TeamRepository errors across read, batch filter, post, execute, and prepare",
     () => {
       const repoError = new TeamRepository.TeamRepositoryError({
         operation: "injected",
@@ -2092,11 +2503,489 @@ describe("TeamService", () => {
         expect(yield* team.canReadAttachment(sid, `${tid}-att-1`)).toBe(false);
         expect(yield* team.canPostInThread(sid, tid)).toBe(false);
         expect((yield* team.filterReadableThreadIds(sid, [tid])).size).toBe(0);
+        expect((yield* Effect.exit(team.assertCanExecuteOnThreadEnvironment(sid, tid)))._tag).toBe(
+          "Failure",
+        );
+        expect((yield* Effect.exit(team.assertCanAccessLocalEnvironment(sid)))._tag).toBe(
+          "Failure",
+        );
+        expect((yield* Effect.exit(team.getRemotePairingSubject(sid)))._tag).toBe("Failure");
+        expect((yield* Effect.exit(team.assertCanLaunchThread({ sessionId: sid })))._tag).toBe(
+          "Failure",
+        );
         expect(
           (yield* Effect.exit(team.prepareThreadAttribution({ sessionId: sid, threadId: tid })))
             ._tag,
         ).toBe("Failure");
       }).pipe(Effect.provide(failingServiceLayer));
     },
+  );
+
+  it.effect(
+    "drains pending remote revocations with unlinkAfterRevoke safely across omitted peerLinks, unlink failure, and environment filtering",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({
+          subject: "owner-alice",
+          method: "browser-session-cookie",
+          scopes: AuthStandardClientScopes,
+        });
+        yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Acme", ownerPseudo: "alice" },
+        });
+
+        const envA = EnvironmentId.make("env-remote-a");
+        const envB = EnvironmentId.make("env-remote-b");
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envA,
+            name: "Remote A",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envB,
+            name: "Remote B",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+
+        let remoteOnline = false;
+        let unlinkSucceeds = false;
+        const revokedCalls: Array<{ environmentId: EnvironmentId; prefix: string }> = [];
+        const unlinkedEnvs: Array<EnvironmentId> = [];
+
+        const mockPeerClientPairing = {
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.sync(() => {
+              revokedCalls.push({ environmentId, prefix });
+              return remoteOnline
+                ? { ok: true as const, revokedSessions: 1, revokedPairingLinks: 0 }
+                : { ok: false as const, reason: "unreachable" as const };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+
+        const mockPeerLinks = {
+          unlink: (environmentId: EnvironmentId) =>
+            unlinkSucceeds
+              ? Effect.sync(() => {
+                  unlinkedEnvs.push(environmentId);
+                  return { unlinked: true };
+                })
+              : Effect.fail({ _tag: "MockPeerUnlinkFailed" } as const),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerLinks"]
+        >;
+
+        // Detaching while offline queues a pending revocation with unlinkAfterRevoke = true.
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: envA },
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(unlinkedEnvs).toEqual([]);
+
+        // Bring remote online.
+        remoteOnline = true;
+
+        // 1. Filtering to envB must not touch envA's pending revocation.
+        revokedCalls.length = 0;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+          environmentId: envB,
+        });
+        expect(revokedCalls).toEqual([]);
+
+        // 2. Draining WITHOUT peerLinks must not drop an unlinkAfterRevoke row.
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+        });
+        expect(revokedCalls).toEqual([]);
+
+        // 3. Draining WITH peerLinks while unlink fails keeps the pending row for retry.
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(revokedCalls.length).toBe(1);
+        expect(unlinkedEnvs).toEqual([]);
+
+        // 4. Once unlink succeeds, the row is drained and deleted; a subsequent drain is a no-op.
+        unlinkSucceeds = true;
+        revokedCalls.length = 0;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(revokedCalls.length).toBe(1);
+        expect(unlinkedEnvs).toEqual([envA]);
+
+        revokedCalls.length = 0;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(revokedCalls).toEqual([]);
+
+        // 5. Re-attaching an offline-detached environment clears unlinkAfterRevoke so drain
+        // still revokes old sessions WITHOUT unlinking the re-attached environment.
+        remoteOnline = false;
+        unlinkedEnvs.length = 0;
+        revokedCalls.length = 0;
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: envB },
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(unlinkedEnvs).toEqual([]);
+
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envB,
+            name: "Remote B Reattached",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+
+        remoteOnline = true;
+        revokedCalls.length = 0;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(revokedCalls.length).toBe(1);
+        expect(revokedCalls[0]?.environmentId).toBe(envB);
+        expect(unlinkedEnvs).toEqual([]);
+
+        // 6. Concurrent re-attach WHILE drainPendingRemoteRevocations is mid-revokeSubject must
+        // never lose its newly re-attached peer link when the in-flight drain finishes.
+        remoteOnline = false;
+        unlinkedEnvs.length = 0;
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: envB },
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        const revokeStarted = yield* Deferred.make<void>();
+        const releaseRevoke = yield* Deferred.make<void>();
+        const slowPeerClientPairing = {
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.gen(function* () {
+              revokedCalls.push({ environmentId, prefix });
+              yield* Deferred.succeed(revokeStarted, undefined);
+              yield* Deferred.await(releaseRevoke);
+              return { ok: true as const, revokedSessions: 1, revokedPairingLinks: 0 };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+
+        revokedCalls.length = 0;
+        const drainFiber = yield* Effect.forkChild(
+          team.drainPendingRemoteRevocations({
+            peerClientPairing: slowPeerClientPairing,
+            peerLinks: mockPeerLinks,
+          }),
+        );
+        yield* Deferred.await(revokeStarted);
+        // Re-attach envB while the drain's revokeSubject call is still in flight.
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envB,
+            name: "Remote B Concurrent Reattach",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+        yield* Deferred.succeed(releaseRevoke, undefined);
+        yield* Fiber.join(drainFiber);
+        expect(revokedCalls.length).toBe(1);
+        expect(unlinkedEnvs).toEqual([]);
+
+        // 7. Concurrent drain finishing revokeSubject WHILE attachEnvironment is mid-linkUnlessLinked
+        // must wait for attachEnvironment to commit and must NOT unlink the newly linked peer.
+        remoteOnline = false;
+        unlinkedEnvs.length = 0;
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: envB },
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+
+        const linkResolved = yield* Deferred.make<void>();
+        const releaseLink = yield* Deferred.make<void>();
+        const drainRevoked = yield* Deferred.make<void>();
+        const slowLinkPeerLinks = {
+          linkUnlessLinked: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(linkResolved, undefined);
+              yield* Deferred.await(releaseLink);
+              return { link: { environmentId: envB, label: "Remote B Linked" } };
+            }),
+          unlink: (environmentId: EnvironmentId) =>
+            Effect.sync(() => {
+              unlinkedEnvs.push(environmentId);
+              return { unlinked: true };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerLinks"]
+        >;
+        const signalRevokePairing = {
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.gen(function* () {
+              revokedCalls.push({ environmentId, prefix });
+              yield* Deferred.succeed(drainRevoked, undefined);
+              return { ok: true as const, revokedSessions: 1, revokedPairingLinks: 0 };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+
+        revokedCalls.length = 0;
+        const attachFiber = yield* Effect.forkChild(
+          team.attachEnvironment({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              url: "http://remote-b.test",
+              pairingCode: "pair-b-1",
+              name: "Remote B Re-Linked",
+              accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+            },
+            peerLinks: slowLinkPeerLinks,
+          }),
+        );
+        yield* Deferred.await(linkResolved);
+
+        // Drain completes remote revokeSubject while attachEnvironment is paused after link resolution.
+        const drainDuringAttachFiber = yield* Effect.forkChild(
+          team.drainPendingRemoteRevocations({
+            peerClientPairing: signalRevokePairing,
+            peerLinks: slowLinkPeerLinks,
+          }),
+        );
+        yield* Deferred.await(drainRevoked);
+        yield* Effect.yieldNow;
+        expect(unlinkedEnvs).toEqual([]);
+
+        yield* Deferred.succeed(releaseLink, undefined);
+        const reattached = yield* Fiber.join(attachFiber);
+        yield* Fiber.join(drainDuringAttachFiber);
+        expect(reattached.environmentId).toBe(envB);
+        expect(revokedCalls.length).toBe(1);
+        expect(unlinkedEnvs).toEqual([]);
+
+        // 8. Concurrent ACL revocation during an in-flight pairRemoteEnvironmentForSession waits
+        // for the remote request to settle, denies returning the credential to the revoked member,
+        // and runs revokeSubject strictly AFTER the remote pairing request finishes.
+        const bobInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob-pair" },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob-pair",
+          client: { deviceType: "desktop" },
+        });
+        const bobVerified = yield* sessions.verify(bobRedeemed.accessToken);
+
+        const pairingStarted = yield* Deferred.make<void>();
+        const releasePairing = yield* Deferred.make<void>();
+        const eventOrder: Array<string> = [];
+        const racingPairing = {
+          request: (_input: { readonly environmentId: EnvironmentId }) =>
+            Effect.gen(function* () {
+              eventOrder.push("pair:start");
+              yield* Deferred.succeed(pairingStarted, undefined);
+              yield* Deferred.await(releasePairing);
+              eventOrder.push("pair:remote-minted");
+              return {
+                type: "credential" as const,
+                environmentId: envB,
+                label: "Remote B",
+                urls: ["http://remote-b.test"],
+                credential: "should-never-reach-revoked-caller",
+                expiresAt: "2026-12-01T00:00:00.000Z",
+              };
+            }),
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.sync(() => {
+              eventOrder.push(`revoke:${environmentId}:${prefix}`);
+              revokedCalls.push({ environmentId, prefix });
+              return { ok: true as const, revokedSessions: 0, revokedPairingLinks: 1 };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+
+        revokedCalls.length = 0;
+        const pairFiber = yield* Effect.forkChild(
+          Effect.exit(
+            team.pairRemoteEnvironmentForSession({
+              sessionId: bobVerified.sessionId,
+              scopes: bobVerified.scopes,
+              pairingInput: { environmentId: envB },
+              peerClientPairing: racingPairing,
+              peerLinks: mockPeerLinks,
+            }),
+          ),
+        );
+        yield* Deferred.await(pairingStarted);
+
+        // Alice revokes regular access on envB while Bob's remote pairing request is in flight.
+        const revokeAclFiber = yield* Effect.forkChild(
+          team.updateEnvironment({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              environmentId: envB,
+              accessRule: { roles: ["owner", "admin"], memberIds: [] },
+            },
+            peerClientPairing: racingPairing,
+          }),
+        );
+        yield* Effect.yieldNow;
+        // Revocation barrier must hold revokeSubject until the in-flight pairing finishes on remote.
+        expect(revokedCalls).toEqual([]);
+
+        yield* Deferred.succeed(releasePairing, undefined);
+        const pairExit = yield* Fiber.join(pairFiber);
+        yield* Fiber.join(revokeAclFiber);
+
+        expect(pairExit._tag).toBe("Failure");
+        expect(revokedCalls.length).toBe(1);
+        expect(revokedCalls[0]?.environmentId).toBe(envB);
+        expect(revokedCalls[0]?.prefix).toContain(`:${bobRedeemed.member.id}:`);
+        expect(eventOrder[0]).toBe("pair:start");
+        expect(eventOrder[1]).toBe("pair:remote-minted");
+        expect(eventOrder[2]?.startsWith(`revoke:${envB}:`)).toBe(true);
+
+        // 9. Demoting an admin -> regular revokes their privileged remote grants across ALL
+        // linked/registered environments (even environments still accessible to regular members!),
+        // and blocks an in-flight admin-scoped pairing on a still-accessible environment.
+        const envShared = EnvironmentId.make("env-shared-all-roles");
+        const envUnregistered = EnvironmentId.make("env-unregistered-peer");
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envShared,
+            name: "Shared Worker",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+        const claraInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "admin", prefilledPseudo: "clara-demote" },
+        });
+        const claraRedeemed = yield* team.redeemInvite({
+          token: claraInvite.token,
+          pseudo: "clara-demote",
+          client: { deviceType: "desktop" },
+        });
+        const claraVerified = yield* sessions.verify(claraRedeemed.accessToken);
+        expect(claraVerified.scopes).toContain(AuthAccessWriteScope);
+
+        const claraPairStarted = yield* Deferred.make<void>();
+        const releaseClaraPair = yield* Deferred.make<void>();
+        const demoteEvents: Array<string> = [];
+        const demoteRevokedEnvs: Array<EnvironmentId> = [];
+        const demotePairing = {
+          request: (_input: { readonly environmentId: EnvironmentId }) =>
+            Effect.gen(function* () {
+              demoteEvents.push("pair:start");
+              yield* Deferred.succeed(claraPairStarted, undefined);
+              yield* Deferred.await(releaseClaraPair);
+              demoteEvents.push("pair:remote-minted");
+              return {
+                type: "credential" as const,
+                environmentId: envShared,
+                label: "Shared Worker",
+                urls: ["http://shared.test"],
+                credential: "over-privileged-admin-cred",
+                expiresAt: "2026-12-01T00:00:00.000Z",
+              };
+            }),
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.sync(() => {
+              demoteEvents.push(`revoke:${environmentId}:${prefix}`);
+              demoteRevokedEnvs.push(environmentId);
+              return { ok: true as const, revokedSessions: 1, revokedPairingLinks: 1 };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+        const demotePeerLinks = {
+          list: Effect.succeed([
+            { environmentId: envShared, label: "Shared Worker" },
+            { environmentId: envUnregistered, label: "Unregistered Peer" },
+          ]),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerLinks"]
+        >;
+
+        const claraPairFiber = yield* Effect.forkChild(
+          Effect.exit(
+            team.pairRemoteEnvironmentForSession({
+              sessionId: claraVerified.sessionId,
+              scopes: claraVerified.scopes,
+              pairingInput: { environmentId: envShared },
+              peerClientPairing: demotePairing,
+              peerLinks: demotePeerLinks,
+            }),
+          ),
+        );
+        yield* Deferred.await(claraPairStarted);
+
+        const demoteFiber = yield* Effect.forkChild(
+          team.updateMemberRole({
+            sessionId: aliceSession.sessionId,
+            payload: { memberId: claraRedeemed.member.id, role: "regular" },
+            peerClientPairing: demotePairing,
+            peerLinks: demotePeerLinks,
+          }),
+        );
+        yield* Effect.yieldNow;
+        expect(demoteRevokedEnvs).toEqual([]);
+
+        yield* Deferred.succeed(releaseClaraPair, undefined);
+        const claraPairExit = yield* Fiber.join(claraPairFiber);
+        yield* Fiber.join(demoteFiber);
+
+        expect(claraPairExit._tag).toBe("Failure");
+        expect(demoteRevokedEnvs).toContain(envShared);
+        expect(demoteRevokedEnvs).toContain(envUnregistered);
+        expect(demoteEvents[0]).toBe("pair:start");
+        expect(demoteEvents[1]).toBe("pair:remote-minted");
+        expect(demoteEvents.slice(2).every((e) => e.startsWith("revoke:"))).toBe(true);
+      }).pipe(Effect.provide(makeTestLayer())),
   );
 });

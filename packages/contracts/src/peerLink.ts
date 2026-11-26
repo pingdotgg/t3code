@@ -217,6 +217,11 @@ export const PeerLinkClientPairingRequest = Schema.Struct({
   /** The client's name there, shown in Connections here. */
   clientLabel: TrimmedNonEmptyString,
   /**
+   * Optional team-member subject prefix (`team-member:<teamId>:<memberId>`) so the linking Team
+   * Server can revoke direct client sessions on this environment when ACLs or membership change.
+   */
+  subject: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Set when the pairing is for a link from another environment, not for the client itself: the
    * credential is then a link pairing code at this access, and `scopes` is not used.
    */
@@ -229,6 +234,18 @@ export const PeerLinkClientPairingCredential = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type PeerLinkClientPairingCredential = typeof PeerLinkClientPairingCredential.Type;
+
+export const PeerLinkRevokeSubjectRequest = Schema.Struct({
+  /** Must start with `team-member:` so peer links can only revoke team-minted grants. */
+  subjectPrefix: TrimmedNonEmptyString,
+});
+export type PeerLinkRevokeSubjectRequest = typeof PeerLinkRevokeSubjectRequest.Type;
+
+export const PeerLinkRevokeSubjectResult = Schema.Struct({
+  revokedSessions: Schema.Number,
+  revokedPairingLinks: Schema.Number,
+});
+export type PeerLinkRevokeSubjectResult = typeof PeerLinkRevokeSubjectResult.Type;
 
 /**
  * The user's answer to an agent asking to link an environment. The pairing

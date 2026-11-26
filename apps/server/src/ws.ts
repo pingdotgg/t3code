@@ -159,6 +159,8 @@ import {
   toShellApplicationEvent,
   type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
+import * as EventSink from "./orchestration-v2/EventSink.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
 import {
   coalesceLiveUpdatedEvents,
@@ -1648,6 +1650,8 @@ export const layerWsRpc = (
       const hostEnvironment = yield* HostProcess.Environment;
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
+      const eventSinkOption = yield* Effect.serviceOption(EventSink.EventSinkV2);
+      const projectionStoreOption = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
       const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
@@ -2134,8 +2138,14 @@ export const layerWsRpc = (
         [WS_METHODS.issuesSetState]: (input) => issues.setState(input),
         [WS_METHODS.issuesReact]: (input) => issues.react(input),
         [WS_METHODS.issueTrackersList]: () => issueTrackers.list,
-        [WS_METHODS.issueTrackersConnect]: (input) => issueTrackers.connect(input),
-        [WS_METHODS.issueTrackersBindProject]: (input) => issueTrackers.bindProject(input),
+        [WS_METHODS.issueTrackersConnect]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(issueTrackers.connect(input))),
+        [WS_METHODS.issueTrackersBindProject]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(issueTrackers.bindProject(input))),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2168,19 +2178,25 @@ export const layerWsRpc = (
             Effect.andThen(
               teamService.assertAndNormalizeDispatchCommand(currentSessionId, command),
             ),
-            Effect.flatMap((effectiveCommand) =>
+            Effect.flatMap((normalizedCommand) =>
               Effect.gen(function* () {
-                const preparedThreadId = yield* prepareTeamDispatchAttribution(
-                  teamService,
-                  currentSessionId,
-                  effectiveCommand,
-                );
-                yield* teamService.prepareTurnAttributionForCommand(
-                  currentSessionId,
-                  effectiveCommand,
-                );
-                return yield* startup
-                  .enqueueCommand(
+                const { command: effectiveCommand, reservationToken } =
+                  yield* teamService.prepareNotesForDispatchCommand({
+                    sessionId: currentSessionId,
+                    command: normalizedCommand,
+                  });
+                let preparedThreadId: ThreadId | null = null;
+                return yield* Effect.gen(function* () {
+                  preparedThreadId = yield* prepareTeamDispatchAttribution(
+                    teamService,
+                    currentSessionId,
+                    effectiveCommand,
+                  );
+                  yield* teamService.prepareTurnAttributionForCommand(
+                    currentSessionId,
+                    effectiveCommand,
+                  );
+                  return yield* startup.enqueueCommand(
                     (effectiveCommand.type === "prepared-run.retry"
                       ? threadLaunch.retryPreparation(effectiveCommand)
                       : ThreadMessageIntake.dispatchCommand(
@@ -2197,57 +2213,66 @@ export const layerWsRpc = (
                           },
                         )
                     ).pipe(Effect.provide(intakeContext)),
-                  )
-                  .pipe(
-                    Effect.onError(() =>
+                  );
+                }).pipe(
+                  Effect.onError(() =>
+                    Effect.all([
                       preparedThreadId !== null
                         ? teamService.rollbackPreparedThreadAttribution(preparedThreadId)
                         : Effect.void,
-                    ),
-                    Effect.tap((result) =>
-                      result.replayed
-                        ? Effect.void
-                        : recordTeamDispatchEvents(
-                            teamService,
-                            currentSessionId,
-                            result.storedEvents,
-                          ).pipe(
-                            Effect.andThen(
-                              effectiveCommand.type === "run.interrupt" ||
-                                effectiveCommand.type === "subagent.stop"
+                      reservationToken !== null
+                        ? teamService.releaseNoteReservationByToken(reservationToken)
+                        : Effect.void,
+                    ]).pipe(Effect.asVoid),
+                  ),
+                  Effect.tap((result) =>
+                    result.replayed
+                      ? reservationToken !== null
+                        ? teamService.releaseNoteReservationByToken(reservationToken)
+                        : Effect.void
+                      : recordTeamDispatchEvents(
+                          teamService,
+                          currentSessionId,
+                          result.storedEvents,
+                          effectiveCommand,
+                          reservationToken,
+                        ).pipe(
+                          Effect.andThen(
+                            effectiveCommand.type === "run.interrupt" ||
+                              effectiveCommand.type === "subagent.stop"
+                              ? teamService.notifyTurnInterrupted({
+                                  actor: { kind: "session", sessionId: currentSessionId },
+                                  threadId: effectiveCommand.threadId,
+                                  runId: effectiveCommand.runId,
+                                  reason: "interrupt",
+                                })
+                              : effectiveCommand.type === "thread.stop"
                                 ? teamService.notifyTurnInterrupted({
                                     actor: { kind: "session", sessionId: currentSessionId },
                                     threadId: effectiveCommand.threadId,
-                                    runId: effectiveCommand.runId,
-                                    reason: "interrupt",
+                                    reason: "stop",
                                   })
-                                : effectiveCommand.type === "thread.stop"
+                                : effectiveCommand.type === "queued-message.promote-to-steer"
                                   ? teamService.notifyTurnInterrupted({
                                       actor: { kind: "session", sessionId: currentSessionId },
                                       threadId: effectiveCommand.threadId,
-                                      reason: "stop",
+                                      runId: effectiveCommand.targetRunId,
+                                      reason: "promote_to_steer",
                                     })
-                                  : effectiveCommand.type === "queued-message.promote-to-steer"
-                                    ? teamService.notifyTurnInterrupted({
-                                        actor: { kind: "session", sessionId: currentSessionId },
-                                        threadId: effectiveCommand.threadId,
-                                        runId: effectiveCommand.targetRunId,
-                                        reason: "promote_to_steer",
-                                      })
-                                    : Effect.void,
-                            ),
-                            Effect.andThen(recordClientCommandAnalytics(effectiveCommand)),
+                                  : Effect.void,
                           ),
-                    ),
-                    Effect.map((result) => ({ sequence: result.sequence })),
-                  );
+                          Effect.andThen(recordClientCommandAnalytics(effectiveCommand)),
+                        ),
+                  ),
+                  Effect.map((result) => ({ sequence: result.sequence })),
+                );
               }).pipe(
                 Effect.mapError((cause) => {
                   if (cause._tag === "EnvironmentAuthorizationError") return cause;
                   const detail = userFacingDispatchErrorMessage(cause);
                   return new OrchestrationV2DispatchCommandError({
-                    commandId: effectiveCommand.commandId,
-                    commandType: effectiveCommand.type,
+                    commandId: normalizedCommand.commandId,
+                    commandType: normalizedCommand.type,
                     message: detail ?? "Failed to dispatch orchestration V2 command",
                     ...(detail === undefined ? {} : { detail }),
                     cause,
@@ -2258,6 +2283,9 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) =>
           teamService.assertCanUseWorkflows(currentSessionId).pipe(
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+            ),
             Effect.andThen(teamService.assertCanInterruptThread(currentSessionId, input.threadId)),
             Effect.andThen(threadManagement.stopWorkflow(input)),
             Effect.tap(() =>
@@ -2269,7 +2297,8 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
-          teamService.assertCanInterruptThread(currentSessionId, input.threadId).pipe(
+          teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId).pipe(
+            Effect.andThen(teamService.assertCanInterruptThread(currentSessionId, input.threadId)),
             Effect.andThen(threadManagement.forceStopThread(input)),
             Effect.tap(() =>
               teamService.notifyTurnInterrupted({
@@ -2486,6 +2515,7 @@ export const layerWsRpc = (
             Effect.andThen(
               teamService.assertCanLaunchThread({
                 sessionId: currentSessionId,
+                projectId: input.projectId,
                 ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
                 ...(input.reuseExistingThread === undefined
                   ? {}
@@ -2507,6 +2537,7 @@ export const layerWsRpc = (
                     ? yield* teamService.prepareThreadAttribution({
                         sessionId: currentSessionId,
                         threadId: resolvedThreadId,
+                        projectId: input.projectId,
                         ...(input.teamViewId === undefined ? {} : { viewId: input.teamViewId }),
                         ...(input.teamLocked === undefined ? {} : { locked: input.teamLocked }),
                       })
@@ -2586,6 +2617,7 @@ export const layerWsRpc = (
                     // A resumed launch is a retry of one already counted.
                     Effect.tap((result) =>
                       recordTeamThreadLaunch(teamService, currentSessionId, result, {
+                        projectId: input.projectId,
                         ...(input.teamViewId === undefined ? {} : { viewId: input.teamViewId }),
                         ...(input.teamLocked === undefined ? {} : { locked: input.teamLocked }),
                       }),
@@ -2835,11 +2867,17 @@ export const layerWsRpc = (
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+            ),
             Effect.andThen(secretRequests.answer(input)),
           ),
         [WS_METHODS.agentFeedbackAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+            ),
             Effect.andThen(feedbackStore.answer(input)),
           ),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
@@ -2865,110 +2903,149 @@ export const layerWsRpc = (
             .search(input)
             .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
         [WS_METHODS.serverPrepareAcpRegistryAgent]: (input) =>
-          Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
             Effect.andThen(
-              Effect.suspend(() => {
-                const blocked = ManagedProviders.disallowedDriverReason(
-                  serverSettings.managedPolicy,
-                  ProviderDriverKind.make("acpRegistry"),
-                );
-                return blocked === undefined
-                  ? acpRegistryCatalog
-                      .prepare(input)
-                      .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError))
-                  : Effect.fail(
-                      new AcpRegistryOperationError({ reason: "install_failed", message: blocked }),
+              Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    const blocked = ManagedProviders.disallowedDriverReason(
+                      serverSettings.managedPolicy,
+                      ProviderDriverKind.make("acpRegistry"),
                     );
-              }),
+                    return blocked === undefined
+                      ? acpRegistryCatalog
+                          .prepare(input)
+                          .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError))
+                      : Effect.fail(
+                          new AcpRegistryOperationError({
+                            reason: "install_failed",
+                            message: blocked,
+                          }),
+                        );
+                  }),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: (input) =>
-          Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
-            Effect.andThen(
-              acpRegistryCatalog
-                .uninstallManagedBinary(input)
-                .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
+                  Effect.andThen(
+                    acpRegistryCatalog
+                      .uninstallManagedBinary(input)
+                      .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
+                  ),
+                ),
+              ),
             ),
-          ),
         [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: (input) =>
-          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
-            Effect.andThen(
-              acpRegistryRuntimeCoordinator
-                .acceptUrlAuthentication(input)
-                .pipe(Effect.map((accepted) => ({ accepted }))),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+                  Effect.andThen(
+                    acpRegistryRuntimeCoordinator
+                      .acceptUrlAuthentication(input)
+                      .pipe(Effect.map((accepted) => ({ accepted }))),
+                  ),
+                ),
+              ),
             ),
-          ),
         [WS_METHODS.serverListAcpRegistrySessions]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
             "project.id": input.projectId,
           }).pipe(Effect.andThen(listAcpRegistrySessions(input))),
         [WS_METHODS.serverImportAcpRegistrySession]: (input) =>
-          Effect.annotateCurrentSpan({
-            "provider.instance_id": input.instanceId,
-            "project.id": input.projectId,
-          }).pipe(Effect.andThen(acpRegistrySessions.importSession(input))),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              Effect.annotateCurrentSpan({
+                "provider.instance_id": input.instanceId,
+                "project.id": input.projectId,
+              }).pipe(Effect.andThen(acpRegistrySessions.importSession(input))),
+            ),
+          ),
         [WS_METHODS.serverDeleteAcpRegistrySession]: (input) =>
-          Effect.annotateCurrentSpan({
-            "provider.instance_id": input.instanceId,
-            "project.id": input.projectId,
-          }).pipe(Effect.andThen(deleteAcpRegistrySession(input))),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              Effect.annotateCurrentSpan({
+                "provider.instance_id": input.instanceId,
+                "project.id": input.projectId,
+              }).pipe(Effect.andThen(deleteAcpRegistrySession(input))),
+            ),
+          ),
         [WS_METHODS.serverListAcpRegistryProviders]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
             "project.id": input.projectId,
           }).pipe(Effect.andThen(listAcpRegistryProviders(input))),
         [WS_METHODS.serverSetAcpRegistryProvider]: (input) =>
-          Effect.annotateCurrentSpan({
-            "provider.instance_id": input.instanceId,
-            "project.id": input.projectId,
-          }).pipe(Effect.andThen(setAcpRegistryProvider(input))),
-        [WS_METHODS.serverDisableAcpRegistryProvider]: (input) =>
-          Effect.annotateCurrentSpan({
-            "provider.instance_id": input.instanceId,
-            "project.id": input.projectId,
-          }).pipe(Effect.andThen(disableAcpRegistryProvider(input))),
-        [WS_METHODS.serverLogoutAcpRegistry]: (input) =>
-          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
             Effect.andThen(
-              Effect.gen(function* () {
-                const { instance, manager } = yield* acpRegistrySessions.sessionManager(
-                  input.instanceId,
-                );
-                const snapshot = yield* instance.snapshot.getSnapshot;
-                if (snapshot.auth.canLogout !== true) {
-                  return yield* new AcpRegistryOperationError({
-                    reason: "logout_unsupported",
-                    message: "The ACP agent does not advertise logout.",
-                  });
-                }
-                if (instance.auth) {
-                  yield* providerAuth.logout(input).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new AcpRegistryOperationError({
-                          reason: "logout_failed",
-                          message: "Could not sign out of the ACP agent.",
-                          cause,
-                        }),
-                    ),
-                  );
-                } else {
-                  yield* providerSessionManager.closeInstance(input.instanceId).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new AcpRegistryOperationError({
-                          reason: "logout_failed",
-                          message: "Could not stop live sessions before ACP logout.",
-                          cause,
-                        }),
-                    ),
-                  );
-                  yield* manager.logout(config.cwd);
-                }
-                yield* providerRegistry.refreshInstance(input.instanceId);
-                return { loggedOut: true } as const;
-              }),
+              Effect.annotateCurrentSpan({
+                "provider.instance_id": input.instanceId,
+                "project.id": input.projectId,
+              }).pipe(Effect.andThen(setAcpRegistryProvider(input))),
+            ),
+          ),
+        [WS_METHODS.serverDisableAcpRegistryProvider]: (input) =>
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              Effect.annotateCurrentSpan({
+                "provider.instance_id": input.instanceId,
+                "project.id": input.projectId,
+              }).pipe(Effect.andThen(disableAcpRegistryProvider(input))),
+            ),
+          ),
+        [WS_METHODS.serverLogoutAcpRegistry]: (input) =>
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    const { instance, manager } = yield* acpRegistrySessions.sessionManager(
+                      input.instanceId,
+                    );
+                    const snapshot = yield* instance.snapshot.getSnapshot;
+                    if (snapshot.auth.canLogout !== true) {
+                      return yield* new AcpRegistryOperationError({
+                        reason: "logout_unsupported",
+                        message: "The ACP agent does not advertise logout.",
+                      });
+                    }
+                    if (instance.auth) {
+                      yield* providerAuth.logout(input).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new AcpRegistryOperationError({
+                              reason: "logout_failed",
+                              message: "Could not sign out of the ACP agent.",
+                              cause,
+                            }),
+                        ),
+                      );
+                    } else {
+                      yield* providerSessionManager.closeInstance(input.instanceId).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new AcpRegistryOperationError({
+                              reason: "logout_failed",
+                              message: "Could not stop live sessions before ACP logout.",
+                              cause,
+                            }),
+                        ),
+                      );
+                      yield* manager.logout(config.cwd);
+                    }
+                    yield* providerRegistry.refreshInstance(input.instanceId);
+                    return { loggedOut: true } as const;
+                  }),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.serverRefreshProviders]:
@@ -3071,7 +3148,12 @@ export const layerWsRpc = (
         [WS_METHODS.mcpAppsCallTool]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(mcpAppRequests.callTool(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(mcpAppRequests.callTool(input)),
+            ),
         [WS_METHODS.mcpAppsToolInfo]: (input) =>
           teamService
             .assertCanReadThread(currentSessionId, input.threadId)
@@ -3083,19 +3165,35 @@ export const layerWsRpc = (
               Effect.andThen(
                 teamService.assertCanPostInThread(currentSessionId, input.conversationThreadId),
               ),
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  input.conversationThreadId,
+                ),
+              ),
               Effect.andThen(mcpAppRequests.updateModelContext(input)),
             ),
         [WS_METHODS.mcpAppsReadResource]: (input) =>
           teamService
             .assertCanReadThread(currentSessionId, input.threadId)
             .pipe(Effect.andThen(mcpAppRequests.readResource(input))),
-        [WS_METHODS.providerMcpSignInStart]: (input) => mcpSignIn.start(input),
-        [WS_METHODS.providerMcpSignInComplete]: (input) => mcpSignIn.complete(input),
+        [WS_METHODS.providerMcpSignInStart]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(mcpSignIn.start(input))),
+        [WS_METHODS.providerMcpSignInComplete]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(mcpSignIn.complete(input))),
         [WS_METHODS.providerUploadFeedback]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(
             function* (input) {
               yield* teamService.assertCanPostInThread(currentSessionId, input.threadId);
+              yield* teamService.assertCanExecuteOnThreadEnvironment(
+                currentSessionId,
+                input.threadId,
+              );
               const projection = yield* threadManagement.getThreadRecords(input.threadId, [
                 "providerThreads",
               ]);
@@ -3142,10 +3240,13 @@ export const layerWsRpc = (
               ),
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
-          providerMaintenanceRunner.updateProvider(input),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerMaintenanceRunner.updateProvider(input))),
         [WS_METHODS.providerConsumeResetCredit]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
+            yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
             if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
             const instance = yield* providerInstances.getInstance(input.instanceId);
             if (instance === undefined || !instance.enabled) {
@@ -3175,26 +3276,61 @@ export const layerWsRpc = (
             );
             return { outcome };
           }),
-        [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
+        [WS_METHODS.providerAuthStart]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.start(input, currentSessionId))),
         [WS_METHODS.providerAuthRespond]: (input) =>
-          Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(
-            Effect.andThen(providerAuth.respond(input, currentSessionId)),
-          ),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(
+                  Effect.andThen(providerAuth.respond(input, currentSessionId)),
+                ),
+              ),
+            ),
         [WS_METHODS.providerAuthComplete]: (input) =>
-          providerAuth.complete(input, currentSessionId),
-        [WS_METHODS.chatGptReconnectProfile]: (input) => providerAuth.reconnectProfile(input),
-        [WS_METHODS.chatGptImportProfile]: (input) => providerAuth.importProfile(input),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.complete(input, currentSessionId))),
+        [WS_METHODS.chatGptReconnectProfile]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.reconnectProfile(input))),
+        [WS_METHODS.chatGptImportProfile]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.importProfile(input))),
         [WS_METHODS.chatGptHandoffSubscribe]: (input) =>
           subscribeChatGptHandoff(input, currentSessionId),
-        [WS_METHODS.providerAuthCancel]: (input) => providerAuth.cancel(input, currentSessionId),
-        [WS_METHODS.providerAuthRemoveMethod]: (input) => providerAuth.removeMethod(input),
-        [WS_METHODS.providerAuthLogout]: (input) => providerAuth.logout(input),
+        [WS_METHODS.providerAuthCancel]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.cancel(input, currentSessionId))),
+        [WS_METHODS.providerAuthRemoveMethod]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.removeMethod(input))),
+        [WS_METHODS.providerAuthLogout]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.logout(input))),
         [WS_METHODS.providerAuthSubscribe]: (input) =>
           providerAuth.subscribe(input, currentSessionId),
-        [WS_METHODS.providerInstallStart]: (input) => providerInstallation.start(input),
-        [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
+        [WS_METHODS.providerInstallStart]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerInstallation.start(input))),
+        [WS_METHODS.providerInstallCancel]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerInstallation.cancel(input))),
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
-        [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
+        [WS_METHODS.providerInstallRemove]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerInstallation.remove(input))),
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
@@ -3204,39 +3340,135 @@ export const layerWsRpc = (
         [WS_METHODS.serverUpsertKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {
+            yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
             return yield* keybindings.upsertKeybindingRule(rule);
           }),
         [WS_METHODS.serverRemoveKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {
+            yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
             return yield* keybindings.removeKeybindingRule(rule);
           }),
-        [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
+        [WS_METHODS.serverRunStorageCleanup]: () =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(storageCleanup.runNow)),
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
-        [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
+        [WS_METHODS.serverReclaimDatabaseSpace]: () =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(databaseStorage.requestReclaim)),
         [WS_METHODS.peerLinksList]: (_input) =>
-          peerLinks.list.pipe(Effect.map((links) => ({ links }))),
+          peerLinks.list.pipe(
+            Effect.flatMap((links) =>
+              teamService
+                .filterAccessibleEnvironmentIds(
+                  currentSessionId,
+                  links.map((link) => link.environmentId),
+                )
+                .pipe(
+                  Effect.map((allowed) => ({
+                    links: links.filter((link) => allowed.has(link.environmentId)),
+                  })),
+                ),
+            ),
+          ),
         [WS_METHODS.peerLinksNames]: (_input) =>
-          peerLinks.names.pipe(Effect.map((links) => ({ links }))),
-        [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
-        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) => peerLinks.unlink(environmentId),
-        [WS_METHODS.peerLinksSubscribeThread]: (input) => peerThreadRelay.subscribe(input),
+          peerLinks.names.pipe(
+            Effect.flatMap((links) =>
+              teamService
+                .filterAccessibleEnvironmentIds(
+                  currentSessionId,
+                  links.map((link) => link.environmentId),
+                )
+                .pipe(
+                  Effect.map((allowed) => ({
+                    links: links.filter((link) => allowed.has(link.environmentId)),
+                  })),
+                ),
+            ),
+          ),
+        [WS_METHODS.peerLinksLink]: (input) =>
+          teamService
+            .assertActorIsAdmin(
+              { kind: "session", sessionId: currentSessionId },
+              "Only owner and admin members can link remote environments.",
+              "team:environment:write",
+            )
+            .pipe(Effect.andThen(peerLinks.link(input))),
+        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
+          teamService
+            .assertActorIsAdmin(
+              { kind: "session", sessionId: currentSessionId },
+              "Only owner and admin members can unlink remote environments.",
+              "team:environment:write",
+            )
+            .pipe(
+              Effect.andThen(
+                teamService.unlinkRemoteEnvironment({
+                  environmentId,
+                  peerClientPairing,
+                  peerLinks,
+                }),
+              ),
+            ),
+        [WS_METHODS.peerLinksSubscribeThread]: (input) =>
+          Stream.unwrap(
+            teamService
+              .assertCanAccessEnvironment(currentSessionId, input.environmentId)
+              .pipe(Effect.as(peerThreadRelay.subscribe(input))),
+          ),
         [WS_METHODS.peerLinksThreadHistoryPage]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(
+              teamService.assertCanAccessEnvironment(currentSessionId, input.environmentId),
+            ),
             Effect.andThen(peerThreadRelay.historyPage(input)),
           ),
         [WS_METHODS.peerLinksThreadItem]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(
+              teamService.assertCanAccessEnvironment(currentSessionId, input.environmentId),
+            ),
             Effect.andThen(peerThreadRelay.item(input)),
           ),
         [WS_METHODS.peerLinksPairClient]: (input) =>
-          peerClientPairing.request(input, currentSession),
+          teamService.pairRemoteEnvironmentForSession({
+            sessionId: currentSession.sessionId,
+            scopes: currentSession.scopes,
+            pairingInput: input,
+            peerClientPairing,
+            peerLinks,
+          }),
         [WS_METHODS.peerLinksPairLink]: (input) =>
-          peerClientPairing.requestForLink(input, currentSession),
+          teamService
+            .assertActorIsAdmin(
+              { kind: "session", sessionId: currentSessionId },
+              "Only owner and admin members can pair remote environment links.",
+              "team:environment:write",
+            )
+            .pipe(Effect.andThen(peerClientPairing.requestForLink(input, currentSession))),
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+            ),
+            Effect.andThen(
+              input.answer.type === "link"
+                ? teamService.assertActorIsAdmin(
+                    { kind: "session", sessionId: currentSessionId },
+                    "Only owner and admin members can link new remote environments.",
+                    "team:environment:write",
+                  )
+                : input.answer.type === "use-existing"
+                  ? teamService.assertCanAccessEnvironment(
+                      currentSessionId,
+                      input.answer.environmentId,
+                    )
+                  : Effect.void,
+            ),
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
         [WS_METHODS.serverGetSettings]: (_input) =>
@@ -3246,6 +3478,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
+            yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -3275,7 +3508,10 @@ export const layerWsRpc = (
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
-        [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
+        [WS_METHODS.serverPrepareTriage]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(triage.prepare(input))),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
@@ -3359,7 +3595,9 @@ export const layerWsRpc = (
         [WS_METHODS.pullRequestsReviewGuide]: (input) =>
           withPullRequestViewer(input, reviewGuides.get(input)),
         [WS_METHODS.pullRequestsGenerateReviewGuide]: (input) =>
-          withPullRequestViewer(input, reviewGuides.generate(input)),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(withPullRequestViewer(input, reviewGuides.generate(input)))),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>
           withPullRequestViewer(input, pullRequests.threadComments(input)),
         [WS_METHODS.pullRequestsDiffFileContents]: (input) =>
@@ -3423,69 +3661,102 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
-          sourceControlRepositories.cloneRepository(input),
-        [WS_METHODS.sourceControlSignInStart]: (input) => sourceControlSignIn.start(input),
-        [WS_METHODS.sourceControlSignInWait]: (input) => sourceControlSignIn.wait(input),
-        [WS_METHODS.sourceControlSignInCancel]: (input) => sourceControlSignIn.cancel(input),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(sourceControlRepositories.cloneRepository(input))),
+        [WS_METHODS.sourceControlSignInStart]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(sourceControlSignIn.start(input))),
+        [WS_METHODS.sourceControlSignInWait]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(sourceControlSignIn.wait(input))),
+        [WS_METHODS.sourceControlSignInCancel]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(sourceControlSignIn.cancel(input))),
         [WS_METHODS.sourceControlAppAccess]: (input) => sourceControlSignIn.access(input),
         [WS_METHODS.sourceControlStarred]: (input) => sourceControlSignIn.starred(input),
         [WS_METHODS.sourceControlStar]: (input) => sourceControlSignIn.star(input),
         [WS_METHODS.projectCloneStart]: (input) =>
-          projectCloneTracker.start(input, {
-            createProject: (project) =>
-              projectService
-                .create({
-                  commandId: CommandId.make(`project-clone-create:${project.projectId}`),
-                  projectId: project.projectId,
-                  title: project.title,
-                  workspaceRoot: project.workspaceRoot,
-                  createWorkspaceRootIfMissing: true,
-                })
-                .pipe(
-                  Effect.asVoid,
-                  Effect.mapError((cause) =>
-                    cause._tag === "ProjectConflictError"
-                      ? cause
-                      : new OrchestrationDispatchCommandError({
-                          message: "Failed to create clone project.",
-                          cause,
-                        }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              projectCloneTracker.start(input, {
+                createProject: (project) =>
+                  projectService
+                    .create({
+                      commandId: CommandId.make(`project-clone-create:${project.projectId}`),
+                      projectId: project.projectId,
+                      title: project.title,
+                      workspaceRoot: project.workspaceRoot,
+                      createWorkspaceRootIfMissing: true,
+                    })
+                    .pipe(
+                      Effect.asVoid,
+                      Effect.mapError((cause) =>
+                        cause._tag === "ProjectConflictError"
+                          ? cause
+                          : new OrchestrationDispatchCommandError({
+                              message: "Failed to create clone project.",
+                              cause,
+                            }),
+                      ),
+                    ),
+                onCloned: (project) =>
+                  repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
+                    Effect.andThen(
+                      projectService.update({
+                        commandId: CommandId.make(`project-clone-done:${project.projectId}`),
+                        projectId: project.projectId,
+                      }),
+                    ),
+                    Effect.andThen(refreshGitStatus(project.workspaceRoot)),
+                    // The folder was empty when the project was created, so the cached
+                    // enrichment says "no repository" and clients cannot group it yet.
+                    Effect.andThen(projectEnrichment.invalidate([project.workspaceRoot])),
+                    Effect.andThen(projectEnrichment.request(project.workspaceRoot)),
+                    Effect.ignoreCause({ log: true }),
                   ),
-                ),
-            onCloned: (project) =>
-              repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
-                Effect.andThen(
-                  projectService.update({
-                    commandId: CommandId.make(`project-clone-done:${project.projectId}`),
-                    projectId: project.projectId,
-                  }),
-                ),
-                Effect.andThen(refreshGitStatus(project.workspaceRoot)),
-                // The folder was empty when the project was created, so the cached
-                // enrichment says "no repository" and clients cannot group it yet.
-                Effect.andThen(projectEnrichment.invalidate([project.workspaceRoot])),
-                Effect.andThen(projectEnrichment.request(project.workspaceRoot)),
-                Effect.ignoreCause({ log: true }),
-              ),
-          }),
-        [WS_METHODS.projectsEnsureScratch]: () =>
-          managedFolders.ensureScratchProject.pipe(
-            Effect.mapError(
-              (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+              }),
             ),
           ),
-        [WS_METHODS.projectsCreateNew]: (input) =>
-          managedFolders
-            .createNamedProject(input)
+        [WS_METHODS.projectsEnsureScratch]: () =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
             .pipe(
-              Effect.mapError(
-                (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+              Effect.andThen(
+                managedFolders.ensureScratchProject.pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+                  ),
+                ),
+              ),
+            ),
+        [WS_METHODS.projectsCreateNew]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                managedFolders
+                  .createNamedProject(input)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+                    ),
+                  ),
               ),
             ),
         [WS_METHODS.projectsCreateFromThread]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(teamService.assertCanAccessLocalEnvironment(currentSessionId)),
               Effect.andThen(
                 scratchThreadPromotion
                   .promote(input)
@@ -3498,17 +3769,37 @@ export const layerWsRpc = (
               ),
             ),
         [WS_METHODS.projectCloneCancel]: (input) =>
-          projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                projectCloneTracker
+                  .cancel(input.projectId)
+                  .pipe(Effect.map((applied) => ({ applied }))),
+              ),
+            ),
         [WS_METHODS.projectCloneRetry]: (input) =>
-          projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                projectCloneTracker
+                  .retry(input.projectId)
+                  .pipe(Effect.map((applied) => ({ applied }))),
+              ),
+            ),
         [WS_METHODS.subscribeProjectClones]: () => projectCloneTracker.stream,
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
-          sourceControlRepositories.publishRepository(input).pipe(
-            // A failed push still leaves the new remote added.
-            Effect.ensuring(
-              repositoryIdentityResolver
-                .resolve(input.cwd, { refresh: true })
-                .pipe(Effect.andThen(refreshGitStatus(input.cwd))),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              sourceControlRepositories.publishRepository(input).pipe(
+                // A failed push still leaves the new remote added.
+                Effect.ensuring(
+                  repositoryIdentityResolver
+                    .resolve(input.cwd, { refresh: true })
+                    .pipe(Effect.andThen(refreshGitStatus(input.cwd))),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
@@ -3571,32 +3862,44 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
-          workspaceFileSystem.writeFile(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectWriteFileError({
-                  cwd: input.cwd,
-                  relativePath: input.relativePath,
-                  ...projectFileFailureContext(cause),
-                  cause,
-                }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              workspaceFileSystem.writeFile(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectWriteFileError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.projectsMutate]: (mutation) =>
-          startup.enqueueCommand(mutateProject(mutation)).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectMutationError({
-                  commandId: mutation.commandId,
-                  message:
-                    cause._tag === "ProjectNotEmptyError" || cause._tag === "ProjectInvalidError"
-                      ? cause.message
-                      : "Failed to mutate project.",
-                  cause,
-                }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              startup.enqueueCommand(mutateProject(mutation)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectMutationError({
+                      commandId: mutation.commandId,
+                      message:
+                        cause._tag === "ProjectNotEmptyError" ||
+                        cause._tag === "ProjectInvalidError"
+                          ? cause.message
+                          : "Failed to mutate project.",
+                      cause,
+                    }),
+                ),
+              ),
             ),
           ),
-        [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
+        [WS_METHODS.shellOpenInEditor]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(externalLauncher.launchEditor(input))),
         [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
@@ -3613,22 +3916,40 @@ export const layerWsRpc = (
         [WS_METHODS.workspaceScanFolders]: (input) => workspaceFolders.scan(input),
         [WS_METHODS.workspaceTaskFolder]: (input) =>
           taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
-        [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
+        [WS_METHODS.workspaceAddTaskFolderRepository]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(taskFolders.addRepository(input))),
         [WS_METHODS.workspaceLayoutCommands]: (input) =>
           taskFolders.layoutCommands(input.projectId),
         // The one place an approval is recorded: a person's client session, behind the scope.
         [WS_METHODS.workspaceApproveLayoutCommands]: (input) =>
-          Effect.forEach(
-            input.approvals,
-            (approval) =>
-              layoutCommandApprovalWrites.set({ projectId: input.projectId, ...approval }),
-            { discard: true },
-          ).pipe(Effect.andThen(taskFolders.layoutCommands(input.projectId))),
-        [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
-        [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                Effect.forEach(
+                  input.approvals,
+                  (approval) =>
+                    layoutCommandApprovalWrites.set({ projectId: input.projectId, ...approval }),
+                  { discard: true },
+                ),
+              ),
+              Effect.andThen(taskFolders.layoutCommands(input.projectId)),
+            ),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(issueAttachmentUploadUrl(input))),
+        [WS_METHODS.attachmentsDelete]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deletePendingAttachment(input.attachmentId))),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
         [WS_METHODS.agentSessionsImport]: (input) =>
-          agentSessionImporter.importRecentAgentThreads(input),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(agentSessionImporter.importRecentAgentThreads(input))),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
@@ -3731,6 +4052,9 @@ export const layerWsRpc = (
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
               Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(
                 persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
               ),
             ),
@@ -3750,6 +4074,9 @@ export const layerWsRpc = (
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
               Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(
                 worktreeSetupTracker
                   .cancel(input.threadId)
                   .pipe(Effect.map((cancelled) => ({ cancelled }))),
@@ -3758,18 +4085,34 @@ export const layerWsRpc = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
         [WS_METHODS.vcsPull]: (input) =>
-          gitWorkflow.pullCurrentBranch(input.cwd).pipe(
-            Effect.matchCauseEffect({
-              onFailure: (cause) => Effect.failCause(cause),
-              onSuccess: (result) =>
-                refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
-            }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              gitWorkflow.pullCurrentBranch(input.cwd).pipe(
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Effect.failCause(cause),
+                  onSuccess: (result) =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.ignore({ log: true }),
+                      Effect.as(result),
+                    ),
+                }),
+              ),
+            ),
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
           Stream.unwrap(
             (input.threadId === undefined
-              ? Effect.void
-              : teamService.assertCanPostInThread(currentSessionId, input.threadId)
+              ? teamService.assertCanAccessLocalEnvironment(currentSessionId)
+              : teamService
+                  .assertCanPostInThread(currentSessionId, input.threadId)
+                  .pipe(
+                    Effect.andThen(
+                      teamService.assertCanExecuteOnThreadEnvironment(
+                        currentSessionId,
+                        input.threadId,
+                      ),
+                    ),
+                  )
             ).pipe(
               Effect.as(
                 Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
@@ -3834,63 +4177,79 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
-          (input.mode === "local"
-            ? assertCheckoutIdle("GitWorkflowService.preparePullRequestThread", input.cwd)
-            : Effect.void
-          ).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              input.mode === "local"
+                ? assertCheckoutIdle("GitWorkflowService.preparePullRequestThread", input.cwd)
+                : Effect.void,
+            ),
             Effect.andThen(gitWorkflow.preparePullRequestThread(input)),
             Effect.tap(() => refreshGitStatus(input.cwd)),
           ),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           // A project that tracks repositories gets a task folder, as its new worktree threads do.
-          taskFolders.createForProjectFolder(input, { projectCommands }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitCommandError({
-                  operation: "TaskFolders.create",
-                  command: "git worktree add",
-                  cwd: input.cwd,
-                  detail: cause.detail,
-                }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              taskFolders.createForProjectFolder(input, { projectCommands }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new GitCommandError({
+                      operation: "TaskFolders.create",
+                      command: "git worktree add",
+                      cwd: input.cwd,
+                      detail: cause.detail,
+                    }),
+                ),
+                Effect.filterOrElse(
+                  (created) => created !== null,
+                  () => gitWorkflow.createWorktree(input),
+                ),
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+              ),
             ),
-            Effect.filterOrElse(
-              (created) => created !== null,
-              () => gitWorkflow.createWorktree(input),
-            ),
-            Effect.tap(() => refreshGitStatus(input.cwd)),
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           // A thread's worktree may be a task folder: its repositories' worktrees go with it.
-          taskFolders
-            .removeIfTaskFolder({ path: input.path, force: input.force === true, projectCommands })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new GitCommandError({
-                    operation: "TaskFolders.remove",
-                    command: "git worktree remove",
-                    cwd: input.cwd,
-                    detail: cause.detail,
-                  }),
-              ),
-              Effect.flatMap((removed) =>
-                removed ? Effect.void : gitWorkflow.removeWorktree(input),
-              ),
-              // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
-              // second refresh would queue behind this one and reread an unchanged repository.
-              // Subscribers of the removed checkout learn it is no longer a repository.
-              Effect.tap(() =>
-                vcsStatusBroadcaster
-                  .refreshLocalStatus(input.path)
-                  .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
-              ),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              taskFolders
+                .removeIfTaskFolder({
+                  path: input.path,
+                  force: input.force === true,
+                  projectCommands,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new GitCommandError({
+                        operation: "TaskFolders.remove",
+                        command: "git worktree remove",
+                        cwd: input.cwd,
+                        detail: cause.detail,
+                      }),
+                  ),
+                  Effect.flatMap((removed) =>
+                    removed ? Effect.void : gitWorkflow.removeWorktree(input),
+                  ),
+                  // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
+                  // second refresh would queue behind this one and reread an unchanged repository.
+                  // Subscribers of the removed checkout learn it is no longer a repository.
+                  Effect.tap(() =>
+                    vcsStatusBroadcaster
+                      .refreshLocalStatus(input.path)
+                      .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
+                  ),
+                ),
             ),
+          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
-          (input.switchRef
-            ? assertCheckoutIdle("GitWorkflowService.createRef", input.cwd)
-            : Effect.void
-          ).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              input.switchRef
+                ? assertCheckoutIdle("GitWorkflowService.createRef", input.cwd)
+                : Effect.void,
+            ),
             Effect.andThen(gitWorkflow.createRef(input)),
             Effect.tap(() =>
               input.switchRef
@@ -3899,12 +4258,16 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
-          assertCheckoutIdle("GitWorkflowService.switchRef", input.cwd).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(assertCheckoutIdle("GitWorkflowService.switchRef", input.cwd)),
             Effect.andThen(gitWorkflow.switchRef(input)),
             Effect.tap(() => vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)),
           ),
         [WS_METHODS.vcsInit]: (input) =>
-          vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(vcsProvisioning.initRepository(input)),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
@@ -3912,6 +4275,12 @@ export const layerWsRpc = (
           assertLocalTerminalRpcExecutionAllowed.pipe(
             Effect.andThen(
               teamService.assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId)),
+            ),
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(
+                currentSessionId,
+                ThreadId.make(input.threadId),
+              ),
             ),
             Effect.andThen(
               prepareTerminalLaunch(input).pipe(
@@ -3938,6 +4307,12 @@ export const layerWsRpc = (
                     ThreadId.make(input.threadId),
                   ),
                 ),
+                Effect.andThen(
+                  teamService.assertCanExecuteOnThreadEnvironment(
+                    currentSessionId,
+                    ThreadId.make(input.threadId),
+                  ),
+                ),
                 Effect.andThen(prepareTerminalLaunch(input)),
                 Effect.map((launch) =>
                   terminalManager
@@ -3952,19 +4327,51 @@ export const layerWsRpc = (
         [WS_METHODS.terminalWrite]: (input, metadata) =>
           teamService
             .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(Effect.andThen(terminalManager.write(input, terminalViewerId(metadata)))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  ThreadId.make(input.threadId),
+                ),
+              ),
+              Effect.andThen(terminalManager.write(input, terminalViewerId(metadata))),
+            ),
         [WS_METHODS.terminalResize]: (input, metadata) =>
           teamService
             .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(Effect.andThen(terminalManager.resize(input, terminalViewerId(metadata)))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  ThreadId.make(input.threadId),
+                ),
+              ),
+              Effect.andThen(terminalManager.resize(input, terminalViewerId(metadata))),
+            ),
         [WS_METHODS.terminalClear]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(Effect.andThen(terminalManager.clear(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  ThreadId.make(input.threadId),
+                ),
+              ),
+              Effect.andThen(terminalManager.clear(input)),
+            ),
         [WS_METHODS.terminalClose]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(Effect.andThen(terminalManager.close(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  ThreadId.make(input.threadId),
+                ),
+              ),
+              Effect.andThen(terminalManager.close(input)),
+            ),
         [WS_METHODS.terminalObserve]: (input) =>
           guardThreadScopedStreamForSession(
             teamService,
@@ -3991,33 +4398,67 @@ export const layerWsRpc = (
         [WS_METHODS.previewOpen]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.open(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.open(input)),
+            ),
         [WS_METHODS.previewResize]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.resize(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.resize(input)),
+            ),
         [WS_METHODS.previewAdjust]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.adjust(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.adjust(input)),
+            ),
         [WS_METHODS.previewClose]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.close(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.close(input)),
+            ),
         [WS_METHODS.previewList]: (input) =>
           teamService
             .assertCanReadThread(currentSessionId, input.threadId)
             .pipe(Effect.andThen(previewManager.list(input))),
-        [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
+        [WS_METHODS.previewClearProfile]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(serverBrowser.clearProfile(input.profileId))),
         [WS_METHODS.previewReportProfiles]: (input) => reportProfiles(input),
         [WS_METHODS.previewReportStatus]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.reportStatus(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.reportStatus(input)),
+            ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           filterPreviewEventsStreamForSession(teamService, currentSessionId, previewManager.events),
-        [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
-        [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
+        [WS_METHODS.deviceConfigure]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deviceService.configure(input))),
+        [WS_METHODS.deviceTestHost]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deviceService.testHost(input))),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
         [WS_METHODS.deviceSimlockIdentity]: (input) => deviceService.simlockIdentity(input),
         [WS_METHODS.deviceList]: (input) =>
@@ -4026,9 +4467,13 @@ export const layerWsRpc = (
             : authorizeEffect(
                 requiredScopeForDeviceList(input),
                 input.updateTool
-                  ? deviceService.updateTool(input.updateTool)
+                  ? teamService
+                      .assertCanAccessLocalEnvironment(currentSessionId)
+                      .pipe(Effect.andThen(deviceService.updateTool(input.updateTool)))
                   : input.retryHostId
-                    ? deviceService.retryHost(input.retryHostId)
+                    ? teamService
+                        .assertCanAccessLocalEnvironment(currentSessionId)
+                        .pipe(Effect.andThen(deviceService.retryHost(input.retryHostId)))
                     : deviceService.list,
               )
           ).pipe(
@@ -4041,6 +4486,9 @@ export const layerWsRpc = (
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
               Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(
                 threadWorkspaceRoot(input.threadId).pipe(
                   Effect.flatMap((workspaceRoot) => deviceService.open(input, { workspaceRoot })),
                 ),
@@ -4049,17 +4497,31 @@ export const layerWsRpc = (
         [WS_METHODS.deviceClose]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(deviceService.close(input))),
-        [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(deviceService.close(input)),
+            ),
+        [WS_METHODS.deviceShutdown]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deviceService.shutdown(input))),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
-        [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
+        [WS_METHODS.deviceAction]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deviceService.action(input))),
         [WS_METHODS.subscribeDeviceState]: (_input) =>
           DeviceService.stateStream(deviceService).pipe(
             Stream.mapEffect((state) =>
               filterDeviceStateForSession(teamService, currentSessionId, state),
             ),
           ),
-        [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
+        [WS_METHODS.previewStopLocalServer]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(portDiscovery.stopServer(input))),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {
@@ -4328,7 +4790,15 @@ export const layerWsRpc = (
               Stream.concat(Stream.make(latest), changes),
             ),
           ),
-        ...makeTeamWsRpcHandlers(teamService, currentSessionId),
+        ...makeTeamWsRpcHandlers(teamService, currentSessionId, {
+          peerLinks,
+          peerClientPairing,
+          projectService,
+          ...(Option.isSome(eventSinkOption) ? { eventSink: eventSinkOption.value } : {}),
+          ...(Option.isSome(projectionStoreOption)
+            ? { projectionStore: projectionStoreOption.value }
+            : {}),
+        }),
       });
       const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
       const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =

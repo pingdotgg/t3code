@@ -173,6 +173,12 @@ describe("team notification gating helpers", () => {
       ]),
       viewById: new Map(),
       attributionByThreadId: new Map([[aliceThreadId, attribution]]),
+      teamProjects: [],
+      projectAssignmentByProjectId: new Map(),
+      projectAssignmentByRepoKey: new Map(),
+      environments: [],
+      environmentById: new Map(),
+      threadNotesByThreadId: new Map(),
       ...overrides,
     };
   };

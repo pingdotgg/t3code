@@ -34,6 +34,7 @@ import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import { isTeamHubOnlyServer } from "../team/hubOnly.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
@@ -291,19 +292,25 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const teamHubOnly = yield* isTeamHubOnlyServer;
+  const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
-  const settingsFlags = serverSettings.getSettings.pipe(
-    Effect.map((settings) => ({
-      linkedEnvironments: teamHubOnly || settings.linkedEnvironmentsEnabled,
-      agentFeedback: settings.agentFeedback.mode,
-      workflows: settings.workflowsEnabled,
-    })),
-    Effect.orElseSucceed(() => ({
-      linkedEnvironments: teamHubOnly,
-      agentFeedback: "off" as const,
-      workflows: false,
-    })),
-  );
+  const settingsFlags = Effect.gen(function* () {
+    const teamConfigured = Option.isSome(teamServiceOption)
+      ? yield* teamServiceOption.value.isTeamConfigured().pipe(Effect.orElseSucceed(() => false))
+      : false;
+    return yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => ({
+        linkedEnvironments: teamHubOnly || teamConfigured || settings.linkedEnvironmentsEnabled,
+        agentFeedback: settings.agentFeedback.mode,
+        workflows: settings.workflowsEnabled,
+      })),
+      Effect.orElseSucceed(() => ({
+        linkedEnvironments: teamHubOnly || teamConfigured,
+        agentFeedback: "off" as const,
+        workflows: false,
+      })),
+    );
+  });
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);

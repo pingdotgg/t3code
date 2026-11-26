@@ -293,6 +293,20 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamDeleteView]: "team",
   [TEAM_WS_METHODS.teamSetThreadView]: "team",
   [TEAM_WS_METHODS.teamSetThreadLocked]: "team",
+  [TEAM_WS_METHODS.teamAssignProject]: "team",
+  [TEAM_WS_METHODS.teamUnassignProject]: "team",
+  [TEAM_WS_METHODS.teamAttachEnvironment]: "team",
+  [TEAM_WS_METHODS.teamUpdateEnvironment]: "team",
+  [TEAM_WS_METHODS.teamDetachEnvironment]: "team",
+  [TEAM_WS_METHODS.teamSyncLocalThread]: "team",
+  [TEAM_WS_METHODS.teamCreateThreadNote]: "team",
+  [TEAM_WS_METHODS.teamDeleteThreadNote]: "team",
+  [TEAM_WS_METHODS.teamResolveThreadNote]: "team",
+  [TEAM_WS_METHODS.teamEditThreadNote]: "team",
+  [TEAM_WS_METHODS.teamReserveAcceptedNotes]: "team",
+  [TEAM_WS_METHODS.teamReleaseAcceptedNotes]: "team",
+  [TEAM_WS_METHODS.teamConsumeAcceptedNotes]: "team",
+  [TEAM_WS_METHODS.teamListThreadNotes]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

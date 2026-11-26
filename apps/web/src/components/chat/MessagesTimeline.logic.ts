@@ -63,6 +63,7 @@ import {
   type RunAttemptId,
   type RuntimeRequestId,
   RunId,
+  type TeamThreadNote,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -538,6 +539,12 @@ type MessagesTimelineRowContent =
       createdAt: string | null;
       snapshot: WorktreeSetupSnapshot;
       embedded: boolean;
+    }
+  | {
+      kind: "team-note";
+      id: string;
+      createdAt: string;
+      note: TeamThreadNote;
     }
   | {
       kind: "work";
@@ -2923,7 +2930,122 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.continuesSteer === bm.continuesSteer
       );
     }
+
+    case "team-note": {
+      const bn = b as typeof a;
+      return a.note === bn.note;
+    }
   }
+}
+
+function rowAnchorTurnIds(row: MessagesTimelineRow): ReadonlyArray<string> {
+  if (row.kind === "message") {
+    const ids: string[] = [];
+    if (row.message.runId) ids.push(row.message.runId);
+    if (row.message.role === "user") ids.push(`msg:${row.message.id}`);
+    return ids;
+  }
+  if (row.kind === "assistant-meta" && row.message.runId) {
+    return [row.message.runId];
+  }
+  if (row.kind === "proposed-plan" && row.proposedPlan.runId) {
+    return [row.proposedPlan.runId];
+  }
+  if (row.kind === "event" && row.projectedItem.item.runId) {
+    return [row.projectedItem.item.runId];
+  }
+  if (row.kind === "work-toggle" && row.runId) {
+    return [row.runId];
+  }
+  return [];
+}
+
+function decodeLocalSyncSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+function resolveNoteAnchorIndex(
+  anchorTurnId: string | null,
+  lastIndexByAnchor: ReadonlyMap<string, number>,
+): number | undefined {
+  if (anchorTurnId === null) return undefined;
+  const direct = lastIndexByAnchor.get(anchorTurnId);
+  if (direct !== undefined) return direct;
+  // Local-synced projections namespace run/message IDs as
+  // `local-sync:<encodedThreadId>:run:<encodedRawId>` on the Team Server while the owner's local
+  // server keeps `<rawId>`.
+  const runMarkerIndex = anchorTurnId.indexOf(":run:");
+  if (anchorTurnId.startsWith("local-sync:") && runMarkerIndex !== -1) {
+    return lastIndexByAnchor.get(
+      decodeLocalSyncSegment(anchorTurnId.slice(runMarkerIndex + ":run:".length)),
+    );
+  }
+  const msgMarkerIndex = anchorTurnId.indexOf(":msg:");
+  if (anchorTurnId.startsWith("local-sync:") && msgMarkerIndex !== -1) {
+    return lastIndexByAnchor.get(
+      `msg:${decodeLocalSyncSegment(anchorTurnId.slice(msgMarkerIndex + ":msg:".length))}`,
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Interleaves Team Thread Notes into the timeline right after their `anchorTurnId`
+ * (or at the end when unanchored or anchored to a turn not yet rendered), preserving
+ * chronological `(anchorSeq, createdAt)` order.
+ */
+export function interleaveTeamThreadNoteRows(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  notes: ReadonlyArray<TeamThreadNote>,
+): MessagesTimelineRow[] {
+  if (notes.length === 0) {
+    return rows as MessagesTimelineRow[];
+  }
+  const lastIndexByAnchor = new Map<string, number>();
+  for (let index = 0; index < rows.length; index += 1) {
+    for (const anchorId of rowAnchorTurnIds(rows[index]!)) {
+      lastIndexByAnchor.set(anchorId, index);
+    }
+  }
+  const sortedNotes = [...notes].sort((left, right) => {
+    if (left.anchorSeq !== right.anchorSeq) return left.anchorSeq - right.anchorSeq;
+    const byCreated = left.createdAt.localeCompare(right.createdAt);
+    return byCreated !== 0 ? byCreated : left.id.localeCompare(right.id);
+  });
+  const afterRowIndex = new Map<number, TeamThreadNote[]>();
+  const trailingNotes: TeamThreadNote[] = [];
+  for (const note of sortedNotes) {
+    const anchorIndex = resolveNoteAnchorIndex(note.anchorTurnId, lastIndexByAnchor);
+    if (anchorIndex === undefined) {
+      trailingNotes.push(note);
+    } else {
+      const bucket = afterRowIndex.get(anchorIndex) ?? [];
+      bucket.push(note);
+      afterRowIndex.set(anchorIndex, bucket);
+    }
+  }
+  const toNoteRow = (note: TeamThreadNote): MessagesTimelineRow => ({
+    kind: "team-note",
+    id: `team-note:${note.id}`,
+    createdAt: note.createdAt,
+    note,
+  });
+  const result: MessagesTimelineRow[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    result.push(rows[index]!);
+    const anchored = afterRowIndex.get(index);
+    if (anchored) {
+      for (const note of anchored) result.push(toNoteRow(note));
+    }
+  }
+  for (const note of trailingNotes) {
+    result.push(toNoteRow(note));
+  }
+  return result;
 }
 
 export function handoffRunsSignature(runs: ReadonlyArray<HandoffTimelineRun>): string {

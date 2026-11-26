@@ -13,11 +13,15 @@ import {
   canAssignTeamRole,
   canChangeTeamMemberRole,
   canChangeThreadTeamView,
+  canManageTeamEnvironments,
   canManageTeamInvites,
   canManageTeamMembers,
+  canManageTeamProjects,
   canManageTeamViews,
+  canMemberAccessTeamEnvironment,
   canMemberCreateThreadInTeamView,
   canMemberInterruptTeamTurn,
+  canMemberLeaveTeamThreadNote,
   canMemberManageTeamQueuedRun,
   canMemberPromoteTeamQueuedRun,
   canMemberReadTeamThread,
@@ -25,34 +29,60 @@ import {
   canMemberSteerActiveTeamTurn,
   canModifyTeamMember,
   canToggleTeamThreadLock,
+  effectiveTeamThreadNoteHash,
   EnvironmentAuthorizationError,
+  EnvironmentId,
+  formatAcceptedTeamNoteForPrompt,
   isValidTeamPseudo,
   normalizeTeamPseudo,
+  resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   TEAM_ROLE_RANK,
+  TeamEnvironmentRecordId,
   TeamId,
   TeamInviteId,
   TeamMemberId,
   TeamOperationError,
+  TeamThreadNoteId,
   TeamViewId,
   type AuthClientMetadata,
   type AuthEnvironmentScope,
   type AuthSessionId,
   type OrchestrationV2Command,
+  type ProjectId,
+  type TeamAcceptedNoteRef,
   type TeamAccessRule,
+  type TeamAssignProjectInput,
+  type TeamAttachEnvironmentInput,
+  type TeamConsumeAcceptedNotesInput,
+  type TeamConsumeAcceptedNotesResult,
   type TeamCreateInviteInput,
+  type TeamCreateThreadNoteInput,
   type TeamCreateViewInput,
+  type TeamDeleteThreadNoteInput,
+  type TeamDeleteThreadNoteResult,
   type TeamDeleteViewInput,
   type TeamDeleteViewResult,
+  type TeamDetachEnvironmentInput,
+  type TeamDetachEnvironmentResult,
+  type TeamEditThreadNoteInput,
+  type TeamEnvironment,
   type TeamInitializeInput,
   type TeamInitializeResult,
   type TeamInvite,
   type TeamInviteCreatedResult,
   type TeamInvitePreviewResult,
+  type TeamListThreadNotesInput,
   type TeamMember,
+  type TeamProjectAssignment,
   type TeamPseudo,
   type TeamRedeemInviteResponse,
+  type TeamReleaseAcceptedNotesInput,
+  type TeamReleaseAcceptedNotesResult,
+  type TeamReserveAcceptedNotesInput,
+  type TeamReserveAcceptedNotesResult,
+  type TeamResolveThreadNoteInput,
   type TeamRevokeInviteInput,
   type TeamRevokeInviteResult,
   type TeamRole,
@@ -60,10 +90,16 @@ import {
   type TeamSetThreadViewInput,
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
+  type TeamSyncLocalThreadInput,
+  type TeamSyncLocalThreadResult,
   type TeamThreadAttribution,
   type TeamThreadFollowInput,
   type TeamThreadFollowResult,
+  type TeamThreadNote,
   type TeamTurnAttribution,
+  type TeamUnassignProjectInput,
+  type TeamUnassignProjectResult,
+  type TeamUpdateEnvironmentInput,
   type TeamUpdateMemberRoleInput,
   type TeamUpdateMemberStatusInput,
   type TeamUpdateMyPseudoInput,
@@ -81,6 +117,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import {
@@ -88,7 +125,18 @@ import {
   parseThreadSegmentFromAttachmentId,
 } from "../attachmentStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import type * as EventSink from "../orchestration-v2/EventSink.ts";
+import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as PeerClientPairing from "../peer/PeerClientPairing.ts";
+import type * as PeerLinks from "../peer/PeerLinks.ts";
+import type * as ProjectService from "../project/ProjectService.ts";
 import { rpcInitialItems } from "../rpcInitialItems.ts";
+import {
+  localSyncMirroredMessageId,
+  localSyncMirroredRunId,
+  mirrorLocalThreadSnapshotToEventSink,
+} from "./TeamLocalSyncService.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 
 const DEFAULT_INVITE_EXPIRY_HOURS = 24 * 7;
@@ -99,6 +147,9 @@ const RENEWABLE_SESSION_WINDOW = Duration.days(30);
 
 const hashInviteToken = (token: string): string =>
   NodeCrypto.createHash("sha256").update(token.trim()).digest("hex");
+
+const hashNoteContent = (body: string): string =>
+  NodeCrypto.createHash("sha256").update(body, "utf8").digest("hex");
 
 const ADMIN_ONLY_SESSION_SCOPES: ReadonlySet<AuthEnvironmentScope> = new Set([
   AuthAccessReadScope,
@@ -149,7 +200,8 @@ export type TeamAccessChangeEvent =
   | { readonly type: "workspace" }
   | { readonly type: "view"; readonly viewId: TeamViewId }
   | { readonly type: "member"; readonly memberId: TeamMemberId }
-  | { readonly type: "threadView"; readonly threadId: ThreadId };
+  | { readonly type: "threadView"; readonly threadId: ThreadId }
+  | { readonly type: "environment"; readonly environmentId: EnvironmentId };
 
 export type TeamActor =
   | { readonly kind: "session"; readonly sessionId: AuthSessionId }
@@ -240,10 +292,14 @@ export class TeamService extends Context.Service<
     readonly updateMemberRole: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamUpdateMemberRoleInput;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) => Effect.Effect<TeamMember, TeamOperationError>;
     readonly updateMemberStatus: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamUpdateMemberStatusInput;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) => Effect.Effect<TeamMember, TeamOperationError>;
     readonly createInvite: (input: {
       readonly sessionId: AuthSessionId;
@@ -316,6 +372,7 @@ export class TeamService extends Context.Service<
     readonly assertCanLaunchThread: (input: {
       readonly sessionId: AuthSessionId;
       readonly threadId?: ThreadId;
+      readonly projectId?: ProjectId;
       readonly reuseExistingThread?: boolean;
       readonly viewId?: TeamViewId;
       readonly locked?: boolean;
@@ -385,12 +442,14 @@ export class TeamService extends Context.Service<
     readonly recordThreadCreated: (input: {
       readonly sessionId: AuthSessionId;
       readonly threadId: ThreadId;
+      readonly projectId?: ProjectId;
       readonly viewId?: TeamViewId;
       readonly locked?: boolean;
     }) => Effect.Effect<void>;
     readonly prepareThreadAttribution: (input: {
       readonly sessionId: AuthSessionId;
       readonly threadId: ThreadId;
+      readonly projectId?: ProjectId;
       readonly viewId?: TeamViewId;
       readonly locked?: boolean;
     }) => Effect.Effect<boolean, EnvironmentAuthorizationError>;
@@ -517,6 +576,149 @@ export class TeamService extends Context.Service<
       readonly runId?: string | null;
       readonly reason: TeamTurnInterruptEvent["reason"];
     }) => Effect.Effect<void>;
+    readonly assignProject: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamAssignProjectInput;
+      readonly projectService?: ProjectService.ProjectService["Service"];
+    }) => Effect.Effect<TeamProjectAssignment, TeamOperationError>;
+    readonly unassignProject: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamUnassignProjectInput;
+    }) => Effect.Effect<TeamUnassignProjectResult, TeamOperationError>;
+    readonly attachEnvironment: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamAttachEnvironmentInput;
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) => Effect.Effect<TeamEnvironment, TeamOperationError>;
+    readonly updateEnvironment: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamUpdateEnvironmentInput;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    }) => Effect.Effect<TeamEnvironment, TeamOperationError>;
+    readonly detachEnvironment: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamDetachEnvironmentInput;
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    }) => Effect.Effect<TeamDetachEnvironmentResult, TeamOperationError>;
+    readonly getRemotePairingSubject: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<Option.Option<string>, EnvironmentAuthorizationError>;
+    readonly assertCanAccessLocalEnvironment: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly unlinkRemoteEnvironment: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks: PeerLinks.PeerLinks["Service"];
+    }) => ReturnType<PeerLinks.PeerLinks["Service"]["unlink"]>;
+    readonly pairRemoteEnvironmentForSession: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+      readonly pairingInput: Parameters<
+        PeerClientPairing.PeerClientPairing["Service"]["request"]
+      >[0];
+      readonly peerClientPairing: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) => Effect.Effect<
+      Effect.Success<ReturnType<PeerClientPairing.PeerClientPairing["Service"]["request"]>>,
+      | EnvironmentAuthorizationError
+      | Effect.Error<ReturnType<PeerClientPairing.PeerClientPairing["Service"]["request"]>>
+    >;
+    readonly drainPendingRemoteRevocations: (input: {
+      readonly environmentId?: EnvironmentId;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) => Effect.Effect<void>;
+    readonly canActorAccessEnvironment: (
+      actor: TeamActor,
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<boolean>;
+    readonly assertActorCanAccessEnvironment: (
+      actor: TeamActor,
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertCanAccessEnvironment: (
+      sessionId: AuthSessionId,
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly filterAccessibleEnvironmentIdsForActor: (
+      actor: TeamActor,
+      environmentIds: ReadonlyArray<EnvironmentId>,
+    ) => Effect.Effect<ReadonlySet<EnvironmentId>>;
+    readonly filterAccessibleEnvironmentIds: (
+      sessionId: AuthSessionId,
+      environmentIds: ReadonlyArray<EnvironmentId>,
+    ) => Effect.Effect<ReadonlySet<EnvironmentId>>;
+    readonly assertActorCanExecuteOnThreadEnvironment: (
+      actor: TeamActor,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertCanExecuteOnThreadEnvironment: (
+      sessionId: AuthSessionId,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly syncLocalThread: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamSyncLocalThreadInput;
+      readonly eventSink?: EventSink.EventSinkV2["Service"];
+      readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
+    }) => Effect.Effect<TeamSyncLocalThreadResult, TeamOperationError>;
+    readonly createThreadNote: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamCreateThreadNoteInput;
+    }) => Effect.Effect<TeamThreadNote, TeamOperationError>;
+    readonly deleteThreadNote: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamDeleteThreadNoteInput;
+    }) => Effect.Effect<TeamDeleteThreadNoteResult, TeamOperationError>;
+    readonly resolveThreadNote: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamResolveThreadNoteInput;
+    }) => Effect.Effect<TeamThreadNote, TeamOperationError>;
+    readonly editThreadNote: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamEditThreadNoteInput;
+    }) => Effect.Effect<TeamThreadNote, TeamOperationError>;
+    readonly reserveAcceptedNotes: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamReserveAcceptedNotesInput;
+    }) => Effect.Effect<TeamReserveAcceptedNotesResult, TeamOperationError>;
+    readonly releaseAcceptedNotes: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamReleaseAcceptedNotesInput;
+    }) => Effect.Effect<TeamReleaseAcceptedNotesResult, TeamOperationError>;
+    readonly consumeAcceptedNotes: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamConsumeAcceptedNotesInput;
+    }) => Effect.Effect<TeamConsumeAcceptedNotesResult, TeamOperationError>;
+    readonly listThreadNotes: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamListThreadNotesInput;
+    }) => Effect.Effect<ReadonlyArray<TeamThreadNote>, TeamOperationError>;
+    readonly prepareNotesForDispatchCommand: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly command: OrchestrationV2Command;
+    }) => Effect.Effect<
+      {
+        readonly command: OrchestrationV2Command;
+        readonly reservationToken: string | null;
+      },
+      EnvironmentAuthorizationError
+    >;
+    readonly releaseNoteReservationByToken: (reservationToken: string) => Effect.Effect<void>;
+    readonly verifyAcceptedNotesForDispatch: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly threadId: ThreadId;
+      readonly acceptedNotes: ReadonlyArray<TeamAcceptedNoteRef>;
+    }) => Effect.Effect<string, EnvironmentAuthorizationError>;
+    readonly finalizeNotesForDispatchedTurn: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly threadId: ThreadId;
+      readonly targetTurnId: string;
+      readonly acceptedNotes: ReadonlyArray<TeamAcceptedNoteRef>;
+      readonly reservationToken?: string | null;
+    }) => Effect.Effect<void>;
   }
 >()("t3/team/TeamService") {}
 
@@ -524,10 +726,199 @@ const make = Effect.gen(function* () {
   const repository = yield* TeamRepository.TeamRepository;
   const sessionStore = yield* SessionStore.SessionStore;
   const random = yield* SecureRandom.SecureRandom;
+  const serverEnvironmentOption = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
   const eventsPubSub = yield* PubSub.unbounded<TeamStateStreamEvent>();
   const notificationTriggersPubSub = yield* PubSub.unbounded<TeamNotificationTriggerEvent>();
   const accessChangesPubSub = yield* PubSub.unbounded<TeamAccessChangeEvent>();
   const turnInterruptHooks = new Set<TeamTurnInterruptHook>();
+  const noteStateLock = yield* Semaphore.make(1);
+  const MAX_REMOTE_PAIRING_PERMITS = 1024;
+  // Shared (1 permit) for remote pairing issuance, exclusive (all permits) for ACL/member/detach
+  // revocations so in-flight pairing calls finish before revokeSubject/unlink run.
+  const remotePairingGate = yield* Semaphore.make(MAX_REMOTE_PAIRING_PERMITS);
+  const withRemotePairingPermit = remotePairingGate.withPermits(1);
+  const withRemoteRevocationBarrier = remotePairingGate.withPermits(MAX_REMOTE_PAIRING_PERMITS);
+  const remoteEnvLifecycleLock = yield* Semaphore.make(1);
+  const NOTE_RESERVATION_TTL_MS = 60_000;
+  const activeNoteReservations = new Map<
+    TeamThreadNoteId,
+    {
+      readonly reservationToken: string;
+      readonly threadId: ThreadId;
+      readonly memberId: TeamMemberId;
+      readonly contentHash: string;
+      readonly expiresAtMs: number;
+    }
+  >();
+
+  const pruneExpiredNoteReservations = (nowMs: number) => {
+    for (const [noteId, reservation] of activeNoteReservations) {
+      if (reservation.expiresAtMs <= nowMs) {
+        activeNoteReservations.delete(noteId);
+      }
+    }
+  };
+
+  const remoteSubjectForMember = (teamId: TeamId, memberId: TeamMemberId): string =>
+    `${PeerClientPairing.TEAM_MEMBER_REMOTE_SUBJECT_PREFIX}${teamId}:${memberId}:`;
+
+  const remoteSubjectPrefixForTeam = (teamId: TeamId): string =>
+    `${PeerClientPairing.TEAM_MEMBER_REMOTE_SUBJECT_PREFIX}${teamId}:`;
+
+  const drainPendingRemoteRevocations = Effect.fn("TeamService.drainPendingRemoteRevocations")(
+    function* (input: {
+      readonly environmentId?: EnvironmentId;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) {
+      if (!input.peerClientPairing) return;
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isNone(workspaceOption)) return;
+      const teamId = workspaceOption.value.id;
+      const pending = yield* repository
+        .listPendingRemoteRevocations(teamId)
+        .pipe(Effect.orElseSucceed(() => []));
+      for (const item of pending) {
+        if (input.environmentId !== undefined && item.environmentId !== input.environmentId) {
+          continue;
+        }
+        if (item.unlinkAfterRevoke && !input.peerLinks) {
+          continue;
+        }
+        yield* withRemoteRevocationBarrier(
+          Effect.gen(function* () {
+            const result = yield* input.peerClientPairing!.revokeSubject(
+              item.environmentId,
+              item.subjectPrefix,
+            );
+            if (result.ok || result.reason === "unknown_link") {
+              // Serialize unlink decisions with attachEnvironment so a concurrent re-attach during
+              // remote revocation never loses its newly attached peer link.
+              yield* remoteEnvLifecycleLock.withPermits(1)(
+                Effect.gen(function* () {
+                  const currentRows = yield* repository
+                    .listPendingRemoteRevocations(teamId)
+                    .pipe(Effect.orElseSucceed(() => []));
+                  const currentItem = currentRows.find((candidate) => candidate.id === item.id);
+                  if (!currentItem) return;
+                  const attachedEnv = yield* repository
+                    .getEnvironmentByEnvironmentId({
+                      teamId,
+                      environmentId: item.environmentId,
+                    })
+                    .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()));
+                  if (
+                    currentItem.unlinkAfterRevoke &&
+                    Option.isNone(attachedEnv) &&
+                    result.ok &&
+                    input.peerLinks
+                  ) {
+                    const unlinked = yield* input.peerLinks.unlink(item.environmentId).pipe(
+                      Effect.as(true),
+                      Effect.orElseSucceed(() => false),
+                    );
+                    if (!unlinked) return;
+                  }
+                  yield* repository.deletePendingRemoteRevocation(item.id).pipe(Effect.ignore);
+                }),
+              );
+            }
+          }),
+        );
+      }
+    },
+  );
+
+  const revokeRemoteMemberGrantsForEnvironments = Effect.fn(
+    "TeamService.revokeRemoteMemberGrantsForEnvironments",
+  )(function* (input: {
+    readonly teamId: TeamId;
+    readonly peerClientPairing: PeerClientPairing.PeerClientPairing["Service"] | undefined;
+    readonly environmentIds: ReadonlyArray<EnvironmentId>;
+    readonly subjectPrefixes: ReadonlyArray<string>;
+    readonly unlinkAfterRevoke?: boolean;
+  }) {
+    const {
+      teamId,
+      peerClientPairing,
+      environmentIds,
+      subjectPrefixes,
+      unlinkAfterRevoke = false,
+    } = input;
+    if (!peerClientPairing || environmentIds.length === 0 || subjectPrefixes.length === 0) {
+      return { allSucceeded: true };
+    }
+    let allSucceeded = true;
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const uniqueEnvIds = Array.from(new Set(environmentIds));
+    for (const environmentId of uniqueEnvIds) {
+      for (const subjectPrefix of subjectPrefixes) {
+        const result = yield* peerClientPairing.revokeSubject(environmentId, subjectPrefix);
+        if (!result.ok && result.reason !== "unknown_link") {
+          allSucceeded = false;
+          const pendingId = yield* random
+            .uuidV4()
+            .pipe(Effect.orElseSucceed(() => `${environmentId}:${subjectPrefix}`));
+          yield* remoteEnvLifecycleLock.withPermits(1)(
+            Effect.gen(function* () {
+              const attachedEnv = unlinkAfterRevoke
+                ? yield* repository
+                    .getEnvironmentByEnvironmentId({ teamId, environmentId })
+                    .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()))
+                : Option.none<TeamEnvironment>();
+              yield* repository
+                .enqueuePendingRemoteRevocation({
+                  id: pendingId,
+                  teamId,
+                  environmentId,
+                  subjectPrefix,
+                  unlinkAfterRevoke: unlinkAfterRevoke && Option.isNone(attachedEnv),
+                  createdAt: nowIso,
+                })
+                .pipe(Effect.ignore);
+            }),
+          );
+        }
+      }
+    }
+    return { allSucceeded };
+  });
+
+  const resolveLocalEnvironmentIdentity = Effect.fn("TeamService.resolveLocalEnvironmentIdentity")(
+    function* () {
+      if (Option.isSome(serverEnvironmentOption)) {
+        const descriptor = yield* serverEnvironmentOption.value.getDescriptor;
+        return {
+          environmentId: descriptor.environmentId,
+          name: descriptor.label.trim().length > 0 ? descriptor.label : "Default Team Environment",
+        };
+      }
+      return {
+        environmentId: EnvironmentId.make("default-team-environment"),
+        name: "Default Team Environment",
+      };
+    },
+  );
+
+  const ensureDefaultEnvironmentForTeam = Effect.fn("TeamService.ensureDefaultEnvironmentForTeam")(
+    function* (team: TeamWorkspace) {
+      const local = yield* resolveLocalEnvironmentIdentity();
+      const recordId = TeamEnvironmentRecordId.make(
+        yield* random.uuidV4().pipe(Effect.mapError(toInternalError)),
+      );
+      return yield* repository
+        .ensureDefaultEnvironment({
+          id: recordId,
+          teamId: team.id,
+          environmentId: local.environmentId,
+          name: local.name,
+          createdAt: team.createdAt,
+        })
+        .pipe(Effect.mapError(toInternalError));
+    },
+  );
 
   const publishAccessChange = (event: TeamAccessChangeEvent) =>
     PubSub.publish(accessChangesPubSub, event).pipe(Effect.asVoid);
@@ -643,6 +1034,9 @@ const make = Effect.gen(function* () {
         threadAttributions: [],
         followedThreadIds: [],
         latestTurnAttributions: [],
+        teamProjects: [],
+        environments: [],
+        threadNotes: [],
       } satisfies TeamStateSnapshot;
     }
     const team = workspaceOption.value;
@@ -652,13 +1046,21 @@ const make = Effect.gen(function* () {
       allViews,
       allThreadAttributions,
       allLatestTurnAttributions,
+      teamProjects,
+      rawEnvironments,
+      allThreadNotes,
     ] = yield* Effect.all([
       repository.getMemberForSession(sessionId).pipe(Effect.mapError(toInternalError)),
       repository.listMembers(team.id).pipe(Effect.mapError(toInternalError)),
       repository.listViews(team.id).pipe(Effect.mapError(toInternalError)),
       repository.listThreadAttributions(team.id).pipe(Effect.mapError(toInternalError)),
       repository.listLatestTurnAttributions(team.id).pipe(Effect.mapError(toInternalError)),
+      repository.listProjectAssignments(team.id).pipe(Effect.mapError(toInternalError)),
+      repository.listEnvironments(team.id).pipe(Effect.mapError(toInternalError)),
+      repository.listThreadNotes({ teamId: team.id }).pipe(Effect.mapError(toInternalError)),
     ]);
+    const allEnvironments =
+      rawEnvironments.length > 0 ? rawEnvironments : [yield* ensureDefaultEnvironmentForTeam(team)];
     const currentMember = Option.getOrNull(currentMemberOption);
     const viewById = new Map(allViews.map((view) => [view.id, view] as const));
     const defaultView = viewById.get(team.defaultViewId) ?? null;
@@ -675,6 +1077,15 @@ const make = Effect.gen(function* () {
     });
     const latestTurnAttributions = allLatestTurnAttributions.filter((turn) =>
       readableThreadIds.has(turn.threadId),
+    );
+    const visibleEnvironments =
+      currentMember !== null &&
+      currentMember.status === "active" &&
+      canManageTeamEnvironments(currentMember.role)
+        ? allEnvironments
+        : allEnvironments.filter((env) => canMemberAccessTeamEnvironment(currentMember, env));
+    const visibleThreadNotes = allThreadNotes.filter((note) =>
+      readableThreadIds.has(note.threadId),
     );
 
     const [invites, rawFollowedThreadIds] = yield* Effect.all([
@@ -701,6 +1112,9 @@ const make = Effect.gen(function* () {
       threadAttributions,
       followedThreadIds,
       latestTurnAttributions,
+      teamProjects,
+      environments: visibleEnvironments,
+      threadNotes: visibleThreadNotes,
     } satisfies TeamStateSnapshot;
   });
 
@@ -720,7 +1134,9 @@ const make = Effect.gen(function* () {
               if (
                 event.type === "teamUpdated" ||
                 event.type === "viewUpserted" ||
-                event.type === "viewDeleted"
+                event.type === "viewDeleted" ||
+                event.type === "environmentUpserted" ||
+                event.type === "environmentRemoved"
               ) {
                 const fresh = yield* getState(sessionId);
                 currentMember = fresh.currentMember;
@@ -787,6 +1203,12 @@ const make = Effect.gen(function* () {
                 return Option.none<TeamStateStreamEvent>();
               }
               if (event.type === "turnAttributed") {
+                const readable = yield* canReadThread(sessionId, event.payload.threadId);
+                return readable
+                  ? Option.some<TeamStateStreamEvent>(event)
+                  : Option.none<TeamStateStreamEvent>();
+              }
+              if (event.type === "threadNoteUpserted" || event.type === "threadNoteDeleted") {
                 const readable = yield* canReadThread(sessionId, event.payload.threadId);
                 return readable
                   ? Option.some<TeamStateStreamEvent>(event)
@@ -878,8 +1300,11 @@ const make = Effect.gen(function* () {
         }),
       );
 
+    const defaultEnvironment = yield* ensureDefaultEnvironmentForTeam(team);
+
     yield* publish({ version: 1, type: "teamUpdated", payload: team });
     yield* publish({ version: 1, type: "memberUpserted", payload: owner });
+    yield* publish({ version: 1, type: "environmentUpserted", payload: defaultEnvironment });
     yield* publishAccessChange({ type: "workspace" });
 
     return { team, owner } satisfies TeamInitializeResult;
@@ -975,6 +1400,8 @@ const make = Effect.gen(function* () {
   const updateMemberRole = Effect.fn("TeamService.updateMemberRole")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly payload: TeamUpdateMemberRoleInput;
+    readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
   }) {
     const team = yield* requireWorkspace();
     const actor = yield* requireActiveMember(input.sessionId);
@@ -1058,6 +1485,39 @@ const make = Effect.gen(function* () {
     if (prevIsAdminTier !== nextIsAdminTier) {
       yield* reconcileMemberSessionScopes(updatedMember.id, updatedMember.role);
     }
+    if (input.peerClientPairing) {
+      const envs = yield* repository
+        .listEnvironments(team.id)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+      const registeredEnvIds = new Set(envs.map((env) => env.environmentId));
+      // Demoting from owner/admin strips admin-only session scopes, so revoke remote grants on
+      // ALL non-default environments (including still-accessible ones) to clear over-privileged sessions.
+      const demotedFromAdminTier = prevIsAdminTier && !nextIsAdminTier;
+      const revokedEnvIds = envs
+        .filter(
+          (env) =>
+            !env.isDefault &&
+            (demotedFromAdminTier || !canMemberAccessTeamEnvironment(updatedMember, env)),
+        )
+        .map((env) => env.environmentId);
+      // Demoting an admin/owner also revokes their sessions on unregistered peer links.
+      if (input.peerLinks && !isTeamAdminOrOwner(updatedMember)) {
+        const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
+        for (const peer of allPeers) {
+          if (!registeredEnvIds.has(peer.environmentId)) {
+            revokedEnvIds.push(peer.environmentId);
+          }
+        }
+      }
+      yield* withRemoteRevocationBarrier(
+        revokeRemoteMemberGrantsForEnvironments({
+          teamId: team.id,
+          peerClientPairing: input.peerClientPairing,
+          environmentIds: revokedEnvIds,
+          subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
+        }),
+      );
+    }
     yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
     yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
     return updatedMember;
@@ -1066,6 +1526,8 @@ const make = Effect.gen(function* () {
   const updateMemberStatus = Effect.fn("TeamService.updateMemberStatus")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly payload: TeamUpdateMemberStatusInput;
+    readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
   }) {
     const team = yield* requireWorkspace();
     const actor = yield* requireActiveMember(input.sessionId);
@@ -1139,6 +1601,26 @@ const make = Effect.gen(function* () {
     }
     if (updated.value.status !== "active") {
       yield* revokeSessionsForMember(updated.value.id);
+      if (input.peerClientPairing) {
+        const envs = yield* repository
+          .listEnvironments(team.id)
+          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+        const targetEnvIds = envs.filter((env) => !env.isDefault).map((env) => env.environmentId);
+        if (input.peerLinks) {
+          const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
+          for (const peer of allPeers) {
+            targetEnvIds.push(peer.environmentId);
+          }
+        }
+        yield* withRemoteRevocationBarrier(
+          revokeRemoteMemberGrantsForEnvironments({
+            teamId: team.id,
+            peerClientPairing: input.peerClientPairing,
+            environmentIds: targetEnvIds,
+            subjectPrefixes: [remoteSubjectForMember(team.id, updated.value.id)],
+          }),
+        );
+      }
     }
     yield* publish({ version: 1, type: "memberUpserted", payload: updated.value });
     yield* publishAccessChange({ type: "member", memberId: updated.value.id });
@@ -2644,17 +3126,44 @@ const make = Effect.gen(function* () {
   const assertCanLaunchThread = Effect.fn("TeamService.assertCanLaunchThread")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly threadId?: ThreadId;
+    readonly projectId?: ProjectId;
     readonly reuseExistingThread?: boolean;
     readonly viewId?: TeamViewId;
     readonly locked?: boolean;
   }) {
     if (input.reuseExistingThread === true && input.threadId !== undefined) {
       yield* assertCanPostInThread(input.sessionId, input.threadId);
+      yield* assertCanExecuteOnThreadEnvironment(input.sessionId, input.threadId);
       return;
+    }
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertCanLaunchThread(getWorkspace) failed", { cause }),
+      ),
+      Effect.mapError(() => teamPostAuthError("Could not verify team environment permissions.")),
+    );
+    if (Option.isSome(workspaceOption)) {
+      const localEnv = yield* resolveLocalEnvironmentIdentity();
+      yield* assertActorCanAccessEnvironment(sessionActor(input.sessionId), localEnv.environmentId);
+    }
+    let resolvedViewId = input.viewId;
+    if (resolvedViewId === undefined && input.projectId !== undefined) {
+      const projectAssignment = yield* repository.getProjectAssignment(input.projectId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertCanLaunchThread(getProjectAssignment) failed", {
+            projectId: input.projectId,
+            cause,
+          }),
+        ),
+        Effect.mapError(() => teamPostAuthError("Could not verify team project view permissions.")),
+      );
+      if (Option.isSome(projectAssignment) && projectAssignment.value.defaultViewId !== null) {
+        resolvedViewId = projectAssignment.value.defaultViewId;
+      }
     }
     yield* assertCanCreateThreadInView({
       sessionId: input.sessionId,
-      ...(input.viewId !== undefined ? { viewId: input.viewId } : {}),
+      ...(resolvedViewId !== undefined ? { viewId: resolvedViewId } : {}),
       ...(input.locked !== undefined ? { locked: input.locked } : {}),
     });
   });
@@ -2670,9 +3179,30 @@ const make = Effect.gen(function* () {
     }
     const actor = sessionActor(sessionId);
     switch (command.type) {
-      case "thread.create":
-        yield* assertActorCanCreateThreadInView({ actor });
+      case "thread.create": {
+        const localEnv = yield* resolveLocalEnvironmentIdentity();
+        yield* assertActorCanAccessEnvironment(actor, localEnv.environmentId);
+        const projectAssignment = yield* repository.getProjectAssignment(command.projectId).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning(
+              "TeamService.assertAndNormalizeDispatchCommand(thread.create) failed",
+              { projectId: command.projectId, cause },
+            ),
+          ),
+          Effect.mapError(() =>
+            teamPostAuthError("Could not verify team project view permissions."),
+          ),
+        );
+        const defaultViewId =
+          Option.isSome(projectAssignment) && projectAssignment.value.defaultViewId !== null
+            ? projectAssignment.value.defaultViewId
+            : undefined;
+        yield* assertActorCanCreateThreadInView({
+          actor,
+          ...(defaultViewId !== undefined ? { viewId: defaultViewId } : {}),
+        });
         return command;
+      }
       case "thread.visit":
       case "thread.mark-unread":
         yield* assertActorCanReadThread(actor, command.threadId);
@@ -2728,6 +3258,8 @@ const make = Effect.gen(function* () {
           Effect.mapError(() => teamReadAuthError()),
         );
         if (sourceCtx.kind === "personal") return command;
+        const localEnv = yield* resolveLocalEnvironmentIdentity();
+        yield* assertActorCanAccessEnvironment(actor, localEnv.environmentId);
         yield* assertActorCanReadThread(actor, command.sourceThreadId);
         const inheritedViewId =
           sourceCtx.kind === "team_thread" ? sourceCtx.attribution.viewId : undefined;
@@ -2740,48 +3272,56 @@ const make = Effect.gen(function* () {
       case "thread.merge_back":
         yield* assertActorCanReadThread(actor, command.sourceThreadId);
         yield* assertActorCanPostInThread(actor, command.targetThreadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.targetThreadId);
         return command;
       case "message.dispatch": {
         yield* assertActorCanPostInThread(actor, command.threadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        const effectiveCommand = command;
         if (
-          command.dispatchMode.type === "steer_active" ||
-          command.dispatchMode.type === "restart_active" ||
-          command.deliveryIntent === "steer" ||
-          command.deliveryIntent === "restart"
+          effectiveCommand.dispatchMode.type === "steer_active" ||
+          effectiveCommand.dispatchMode.type === "restart_active" ||
+          effectiveCommand.deliveryIntent === "steer" ||
+          effectiveCommand.deliveryIntent === "restart"
         ) {
-          yield* assertActorCanSteerActiveTurn(actor, command.threadId);
-          return command;
+          yield* assertActorCanSteerActiveTurn(actor, effectiveCommand.threadId);
+          return effectiveCommand;
         }
-        const canSteer = yield* canActorSteerActiveTurn(actor, command.threadId);
+        const canSteer = yield* canActorSteerActiveTurn(actor, effectiveCommand.threadId);
         if (!canSteer) {
           // Strip deliveryIntent and force queue_after_active so non-creators never auto-steer or restart.
-          const { deliveryIntent: _stripped, ...withoutDeliveryIntent } = command;
+          const { deliveryIntent: _stripped, ...withoutDeliveryIntent } = effectiveCommand;
           return {
             ...withoutDeliveryIntent,
             dispatchMode: { type: "queue_after_active" },
           };
         }
-        return command;
+        return effectiveCommand;
       }
       case "queued-message.promote-to-steer":
       case "queued-run.start":
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
         yield* assertActorCanPromoteQueuedRun(actor, command.threadId);
         return command;
       case "run.interrupt":
       case "subagent.stop":
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
         yield* assertActorCanInterruptThread(actor, command.threadId, command.runId);
         return command;
       case "thread.stop":
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
         yield* assertActorCanInterruptThread(actor, command.threadId);
         return command;
       case "runtime-request.respond":
       case "thread.user-input.dismiss":
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
         yield* assertActorCanInterruptThread(actor, command.threadId);
         return command;
       case "queued-run.edit":
       case "queued-run.cancel":
       case "queued-run.reorder":
         yield* assertActorCanPostInThread(actor, command.threadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
         yield* assertActorCanManageQueuedRun(actor, command.threadId, command.runId);
         return command;
       case "delegated_task.request":
@@ -2790,9 +3330,41 @@ const make = Effect.gen(function* () {
       case "delegated_task.completion-delivery.dispose":
       case "thread.created.record":
         yield* assertActorCanPostInThread(actor, command.parentThreadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.parentThreadId);
+        return command;
+      case "thread.metadata.update":
+        yield* assertActorCanPostInThread(actor, command.threadId);
+        if (command.continuation !== undefined) {
+          yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        }
+        return command;
+      case "thread.archive":
+      case "thread.unarchive":
+      case "thread.unsettle":
+      case "thread.snooze":
+      case "thread.unsnooze":
+      case "thread.auto-settle.set":
+      case "thread.pin":
+      case "thread.unpin":
+      case "thread.tag.set":
+      case "thread.pin.reorder":
+      case "thread.active.reorder":
+      case "thread.pull-request.link":
+      case "thread.pull-request.unlink":
+      case "thread.pull-request-link.sync":
+      case "thread.issue.link":
+      case "thread.issue.unlink":
+      case "thread.title.regeneration.complete":
+      case "thread.guest-share.close":
+      case "thread.guest-message.dismiss":
+        yield* assertActorCanPostInThread(actor, command.threadId);
         return command;
       default:
+        // Fail closed for all remaining execution-capable commands (including thread.settle /
+        // thread.auto-settle which close terminals and execute project settle scripts,
+        // prepared-run.retry, queue.resume, checkpoint.rollback, provider.switch, etc.).
         yield* assertActorCanPostInThread(actor, command.threadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
         return command;
     }
   });
@@ -3323,9 +3895,28 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const resolveDefaultViewIdForProject = Effect.fn("TeamService.resolveDefaultViewIdForProject")(
+    function* (team: TeamWorkspace, projectId: ProjectId | undefined, explicitViewId?: TeamViewId) {
+      if (explicitViewId !== undefined) return explicitViewId;
+      if (projectId === undefined) return team.defaultViewId;
+      const assignment = yield* repository
+        .getProjectAssignment(projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamProjectAssignment>()));
+      if (
+        Option.isSome(assignment) &&
+        assignment.value.teamId === team.id &&
+        assignment.value.defaultViewId !== null
+      ) {
+        return assignment.value.defaultViewId;
+      }
+      return team.defaultViewId;
+    },
+  );
+
   const recordThreadCreated = Effect.fn("TeamService.recordThreadCreated")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly threadId: ThreadId;
+    readonly projectId?: ProjectId;
     readonly viewId?: TeamViewId;
     readonly locked?: boolean;
   }) {
@@ -3344,13 +3935,18 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(memberOption)) return;
     const locked = input.locked === true && canToggleTeamThreadLock(memberOption.value.role);
+    const resolvedViewId = yield* resolveDefaultViewIdForProject(
+      workspaceOption.value,
+      input.projectId,
+      input.viewId,
+    );
     const nowIso = DateTime.formatIso(yield* DateTime.now);
     const attribution = yield* repository
       .recordThreadAttribution({
         threadId: input.threadId,
         teamId: workspaceOption.value.id,
         creatorMemberId: memberOption.value.id,
-        viewId: input.viewId ?? workspaceOption.value.defaultViewId,
+        viewId: resolvedViewId,
         locked,
         lockedByMemberId: locked ? memberOption.value.id : null,
         createdAt: nowIso,
@@ -3377,6 +3973,7 @@ const make = Effect.gen(function* () {
     function* (input: {
       readonly sessionId: AuthSessionId;
       readonly threadId: ThreadId;
+      readonly projectId?: ProjectId;
       readonly viewId?: TeamViewId;
       readonly locked?: boolean;
     }) {
@@ -3394,12 +3991,17 @@ const make = Effect.gen(function* () {
           return yield* teamPostAuthError("This session is not bound to an active team member.");
         }
         const locked = input.locked === true && canToggleTeamThreadLock(memberOption.value.role);
+        const resolvedViewId = yield* resolveDefaultViewIdForProject(
+          workspaceOption.value,
+          input.projectId,
+          input.viewId,
+        );
         const nowIso = DateTime.formatIso(yield* DateTime.now);
         const inserted = yield* repository.recordThreadAttribution({
           threadId: input.threadId,
           teamId: workspaceOption.value.id,
           creatorMemberId: memberOption.value.id,
-          viewId: input.viewId ?? workspaceOption.value.defaultViewId,
+          viewId: resolvedViewId,
           locked,
           lockedByMemberId: locked ? memberOption.value.id : null,
           createdAt: nowIso,
@@ -3960,6 +4562,1591 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const assignProject = Effect.fn("TeamService.assignProject")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamAssignProjectInput;
+    readonly projectService?: ProjectService.ProjectService["Service"];
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamProjects(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only owner and admin members can assign projects to a team.",
+      });
+    }
+    const defaultViewId = input.payload.defaultViewId ?? null;
+    if (defaultViewId !== null) {
+      const viewOption = yield* repository
+        .getViewById(defaultViewId)
+        .pipe(Effect.mapError(toInternalError));
+      if (Option.isNone(viewOption) || viewOption.value.teamId !== team.id) {
+        return yield* new TeamOperationError({
+          code: "not_found",
+          message: "Selected default team view could not be found.",
+        });
+      }
+    }
+    let repoIdentityKey: string | null = input.payload.repoIdentityKey ?? null;
+    if (repoIdentityKey === null && input.projectService !== undefined) {
+      const projectOption = yield* input.projectService
+        .getById(input.payload.projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isSome(projectOption)) {
+        repoIdentityKey =
+          projectOption.value.repositoryIdentity?.origin?.canonicalKey ??
+          projectOption.value.repositoryIdentity?.canonicalKey ??
+          null;
+      }
+    }
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const saved = yield* repository
+      .upsertProjectAssignment({
+        projectId: input.payload.projectId,
+        teamId: team.id,
+        defaultViewId,
+        repoIdentityKey,
+        assignedByMemberId: actor.id,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    yield* publish({ version: 1, type: "projectAssigned", payload: saved });
+    return saved;
+  });
+
+  const unassignProject = Effect.fn("TeamService.unassignProject")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamUnassignProjectInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamProjects(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only owner and admin members can unassign projects from a team.",
+      });
+    }
+    const unassigned = yield* repository
+      .deleteProjectAssignment({
+        teamId: team.id,
+        projectId: input.payload.projectId,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    if (unassigned) {
+      yield* publish({
+        version: 1,
+        type: "projectUnassigned",
+        payload: { projectId: input.payload.projectId },
+      });
+    }
+    return { unassigned } satisfies TeamUnassignProjectResult;
+  });
+
+  const attachEnvironment = Effect.fn("TeamService.attachEnvironment")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamAttachEnvironmentInput;
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamEnvironments(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only owner and admin members can attach remote team environments.",
+      });
+    }
+    yield* ensureDefaultEnvironmentForTeam(team);
+    if (
+      (input.payload.url === undefined || input.payload.pairingCode === undefined) &&
+      input.payload.environmentId === undefined
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Provide either an existing environmentId or a remote URL and pairing code.",
+      });
+    }
+    const accessRule = normalizeAccessRule(
+      input.payload.accessRule ?? { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+    );
+    yield* validateAccessRuleMemberIds(team.id, [accessRule]);
+
+    // Hold remoteEnvLifecycleLock across peer-link acquisition and attachment commit so a
+    // concurrent pending revocation drain cannot unlink the peer between linking and committing.
+    const environment = yield* remoteEnvLifecycleLock.withPermits(1)(
+      Effect.gen(function* () {
+        let environmentId = input.payload.environmentId;
+        let resolvedName = input.payload.name?.trim();
+        let peerLinkId: string | null = null;
+
+        if (input.payload.url !== undefined && input.payload.pairingCode !== undefined) {
+          if (input.peerLinks === undefined) {
+            return yield* new TeamOperationError({
+              code: "environment_unavailable",
+              message: "Peer environment linking is unavailable on this server.",
+            });
+          }
+          const linked = yield* input.peerLinks
+            .linkUnlessLinked({
+              url: input.payload.url,
+              pairingCode: input.payload.pairingCode,
+              access: input.payload.access ?? "full-access",
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new TeamOperationError({
+                    code: "environment_unavailable",
+                    message: error.message,
+                  }),
+              ),
+            );
+          environmentId = linked.link.environmentId;
+          peerLinkId = linked.link.environmentId;
+          resolvedName = resolvedName || linked.link.label;
+        } else if (environmentId !== undefined) {
+          peerLinkId = environmentId;
+          if (input.peerLinks !== undefined && !resolvedName) {
+            const existingPeer = yield* input.peerLinks
+              .get(environmentId)
+              .pipe(Effect.orElseSucceed(() => Option.none()));
+            if (Option.isSome(existingPeer)) {
+              resolvedName = existingPeer.value.label;
+            }
+          }
+        } else {
+          return yield* new TeamOperationError({
+            code: "invalid_input",
+            message: "Provide either an existing environmentId or a remote URL and pairing code.",
+          });
+        }
+
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const recordId = TeamEnvironmentRecordId.make(
+          yield* random.uuidV4().pipe(Effect.mapError(toInternalError)),
+        );
+        const nextEnvironment: TeamEnvironment = {
+          id: recordId,
+          teamId: team.id,
+          environmentId,
+          name: resolvedName && resolvedName.length > 0 ? resolvedName : environmentId,
+          isDefault: false,
+          peerLinkId,
+          accessRule,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        yield* repository.createEnvironment(nextEnvironment).pipe(
+          Effect.catchTags({
+            TeamEnvironmentAlreadyAttachedError: (error) =>
+              Effect.fail(
+                new TeamOperationError({
+                  code: "environment_already_attached",
+                  message: error.message,
+                }),
+              ),
+            TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+          }),
+        );
+        // Clear any stale unlink_after_revoke flag from an earlier offline detach so background
+        // revocation drain revokes old sessions without tearing down this re-attached environment.
+        yield* repository
+          .clearPendingRemoteRevocationUnlinkFlag({ teamId: team.id, environmentId })
+          .pipe(Effect.mapError(toInternalError));
+        return nextEnvironment;
+      }),
+    );
+    yield* publish({ version: 1, type: "environmentUpserted", payload: environment });
+    yield* publishAccessChange({ type: "environment", environmentId: environment.environmentId });
+    return environment;
+  });
+
+  const updateEnvironment = Effect.fn("TeamService.updateEnvironment")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamUpdateEnvironmentInput;
+    readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamEnvironments(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only owner and admin members can update team environment ACLs.",
+      });
+    }
+    yield* ensureDefaultEnvironmentForTeam(team);
+    const nextName = input.payload.name !== undefined ? input.payload.name.trim() : undefined;
+    if (nextName !== undefined && nextName.length === 0) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Environment name cannot be empty.",
+      });
+    }
+    const nextAccessRule =
+      input.payload.accessRule !== undefined
+        ? normalizeAccessRule(input.payload.accessRule)
+        : undefined;
+    yield* validateAccessRuleMemberIds(team.id, [nextAccessRule]);
+    const updatedAt = DateTime.formatIso(yield* DateTime.now);
+    const updated = yield* repository
+      .updateEnvironment({
+        teamId: team.id,
+        environmentId: input.payload.environmentId,
+        ...(nextName !== undefined ? { name: nextName } : {}),
+        ...(nextAccessRule !== undefined ? { accessRule: nextAccessRule } : {}),
+        updatedAt,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(updated)) {
+      return yield* new TeamOperationError({
+        code: "not_found",
+        message: "Team environment could not be found.",
+      });
+    }
+    if (input.peerClientPairing && !updated.value.isDefault && nextAccessRule !== undefined) {
+      const members = yield* repository
+        .listMembers(team.id)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
+      const revokedSubjects = members
+        .filter((member) => !canMemberAccessTeamEnvironment(member, updated.value))
+        .map((member) => remoteSubjectForMember(team.id, member.id));
+      yield* withRemoteRevocationBarrier(
+        revokeRemoteMemberGrantsForEnvironments({
+          teamId: team.id,
+          peerClientPairing: input.peerClientPairing,
+          environmentIds: [updated.value.environmentId],
+          subjectPrefixes: revokedSubjects,
+        }),
+      );
+    }
+    yield* publish({ version: 1, type: "environmentUpserted", payload: updated.value });
+    yield* publishAccessChange({
+      type: "environment",
+      environmentId: updated.value.environmentId,
+    });
+    return updated.value;
+  });
+
+  const detachEnvironment = Effect.fn("TeamService.detachEnvironment")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamDetachEnvironmentInput;
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamEnvironments(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only owner and admin members can detach team environments.",
+      });
+    }
+    yield* ensureDefaultEnvironmentForTeam(team);
+    const detached = yield* repository
+      .deleteEnvironment({
+        teamId: team.id,
+        environmentId: input.payload.environmentId,
+      })
+      .pipe(
+        Effect.catchTags({
+          TeamDefaultEnvironmentProtectedError: (error) =>
+            Effect.fail(
+              new TeamOperationError({
+                code: "default_environment_protected",
+                message: error.message,
+              }),
+            ),
+          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+        }),
+      );
+    if (detached) {
+      const shouldUnlink = input.payload.unlinkPeer !== false;
+      yield* withRemoteRevocationBarrier(
+        Effect.gen(function* () {
+          let revocationComplete = true;
+          if (input.peerClientPairing) {
+            const outcome = yield* revokeRemoteMemberGrantsForEnvironments({
+              teamId: team.id,
+              peerClientPairing: input.peerClientPairing,
+              environmentIds: [input.payload.environmentId],
+              subjectPrefixes: [remoteSubjectPrefixForTeam(team.id)],
+              unlinkAfterRevoke: shouldUnlink,
+            });
+            revocationComplete = outcome.allSucceeded;
+          }
+          // Retain the peer link when the remote is unreachable so pending revocations can drain later.
+          if (shouldUnlink && revocationComplete && input.peerLinks !== undefined) {
+            const peerLinks = input.peerLinks;
+            yield* remoteEnvLifecycleLock.withPermits(1)(
+              Effect.gen(function* () {
+                const reattached = yield* repository
+                  .getEnvironmentByEnvironmentId({
+                    teamId: team.id,
+                    environmentId: input.payload.environmentId,
+                  })
+                  .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()));
+                if (Option.isNone(reattached)) {
+                  yield* peerLinks.unlink(input.payload.environmentId).pipe(Effect.ignore);
+                }
+              }),
+            );
+          }
+        }),
+      );
+      yield* publish({
+        version: 1,
+        type: "environmentRemoved",
+        payload: { environmentId: input.payload.environmentId },
+      });
+      yield* publishAccessChange({
+        type: "environment",
+        environmentId: input.payload.environmentId,
+      });
+    }
+    return { detached } satisfies TeamDetachEnvironmentResult;
+  });
+
+  const unlinkRemoteEnvironment = Effect.fn("TeamService.unlinkRemoteEnvironment")(
+    function* (input: {
+      readonly environmentId: EnvironmentId;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks: PeerLinks.PeerLinks["Service"];
+    }) {
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isNone(workspaceOption) || !input.peerClientPairing) {
+        return yield* input.peerLinks.unlink(input.environmentId);
+      }
+      const teamId = workspaceOption.value.id;
+      const peerClientPairing = input.peerClientPairing;
+      return yield* withRemoteRevocationBarrier(
+        Effect.gen(function* () {
+          const outcome = yield* revokeRemoteMemberGrantsForEnvironments({
+            teamId,
+            peerClientPairing,
+            environmentIds: [input.environmentId],
+            subjectPrefixes: [remoteSubjectPrefixForTeam(teamId)],
+            unlinkAfterRevoke: true,
+          });
+          if (!outcome.allSucceeded) {
+            return { removed: false, endedThere: false };
+          }
+          return yield* remoteEnvLifecycleLock.withPermits(1)(
+            input.peerLinks.unlink(input.environmentId),
+          );
+        }),
+      );
+    },
+  );
+
+  const pairRemoteEnvironmentForSession = Effect.fn("TeamService.pairRemoteEnvironmentForSession")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+      readonly pairingInput: Parameters<
+        PeerClientPairing.PeerClientPairing["Service"]["request"]
+      >[0];
+      readonly peerClientPairing: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) {
+      yield* assertCanAccessEnvironment(input.sessionId, input.pairingInput.environmentId);
+      yield* drainPendingRemoteRevocations({
+        environmentId: input.pairingInput.environmentId,
+        peerClientPairing: input.peerClientPairing,
+        ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
+      }).pipe(Effect.ignore);
+      return yield* withRemotePairingPermit(
+        Effect.gen(function* () {
+          yield* assertCanAccessEnvironment(input.sessionId, input.pairingInput.environmentId);
+          const subjectOption = yield* getRemotePairingSubject(input.sessionId);
+          const memberBefore = Option.isSome(subjectOption)
+            ? yield* repository
+                .getMemberForSession(input.sessionId)
+                .pipe(
+                  Effect.mapError(() =>
+                    teamPostAuthError(
+                      "Could not resolve team membership for remote environment pairing.",
+                    ),
+                  ),
+                )
+            : Option.none<TeamMember>();
+          const effectiveScopes =
+            Option.isSome(memberBefore) && !isTeamAdminOrOwner(memberBefore.value)
+              ? input.scopes.filter((scope) => !ADMIN_ONLY_SESSION_SCOPES.has(scope))
+              : input.scopes;
+          const requestedAdminScopes = effectiveScopes.some((scope) =>
+            ADMIN_ONLY_SESSION_SCOPES.has(scope),
+          );
+          const result = yield* input.peerClientPairing.request(input.pairingInput, {
+            sessionId: input.sessionId,
+            scopes: effectiveScopes,
+            ...(Option.isSome(subjectOption) ? { teamMemberSubject: subjectOption.value } : {}),
+          });
+          if (Option.isSome(subjectOption) && result.type === "credential") {
+            yield* assertCanAccessEnvironment(input.sessionId, input.pairingInput.environmentId);
+            yield* getRemotePairingSubject(input.sessionId);
+            if (requestedAdminScopes) {
+              const memberAfter = yield* repository
+                .getMemberForSession(input.sessionId)
+                .pipe(
+                  Effect.mapError(() =>
+                    teamPostAuthError(
+                      "Could not verify team membership after remote environment pairing.",
+                    ),
+                  ),
+                );
+              if (Option.isNone(memberAfter) || !isTeamAdminOrOwner(memberAfter.value)) {
+                return yield* teamPostAuthError(
+                  "Your team role changed while pairing with this remote environment. Please retry.",
+                );
+              }
+            }
+          }
+          return result;
+        }),
+      );
+    },
+  );
+
+  const getRemotePairingSubject = Effect.fn("TeamService.getRemotePairingSubject")(function* (
+    sessionId: AuthSessionId,
+  ) {
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.getRemotePairingSubject(getWorkspace) failed", { cause }),
+      ),
+      Effect.mapError(() =>
+        teamPostAuthError("Could not resolve team membership for remote environment pairing."),
+      ),
+    );
+    if (Option.isNone(workspaceOption)) return Option.none<string>();
+    const team = workspaceOption.value;
+    const memberOption = yield* repository.getMemberForSession(sessionId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.getRemotePairingSubject(getMemberForSession) failed", {
+          cause,
+        }),
+      ),
+      Effect.mapError(() =>
+        teamPostAuthError("Could not resolve team membership for remote environment pairing."),
+      ),
+    );
+    if (
+      Option.isNone(memberOption) ||
+      memberOption.value.teamId !== team.id ||
+      memberOption.value.status !== "active"
+    ) {
+      return yield* teamPostAuthError("This session is not bound to an active team member.");
+    }
+    return Option.some(remoteSubjectForMember(team.id, memberOption.value.id));
+  });
+
+  const assertCanAccessLocalEnvironment = Effect.fn("TeamService.assertCanAccessLocalEnvironment")(
+    function* (sessionId: AuthSessionId) {
+      const workspaceOption = yield* repository.getWorkspace().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertCanAccessLocalEnvironment(getWorkspace) failed", {
+            cause,
+          }),
+        ),
+        Effect.mapError(() => teamPostAuthError("Could not verify team environment permissions.")),
+      );
+      if (Option.isNone(workspaceOption)) return;
+      const localEnv = yield* resolveLocalEnvironmentIdentity();
+      yield* assertActorCanAccessEnvironment(sessionActor(sessionId), localEnv.environmentId);
+    },
+  );
+
+  const canActorAccessEnvironment = Effect.fn("TeamService.canActorAccessEnvironment")(function* (
+    actor: TeamActor,
+    environmentId: EnvironmentId,
+  ) {
+    return yield* Effect.gen(function* () {
+      const workspaceOption = yield* repository.getWorkspace();
+      if (Option.isNone(workspaceOption)) return true;
+      const team = workspaceOption.value;
+      const memberOption = yield* resolveMemberForActor(actor);
+      const member =
+        Option.isSome(memberOption) && memberOption.value.teamId === team.id
+          ? memberOption.value
+          : null;
+      if (!member || member.status !== "active") return false;
+      yield* ensureDefaultEnvironmentForTeam(team).pipe(Effect.ignore);
+      const envOption = yield* repository.getEnvironmentByEnvironmentId({
+        teamId: team.id,
+        environmentId,
+      });
+      if (Option.isNone(envOption)) {
+        // Unregistered peer environments are restricted to owner/admin only (fail closed for regular/modo).
+        return isTeamAdminOrOwner(member);
+      }
+      return canMemberAccessTeamEnvironment(member, envOption.value);
+    }).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.canActorAccessEnvironment failed; denying", {
+          environmentId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+  });
+
+  const assertActorCanAccessEnvironment = Effect.fn("TeamService.assertActorCanAccessEnvironment")(
+    function* (actor: TeamActor, environmentId: EnvironmentId) {
+      const allowed = yield* canActorAccessEnvironment(actor, environmentId);
+      if (!allowed) {
+        return yield* new EnvironmentAuthorizationError({
+          message: "You do not have permission to access this team environment.",
+          requiredScope: AuthOrchestrationOperateScope,
+          requiredPermission: "team:environment:access",
+        });
+      }
+    },
+  );
+
+  const assertCanAccessEnvironment = (sessionId: AuthSessionId, environmentId: EnvironmentId) =>
+    assertActorCanAccessEnvironment(sessionActor(sessionId), environmentId);
+
+  const filterAccessibleEnvironmentIdsForActor = Effect.fn(
+    "TeamService.filterAccessibleEnvironmentIdsForActor",
+  )(function* (actor: TeamActor, environmentIds: ReadonlyArray<EnvironmentId>) {
+    if (environmentIds.length === 0) {
+      return new Set<EnvironmentId>() as ReadonlySet<EnvironmentId>;
+    }
+    return yield* Effect.gen(function* () {
+      const workspaceOption = yield* repository.getWorkspace();
+      if (Option.isNone(workspaceOption)) {
+        return new Set<EnvironmentId>(environmentIds) as ReadonlySet<EnvironmentId>;
+      }
+      const team = workspaceOption.value;
+      const memberOption = yield* resolveMemberForActor(actor);
+      const member =
+        Option.isSome(memberOption) && memberOption.value.teamId === team.id
+          ? memberOption.value
+          : null;
+      if (!member || member.status !== "active") {
+        return new Set<EnvironmentId>() as ReadonlySet<EnvironmentId>;
+      }
+      yield* ensureDefaultEnvironmentForTeam(team).pipe(Effect.ignore);
+      const envs = yield* repository.listEnvironments(team.id);
+      const envById = new Map(envs.map((env) => [env.environmentId, env] as const));
+      const allowed = new Set<EnvironmentId>();
+      for (const envId of environmentIds) {
+        const registered = envById.get(envId);
+        if (registered !== undefined) {
+          if (canMemberAccessTeamEnvironment(member, registered)) {
+            allowed.add(envId);
+          }
+        } else if (isTeamAdminOrOwner(member)) {
+          allowed.add(envId);
+        }
+      }
+      return allowed as ReadonlySet<EnvironmentId>;
+    }).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning(
+          "TeamService.filterAccessibleEnvironmentIdsForActor failed; failing closed",
+          {
+            cause,
+          },
+        ),
+      ),
+      Effect.orElseSucceed(() => new Set<EnvironmentId>() as ReadonlySet<EnvironmentId>),
+    );
+  });
+
+  const filterAccessibleEnvironmentIds = (
+    sessionId: AuthSessionId,
+    environmentIds: ReadonlyArray<EnvironmentId>,
+  ) => filterAccessibleEnvironmentIdsForActor(sessionActor(sessionId), environmentIds);
+
+  const assertActorCanExecuteOnThreadEnvironment = Effect.fn(
+    "TeamService.assertActorCanExecuteOnThreadEnvironment",
+  )(function* (actor: TeamActor, threadId: ThreadId) {
+    const failClosed =
+      <A, E, R>(label: string) =>
+      (effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning(
+              `TeamService.assertActorCanExecuteOnThreadEnvironment(${label}) failed`,
+              {
+                threadId,
+                cause,
+              },
+            ),
+          ),
+          Effect.mapError(() =>
+            teamPostAuthError("Could not verify thread environment execution permissions."),
+          ),
+        );
+    const workspaceOption = yield* repository.getWorkspace().pipe(failClosed("getWorkspace"));
+    if (Option.isNone(workspaceOption)) return;
+    const team = workspaceOption.value;
+    const [memberOption, attributionOption] = yield* Effect.all([
+      resolveMemberForActor(actor).pipe(failClosed("resolveMemberForActor")),
+      repository.getThreadAttribution(threadId).pipe(failClosed("getThreadAttribution")),
+    ]);
+    const member =
+      Option.isSome(memberOption) && memberOption.value.teamId === team.id
+        ? memberOption.value
+        : null;
+    if (!member || member.status !== "active") {
+      return yield* teamPostAuthError("This session is not bound to an active team member.");
+    }
+    if (Option.isNone(attributionOption)) {
+      const localEnv = yield* resolveLocalEnvironmentIdentity();
+      yield* assertActorCanAccessEnvironment(actor, localEnv.environmentId);
+      return;
+    }
+    const attribution = attributionOption.value;
+    if (attribution.isLocalSynced === true) {
+      const label =
+        attribution.executionEnvironmentLabel ?? `${attribution.creatorPseudo}'s local environment`;
+      return yield* teamPostAuthError(
+        `Cannot execute turns on "${label}". Local-environment threads run exclusively on their owner's machine; fork the thread or leave a note instead.`,
+      );
+    }
+    yield* ensureDefaultEnvironmentForTeam(team).pipe(
+      failClosed("ensureDefaultEnvironmentForTeam"),
+    );
+    const environments = yield* repository
+      .listEnvironments(team.id)
+      .pipe(failClosed("listEnvironments"));
+    const access = resolveTeamThreadEnvironmentAccess({
+      member,
+      attribution,
+      environments,
+    });
+    if (!access.canExecute) {
+      return yield* teamPostAuthError(
+        `You do not have permission to execute turns on environment "${access.environmentLabel}". Fork the thread or leave a note instead.`,
+      );
+    }
+  });
+
+  const assertCanExecuteOnThreadEnvironment = (sessionId: AuthSessionId, threadId: ThreadId) =>
+    assertActorCanExecuteOnThreadEnvironment(sessionActor(sessionId), threadId);
+
+  const syncLocalThread = Effect.fn("TeamService.syncLocalThread")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamSyncLocalThreadInput;
+    readonly eventSink?: EventSink.EventSinkV2["Service"];
+    readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "This session does not belong to the active team.",
+      });
+    }
+    yield* ensureDefaultEnvironmentForTeam(team);
+    const localEnv = yield* resolveLocalEnvironmentIdentity();
+    const registeredEnvironments = yield* repository
+      .listEnvironments(team.id)
+      .pipe(Effect.mapError(toInternalError));
+    if (
+      input.payload.executionEnvironmentId === localEnv.environmentId ||
+      registeredEnvironments.some(
+        (env) => env.environmentId === input.payload.executionEnvironmentId,
+      )
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message:
+          "Local-synced threads cannot use the Team Server or a registered team environment ID.",
+      });
+    }
+    const projectAssignment = yield* repository
+      .getProjectAssignment(input.payload.projectId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(projectAssignment) || projectAssignment.value.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Local threads can only be synced to projects assigned to this team.",
+      });
+    }
+    const existingAttribution = yield* repository
+      .getThreadAttribution(input.payload.threadId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(existingAttribution) && input.projectionStore !== undefined) {
+      const existingProjection = yield* input.projectionStore
+        .getThreadProjection(input.payload.threadId)
+        .pipe(
+          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+          Effect.mapError(toInternalError),
+        );
+      if (existingProjection !== null) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "Cannot overwrite an existing Team Server thread via local sync.",
+        });
+      }
+    }
+    const resolvedViewId = yield* resolveDefaultViewIdForProject(
+      team,
+      input.payload.projectId,
+      input.payload.viewId,
+    );
+    const viewOption = yield* repository
+      .getViewById(resolvedViewId)
+      .pipe(Effect.mapError(toInternalError));
+    const view =
+      Option.isSome(viewOption) && viewOption.value.teamId === team.id ? viewOption.value : null;
+    const locked = input.payload.locked === true;
+    if (!canMemberCreateThreadInTeamView(actor, view, locked)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "You do not have permission to sync a thread into this view.",
+      });
+    }
+    const label =
+      input.payload.executionEnvironmentLabel?.trim() || `${actor.pseudo}'s local environment`;
+    const attributionOption = yield* repository
+      .upsertLocalSyncedThreadAttribution({
+        threadId: input.payload.threadId,
+        teamId: team.id,
+        creatorMemberId: actor.id,
+        viewId: resolvedViewId,
+        locked,
+        lockedByMemberId: locked ? actor.id : null,
+        executionEnvironmentId: input.payload.executionEnvironmentId,
+        executionEnvironmentLabel: label,
+        createdAt: input.payload.createdAt,
+      })
+      .pipe(
+        Effect.catchTags({
+          TeamMemberForbiddenError: (error) =>
+            Effect.fail(
+              new TeamOperationError({
+                code: "forbidden",
+                message: error.message,
+              }),
+            ),
+          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+        }),
+      );
+    if (Option.isNone(attributionOption)) {
+      return yield* new TeamOperationError({
+        code: "internal",
+        message: "Failed to persist local-synced thread metadata.",
+      });
+    }
+    if (input.eventSink !== undefined && input.projectionStore !== undefined) {
+      yield* mirrorLocalThreadSnapshotToEventSink({
+        eventSink: input.eventSink,
+        projectionStore: input.projectionStore,
+        random,
+        sync: input.payload,
+      }).pipe(Effect.mapError(toInternalError));
+    }
+    // Record turn attributions, relink msg:<userMessageId> note anchors to mirrored run IDs, and
+    // re-anchor pending notes once for the highest-ordinal brand-new local run.
+    let highestInsertedRun: { readonly ordinal: number; readonly mirroredRunId: string } | null =
+      null;
+    for (const run of input.payload.runs) {
+      const mirroredRunId = localSyncMirroredRunId(input.payload.threadId, run.id);
+      const mirroredMessageId = localSyncMirroredMessageId(
+        input.payload.threadId,
+        run.userMessageId,
+      );
+      const inserted = yield* repository
+        .recordTurnAttribution({
+          turnId: mirroredRunId,
+          threadId: input.payload.threadId,
+          authorMemberId: actor.id,
+          createdAt: run.createdAt,
+        })
+        .pipe(Effect.orElseSucceed(() => false));
+      if (inserted) {
+        if (highestInsertedRun === null || run.ordinal >= highestInsertedRun.ordinal) {
+          highestInsertedRun = { ordinal: run.ordinal, mirroredRunId };
+        }
+        yield* publish({
+          version: 1,
+          type: "turnAttributed",
+          payload: {
+            turnId: mirroredRunId,
+            threadId: input.payload.threadId,
+            authorMemberId: actor.id,
+            authorPseudo: actor.pseudo,
+            createdAt: run.createdAt,
+          },
+        });
+      }
+      const relinkedRaw = yield* repository
+        .relinkNoteTurnId({
+          teamId: team.id,
+          threadId: input.payload.threadId,
+          fromTurnId: `msg:${run.userMessageId}`,
+          toTurnId: mirroredRunId,
+        })
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
+      const relinkedMirrored = yield* repository
+        .relinkNoteTurnId({
+          teamId: team.id,
+          threadId: input.payload.threadId,
+          fromTurnId: `msg:${mirroredMessageId}`,
+          toTurnId: mirroredRunId,
+        })
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
+      for (const note of [...relinkedRaw, ...relinkedMirrored]) {
+        yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
+      }
+    }
+    if (highestInsertedRun !== null) {
+      const reanchored = yield* repository
+        .reanchorPendingNotesForNewTurn({
+          teamId: team.id,
+          threadId: input.payload.threadId,
+          targetTurnId: highestInsertedRun.mirroredRunId,
+        })
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
+      for (const note of reanchored) {
+        yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
+      }
+    }
+    yield* publish({
+      version: 1,
+      type: "threadAttributed",
+      payload: attributionOption.value,
+    });
+    return { attribution: attributionOption.value } satisfies TeamSyncLocalThreadResult;
+  });
+
+  const assertActorCanResolveNotesOnThread = Effect.fn(
+    "TeamService.assertActorCanResolveNotesOnThread",
+  )(function* (team: TeamWorkspace, actor: TeamMember, threadId: ThreadId) {
+    const attributionOption = yield* repository
+      .getThreadAttribution(threadId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(attributionOption) || attributionOption.value.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "not_found",
+        message: "Team thread could not be found.",
+      });
+    }
+    const attribution = attributionOption.value;
+    if (attribution.isLocalSynced === true) {
+      if (attribution.creatorMemberId !== actor.id) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "Only the local thread owner can accept, edit, or reject notes on this thread.",
+        });
+      }
+      return attribution;
+    }
+    const viewOption = yield* repository
+      .getViewById(attribution.viewId)
+      .pipe(Effect.mapError(toInternalError));
+    const defaultViewOption =
+      attribution.viewId === team.defaultViewId
+        ? viewOption
+        : yield* repository.getViewById(team.defaultViewId).pipe(Effect.mapError(toInternalError));
+    const view = Option.getOrNull(viewOption) ?? Option.getOrNull(defaultViewOption);
+    if (
+      resolveTeamThreadPostBlockReason({
+        member: actor,
+        attribution,
+        view,
+      }) !== "ok"
+    ) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "You do not have permission to resolve notes on this thread.",
+      });
+    }
+    yield* ensureDefaultEnvironmentForTeam(team);
+    const environments = yield* repository
+      .listEnvironments(team.id)
+      .pipe(Effect.mapError(toInternalError));
+    const envAccess = resolveTeamThreadEnvironmentAccess({
+      member: actor,
+      attribution,
+      environments,
+    });
+    if (!envAccess.canExecute) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message:
+          "Only members with execution access to this thread's environment can resolve notes.",
+      });
+    }
+    return attribution;
+  });
+
+  const createThreadNote = Effect.fn("TeamService.createThreadNote")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamCreateThreadNoteInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "This session does not belong to the active team.",
+      });
+    }
+    const body = input.payload.body.trim();
+    if (body.length === 0) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Note body cannot be empty.",
+      });
+    }
+    const attributionOption = yield* repository
+      .getThreadAttribution(input.payload.threadId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(attributionOption) || attributionOption.value.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "not_found",
+        message: "Team thread could not be found.",
+      });
+    }
+    const attribution = attributionOption.value;
+    const viewOption = yield* repository
+      .getViewById(attribution.viewId)
+      .pipe(Effect.mapError(toInternalError));
+    const defaultViewOption =
+      attribution.viewId === team.defaultViewId
+        ? viewOption
+        : yield* repository.getViewById(team.defaultViewId).pipe(Effect.mapError(toInternalError));
+    const view = Option.getOrNull(viewOption) ?? Option.getOrNull(defaultViewOption);
+    if (
+      !canMemberLeaveTeamThreadNote({
+        member: actor,
+        attribution,
+        view,
+      })
+    ) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: attribution.locked
+          ? "This thread is locked. Only owners and admins can leave notes."
+          : "You do not have permission to leave notes on this thread.",
+      });
+    }
+    const latestRun = yield* repository
+      .getLatestRunInProjection(input.payload.threadId)
+      .pipe(Effect.mapError(toInternalError));
+    // Anchor server-authoritatively to the thread's latest non-queued run; ignore arbitrary client anchorTurnId.
+    const anchorTurnId = Option.isSome(latestRun) ? latestRun.value.runId : null;
+    const noteId = TeamThreadNoteId.make(
+      yield* random.uuidV4().pipe(Effect.mapError(toInternalError)),
+    );
+    const createdAt = DateTime.formatIso(yield* DateTime.now);
+    const created = yield* repository
+      .createThreadNote({
+        id: noteId,
+        threadId: input.payload.threadId,
+        teamId: team.id,
+        authorMemberId: actor.id,
+        originalBody: body,
+        originalContentHash: hashNoteContent(body),
+        anchorTurnId,
+        createdAt,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(created)) {
+      return yield* new TeamOperationError({
+        code: "internal",
+        message: "Failed to create thread note.",
+      });
+    }
+    yield* publish({ version: 1, type: "threadNoteUpserted", payload: created.value });
+    yield* PubSub.publish(notificationTriggersPubSub, {
+      type: "thread",
+      threadId: input.payload.threadId,
+    }).pipe(Effect.asVoid);
+    return created.value;
+  });
+
+  const deleteThreadNote = Effect.fn("TeamService.deleteThreadNote")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamDeleteThreadNoteInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "This session does not belong to the active team.",
+      });
+    }
+    const existing = yield* repository
+      .getThreadNoteById(input.payload.noteId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(existing) || existing.value.teamId !== team.id) {
+      return { deleted: false } satisfies TeamDeleteThreadNoteResult;
+    }
+    const deleted = yield* repository
+      .deletePendingThreadNoteByAuthor({
+        teamId: team.id,
+        noteId: input.payload.noteId,
+        authorMemberId: actor.id,
+      })
+      .pipe(
+        Effect.catchTags({
+          TeamMemberForbiddenError: (error) =>
+            Effect.fail(new TeamOperationError({ code: "forbidden", message: error.message })),
+          TeamNoteStateConflictError: (error) =>
+            Effect.fail(new TeamOperationError({ code: error.code, message: error.message })),
+          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+        }),
+      );
+    if (deleted) {
+      yield* publish({
+        version: 1,
+        type: "threadNoteDeleted",
+        payload: { noteId: existing.value.id, threadId: existing.value.threadId },
+      });
+    }
+    return { deleted } satisfies TeamDeleteThreadNoteResult;
+  });
+
+  const resolveThreadNote = Effect.fn("TeamService.resolveThreadNote")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamResolveThreadNoteInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    const existing = yield* repository
+      .getThreadNoteById(input.payload.noteId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(existing) || existing.value.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "not_found",
+        message: "Thread note could not be found.",
+      });
+    }
+    yield* assertActorCanResolveNotesOnThread(team, actor, existing.value.threadId);
+    const updated = yield* noteStateLock.withPermits(1)(
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        pruneExpiredNoteReservations(DateTime.toEpochMillis(now));
+        if (activeNoteReservations.has(input.payload.noteId)) {
+          return yield* new TeamOperationError({
+            code: "note_already_consumed",
+            message: "This note is currently being dispatched in an active send.",
+          });
+        }
+        const resolvedAt = DateTime.formatIso(now);
+        return yield* repository
+          .resolveThreadNote({
+            teamId: team.id,
+            noteId: input.payload.noteId,
+            status: input.payload.status,
+            ...(input.payload.expectedContentHash !== undefined
+              ? { expectedContentHash: input.payload.expectedContentHash }
+              : {}),
+            resolvedByMemberId: actor.id,
+            resolvedAt,
+          })
+          .pipe(
+            Effect.catchTags({
+              TeamNoteStateConflictError: (error) =>
+                Effect.fail(new TeamOperationError({ code: error.code, message: error.message })),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+      }),
+    );
+    if (Option.isNone(updated)) {
+      return yield* new TeamOperationError({
+        code: "not_found",
+        message: "Thread note could not be found.",
+      });
+    }
+    yield* publish({ version: 1, type: "threadNoteUpserted", payload: updated.value });
+    return updated.value;
+  });
+
+  const editThreadNote = Effect.fn("TeamService.editThreadNote")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamEditThreadNoteInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    const existing = yield* repository
+      .getThreadNoteById(input.payload.noteId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(existing) || existing.value.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "not_found",
+        message: "Thread note could not be found.",
+      });
+    }
+    yield* assertActorCanResolveNotesOnThread(team, actor, existing.value.threadId);
+    const editedBody = input.payload.editedBody.trim();
+    if (editedBody.length === 0) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Edited note body cannot be empty.",
+      });
+    }
+    const updated = yield* noteStateLock.withPermits(1)(
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        pruneExpiredNoteReservations(DateTime.toEpochMillis(now));
+        if (activeNoteReservations.has(input.payload.noteId)) {
+          return yield* new TeamOperationError({
+            code: "note_already_consumed",
+            message: "This note is currently being dispatched in an active send.",
+          });
+        }
+        const resolvedAt = DateTime.formatIso(now);
+        return yield* repository
+          .editThreadNote({
+            teamId: team.id,
+            noteId: input.payload.noteId,
+            editedBody,
+            editedContentHash: hashNoteContent(editedBody),
+            ...(input.payload.expectedOriginalContentHash !== undefined
+              ? { expectedOriginalContentHash: input.payload.expectedOriginalContentHash }
+              : {}),
+            status: input.payload.status ?? "accepted",
+            resolvedByMemberId: actor.id,
+            resolvedAt,
+          })
+          .pipe(
+            Effect.catchTags({
+              TeamNoteStateConflictError: (error) =>
+                Effect.fail(new TeamOperationError({ code: error.code, message: error.message })),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+      }),
+    );
+    if (Option.isNone(updated)) {
+      return yield* new TeamOperationError({
+        code: "not_found",
+        message: "Thread note could not be found.",
+      });
+    }
+    yield* publish({ version: 1, type: "threadNoteUpserted", payload: updated.value });
+    return updated.value;
+  });
+
+  const reserveAcceptedNotesLocked = Effect.fn("TeamService.reserveAcceptedNotesLocked")(
+    function* (input: {
+      readonly team: TeamWorkspace;
+      readonly actor: TeamMember;
+      readonly threadId: ThreadId;
+      readonly acceptedNotes: ReadonlyArray<TeamAcceptedNoteRef>;
+    }) {
+      const now = yield* DateTime.now;
+      const nowMs = DateTime.toEpochMillis(now);
+      pruneExpiredNoteReservations(nowMs);
+      const token = yield* random.uuidV4().pipe(Effect.mapError(toInternalError));
+      const blocks: Array<string> = [];
+      const reserved: Array<{ readonly noteId: TeamThreadNoteId; readonly contentHash: string }> =
+        [];
+      const seen = new Set<string>();
+      for (const ref of input.acceptedNotes) {
+        if (seen.has(ref.noteId)) continue;
+        seen.add(ref.noteId);
+        if (activeNoteReservations.has(ref.noteId)) {
+          return yield* new TeamOperationError({
+            code: "note_already_consumed",
+            message: `Accepted note "${ref.noteId}" is already reserved by an in-flight dispatch.`,
+          });
+        }
+        const noteOption = yield* repository
+          .getThreadNoteById(ref.noteId)
+          .pipe(Effect.mapError(toInternalError));
+        if (
+          Option.isNone(noteOption) ||
+          noteOption.value.teamId !== input.team.id ||
+          noteOption.value.threadId !== input.threadId
+        ) {
+          return yield* new TeamOperationError({
+            code: "note_hash_mismatch",
+            message: `Accepted note "${ref.noteId}" was not found on this thread.`,
+          });
+        }
+        const note = noteOption.value;
+        if (note.status === "consumed") {
+          return yield* new TeamOperationError({
+            code: "note_already_consumed",
+            message: `Accepted note "${ref.noteId}" was already consumed by an earlier turn.`,
+          });
+        }
+        if (note.status !== "accepted") {
+          return yield* new TeamOperationError({
+            code: "note_not_pending",
+            message: `Note "${ref.noteId}" has status "${note.status}" and cannot be injected without explicit acceptance.`,
+          });
+        }
+        const effectiveHash = effectiveTeamThreadNoteHash(note);
+        if (effectiveHash !== ref.contentHash) {
+          return yield* new TeamOperationError({
+            code: "note_hash_mismatch",
+            message: `Content hash mismatch for accepted note "${ref.noteId}".`,
+          });
+        }
+        reserved.push({ noteId: note.id, contentHash: effectiveHash });
+        blocks.push(
+          formatAcceptedTeamNoteForPrompt({
+            authorPseudo: note.authorPseudo,
+            approverPseudo: note.resolvedByPseudo ?? input.actor.pseudo,
+            originalBody: note.originalBody,
+            editedBody: note.editedBody,
+          }),
+        );
+      }
+      const expiresAtMs = nowMs + NOTE_RESERVATION_TTL_MS;
+      for (const item of reserved) {
+        activeNoteReservations.set(item.noteId, {
+          reservationToken: token,
+          threadId: input.threadId,
+          memberId: input.actor.id,
+          contentHash: item.contentHash,
+          expiresAtMs,
+        });
+      }
+      return {
+        reservationToken: token,
+        noteIds: reserved.map((item) => item.noteId),
+        formattedPromptPrefix: blocks.join("\n\n"),
+      } satisfies TeamReserveAcceptedNotesResult;
+    },
+  );
+
+  const reserveAcceptedNotes = Effect.fn("TeamService.reserveAcceptedNotes")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamReserveAcceptedNotesInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    yield* assertActorCanResolveNotesOnThread(team, actor, input.payload.threadId);
+    return yield* noteStateLock.withPermits(1)(
+      reserveAcceptedNotesLocked({
+        team,
+        actor,
+        threadId: input.payload.threadId,
+        acceptedNotes: input.payload.acceptedNotes,
+      }),
+    );
+  });
+
+  const releaseNoteReservationByToken = Effect.fn("TeamService.releaseNoteReservationByToken")(
+    function* (reservationToken: string) {
+      yield* noteStateLock.withPermits(1)(
+        Effect.sync(() => {
+          for (const [noteId, reservation] of activeNoteReservations) {
+            if (reservation.reservationToken === reservationToken) {
+              activeNoteReservations.delete(noteId);
+            }
+          }
+        }),
+      );
+    },
+  );
+
+  const releaseAcceptedNotes = Effect.fn("TeamService.releaseAcceptedNotes")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamReleaseAcceptedNotesInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    yield* assertActorCanResolveNotesOnThread(team, actor, input.payload.threadId);
+    const releasedCount = yield* noteStateLock.withPermits(1)(
+      Effect.sync(() => {
+        let count = 0;
+        for (const [noteId, reservation] of activeNoteReservations) {
+          if (
+            reservation.reservationToken === input.payload.reservationToken &&
+            reservation.threadId === input.payload.threadId &&
+            reservation.memberId === actor.id
+          ) {
+            activeNoteReservations.delete(noteId);
+            count += 1;
+          }
+        }
+        return count;
+      }),
+    );
+    return { releasedCount } satisfies TeamReleaseAcceptedNotesResult;
+  });
+
+  const consumeAcceptedNotes = Effect.fn("TeamService.consumeAcceptedNotes")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamConsumeAcceptedNotesInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    yield* assertActorCanResolveNotesOnThread(team, actor, input.payload.threadId);
+    const { consumedNotes, reanchoredNotes } = yield* noteStateLock.withPermits(1)(
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        pruneExpiredNoteReservations(DateTime.toEpochMillis(now));
+        for (const ref of input.payload.acceptedNotes) {
+          const existingReservation = activeNoteReservations.get(ref.noteId);
+          if (
+            existingReservation !== undefined &&
+            existingReservation.reservationToken !== input.payload.reservationToken
+          ) {
+            return yield* new TeamOperationError({
+              code: "note_already_consumed",
+              message: `Accepted note "${ref.noteId}" is already reserved by another dispatch.`,
+            });
+          }
+        }
+        const resolvedAt = DateTime.formatIso(now);
+        const result = yield* repository
+          .consumeAcceptedNotesAndReanchorPending({
+            teamId: team.id,
+            threadId: input.payload.threadId,
+            targetTurnId: input.payload.targetTurnId,
+            acceptedNotes: input.payload.acceptedNotes,
+            resolvedByMemberId: actor.id,
+            resolvedAt,
+          })
+          .pipe(
+            Effect.catchTags({
+              TeamNoteStateConflictError: (error) =>
+                Effect.fail(new TeamOperationError({ code: error.code, message: error.message })),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+        for (const note of result.consumedNotes) {
+          activeNoteReservations.delete(note.id);
+        }
+        if (input.payload.reservationToken !== undefined) {
+          for (const [noteId, reservation] of activeNoteReservations) {
+            if (reservation.reservationToken === input.payload.reservationToken) {
+              activeNoteReservations.delete(noteId);
+            }
+          }
+        }
+        return result;
+      }),
+    );
+    for (const note of [...consumedNotes, ...reanchoredNotes]) {
+      yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
+    }
+    const formattedPromptPrefix = consumedNotes
+      .map((note) =>
+        formatAcceptedTeamNoteForPrompt({
+          authorPseudo: note.authorPseudo,
+          approverPseudo: note.resolvedByPseudo ?? actor.pseudo,
+          originalBody: note.originalBody,
+          editedBody: note.editedBody,
+        }),
+      )
+      .join("\n\n");
+    return {
+      consumedNotes: [...consumedNotes],
+      reanchoredNoteIds: reanchoredNotes.map((note) => note.id),
+      formattedPromptPrefix,
+    } satisfies TeamConsumeAcceptedNotesResult;
+  });
+
+  const listThreadNotes = Effect.fn("TeamService.listThreadNotes")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamListThreadNotesInput;
+  }) {
+    const workspaceOption = yield* repository.getWorkspace().pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(workspaceOption)) return [];
+    const readable = yield* canReadThread(input.sessionId, input.payload.threadId);
+    if (!readable) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "You do not have permission to view notes on this thread.",
+      });
+    }
+    return yield* repository
+      .listThreadNotes({ teamId: workspaceOption.value.id, threadId: input.payload.threadId })
+      .pipe(Effect.mapError(toInternalError));
+  });
+
+  const verifyAcceptedNotesForDispatch = Effect.fn("TeamService.verifyAcceptedNotesForDispatch")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly threadId: ThreadId;
+      readonly acceptedNotes: ReadonlyArray<TeamAcceptedNoteRef>;
+    }) {
+      if (input.acceptedNotes.length === 0) return "";
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(Effect.mapError(() => teamPostAuthError("Failed to verify accepted notes.")));
+      if (Option.isNone(workspaceOption)) return "";
+      const memberOption = yield* repository
+        .getMemberForSession(input.sessionId)
+        .pipe(Effect.mapError(() => teamPostAuthError("Failed to verify accepted notes.")));
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.teamId !== workspaceOption.value.id ||
+        memberOption.value.status !== "active"
+      ) {
+        return yield* teamPostAuthError("This session is not bound to an active team member.");
+      }
+      const actor = memberOption.value;
+      const blocks: Array<string> = [];
+      const seen = new Set<string>();
+      for (const ref of input.acceptedNotes) {
+        if (seen.has(ref.noteId)) continue;
+        seen.add(ref.noteId);
+        const noteOption = yield* repository
+          .getThreadNoteById(ref.noteId)
+          .pipe(Effect.mapError(() => teamPostAuthError("Failed to verify accepted note.")));
+        if (
+          Option.isNone(noteOption) ||
+          noteOption.value.teamId !== workspaceOption.value.id ||
+          noteOption.value.threadId !== input.threadId
+        ) {
+          return yield* teamPostAuthError(`Accepted note "${ref.noteId}" was not found.`);
+        }
+        const note = noteOption.value;
+        if (note.status !== "accepted") {
+          return yield* teamPostAuthError(
+            `Note "${ref.noteId}" has status "${note.status}" and cannot be injected without explicit acceptance.`,
+          );
+        }
+        if (effectiveTeamThreadNoteHash(note) !== ref.contentHash) {
+          return yield* teamPostAuthError(
+            `Content hash mismatch for accepted note "${ref.noteId}".`,
+          );
+        }
+        blocks.push(
+          formatAcceptedTeamNoteForPrompt({
+            authorPseudo: note.authorPseudo,
+            approverPseudo: note.resolvedByPseudo ?? actor.pseudo,
+            originalBody: note.originalBody,
+            editedBody: note.editedBody,
+          }),
+        );
+      }
+      return blocks.join("\n\n");
+    },
+  );
+
+  const prepareNotesForDispatchCommand = Effect.fn("TeamService.prepareNotesForDispatchCommand")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly command: OrchestrationV2Command;
+    }) {
+      if (
+        input.command.type !== "message.dispatch" ||
+        input.command.teamAcceptedNotes === undefined ||
+        input.command.teamAcceptedNotes.length === 0
+      ) {
+        return { command: input.command, reservationToken: null };
+      }
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(Effect.mapError(() => teamPostAuthError("Failed to verify accepted notes.")));
+      if (Option.isNone(workspaceOption)) {
+        return { command: input.command, reservationToken: null };
+      }
+      const memberOption = yield* repository
+        .getMemberForSession(input.sessionId)
+        .pipe(Effect.mapError(() => teamPostAuthError("Failed to verify accepted notes.")));
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.teamId !== workspaceOption.value.id ||
+        memberOption.value.status !== "active"
+      ) {
+        return yield* teamPostAuthError("This session is not bound to an active team member.");
+      }
+      const reserved = yield* noteStateLock
+        .withPermits(1)(
+          reserveAcceptedNotesLocked({
+            team: workspaceOption.value,
+            actor: memberOption.value,
+            threadId: input.command.threadId,
+            acceptedNotes: input.command.teamAcceptedNotes,
+          }),
+        )
+        .pipe(Effect.mapError((error) => teamPostAuthError(error.message)));
+      const trimmedPrompt = input.command.text.trim();
+      const effectiveCommand: OrchestrationV2Command =
+        reserved.formattedPromptPrefix.length > 0
+          ? {
+              ...input.command,
+              text:
+                trimmedPrompt.length === 0
+                  ? reserved.formattedPromptPrefix
+                  : `${reserved.formattedPromptPrefix}\n\n${input.command.text}`,
+            }
+          : input.command;
+      return {
+        command: effectiveCommand,
+        reservationToken: reserved.reservationToken,
+      };
+    },
+  );
+
+  const finalizeNotesForDispatchedTurn = Effect.fn("TeamService.finalizeNotesForDispatchedTurn")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly threadId: ThreadId;
+      readonly targetTurnId: string;
+      readonly acceptedNotes: ReadonlyArray<TeamAcceptedNoteRef>;
+      readonly reservationToken?: string | null;
+    }) {
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isNone(workspaceOption)) return;
+      const memberOption = yield* repository
+        .getMemberForSession(input.sessionId)
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.teamId !== workspaceOption.value.id ||
+        memberOption.value.status !== "active"
+      ) {
+        return;
+      }
+      const outcome = yield* noteStateLock.withPermits(1)(
+        Effect.gen(function* () {
+          const resolvedAt = DateTime.formatIso(yield* DateTime.now);
+          const result = yield* repository
+            .consumeAcceptedNotesAndReanchorPending({
+              teamId: workspaceOption.value.id,
+              threadId: input.threadId,
+              targetTurnId: input.targetTurnId,
+              acceptedNotes: input.acceptedNotes,
+              resolvedByMemberId: memberOption.value.id,
+              resolvedAt,
+            })
+            .pipe(
+              Effect.tapError((cause) =>
+                Effect.logError("TeamService.finalizeNotesForDispatchedTurn failed", {
+                  threadId: input.threadId,
+                  targetTurnId: input.targetTurnId,
+                  cause,
+                }),
+              ),
+              Effect.orElseSucceed(() => ({
+                consumedNotes: [] as ReadonlyArray<TeamThreadNote>,
+                reanchoredNotes: [] as ReadonlyArray<TeamThreadNote>,
+              })),
+            );
+          for (const note of result.consumedNotes) {
+            activeNoteReservations.delete(note.id);
+          }
+          if (input.reservationToken) {
+            for (const [noteId, reservation] of activeNoteReservations) {
+              if (reservation.reservationToken === input.reservationToken) {
+                activeNoteReservations.delete(noteId);
+              }
+            }
+          }
+          return result;
+        }),
+      );
+      for (const note of [...outcome.consumedNotes, ...outcome.reanchoredNotes]) {
+        yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
+      }
+    },
+  );
+
   return TeamService.of({
     isTeamConfigured,
     getState,
@@ -4036,6 +6223,36 @@ const make = Effect.gen(function* () {
     assertActorIsAdmin,
     registerTurnInterruptHook,
     notifyTurnInterrupted,
+    assignProject,
+    unassignProject,
+    attachEnvironment,
+    updateEnvironment,
+    detachEnvironment,
+    getRemotePairingSubject,
+    assertCanAccessLocalEnvironment,
+    unlinkRemoteEnvironment,
+    pairRemoteEnvironmentForSession,
+    drainPendingRemoteRevocations,
+    canActorAccessEnvironment,
+    assertActorCanAccessEnvironment,
+    assertCanAccessEnvironment,
+    filterAccessibleEnvironmentIdsForActor,
+    filterAccessibleEnvironmentIds,
+    assertActorCanExecuteOnThreadEnvironment,
+    assertCanExecuteOnThreadEnvironment,
+    syncLocalThread,
+    createThreadNote,
+    deleteThreadNote,
+    resolveThreadNote,
+    editThreadNote,
+    reserveAcceptedNotes,
+    releaseAcceptedNotes,
+    consumeAcceptedNotes,
+    listThreadNotes,
+    prepareNotesForDispatchCommand,
+    releaseNoteReservationByToken,
+    verifyAcceptedNotesForDispatch,
+    finalizeNotesForDispatchedTurn,
   });
 });
 

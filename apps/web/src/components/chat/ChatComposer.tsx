@@ -403,6 +403,10 @@ export interface ChatComposerProps {
   canResume: boolean;
   isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
+  allowEmptySend?: boolean;
+  teamNoteMode?: boolean;
+  onCancelTeamNoteMode?: () => void;
+  composerInputDisabled?: boolean;
   isPreparingWorktree: boolean;
   canSteer: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
@@ -554,6 +558,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     canResume,
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
+    allowEmptySend = false,
+    teamNoteMode = false,
+    onCancelTeamNoteMode,
+    composerInputDisabled = false,
     isPreparingWorktree,
     canSteer,
     environmentUnavailable,
@@ -1331,7 +1339,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         isComplete: Boolean(activePendingResolvedAnswers),
       }
     : null;
-  const hasMessageToSend = composerSendState.hasSendableContent || messageHasPreparingImages;
+  const hasMessageToSend =
+    composerSendState.hasSendableContent ||
+    messageHasPreparingImages ||
+    (allowEmptySend && !teamNoteMode);
   const showResumeAction =
     canResume &&
     !composerDraftHasUserContent(composerDraft) &&
@@ -2569,6 +2580,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : null;
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) => {
+    if (key === "Escape" && teamNoteMode && onCancelTeamNoteMode && !event.isComposing) {
+      onCancelTeamNoteMode();
+      return true;
+    }
     if (key === "Escape" && composerSendHeld && !event.isComposing) {
       cancelHeldSend();
       return true;
@@ -3745,10 +3760,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ref={composerSurfaceRef}
             data-chat-composer-surface="true"
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
+            data-team-note-mode={teamNoteMode ? "true" : undefined}
             className={cn(
               "rounded-2xl transition-[background-color] duration-200",
               "in-data-[thread-context-over]:bg-accent/45 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-inset in-data-[thread-context-over]:ring-primary/70",
               isDragOverComposer ? "bg-accent/45 ring-1 ring-inset ring-primary/70" : null,
+              teamNoteMode ? "bg-info/5 ring-2 ring-inset ring-info/70" : null,
+              composerInputDisabled && !teamNoteMode ? "opacity-60" : null,
               projectSelectionRequired ? "opacity-75" : null,
               composerProviderState.composerSurfaceClassName,
             )}
@@ -3958,23 +3976,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onCitationDraftSave={saveCitationDraftToPromptStable}
                     onPaste={onComposerPasteStable}
                     placeholder={
-                      isComposerApprovalState
-                        ? activePendingApproval?.supportsFeedback
-                          ? gt("Send feedback to decline this request")
-                          : gt("Send a message to decline and redirect the agent")
-                        : activePendingProgress
-                          ? isChoiceOnlyPendingQuestion
-                            ? gt("Choose an option above")
-                            : activePendingProgress.activeQuestion?.options.length === 0
-                              ? gt("Type your answer")
-                              : gt(
-                                  "Type your own answer, or leave this blank to use the selected option",
-                                )
-                          : projectSelectionRequired
-                            ? gt("Choose a project above to start a thread")
-                            : showProviderUnavailable
-                              ? gt("Enable a provider in Settings to send a message")
-                              : (offeredPromptSuggestion ?? m(DEFAULT_COMPOSER_PLACEHOLDER))
+                      teamNoteMode
+                        ? gt("Write a note for the thread owner…")
+                        : isComposerApprovalState
+                          ? activePendingApproval?.supportsFeedback
+                            ? gt("Send feedback to decline this request")
+                            : gt("Send a message to decline and redirect the agent")
+                          : activePendingProgress
+                            ? isChoiceOnlyPendingQuestion
+                              ? gt("Choose an option above")
+                              : activePendingProgress.activeQuestion?.options.length === 0
+                                ? gt("Type your answer")
+                                : gt(
+                                    "Type your own answer, or leave this blank to use the selected option",
+                                  )
+                            : projectSelectionRequired
+                              ? gt("Choose a project above to start a thread")
+                              : showProviderUnavailable
+                                ? gt("Enable a provider in Settings to send a message")
+                                : (offeredPromptSuggestion ?? m(DEFAULT_COMPOSER_PLACEHOLDER))
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (
@@ -3999,6 +4019,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     disabled={
                       projectSelectionRequired ||
+                      (composerInputDisabled && !teamNoteMode) ||
                       isChoiceOnlyPendingQuestion ||
                       activePendingIsResponding ||
                       speechInput.freezesEditor
@@ -4080,91 +4101,117 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
-                  <ComposerFooterPrimaryActions
-                    // Stop state belongs to one thread; the composer stays mounted across threads.
-                    key={`${environmentId}:${activeThreadId ?? "new"}`}
-                    compact={isComposerPrimaryActionsCompact}
-                    canOperateThread={canOperateThread}
-                    pendingAction={pendingPrimaryAction}
-                    isRunning={(phase === "running" || phase === "connecting") && !draftRunsLocally}
-                    canInterrupt={canInterrupt}
-                    isExplicitAdminInterrupt={isExplicitAdminInterrupt}
-                    runId={activeThread?.runtime?.activeRunId ?? null}
-                    followUpBehavior={followUpBehavior}
-                    canSteer={canSteer}
-                    alternateShortcutLabel={shortcutLabelForCommand(
-                      keybindings,
-                      "composer.sendAlternate",
-                      {
-                        context: {
-                          composerFocus: true,
-                          draftThreadRoute: routeKind === "draft",
-                          turnRunning: true,
-                          composerRequiresModifier: composerRequiresModifier(
-                            settings.sendShortcut,
-                            prompt,
-                          ),
+                  {teamNoteMode ? (
+                    <div className="flex items-center gap-1.5">
+                      {onCancelTeamNoteMode ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          data-testid="team-note-composer-cancel"
+                          onClick={onCancelTeamNoteMode}
+                        >
+                          <T>Cancel</T>
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="submit"
+                        size="xs"
+                        disabled={isSendBusy || prompt.trim().length === 0}
+                        data-testid="team-note-composer-submit"
+                      >
+                        <T>Send note</T>
+                      </Button>
+                    </div>
+                  ) : (
+                    <ComposerFooterPrimaryActions
+                      // Stop state belongs to one thread; the composer stays mounted across threads.
+                      key={`${environmentId}:${activeThreadId ?? "new"}`}
+                      compact={isComposerPrimaryActionsCompact}
+                      canOperateThread={canOperateThread}
+                      pendingAction={pendingPrimaryAction}
+                      isRunning={
+                        (phase === "running" || phase === "connecting") && !draftRunsLocally
+                      }
+                      canInterrupt={canInterrupt}
+                      isExplicitAdminInterrupt={isExplicitAdminInterrupt}
+                      runId={activeThread?.runtime?.activeRunId ?? null}
+                      followUpBehavior={followUpBehavior}
+                      canSteer={canSteer}
+                      alternateShortcutLabel={shortcutLabelForCommand(
+                        keybindings,
+                        "composer.sendAlternate",
+                        {
+                          context: {
+                            composerFocus: true,
+                            draftThreadRoute: routeKind === "draft",
+                            turnRunning: true,
+                            composerRequiresModifier: composerRequiresModifier(
+                              settings.sendShortcut,
+                              prompt,
+                            ),
+                          },
                         },
-                      },
-                    )}
-                    voiceInputActive={voiceInputActive}
-                    isSendBusy={isSendBusy}
-                    isSendHeld={composerSendHeld}
-                    sendDisabledReason={primaryActionSendDisabledReason}
-                    isEnvironmentUnavailable={primaryActionEnvironmentUnavailable}
-                    isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={hasMessageToSend || voiceInputActive}
-                    canResume={showResumeAction}
-                    preserveComposerFocusOnPointerDown={isMobileViewport}
-                    isEditingQueuedMessage={isEditingQueuedMessage}
-                    onSubmitMessage={handleSubmitMessageStable}
-                    onResume={onResume}
-                    onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                    onInterrupt={handleInterruptPrimaryActionStable}
-                    compactBeforeSendTokens={props.resumeCompactionTokens}
-                    hideCompactToggle={dictationTakesFooter}
-                    keepFullHistory={props.keepFullHistory}
-                    onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-                  >
-                    {speechInput.available ? (
-                      <>
-                        <ComposerSpeechRecordingPill
-                          state={speechInput.state}
-                          progress={null}
-                          finishShortcutLabel={dictationShortcutLabel}
-                          cancelShortcutLabel="Esc"
-                          level={speechInput.level}
-                          recordingStartedAt={speechInput.recordingStartedAt}
-                          disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
-                          onStop={() => void speechInput.stop()}
-                          onCancel={() => speechInput.cancel()}
-                          onSkipPostProcessing={() => speechInput.skipPostProcessing()}
-                        />
-                        <ComposerSpeechButton
-                          state={speechInput.state}
-                          shortcutLabel={dictationShortcutLabel}
-                          disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
-                        />
-                      </>
-                    ) : null}
-                    <VoiceInputSetup
-                      environmentId={speechInput.transcriptionEnvironmentId}
-                      open={speechInput.setup.open}
-                      step={speechInput.setup.step}
-                      status={speechInput.status}
-                      model={speechInput.setup.model}
-                      language={speechInput.setup.language}
-                      downloading={speechInput.setup.downloading}
-                      error={speechInput.setup.error}
-                      onOpenChange={speechInput.setup.setOpen}
-                      onRetryCatalog={speechInput.setup.retryCatalog}
-                      onDownload={() => void speechInput.setup.download()}
-                      onCancelDownload={() => void speechInput.setup.cancelDownload()}
-                      onStartRecording={() => void speechInput.setup.startRecording()}
-                    />
-                  </ComposerFooterPrimaryActions>
+                      )}
+                      voiceInputActive={voiceInputActive}
+                      isSendBusy={isSendBusy}
+                      isSendHeld={composerSendHeld}
+                      sendDisabledReason={primaryActionSendDisabledReason}
+                      isEnvironmentUnavailable={primaryActionEnvironmentUnavailable}
+                      isPreparingWorktree={isPreparingWorktree}
+                      hasSendableContent={hasMessageToSend || voiceInputActive}
+                      canResume={showResumeAction}
+                      preserveComposerFocusOnPointerDown={isMobileViewport}
+                      isEditingQueuedMessage={isEditingQueuedMessage}
+                      onSubmitMessage={handleSubmitMessageStable}
+                      onResume={onResume}
+                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                      onInterrupt={handleInterruptPrimaryActionStable}
+                      compactBeforeSendTokens={props.resumeCompactionTokens}
+                      hideCompactToggle={dictationTakesFooter}
+                      keepFullHistory={props.keepFullHistory}
+                      onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+                    >
+                      {speechInput.available ? (
+                        <>
+                          <ComposerSpeechRecordingPill
+                            state={speechInput.state}
+                            progress={null}
+                            finishShortcutLabel={dictationShortcutLabel}
+                            cancelShortcutLabel="Esc"
+                            level={speechInput.level}
+                            recordingStartedAt={speechInput.recordingStartedAt}
+                            disabled={dictationDisabled}
+                            onStart={() => void speechInput.start()}
+                            onStop={() => void speechInput.stop()}
+                            onCancel={() => speechInput.cancel()}
+                            onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                          />
+                          <ComposerSpeechButton
+                            state={speechInput.state}
+                            shortcutLabel={dictationShortcutLabel}
+                            disabled={dictationDisabled}
+                            onStart={() => void speechInput.start()}
+                          />
+                        </>
+                      ) : null}
+                      <VoiceInputSetup
+                        environmentId={speechInput.transcriptionEnvironmentId}
+                        open={speechInput.setup.open}
+                        step={speechInput.setup.step}
+                        status={speechInput.status}
+                        model={speechInput.setup.model}
+                        language={speechInput.setup.language}
+                        downloading={speechInput.setup.downloading}
+                        error={speechInput.setup.error}
+                        onOpenChange={speechInput.setup.setOpen}
+                        onRetryCatalog={speechInput.setup.retryCatalog}
+                        onDownload={() => void speechInput.setup.download()}
+                        onCancelDownload={() => void speechInput.setup.cancelDownload()}
+                        onStartRecording={() => void speechInput.setup.startRecording()}
+                      />
+                    </ComposerFooterPrimaryActions>
+                  )}
                 </div>
               </div>
             )}

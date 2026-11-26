@@ -21,6 +21,8 @@ import {
   type RunAttemptId,
   type ServerProviderSkill,
   type RunId,
+  type TeamMember,
+  type TeamThreadNote,
   ThreadId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -83,6 +85,7 @@ import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
+  interleaveTeamThreadNoteRows,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
@@ -144,6 +147,7 @@ import {
 } from "./timelineViewport";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
+import { TeamThreadNoteCard } from "../team/TeamThreadNoteCard";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 import { useClientSettings } from "../../hooks/useSettings";
 
@@ -347,6 +351,18 @@ interface MessagesTimelineProps {
   findQuery?: string;
   activeFindMatch?: ThreadFindMatch | null;
   findNavigationId?: number;
+  teamNotes?: ReadonlyArray<TeamThreadNote> | undefined;
+  teamNoteContext?: {
+    readonly teamEnvironmentId: EnvironmentId;
+    readonly currentMember: TeamMember | null;
+    readonly canResolveNotes: boolean;
+    readonly isComposerEmpty: boolean;
+    readonly isThreadRunning: boolean;
+    readonly onDispatchAcceptedNote?: (input: {
+      readonly note: TeamThreadNote;
+      readonly queueBehindActive: boolean;
+    }) => Promise<void>;
+  } | null;
 }
 
 export function MessagesTimeline(props: MessagesTimelineProps) {
@@ -441,6 +457,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   emptyPlaceholderInset,
   topFadeEnabled = false,
   historyControls,
+  teamNotes,
+  teamNoteContext = null,
 }: MessagesTimelineProps) {
   const gt = useGT();
   const canvas = useChatCanvas();
@@ -781,7 +799,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     toolCallVisibility,
     revealedMessageId,
   });
-  const rows = useStableRows(rawRows, listIdentityKey);
+  const stableBaseRows = useStableRows(rawRows, listIdentityKey);
+  const rows =
+    teamNotes && teamNotes.length > 0
+      ? interleaveTeamThreadNoteRows(stableBaseRows, teamNotes)
+      : stableBaseRows;
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
     const entries =
@@ -1186,6 +1208,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
     workGroupViewState,
+    teamNoteContext,
   };
   const compactionAwaitingRow =
     isCompacting &&
@@ -1749,9 +1772,28 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
+      {row.kind === "team-note" ? <TeamNoteTimelineRow row={row} /> : null}
     </div>
   );
 });
+
+function TeamNoteTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "team-note" }> }) {
+  const { teamNoteContext } = use(TimelineRowCtx);
+  if (!teamNoteContext) return null;
+  return (
+    <TeamThreadNoteCard
+      note={row.note}
+      teamEnvironmentId={teamNoteContext.teamEnvironmentId}
+      currentMember={teamNoteContext.currentMember}
+      canResolveNotes={teamNoteContext.canResolveNotes}
+      isComposerEmpty={teamNoteContext.isComposerEmpty}
+      isThreadRunning={teamNoteContext.isThreadRunning}
+      {...(teamNoteContext.onDispatchAcceptedNote
+        ? { onDispatchAcceptedNote: teamNoteContext.onDispatchAcceptedNote }
+        : {})}
+    />
+  );
+}
 
 function WorktreeSetupTimelineRow({
   row,

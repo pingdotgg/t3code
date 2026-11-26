@@ -210,6 +210,7 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly bootstrap?: StartThreadBootstrap;
   readonly sourceProposedPlan?: { readonly threadId: ThreadId; readonly planId: PlanId };
   readonly dispatchMode?: "auto" | "queue" | "steer" | "restart" | "start";
+  readonly teamAcceptedNotes?: ReadonlyArray<import("@t3tools/contracts").TeamAcceptedNoteRef>;
   /** Start a new provider session; needs the server's `freshContext` capability. */
   readonly freshContext?: boolean;
   /** Defaults to true. Callers with their own retry queue opt out so a dead socket fails fast. */
@@ -881,6 +882,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
           ? {}
           : { sourcePlanRef: input.sourceProposedPlan }),
         ...(input.freshContext ? { freshContext: true } : {}),
+        ...(input.teamAcceptedNotes ? { teamAcceptedNotes: input.teamAcceptedNotes } : {}),
         dispatchMode: { type: "start_immediately" },
       },
       resend,
@@ -911,6 +913,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ? {}
         : { sourcePlanRef: input.sourceProposedPlan }),
       ...(input.freshContext ? { freshContext: true } : {}),
+      ...(input.teamAcceptedNotes ? { teamAcceptedNotes: input.teamAcceptedNotes } : {}),
       ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
       dispatchMode,
     },

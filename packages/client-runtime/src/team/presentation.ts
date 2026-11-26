@@ -1,19 +1,29 @@
 import {
   canChangeThreadTeamView,
+  canMemberAccessTeamEnvironment,
   canMemberCreateThreadInTeamView,
   canMemberInterruptTeamTurn,
+  canMemberLeaveTeamThreadNote,
   canMemberManageTeamQueuedRun,
   canMemberPromoteTeamQueuedRun,
   canMemberReadTeamView,
   canMemberSteerActiveTeamTurn,
   canToggleTeamThreadLock,
   isTeamAdminRole,
+  resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   type EnvironmentId,
+  type ProjectId,
+  type RepositoryIdentity,
+  type TeamEnvironment,
   type TeamMemberId,
+  type TeamProjectAssignment,
+  type TeamThreadEnvironmentAccess,
+  type TeamThreadNote,
   type TeamThreadPostBlockReason,
   type TeamView,
+  type TeamWorkspace,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { TeamEnvironmentState } from "./state.ts";
@@ -505,4 +515,169 @@ export function resolveTeamThreadTurnControls(input: {
     canInterrupt: interrupt.canInterrupt,
     isExplicitAdminInterrupt: interrupt.isExplicitAdminInterrupt,
   };
+}
+
+export interface ResolvedProjectTeamAssignment {
+  readonly teamEnvironmentId: EnvironmentId;
+  readonly team: TeamWorkspace;
+  readonly assignment: TeamProjectAssignment;
+  readonly teamState: TeamEnvironmentState;
+}
+
+export function extractProjectRepoIdentityKey(
+  repositoryIdentity: RepositoryIdentity | null | undefined,
+): string | null {
+  if (!repositoryIdentity) return null;
+  return repositoryIdentity.origin?.canonicalKey ?? repositoryIdentity.canonicalKey;
+}
+
+/**
+ * Resolves whether a project (on a Team Server or a correlated local checkout) belongs to a team.
+ * Correlates clones across environments using T3 Code's canonical `RepositoryIdentity`.
+ */
+export function resolveProjectTeamAssignment(input: {
+  readonly project:
+    | {
+        readonly id: ProjectId;
+        readonly environmentId: EnvironmentId;
+        readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+      }
+    | null
+    | undefined;
+  readonly teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>;
+}): ResolvedProjectTeamAssignment | null {
+  const { project, teamStates } = input;
+  if (!project) return null;
+  const directTeamState = teamStates.get(project.environmentId);
+  if (directTeamState && directTeamState.team !== null) {
+    const direct = directTeamState.projectAssignmentByProjectId.get(project.id);
+    if (direct) {
+      return {
+        teamEnvironmentId: project.environmentId,
+        team: directTeamState.team,
+        assignment: direct,
+        teamState: directTeamState,
+      };
+    }
+  }
+  const repoKey = extractProjectRepoIdentityKey(project.repositoryIdentity);
+  if (repoKey !== null) {
+    for (const [envId, state] of teamStates) {
+      if (state.team === null) continue;
+      const correlated = state.projectAssignmentByRepoKey.get(repoKey);
+      if (correlated) {
+        return {
+          teamEnvironmentId: envId,
+          team: state.team,
+          assignment: correlated,
+          teamState: state,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+export function listAccessibleTeamEnvironments(
+  teamState: TeamEnvironmentState | null | undefined,
+): ReadonlyArray<TeamEnvironment> {
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return [];
+  }
+  return teamState.environments.filter((env) =>
+    canMemberAccessTeamEnvironment(teamState.currentMember, env),
+  );
+}
+
+export const TEAM_THREAD_ENV_ACCESS_ALLOWED: TeamThreadEnvironmentAccess = {
+  canExecute: true,
+  reason: "ok",
+};
+
+export function resolveTeamThreadEnvironmentAccessForClient(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly viewingOnLocalExecutionEnvironment?: boolean;
+}): TeamThreadEnvironmentAccess {
+  const { teamState, threadId, viewingOnLocalExecutionEnvironment = false } = input;
+  if (!teamState || teamState.team === null) {
+    return TEAM_THREAD_ENV_ACCESS_ALLOWED;
+  }
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  if (attribution === null) {
+    return TEAM_THREAD_ENV_ACCESS_ALLOWED;
+  }
+  return resolveTeamThreadEnvironmentAccess({
+    member: teamState.currentMember,
+    attribution,
+    environments: teamState.environments,
+    viewingOnLocalExecutionEnvironment,
+  });
+}
+
+export function canCurrentMemberLeaveThreadNote(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): boolean {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return false;
+  }
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  if (!attribution) return false;
+  const view = resolveTeamThreadView({ teamState, threadId });
+  return canMemberLeaveTeamThreadNote({
+    member: teamState.currentMember,
+    attribution,
+    view,
+  });
+}
+
+export function canCurrentMemberResolveThreadNotes(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly viewingOnLocalExecutionEnvironment?: boolean;
+}): boolean {
+  const { teamState, threadId, viewingOnLocalExecutionEnvironment = false } = input;
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return false;
+  }
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  if (!attribution) return false;
+  if (attribution.isLocalSynced === true) {
+    return attribution.creatorMemberId === teamState.currentMember.id;
+  }
+  const postPermission = resolveTeamThreadPostPermission({ teamState, threadId });
+  if (!postPermission.canPost) return false;
+  const envAccess = resolveTeamThreadEnvironmentAccessForClient({
+    teamState,
+    threadId,
+    viewingOnLocalExecutionEnvironment,
+  });
+  return envAccess.canExecute;
+}
+
+const EMPTY_THREAD_NOTES: ReadonlyArray<TeamThreadNote> = [];
+
+export function resolveTeamThreadNotes(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): ReadonlyArray<TeamThreadNote> {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null) return EMPTY_THREAD_NOTES;
+  return teamState.threadNotesByThreadId.get(threadId) ?? EMPTY_THREAD_NOTES;
+}
+
+export function resolveTeamThreadPendingNotes(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): ReadonlyArray<TeamThreadNote> {
+  return resolveTeamThreadNotes(input).filter((note) => note.status === "pending");
+}
+
+export function resolveTeamThreadAcceptedNotes(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): ReadonlyArray<TeamThreadNote> {
+  return resolveTeamThreadNotes(input).filter((note) => note.status === "accepted");
 }
