@@ -725,6 +725,21 @@ export interface AcpAdapterV2Flavor {
    * through `ACP_OPEN_REPLY_QUIET_LIMIT` instead of closing early.
    */
   readonly hasPendingReply?: (sessionId: string) => Effect.Effect<boolean>;
+  /**
+   * True when the agent owns background work outside ACP's wire state (such as native
+   * subagents, swarms, or queued wakes). `purpose: "idle_release"` also covers live
+   * waiting workers whose process state would be lost on idle teardown, while
+   * `"session_replace"` checks only actively executing work so rollbacks stay possible.
+   */
+  readonly hasPendingBackgroundWork?: (input: {
+    readonly sessionId: string;
+    readonly purpose: "idle_release" | "session_replace";
+  }) => Effect.Effect<boolean>;
+  /**
+   * Skip `session/close` during scope teardown when the agent treats it as a destructive
+   * force-cancel rather than a graceful detach.
+   */
+  readonly skipCloseSessionOnTeardown?: boolean;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
@@ -8118,6 +8133,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           commitSessionState: (
             replacement: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) => Effect.Effect<void>,
+          beforeCommit?: Effect.Effect<
+            void,
+            EffectAcpErrors.AcpError | ProviderAdapter.ProviderAdapterProtocolError
+          >,
         ) {
           const previousScope = runtimeScope;
           const previousGeneration = yield* Ref.get(runtimeCallbackGeneration);
@@ -8202,6 +8221,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               Effect.uninterruptible(
                 Effect.gen(function* () {
                   yield* awaitAdmittedNativeResponses;
+                  if (beforeCommit !== undefined) {
+                    yield* beforeCommit.pipe(
+                      Effect.tapError(() =>
+                        quarantineNativeTransportAtGeneration(replacementGeneration),
+                      ),
+                    );
+                  }
                   yield* wireAcpRuntimeHandlers(
                     replacementExit.value.replacementRuntime,
                     replacementGeneration,
@@ -8290,6 +8316,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: ThreadId | null,
             candidate: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) {
+            itemIdentityVersion = 2;
             rememberTerminalEnvironment(candidate.sessionId, yield* readMcpContext(threadId));
             yield* Ref.set(runtimeRestartRequired, false);
             yield* Ref.set(activeSessionId, candidate.sessionId);
@@ -10397,7 +10424,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const transportHadOutstandingResponses = yield* closeNativeTransport;
             const sessionCapabilities =
               started.initializeResult.agentCapabilities?.sessionCapabilities;
-            if (sessionCapabilities?.close != null) {
+            if (sessionCapabilities?.close != null && flavor.skipCloseSessionOnTeardown !== true) {
               yield* runtimeTransitionPermit.withPermitsIfAvailable(1)(
                 Effect.gen(function* () {
                   const teardownState = yield* Ref.get(runtimeTeardownState);
@@ -10427,8 +10454,65 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         // A replacement agent can negotiate capabilities the initial agent did not have.
         const canReportBackgroundWork =
-          continuationRequests !== undefined &&
-          (flavor.followAgentWorkState === true || Boolean(flavor.enablePostSettleContinuation));
+          flavor.hasPendingBackgroundWork !== undefined ||
+          flavor.hasPendingReply !== undefined ||
+          (continuationRequests !== undefined &&
+            (flavor.followAgentWorkState === true || Boolean(flavor.enablePostSettleContinuation)));
+        const checkPendingBackgroundWork = Effect.fn("AcpAdapterV2.checkPendingBackgroundWork")(
+          function* (purpose: "idle_release" | "session_replace") {
+            const rootSessionId = yield* Ref.get(activeSessionId);
+            if (postSettleContinuationEnabled || followsAgentWorkState) {
+              if (
+                followsAgentWorkState &&
+                rootSessionId !== null &&
+                hasWorkingDescendant(rootSessionId)
+              )
+                return true;
+              if (
+                followsAgentWorkState &&
+                (agentWork?.state === "running" ||
+                  agentWork?.state === "requires_action" ||
+                  agentRequests.size > 0)
+              )
+                return true;
+              if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
+              if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
+              if (yield* Ref.get(continuationRequested)) return true;
+              if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+              const active = yield* Ref.get(activeTurn);
+              if (
+                active !== null &&
+                [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
+              ) {
+                return true;
+              }
+              const carryover = yield* Ref.get(carryoverSubagents);
+              if (
+                carryover !== null &&
+                carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
+              ) {
+                return true;
+              }
+            }
+            if (rootSessionId !== null) {
+              if (flavor.hasPendingBackgroundWork !== undefined) {
+                if (
+                  yield* flavor.hasPendingBackgroundWork({
+                    sessionId: rootSessionId,
+                    purpose,
+                  })
+                ) {
+                  return true;
+                }
+              } else if (flavor.hasPendingReply !== undefined) {
+                if (yield* flavor.hasPendingReply(rootSessionId)) {
+                  return true;
+                }
+              }
+            }
+            return false;
+          },
+        );
         const sessionRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver,
@@ -10450,42 +10534,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }),
           ...(canReportBackgroundWork
             ? {
-                hasPendingBackgroundWork: Effect.gen(function* () {
-                  if (!postSettleContinuationEnabled && !followsAgentWorkState) return false;
-                  const rootSessionId = yield* Ref.get(activeSessionId);
-                  if (
-                    followsAgentWorkState &&
-                    rootSessionId !== null &&
-                    hasWorkingDescendant(rootSessionId)
-                  )
-                    return true;
-                  if (
-                    followsAgentWorkState &&
-                    (agentWork?.state === "running" ||
-                      agentWork?.state === "requires_action" ||
-                      agentRequests.size > 0)
-                  )
-                    return true;
-                  if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
-                  if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
-                  if (yield* Ref.get(continuationRequested)) return true;
-                  if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
-                  const active = yield* Ref.get(activeTurn);
-                  if (
-                    active !== null &&
-                    [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
-                  ) {
-                    return true;
-                  }
-                  const carryover = yield* Ref.get(carryoverSubagents);
-                  if (
-                    carryover !== null &&
-                    carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
-                  ) {
-                    return true;
-                  }
-                  return false;
-                }),
+                hasPendingBackgroundWork: checkPendingBackgroundWork("idle_release"),
               }
             : {}),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
@@ -10493,26 +10542,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return yield* runtimeTransitionPermit.withPermit(
                 Effect.gen(function* () {
                   if (threadInput.forceNewNativeThread) {
-                    const currentTurn = yield* Ref.get(activeTurn);
-                    const pendingWork = yield* (
-                      sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)
-                    );
-                    if (currentTurn !== null || pendingWork)
-                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                        driver,
-                        detail:
-                          "Cannot replace ACP session while a turn or background work is active",
-                      });
+                    const assertCanReplaceSession = Effect.gen(function* () {
+                      const currentTurn = yield* Ref.get(activeTurn);
+                      const pendingWork = canReportBackgroundWork
+                        ? yield* checkPendingBackgroundWork("session_replace")
+                        : false;
+                      if (currentTurn !== null || pendingWork) {
+                        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver,
+                          detail:
+                            "Cannot replace ACP session while a turn or background work is active",
+                        });
+                      }
+                    });
+                    yield* assertCanReplaceSession;
                     yield* awaitRuntimeTeardown();
-                    const previousItemIdentityVersion = itemIdentityVersion;
-                    itemIdentityVersion = 2;
+                    const previousPendingTerminalEnvironment = pendingTerminalEnvironment;
                     prepareTerminalEnvironment(yield* readMcpContext(threadInput.threadId));
-                    yield* startReplacementAcpRuntime(threadInput.threadId, (candidate) =>
-                      commitReplacementSession(threadInput.threadId, candidate),
+                    yield* startReplacementAcpRuntime(
+                      threadInput.threadId,
+                      (candidate) => commitReplacementSession(threadInput.threadId, candidate),
+                      assertCanReplaceSession,
                     ).pipe(
                       Effect.tapError(() =>
                         Effect.sync(() => {
-                          itemIdentityVersion = previousItemIdentityVersion;
+                          pendingTerminalEnvironment = previousPendingTerminalEnvironment;
                         }),
                       ),
                     );
@@ -11236,15 +11290,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeTransitionPermit
               .withPermit(
                 Effect.gen(function* () {
-                  const currentTurn = yield* Ref.get(activeTurn);
-                  if (currentTurn !== null) {
-                    return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                      driver,
-                      detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
-                    });
-                  }
+                  let blockedByGuard = false;
+                  const assertCanRollbackSession = Effect.gen(function* () {
+                    const currentTurn = yield* Ref.get(activeTurn);
+                    if (currentTurn !== null) {
+                      blockedByGuard = true;
+                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver,
+                        detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
+                      });
+                    }
+                    const pendingWork = canReportBackgroundWork
+                      ? yield* checkPendingBackgroundWork("session_replace")
+                      : false;
+                    if (pendingWork) {
+                      blockedByGuard = true;
+                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver,
+                        detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while background work is active`,
+                      });
+                    }
+                  });
+                  yield* assertCanRollbackSession;
                   yield* awaitRuntimeTeardown();
-                  itemIdentityVersion = 2;
+                  const previousPendingTerminalEnvironment = pendingTerminalEnvironment;
                   prepareTerminalEnvironment(
                     yield* readMcpContext(rollbackInput.providerThread.appThreadId),
                   );
@@ -11252,7 +11321,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     rollbackInput.providerThread.appThreadId,
                     (candidate) =>
                       commitReplacementSession(rollbackInput.providerThread.appThreadId, candidate),
-                  ).pipe(Effect.retry({ times: 1 }));
+                    assertCanRollbackSession,
+                  ).pipe(
+                    Effect.retry({ times: 1, while: () => !blockedByGuard }),
+                    Effect.tapError(() =>
+                      Effect.sync(() => {
+                        pendingTerminalEnvironment = previousPendingTerminalEnvironment;
+                      }),
+                    ),
+                  );
                   const now = yield* DateTime.now;
                   return {
                     providerThread: {

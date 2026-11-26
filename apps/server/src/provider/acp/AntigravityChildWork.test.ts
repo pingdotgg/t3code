@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- fixtures name transcript files by URL.
+import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -13,6 +14,7 @@ import {
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
   readAntigravityChildWork,
+  readAntigravityHasPendingBackgroundWork,
   readAntigravityPendingReply,
 } from "./AntigravityChildWork.ts";
 import { sanitizeAntigravityToolPayload } from "./AntigravityProtocol.ts";
@@ -785,6 +787,311 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         yield* fs.remove(transcriptPath);
         yield* fs.symlink(external, transcriptPath);
         expect(yield* pending()).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "detects active and waiting swarms, detached subagents, and wakes while ignoring pre-stop records",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-bg-work-" });
+        const write = (conversationId: string, segments: ReadonlyArray<string>, value: unknown) => {
+          const file = path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            conversationId,
+            ".system_generated",
+            ...segments,
+          );
+          return fs
+            .makeDirectory(path.dirname(file), { recursive: true })
+            .pipe(
+              Effect.andThen(
+                fs.writeFileString(file, typeof value === "string" ? value : JSON.stringify(value)),
+              ),
+            );
+        };
+        const hasPending = (purpose?: "idle_release" | "session_replace") =>
+          readAntigravityHasPendingBackgroundWork({
+            profileDirectory: profile,
+            sessionId: ROOT,
+            ...(purpose === undefined ? {} : { purpose }),
+          });
+        const workerA = "11111111-1111-1111-1111-111111111111";
+        const workerB = "22222222-2222-2222-2222-222222222222";
+        const detachedId = "33333333-3333-3333-3333-333333333333";
+
+        // Clean empty profile stays releasable.
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        // Coordinator-only or killed swarm returns false.
+        yield* write(ROOT, ["swarm", "members.json"], {
+          members: {
+            coordinator: {
+              conversation_id: ROOT,
+              role: "coordinator",
+              phase: "RUNNING",
+              wake_mode: "mentions",
+              killed: false,
+            },
+            "worker-dead": {
+              conversation_id: workerB,
+              role: "worker",
+              phase: "KILLED",
+              wake_mode: "mentions",
+              killed: true,
+            },
+          },
+        });
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        // Waiting swarm worker (wake_mode: "mentions") pins idle_release without blocking session_replace.
+        yield* write(ROOT, ["swarm", "members.json"], {
+          members: {
+            coordinator: {
+              conversation_id: ROOT,
+              role: "coordinator",
+              phase: "RUNNING",
+              wake_mode: "mentions",
+              killed: false,
+            },
+            "worker-waiting": {
+              conversation_id: workerA,
+              role: "worker",
+              phase: "RUNNING",
+              wake_mode: "mentions",
+              last_read_seq: 4,
+              last_nudged_seq: 4,
+              killed: false,
+            },
+          },
+        });
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        // Actively working swarm worker (wake_mode: "working") returns true for both purposes.
+        yield* write(ROOT, ["swarm", "members.json"], {
+          members: {
+            "worker-active": {
+              conversation_id: workerA,
+              role: "worker",
+              phase: "RUNNING",
+              wake_mode: "working",
+              killed: false,
+            },
+          },
+        });
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+
+        // A worker predating a system stop notice does not pin the session.
+        yield* write(workerA, ["messages", "brief-old.json"], {
+          sender: ROOT,
+          timestamp: "2026-11-23T01:00:00Z",
+          content: "brief",
+        });
+        yield* write(ROOT, ["messages", "stop-1.json"], {
+          id: "stop-1",
+          sender: "system",
+          priority: "MESSAGE_PRIORITY_LOW",
+          timestamp: "2026-11-23T01:10:00Z",
+          content:
+            "[Notice] All your subagents and background tasks have been stopped due to server restart.",
+        });
+        yield* write(ROOT, ["messages", "read.json"], { "stop-1": true });
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        // A worker woken after a force-cancellation notice is live again.
+        yield* write(ROOT, ["messages", "stop-2.json"], {
+          id: "stop-2",
+          sender: "system",
+          priority: "MESSAGE_PRIORITY_LOW",
+          timestamp: "2026-11-23T01:20:00Z",
+          content:
+            "[Notice] All your subagents and background tasks have been stopped due to user force cancellation.",
+        });
+        yield* write(ROOT, ["messages", "read.json"], { "stop-1": true, "stop-2": true });
+        yield* write(workerA, ["messages", "wake-new.json"], {
+          sender: ROOT,
+          timestamp: "2026-11-23T01:25:00Z",
+          content: "resume work",
+        });
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+
+        // Remove swarm file and test detached invoke_subagent lifecycle against the stop notice.
+        yield* fs.remove(
+          path.join(profile, "antigravity-acp", "brain", ROOT, ".system_generated", "swarm"),
+          { recursive: true },
+        );
+        yield* write(ROOT, ["subagents", `${detachedId}.json`], {
+          conversationId: detachedId,
+          state: "SUBAGENT_STATE_ALIVE",
+        });
+        // Predates stop-2 -> ignored.
+        yield* write(detachedId, ["messages", "launch-old.json"], {
+          sender: ROOT,
+          timestamp: "2026-11-23T01:15:00Z",
+          content: "old prompt",
+        });
+        expect(yield* hasPending("idle_release")).toBe(false);
+
+        // Revived after stop-2 -> pending until child reports.
+        yield* write(detachedId, ["messages", "launch-new.json"], {
+          sender: ROOT,
+          timestamp: "2026-11-23T01:25:00Z",
+          content: "new prompt",
+        });
+        expect(yield* hasPending("idle_release")).toBe(true);
+
+        // Child reported -> no longer pending.
+        yield* write(ROOT, ["messages", "report-1.json"], {
+          id: "report-1",
+          sender: detachedId,
+          priority: "MESSAGE_PRIORITY_LOW",
+          timestamp: "2026-11-23T01:26:00Z",
+          content: "done",
+        });
+        yield* write(ROOT, ["messages", "read.json"], {
+          "stop-1": true,
+          "stop-2": true,
+          "report-1": true,
+        });
+        expect(yield* hasPending("idle_release")).toBe(false);
+
+        // Parent sent a follow-up prompt after the child reported -> active again.
+        yield* write(detachedId, ["messages", "followup.json"], {
+          sender: ROOT,
+          timestamp: "2026-11-23T01:27:00Z",
+          content: "follow up",
+        });
+        expect(yield* hasPending("idle_release")).toBe(true);
+
+        // Killed detached child -> false.
+        yield* write(ROOT, ["subagents", `${detachedId}.json`], {
+          conversationId: detachedId,
+          state: "SUBAGENT_STATE_KILLED",
+        });
+        expect(yield* hasPending("idle_release")).toBe(false);
+
+        // Unread high-priority wake holds the session open even with no children.
+        yield* write(ROOT, ["messages", "wake-unread.json"], {
+          id: "wake-unread",
+          sender: `${ROOT}/task-1`,
+          priority: "MESSAGE_PRIORITY_HIGH",
+          timestamp: "2026-11-23T01:28:00Z",
+        });
+        expect(yield* hasPending("idle_release")).toBe(true);
+
+        // Corrupt read.json is treated as unknown for lifecycle checks while keeping pendingReply fail-closed.
+        yield* write(ROOT, ["messages", "read.json"], "{truncated");
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+        expect(
+          yield* readAntigravityPendingReply({ profileDirectory: profile, sessionId: ROOT }),
+        ).toBe(false);
+
+        // Mark wake read, then verify a corrupt parent message neither masks a working swarm nor
+        // reports "no work" on its own.
+        yield* write(ROOT, ["messages", "read.json"], {
+          "stop-1": true,
+          "stop-2": true,
+          "report-1": true,
+          "wake-unread": true,
+        });
+        yield* write(ROOT, ["messages", "corrupt.json"], "{truncated");
+        yield* write(ROOT, ["swarm", "members.json"], {
+          members: {
+            "worker-working": {
+              conversation_id: workerA,
+              role: "worker",
+              phase: "RUNNING",
+              wake_mode: "working",
+              killed: false,
+            },
+          },
+        });
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+
+        // Remove swarm: unreadable parent inbox still conservatively returns true until removed.
+        yield* fs.remove(
+          path.join(profile, "antigravity-acp", "brain", ROOT, ".system_generated", "swarm"),
+          { recursive: true },
+        );
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+
+        yield* fs.remove(
+          path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            ROOT,
+            ".system_generated",
+            "messages",
+            "corrupt.json",
+          ),
+        );
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        // Decoded non-waking final transcript step stays releasable; partial tail preserves unknown.
+        yield* write(
+          ROOT,
+          ["logs", "transcript.jsonl"],
+          `${JSON.stringify({ step_index: 0, type: "PLANNER_RESPONSE", status: "DONE", content: "ok" })}\n`,
+        );
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        yield* write(
+          ROOT,
+          ["logs", "transcript.jsonl"],
+          `${JSON.stringify({ step_index: 0, type: "PLANNER_RESPONSE", status: "DONE", content: "ok" })}\n{"type":"SYSTEM_MESSAGE"`,
+        );
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+        expect(
+          yield* readAntigravityPendingReply({ profileDirectory: profile, sessionId: ROOT }),
+        ).toBe(false);
+
+        yield* write(ROOT, ["logs", "transcript.jsonl"], "");
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        // Transient lstat I/O failure on messages/ is preserved conservatively instead of treated as empty.
+        const messagesDir = path.join(
+          profile,
+          "antigravity-acp",
+          "brain",
+          ROOT,
+          ".system_generated",
+          "messages",
+        );
+        const realLstat = NodeFS.promises.lstat.bind(NodeFS.promises);
+        const lstatSpy = vi.spyOn(NodeFS.promises, "lstat").mockImplementation((async (
+          targetPath,
+          options,
+        ) => {
+          if (String(targetPath) === messagesDir) {
+            throw Object.assign(new Error("EIO"), { code: "EIO" });
+          }
+          return realLstat(targetPath, options);
+        }) as typeof NodeFS.promises.lstat);
+        yield* Effect.gen(function* () {
+          expect(yield* hasPending("idle_release")).toBe(true);
+          expect(yield* hasPending("session_replace")).toBe(true);
+        }).pipe(Effect.ensuring(Effect.sync(() => lstatSpy.mockRestore())));
+
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
       }),
   );
 });

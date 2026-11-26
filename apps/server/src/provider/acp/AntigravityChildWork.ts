@@ -13,7 +13,12 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
+import {
+  antigravityManagedPath,
+  antigravityProfileRoot,
+  inspectAntigravityManagedPath,
+  inspectAntigravityProfileRoot,
+} from "./AntigravityProfilePaths.ts";
 import { boundAntigravityToolText, isCutAntigravityToolText } from "./AntigravityProtocol.ts";
 
 // Field numbers from the runtime's trajectory protos (exa.cortex_pb).
@@ -802,63 +807,105 @@ const decodeInboxPriorityMessage = Schema.decodeUnknownOption(
   ),
 );
 
-async function hasUnreadWakingInboxMessage(
+type BackgroundWorkCheckState = "yes" | "no" | "unknown";
+
+function nodeErrorCode(cause: unknown): string | undefined {
+  return typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    typeof cause.code === "string"
+    ? cause.code
+    : undefined;
+}
+
+async function inspectUnreadWakingInboxMessage(
   profileRoot: string,
   sessionId: string,
-): Promise<boolean> {
+): Promise<BackgroundWorkCheckState> {
   const directory = ["antigravity-acp", "brain", sessionId, ".system_generated", "messages"];
-  const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
-  if (inbox === undefined) return false;
+  const inbox = await inspectAntigravityManagedPath(profileRoot, directory, "directory");
+  if (inbox.status === "missing" || inbox.status === "invalid") return "no";
+  if (inbox.status === "error") return "unknown";
   const entries = await NodeFSP.readdir(inbox.path).catch(() => undefined);
-  if (entries === undefined) return false;
+  if (entries === undefined) return "unknown";
   const messageNames = entries.filter((name) => name.endsWith(".json") && name !== "read.json");
-  if (messageNames.length === 0 || messageNames.length > MAX_MESSAGE_FILES) return false;
+  if (messageNames.length === 0) return "no";
+  if (messageNames.length > MAX_MESSAGE_FILES) return "unknown";
   let readReceipts: Readonly<Record<string, boolean>> = {};
   if (entries.includes("read.json")) {
-    const receiptFile = await antigravityManagedPath(
+    const receiptFile = await inspectAntigravityManagedPath(
       profileRoot,
       [...directory, "read.json"],
       "file",
     );
-    if (receiptFile === undefined || receiptFile.info.size > MAX_STEP_BYTES) return false;
-    const rawReceipts = await NodeFSP.readFile(receiptFile.path, "utf8").catch(() => undefined);
-    if (rawReceipts === undefined) return false;
-    const decodedReceipts = decodeReadReceipts(rawReceipts);
-    if (Option.isNone(decodedReceipts)) return false;
-    readReceipts = decodedReceipts.value;
+    if (receiptFile.status !== "missing") {
+      if (receiptFile.status !== "ok" || receiptFile.info.size > MAX_STEP_BYTES) return "unknown";
+      const rawReceipts = await NodeFSP.readFile(receiptFile.path, "utf8").catch(() => undefined);
+      if (rawReceipts === undefined) return "unknown";
+      const decodedReceipts = decodeReadReceipts(rawReceipts);
+      if (Option.isNone(decodedReceipts)) return "unknown";
+      readReceipts = decodedReceipts.value;
+    }
   }
+  let unknown = false;
   for (const name of messageNames) {
     const fileId = name.slice(0, -5);
     if (readReceipts[fileId] === true) continue;
-    const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
-    if (file === undefined || file.info.size > MAX_STEP_BYTES) continue;
+    const file = await inspectAntigravityManagedPath(profileRoot, [...directory, name], "file");
+    if (file.status === "missing") continue;
+    if (file.status !== "ok" || file.info.size > MAX_STEP_BYTES) {
+      unknown = true;
+      continue;
+    }
     const raw = await NodeFSP.readFile(file.path, "utf8").catch(() => undefined);
-    if (raw === undefined) continue;
+    if (raw === undefined) {
+      unknown = true;
+      continue;
+    }
     const decoded = decodeInboxPriorityMessage(raw);
-    if (Option.isNone(decoded)) continue;
+    if (Option.isNone(decoded)) {
+      unknown = true;
+      continue;
+    }
     if (decoded.value.id !== undefined && readReceipts[decoded.value.id] === true) continue;
-    if (decoded.value.priority === HIGH_PRIORITY_MESSAGE) return true;
+    if (decoded.value.priority === HIGH_PRIORITY_MESSAGE) return "yes";
   }
-  return false;
+  return unknown ? "unknown" : "no";
 }
 
-async function readLastTranscriptLine(
+async function inspectLastTranscriptLine(
   profileRoot: string,
   sessionId: string,
-): Promise<Schema.Schema.Type<typeof TranscriptLine> | undefined> {
-  const transcript = await antigravityManagedPath(
+): Promise<
+  | { readonly status: "absent" }
+  | { readonly status: "invalid" }
+  | { readonly status: "unknown" }
+  | { readonly status: "ok"; readonly line: Schema.Schema.Type<typeof TranscriptLine> }
+> {
+  const transcript = await inspectAntigravityManagedPath(
     profileRoot,
     ["antigravity-acp", "brain", sessionId, ".system_generated", "logs", "transcript.jsonl"],
     "file",
   );
-  if (transcript === undefined) return undefined;
-  const handle = await NodeFSP.open(
-    transcript.path,
-    NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
-  );
+  if (transcript.status === "missing") return { status: "absent" };
+  if (transcript.status === "invalid") return { status: "invalid" };
+  if (transcript.status === "error") return { status: "unknown" };
+  let handle: NodeFSP.FileHandle;
+  try {
+    handle = await NodeFSP.open(
+      transcript.path,
+      NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+    );
+  } catch (cause) {
+    const code = nodeErrorCode(cause);
+    if (code === "ENOENT") return { status: "absent" };
+    if (code === "ELOOP") return { status: "invalid" };
+    return { status: "unknown" };
+  }
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.size === 0) return undefined;
+    if (!stat.isFile()) return { status: "invalid" };
+    if (stat.size === 0) return { status: "absent" };
     for (const byteCap of [PENDING_REPLY_TAIL_BYTES, TRANSCRIPT_BYTE_CAP]) {
       const start = Math.max(0, stat.size - byteCap);
       const buffer = Buffer.alloc(stat.size - start);
@@ -868,19 +915,131 @@ async function readLastTranscriptLine(
         end -= 1;
       }
       if (end === 0) {
-        if (start === 0) return undefined;
+        if (start === 0) return { status: "absent" };
         continue;
       }
       const trimmed = buffer.subarray(0, end);
       const lastNewline = trimmed.lastIndexOf(0x0a);
       if (lastNewline === -1 && start > 0) continue;
       const line = trimmed.toString("utf8", lastNewline + 1);
-      return Option.getOrUndefined(decodeTranscriptLine(line));
+      const decoded = decodeTranscriptLine(line);
+      return Option.isSome(decoded) ? { status: "ok", line: decoded.value } : { status: "unknown" };
     }
-    return undefined;
+    return { status: "unknown" };
+  } catch {
+    return { status: "unknown" };
   } finally {
-    await handle.close();
+    await handle.close().catch(() => undefined);
   }
+}
+
+const SYSTEM_STOP_NOTICE_PREFIX =
+  "All your subagents and background tasks have been stopped due to ";
+
+const decodeInboxMessageSummary = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      sender: Schema.String,
+      timestamp: Schema.optional(Schema.String),
+      content: Schema.optional(Schema.String),
+    }),
+  ),
+);
+
+const decodeSwarmMembers = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      members: Schema.optional(
+        Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            conversation_id: Schema.optional(Schema.String),
+            role: Schema.optional(Schema.String),
+            desired_state: Schema.optional(Schema.String),
+            phase: Schema.optional(Schema.String),
+            wake_mode: Schema.optional(Schema.String),
+            killed: Schema.optional(Schema.Boolean),
+            last_read_seq: Schema.optional(Schema.Number),
+            last_nudged_seq: Schema.optional(Schema.Number),
+          }),
+        ),
+      ),
+    }),
+  ),
+);
+
+interface InboxMessageSummary {
+  readonly sender: string;
+  readonly timestampMs: number | undefined;
+  readonly content: string | undefined;
+}
+
+interface InboxMessagesResult {
+  readonly messages: ReadonlyArray<InboxMessageSummary>;
+  readonly incomplete: boolean;
+}
+
+const parseTimestampMs = (timestamp: string | undefined): number | undefined => {
+  if (timestamp === undefined) return undefined;
+  const ms = Date.parse(timestamp);
+  return Number.isFinite(ms) ? ms : undefined;
+};
+
+async function readMessageSummaries(
+  profileRoot: string,
+  conversationId: string,
+): Promise<InboxMessagesResult> {
+  const directory = ["antigravity-acp", "brain", conversationId, ".system_generated", "messages"];
+  const inbox = await inspectAntigravityManagedPath(profileRoot, directory, "directory");
+  if (inbox.status === "missing" || inbox.status === "invalid") {
+    return { messages: [], incomplete: false };
+  }
+  if (inbox.status === "error") return { messages: [], incomplete: true };
+  const entries = await NodeFSP.readdir(inbox.path).catch(() => undefined);
+  if (entries === undefined) return { messages: [], incomplete: true };
+  const names = entries.filter((name) => name.endsWith(".json") && name !== "read.json");
+  if (names.length > MAX_MESSAGE_FILES) return { messages: [], incomplete: true };
+  const messages: Array<InboxMessageSummary> = [];
+  let incomplete = false;
+  for (const name of names) {
+    const file = await inspectAntigravityManagedPath(profileRoot, [...directory, name], "file");
+    if (file.status === "missing") continue;
+    if (file.status !== "ok" || file.info.size > MAX_STEP_BYTES) {
+      incomplete = true;
+      continue;
+    }
+    const raw = await NodeFSP.readFile(file.path, "utf8").catch(() => undefined);
+    if (raw === undefined) {
+      incomplete = true;
+      continue;
+    }
+    const decoded = decodeInboxMessageSummary(raw);
+    if (Option.isNone(decoded)) {
+      incomplete = true;
+      continue;
+    }
+    messages.push({
+      sender: decoded.value.sender,
+      timestampMs: parseTimestampMs(decoded.value.timestamp),
+      content: decoded.value.content,
+    });
+  }
+  return { messages, incomplete };
+}
+
+async function inspectUnansweredWakingTranscriptStep(
+  profileRoot: string,
+  sessionId: string,
+): Promise<BackgroundWorkCheckState> {
+  const lastStep = await inspectLastTranscriptLine(profileRoot, sessionId);
+  if (lastStep.status === "absent" || lastStep.status === "invalid") return "no";
+  if (lastStep.status === "unknown") return "unknown";
+  if (lastStep.line.type !== "SYSTEM_MESSAGE") return "no";
+  return lastStep.line.content === undefined ||
+    lastStep.line.content.includes(`priority=${HIGH_PRIORITY_MESSAGE}`) ||
+    !lastStep.line.content.includes(`priority=${LOW_PRIORITY_MESSAGE}`)
+    ? "yes"
+    : "no";
 }
 
 /**
@@ -894,14 +1053,10 @@ export const readAntigravityPendingReply = Effect.fn("readAntigravityPendingRepl
     const read = async (): Promise<boolean> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
       if (profileRoot === undefined) return false;
-      if (await hasUnreadWakingInboxMessage(profileRoot, input.sessionId)) return true;
-      const lastStep = await readLastTranscriptLine(profileRoot, input.sessionId);
-      if (lastStep === undefined || lastStep.type !== "SYSTEM_MESSAGE") return false;
-      return (
-        lastStep.content === undefined ||
-        lastStep.content.includes(`priority=${HIGH_PRIORITY_MESSAGE}`) ||
-        !lastStep.content.includes(`priority=${LOW_PRIORITY_MESSAGE}`)
-      );
+      if ((await inspectUnreadWakingInboxMessage(profileRoot, input.sessionId)) === "yes") {
+        return true;
+      }
+      return (await inspectUnansweredWakingTranscriptStep(profileRoot, input.sessionId)) === "yes";
     };
     return yield* Effect.tryPromise({
       try: read,
@@ -909,6 +1064,188 @@ export const readAntigravityPendingReply = Effect.fn("readAntigravityPendingRepl
     }).pipe(Effect.orElseSucceed(() => false));
   },
 );
+
+/**
+ * True when Antigravity owns background work for this session that would be lost if the process
+ * were torn down: unread high-priority wakes, unanswered waking steps, live swarm members in
+ * `swarm/members.json`, or active/revived detached subagents in `subagents/*.json`.
+ * Ignores persisted child records predating the latest system stop notice.
+ */
+export const readAntigravityHasPendingBackgroundWork = Effect.fn(
+  "readAntigravityHasPendingBackgroundWork",
+)(function* (input: {
+  readonly profileDirectory: string;
+  readonly sessionId: string;
+  readonly purpose?: "idle_release" | "session_replace";
+}) {
+  if (!NATIVE_ID.test(input.sessionId)) return false;
+  const read = async (): Promise<boolean> => {
+    const profileRootResult = await inspectAntigravityProfileRoot(input.profileDirectory);
+    if (profileRootResult.status === "missing") return false;
+    if (profileRootResult.status === "error") return true;
+    const profileRoot = profileRootResult.path;
+    let unknownState = false;
+    const inboxWakeState = await inspectUnreadWakingInboxMessage(profileRoot, input.sessionId);
+    if (inboxWakeState === "yes") return true;
+    if (inboxWakeState === "unknown") unknownState = true;
+    const transcriptState = await inspectUnansweredWakingTranscriptStep(
+      profileRoot,
+      input.sessionId,
+    );
+    if (transcriptState === "yes") return true;
+    if (transcriptState === "unknown") unknownState = true;
+
+    const parentInbox = await readMessageSummaries(profileRoot, input.sessionId);
+    if (parentInbox.incomplete) {
+      unknownState = true;
+    }
+    let latestSystemStopMs: number | undefined;
+    const reportedSenders = new Set<string>();
+    const latestReportMsBySender = new Map<string, number>();
+    for (const msg of parentInbox.messages) {
+      reportedSenders.add(msg.sender);
+      if (msg.timestampMs !== undefined) {
+        const previousReportMs = latestReportMsBySender.get(msg.sender);
+        if (previousReportMs === undefined || msg.timestampMs > previousReportMs) {
+          latestReportMsBySender.set(msg.sender, msg.timestampMs);
+        }
+        if (msg.sender === "system" && msg.content?.includes(SYSTEM_STOP_NOTICE_PREFIX) === true) {
+          if (latestSystemStopMs === undefined || msg.timestampMs > latestSystemStopMs) {
+            latestSystemStopMs = msg.timestampMs;
+          }
+        }
+      }
+    }
+
+    const swarmLookup = await inspectAntigravityManagedPath(
+      profileRoot,
+      ["antigravity-acp", "brain", input.sessionId, ".system_generated", "swarm", "members.json"],
+      "file",
+    );
+    if (swarmLookup.status === "error") {
+      unknownState = true;
+    }
+    const swarmFile = swarmLookup.status === "ok" ? swarmLookup : undefined;
+    const rawSwarm =
+      swarmFile !== undefined && swarmFile.info.size <= MAX_STEP_BYTES
+        ? await NodeFSP.readFile(swarmFile.path, "utf8").catch(() => undefined)
+        : undefined;
+    const swarm =
+      rawSwarm === undefined ? undefined : Option.getOrUndefined(decodeSwarmMembers(rawSwarm));
+    if (swarmFile !== undefined && swarm === undefined) {
+      unknownState = true;
+    }
+    const swarmChildIds = new Set<string>();
+    for (const member of Object.values(swarm?.members ?? {})) {
+      if (member.conversation_id !== undefined) {
+        swarmChildIds.add(member.conversation_id);
+      }
+    }
+    for (const [name, member] of Object.entries(swarm?.members ?? {})) {
+      if (name === "coordinator" || member.role === "coordinator") continue;
+      if (
+        member.killed === true ||
+        member.phase === "KILLED" ||
+        member.phase === "STOPPED" ||
+        member.desired_state === "KILLED" ||
+        member.desired_state === "STOPPED"
+      ) {
+        continue;
+      }
+      if (latestSystemStopMs !== undefined) {
+        if (member.conversation_id === undefined || !NATIVE_ID.test(member.conversation_id)) {
+          continue;
+        }
+        const childInbox = await readMessageSummaries(profileRoot, member.conversation_id);
+        if (childInbox.incomplete) {
+          unknownState = true;
+          continue;
+        }
+        let latestChildMsgMs: number | undefined;
+        for (const msg of childInbox.messages) {
+          if (
+            msg.timestampMs !== undefined &&
+            (latestChildMsgMs === undefined || msg.timestampMs > latestChildMsgMs)
+          ) {
+            latestChildMsgMs = msg.timestampMs;
+          }
+        }
+        if (latestChildMsgMs === undefined || latestChildMsgMs <= latestSystemStopMs) {
+          continue;
+        }
+      }
+      const isActivelyWorking =
+        member.wake_mode === "working" ||
+        member.phase === "STARTING" ||
+        (member.last_nudged_seq !== undefined &&
+          member.last_read_seq !== undefined &&
+          member.last_nudged_seq > member.last_read_seq);
+      if (isActivelyWorking || input.purpose !== "session_replace") {
+        return true;
+      }
+    }
+
+    const subagentsLookup = await inspectAntigravityManagedPath(
+      profileRoot,
+      ["antigravity-acp", "brain", input.sessionId, ".system_generated", "subagents"],
+      "directory",
+    );
+    if (subagentsLookup.status === "error") {
+      unknownState = true;
+    } else if (subagentsLookup.status === "ok") {
+      const childIds = await listDetachedChildIds(profileRoot, input.sessionId);
+      if (childIds === undefined) {
+        unknownState = true;
+      } else {
+        for (const childId of childIds) {
+          if (swarmChildIds.has(childId)) continue;
+          const subagent = await readDetachedSubagent(profileRoot, input.sessionId, childId);
+          if (subagent === undefined) {
+            unknownState = true;
+            continue;
+          }
+          if (subagent.state === "SUBAGENT_STATE_KILLED") continue;
+          const childInbox = await readMessageSummaries(profileRoot, childId);
+          if (childInbox.incomplete) {
+            unknownState = true;
+            continue;
+          }
+          let latestPromptFromParentMs: number | undefined;
+          for (const msg of childInbox.messages) {
+            if (
+              msg.sender === input.sessionId &&
+              msg.timestampMs !== undefined &&
+              (latestPromptFromParentMs === undefined || msg.timestampMs > latestPromptFromParentMs)
+            ) {
+              latestPromptFromParentMs = msg.timestampMs;
+            }
+          }
+          if (
+            latestSystemStopMs !== undefined &&
+            (latestPromptFromParentMs === undefined ||
+              latestPromptFromParentMs <= latestSystemStopMs)
+          ) {
+            continue;
+          }
+          if (!reportedSenders.has(childId)) return true;
+          const latestReportMs = latestReportMsBySender.get(childId);
+          if (
+            latestPromptFromParentMs !== undefined &&
+            (latestReportMs === undefined || latestPromptFromParentMs > latestReportMs)
+          ) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return unknownState;
+  };
+  return yield* Effect.tryPromise({
+    try: read,
+    catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+  }).pipe(Effect.orElseSucceed(() => true));
+});
 
 /**
  * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:
