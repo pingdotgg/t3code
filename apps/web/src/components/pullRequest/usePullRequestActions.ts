@@ -12,6 +12,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestRef,
   PullRequestSummary,
+  ScopedProjectRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
@@ -350,11 +351,12 @@ type PreparedCheckout = Awaited<
  */
 export function prepareDraftCheckout(
   draftId: DraftId,
+  projectRef: ScopedProjectRef,
   checkout: Promise<PreparedCheckout>,
   isCancelled: () => boolean = () => false,
 ): Promise<PreparedCheckout> {
-  const pointed = checkout.then((prepared) => {
-    if (isCancelled() || prepared._tag === "Failure") return prepared;
+  return trackPendingDraftCheckout(draftId, projectRef, checkout, (prepared) => {
+    if (isCancelled() || prepared._tag === "Failure") return;
     const { branch, worktreePath, pullRequest } = prepared.value;
     // A waiting send resumes right after this and must render the checkout first.
     flushSync(() =>
@@ -367,10 +369,7 @@ export function prepareDraftCheckout(
         checkoutPullRequest: { url: pullRequest.url, branch },
       }),
     );
-    return prepared;
   });
-  trackPendingDraftCheckout(draftId, pointed);
-  return pointed;
 }
 
 export type PullRequestHandoffDetail = Pick<
@@ -492,6 +491,7 @@ export function usePullRequestHandoffs({
     }
     const prepared = await prepareDraftCheckout(
       opened.draftId,
+      projectRef,
       prepareThread.run({
         reference: detail.url,
         mode,

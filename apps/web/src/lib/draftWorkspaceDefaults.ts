@@ -32,17 +32,45 @@ function acceptsWorkspaceDefault(
 
 const pendingCheckouts = new Map<DraftId, Promise<void>>();
 
-/** A send waits while a checkout is prepared for its draft, so it starts in that checkout. */
-export function trackPendingDraftCheckout(draftId: DraftId, checkout: Promise<unknown>) {
-  const settled: Promise<void> = checkout
+/** A checkout can point its draft and delay sends only while the draft stays in its project. */
+export function trackPendingDraftCheckout<T>(
+  draftId: DraftId,
+  projectRef: ScopedProjectRef,
+  checkout: Promise<T>,
+  apply: (result: T) => void,
+): Promise<T> {
+  const { getDraftSession } = useComposerDraftStore.getState();
+  const isInProject = () => {
+    const draft = getDraftSession(draftId);
+    return (
+      draft !== null &&
+      draft.promotedTo == null &&
+      draft.environmentId === projectRef.environmentId &&
+      draft.projectId === projectRef.projectId
+    );
+  };
+  if (!isInProject()) return checkout;
+
+  const clear = () => {
+    unsubscribe();
+    if (pendingCheckouts.get(draftId) === settled) pendingCheckouts.delete(draftId);
+  };
+  // Moving away invalidates the checkout even if the draft moves back before it finishes.
+  const unsubscribe = useComposerDraftStore.subscribe(() => {
+    if (!isInProject()) clear();
+  });
+  const pointed = checkout.then((result) => {
+    if (pendingCheckouts.get(draftId) === settled) apply(result);
+    return result;
+  });
+  const settled = pointed
     .then(
       () => {},
       () => {},
     )
-    .finally(() => {
-      if (pendingCheckouts.get(draftId) === settled) pendingCheckouts.delete(draftId);
-    });
+    .finally(clear);
   pendingCheckouts.set(draftId, settled);
+  return pointed;
 }
 
 export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | null {
