@@ -437,13 +437,32 @@ function rawStringField(
   return undefined;
 }
 
+// Linear scan: transcript content is untrusted and can be hundreds of KiB, so no backtracking regex.
+function deliveredSystemMessageBody(content: string): string | undefined {
+  const openTag = "<SYSTEM_MESSAGE>";
+  for (
+    let open = content.indexOf(openTag);
+    open !== -1;
+    open = content.indexOf(openTag, open + 1)
+  ) {
+    let start = open + openTag.length;
+    let sawNewline = false;
+    while (start < content.length && /\s/u.test(content[start]!)) {
+      if (content[start] === "\n") sawNewline = true;
+      start += 1;
+    }
+    if (!sawNewline || !content.startsWith("[Message]", start)) continue;
+    const close = content.indexOf("</SYSTEM_MESSAGE>", start);
+    return content.slice(start, close === -1 ? undefined : close).trim();
+  }
+  return undefined;
+}
+
 /** Extracts the delivered body from an inter-agent `<SYSTEM_MESSAGE>[Message] ... content=...</SYSTEM_MESSAGE>`. */
 function extractDeliveredSystemMessage(content: string | undefined): string | undefined {
   if (content === undefined) return undefined;
-  const match =
-    /<SYSTEM_MESSAGE>\s*\r?\n(\[Message\][\s\S]*?)(?:\r?\n<\/SYSTEM_MESSAGE>|\s*$)/u.exec(content);
   const inner =
-    match?.[1]?.trim() ??
+    deliveredSystemMessageBody(content) ??
     (content.trimStart().startsWith("[Message]") ? content.trim() : undefined);
   if (inner === undefined) return undefined;
   const contentMarker = " content=";

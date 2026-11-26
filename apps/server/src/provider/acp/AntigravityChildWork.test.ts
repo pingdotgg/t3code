@@ -790,6 +790,18 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       }),
   );
 
+  // A backtracking parser takes tens of seconds here and trips the test timeout.
+  it("parses an unterminated inter-agent message with a long whitespace run in linear time", () => {
+    const line = JSON.stringify({
+      step_index: 1,
+      type: "SYSTEM_MESSAGE",
+      content: `<SYSTEM_MESSAGE>\n[Message] sender=root content=hi${" ".repeat(200_000)}x`,
+    });
+    const entries = transcriptToSubagentEntries(line, { prompt: "launch" });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.kind === "user_message" && entries[0].text.startsWith("hi")).toBe(true);
+  });
+
   it("maps Antigravity child transcript steps into standard thinking, tool, user, assistant, and error entries", () => {
     const transcript = [
       // Step 0 launch envelope is skipped (already projected as the child thread prompt).
