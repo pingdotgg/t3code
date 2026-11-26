@@ -10,6 +10,7 @@ import {
   type ManagedPolicySummary,
   type ProjectCloneSnapshot,
   type ProjectCloneStage,
+  type ProviderRuntimeModeLimit,
   type RuntimeMode,
   type WorktreeSetupStageId,
   worktreeSetupStageLabel as contractsWorktreeSetupStageLabel,
@@ -123,6 +124,27 @@ export function managedRuntimeModeDenial(
   return summary !== undefined && ceiling !== undefined && isRuntimeModeAbove(mode, ceiling)
     ? managedRuntimeModeCeilingMessage(summary.organization, ceiling, resolve)
     : undefined;
+}
+
+/** Why a provider cannot run `mode` in the current folder, or undefined when it can. */
+export function providerRuntimeModeLimitMessage(
+  limits: ReadonlyArray<ProviderRuntimeModeLimit> | undefined,
+  mode: RuntimeMode,
+  resolve: MFunctionType = mFallback,
+): string | undefined {
+  const limit = limits?.find((candidate) => candidate.mode === mode);
+  if (limit === undefined) return undefined;
+  // Only Claude's auto mode reports limits today.
+  switch (limit.reason) {
+    case "managed-settings":
+      return resolve(msg("Your organization's Claude settings turn auto mode off."));
+    case "user-settings":
+      return resolve(msg("Your Claude settings turn auto mode off."));
+    case "project-settings":
+      return resolve(msg("This project's Claude settings turn auto mode off."));
+    case "settings":
+      return resolve(msg("Claude's settings turn auto mode off."));
+  }
 }
 
 export type ManagedCapability =
