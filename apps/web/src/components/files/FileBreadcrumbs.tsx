@@ -122,7 +122,7 @@ function BreadcrumbMenuContent(props: {
       {canGoBack && parentPath !== null ? (
         <>
           <MenuItem closeOnClick={false} onClick={() => props.onDirectoryChange(parentPath)}>
-            <ArrowLeftIcon className="[&:dir(rtl)]:rotate-180" />
+            <ArrowLeftIcon className="rtl:rotate-180" />
             <span className="truncate">
               <T>
                 Back to <Var>{pathLabel(parentPath, props.projectName)}</Var>
@@ -192,7 +192,7 @@ function BreadcrumbMenuContent(props: {
                   onClick={() => props.onDirectoryChange(entry.path)}
                 >
                   {row}
-                  <ChevronRightIcon className="[&:dir(rtl)]:rotate-180" />
+                  <ChevronRightIcon className="rtl:rotate-180" />
                 </MenuItem>
               ) : (
                 <MenuRadioItem
@@ -259,7 +259,7 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
           />
         }
       >
-        <ChevronRightIcon className="size-3.5 [&:dir(rtl)]:rotate-180" />
+        <ChevronRightIcon className="size-3.5 rtl:rotate-180" />
       </MenuTrigger>
       {open ? (
         <BreadcrumbMenuContent
@@ -348,7 +348,7 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
               {index === breadcrumbs.length - 1 ? null : hostPath ? (
                 <ChevronRightIcon
                   aria-hidden
-                  className="mx-1 size-3.5 shrink-0 text-muted-foreground/60 [&:dir(rtl)]:rotate-180"
+                  className="mx-1 size-3.5 shrink-0 text-muted-foreground/60 rtl:rotate-180"
                 />
               ) : (
                 <FolderContentsMenu {...props} crumb={crumb} />

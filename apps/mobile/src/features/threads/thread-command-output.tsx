@@ -54,7 +54,7 @@ export function ThreadCommandOutput(props: {
     );
   }
   return (
-    <View className="pt-1.5">
+    <View className="pt-1.5" style={{ direction: "ltr" }}>
       <ScrollView
         ref={scrollRef}
         nestedScrollEnabled

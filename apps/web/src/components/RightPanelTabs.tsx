@@ -1244,12 +1244,8 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const maxScroll = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
     const hasOverflow = maxScroll > TAB_SCROLL_EDGE_TOLERANCE;
-    const isRtl = getComputedStyle(viewport).direction === "rtl";
-    const distanceFromLeft = isRtl
-      ? viewport.scrollLeft <= 0
-        ? maxScroll + viewport.scrollLeft
-        : viewport.scrollLeft
-      : viewport.scrollLeft;
+    const isRtl = viewport.matches(":dir(rtl)");
+    const distanceFromLeft = isRtl ? maxScroll + viewport.scrollLeft : viewport.scrollLeft;
     const canScrollLeft = hasOverflow && distanceFromLeft > TAB_SCROLL_EDGE_TOLERANCE;
     const canScrollRight = hasOverflow && distanceFromLeft < maxScroll - TAB_SCROLL_EDGE_TOLERANCE;
     setTabScrollState((current) => {
@@ -1558,7 +1554,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
 
-      const isRtl = getComputedStyle(viewport).direction === "rtl";
+      const isRtl = viewport.matches(":dir(rtl)");
       const previousScrollLeft = viewport.scrollLeft;
       viewport.scrollLeft += isRtl ? -delta : delta;
       if (viewport.scrollLeft === previousScrollLeft) return;

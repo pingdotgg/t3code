@@ -172,7 +172,7 @@ function WorkLogIcon(props: {
 
 export function ThreadDisclosureChevron(props: {
   readonly expanded: boolean;
-  readonly collapsedDirection: "right" | "down" | "inline-end";
+  readonly collapsedDirection: "down" | "inline-end";
   readonly size: number;
   readonly tintColor: ColorValue;
 }) {

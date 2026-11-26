@@ -98,7 +98,7 @@ export function ScrollComposeButton(props: {
         android_ripple={{ foreground: true }}
         style={{
           position: "absolute",
-          right: 0,
+          end: 0,
           top: 0,
           bottom: 0,
           width: props.expanded ? buttonWidth * scale : fabSize,

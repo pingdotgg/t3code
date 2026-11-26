@@ -230,7 +230,7 @@ function NativeSourceFileSurface(
     : NATIVE_SOURCE_CONTENT_WIDTH;
 
   return (
-    <View className="relative flex-1 bg-sheet">
+    <View className="relative flex-1 bg-sheet" style={{ direction: "ltr" }}>
       <SourceHighlightStatusView status={status} />
       <NativeView
         collapsable={false}
@@ -315,13 +315,13 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   // One native text view permits document-wide selection; virtualized rows cannot.
   const selectableBlock = usesTextSelection ? (
     <SourceText
-      direction="ltr"
       selectable
       style={{
         color: foreground,
         fontFamily: monoFontFamily,
         fontSize: codeSurface.fontSize,
         lineHeight: codeSurface.rowHeight,
+        textAlign: "left",
       }}
     >
       {selectableTokens
@@ -432,7 +432,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   );
 
   return (
-    <View className="relative flex-1 bg-sheet">
+    <View className="relative flex-1 bg-sheet" style={{ direction: "ltr" }}>
       {usesWebSelection ? null : <SourceHighlightStatusView status={status} />}
       {usesLineList ? (
         codeWordBreak ? (

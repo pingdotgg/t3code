@@ -2745,8 +2745,4 @@ code {
     direction: ltr;
     unicode-bidi: isolate;
   }
-
-  :dir(rtl) :is(pre, code, kbd, samp, diffs-container) {
-    text-align: left;
-  }
 }

@@ -7,26 +7,15 @@ import { flattenStyles } from "./util";
 const TextAncestorContext = React.createContext<[boolean, TextStyle]>([false, {}]);
 
 export type SourceTextProps = Omit<TextProps, "onTextLayout" | "onPress" | "onLongPress"> & {
-  direction?: "ltr" | "rtl";
   nativeTextRef?: Ref<ComponentRef<typeof Text>>;
   onSelectionChange?: (event: {
     nativeEvent: { target: number; start: number; end: number };
   }) => void;
 };
 
-export function SourceText({
-  direction,
-  style,
-  children,
-  nativeTextRef,
-  ...props
-}: SourceTextProps) {
+export function SourceText({ style, children, nativeTextRef, ...props }: SourceTextProps) {
   const [isAncestor, rootStyle] = React.useContext(TextAncestorContext);
-  const isRTL = direction === undefined ? undefined : direction === "rtl";
-  const flattenedStyle = React.useMemo(
-    () => flattenStyles(rootStyle, style, isRTL),
-    [rootStyle, style, isRTL],
-  );
+  const flattenedStyle = React.useMemo(() => flattenStyles(rootStyle, style), [rootStyle, style]);
   const contextValue = React.useMemo<[boolean, TextStyle]>(
     () => [true, StyleSheet.flatten([rootStyle, style]) ?? {}],
     [rootStyle, style],

@@ -381,7 +381,7 @@ export const ChatHeader = memo(function ChatHeader({
               render={
                 <h2
                   aria-label={activeThreadTitle}
-                  className="min-w-0 max-w-full"
+                  className="min-w-0 flex-1"
                   dir={textDirection(activeThreadTitle)}
                 />
               }
