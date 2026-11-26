@@ -1,7 +1,12 @@
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
-import { androidActivityData, androidAlertForState, fitFcmData } from "./fcmPayloads.ts";
+import {
+  androidActivityData,
+  androidAlertForState,
+  androidRecipientData,
+  fitFcmData,
+} from "./fcmPayloads.ts";
 
 const preferences = {
   notificationsEnabled: true,
@@ -44,8 +49,8 @@ export function makeUnifiedPushWatch(identity: {
       label: label(active),
       data: fitFcmData({
         t3_kind: "agent_activity",
-        device_id: identity.deviceId,
-        user_id: identity.userId,
+        // No app version keeps user_id, which AgentUnifiedPush matches before the shared receiver checks user_hash.
+        ...androidRecipientData(identity.userId, identity.deviceId, null),
         ...(identity.source === undefined ? {} : { source: identity.source }),
         updated_at: String(nowMs),
         ...activity,
