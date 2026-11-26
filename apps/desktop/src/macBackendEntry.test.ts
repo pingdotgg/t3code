@@ -6,41 +6,41 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import type * as NodeStream from "node:stream";
+import * as NodeURL from "node:url";
 
 import { assert, describe, it } from "@effect/vitest";
 
 import { BACKEND_SETTLED_ACK_FD, BACKEND_SETTLED_LINE } from "./macHelperExec.ts";
 
-const entry = new URL("./macBackendEntry.ts", import.meta.url).pathname;
+const entry = NodeURL.fileURLToPath(new URL("./macBackendEntry.ts", import.meta.url));
 
-// A stand-in server entry. It reports how it was started, then starts a worker thread and a fork.
+// A stand-in for the server's bin.mjs, which starts only when import.meta.main is true. It
+// reports how it was started, then starts a worker thread and a fork.
 const serverCode = `
-  const { Worker } = require("node:worker_threads");
-  const { fork } = require("node:child_process");
-  const { once } = require("node:events");
-  (async () => {
-    const worker = new Worker(
-      'require("node:worker_threads").parentPort.postMessage(process.execArgv)',
-      { eval: true },
-    );
-    const [workerExecArgv] = await once(worker, "message");
-    const [workerExit] = await once(worker, "exit");
-    const child = fork(process.argv[2], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
-    const [forkExecArgv] = await once(child, "message");
-    const [forkExit] = await once(child, "exit");
-    process.stdout.write(JSON.stringify({
-      main: require.main === module,
-      args: process.argv.slice(1),
-      workerExecArgv, workerExit, forkExecArgv, forkExit,
-    }));
-  })();
+  import { fork } from "node:child_process";
+  import { once } from "node:events";
+  import { Worker } from "node:worker_threads";
+  const worker = new Worker(
+    'require("node:worker_threads").parentPort.postMessage(process.execArgv)',
+    { eval: true },
+  );
+  const [workerExecArgv] = await once(worker, "message");
+  const [workerExit] = await once(worker, "exit");
+  const child = fork(process.argv[2], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
+  const [forkExecArgv] = await once(child, "message");
+  const [forkExit] = await once(child, "exit");
+  process.stdout.write(JSON.stringify({
+    main: import.meta.main,
+    args: process.argv.slice(1),
+    workerExecArgv, workerExit, forkExecArgv, forkExit,
+  }));
 `;
 
 // Off macOS the re-exec fails and falls back, so this exercises the handshake in its final process.
 async function startBackend(ack: (input: NodeStream.Writable) => void) {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-backend-entry-"));
   try {
-    const server = NodePath.join(directory, "server.cjs");
+    const server = NodePath.join(directory, "bin.mjs");
     const forked = NodePath.join(directory, "fork.cjs");
     await NodeFSP.writeFile(server, serverCode);
     await NodeFSP.writeFile(forked, "process.send(process.execArgv, () => process.exit(0));");
@@ -54,7 +54,11 @@ async function startBackend(ack: (input: NodeStream.Writable) => void) {
     backend.stdout?.on("data", (chunk) => (output += chunk));
     controlChannel.on("data", (chunk) => (control += chunk));
     const exited = NodeEvents.EventEmitter.once(backend, "close");
-    await NodeEvents.EventEmitter.once(controlChannel, "data");
+    const first = await Promise.race([
+      NodeEvents.EventEmitter.once(controlChannel, "data").then(() => "settled"),
+      exited.then(() => "exited"),
+    ]);
+    if (first === "exited") throw new Error("The backend exited before it settled");
     ack(pipes[BACKEND_SETTLED_ACK_FD] as NodeStream.Writable);
     const [code] = await exited;
     return { code, control, server, forked, output };
