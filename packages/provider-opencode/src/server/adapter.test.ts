@@ -728,6 +728,7 @@ describe("OpenCodeAdapterV2", () => {
           get: async () => ({
             data: {
               id: "root",
+              directory: "/workspace",
               permission: openCodePermissionRules(fullAccess),
               time: { created: 1, updated: 1 },
             },
@@ -763,6 +764,66 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  it.effect("prompts a session bound to the thread's cwd after a worktree handoff", () =>
+    Effect.gen(function* () {
+      // OpenCode 1.x runs a session in the directory it was created in and publishes its
+      // events on that directory's /event stream, not the one the adapter subscribed to.
+      const directories = new Map<string, string>();
+      const prompted: string[] = [];
+      let created = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness("worktree-handoff", "root", {
+        event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+        session: {
+          create: async () => {
+            // The first session predates the handoff and lives in the repository root.
+            const id = created++ === 0 ? "root" : `ses_worktree_${created}`;
+            directories.set(id, id === "root" ? "/repo" : "/workspace");
+            return {
+              data: { id, directory: directories.get(id), time: { created: 1, updated: 1 } },
+            };
+          },
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            data: {
+              id: sessionID,
+              directory: directories.get(sessionID),
+              time: { created: 1, updated: 1 },
+            },
+          }),
+          update: async (input: { sessionID: string }) => ({
+            data: { id: input.sessionID, time: { created: 1, updated: 2 } },
+          }),
+          promptAsync: async ({ sessionID }: { sessionID: string }) => {
+            prompted.push(sessionID);
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+        path: { get: async () => ({ data: { directory: "/workspace" } }) },
+        client: {
+          post: async (input: {
+            url: string;
+            body: { sessionID: string; destination: { directory: string } };
+          }) => {
+            assert.equal(input.url, "/experimental/control-plane/move-session");
+            directories.set(input.body.sessionID, input.body.destination.directory);
+            return { data: undefined };
+          },
+        },
+      });
+      assert.equal(directories.get("root"), "/repo");
+
+      const resumed = yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: harness.policy,
+      });
+      yield* harness.startTurn("continue in the worktree", resumed);
+
+      assert.equal(prompted.length, 1);
+      assert.equal(directories.get(prompted[0]!), harness.policy.cwd);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
   it.effect("applies a changed runtime policy to existing subagent sessions", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -788,6 +849,7 @@ describe("OpenCodeAdapterV2", () => {
           get: async ({ sessionID }: { sessionID: string }) => ({
             data: {
               id: sessionID,
+              directory: "/workspace",
               ...(sessionID === child ? { parentID: root } : {}),
               permission: nativePermissions.get(sessionID),
               time: { created: 1, updated: 1 },
@@ -1125,7 +1187,9 @@ describe("OpenCodeAdapterV2", () => {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-          get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          get: async () => ({
+            data: { id: "root", directory: "/workspace", time: { created: 1, updated: 1 } },
+          }),
           promptAsync: async (input: { messageID: string }) => {
             promptId = input.messageID;
             return { data: true };
@@ -2410,7 +2474,9 @@ describe("OpenCodeAdapterV2", () => {
                 create: async () => ({
                   data: { id: "ses_replacement", time: { created: 1, updated: 1 } },
                 }),
-                get: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+                get: async () => ({
+                  data: { id: root, directory: "/workspace", time: { created: 1, updated: 1 } },
+                }),
                 messages: async () => ({
                   data: [
                     {
