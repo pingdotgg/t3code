@@ -310,6 +310,7 @@ interface ActiveOpenCodeTurn {
   readonly providerTurn: OrchestrationV2ProviderTurn;
   nextItemOrdinal: number;
   nativeUserMessageId: string | null;
+  readonly rootPromptId?: string;
   admissionMessageId: string | null;
   readonly priorWakePromptIds: Set<string>;
   priorWakeSettled: Deferred.Deferred<void> | null;
@@ -1275,6 +1276,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           turn: ActiveOpenCodeTurn,
           status: OrchestrationV2ProviderTurn["status"],
           completedAt: DateTime.Utc | null,
+          promptDropped = false,
         ) => {
           const providerTurn: OrchestrationV2ProviderTurn = {
             ...turn.providerTurn,
@@ -1284,6 +1286,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 : providerRef(turn.nativeUserMessageId, "weak"),
             status,
             completedAt,
+            ...(promptDropped ? { promptDropped: true } : {}),
             ...(completedAt === null
               ? {}
               : {
@@ -2312,7 +2315,38 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   ),
                 ).pipe(Effect.exit);
               }
-              yield* emitProviderTurn(state, turn, status, completedAt);
+              const promptId = turn.rootPromptId;
+              // An aborted request can still have saved the prompt before the reply or event arrived.
+              const promptDropped =
+                status === "interrupted" &&
+                promptId !== undefined &&
+                promptId === turn.admissionMessageId &&
+                !turn.admissionAccepted &&
+                !turn.admissionMessageObserved &&
+                turn.nativeUserMessageId === null &&
+                (yield* restore(
+                  sdkCall(
+                    "session.messages",
+                    { sessionID: state.nativeSessionId, limit: 2 },
+                    (signal) =>
+                      client.session.messages(
+                        { sessionID: state.nativeSessionId, limit: 2 },
+                        { signal },
+                      ),
+                  ).pipe(Effect.timeout("2 seconds")),
+                ).pipe(
+                  Effect.exit,
+                  Effect.map(
+                    (result) =>
+                      Exit.isSuccess(result) &&
+                      result.value.data?.every(
+                        ({ info }) =>
+                          info.id !== promptId &&
+                          (info.role !== "assistant" || info.parentID !== promptId),
+                      ) === true,
+                  ),
+                ));
+              yield* emitProviderTurn(state, turn, status, completedAt, promptDropped);
               const threadDisposition = terminal?.threadDisposition ?? "reusable";
               yield* updateProviderThread(state, {
                 status: turn.isRoot ? "active" : threadDisposition === "broken" ? "error" : "idle",
@@ -2382,6 +2416,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       runOrdinal: turn.runOrdinal,
                       status,
                       failure: null,
+                      ...(promptDropped ? { promptDropped: true as const } : {}),
                       threadDisposition,
                     },
               );
@@ -3804,6 +3839,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 providerTurn,
                 nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
                 nativeUserMessageId: null,
+                ...(!isCompaction && admissionMessageId !== null
+                  ? { rootPromptId: admissionMessageId }
+                  : {}),
                 admissionMessageId,
                 priorWakePromptIds: new Set(),
                 priorWakeSettled: null,
@@ -3967,6 +4005,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 admissionAbortController!,
                 turnInput.message.text,
               ).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    turn.admissionAccepted = true;
+                  }),
+                ),
                 Effect.tapError((cause) =>
                   admissionAbortController!.signal.aborted
                     ? Effect.void

@@ -4420,12 +4420,13 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
-  it.effect("interrupts an initial prompt while its SDK request is pending", () =>
+  it.effect.each([false, true])("stops a pending initial prompt (saved: %s)", (saved) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const promptStarted = promiseGate<void>();
       const abortCalled = promiseGate<void>();
       let abortCalls = 0;
+      let promptId: string | undefined;
       const client = {
         event: {
           subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
@@ -4440,7 +4441,11 @@ describe("OpenCodeAdapterV2", () => {
           get: async () => ({
             data: { id: "native-opencode-initial-stop", time: { created: 1, updated: 1 } },
           }),
-          promptAsync: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+          promptAsync: async (
+            input: { readonly messageID: string },
+            options?: { readonly signal?: AbortSignal },
+          ) => {
+            promptId = input.messageID;
             promptStarted.resolve();
             await new Promise<void>((_resolve, reject) => {
               const signal = options?.signal;
@@ -4455,7 +4460,9 @@ describe("OpenCodeAdapterV2", () => {
           status: async () => ({
             data: { "native-opencode-initial-stop": { type: "idle" as const } },
           }),
-          messages: async () => ({ data: [] }),
+          messages: async () => ({
+            data: saved ? [{ info: { role: "user", id: promptId }, parts: [] }] : [],
+          }),
           children: async () => ({ data: [] }),
           abort: async () => {
             abortCalls += 1;
@@ -4575,6 +4582,11 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(abortCalls, 1);
       assert.lengthOf(terminals, 1);
       assert.equal(terminals[0]?.status, "interrupted");
+      assert.equal(terminals[0]?.promptDropped, saved ? undefined : true);
+      const finalTurn = events
+        .filter((event) => event.type === "provider_turn.updated")
+        .findLast((event) => event.providerTurn.status === "interrupted");
+      assert.equal(finalTurn?.providerTurn.promptDropped, saved ? undefined : true);
       assert.isNull(terminals[0]?.failure ?? null);
       assert.isFalse(
         events.some(
