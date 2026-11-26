@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Uses O_NOFOLLOW/lstat/realpath/stat to enforce canonical mount validation and symlink/userdata escape prevention.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -73,6 +74,7 @@ const TURN_SOCKET_ENV_VARS: ReadonlyArray<string> = [
 ];
 
 const ALLOWED_OWN_STATE_PROFILE_PARENTS = new Set(["team-profiles", "providers"]);
+const FORBIDDEN_MOUNT_OVERWRITE_ROOTS = new Set(["/", "/tmp", "/dev", "/proc"]);
 const UNSAFE_WIDEN_RO_ROOTS = new Set([
   "/",
   "/tmp",
@@ -80,6 +82,8 @@ const UNSAFE_WIDEN_RO_ROOTS = new Set([
   "/var/tmp",
   "/home",
   "/root",
+  "/dev",
+  "/proc",
   "/etc",
   "/run",
   "/srv",
@@ -201,6 +205,8 @@ export interface BwrapRegularGitRepoBinds {
   readonly hooksDir: string;
   readonly configFile: string;
   readonly configFileExists: boolean;
+  readonly worktreeConfigFile?: string | undefined;
+  readonly worktreeConfigFileExists?: boolean | undefined;
   readonly maskWorktreesDir?: string | undefined;
 }
 
@@ -210,6 +216,8 @@ export interface BwrapSandboxPlan {
   readonly chdir: string;
   readonly gitWorktree?: BwrapGitWorktreeBinds | undefined;
   readonly gitRepo?: BwrapRegularGitRepoBinds | undefined;
+  /** Host-side 0-byte 0444 regular file bound RO over absent git config files so O_WRONLY fails with EROFS. */
+  readonly emptyRoFile?: string | undefined;
   readonly roSystemBinds?: ReadonlyArray<string> | undefined;
   readonly roTrySystemBinds?: ReadonlyArray<string> | undefined;
   readonly providerProfileDirs: ReadonlyArray<string>;
@@ -488,19 +496,103 @@ async function expandForbiddenRoots(
   };
 }
 
+async function expandHomeRoots(envHome: string | undefined): Promise<ReadonlyArray<string>> {
+  const roots = new Set<string>();
+  const rawCandidates = [envHome, HostProcess.HomeDirectory.defaultValue()];
+  for (const raw of rawCandidates) {
+    if (raw === undefined || raw.trim().length === 0 || !NodePath.posix.isAbsolute(raw)) continue;
+    const normalized = normalizePosixPath(raw);
+    if (normalized !== "/") {
+      roots.add(normalized);
+    }
+    const resolved = await tryRealpath(normalized);
+    if (resolved !== undefined && resolved !== "/") {
+      roots.add(resolved);
+    }
+  }
+  return [...roots];
+}
+
+/**
+ * Ensures a host-side 0-byte 0444 regular file exists for locking absent git config files.
+ * Unlike `/dev/null` (a char device where O_WRONLY bypasses MS_RDONLY), a regular file enforces EROFS.
+ */
+async function ensureEmptyRoFilePath(ownStateDir: string | undefined): Promise<string> {
+  const uid = HostProcess.UserId.defaultValue() ?? 0;
+  let containerDir: string;
+  if (
+    ownStateDir !== undefined &&
+    ownStateDir.trim().length > 0 &&
+    NodePath.posix.isAbsolute(ownStateDir) &&
+    (await pathExists(ownStateDir))
+  ) {
+    containerDir = normalizePosixPath(ownStateDir);
+  } else {
+    containerDir = NodePath.posix.join(
+      normalizePosixPath(NodeOS.tmpdir()),
+      `t3-bwrap-empty-${uid}`,
+    );
+    await NodeFSP.mkdir(containerDir, { recursive: true, mode: 0o700 });
+    const dirStat = await NodeFSP.lstat(containerDir);
+    if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+      throw new Error(`Unsafe empty-ro container directory: ${containerDir}`);
+    }
+  }
+  const filePath = NodePath.posix.join(containerDir, ".bwrap-empty-ro");
+  const handle = await NodeFSP.open(
+    filePath,
+    NodeFS.constants.O_CREAT | NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+    0o444,
+  );
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size !== 0) {
+      throw new Error(`Unexpected empty-ro stub file state: ${filePath}`);
+    }
+  } finally {
+    await handle.close();
+  }
+  return normalizePosixPath(await NodeFSP.realpath(filePath));
+}
+
 function assertLexicalPathNotForbidden(input: {
   readonly candidate: string;
   readonly role: BwrapBindRole;
   readonly ownStateRoots: ReadonlyArray<string>;
   readonly foreignForbiddenRoots: ReadonlyArray<string>;
+  readonly homeRoots?: ReadonlyArray<string> | undefined;
+  readonly isDirectory?: boolean | undefined;
 }): BwrapSandboxPathError | undefined {
   const { candidate, role, ownStateRoots, foreignForbiddenRoots } = input;
-  if (candidate === "/") {
+  if (
+    FORBIDDEN_MOUNT_OVERWRITE_ROOTS.has(candidate) ||
+    isSameOrAncestor(candidate, SANDBOX_SCRATCH_HOME)
+  ) {
     return new BwrapSandboxPathError({
       reason: "forbidden_userdata_path",
       role,
       path: candidate,
     });
+  }
+
+  // Never allow binding broad system/shared/home directories into the sandbox.
+  if (input.isDirectory === true) {
+    if (UNSAFE_WIDEN_RO_ROOTS.has(candidate)) {
+      return new BwrapSandboxPathError({
+        reason: "forbidden_userdata_path",
+        role,
+        path: candidate,
+      });
+    }
+    for (const homeRoot of input.homeRoots ?? []) {
+      if (isSameOrAncestor(candidate, homeRoot)) {
+        return new BwrapSandboxPathError({
+          reason: "forbidden_userdata_path",
+          role,
+          path: candidate,
+        });
+      }
+    }
   }
 
   const baseName = NodePath.posix.basename(candidate);
@@ -556,9 +648,10 @@ const canonicalizeAndValidateBindPath = Effect.fn("bwrapSandbox.validateBindPath
     readonly role: BwrapBindRole;
     readonly ownStateRoots: ReadonlyArray<string>;
     readonly foreignForbiddenRoots: ReadonlyArray<string>;
+    readonly homeRoots?: ReadonlyArray<string> | undefined;
     readonly expectedType?: "directory" | "file" | "socket" | "any" | undefined;
   }): Effect.fn.Return<string, BwrapSandboxPathError> {
-    const { rawPath, role, ownStateRoots, foreignForbiddenRoots } = input;
+    const { rawPath, role, ownStateRoots, foreignForbiddenRoots, homeRoots } = input;
     if (rawPath.length === 0 || rawPath.includes("\0")) {
       return yield* new BwrapSandboxPathError({
         reason: "nul_byte",
@@ -620,6 +713,8 @@ const canonicalizeAndValidateBindPath = Effect.fn("bwrapSandbox.validateBindPath
       role,
       ownStateRoots,
       foreignForbiddenRoots,
+      homeRoots,
+      isDirectory: canonical.stat.isDirectory(),
     });
     if (lexicalError !== undefined) {
       return yield* lexicalError;
@@ -733,9 +828,11 @@ const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function
     }
     const hooksDir = NodePath.posix.join(canonicalGitDir, "hooks");
     const configFile = NodePath.posix.join(canonicalGitDir, "config");
+    const worktreeConfigFile = NodePath.posix.join(canonicalGitDir, "config.worktree");
     const worktreesDir = NodePath.posix.join(canonicalGitDir, "worktrees");
     yield* inspectOptionalGitSubdir(hooksDir);
     const configFileExists = yield* inspectOptionalGitRegularFile(configFile);
+    const worktreeConfigFileExists = yield* inspectOptionalGitRegularFile(worktreeConfigFile);
     const hasWorktreesDir = yield* inspectOptionalGitSubdir(worktreesDir);
     return {
       kind: "regular_repo",
@@ -744,6 +841,8 @@ const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function
         hooksDir,
         configFile,
         configFileExists,
+        worktreeConfigFile,
+        worktreeConfigFileExists,
         ...(hasWorktreesDir ? { maskWorktreesDir: worktreesDir } : {}),
       },
     };
@@ -918,14 +1017,14 @@ const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function
 function isSafeExternalRoDir(input: {
   readonly dir: string;
   readonly canonicalCwd: string;
-  readonly homeDir: string | undefined;
+  readonly homeRoots: ReadonlyArray<string>;
   readonly ownStateRoots: ReadonlyArray<string>;
   readonly foreignForbiddenRoots: ReadonlyArray<string>;
 }): boolean {
   const normalized = normalizePosixPath(input.dir);
   if (UNSAFE_WIDEN_RO_ROOTS.has(normalized)) return false;
   if (isCoveredBySystemRoBinds(normalized)) return false;
-  if (input.homeDir !== undefined && isSameOrAncestor(normalized, input.homeDir)) return false;
+  if (input.homeRoots.some((homeRoot) => isSameOrAncestor(normalized, homeRoot))) return false;
   if (
     isSameOrAncestor(normalized, input.canonicalCwd) ||
     isSameOrDescendant(normalized, input.canonicalCwd)
@@ -938,6 +1037,8 @@ function isSafeExternalRoDir(input: {
       role: "executable",
       ownStateRoots: input.ownStateRoots,
       foreignForbiddenRoots: input.foreignForbiddenRoots,
+      homeRoots: input.homeRoots,
+      isDirectory: true,
     }) === undefined
   );
 }
@@ -989,7 +1090,7 @@ async function readShebangInterpreterPath(
 async function discoverExternalExecutablePackageDir(input: {
   readonly canonicalExecutable: string;
   readonly canonicalCwd: string;
-  readonly homeDir: string | undefined;
+  readonly homeRoots: ReadonlyArray<string>;
   readonly ownStateRoots: ReadonlyArray<string>;
   readonly foreignForbiddenRoots: ReadonlyArray<string>;
 }): Promise<string | undefined> {
@@ -1032,7 +1133,7 @@ async function discoverExternalExecutablePackageDir(input: {
       isSafeExternalRoDir({
         dir: bestNm,
         canonicalCwd: input.canonicalCwd,
-        homeDir: input.homeDir,
+        homeRoots: input.homeRoots,
         ownStateRoots: input.ownStateRoots,
         foreignForbiddenRoots: input.foreignForbiddenRoots,
       })
@@ -1043,7 +1144,7 @@ async function discoverExternalExecutablePackageDir(input: {
       isSafeExternalRoDir({
         dir: nodeModulesDir,
         canonicalCwd: input.canonicalCwd,
-        homeDir: input.homeDir,
+        homeRoots: input.homeRoots,
         ownStateRoots: input.ownStateRoots,
         foreignForbiddenRoots: input.foreignForbiddenRoots,
       })
@@ -1055,7 +1156,7 @@ async function discoverExternalExecutablePackageDir(input: {
   return isSafeExternalRoDir({
     dir: candidate,
     canonicalCwd: input.canonicalCwd,
-    homeDir: input.homeDir,
+    homeRoots: input.homeRoots,
     ownStateRoots: input.ownStateRoots,
     foreignForbiddenRoots: input.foreignForbiddenRoots,
   })
@@ -1219,6 +1320,9 @@ function buildBwrapPrefixArgs(
   // Thread workspace / worktree (always RW).
   pushRw(plan.cwd);
 
+  const emptyConfigLockSource =
+    plan.emptyRoFile !== undefined ? normalizePosixPath(plan.emptyRoFile) : "/dev/null";
+
   // Linked git worktree common-dir: lock down `.git` pointer, shared hooks, shared/worktree configs, and sibling worktree dirs.
   if (plan.gitWorktree !== undefined) {
     const dotGit = normalizePosixPath(plan.gitWorktree.dotGitFile);
@@ -1235,9 +1339,9 @@ function buildBwrapPrefixArgs(
     pushRw(commonDir);
     // Isolate shared hooks on a private ephemeral tmpfs so writes never affect host or sibling worktrees.
     args.push("--tmpfs", hooksDir);
-    // Lock shared git config (or bind /dev/null when absent) so core.fsmonitor/hooksPath cannot be modified or created.
+    // Lock shared git config (or bind empty 0444 file when absent) so core.fsmonitor/hooksPath cannot be modified or created.
     if (plan.gitWorktree.configFileExists === false) {
-      args.push("--ro-bind", "/dev/null", configFile);
+      args.push("--ro-bind", emptyConfigLockSource, configFile);
     } else {
       args.push("--ro-bind", configFile, configFile);
     }
@@ -1256,19 +1360,30 @@ function buildBwrapPrefixArgs(
     if (plan.gitWorktree.worktreeConfigFileExists === true) {
       args.push("--ro-bind", wtConfigFile, wtConfigFile);
     } else {
-      args.push("--ro-bind", "/dev/null", wtConfigFile);
+      args.push("--ro-bind", emptyConfigLockSource, wtConfigFile);
     }
   }
 
-  // Ordinary `.git/` repository: lock hooks and config (and mask sibling `.git/worktrees` when present).
+  // Ordinary `.git/` repository: make `.git` itself a mountpoint (blocking `mv .git`), lock hooks/configs, and mask sibling worktrees.
   if (plan.gitRepo !== undefined) {
+    const gitDir = normalizePosixPath(plan.gitRepo.gitDir);
     const hooksDir = normalizePosixPath(plan.gitRepo.hooksDir);
     const configFile = normalizePosixPath(plan.gitRepo.configFile);
+    const wtConfigFile = normalizePosixPath(
+      plan.gitRepo.worktreeConfigFile ?? NodePath.posix.join(gitDir, "config.worktree"),
+    );
+    mountedRw.add(gitDir);
+    args.push("--bind", gitDir, gitDir);
     args.push("--tmpfs", hooksDir);
     if (plan.gitRepo.configFileExists) {
       args.push("--ro-bind", configFile, configFile);
     } else {
-      args.push("--ro-bind", "/dev/null", configFile);
+      args.push("--ro-bind", emptyConfigLockSource, configFile);
+    }
+    if (plan.gitRepo.worktreeConfigFileExists === true) {
+      args.push("--ro-bind", wtConfigFile, wtConfigFile);
+    } else {
+      args.push("--ro-bind", emptyConfigLockSource, wtConfigFile);
     }
     if (plan.gitRepo.maskWorktreesDir !== undefined) {
       args.push("--tmpfs", normalizePosixPath(plan.gitRepo.maskWorktreesDir));
@@ -1322,12 +1437,14 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
   const { ownStateRoots, foreignForbiddenRoots } = yield* Effect.promise(() =>
     expandForbiddenRoots(input.ownStateDir, input.forbiddenUserdataDirs),
   );
+  const homeRoots = yield* Effect.promise(() => expandHomeRoots(input.env?.HOME));
 
   const canonicalCwd = yield* canonicalizeAndValidateBindPath({
     rawPath: input.cwd,
     role: "cwd",
     ownStateRoots,
     foreignForbiddenRoots,
+    homeRoots,
     expectedType: "directory",
   });
 
@@ -1338,6 +1455,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       role: "chdir",
       ownStateRoots,
       foreignForbiddenRoots,
+      homeRoots,
       expectedType: "directory",
     });
     if (!isSameOrDescendant(canonicalChdir, canonicalCwd)) {
@@ -1357,6 +1475,24 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
   const gitWorktree = gitMetadata?.kind === "linked_worktree" ? gitMetadata.binds : undefined;
   const gitRepo = gitMetadata?.kind === "regular_repo" ? gitMetadata.binds : undefined;
 
+  const needsEmptyRoFile =
+    (gitWorktree !== undefined &&
+      (gitWorktree.configFileExists === false || gitWorktree.worktreeConfigFileExists !== true)) ||
+    (gitRepo !== undefined &&
+      (!gitRepo.configFileExists || gitRepo.worktreeConfigFileExists !== true));
+  const emptyRoFile = needsEmptyRoFile
+    ? yield* Effect.tryPromise({
+        try: () => ensureEmptyRoFilePath(input.ownStateDir),
+        catch: (cause) =>
+          new BwrapSandboxPathError({
+            reason: "invalid_git_worktree",
+            role: "git_common_dir",
+            path: input.ownStateDir ?? NodeOS.tmpdir(),
+            cause,
+          }),
+      })
+    : undefined;
+
   const extracted = extractSandboxBindsFromEnv(input.env);
 
   const providerProfileDirs: Array<string> = [];
@@ -1366,6 +1502,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       role: "provider_profile",
       ownStateRoots,
       foreignForbiddenRoots,
+      homeRoots,
       expectedType: "directory",
     });
     providerProfileDirs.push(validated);
@@ -1378,6 +1515,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       role: "tool_cache",
       ownStateRoots,
       foreignForbiddenRoots,
+      homeRoots,
       expectedType: "directory",
     });
     toolCacheDirs.push(validated);
@@ -1390,6 +1528,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       role: "extra_rw",
       ownStateRoots,
       foreignForbiddenRoots,
+      homeRoots,
     });
     extraRwBinds.push(validated);
   }
@@ -1401,6 +1540,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       role: "extra_ro",
       ownStateRoots,
       foreignForbiddenRoots,
+      homeRoots,
     });
     extraRoBinds.push(validated);
   }
@@ -1412,6 +1552,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       role: "socket",
       ownStateRoots,
       foreignForbiddenRoots,
+      homeRoots,
       expectedType: "socket",
     });
     socketPaths.push(validated);
@@ -1424,107 +1565,118 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       role: "helper",
       ownStateRoots,
       foreignForbiddenRoots,
+      homeRoots,
     });
     helperPaths.push(validated);
   }
 
-  // If the target executable is a trusted server-configured absolute path outside OS RO binds and cwd,
-  // bind the executable, its package/node_modules tree (when safe), and any non-system shebang interpreter RO.
+  // Bind trusted absolute executables outside OS RO binds (including system-dir symlinks targeting
+  // external installs), plus their safe package/node_modules dir and any non-system shebang interpreter.
   if (
     input.allowExternalExecutableBind !== false &&
     NodePath.posix.isAbsolute(input.command) &&
-    !isCoveredBySystemRoBinds(input.command) &&
     !isSameOrDescendant(input.command, canonicalCwd)
   ) {
-    const validatedExecutable = yield* canonicalizeAndValidateBindPath({
-      rawPath: input.command,
-      role: "executable",
-      ownStateRoots,
-      foreignForbiddenRoots,
-      expectedType: "file",
-    });
-    if (!isCoveredBySystemRoBinds(validatedExecutable)) {
-      extraRoBinds.push(validatedExecutable);
-    }
-    const normalizedCmd = normalizePosixPath(input.command);
-    if (normalizedCmd !== validatedExecutable && !isCoveredBySystemRoBinds(normalizedCmd)) {
-      const lexicalCmdError = assertLexicalPathNotForbidden({
-        candidate: normalizedCmd,
+    const lexicalInSystemRo = isCoveredBySystemRoBinds(input.command);
+    const systemCommandExists = lexicalInSystemRo
+      ? yield* Effect.promise(() => pathExists(input.command))
+      : true;
+    if (systemCommandExists) {
+      const validatedExecutable = yield* canonicalizeAndValidateBindPath({
+        rawPath: input.command,
         role: "executable",
         ownStateRoots,
         foreignForbiddenRoots,
-      });
-      if (lexicalCmdError !== undefined) {
-        return yield* lexicalCmdError;
-      }
-      extraRoBinds.push(normalizedCmd);
-    }
-
-    const normalizedHome =
-      input.env?.HOME !== undefined && NodePath.posix.isAbsolute(input.env.HOME)
-        ? normalizePosixPath(input.env.HOME)
-        : undefined;
-    const packageRoDir = yield* Effect.promise(() =>
-      discoverExternalExecutablePackageDir({
-        canonicalExecutable: validatedExecutable,
-        canonicalCwd,
-        homeDir: normalizedHome,
-        ownStateRoots,
-        foreignForbiddenRoots,
-      }),
-    );
-    if (packageRoDir !== undefined) {
-      const validatedPkgDir = yield* canonicalizeAndValidateBindPath({
-        rawPath: packageRoDir,
-        role: "executable",
-        ownStateRoots,
-        foreignForbiddenRoots,
-        expectedType: "directory",
-      });
-      if (!isCoveredBySystemRoBinds(validatedPkgDir)) {
-        extraRoBinds.push(validatedPkgDir);
-      }
-    }
-
-    const shebangInterpreter = yield* Effect.promise(() =>
-      readShebangInterpreterPath(validatedExecutable, input.env),
-    );
-    if (
-      shebangInterpreter !== undefined &&
-      !isCoveredBySystemRoBinds(shebangInterpreter) &&
-      !isSameOrDescendant(shebangInterpreter, canonicalCwd)
-    ) {
-      const validatedInterpreter = yield* canonicalizeAndValidateBindPath({
-        rawPath: shebangInterpreter,
-        role: "executable",
-        ownStateRoots,
-        foreignForbiddenRoots,
+        homeRoots,
         expectedType: "file",
-      }).pipe(
-        Effect.catchIf(
-          (err) => err.reason === "missing_path",
-          () => Effect.undefined,
-        ),
-      );
-      if (validatedInterpreter !== undefined) {
-        if (!isCoveredBySystemRoBinds(validatedInterpreter)) {
-          extraRoBinds.push(validatedInterpreter);
+      });
+      const executableOutsideSystemRo =
+        !lexicalInSystemRo || !isCoveredBySystemRoBinds(validatedExecutable);
+      if (executableOutsideSystemRo) {
+        if (!isCoveredBySystemRoBinds(validatedExecutable)) {
+          extraRoBinds.push(validatedExecutable);
         }
-        const normalizedInterp = normalizePosixPath(shebangInterpreter);
-        if (
-          normalizedInterp !== validatedInterpreter &&
-          !isCoveredBySystemRoBinds(normalizedInterp)
-        ) {
-          const lexicalInterpError = assertLexicalPathNotForbidden({
-            candidate: normalizedInterp,
+        const normalizedCmd = normalizePosixPath(input.command);
+        if (normalizedCmd !== validatedExecutable && !isCoveredBySystemRoBinds(normalizedCmd)) {
+          const lexicalCmdError = assertLexicalPathNotForbidden({
+            candidate: normalizedCmd,
             role: "executable",
             ownStateRoots,
             foreignForbiddenRoots,
+            homeRoots,
           });
-          if (lexicalInterpError !== undefined) {
-            return yield* lexicalInterpError;
+          if (lexicalCmdError !== undefined) {
+            return yield* lexicalCmdError;
           }
-          extraRoBinds.push(normalizedInterp);
+          extraRoBinds.push(normalizedCmd);
+        }
+
+        const packageRoDir = yield* Effect.promise(() =>
+          discoverExternalExecutablePackageDir({
+            canonicalExecutable: validatedExecutable,
+            canonicalCwd,
+            homeRoots,
+            ownStateRoots,
+            foreignForbiddenRoots,
+          }),
+        );
+        if (packageRoDir !== undefined) {
+          const validatedPkgDir = yield* canonicalizeAndValidateBindPath({
+            rawPath: packageRoDir,
+            role: "executable",
+            ownStateRoots,
+            foreignForbiddenRoots,
+            homeRoots,
+            expectedType: "directory",
+          });
+          if (!isCoveredBySystemRoBinds(validatedPkgDir)) {
+            extraRoBinds.push(validatedPkgDir);
+          }
+        }
+      }
+
+      const shebangInterpreter = yield* Effect.promise(() =>
+        readShebangInterpreterPath(validatedExecutable, input.env),
+      );
+      if (
+        shebangInterpreter !== undefined &&
+        !isCoveredBySystemRoBinds(shebangInterpreter) &&
+        !isSameOrDescendant(shebangInterpreter, canonicalCwd)
+      ) {
+        const validatedInterpreter = yield* canonicalizeAndValidateBindPath({
+          rawPath: shebangInterpreter,
+          role: "executable",
+          ownStateRoots,
+          foreignForbiddenRoots,
+          homeRoots,
+          expectedType: "file",
+        }).pipe(
+          Effect.catchIf(
+            (err) => err.reason === "missing_path",
+            () => Effect.undefined,
+          ),
+        );
+        if (validatedInterpreter !== undefined) {
+          if (!isCoveredBySystemRoBinds(validatedInterpreter)) {
+            extraRoBinds.push(validatedInterpreter);
+          }
+          const normalizedInterp = normalizePosixPath(shebangInterpreter);
+          if (
+            normalizedInterp !== validatedInterpreter &&
+            !isCoveredBySystemRoBinds(normalizedInterp)
+          ) {
+            const lexicalInterpError = assertLexicalPathNotForbidden({
+              candidate: normalizedInterp,
+              role: "executable",
+              ownStateRoots,
+              foreignForbiddenRoots,
+              homeRoots,
+            });
+            if (lexicalInterpError !== undefined) {
+              return yield* lexicalInterpError;
+            }
+            extraRoBinds.push(normalizedInterp);
+          }
         }
       }
     }
@@ -1536,6 +1688,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     chdir: canonicalChdir,
     ...(gitWorktree === undefined ? {} : { gitWorktree }),
     ...(gitRepo === undefined ? {} : { gitRepo }),
+    ...(emptyRoFile === undefined ? {} : { emptyRoFile }),
     providerProfileDirs,
     toolCacheDirs,
     extraRwBinds,

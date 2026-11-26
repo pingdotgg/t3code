@@ -217,9 +217,29 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       invocation.command,
       ...(invocation.entrypoint === undefined ? [] : [invocation.entrypoint]),
     ];
-    const extraRoBinds =
+    const entrypointDir =
       invocation.entrypoint !== undefined && path.isAbsolute(invocation.entrypoint)
-        ? [path.dirname(invocation.entrypoint)]
+        ? path.dirname(invocation.entrypoint)
+        : undefined;
+    const extraRoBinds =
+      entrypointDir !== undefined &&
+      !new Set([
+        "/",
+        "/tmp",
+        "/var",
+        "/var/tmp",
+        "/home",
+        "/root",
+        "/dev",
+        "/proc",
+        "/etc",
+        "/run",
+        "/srv",
+        "/mnt",
+        "/media",
+        "/data",
+      ]).has(entrypointDir)
+        ? [entrypointDir]
         : [];
     return {
       config: decodeSettings({

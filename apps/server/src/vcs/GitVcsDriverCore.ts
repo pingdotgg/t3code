@@ -48,7 +48,12 @@ import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observabil
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
-import { gitConfigEnv, serverGitConfigEnv, unsetInheritedRepositoryEnv } from "./VcsProcess.ts";
+import {
+  gitConfigEnv,
+  sandboxSafeGitConfigEnv,
+  serverGitConfigEnv,
+  unsetInheritedRepositoryEnv,
+} from "./VcsProcess.ts";
 import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
@@ -1094,22 +1099,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
         const env = { ...baseEnv, ...serverGitConfigEnv(baseEnv, hostPlatform) };
         const longPathEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
-        // Under --team-bwrap-sandbox, prevent untrusted workspace .git/config or hooks (including
-        // freshly `git init`'d repos) from executing host commands during server-side git calls.
-        const sandboxSafeEnv =
+        // Under --team-bwrap-sandbox, neutralize untrusted workspace git hooks, fsmonitor,
+        // clean/smudge/process filters, diff/merge drivers, and protocol helpers on host git calls.
+        const spawnEnv =
           teamBwrapSandbox === true
-            ? (() => {
-                const noFsMonitor = {
-                  ...longPathEnv,
-                  ...gitConfigEnv(longPathEnv, "core.fsmonitor", "false", hostPlatform),
-                };
-                return {
-                  ...noFsMonitor,
-                  ...gitConfigEnv(noFsMonitor, "core.hooksPath", "/dev/null", hostPlatform),
-                };
-              })()
+            ? {
+                ...longPathEnv,
+                ...sandboxSafeGitConfigEnv(commandInput.cwd, longPathEnv, hostPlatform),
+              }
             : longPathEnv;
-        const spawnEnv = sandboxSafeEnv;
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         const spawnError = (cause: unknown) =>
           new GitCommandError({

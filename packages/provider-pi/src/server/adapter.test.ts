@@ -7453,12 +7453,22 @@ process.stdout.write('{"type":"ready"}\\n');
   );
 
   it.effect(
-    "provisions persistent PI_CODING_AGENT_DIR and passes sanitized hostEnv when ProcessSandbox is enabled",
+    "isolates persistent PI_CODING_AGENT_DIR per thread, seeds allowlisted config without sessions, and passes sanitized hostEnv when ProcessSandbox is enabled",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const host = yield* ProviderHost.ProviderHost;
         const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-sandbox-cwd-" });
+        const sharedProfileDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-pi-shared-profile-",
+        });
+        yield* fileSystem.writeFileString(`${sharedProfileDir}/settings.json`, '{"theme":"dark"}');
+        yield* fileSystem.makeDirectory(`${sharedProfileDir}/sessions`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${sharedProfileDir}/sessions/secret-sibling.jsonl`,
+          '{"secret":true}\n',
+        );
+
         const spawnedEnvs: Array<Readonly<Record<string, unknown>> | undefined> = [];
         const wrapCalls: Array<{
           readonly env?: NodeJS.ProcessEnv | undefined;
@@ -7509,6 +7519,7 @@ process.stdout.write('{"type":"ready"}\\n');
           settings: { enabled: true, binaryPath: "/usr/bin/pi", launchArgs: "", customModels: [] },
           environment: {
             PATH: "/usr/bin:/bin",
+            PI_CODING_AGENT_DIR: sharedProfileDir,
             LD_PRELOAD: `${cwd}/evil.so`,
           },
         }).pipe(
@@ -7516,9 +7527,21 @@ process.stdout.write('{"type":"ready"}\\n');
           Effect.provideService(ProcessSandbox, sandbox),
         );
 
+        const threadA = ThreadId.make("thread-pi-a");
+        const threadB = ThreadId.make("thread-pi-b");
         yield* adapter.openSession({
-          threadId: THREAD_ID,
-          providerSessionId: SESSION_ID,
+          threadId: threadA,
+          providerSessionId: ProviderSessionId.make("provider-session-pi-a"),
+          modelSelection: modelSelection("default"),
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          }),
+        });
+        yield* adapter.openSession({
+          threadId: threadB,
+          providerSessionId: ProviderSessionId.make("provider-session-pi-b"),
           modelSelection: modelSelection("default"),
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode: "full-access",
@@ -7527,14 +7550,21 @@ process.stdout.write('{"type":"ready"}\\n');
           }),
         });
 
-        assert.equal(wrapCalls.length, 1);
-        const expectedDir = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}`;
-        assert.equal(wrapCalls[0]?.env?.PI_CODING_AGENT_DIR, expectedDir);
-        assert.deepEqual(wrapCalls[0]?.extraProviderProfileDirs, [expectedDir]);
-        assert.isTrue(yield* fileSystem.exists(expectedDir));
-        assert.equal(spawnedEnvs.length, 1);
+        assert.equal(wrapCalls.length, 2);
+        const dirA = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadA}`;
+        const dirB = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadB}`;
+        assert.notEqual(dirA, dirB);
+        assert.equal(wrapCalls[0]?.env?.PI_CODING_AGENT_DIR, dirA);
+        assert.equal(wrapCalls[1]?.env?.PI_CODING_AGENT_DIR, dirB);
+        assert.deepEqual(wrapCalls[0]?.extraProviderProfileDirs, [dirA]);
+        assert.deepEqual(wrapCalls[1]?.extraProviderProfileDirs, [dirB]);
+        assert.isFalse(wrapCalls[0]?.extraProviderProfileDirs?.includes(sharedProfileDir) ?? false);
+        assert.isFalse(wrapCalls[0]?.extraProviderProfileDirs?.includes(dirB) ?? false);
+        assert.equal(yield* fileSystem.readFileString(`${dirA}/settings.json`), '{"theme":"dark"}');
+        assert.isFalse(yield* fileSystem.exists(`${dirA}/sessions/secret-sibling.jsonl`));
+        assert.equal(spawnedEnvs.length, 2);
         assert.equal(spawnedEnvs[0]?.LD_PRELOAD, undefined);
-        assert.equal(spawnedEnvs[0]?.PI_CODING_AGENT_DIR, expectedDir);
+        assert.equal(spawnedEnvs[1]?.LD_PRELOAD, undefined);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 });

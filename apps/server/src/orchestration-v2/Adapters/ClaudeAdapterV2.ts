@@ -393,16 +393,53 @@ function mergeClaudeStreamUsage(
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 
+const CLAUDE_UNSAFE_RO_BIND_DIRS = new Set([
+  "/",
+  "/tmp",
+  "/var",
+  "/var/tmp",
+  "/home",
+  "/root",
+  "/dev",
+  "/proc",
+  "/etc",
+  "/run",
+  "/srv",
+  "/mnt",
+  "/media",
+  "/data",
+]);
+
 export function resolveClaudeSandboxExtraRoBinds(
   binaryPath: string | undefined,
 ): ReadonlyArray<string> {
   const dirs = new Set<string>();
+  const homeRoots = new Set<string>();
+  const hostHome = HostProcess.HomeDirectory.defaultValue();
+  if (NodePath.isAbsolute(hostHome)) {
+    homeRoots.add(NodePath.posix.normalize(hostHome).replace(/\/+$/, "") || "/");
+    try {
+      homeRoots.add(
+        NodePath.posix.normalize(NodeFS.realpathSync(hostHome)).replace(/\/+$/, "") || "/",
+      );
+    } catch {
+      // Keep lexical home root.
+    }
+  }
+  const addSafeDir = (dirPath: string) => {
+    const normalized = NodePath.posix.normalize(dirPath).replace(/\/+$/, "") || "/";
+    if (CLAUDE_UNSAFE_RO_BIND_DIRS.has(normalized)) return;
+    for (const homeRoot of homeRoots) {
+      if (normalized === homeRoot || homeRoot.startsWith(`${normalized}/`)) return;
+    }
+    dirs.add(normalized);
+  };
   const addDirWithRealpath = (targetPath: string) => {
     if (!NodePath.isAbsolute(targetPath)) return;
-    dirs.add(NodePath.dirname(targetPath));
+    addSafeDir(NodePath.dirname(targetPath));
     try {
       const real = NodeFS.realpathSync(targetPath);
-      dirs.add(NodePath.dirname(real));
+      addSafeDir(NodePath.dirname(real));
     } catch {
       // Keep lexical dirname when realpath is unavailable.
     }

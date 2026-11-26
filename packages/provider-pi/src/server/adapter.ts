@@ -554,17 +554,69 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           };
           let sandboxPiAgentDir: string | undefined;
           if (processSandbox.enabled) {
-            const configuredAgentDir = baseEnvironment.PI_CODING_AGENT_DIR?.trim();
-            if (configuredAgentDir !== undefined && configuredAgentDir.length > 0) {
-              sandboxPiAgentDir = configuredAgentDir;
-            } else {
-              const safeInstanceId =
-                options.instanceId.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^\.+$/, "default") ||
-                "default";
-              sandboxPiAgentDir = path.join(host.paths.stateDir, "providers", "pi", safeInstanceId);
-              yield* fileSystem.makeDirectory(sandboxPiAgentDir, { recursive: true });
-              baseEnvironment.PI_CODING_AGENT_DIR = sandboxPiAgentDir;
+            // Isolate Pi's mutable profile + sessions directory per thread so sibling threads
+            // sharing one provider instance cannot read or poison each other's sessions or config.
+            const sanitizeSegment = (value: string) =>
+              value.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^\.+$/, "default") || "default";
+            const rawSlug = `${sanitizeSegment(options.instanceId)}__${sanitizeSegment(input.threadId)}`;
+            const threadProfileSlug =
+              rawSlug.length <= 96
+                ? rawSlug
+                : (() => {
+                    let hash = 0x811c9dc5;
+                    for (let i = 0; i < rawSlug.length; i += 1) {
+                      hash ^= rawSlug.charCodeAt(i);
+                      hash = Math.imul(hash, 0x01000193);
+                    }
+                    return `${rawSlug.slice(0, 80)}_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+                  })();
+            const threadAgentDir = path.join(
+              host.paths.stateDir,
+              "providers",
+              "pi",
+              threadProfileSlug,
+            );
+            yield* fileSystem.makeDirectory(threadAgentDir, { recursive: true });
+            const sharedAgentDir = baseEnvironment.PI_CODING_AGENT_DIR?.trim();
+            if (
+              sharedAgentDir !== undefined &&
+              sharedAgentDir.length > 0 &&
+              path.resolve(sharedAgentDir) !== path.resolve(threadAgentDir)
+            ) {
+              const realSharedDir = yield* fileSystem
+                .realPath(sharedAgentDir)
+                .pipe(Effect.orElseSucceed(() => undefined));
+              if (realSharedDir !== undefined) {
+                for (const fileName of [
+                  "auth.json",
+                  "models.json",
+                  "settings.json",
+                  "keybindings.json",
+                ] as const) {
+                  const srcPath = path.join(sharedAgentDir, fileName);
+                  const realSrc = yield* fileSystem
+                    .realPath(srcPath)
+                    .pipe(Effect.orElseSucceed(() => undefined));
+                  if (realSrc === undefined || !realSrc.startsWith(`${realSharedDir}${path.sep}`)) {
+                    continue;
+                  }
+                  const srcStat = yield* fileSystem
+                    .stat(realSrc)
+                    .pipe(Effect.orElseSucceed(() => undefined));
+                  if (srcStat?.type !== "File") continue;
+                  const bytes = yield* fileSystem
+                    .readFile(realSrc)
+                    .pipe(Effect.orElseSucceed(() => undefined));
+                  if (bytes !== undefined) {
+                    yield* fileSystem
+                      .writeFile(path.join(threadAgentDir, fileName), bytes)
+                      .pipe(Effect.ignore);
+                  }
+                }
+              }
             }
+            sandboxPiAgentDir = threadAgentDir;
+            baseEnvironment.PI_CODING_AGENT_DIR = threadAgentDir;
           }
           const launch = buildPiRpcLaunch({
             launchArgs: resolvedLaunchArgs.args,
@@ -575,21 +627,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             sessionPath,
             runtimeMode: input.runtimePolicy.runtimeMode,
           });
-          const sessionDir = sessionPath !== undefined ? path.dirname(sessionPath) : undefined;
           const resolvedAgentDir =
             sandboxPiAgentDir !== undefined ? path.resolve(sandboxPiAgentDir) : undefined;
           const resolvedCwd = path.resolve(cwd);
-          const needsSeparateSessionDirBind =
-            sessionDir !== undefined &&
+          const needsSeparateSessionFileBind =
+            sessionPath !== undefined &&
             (() => {
-              const resolvedSessionDir = path.resolve(sessionDir);
+              const resolvedSessionPath = path.resolve(sessionPath);
               const insideAgentDir =
                 resolvedAgentDir !== undefined &&
-                (resolvedSessionDir === resolvedAgentDir ||
-                  resolvedSessionDir.startsWith(`${resolvedAgentDir}${path.sep}`));
+                (resolvedSessionPath === resolvedAgentDir ||
+                  resolvedSessionPath.startsWith(`${resolvedAgentDir}${path.sep}`));
               const insideCwd =
-                resolvedSessionDir === resolvedCwd ||
-                resolvedSessionDir.startsWith(`${resolvedCwd}${path.sep}`);
+                resolvedSessionPath === resolvedCwd ||
+                resolvedSessionPath.startsWith(`${resolvedCwd}${path.sep}`);
               return !insideAgentDir && !insideCwd;
             })();
           const sandboxedLaunch = processSandbox.enabled
@@ -603,8 +654,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   ...(sandboxPiAgentDir !== undefined
                     ? { extraProviderProfileDirs: [sandboxPiAgentDir] }
                     : {}),
-                  ...(needsSeparateSessionDirBind && sessionDir !== undefined
-                    ? { extraRwBinds: [sessionDir] }
+                  // Bind only the single legacy session file (never a shared parent sessions/ dir).
+                  ...(needsSeparateSessionFileBind && sessionPath !== undefined
+                    ? { extraRwBinds: [sessionPath] }
                     : {}),
                   name: "pi",
                   threadId: input.threadId,

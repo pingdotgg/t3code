@@ -1,8 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Reads local repo .git/config and includes synchronously to neutralize untrusted git hooks/filters under bwrap.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/process";
@@ -22,6 +28,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SourceControlProcessInput } from "@t3tools/source-control-core/server/SourceControlHost";
 
+import * as ServerConfig from "../config.ts";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -156,6 +163,214 @@ export const serverGitConfigEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Plat
   return added;
 };
 
+const SANDBOX_SAFE_FIXED_GIT_CONFIG = [
+  ["core.fsmonitor", "false"],
+  ["core.hooksPath", "/dev/null"],
+  ["protocol.ext.allow", "never"],
+  ["diff.external", ""],
+  ["core.gitProxy", ""],
+  ["core.askPass", ""],
+  ["core.pager", "cat"],
+  ["core.editor", "false"],
+  ["core.alternateRefsCommand", ""],
+  ["uploadpack.packObjectsHook", ""],
+] as const;
+
+const MAX_SANDBOX_GIT_CONFIG_BYTES = 262_144;
+const MAX_SANDBOX_GIT_CONFIG_FILES = 16;
+
+function findEnclosingGitConfigFiles(cwd: string | undefined): ReadonlyArray<string> {
+  if (cwd === undefined || cwd.trim().length === 0) return [];
+  let cursor = NodePath.resolve(cwd);
+  for (let depth = 0; depth < 64; depth += 1) {
+    const dotGit = NodePath.join(cursor, ".git");
+    try {
+      const stat = NodeFS.lstatSync(dotGit);
+      if (stat.isDirectory()) {
+        return [NodePath.join(dotGit, "config"), NodePath.join(dotGit, "config.worktree")];
+      }
+      if (stat.isFile()) {
+        const raw = NodeFS.readFileSync(dotGit, "utf8").slice(0, 4096);
+        const match = /^gitdir:\s*(.+)$/m.exec(raw);
+        const target = match?.[1]?.trim();
+        if (target === undefined || target.length === 0) return [];
+        const worktreeGitDir = NodePath.isAbsolute(target)
+          ? target
+          : NodePath.resolve(cursor, target);
+        const files = [
+          NodePath.join(worktreeGitDir, "config"),
+          NodePath.join(worktreeGitDir, "config.worktree"),
+        ];
+        try {
+          const commonRaw = NodeFS.readFileSync(
+            NodePath.join(worktreeGitDir, "commondir"),
+            "utf8",
+          ).trim();
+          if (commonRaw.length > 0) {
+            const commonDir = NodePath.isAbsolute(commonRaw)
+              ? commonRaw
+              : NodePath.resolve(worktreeGitDir, commonRaw);
+            files.unshift(NodePath.join(commonDir, "config"));
+          }
+        } catch {
+          // Worktree without readable commondir still neutralizes worktree-local configs.
+        }
+        return files;
+      }
+    } catch {
+      // Keep walking upward until a `.git` entry is found.
+    }
+    const parent = NodePath.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return [];
+}
+
+function unescapeGitConfigSubsection(raw: string): string {
+  return raw.replace(/\\(.)/g, "$1");
+}
+
+function discoverUntrustedRepoGitOverrides(
+  cwd: string | undefined,
+): ReadonlyArray<readonly [string, string]> {
+  const initialFiles = findEnclosingGitConfigFiles(cwd);
+  if (initialFiles.length === 0) return [];
+
+  const filters = new Set<string>();
+  const diffs = new Set<string>();
+  const merges = new Set<string>();
+  let hasSshCommand = false;
+  let hasCredentialSection = false;
+  const visited = new Set<string>();
+  const queue: Array<string> = [...initialFiles];
+
+  while (queue.length > 0 && visited.size < MAX_SANDBOX_GIT_CONFIG_FILES) {
+    const filePath = queue.shift()!;
+    const resolvedPath = NodePath.resolve(filePath);
+    if (visited.has(resolvedPath)) continue;
+    visited.add(resolvedPath);
+
+    let content: string;
+    try {
+      const stat = NodeFS.statSync(resolvedPath);
+      if (!stat.isFile()) continue;
+      const bytesToRead = Math.min(stat.size, MAX_SANDBOX_GIT_CONFIG_BYTES);
+      const fd = NodeFS.openSync(resolvedPath, "r");
+      try {
+        const buf = Buffer.alloc(bytesToRead);
+        const bytesRead = NodeFS.readSync(fd, buf, 0, bytesToRead, 0);
+        content = buf.subarray(0, bytesRead).toString("utf8");
+      } finally {
+        NodeFS.closeSync(fd);
+      }
+    } catch {
+      continue;
+    }
+
+    let currentSection = "";
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
+
+      if (line.startsWith("[")) {
+        const quotedMatch = /^\[\s*([a-zA-Z0-9-]+)\s+"((?:\\.|[^"\\])+)"\s*\]/.exec(line);
+        if (quotedMatch !== null) {
+          const section = quotedMatch[1]!.toLowerCase();
+          const subsection = unescapeGitConfigSubsection(quotedMatch[2]!);
+          currentSection = section;
+          if (section === "filter") filters.add(subsection);
+          else if (section === "diff") diffs.add(subsection);
+          else if (section === "merge") merges.add(subsection);
+          else if (section === "credential") hasCredentialSection = true;
+          continue;
+        }
+        const dotMatch = /^\[\s*([a-zA-Z0-9-]+)\.([^\s\]]+)\s*\]/.exec(line);
+        if (dotMatch !== null) {
+          const section = dotMatch[1]!.toLowerCase();
+          const subsection = dotMatch[2]!;
+          currentSection = section;
+          if (section === "filter") filters.add(subsection);
+          else if (section === "diff") diffs.add(subsection);
+          else if (section === "merge") merges.add(subsection);
+          else if (section === "credential") hasCredentialSection = true;
+          continue;
+        }
+        const plainMatch = /^\[\s*([a-zA-Z0-9-]+)\s*\]/.exec(line);
+        if (plainMatch !== null) {
+          currentSection = plainMatch[1]!.toLowerCase();
+          if (currentSection === "credential") hasCredentialSection = true;
+          continue;
+        }
+      }
+
+      const kvMatch = /^([a-zA-Z0-9-]+)\s*=\s*(.+)$/.exec(line);
+      if (kvMatch === null) continue;
+      const key = kvMatch[1]!.toLowerCase();
+      const rawValue = kvMatch[2]!.trim().replace(/^"(.*)"$/, "$1");
+      if (currentSection === "core" && key === "sshcommand") {
+        hasSshCommand = true;
+      } else if (
+        (currentSection === "include" || currentSection === "includeif") &&
+        key === "path" &&
+        rawValue.length > 0
+      ) {
+        const expanded = rawValue.startsWith("~/")
+          ? NodePath.join(NodeOS.homedir(), rawValue.slice(2))
+          : rawValue;
+        const includeTarget = NodePath.isAbsolute(expanded)
+          ? expanded
+          : NodePath.resolve(NodePath.dirname(resolvedPath), expanded);
+        if (!visited.has(includeTarget)) {
+          queue.push(includeTarget);
+        }
+      }
+    }
+  }
+
+  const overrides: Array<readonly [string, string]> = [];
+  for (const name of filters) {
+    overrides.push(
+      [`filter.${name}.clean`, ""],
+      [`filter.${name}.smudge`, ""],
+      [`filter.${name}.process`, ""],
+      [`filter.${name}.required`, "false"],
+    );
+  }
+  for (const name of diffs) {
+    overrides.push([`diff.${name}.textconv`, ""], [`diff.${name}.command`, ""]);
+  }
+  for (const name of merges) {
+    overrides.push([`merge.${name}.driver`, ""]);
+  }
+  if (hasSshCommand) {
+    overrides.push(["core.sshCommand", "false"]);
+  }
+  if (hasCredentialSection) {
+    overrides.push(["credential.helper", ""]);
+  }
+  return overrides;
+}
+
+/**
+ * Neutralizes repo-local executable Git config vectors (hooks, fsmonitor, clean/smudge/process
+ * filters, diff/merge drivers, ext::, sshCommand, credential helpers) when sandboxing is active.
+ */
+export const sandboxSafeGitConfigEnv = (
+  cwd: string | undefined,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv => {
+  const added: NodeJS.ProcessEnv = {};
+  for (const [key, value] of [
+    ...SANDBOX_SAFE_FIXED_GIT_CONFIG,
+    ...discoverUntrustedRepoGitOverrides(cwd),
+  ]) {
+    Object.assign(added, gitConfigEnv({ ...env, ...added }, key, value, platform));
+  }
+  return added;
+};
+
 const REPOSITORY_SELECTORS = new Set([
   "GIT_DIR",
   "GIT_WORK_TREE",
@@ -229,6 +444,9 @@ const canRetryFullFsync = (stderr: string) =>
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcess.Platform;
+  const serverConfigOption = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  const teamBwrapSandbox =
+    Option.isSome(serverConfigOption) && serverConfigOption.value.teamBwrapSandbox === true;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
   const backgroundProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY - 1);
@@ -256,16 +474,31 @@ export const make = Effect.gen(function* () {
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
-        env: {
-          ...(input.command === "git"
-            ? unsetInheritedRepositoryEnv(process.env, hostPlatform)
-            : {}),
-          // Failures are read by English patterns; without LANG, macOS Git follows the system language.
-          // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
-          ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
-          ...input.env,
-          ...serverGitConfigEnv({ ...process.env, ...input.env }, hostPlatform),
-        },
+        env: (() => {
+          const baseEnv: NodeJS.ProcessEnv = {
+            ...(input.command === "git"
+              ? unsetInheritedRepositoryEnv(process.env, hostPlatform)
+              : {}),
+            // Failures are read by English patterns; without LANG, macOS Git follows the system language.
+            // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
+            ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
+            ...input.env,
+          };
+          const withServerGitConfig: NodeJS.ProcessEnv = {
+            ...baseEnv,
+            ...serverGitConfigEnv({ ...process.env, ...baseEnv }, hostPlatform),
+          };
+          return input.command === "git" && teamBwrapSandbox
+            ? {
+                ...withServerGitConfig,
+                ...sandboxSafeGitConfigEnv(
+                  input.cwd,
+                  { ...process.env, ...withServerGitConfig },
+                  hostPlatform,
+                ),
+              }
+            : withServerGitConfig;
+        })(),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",
