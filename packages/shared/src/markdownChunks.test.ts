@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
+import { toHtml } from "hast-util-to-html";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { unified } from "unified";
 
-import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, splitMarkdown } from "./markdownChunks.ts";
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  splitMarkdown,
+  withMarkdownDefinitions,
+} from "./markdownChunks.ts";
 
 const splitLargeMarkdown = (text: string, targetChars?: number) =>
   splitMarkdown(text, targetChars).chunks;
@@ -161,7 +169,7 @@ describe("splitMarkdown", () => {
     expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
   });
 
-  it("collects link definitions outside code so every piece can resolve them", () => {
+  it.each(["", " "])("collects link definitions outside code with fence indent %j", (indent) => {
     const text = [
       "[![badge][b]][site]",
       "",
@@ -187,9 +195,9 @@ describe("splitMarkdown", () => {
       "===",
       "[p]: /paragraph-text",
       "",
-      "```sh",
+      `${indent}\`\`\`sh`,
       "npm install",
-      "```",
+      `${indent}\`\`\``,
       "[fence]: /after-fence",
       "~~~",
       "~~~",
@@ -223,5 +231,18 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
     const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
     expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
+
+    const textWithLink =
+      "Read [guide]. " +
+      "filler ".repeat(600) +
+      `\n\n# Notes\n\n${indent}\`\`\`sh\n echo x\n${indent}\`\`\`\n[guide]: https://example.com/guide\n`;
+    const { chunks, definitions } = splitMarkdown(textWithLink);
+    expect(chunks).toHaveLength(2);
+    const processor = unified().use(remarkParse).use(remarkRehype);
+    const render = (markdown: string) => toHtml(processor.runSync(processor.parse(markdown)));
+    expect(render(textWithLink)).toContain('<a href="https://example.com/guide">guide</a>');
+    expect(render(withMarkdownDefinitions(chunks[0]!.text, definitions))).toContain(
+      '<a href="https://example.com/guide">guide</a>',
+    );
   });
 });
