@@ -126,20 +126,17 @@ function findCodeSpanEnd(
   lineIndex: number,
 ): number {
   const openDepth = lines[lineIndex]!.depth;
-  let nextLine = lines[lineIndex + 1];
   for (let i = openIndex + tickCount; i < markdown.length; i++) {
-    if (i === nextLine?.start) {
-      SPAN_BREAK_LINE.lastIndex = i;
-      if (SPAN_BREAK_LINE.test(markdown) || nextLine.breaksSpan || nextLine.depth > openDepth)
-        return -1;
-      lineIndex++;
-      nextLine = lines[lineIndex + 1];
-    }
     if (markdown[i] === "`") {
       let runEnd = i + 1;
       while (markdown[runEnd] === "`") runEnd++;
       if (runEnd - i === tickCount) return runEnd;
       i = runEnd - 1;
+    } else if (i + 1 === lines[lineIndex + 1]?.start) {
+      lineIndex++;
+      SPAN_BREAK_LINE.lastIndex = i + 1;
+      const line = lines[lineIndex]!;
+      if (SPAN_BREAK_LINE.test(markdown) || line.breaksSpan || line.depth > openDepth) return -1;
     }
   }
   return -1;
