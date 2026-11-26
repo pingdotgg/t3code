@@ -70,13 +70,13 @@ test(
     await composer.fill("Unsubmitted replacement");
     await browser.evaluate(async () => {
       await window.workspaceDefaultHold.release();
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
       return null;
     });
 
+    await expect(
+      screen.getByText("Draft changed while preparing this message. Review it and send again."),
+    ).toBeVisible();
     await app.screenshot("after-workspace-default-loads");
-    expect(await composer.textContent()).toContain("Unsubmitted replacement");
+    await expect(composer).toHaveText("Unsubmitted replacement");
   },
 );
