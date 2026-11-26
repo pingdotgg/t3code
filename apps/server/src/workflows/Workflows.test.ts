@@ -2805,6 +2805,36 @@ it.effect("a step of a paused run waits for the resume, even when the engine rep
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a list by tag keeps the runs that did something apart from skipped ones", () =>
+  Effect.gen(function* () {
+    const { boot, database } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const run = yield* workflows.start("sorter", { tags: ["pr"] }, { idempotencyKey: "kept" });
+        yield* workflows.waitFor(run.runId, status("waiting"));
+        // A trigger that skips most of what it brings: 500 newer skipped runs with the same tag.
+        yield* Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) => sql`
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+            INSERT INTO workflow_runs (run_id, workflow, version, engine_tag, idempotency_key,
+              title, status, pauses, started_at, updated_at, ended_at, held, tags_json)
+            SELECT 'skip-' || i, workflow, version, engine_tag, 'skip-' || i, title, 'skipped',
+              0, '2999-01-01T00:00:00.000Z', '2999-01-01T00:00:00.000Z',
+              '2999-01-01T00:00:00.000Z', 0, tags_json
+            FROM n, workflow_runs WHERE run_id = ${run.runId}
+          `,
+        ).pipe(Effect.provide(database));
+        assert.include(
+          (yield* workflows.list({ tag: "pr" })).map((listed) => listed.runId),
+          run.runId,
+        );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it("tags refuses a list with a gap in it", () => {
   // The same list `tags([, "pr"])` makes: a first entry that was never set.
   const gapped = new Array<string>(2);
