@@ -66,6 +66,11 @@ export interface ProjectCloneHooks {
     readonly projectId: ProjectId;
     readonly workspaceRoot: string;
   }) => Effect.Effect<void>;
+  /** Whether the folder is already a checkout of the repository `remoteUrl` names. */
+  readonly isCheckoutOf: (input: {
+    readonly workspaceRoot: string;
+    readonly remoteUrl: string;
+  }) => Effect.Effect<boolean>;
 }
 
 const DONE_RETENTION = "30 seconds";
@@ -281,9 +286,105 @@ export const make = Effect.gen(function* () {
       return [true, next] as const;
     });
 
+  // Adds the checkout already at the destination without touching it. The done
+  // snapshot lets clients waiting on the clone carry on.
+  const adopt = Effect.fn("ProjectCloneTracker.adopt")(function* (
+    input: ProjectCloneStartInput,
+    prepared: SourceControlRepositoryService.SourceControlPreparedClone,
+    hooks: ProjectCloneHooks,
+  ) {
+    const projectId = yield* hooks
+      .createProject({
+        projectId: input.projectId,
+        title: input.title,
+        workspaceRoot: prepared.destinationPath,
+        createdAt: input.createdAt,
+      })
+      .pipe(
+        Effect.as(input.projectId),
+        Effect.catchTags({
+          ProjectConflictError: (conflict) => Effect.succeed(conflict.conflictingProjectId),
+        }),
+      );
+    const now = yield* nowIso;
+    yield* clearRetention(projectId);
+    yield* Ref.update(clones, (current) => {
+      const next = new Map(current);
+      for (const tracked of current.values()) {
+        if (tracked.input.destinationPath === prepared.destinationPath) {
+          next.delete(tracked.snapshot.projectId);
+        }
+      }
+      next.set(projectId, {
+        snapshot: {
+          projectId,
+          remoteUrl: prepared.remoteUrl,
+          destinationPath: prepared.destinationPath,
+          repository: prepared.repository,
+          phase: "done",
+          stage: "checkout",
+          percent: 100,
+          detail: null,
+          stalled: false,
+          error: null,
+          startedAt: now,
+          endedAt: now,
+          sequence: ++sequence,
+        },
+        fiber: null,
+        hooks,
+        input: {
+          cloneUrl: prepared.cloneUrl,
+          destinationPath: prepared.destinationPath,
+          repository: prepared.repository,
+          protocol: input.protocol ?? "auto",
+        },
+      });
+      return next;
+    });
+    yield* publish;
+    yield* scheduleRemoval(projectId);
+    yield* hooks
+      .onCloned({ projectId, workspaceRoot: prepared.destinationPath })
+      .pipe(Effect.ignoreCause({ log: true }));
+    return {
+      projectId,
+      cwd: prepared.destinationPath,
+      remoteUrl: prepared.remoteUrl,
+      repository: prepared.repository,
+      existingCheckout: true,
+    };
+  });
+
   const start: ProjectCloneTracker["Service"]["start"] = Effect.fn("ProjectCloneTracker.start")(
     function* (input, hooks) {
-      const prepared = yield* repositories.prepareClone(input);
+      const prepared = yield* repositories.prepareClone(input, { allowOccupied: true });
+      const alreadyInProgress = new SourceControlRepositoryError({
+        operation: "cloneRepository",
+        provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+        detail: "A clone into this destination is already in progress.",
+      });
+      if (prepared.occupied) {
+        const running = Array.from((yield* Ref.get(clones)).values()).some(
+          (tracked) =>
+            tracked.snapshot.phase === "running" &&
+            tracked.input.destinationPath === prepared.destinationPath,
+        );
+        if (running) return yield* alreadyInProgress;
+        const sameRepository = yield* hooks.isCheckoutOf({
+          workspaceRoot: prepared.destinationPath,
+          remoteUrl: prepared.cloneUrl,
+        });
+        if (!sameRepository) {
+          return yield* new SourceControlRepositoryError({
+            operation: "cloneRepository",
+            provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+            detail:
+              "Destination path already exists and is not empty, and is not a checkout of this repository.",
+          });
+        }
+        return yield* adopt(input, prepared, hooks);
+      }
       const startedAt = yield* nowIso;
       const snapshot: ProjectCloneSnapshot = {
         projectId: input.projectId,
@@ -325,11 +426,6 @@ export const make = Effect.gen(function* () {
           },
         });
         return [overlapping.map((stale) => stale.snapshot.projectId), next] as const;
-      });
-      const alreadyInProgress = new SourceControlRepositoryError({
-        operation: "cloneRepository",
-        provider: input.provider ?? SourceControlProviderKind.make("unknown"),
-        detail: "A clone into this destination is already in progress.",
       });
       if (claim === null) return yield* alreadyInProgress;
       // A superseded done entry's pending removal would otherwise delete the new claim.

@@ -167,6 +167,18 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   }
   void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
   if (reads.length === 0) return projectId;
+  // Its own ignored files, like .env, are not ours to overwrite.
+  if (started.value.existingCheckout) {
+    setFileCopy(copyKey, {
+      phase: "failed",
+      title: msg(
+        "Used the checkout already on {target}, so {count, plural, one {{count} file was} other {{count} files were}} not copied",
+        { count: reads.length, target: input.target.label },
+      ),
+      failures: reads.map((read) => read.relativePath),
+    });
+    return projectId;
+  }
 
   void (async () => {
     const clone = await waitForClone(input.target.environmentId, projectId);

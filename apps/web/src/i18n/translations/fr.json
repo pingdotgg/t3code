@@ -12986,5 +12986,6 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "92e129bf413a1220": "retirée",
-  "800966eb58181745": "Vérification des langues prises en charge par le modèle…"
+  "800966eb58181745": "Vérification des langues prises en charge par le modèle…",
+  "546bb8e7c137c91d": "Le checkout déjà présent sur {target} a été utilisé, donc {count, plural, one {{count} fichier n’a pas été copié} other {{count} fichiers n’ont pas été copiés}}"
 }

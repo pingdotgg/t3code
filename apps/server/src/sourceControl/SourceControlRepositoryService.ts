@@ -49,6 +49,7 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
     readonly prepareClone: (
       input: SourceControlCloneRepositoryInput,
+      options?: SourceControlPrepareCloneOptions,
     ) => Effect.Effect<SourceControlPreparedClone, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
@@ -68,6 +69,13 @@ export interface SourceControlPreparedClone {
   readonly remoteUrl: string;
   readonly cloneUrl: string;
   readonly repository: SourceControlRepositoryInfo | null;
+  /** The destination already holds files; only reported when `allowOccupied` is set. */
+  readonly occupied: boolean;
+}
+
+export interface SourceControlPrepareCloneOptions {
+  /** Report a non-empty destination instead of failing, so a caller can adopt a checkout already there. */
+  readonly allowOccupied?: boolean;
 }
 
 export interface SourceControlCloneOptions {
@@ -258,8 +266,9 @@ export const make = Effect.gen(function* () {
   );
 
   const prepareDestination = Effect.fn("SourceControlRepositoryService.prepareDestination")(
-    function* (destinationPath: string) {
+    function* (destinationPath: string, allowOccupied: boolean) {
       const normalizedDestination = yield* normalizeDestinationPath(destinationPath);
+      let occupied = false;
       if (yield* fileSystem.exists(normalizedDestination)) {
         const entries = yield* fileSystem
           .readDirectory(normalizedDestination, { recursive: false })
@@ -274,7 +283,8 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
-        if (entries.length > 0) {
+        occupied = entries.length > 0;
+        if (occupied && !allowOccupied) {
           return yield* new SourceControlRepositoryError({
             operation: "cloneRepository",
             provider: SourceControlProviderKind.make("unknown"),
@@ -293,14 +303,19 @@ export const make = Effect.gen(function* () {
         destinationPath: normalizedDestination,
         parentPath: path.dirname(normalizedDestination),
         directoryName: path.basename(normalizedDestination),
+        occupied,
       };
     },
   );
 
   const prepareClone = Effect.fn("SourceControlRepositoryService.prepareClone")(function* (
     input: SourceControlCloneRepositoryInput,
+    options?: SourceControlPrepareCloneOptions,
   ) {
-    const preparedDestination = yield* prepareDestination(input.destinationPath);
+    const preparedDestination = yield* prepareDestination(
+      input.destinationPath,
+      options?.allowOccupied === true,
+    );
     let repository: SourceControlRepositoryInfo | null = null;
     let remoteUrl = input.remoteUrl?.trim() ?? null;
     let provider: SourceControlProviderKind =
@@ -329,6 +344,7 @@ export const make = Effect.gen(function* () {
       remoteUrl: redactRemoteUrl(remoteUrl),
       cloneUrl: remoteUrl,
       repository,
+      occupied: preparedDestination.occupied,
     } satisfies SourceControlPreparedClone;
   });
 
@@ -624,8 +640,8 @@ export const make = Effect.gen(function* () {
         mapRepositoryError("lookupRepository", input.provider),
       );
     }),
-    prepareClone: Effect.fnUntraced(function* (input) {
-      return yield* prepareClone(input).pipe(
+    prepareClone: Effect.fnUntraced(function* (input, options) {
+      return yield* prepareClone(input, options).pipe(
         mapRepositoryError(
           "cloneRepository",
           input.provider ?? SourceControlProviderKind.make("unknown"),

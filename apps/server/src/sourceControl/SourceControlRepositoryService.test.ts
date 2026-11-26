@@ -668,6 +668,28 @@ it.effect.each([
   }),
 );
 
+it.effect("reports a non-empty destination only when asked to allow it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const destinationPath = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-occupied-",
+    });
+    yield* fs.writeFileString(path.join(destinationPath, "README.md"), "hello\n");
+    const input = { remoteUrl: "https://github.com/octocat/t3code.git", destinationPath };
+    const [refused, allowed] = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return [
+        yield* Effect.flip(service.prepareClone(input)),
+        yield* service.prepareClone(input, { allowOccupied: true }),
+      ] as const;
+    }).pipe(Effect.provide(layer({ git: { execute: () => Effect.succeed(processOutput()) } })));
+    assert.include(refused.detail, "not empty");
+    assert.equal(allowed.occupied, true);
+    assert.equal(allowed.destinationPath, destinationPath);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("strips embedded credentials from the remote URL it reports", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

@@ -30,6 +30,7 @@ const startInput = {
 
 function makeHarness(options?: {
   readonly clone?: SourceControlRepositoryService.SourceControlRepositoryService["Service"]["cloneRepository"];
+  readonly existing?: "same-repository" | "other-repository";
 }) {
   const created: Array<{ projectId: ProjectId; workspaceRoot: string }> = [];
   const cloned: Array<ProjectId> = [];
@@ -40,6 +41,7 @@ function makeHarness(options?: {
         created.push({ projectId: input.projectId, workspaceRoot: input.workspaceRoot });
       }),
     onCloned: (input) => Effect.sync(() => void cloned.push(input.projectId)),
+    isCheckoutOf: () => Effect.succeed(options?.existing === "same-repository"),
   };
   const layer = ProjectCloneTracker.layer.pipe(
     Layer.provide(
@@ -50,6 +52,7 @@ function makeHarness(options?: {
             remoteUrl: input.remoteUrl ?? "",
             cloneUrl: input.remoteUrl ?? "",
             repository: null,
+            occupied: options?.existing !== undefined,
           }),
         cloneRepository:
           options?.clone ??
@@ -253,6 +256,7 @@ describe("ProjectCloneTracker", () => {
               remoteUrl: "https://github.com/octocat/t3code.git",
               cloneUrl: "https://user:s3cret@github.com/octocat/t3code.git",
               repository: null,
+              occupied: false,
             }),
           cloneRepository: (input) =>
             Effect.sync(() => {
@@ -390,6 +394,57 @@ describe("ProjectCloneTracker", () => {
       );
       expect(error.message).toContain("already in progress");
       expect((yield* tracker.get(projectId))?.phase).toBe("running");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("adds a checkout of the same repository already at the destination", () => {
+    const harness = makeHarness({
+      existing: "same-repository",
+      clone: () => Effect.die("must not clone over an existing checkout"),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const result = yield* tracker.start(startInput, harness.hooks);
+      expect(result).toMatchObject({ projectId, existingCheckout: true });
+      expect(harness.created).toEqual([{ projectId, workspaceRoot: "/workspace/t3code" }]);
+      expect(harness.cloned).toEqual([projectId]);
+      expect(yield* tracker.get(projectId)).toMatchObject({ phase: "done", percent: 100 });
+      expect(yield* tracker.cancel(projectId)).toBe(false);
+      yield* tracker.discard(projectId);
+      expect(harness.discarded).toEqual([]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("opens the project that already owns an existing checkout", () => {
+    const owner = ProjectId.make("project-existing");
+    const harness = makeHarness({ existing: "same-repository" });
+    const hooks: ProjectCloneTracker.ProjectCloneHooks = {
+      ...harness.hooks,
+      createProject: (input) =>
+        Effect.fail(
+          new ProjectConflictError({
+            projectId: input.projectId,
+            workspaceRoot: input.workspaceRoot,
+            conflictingProjectId: owner,
+          }),
+        ),
+    };
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const result = yield* tracker.start(startInput, hooks);
+      expect(result).toMatchObject({ projectId: owner, existingCheckout: true });
+      expect(yield* tracker.get(owner)).toMatchObject({ phase: "done" });
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("refuses a non-empty destination that holds another repository", () => {
+    const harness = makeHarness({ existing: "other-repository" });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const error = yield* Effect.flip(tracker.start(startInput, harness.hooks));
+      expect(error.message).toContain("not a checkout of this repository");
+      expect(harness.created).toEqual([]);
+      expect(yield* tracker.get(projectId)).toBeNull();
     }).pipe(Effect.provide(harness.layer));
   });
 
