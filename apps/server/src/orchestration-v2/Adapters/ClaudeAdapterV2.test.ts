@@ -15924,7 +15924,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
       } else {
-        // An exited process never sends the notification, so the hold must still release.
+        // An empty roster can precede the notification, which an exited process never sends.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: "00000000-0000-4000-8000-000000000b06",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
         yield* Queue.shutdown(harness.sdkMessages);
       }
       yield* harness.until(() =>
@@ -21807,6 +21816,88 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           reason === "Stop" ? "command_execution:interrupted" : "command_execution:failed",
         ]);
       }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
+    "streams a background Bash command a subagent starts after the root turn completes",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temp = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-subagent-bg-",
+        });
+        const harness = yield* makeWakeHarnessWithOptions({ environment: { TEMP: temp } });
+        const now = yield* DateTime.now;
+        const AGENT = "toolu-idle-bg-agent";
+        const BASH = "toolu-idle-bg-bash";
+        const taskId = "idle-bg-bash-task";
+        const tasks = path.join(temp, "claude", "project", WAKE_NATIVE_SESSION, "tasks");
+        yield* fileSystem.makeDirectory(tasks, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(tasks, `${taskId}.output`), "auditing\n");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-idle-bg-bash"),
+            text: "Audit in the background.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeSubagentTaskStartedFrame({
+            taskId: "task-idle-bg-agent",
+            toolUseId: AGENT,
+            uuid: "00000000-0000-4000-8000-000000000d01",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000d02",
+            result: "Auditing in the background.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+        for (const frame of makeSubagentAssistantFrames({
+          parentToolUseId: AGENT,
+          uuid: "00000000-0000-4000-8000-000000000d03",
+          bashToolUseId: BASH,
+        })) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: BASH,
+            description: "git log -5",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000d04",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some((event) => event.type === "command_output.delta"),
+        );
+        assert.isTrue(
+          harness.events.some(
+            (event) => event.type === "command_output.background" && event.running,
+          ),
+        );
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provide(
           Layer.mergeAll(
             IdAllocator.layer,

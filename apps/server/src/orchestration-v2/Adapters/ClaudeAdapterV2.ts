@@ -6459,7 +6459,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
         const taskOutputTails = new Map<
           string,
-          { readonly fiber: Fiber.Fiber<void>; readonly stop: Deferred.Deferred<void> }
+          {
+            readonly fiber: Fiber.Fiber<void>;
+            readonly stop: Deferred.Deferred<void>;
+            readonly nativeThreadId: string;
+          }
         >();
         // Waits for the tail's last read so its output lands before the call settles.
         const stopTaskOutputTail = (toolUseId: string) =>
@@ -7598,13 +7602,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const clearPendingBackgroundTasksForNativeThread =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (nativeThreadId: string) {
-            // An ended query never sends these tasks' notifications, so their output tails stop here.
-            const roster = rosterForNativeThread(
-              yield* Ref.get(pendingBackgroundTasksByNativeThread),
-              nativeThreadId,
-            );
-            for (const taskId of roster.keys()) {
-              yield* stopTaskOutputTail(backgroundTaskOutputTailKey(taskId));
+            // An ended query never sends its tasks' notifications, and an empty roster can precede them.
+            for (const [key, tail] of taskOutputTails) {
+              if (
+                key.startsWith(backgroundTaskOutputTailKey("")) &&
+                tail.nativeThreadId === nativeThreadId
+              ) {
+                yield* stopTaskOutputTail(key);
+              }
             }
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               if (!current.has(nativeThreadId)) {
@@ -9247,6 +9252,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Foreground tails end with the tool result; background ones with the task's notification.
         const startTaskOutputTail = Effect.fnUntraced(function* (input: {
           readonly root: string;
+          readonly nativeThreadId: string;
           readonly sessionId: string;
           readonly taskId: string;
           readonly toolCall: ActiveClaudeToolCall;
@@ -9301,7 +9307,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.provideService(Path.Path, path),
             Effect.forkIn(sessionScope),
           );
-          taskOutputTails.set(tailKey, { fiber, stop });
+          taskOutputTails.set(tailKey, { fiber, stop, nativeThreadId: input.nativeThreadId });
           if (!backgrounded) {
             foregroundTailCalls.set(input.taskId, toolCall);
             for (const oldest of foregroundTailCalls.keys()) {
@@ -9312,27 +9318,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         // A foreground command Claude moved to the background keeps streaming until its notification.
         const promoteForegroundTail = (input: {
-          readonly root: string | undefined;
+          readonly liveQuery: ClaudeLiveQueryContext;
           readonly sessionId: string | undefined;
           readonly taskId: unknown;
         }) => {
-          const { root, sessionId, taskId } = input;
+          const { sessionId, taskId } = input;
+          const { taskOutputRoot: root, nativeThreadId } = input.liveQuery;
           const toolCall = typeof taskId === "string" ? foregroundTailCalls.get(taskId) : undefined;
           return root === undefined ||
             sessionId === undefined ||
             typeof taskId !== "string" ||
             toolCall === undefined
             ? Effect.void
-            : startTaskOutputTail({ root, sessionId, taskId, toolCall, backgrounded: true });
+            : startTaskOutputTail({
+                root,
+                nativeThreadId,
+                sessionId,
+                taskId,
+                toolCall,
+                backgrounded: true,
+              });
         };
         const promoteForegroundTailsInRoster = Effect.fnUntraced(function* (
-          root: string | undefined,
+          liveQuery: ClaudeLiveQueryContext,
           message: SDKMessage,
         ) {
           const roster = Reflect.get(message, "tasks");
           for (const entry of Array.isArray(roster) ? roster : []) {
             yield* promoteForegroundTail({
-              root,
+              liveQuery,
               sessionId: message.session_id,
               taskId:
                 entry !== null && typeof entry === "object"
@@ -9340,6 +9354,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : undefined,
             });
           }
+        });
+
+        const tailStartedTask = Effect.fnUntraced(function* (
+          liveQuery: ClaudeLiveQueryContext,
+          message: SDKMessage,
+          context: ActiveClaudeTurnContext,
+        ) {
+          if (
+            message.type !== "system" ||
+            message.subtype !== "task_started" ||
+            message.task_type !== "local_bash" ||
+            message.tool_use_id === undefined ||
+            liveQuery.taskOutputRoot === undefined
+          ) {
+            return;
+          }
+          const toolCall = findToolCall(context, message.tool_use_id);
+          if (toolCall === undefined) return;
+          yield* startTaskOutputTail({
+            root: liveQuery.taskOutputRoot,
+            nativeThreadId: liveQuery.nativeThreadId,
+            sessionId: message.session_id,
+            taskId: message.task_id,
+            toolCall,
+            backgrounded: message.is_backgrounded === true,
+          });
         });
 
         const ensureToolCallStarted = Effect.fnUntraced(function* (input: {
@@ -11753,8 +11793,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 activeContext: null,
               });
               if (isClaudeBackgroundTasksChangedMessage(message)) {
-                yield* promoteForegroundTailsInRoster(liveQuery.taskOutputRoot, message);
+                yield* promoteForegroundTailsInRoster(liveQuery, message);
               }
+              // A subagent can start a command after the root turn settles.
+              const settled = settledTurnByNativeThread.get(liveQuery.nativeThreadId);
+              if (settled !== undefined) yield* tailStartedTask(liveQuery, message, settled);
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
             }
             return;
@@ -12401,29 +12444,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message,
               activeContext: context,
             });
-            yield* promoteForegroundTailsInRoster(liveQuery.taskOutputRoot, message);
+            yield* promoteForegroundTailsInRoster(liveQuery, message);
             return;
           }
 
           if (message.type === "system" && message.subtype === "task_started") {
             if (isClaudeNonSubagentTask(message)) {
-              const tailedCall =
-                message.tool_use_id === undefined
-                  ? undefined
-                  : findToolCall(context, message.tool_use_id);
-              if (
-                liveQuery.taskOutputRoot !== undefined &&
-                message.task_type === "local_bash" &&
-                tailedCall !== undefined
-              ) {
-                yield* startTaskOutputTail({
-                  root: liveQuery.taskOutputRoot,
-                  sessionId: message.session_id,
-                  taskId: message.task_id,
-                  toolCall: tailedCall,
-                  backgrounded: message.is_backgrounded === true,
-                });
-              }
+              yield* tailStartedTask(liveQuery, message, context);
               context.ignoredTaskIds.add(message.task_id);
               yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
@@ -12775,7 +12802,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Hold a moved command's output before its row settles, so open views keep streaming.
             if (message.type === "user") {
               yield* promoteForegroundTail({
-                root: liveQuery.taskOutputRoot,
+                liveQuery,
                 sessionId: message.session_id,
                 taskId: Reflect.get(Object(message.tool_use_result), "backgroundTaskId"),
               });
