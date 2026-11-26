@@ -1112,14 +1112,10 @@ function CheckoutGitActionsControl({
   // Changed-file paths are repository-relative, so they must resolve against
   // the worktree root from the same status snapshot, not the project cwd.
   const workingTreeRoot = gitStatusForActions?.workingTree.rootPath ?? null;
+  // A stash can temporarily hide excluded paths. Only current files affect the commit.
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = selectedFiles.length === allFiles.length;
   const noneSelected = selectedFiles.length === 0;
-  if (gitStatusQuery.isSuccess && excludedFiles.size > allFiles.length - selectedFiles.length) {
-    setExcludedFiles(
-      new Set(allFiles.filter((file) => excludedFiles.has(file.path)).map((file) => file.path)),
-    );
-  }
 
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
