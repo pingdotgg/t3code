@@ -54,7 +54,7 @@
   "929a11e234f6e5d9": "Установите инструменты командной строки Azure ({cli}), затем включите поддержку Azure DevOps командой {command}.",
   "ad599e9de33538dd": "Добавьте токен Bitbucket в Настройки → Контроль версий и issue.",
   "d810ecd91e8cf9d0": "Установите Origin CLI командой {install}, затем выполните {login}.",
-  "eb0f60ef4f92ab7d": "Установите {fj} 0.6 или новее с {fjUrl} и выполните {fjLogin} либо установите {tea} 0.16 или новее с {teaUrl} и выполните {teaLogin} для каждого сервера Forgejo или Gitea.",
+  "1a04c8d36a7b29d3": "Установите {fj} 0.6 или новее с {fjUrl} и выполните {fjLogin} либо установите {gt} 2.0 или новее с {gtUrl} и выполните {gtLogin} для каждого сервера Forgejo или Gitea.",
   "d026a85e2e50e675": "Установите GitCafe CLI командой {install}, затем выполните {login}, сохраните токен в настройках или задайте {variable} на сервере.",
   "22d3c0c48a34b5b3": "Установите TanStack Source CLI командой {install}, затем выполните {login}, сохраните токен в настройках или задайте {variable} на сервере.",
   "756c80ad262ef315": "Ожидание в исходном треде",
@@ -5477,7 +5477,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} остановка} few {{count} остановки} many {{count} остановок} other {{count} остановки}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} остановка} few {{count} остановки} many {{count} остановок} other {{count} остановки}}",
   "9830004326e7d8c0": "{count, plural, one {по {count} файлу} few {по {count} файлам} many {по {count} файлам} other {по {count} файла}}",
   "e6035bad35419efa": "Параметры гида",
   "4d7635a2bf1f5816": "Переписать гайд",
