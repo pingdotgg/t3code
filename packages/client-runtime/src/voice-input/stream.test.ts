@@ -106,3 +106,22 @@ it("fails on disconnect and times out stalled inference", async () => {
     vi.useRealTimers();
   }
 });
+
+it("does not re-arm the timeout when consent revocation closes the stream during an update", async () => {
+  vi.useFakeTimers();
+  try {
+    let allowed = true;
+    const { socket, stream, onText } = connect(undefined, () => allowed);
+    stream.feed(new Float32Array([0.1]));
+    stream.feed(new Float32Array([0.2]));
+    onText.mockImplementationOnce(() => {
+      allowed = false;
+    });
+    socket.receive({ type: "update", revision: 1, text: { committed: "hello", tentative: "" } });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(socket.closed).toBe(true);
+    await expect(stream.finish()).rejects.toThrow("revoked");
+  } finally {
+    vi.useRealTimers();
+  }
+});

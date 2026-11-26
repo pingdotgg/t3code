@@ -47,6 +47,8 @@ export function openSpeechStream(input: {
     input.signal.removeEventListener("abort", abort);
     queue = [];
     queuedBytes = 0;
+    inFlight.length = 0;
+    inFlightBytes = 0;
   };
   const fail = (error: Error, notify = true) => {
     if (closed) return;
@@ -58,6 +60,7 @@ export function openSpeechStream(input: {
   };
   const armTimeout = () => {
     clearTimeout(timer);
+    if (closed) return;
     timer = setTimeout(
       () => fail(translatableError(msg("Live transcription stopped responding."))),
       120_000,
@@ -82,8 +85,13 @@ export function openSpeechStream(input: {
     }
   };
   socket.addEventListener("open", () => {
+    if (closed) return;
     if (!input.canSend()) return fail(translatableError(msg("Voice consent was revoked.")));
-    if (!closed) socket.send(JSON.stringify({ type: "start", options: input.options }));
+    try {
+      socket.send(JSON.stringify({ type: "start", options: input.options }));
+    } catch {
+      fail(translatableError(msg("Could not connect to live transcription.")));
+    }
   });
   socket.addEventListener("message", (event) => {
     if (closed) return;
@@ -105,7 +113,7 @@ export function openSpeechStream(input: {
           clearTimeout(timer);
           if (message.text) input.onText(message.text);
           pump();
-          if (inFlight.length) armTimeout();
+          if (!closed && inFlight.length) armTimeout();
           break;
         case "finished":
           if (!finishSent) throw translatableError(msg("Unexpected speech stream response."));
