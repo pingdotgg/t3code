@@ -355,7 +355,10 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
         "/feature": true,
         "/disabled": false,
       }),
-    ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+    ).pipe(
+      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      Effect.provide(FileSystem.layerNoop({})),
+    );
 
     assert.deepStrictEqual(pulled, ["/clean"]);
 
@@ -363,7 +366,10 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
     yield* ServerRuntimeStartup.autoPullProjects(
       [project("/inherited"), project("/opted-out"), project("/dirty")],
       { ...overrides({ "/opted-out": false }), defaultAutoPull: true },
-    ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+    ).pipe(
+      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      Effect.provide(FileSystem.layerNoop({})),
+    );
     assert.deepStrictEqual(pulled, ["/inherited"]);
   }),
 );

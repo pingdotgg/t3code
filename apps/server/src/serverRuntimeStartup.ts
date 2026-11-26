@@ -21,6 +21,7 @@ import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -189,26 +190,36 @@ interface AutoBootstrapWelcomeTargets {
 }
 
 export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
-  projects: ReadonlyArray<Pick<Project, "id" | "workspaceRoot" | "autoPull">>,
+  projects: ReadonlyArray<Pick<Project, "id" | "workspaceRoot" | "autoPull" | "trackedFolders">>,
   settings = DEFAULT_SERVER_SETTINGS,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const workspaceRoots = [
-    ...new Set(
-      projects
-        .filter((project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull)
-        .map((project) => project.workspaceRoot),
-    ),
-  ];
+  const fileSystem = yield* FileSystem.FileSystem;
+  const enabled = projects.filter(
+    (project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull,
+  );
+  const projectRoots = new Set(projects.map((project) => project.workspaceRoot));
+  const workspaceRoots = new Map(enabled.map((project) => [project.workspaceRoot, false]));
+  for (const project of enabled) {
+    for (const folder of project.trackedFolders ?? []) {
+      // A folder that is a project of its own follows that project's setting.
+      if (!projectRoots.has(folder.path)) workspaceRoots.set(folder.path, true);
+    }
+  }
 
   yield* Effect.forEach(
     workspaceRoots,
-    (cwd) =>
+    ([cwd, tracked]) =>
       Effect.gen(function* () {
         // Startup checks once, so it waits for the fetch rather than reading the old references.
         const status = yield* git
           .statusDetails(cwd)
           .pipe(Effect.provideService(GitVcsDriver.AwaitStatusFetch, true));
+        // Git looks upward from a folder, so a tracked folder is pulled only as its own root.
+        if (tracked) {
+          const root = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => null));
+          if (root === null || status.workingTree.rootPath !== root) return;
+        }
         if (
           !status.isRepo ||
           !status.isDefaultBranch ||
