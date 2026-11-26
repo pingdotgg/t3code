@@ -25,7 +25,7 @@ import {
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 export const FX_DRIVER_KIND = ProviderDriverKind.make("fx");
-/** T3's slug for "Default": the model `fx status` reports, never an fx model id. */
+/** Hyakki's slug for "Default": the model `fx status` reports, never an fx model id. */
 export const FX_DEFAULT_MODEL_SLUG = "default";
 const FX_PROVIDER_CONFIG_ID = "provider";
 const FX_MODEL_CONFIG_ID = "model";

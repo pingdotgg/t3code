@@ -11,7 +11,7 @@ import { assertFullAccess, type Caller } from "./threadAccess.ts";
 /**
  * Below full access, work a link starts here (all of it carries that session in `linkOrigin`)
  * may change only work from the same link: not the user's threads, projects or settings, nor
- * this environment's links. Reads are not fenced. It is a routing rule for T3's tools; agents
+ * this environment's links. Reads are not fenced. It is a routing rule for Hyakki's tools; agents
  * still run as this environment's user, so a full-access link is not fenced at all.
  */
 

@@ -1,6 +1,6 @@
 # Keyboard focus
 
-Navigate T3 Code's workspace, sidebar, and settings entirely from the keyboard on web and desktop. See [Keybindings](./keybindings.md) to customize shortcuts.
+Navigate Hyakki's workspace, sidebar, and settings entirely from the keyboard on web and desktop. See [Keybindings](./keybindings.md) to customize shortcuts.
 
 ## Move between workspace areas
 

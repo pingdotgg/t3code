@@ -48,7 +48,7 @@ const CATALOG = {
   ],
 };
 
-/** The gateway's HTTP API and T3's agent-device CLI, recording what was asked of them. */
+/** The gateway's HTTP API and Hyakki's agent-device CLI, recording what was asked of them. */
 const fakePool = (
   options: {
     /** What the agent-device CLI prints before exiting 1 from `open`. */

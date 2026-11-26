@@ -243,7 +243,7 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// A project opened from T3 must not replace the editor's last active window.
+// A project opened from Hyakki must not replace the editor's last active window.
 it.effect.skipIf(windowsHost)(
   "opens a project folder in a new VS Code window and a file in the existing one",
   () =>

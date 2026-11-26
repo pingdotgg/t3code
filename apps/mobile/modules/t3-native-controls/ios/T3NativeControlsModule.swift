@@ -348,7 +348,7 @@ public final class T3NativeControlsModule: Module {
         promise.reject(NSError(
           domain: "T3NativePhotos",
           code: 1,
-          userInfo: [NSLocalizedDescriptionKey: "Allow T3 Code to add photos in Settings."]
+          userInfo: [NSLocalizedDescriptionKey: "Allow Hyakki to add photos in Settings."]
         ))
         return
       }

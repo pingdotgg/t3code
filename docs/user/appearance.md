@@ -1,6 +1,6 @@
 # Appearance and themes
 
-Customize T3 Code's theme, light/dark appearance, math rendering, motion, and custom CSS. Appearance settings are saved per device or browser.
+Customize Hyakki's theme, light/dark appearance, math rendering, motion, and custom CSS. Appearance settings are saved per device or browser.
 
 ## Switch themes and appearance
 
@@ -28,7 +28,7 @@ Sidebars, the right panel, and the terminal drawer open immediately by default. 
 
 ## Custom themes
 
-On web and desktop, choose **Create theme** in **Settings → Appearance** to edit a palette, import a T3 Code or VS Code theme, or export your theme as JSON.
+On web and desktop, choose **Create theme** in **Settings → Appearance** to edit a palette, import a Hyakki or VS Code theme, or export your theme as JSON.
 
 ### Custom CSS
 
@@ -41,7 +41,7 @@ Open **Custom CSS** in the theme editor for styling beyond palette colors. Custo
 
 ### Ask an agent
 
-An agent running on the same machine as the server in **Full access** mode can restyle T3 Code for you (for example, "give T3 Code a solarized theme"). It publishes an [environment theme](#environment-themes) and switches connected web and desktop clients to it. Ask the agent to switch back to a built-in theme to undo.
+An agent running on the same machine as the server in **Full access** mode can restyle Hyakki for you (for example, "give Hyakki a solarized theme"). It publishes an [environment theme](#environment-themes) and switches connected web and desktop clients to it. Ask the agent to switch back to a built-in theme to undo.
 
 ## Environment themes
 
@@ -61,7 +61,7 @@ t3 theme show            # List the default and all published themes
 
 Save an exported theme JSON into `~/.t3/userdata/themes/` on the server (or `themes/` under your custom state directory). The filename sets the theme ID (e.g. `nightfall.json` → `t3 theme set nightfall`). Avoid reserved IDs (`system`, `light`, `dark`, or built-in theme IDs).
 
-You can also use a minimal palette format—T3 Code generates the remaining tokens:
+You can also use a minimal palette format—Hyakki generates the remaining tokens:
 
 ```json
 {

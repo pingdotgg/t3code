@@ -52,7 +52,7 @@ import {
 } from "./acpSupport.ts";
 
 export const KIRO_PROVIDER = ProviderDriverKind.make("kiro");
-/** T3's slug for "Kiro default", and Kiro's documented default model id. */
+/** Hyakki's slug for "Kiro default", and Kiro's documented default model id. */
 const KIRO_DEFAULT_MODEL = "default";
 const KIRO_COMPACT_METHOD = "_kiro/session/compact";
 const KIRO_STEER_METHOD = "_session/steer";
@@ -98,7 +98,7 @@ const decodeKiroExtensionMethods = Schema.decodeUnknownOption(
 );
 
 /**
- * Kiro answers a `/compact` prompt as chat, so T3 compacts with Kiro's own request,
+ * Kiro answers a `/compact` prompt as chat, so Hyakki compacts with Kiro's own request,
  * on deployments whose `initialize` result lists it among Kiro's extension methods.
  */
 const kiroCompactSession = {
@@ -252,7 +252,7 @@ const applyKiroModel = Effect.fn("KiroAdapterV2.applyKiroModel")(function* (
 });
 
 /**
- * Bound on waiting for Kiro to advertise the model T3 just wrote. Kiro 2.27.0
+ * Bound on waiting for Kiro to advertise the model Hyakki just wrote. Kiro 2.27.0
  * sent it 40-90 ms after the write's result.
  */
 const KIRO_MODEL_ADVERT_BOUND = "2 seconds";
@@ -553,7 +553,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     capabilities: KiroProviderCapabilitiesV2,
     // Kiro V3 loads the user's hooks only when the client opts in. `v2` makes
     // Kiro run them itself; `enabled` alone hands them to the client as
-    // `_kiro/hooks/*` requests, which T3 does not answer.
+    // `_kiro/hooks/*` requests, which Hyakki does not answer.
     clientCapabilitiesMeta: { kiro: { hooks: { enabled: true, v2: true } } },
     makeRuntime,
     promptFailure: kiroPromptFailure,
@@ -570,7 +570,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     // there would put the agent's own model back.
     ownedModelOptionIds: ["reasoningEffort", KIRO_AGENT_CONFIG_ID],
     // With Autopilot off (Supervised) Kiro asks the user to accept a turn's
-    // changes before it ends. T3's runtime policy answers its per-tool prompts
+    // changes before it ends. Hyakki's runtime policy answers its per-tool prompts
     // either way, and a runtime-mode change reopens the session to reapply it.
     sessionConfigForPolicy: (policy) => [
       { id: KIRO_AUTOPILOT_CONFIG_ID, value: kiroAutopilotValue(policy) },

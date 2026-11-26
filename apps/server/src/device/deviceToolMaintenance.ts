@@ -63,7 +63,7 @@ async function withToolMaintenance(root, operation) {
 }
 function pruneTools(root, specs, flat) {
   return withToolMaintenance(root, () => {
-    // Keep installs used by any running helper, including older T3 releases.
+    // Keep installs used by any running helper, including older Hyakki releases.
     const scan = process.platform === 'win32'
       ? require('node:child_process').spawnSync((process.env.SystemRoot || process.env.windir || 'C:\\Windows') + '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine'], { encoding: 'utf8', timeout: 10000 })
       : require('node:child_process').spawnSync('ps', ['-ax', '-o', 'command='], { encoding: 'utf8', timeout: 10000 });

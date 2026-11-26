@@ -5,7 +5,7 @@ import type { AcpSessionModeState } from "./runtimeModel.ts";
 
 export const ACP_SESSION_MODE_OPTION_ID = "_t3/session-mode";
 
-/** Encodes a valid empty ACP choice as a non-empty T3 ID; map back before applying. */
+/** Encodes a valid empty ACP choice as a non-empty Hyakki ID; map back before applying. */
 export const ACP_EMPTY_OPTION_VALUE = "_t3/empty";
 
 const MAX_OPTION_DESCRIPTORS = 16;
@@ -67,7 +67,7 @@ export function acpProviderOptionDescriptors(input: {
   let hasModeCategory = false;
 
   for (const option of input.configOptions ?? []) {
-    // Model and collaboration_mode choices use T3 model and interaction controls.
+    // Model and collaboration_mode choices use Hyakki model and interaction controls.
     if (option.category === "model" || option.category === "collaboration_mode") {
       continue;
     }

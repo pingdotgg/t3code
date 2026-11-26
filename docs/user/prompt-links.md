@@ -1,6 +1,6 @@
 # Prompt links
 
-A prompt link opens T3 Code with a prefilled draft—useful for sharing prompts or adding one-click fixes in pull request comments.
+A prompt link opens Hyakki with a prefilled draft—useful for sharing prompts or adding one-click fixes in pull request comments.
 
 Links **never** auto-send or change your permission mode, branch, or worktree. They only open a draft for you to review and send.
 
@@ -34,8 +34,8 @@ Opening a link on `app.t3.codes` asks whether to use the desktop/mobile app, the
 - **`pr`**: Opens the thread linked to that PR, or prepares a new worktree draft on the PR branch after you confirm checkout.
 - **Thread prompt link** (`https://app.t3.codes/<environment>/<thread>?prompt=…`): Prefills that thread's composer (asks before overwriting an existing draft).
 
-T3 Code strips invisible characters (such as zero-width and hidden tag characters) and warns you if a prompt contained them.
+Hyakki strips invisible characters (such as zero-width and hidden tag characters) and warns you if a prompt contained them.
 
 ## Share a thread
 
-**Copy thread** copies a link (`https://app.t3.codes/threads/<environment>/<thread>`) that opens in T3 Code on desktop, web, or mobile and pastes into any composer as a thread chip. Only someone connected to the machine running that thread can view it.
+**Copy thread** copies a link (`https://app.t3.codes/threads/<environment>/<thread>`) that opens in Hyakki on desktop, web, or mobile and pastes into any composer as a thread chip. Only someone connected to the machine running that thread can view it.

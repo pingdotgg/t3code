@@ -44,7 +44,7 @@ export function HighlightedCodeBlock(props: {
   readonly code: string;
   readonly fence: string;
   readonly language: string;
-  /** False only while the library withholds an unclosed fence (`streamingAnimation`, which T3 never enables, so always true today); highlighting waits for it. */
+  /** False only while the library withholds an unclosed fence (`streamingAnimation`, which Hyakki never enables, so always true today); highlighting waits for it. */
   readonly complete: boolean;
   readonly scheme: HighlightScheme;
   readonly textStyle: NativeMarkdownTextStyle;

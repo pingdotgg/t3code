@@ -986,7 +986,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
-    // Its own entry, so the folder list reaches the model without T3 Code's MCP tools too.
+    // Its own entry, so the folder list reaches the model without Hyakki's MCP tools too.
     const workspaceInstructions = buildWorkspaceInstructions(input.runtimePolicy);
     const workspaceContext =
       workspaceInstructions === ""
@@ -1680,10 +1680,10 @@ export const CODEX_THREAD_CONFIG = {
 // request_secret can wait an hour; keep Codex's MCP timeout above that.
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 const CODEX_T3_MCP_SERVER = "t3-code";
-// Holds T3 tools Codex must call directly, never from Code Mode. Calls arrive as
+// Holds Hyakki tools Codex must call directly, never from Code Mode. Calls arrive as
 // `t3-code-direct.<tool>`; t3McpToolPresentation.ts must keep resolving that form.
 const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
-// The names this adapter registers T3's MCP server under, and so the ones Codex gives for it.
+// The names this adapter registers Hyakki's MCP server under, and so the ones Codex gives for it.
 const CODEX_T3_MCP_SERVERS: ReadonlySet<string> = new Set([
   CODEX_T3_MCP_SERVER,
   CODEX_T3_DIRECT_MCP_SERVER,
@@ -1746,7 +1746,7 @@ function codexThreadRuntimeParams(input: {
       ...(t3Server === undefined
         ? {}
         : {
-            // Override only T3's servers so launch-argument MCP servers survive.
+            // Override only Hyakki's servers so launch-argument MCP servers survive.
             [`mcp_servers.${CODEX_T3_MCP_SERVER}`]: {
               ...t3Server,
               disabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS,
@@ -1834,7 +1834,7 @@ const CODEX_THREAD_ENV_CONFIG_KEY = `shell_environment_policy.set.${PortScanner.
 
 /**
  * One app-server serves every Codex thread on an instance, so each frame is routed to the
- * T3 thread it belongs to. Frames tied to no thread, such as `initialize`, go to the global log.
+ * Hyakki thread it belongs to. Frames tied to no thread, such as `initialize`, go to the global log.
  */
 function makeCodexProtocolThreadRouter() {
   const threadIdsByNativeId = new Map<string, ThreadId>();
@@ -2125,7 +2125,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-  // The elicitation handler shows T3 Code's own requests and passes on the person's answer to each.
+  // The elicitation handler shows Hyakki's own requests and passes on the person's answer to each.
   yield* mcpSessions.showsApprovalRequests(adapterOptions.instanceId);
   const readMcpSession = (threadId: ThreadId | null) =>
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
@@ -6320,7 +6320,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
-            // T3's Full access policy is granular, under which Codex still asks before commands it
+            // Hyakki's Full access policy is granular, under which Codex still asks before commands it
             // deems dangerous. Managed-network asks enforce the user's allowlist, so they still ask.
             if (
               context.input.runtimePolicy.runtimeMode === "full-access" &&
@@ -6555,12 +6555,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
-            // T3's own tools leave what they ask with the thread's MCP session while they wait.
-            // A request is T3's when it is one of those, whatever a server calls itself.
+            // Hyakki's own tools leave what they ask with the thread's MCP session while they wait.
+            // A request is Hyakki's when it is one of those, whatever a server calls itself.
             const ownRequest = CODEX_T3_MCP_SERVERS.has(payload.serverName)
               ? yield* mcpSessions.findApprovalRequest(context.input.threadId, payload.message)
               : undefined;
-            // T3 Code asks only when a person has to answer, so its own request is never
+            // Hyakki asks only when a person has to answer, so its own request is never
             // answered here: a turn's runtime mode alone does not say the thread is in Full access.
             if (
               ownRequest === undefined &&
@@ -6580,7 +6580,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeRequestId,
               requestKind: "mcp-elicitation",
               prompt: payload.message,
-              // T3 Code asking is the app itself, so there is no other app to name.
+              // Hyakki asking is the app itself, so there is no other app to name.
               ...(ownRequest === undefined
                 ? { appName: described.appName }
                 : { pushHooks: ownRequest.pushHooks }),
@@ -6623,7 +6623,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             );
             const response = toMcpElicitationResponse(payload, resolved);
-            // The person's answer in the app is what T3 Code's own request goes by, so it is
+            // The person's answer in the app is what Hyakki's own request goes by, so it is
             // left with the request before Codex carries a reply back.
             if (ownRequest !== undefined) {
               yield* mcpSessions.answerApprovalRequests(
@@ -9397,7 +9397,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   catch: () =>
                     new ProviderMcpSignInError({
                       server,
-                      detail: `Codex returned a sign-in page for ${server} that T3 Code can't open.`,
+                      detail: `Codex returned a sign-in page for ${server} that Hyakki can't open.`,
                     }),
                 });
                 const redirectUri = params.get("redirect_uri");

@@ -29,14 +29,14 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
-// Match local waits: return before MCP client timeouts and T3 Connect's ~100 s idle drop.
+// Match local waits: return before MCP client timeouts and Hyakki Connect's ~100 s idle drop.
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MAX_WAIT_TIMEOUT_MS = 45_000;
 
 type Scope = McpInvocationContext.McpInvocationScope;
 
 /**
- * Runs T3 MCP tools in a linked environment for an agent here. The tool's own
+ * Runs Hyakki MCP tools in a linked environment for an agent here. The tool's own
  * declaration checks the agent here first; the linked environment then holds
  * the call to the link's access, narrowed to the agent's modes, which every
  * forwarded call carries.

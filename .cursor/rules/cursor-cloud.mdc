@@ -1,11 +1,11 @@
 ---
-description: Cursor Cloud environment setup and run notes for T3 Code (Cursor-specific; not for other editors/CI)
+description: Cursor Cloud environment setup and run notes for Hyakki (Cursor-specific; not for other editors/CI)
 alwaysApply: true
 ---
 
 # Cursor Cloud specific instructions
 
-These notes apply only to Cursor Cloud agents (kept out of the shared `AGENTS.md` since T3 Code is
+These notes apply only to Cursor Cloud agents (kept out of the shared `AGENTS.md` since Hyakki is
 developed in many places). They cover the pre-provisioned VM environment and non-obvious run caveats.
 
 ## Toolchain

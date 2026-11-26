@@ -149,8 +149,8 @@ describe("applyClaudePromptEffortPrefix", () => {
     expect(applyClaudePromptEffortPrefix("Investigate this failure", "ultrathink")).toBe(
       "Ultrathink:\nInvestigate this failure",
     );
-    expect(applyClaudePromptEffortPrefix("/home/theo/app.ts crashed on load", "ultrathink")).toBe(
-      "Ultrathink:\n/home/theo/app.ts crashed on load",
+    expect(applyClaudePromptEffortPrefix("/home/tara/app.ts crashed on load", "ultrathink")).toBe(
+      "Ultrathink:\n/home/tara/app.ts crashed on load",
     );
   });
 });

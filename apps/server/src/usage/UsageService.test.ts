@@ -1983,7 +1983,7 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect("reads the Cursor account of an API key or T3 sign-in instead of a CLI login", () =>
+  it.effect("reads the Cursor account of an API key or Hyakki sign-in instead of a CLI login", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const signIn = new TextEncoder().encode(
@@ -2598,7 +2598,7 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect("reads Antigravity history from the default instance's T3-managed profile", () =>
+  it.effect("reads Antigravity history from the default instance's Hyakki-managed profile", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const prefix = "usage-service-antigravity-default-profile-test";

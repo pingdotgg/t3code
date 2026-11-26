@@ -18,7 +18,7 @@ const ISSUE = {
   created_at: "2026-07-01T00:00:00+02:00",
   updated_at: "2026-07-03T00:00:00Z",
   closed_at: null,
-  assignees: [{ login: "theo" }],
+  assignees: [{ login: "tara" }],
   labels: [{ id: 3, name: "bug", color: "d73a4a" }],
   comments: 1,
   is_locked: true,
@@ -44,7 +44,7 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
             {
               id: 5,
               type: "pull_ref",
-              user: { login: "theo" },
+              user: { login: "tara" },
               created_at: "2026-07-02T03:00:00Z",
               ref_issue: {
                 number: 50,
@@ -63,7 +63,7 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
             id: 1,
             type: "label",
             body: "1",
-            user: { login: "theo" },
+            user: { login: "tara" },
             created_at: "2026-07-01T01:00:00Z",
             label: { id: 3, name: "bug" },
           },
@@ -77,7 +77,7 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
           {
             id: 3,
             type: "pull_ref",
-            user: { login: "theo" },
+            user: { login: "tara" },
             created_at: "2026-07-02T01:00:00Z",
             ref_issue: {
               number: 50,
@@ -85,11 +85,11 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
               pull_request: { merged: false },
             },
           },
-          { id: 4, type: "milestone", user: { login: "theo" }, created_at: "2026-07-02T02:00:00Z" },
+          { id: 4, type: "milestone", user: { login: "tara" }, created_at: "2026-07-02T02:00:00Z" },
         ]),
       };
     case "repos/acme/web/issues/42/reactions":
-      return { stdout: encode([{ content: "eyes", user: { login: "theo" } }]) };
+      return { stdout: encode([{ content: "eyes", user: { login: "tara" } }]) };
     case "repos/acme/web/issues/42/comments":
       return {
         stdout: encode([
@@ -106,7 +106,7 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
       return {
         stdout: encode([
           { content: "+1", user: { login: "julius" } },
-          { content: "+1", user: { login: "theo" } },
+          { content: "+1", user: { login: "tara" } },
         ]),
       };
     case "repos/acme/api/pulls/50":
@@ -191,7 +191,7 @@ describe("ForgejoIssueTracker", () => {
           labels: false,
           assignees: false,
         },
-        reactions: [{ content: "eyes", count: 1, actors: ["theo"], viewerHasReacted: false }],
+        reactions: [{ content: "eyes", count: 1, actors: ["tara"], viewerHasReacted: false }],
         // `/comments` answered with everything it has, so nothing is left to page.
         commentsCursor: null,
       });
@@ -202,7 +202,7 @@ describe("ForgejoIssueTracker", () => {
           body: "Repro attached.",
           createdAt: "2026-07-02T00:00:00.000Z",
           url: "https://forgejo.test:3000/acme/web/issues/42#issuecomment-7",
-          reactions: [{ content: "thumbs-up", count: 2, actors: ["theo"], viewerHasReacted: true }],
+          reactions: [{ content: "thumbs-up", count: 2, actors: ["tara"], viewerHasReacted: true }],
         },
       ]);
       // Comments and milestones on the timeline are not events in the shared vocabulary.
@@ -248,7 +248,7 @@ describe("ForgejoIssueTracker", () => {
               Array.from({ length: 51 }, (_, index) => ({
                 id: index + 1,
                 body: `Comment ${index + 1}`,
-                user: { login: "theo" },
+                user: { login: "tara" },
                 created_at: "2026-07-02T00:00:00Z",
                 html_url: "",
               })),
@@ -332,7 +332,7 @@ describe("ForgejoIssueTracker", () => {
         state: "open",
         involvement: "all",
         labels: ["bug", "p1"],
-        assignee: "theo",
+        assignee: "tara",
         sort: "created",
         limit: 50,
       });
@@ -344,19 +344,19 @@ describe("ForgejoIssueTracker", () => {
         scope: "acme/web",
         state: "open",
         involvement: "assigned",
-        assignee: "theo",
+        assignee: "tara",
         sort: "created",
         limit: 50,
       } as const;
       expect((yield* api.listIssues({ ...mine, viewer: "julius" })).items).toEqual([]);
       expect(
-        (yield* api.listIssues({ ...mine, viewer: "Theo" })).items.map((item) => item.key),
+        (yield* api.listIssues({ ...mine, viewer: "Tara" })).items.map((item) => item.key),
       ).toEqual(["42"]);
       expect(paths).toEqual([
         "repos/acme/web/issues?type=issues&state=open&sort=recentupdate&created_by=julius&limit=50&page=2",
-        "repos/acme/web/issues?type=issues&state=open&sort=latest&labels=bug%2Cp1&assigned_by=theo&limit=50&page=1",
-        "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=theo&limit=50&page=1",
-        "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=theo&limit=50&page=1",
+        "repos/acme/web/issues?type=issues&state=open&sort=latest&labels=bug%2Cp1&assigned_by=tara&limit=50&page=1",
+        "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=tara&limit=50&page=1",
+        "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=tara&limit=50&page=1",
       ]);
       expect(page.items.map((item) => item.key)).toEqual(["42"]);
       // No `Link` header at all means the server may still have more; a full page carries on.

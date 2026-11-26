@@ -582,7 +582,7 @@ it.layer(
   );
 
   it.effect.skipIf(windowsHost)(
-    "gives npm view T3's own lasting npm cache and drops its partial download on interrupt",
+    "gives npm view Hyakki's own lasting npm cache and drops its partial download on interrupt",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-npm-view-cache");
@@ -760,7 +760,7 @@ it.layer(
       updateCommand: null,
       canUpdate: false,
       message:
-        "Version 2.1.117 is out. T3 Code runs /Applications/Tool.app/Contents/Resources/bin/package-tool; update it with the app or tool that installed it.",
+        "Version 2.1.117 is out. Hyakki runs /Applications/Tool.app/Contents/Resources/bin/package-tool; update it with the app or tool that installed it.",
     });
   });
 
@@ -894,9 +894,9 @@ it.layer(
   it.effect("recognizes a Windows standalone install through its junctioned bin dir", () =>
     Effect.gen(function* () {
       const visiblePath =
-        "C:\\Users\\Theo\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe";
+        "C:\\Users\\Tara\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe";
       const realPath =
-        "C:\\Users\\Theo\\.codex\\packages\\standalone\\releases\\0.120.0-x86_64\\bin\\codex.exe";
+        "C:\\Users\\Tara\\.codex\\packages\\standalone\\releases\\0.120.0-x86_64\\bin\\codex.exe";
       const capabilities = yield* resolvePackageManagedProviderMaintenance(
         {
           provider: driver("codex"),
@@ -1259,20 +1259,20 @@ it.layer(
   it.effect.each([
     {
       name: "the default home",
-      resolved: "/Users/theo/.vite-plus/bin/claude",
-      real: "/Users/theo/.vite-plus/current/bin/vp",
+      resolved: "/Users/tara/.vite-plus/bin/claude",
+      real: "/Users/tara/.vite-plus/current/bin/vp",
       platform: "darwin",
     },
     {
       name: "the XDG home",
-      resolved: "/home/theo/.local/share/vite-plus/bin/claude",
-      real: "/home/theo/.local/share/vite-plus/current/bin/vp",
+      resolved: "/home/tara/.local/share/vite-plus/bin/claude",
+      real: "/home/tara/.local/share/vite-plus/current/bin/vp",
       platform: "linux",
     },
     {
       name: "the Windows home",
-      resolved: "C:\\Users\\Theo\\AppData\\Local\\vite-plus\\bin\\claude.cmd",
-      real: "C:\\Users\\Theo\\AppData\\Local\\vite-plus\\packages\\@anthropic-ai\\claude-code\\lib\\node_modules\\@anthropic-ai\\claude-code\\cli.js",
+      resolved: "C:\\Users\\Tara\\AppData\\Local\\vite-plus\\bin\\claude.cmd",
+      real: "C:\\Users\\Tara\\AppData\\Local\\vite-plus\\packages\\@anthropic-ai\\claude-code\\lib\\node_modules\\@anthropic-ai\\claude-code\\cli.js",
       platform: "win32",
     },
   ] as const)("updates a Vite+ global install in $name with vp", (fixture) =>

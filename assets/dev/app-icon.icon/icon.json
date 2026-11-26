@@ -6,7 +6,6 @@
     {
       "layers": [
         {
-          "glass": true,
           "image-name": "text.svg",
           "name": "Text",
           "position": {
@@ -15,16 +14,6 @@
           }
         },
         {
-          "glass": false,
-          "image-name": "annotations.svg",
-          "name": "Annotations",
-          "position": {
-            "scale": 8.5,
-            "translation-in-points": [0, 0]
-          }
-        },
-        {
-          "glass": true,
           "image-name": "background.svg",
           "name": "Background",
           "position": {

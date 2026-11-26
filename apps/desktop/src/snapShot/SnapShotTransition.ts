@@ -114,7 +114,7 @@ function createWindow(
     resizable: false,
     show: false,
     skipTaskbar: true,
-    title: "T3 Code Snapshot Animation",
+    title: "Hyakki Snapshot Animation",
     transparent: true,
     webPreferences: {
       backgroundThrottling: false,
@@ -310,7 +310,7 @@ export class SnapShotTransition {
         }
       }
       if (this.waitForCompositorFrame) {
-        // Renderer frames alone can leave a transparent gap; composite the snapshot before revealing T3.
+        // Renderer frames alone can leave a transparent gap; composite the snapshot before revealing Hyakki.
         await Promise.all(
           overlays.map(async (overlay) => {
             if (this.active !== active || overlay.window.isDestroyed()) return;

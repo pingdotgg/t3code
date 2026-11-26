@@ -96,7 +96,7 @@ describe("narrowPullRequestMentions", () => {
     const users = [
       { login: "TonybynMp4", name: null },
       { login: "16g", name: "Tom" },
-      { login: "theo", name: "Theo" },
+      { login: "tara", name: "Tara" },
     ];
     expect(narrowPullRequestMentions(users, "to", 5).map((u) => u.login)).toEqual([
       "TonybynMp4",

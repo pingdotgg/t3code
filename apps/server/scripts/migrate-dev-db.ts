@@ -69,7 +69,7 @@ export class MigrateDevDbLegacySourceError extends Schema.TaggedError<MigrateDev
   },
 ) {
   override get message(): string {
-    return `Source database '${this.sourcePath}' holds ${this.legacyThreads} legacy threads the server has not imported into V2 yet, which this command cannot carry over. Start a server once on a T3 home holding a copy of it so it imports them, then pass the userdata/statev2.sqlite that server leaves behind as --source.`;
+    return `Source database '${this.sourcePath}' holds ${this.legacyThreads} legacy threads the server has not imported into V2 yet, which this command cannot carry over. Start a server once on a Hyakki home holding a copy of it so it imports them, then pass the userdata/statev2.sqlite that server leaves behind as --source.`;
   }
 }
 
@@ -81,7 +81,7 @@ export class MigrateDevDbServerRunningError extends Schema.TaggedError<MigrateDe
   },
 ) {
   override get message(): string {
-    return `Dev database at '${this.databasePath}' is open by a running server (pid ${this.pid} per server-runtime.json). Stop that server first; if that pid is not actually a T3 server (stale descriptor, reused pid), delete the server-runtime.json next to the database and retry.`;
+    return `Dev database at '${this.databasePath}' is open by a running server (pid ${this.pid} per server-runtime.json). Stop that server first; if that pid is not actually a Hyakki server (stale descriptor, reused pid), delete the server-runtime.json next to the database and retry.`;
   }
 }
 

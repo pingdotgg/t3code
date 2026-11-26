@@ -742,7 +742,7 @@ export const layer: Layer.Layer<
         readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         readonly openRunOwnedSubagentsTerminal?: ProviderTerminalEvent;
-        // Root turn snapshot written with the run when T3 ends the run itself.
+        // Root turn snapshot written with the run when Hyakki ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         // Stored root tool calls still open when the provider runtime was lost; nothing else ends them.
         readonly lostToolCalls?: ReadonlyArray<OrchestrationV2TurnItem>;
@@ -2120,7 +2120,7 @@ export const layer: Layer.Layer<
                     runId: input.run.id,
                     cause,
                   });
-                  // An adapter fails its stream when its runtime is gone. A failed write, or a session T3
+                  // An adapter fails its stream when its runtime is gone. A failed write, or a session Hyakki
                   // released or saw end, leaves work that can still report or that the releaser settles.
                   const runtimeLost =
                     isRunExecutionIngestError(squashed) &&

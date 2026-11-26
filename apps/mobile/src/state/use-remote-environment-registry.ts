@@ -28,12 +28,12 @@ import { connectPairingUrl as connectPairingUrlCommand } from "../connection/onb
 const RELAY_REMOVAL_ACCOUNT_NOTE: Record<Discovery.RelayEnvironmentRegistration, string> = {
   registered: msg(
     "It stays on your {connect} account and keeps its host space. Deregister it under {account} → {connect} to free it.",
-    { connect: "T3 Connect", account: "T3 Account" },
+    { connect: "Hyakki Connect", account: "Hyakki Account" },
   ),
-  unregistered: msg("It's no longer on your {connect} account.", { connect: "T3 Connect" }),
+  unregistered: msg("It's no longer on your {connect} account.", { connect: "Hyakki Connect" }),
   unknown: msg(
     "This doesn't change your {connect} account. To deregister it there, use {account} → {connect}.",
-    { connect: "T3 Connect", account: "T3 Account" },
+    { connect: "Hyakki Connect", account: "Hyakki Account" },
   ),
 };
 
@@ -202,7 +202,7 @@ export function useRemoteConnections() {
         environmentId,
       );
       const openAccount = {
-        text: m(msg("Open {account}", { account: "T3 Account" })),
+        text: m(msg("Open {account}", { account: "Hyakki Account" })),
         onPress: () => navigation.navigate("SettingsAuth"),
       };
       const cancel = { text: m(msg("Cancel")), style: "cancel" } as const;

@@ -194,7 +194,7 @@ const connectDeviceListCommand = Command.make("list", {
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "List T3 Connect devices waiting for approval and those already trusted.",
+    "List Hyakki Connect devices waiting for approval and those already trusted.",
   ),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(
@@ -220,7 +220,7 @@ const connectDeviceApproveCommand = Command.make("approve", {
   ...authLocationFlags,
   code: verificationCodeArgument,
 }).pipe(
-  Command.withDescription("Approve the waiting T3 Connect device that shows this code."),
+  Command.withDescription("Approve the waiting Hyakki Connect device that shows this code."),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
@@ -252,7 +252,7 @@ const connectDeviceRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
   code: verificationCodeArgument,
 }).pipe(
-  Command.withDescription("Stop trusting a T3 Connect device and end its sessions."),
+  Command.withDescription("Stop trusting a Hyakki Connect device and end its sessions."),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
@@ -282,7 +282,9 @@ const connectDeviceRevokeCommand = Command.make("revoke", {
 );
 
 const connectDeviceCommand = Command.make("connect-device").pipe(
-  Command.withDescription("Approve and revoke devices that reach this host through T3 Connect."),
+  Command.withDescription(
+    "Approve and revoke devices that reach this host through Hyakki Connect.",
+  ),
   Command.withSubcommands([
     connectDeviceListCommand,
     connectDeviceApproveCommand,
@@ -353,7 +355,7 @@ const sessionRevokeCommand = Command.make("revoke", {
   ),
 }).pipe(
   Command.withDescription(
-    "Revoke an active session. A T3 Connect device's session takes the device's trust and other sessions with it; if approval for new devices is off, the device can connect again on its own.",
+    "Revoke an active session. A Hyakki Connect device's session takes the device's trust and other sessions with it; if approval for new devices is off, the device can connect again on its own.",
   ),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>

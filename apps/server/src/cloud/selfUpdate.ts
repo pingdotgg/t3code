@@ -82,7 +82,7 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
     const platform = yield* HostProcess.Platform;
     const executablePath = yield* HostProcess.ExecutablePath;
     const { entryPath } = pinnedRuntimePaths(path, input.baseDir, packageJson.version, platform);
-    // The executable path is resolved, so it names the real path of a symlinked T3 home.
+    // The executable path is resolved, so it names the real path of a symlinked Hyakki home.
     const realEntryPath = yield* fs.realPath(entryPath).pipe(Effect.orElseSucceed(() => entryPath));
     if (!input.managed && executablePath !== entryPath && executablePath !== realEntryPath) {
       return [];
@@ -94,7 +94,7 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
         ? Option.none<string>()
         : yield* fs.readFile(unitPath).pipe(Effect.map(decodeServiceUnit), Effect.option);
     const program = Option.flatMapNullishOr(unit, bootServiceProgramOf);
-    // The unit may name it through another spelling of a symlinked T3 home.
+    // The unit may name it through another spelling of a symlinked Hyakki home.
     const references = Option.isNone(program)
       ? []
       : [
@@ -191,14 +191,14 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         );
       }
       return yield* failWith(
-        "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
+        "This server is managed by the Hyakki desktop app on its machine; update the desktop app to update it.",
       );
     }
     // The target must accept the launcher that will run it, which can be older than this server.
     const launcherProtocol = launcher.protocol;
     if (capability === null || launcherProtocol === undefined) {
       return yield* failWith(
-        "Remote updates require the T3 Code background service. Run `t3 service install` on the server machine.",
+        "Remote updates require the Hyakki background service. Run `t3 service install` on the server machine.",
       );
     }
 

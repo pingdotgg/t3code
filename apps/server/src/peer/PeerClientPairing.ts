@@ -169,7 +169,7 @@ const make = Effect.gen(function* () {
           sessions.find((session) => session.sessionId === sessionId)?.client,
         ),
       ),
-      Effect.orElseSucceed(() => "T3 Code client"),
+      Effect.orElseSucceed(() => "Hyakki client"),
     );
 
   /** Asks the linked environment for a pairing; `payload` says for whom. */

@@ -14,7 +14,7 @@ import { installCli, isForegroundProcStat, isForegroundPs, offerCliInstall } fro
 
 const VERSION = packageJson.version;
 
-/** A standalone runtime in a temp T3 home, started by the npm launcher from an npx cache. */
+/** A standalone runtime in a temp Hyakki home, started by the npm launcher from an npx cache. */
 const setup = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -62,7 +62,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.isFalse(installed.onPath);
       assert.include(installed.pathCommand, "$HOME/bin");
 
-      // A link written through a symlinked T3 home is still ours.
+      // A link written through a symlinked Hyakki home is still ours.
       const alias = path.join(root, "alias");
       yield* fs.symlink(path.join(root, ".t3"), alias);
       yield* fs.remove(link);
@@ -152,7 +152,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const windows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         provide(effect.pipe(Effect.provideService(HostProcess.Platform, "win32")));
       const desktopShim =
-        '@echo off\r\nrem Written by T3 Code\r\n"C:\\T3 Code\\T3 Code.exe" "x" %*\r\n';
+        '@echo off\r\nrem Written by Hyakki\r\n"C:\\Hyakki\\Hyakki.exe" "x" %*\r\n';
       yield* fs.writeFileString(shim, desktopShim);
       const foreignShim = yield* windows(installCli()).pipe(Effect.flip);
       assert.include(foreignShim.message, "Another t3 is already at");
@@ -220,7 +220,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       // Scripts, CI, sudo, dumb terminals, background jobs, and help never ask.
       yield* offer(false, { interactive: false });
       yield* offer(false, { env: { CI: "true" } });
-      yield* offer(false, { env: { SUDO_USER: "theo" } });
+      yield* offer(false, { env: { SUDO_USER: "tara" } });
       yield* offer(false, { env: { TERM: "dumb" } });
       yield* offer(false, { env: { npm_config_yes: "true" } });
       yield* offer(false, { args: ["--completions", "zsh"] });

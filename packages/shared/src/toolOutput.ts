@@ -206,7 +206,7 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   return Object.keys(output).length === 0 ? undefined : output;
 }
 
-// OpenCode 2 Code Mode reports a script's nested T3 tool calls as one item with the script's result.
+// OpenCode 2 Code Mode reports a script's nested Hyakki tool calls as one item with the script's result.
 const OPENCODE_CODE_MODE_TOOL_NAME = "execute";
 
 export function htmlRenderFromToolItem(item: {
@@ -254,7 +254,7 @@ export function previewRecordingIdFromToolItem(item: {
 }
 
 /**
- * Compact structured result a T3 MCP tool carries on its turn item.
+ * Compact structured result a Hyakki MCP tool carries on its turn item.
  * Preserves every metadata field clients, summaries, and attachment retention read.
  */
 export function compactT3McpToolOutput(

@@ -36,7 +36,7 @@ impl Bridge {
         }
     }
 }
-#[zbus::interface(name = "com.t3tools.KdeCapture.Feedback")]
+#[zbus::interface(name = "dev.ryoku.KdeCapture.Feedback")]
 impl Bridge {
     // An async pending call is an event channel, not a timer or a blocking KWin call.
     async fn next(
@@ -247,7 +247,7 @@ mod tests {
             &stranger,
             destination.as_str(),
             OBJECT,
-            "com.t3tools.KdeCapture.Feedback",
+            "dev.ryoku.KdeCapture.Feedback",
         )
         .unwrap();
         let error = unrelated.call::<_, _, String>("Next", &()).unwrap_err();
@@ -266,7 +266,7 @@ mod tests {
             &f._server,
             destination.clone(),
             OBJECT,
-            "com.t3tools.KdeCapture.Feedback",
+            "dev.ryoku.KdeCapture.Feedback",
         )
         .unwrap();
         // Event remains responsive while Next waits. No blocking the D-Bus executor.

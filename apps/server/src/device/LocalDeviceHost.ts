@@ -1,6 +1,6 @@
 import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
-// The hub runs at origin root; T3 strips its prefix and the Device panel derives stream URLs from it.
+// The hub runs at origin root; Hyakki strips its prefix and the Device panel derives stream URLs from it.
 import {
   type DeviceHostSummary,
   type DevicePlatform,

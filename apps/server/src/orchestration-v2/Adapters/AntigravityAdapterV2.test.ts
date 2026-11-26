@@ -996,7 +996,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
   );
 
   it.effect(
-    "recovers T3 MCP tool results across omitted outputs, replays, errors, and turn boundaries",
+    "recovers Hyakki MCP tool results across omitted outputs, replays, errors, and turn boundaries",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -2460,7 +2460,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
 });
 
 describe("AntigravityAdapterV2 subagent reads", () => {
-  it.effect("completes a read T3 served when the agent later fails it with a step error", () =>
+  it.effect("completes a read Hyakki served when the agent later fails it with a step error", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2525,7 +2525,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
                     send(
                       normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
                     );
-                  // The agent's own view_file never reaches T3, so it must not take a served read.
+                  // The agent's own view_file never reaches Hyakki, so it must not take a served read.
                   const reads = [
                     ["call_native", served, "Running view_file"],
                     ["call_served", served, "Running client_view_file"],
@@ -2653,7 +2653,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
             event.turnItem.nativeItemRef?.nativeId === nativeId &&
             event.turnItem.status === status,
         );
-      // T3 completes a served read itself instead of leaving it running until the flush.
+      // Hyakki completes a served read itself instead of leaving it running until the flush.
       assert.isAbove(firstEvent("call_served", "completed"), -1);
       assert.isBelow(firstEvent("call_served", "completed"), firstEvent("call_native", "failed"));
       const failed = { status: "failed" as const, output: stepError };

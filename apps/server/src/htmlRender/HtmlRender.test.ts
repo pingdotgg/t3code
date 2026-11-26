@@ -443,7 +443,7 @@ describe("HtmlRender", () => {
   describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "when the browser cannot be signalled",
     () => {
-      // A browser T3 cannot signal, as under AppArmor in an LXC container, must still exit.
+      // A browser Hyakki cannot signal, as under AppArmor in an LXC container, must still exit.
       it.live("asks the browser to close when the preview finishes instead of signalling it", () =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;

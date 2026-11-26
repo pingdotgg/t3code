@@ -1,6 +1,6 @@
 ---
 name: launch-video
-description: Make a short launch video (1920x1080 MP4 plus an outro PNG) that demos a T3 Code feature, built from the real app with added motion, for an X/Twitter announcement or release thread. Use when asked for a launch video, demo video, feature teaser or announcement clip, or to add a video to a release tweet.
+description: Make a short launch video (1920x1080 MP4 plus an outro PNG) that demos a Hyakki feature, built from the real app with added motion, for an X/Twitter announcement or release thread. Use when asked for a launch video, demo video, feature teaser or announcement clip, or to add a video to a release tweet.
 ---
 
 # Launch videos
@@ -38,7 +38,7 @@ There are two ways to build one:
      `scripts/fake-claude.mjs` as its CLI, so the video shows Claude's logo, models, thinking
      and tool rows. Each turn is `{ match, steps }`: `think`, `text`, `bash` (+ `output`, `ms`),
      `wait`, `edit` (+ `old`, `new`) and `write` (+ `content`), which change the file for real
-     so diffs and checkpoints show them, and `tool` (+ `input`), which calls that T3 MCP tool
+     so diffs and checkpoints show them, and `tool` (+ `input`), which calls that Hyakki MCP tool
      for real, e.g. `delegate_task`; with `server` and `output` it plays another MCP server's
      tool instead. `<var:name>` is filled from the JSON file at `FAKE_CLAUDE_VARS`, for ids
      that change every run. `bash` with `run: true` executes the command in the session's cwd
@@ -182,7 +182,7 @@ seeks every animation (in the story and inside each beat) to each frame's time.
   throws if two overlap; two captions crossfading read as garbled text.
 - **Pacing**: `Kit.timeline([[realSeconds, animFrom, animTo], ...])` maps video time to
   animation time; `animFrom == animTo` holds a frame. It also sets the video length.
-- **Outro** `.outro`: logo, a two-line headline, "Available now in **T3 Code** `<version>`",
+- **Outro** `.outro`: logo, a two-line headline, "Available now in **Hyakki** `<version>`",
   `t3.codes`. Change the headline and version, keep the rest. Hold it about 3 s.
 
 Two animations on one property of one element fight (the later one wins for its whole

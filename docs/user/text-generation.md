@@ -1,6 +1,6 @@
 # Text generation models
 
-T3 Code uses an LLM for lightweight background text tasks: thread titles, branch names, commit messages, PR titles/descriptions, and voice transcript cleanup. Configure the default in **Settings → Threads → Text generation model** (overridable separately in **Settings → Source control & issues** and **Settings → Voice**).
+Hyakki uses an LLM for lightweight background text tasks: thread titles, branch names, commit messages, PR titles/descriptions, and voice transcript cleanup. Configure the default in **Settings → Threads → Text generation model** (overridable separately in **Settings → Source control & issues** and **Settings → Voice**).
 
 By default, a coding agent handles these tasks by starting a session per request. Adding a dedicated **text generator** API is usually much faster and cheaper.
 

@@ -32,7 +32,7 @@ const effortOf = (configOptions: ReadonlyArray<ConfigOption> | undefined) =>
   configOptions?.find((option) => option.id === "effortLevel")?.currentValue;
 
 /**
- * The turn runs at the thread's effort: T3 writes `effortLevel` only after
+ * The turn runs at the thread's effort: Hyakki writes `effortLevel` only after
  * Kiro has advertised it for the written model, and Kiro reports the level
  * back before the prompt goes out.
  */
@@ -77,7 +77,7 @@ export function assertKiroEffortOutput(
   assert.isAbove(effortWrite, modelWrite);
   assert.isBelow(effortWrite, prompt);
 
-  // Kiro advertised the option for the written model before T3 wrote to it.
+  // Kiro advertised the option for the written model before Hyakki wrote to it.
   const advertised = frames
     .slice(modelWrite, effortWrite)
     .some(

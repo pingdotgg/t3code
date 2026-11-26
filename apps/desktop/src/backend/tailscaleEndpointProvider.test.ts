@@ -101,7 +101,7 @@ describe("tailscale endpoint provider", () => {
                       new URL(request.url).hostname === "127.0.0.1"
                         ? "desktop-backend"
                         : servedEnvironmentId,
-                    label: "T3 server",
+                    label: "Hyakki server",
                     platform: { os: "linux", arch: "x64" },
                     serverVersion: "0.1.9",
                     capabilities: { repositoryIdentity: true },

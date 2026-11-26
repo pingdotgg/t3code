@@ -1,10 +1,10 @@
 # Grok Build
 
-Run xAI's [Grok Build CLI](https://x.ai/cli) in T3 Code using your xAI subscription or `XAI_API_KEY`.
+Run xAI's [Grok Build CLI](https://x.ai/cli) in Hyakki using your xAI subscription or `XAI_API_KEY`.
 
 ## Set up Grok Build
 
-1. Install the Grok Build CLI (`@xai-official/grok`) on the machine running your T3 Code server.
+1. Install the Grok Build CLI (`@xai-official/grok`) on the machine running your Hyakki server.
 2. Authenticate on that machine:
    - Run `grok login` (or `grok login --device-auth` on a headless/remote host), **or**
    - Set `XAI_API_KEY` in the Grok instance's **Environment** settings.

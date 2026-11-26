@@ -37,7 +37,7 @@ const UNSAFE_EXTENSIONS = new Set(["link", "FSMN", "sdir", "UNTR"]);
 const decoder = new TextDecoder();
 
 /**
- * Reads a SHA-1 index that T3 wrote itself (versions 2 and 3). Anything else, including
+ * Reads a SHA-1 index that Hyakki wrote itself (versions 2 and 3). Anything else, including
  * conflicts, sparse entries, split indexes and fsmonitor data, returns null so callers use Git.
  */
 export function parseIndex(bytes: Uint8Array): ParsedIndex | null {

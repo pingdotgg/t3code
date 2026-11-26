@@ -17,7 +17,7 @@ const webIconSource = NodeFS.readFileSync(
 const customSprite = webIconSource.match(/const T3_FILE_ICON_SPRITE = `([\s\S]*?)`;/)?.[1];
 
 if (!customSprite) {
-  throw new Error("Could not read the T3 Pierre icon sprite from apps/web/src/pierre-icons.ts");
+  throw new Error("Could not read the Hyakki Pierre icon sprite from apps/web/src/pierre-icons.ts");
 }
 
 const colors = {

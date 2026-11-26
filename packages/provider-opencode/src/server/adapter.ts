@@ -409,7 +409,7 @@ interface OpenCodeSubagentContext {
   launch: ToolPart | null;
 }
 
-/** Root work OpenCode began with no T3 turn, such as a background task's result; held until a run admits it. */
+/** Root work OpenCode began with no Hyakki turn, such as a background task's result; held until a run admits it. */
 interface OpenCodeWake {
   readonly events: Array<OpenCodeEvent>;
   // A user message alone can be a late update; only a busy root is work worth a run.
@@ -2902,7 +2902,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             onRunEndedWithoutStarting: () => stopWake(state, wake),
           });
 
-        // Callers hold eventPermit. A root user message with no T3 turn starts a wake; its work stays
+        // Callers hold eventPermit. A root user message with no Hyakki turn starts a wake; its work stays
         // held, with that of children no turn has claimed yet, until startTurn takes it.
         const acceptEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
           const sessionId = sessionWorkEventSessionId(event);

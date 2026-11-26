@@ -48,7 +48,7 @@ const config = {
 } satisfies RelayConfiguration.RelayConfiguration["Service"];
 const input = {
   token: "device-token",
-  packageName: "com.t3tools.t3code.dev",
+  packageName: "dev.ryoku.hyakki.dev",
   data: { t3_kind: "agent_activity", active: "true" },
   alert: false,
 };

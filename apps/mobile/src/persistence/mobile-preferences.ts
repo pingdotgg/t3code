@@ -161,7 +161,7 @@ export interface Preferences {
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
-  /** Per host, when the newest T3 Connect device this phone has announced first signed in. */
+  /** Per host, when the newest Hyakki Connect device this phone has announced first signed in. */
   readonly connectDevicesSeenThrough?: Readonly<Record<string, number>>;
   /** Hardware-keyboard Return behavior in the composer. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;

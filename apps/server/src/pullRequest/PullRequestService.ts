@@ -256,7 +256,7 @@ export class PullRequestService extends Context.Service<
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
     /** Emits when the host reports a change; empty where the host has no event feed. */
     readonly changes: (input: PullRequestRef) => Stream.Stream<void>;
-    /** Whether the project's checkout is on a forge T3 reads change requests from. */
+    /** Whether the project's checkout is on a forge Hyakki reads change requests from. */
     readonly servesProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     /** The project as `servesProject` sees it: identity resolved, its forge refined. */
     readonly addressedProject: (

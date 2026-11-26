@@ -201,7 +201,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
   it.effect("discards a credential rejected by verification and permits a fresh login", () =>
     Effect.gen(function* () {
       const rejectionMessage =
-        "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one.";
+        "Cursor needs a paid plan to run in Hyakki. Upgrade this account or sign in with a different one.";
       let rejected = true;
       const harness = yield* makeHarness({
         onChanged: (signedIn) =>

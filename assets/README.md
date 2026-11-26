@@ -1,12 +1,20 @@
 # Brand icons
 
-The three Icon Composer projects are the source of truth for full application icons:
+Hyakki's icon is the Ryoku mark (`source/mark.svg`, from the Ryoku site). `source/make_icons.py` renders
+every tracked PNG and ICO here from it, on any platform with `rsvg-convert` and ImageMagick:
+
+```bash
+python3 assets/source/make_icons.py
+```
+
+It draws three tiles: `prod` (Ryoku dark), `nightly` (night sky), and `dev` (blueprint). The development
+web icons are also copied to `apps/web/public` by hand after a change.
+
+The three Icon Composer projects carry the same mark and backgrounds for Apple platforms:
 
 - `dev/app-icon.icon`
 - `nightly/app-icon.icon`
 - `prod/app-icon.icon`
-
-Each project uses `text.svg` for the T3 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon, web app manifest icons, and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 

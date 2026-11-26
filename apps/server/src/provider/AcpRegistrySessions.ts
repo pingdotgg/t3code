@@ -55,7 +55,7 @@ export class AcpRegistrySessions extends Context.Service<
       readonly sessionId: string;
     }) => Effect.Effect<ThreadId | null, AcpRegistryOperationError>;
     /**
-     * Binds a native ACP session to a T3 thread and copies its history in. Importing a
+     * Binds a native ACP session to a Hyakki thread and copies its history in. Importing a
      * session whose thread still lacks its history repairs that thread instead.
      */
     readonly importSession: (
@@ -248,7 +248,7 @@ const make = Effect.gen(function* () {
       if (racedImport !== null) return { threadId, imported: false } as const;
       return yield* new AcpRegistryOperationError({
         reason: "session_import_failed",
-        message: "Could not create a T3 thread for the ACP session.",
+        message: "Could not create a Hyakki thread for the ACP session.",
         cause: launched.failure,
       });
     }

@@ -7,7 +7,7 @@ import {
 } from "./captureConfigEdit.ts";
 import { readKdlNodes } from "./captureConfigKdl.ts";
 
-const app = "com.t3tools.T3Code";
+const app = "dev.ryoku.Hyakki";
 const binding = captureConfigBinding("niri", app, "Ctrl+Shift+2");
 
 describe("Niri capture config edits", () => {
@@ -46,7 +46,7 @@ describe("Niri capture config edits", () => {
     expect(result.shortcut).toBe("Ctrl+Alt+Y");
   });
   it("replaces and removes only this app's capture binding", () => {
-    const other = captureConfigBinding("niri", "com.t3tools.Other", "Ctrl+Alt+4");
+    const other = captureConfigBinding("niri", "dev.ryoku.Other", "Ctrl+Alt+4");
     const before = `binds {\n    ${binding}\n    ${other}\n}\n`;
     const result = editCaptureConfig(before, "niri", app, "install", "Ctrl+Alt+Y");
     expect(result.after).toContain(other);
@@ -105,7 +105,7 @@ describe("Hyprland capture config edits", () => {
   it.each([
     "return {}",
     "local M = {}\n  return M",
-    '--[[\nhl.bind("CTRL + SHIFT + 2", hl.dsp.global("com.t3tools.T3Code:capture-window"))\n]]',
+    '--[[\nhl.bind("CTRL + SHIFT + 2", hl.dsp.global("dev.ryoku.Hyakki:capture-window"))\n]]',
   ])("does not guess how to edit complex Lua", (source) => {
     expect(() => editCaptureConfig(source, "hyprland-lua", app, "install")).toThrow("manual edit");
   });

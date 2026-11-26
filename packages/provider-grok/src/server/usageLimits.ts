@@ -95,7 +95,7 @@ export function grokUsageResponseToLimits(
 const readGrokCredential = Effect.fn("readGrokCredential")(function* (
   environment: NodeJS.ProcessEnv,
 ) {
-  // T3's ACP adapter explicitly selects API-key auth when this variable is set.
+  // Hyakki's ACP adapter explicitly selects API-key auth when this variable is set.
   if (environment.XAI_API_KEY?.trim()) return undefined;
   // Alternate auth deployments can select another scope or account from the same file.
   if (

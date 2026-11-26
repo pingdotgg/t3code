@@ -50,12 +50,12 @@ describe("resolveMcpGate", () => {
       kind: "open",
       mcpUrl: "https://prod-a1.t3coderelay.com/mcp",
     });
-    // A saved machine's address comes from T3 Connect, not from what it reports itself.
+    // A saved machine's address comes from Hyakki Connect, not from what it reports itself.
     expect(resolveMcpGate(saved)).toEqual({
       kind: "open",
       mcpUrl: "https://prod-b2.t3coderelay.com/mcp",
     });
-    // A disconnected saved machine follows T3 Connect's list. Offline or an unreadable list keeps
+    // A disconnected saved machine follows Hyakki Connect's list. Offline or an unreadable list keeps
     // a retry; only a list showing nothing wrong asks to reconnect.
     const away = { ...saved, connected: false };
     const listed = (
@@ -72,7 +72,7 @@ describe("resolveMcpGate", () => {
     expect(resolveMcpGate(listed("checking")).kind).toBe("checking");
     expect(resolveMcpGate(listed("offline"))).toEqual({ kind: "disconnected", relay: "offline" });
     expect(resolveMcpGate(listed("error"))).toEqual({ kind: "disconnected", relay: "failed" });
-    // T3 Connect refuses to check a publish-only link, so that failure says nothing.
+    // Hyakki Connect refuses to check a publish-only link, so that failure says nothing.
     expect(resolveMcpGate(listed("error", "manual"))).toEqual({
       kind: "disconnected",
       relay: null,
@@ -92,8 +92,8 @@ describe("resolveMcpGate", () => {
   });
 
   it.each([
-    ["no T3 Connect sign-in", { ...open, signedIn: false }, "sign-in"],
-    ["no permission to read T3 Connect", { ...open, canReadRelay: false }, "no-relay-read"],
+    ["no Hyakki Connect sign-in", { ...open, signedIn: false }, "sign-in"],
+    ["no permission to read Hyakki Connect", { ...open, canReadRelay: false }, "no-relay-read"],
     ["a server without approval codes", { ...open, approvalCodes: false }, "update"],
     ["no tunnel", { ...open, linkState: { ...tunnel, managedTunnelActive: false } }, "turn-on"],
     ["a removed link", { ...open, linkState: { ...tunnel, linkRevoked: true } }, "turn-on"],
@@ -113,18 +113,18 @@ describe("resolveMcpGate", () => {
       "turn-on",
     ],
     [
-      "a saved machine T3 Connect does not list",
+      "a saved machine Hyakki Connect does not list",
       { ...saved, relay: { status: "listed", endpoint: undefined } },
       "turn-on",
     ],
-    ["T3 Connect's list still loading", { ...saved, relay: { status: "loading" } }, "checking"],
+    ["Hyakki Connect's list still loading", { ...saved, relay: { status: "loading" } }, "checking"],
     [
-      "a disconnected saved machine while T3 Connect's list refreshes",
+      "a disconnected saved machine while Hyakki Connect's list refreshes",
       { ...saved, connected: false, relay: { status: "loading" } },
       "checking",
     ],
     [
-      "no tunnel, before T3 Connect's list loads",
+      "no tunnel, before Hyakki Connect's list loads",
       {
         ...saved,
         linkState: { ...tunnel, managedTunnelActive: false },
@@ -143,7 +143,7 @@ describe("resolveMcpGate", () => {
           cause: "no_connector",
           reason: "Cloudflare has no live connection from this machine for the tunnel.",
           hint: null,
-          fix: "Restart T3 Code.",
+          fix: "Restart Hyakki.",
         },
       },
       "offline",

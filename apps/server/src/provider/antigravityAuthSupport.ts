@@ -217,7 +217,7 @@ function antigravityEnvironment(
       : auth.authMethod === "agent-platform" && auth.apiKey
         ? { GOOGLE_API_KEY: auth.apiKey }
         : {};
-  // Each launch unpacks about 1 GB; use T3-owned temp so the driver can reclaim files after force-kill.
+  // Each launch unpacks about 1 GB; use Hyakki-owned temp so the driver can reclaim files after force-kill.
   const tempDirectory = runtimeTempDirectory ?? profile.tempDirectory;
   return {
     ...environment,
@@ -435,7 +435,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     helperExecutable.includes("%s")
   ) {
     return yield* authSupportError(
-      "The T3 runtime path cannot be used to suppress Antigravity browser launches.",
+      "The Hyakki runtime path cannot be used to suppress Antigravity browser launches.",
     );
   }
 

@@ -39,8 +39,8 @@ export function cloudChangeReplacesLink(
 const TUNNEL_HOSTNAME = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
 /**
- * An environment's MCP URL on its T3 Connect tunnel, or null. This machine reports its own
- * tunnel hostname; a saved machine's comes from T3 Connect, and only a tunnel counts there,
+ * An environment's MCP URL on its Hyakki Connect tunnel, or null. This machine reports its own
+ * tunnel hostname; a saved machine's comes from Hyakki Connect, and only a tunnel counts there,
  * since a publish-only link registers its local address as `manual`.
  */
 export function t3ConnectMcpUrl(input: {
@@ -58,7 +58,7 @@ export function t3ConnectMcpUrl(input: {
     : null;
 }
 
-/** Where T3 Connect can be turned on for an environment: from here, only by policy, or on its host. */
+/** Where Hyakki Connect can be turned on for an environment: from here, only by policy, or on its host. */
 export type T3ConnectTurnOn =
   | { readonly kind: "here" }
   | { readonly kind: "policy"; readonly reason: string }

@@ -37,9 +37,9 @@ type Routes = Readonly<Record<Route, boolean>>;
 /** How other devices reach this machine now. */
 interface Setup {
   readonly service: BootService.BootServiceStatus;
-  /** Null in builds without T3 Connect. Off when T3 Connect revoked the link. */
+  /** Null in builds without Hyakki Connect. Off when Hyakki Connect revoked the link. */
   readonly connect: boolean | null;
-  /** T3 Connect revoked the link; `t3 connect` links again. */
+  /** Hyakki Connect revoked the link; `t3 connect` links again. */
   readonly connectRevoked: boolean;
   readonly lan: boolean;
   /** An installed service with no T3CODE_LAN or T3CODE_HOST keeps the old default: on. */
@@ -48,7 +48,7 @@ interface Setup {
 }
 
 /**
- * T3 Connect is on when this CLI asked for a managed link, or when the desktop or
+ * Hyakki Connect is on when this CLI asked for a managed link, or when the desktop or
  * web app made one: that saves the tunnel config but no CLI marker. Revoked is off.
  */
 export const connectEnabled = (link: {
@@ -93,7 +93,7 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
 
 /**
  * The routes `t3 up` starts from. With no route flag it asks about every
- * route, starting a machine with no service from T3 Connect. Any route flag
+ * route, starting a machine with no service from Hyakki Connect. Any route flag
  * means it asks nothing and keeps the routes not named as they are.
  */
 export const planRoutes = (
@@ -116,12 +116,12 @@ export const planRoutes = (
   };
 };
 
-/** A running service reads T3CODE_LAN and its T3 Connect link only when it starts. */
+/** A running service reads T3CODE_LAN and its Hyakki Connect link only when it starts. */
 const needsRestart = (before: Routes, after: Routes) =>
   after.lan !== before.lan || (after.connect && !before.connect);
 
 const CHOICES = {
-  connect: { title: "T3 Connect", description: "Creates a tunnel to control your PC." },
+  connect: { title: "Hyakki Connect", description: "Creates a tunnel to control your PC." },
   lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
 } satisfies Record<Route, { readonly title: string; readonly description: string }>;
 
@@ -148,7 +148,7 @@ const formatSetup = (setup: Setup, hints: Hints) => {
   // This home's access settings reach no service, so only the service is shown.
   if (service.otherBaseDir !== undefined) {
     return [
-      `  ${"Service".padEnd(15)}installed for another T3 home · ${service.otherBaseDir}`,
+      `  ${"Service".padEnd(15)}installed for another Hyakki home · ${service.otherBaseDir}`,
       "",
       `Pass \`${BootService.formatBootServiceBaseDirOption(service.otherBaseDir)}\` to manage it.`,
     ].join("\n");
@@ -166,9 +166,9 @@ const formatSetup = (setup: Setup, hints: Hints) => {
       ? []
       : [
           [
-            "T3 Connect",
+            "Hyakki Connect",
             setup.connect
-              ? "on · your T3 account"
+              ? "on · your Hyakki account"
               : setup.connectRevoked
                 ? `off · link revoked. Run \`${hints.connect}\`.`
                 : "off",
@@ -202,15 +202,15 @@ const formatSetup = (setup: Setup, hints: Hints) => {
 const formatNextSteps = (routes: Routes, serviceInstalled: boolean, hints: Hints) =>
   [
     ...(routes.connect
-      ? ["On your other device, sign in to T3 Connect with the same account."]
+      ? ["On your other device, sign in to Hyakki Connect with the same account."]
       : []),
     ...(routes.lan ? [`Run \`${hints.pair}\`. Use the code on your other device.`] : []),
     ...(routes.connect || routes.lan
       ? []
       : [
           serviceInstalled
-            ? "Remote access is off. T3 Code still runs here in the background."
-            : `Remote access is off. Run \`${hints.run}\` to use T3 Code here.`,
+            ? "Remote access is off. Hyakki still runs here in the background."
+            : `Remote access is off. Run \`${hints.run}\` to use Hyakki here.`,
         ]),
   ].join("\n");
 
@@ -241,7 +241,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {
     return yield* new CliError.UserError({
       cause: "connect",
-      userMessage: "T3 Connect is unavailable in this build.",
+      userMessage: "Hyakki Connect is unavailable in this build.",
     });
   }
 
@@ -314,7 +314,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     const confirmed = yield* Prompt.run(
       Prompt.Confirm({
         message: update
-          ? "Update and restart T3 Code? Running agent turns will stop."
+          ? "Update and restart Hyakki? Running agent turns will stop."
           : "Apply changes and restart? Running agent turns will stop.",
         initial: true,
       }),
@@ -329,7 +329,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     });
     if (linked === null) return;
     yield* Console.log(
-      `✓ Signed in to T3 Connect${linked.identity ? ` as ${linked.identity}` : ""}`,
+      `✓ Signed in to Hyakki Connect${linked.identity ? ` as ${linked.identity}` : ""}`,
     );
   }
   // A running server unlinks live; when that fails, only a restart stops its tunnel.
@@ -342,7 +342,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
   // When the service step fails, an installed service still runs with the old
   // value, so the file goes back to match it.
-  // A new T3 Connect link is undone too, with any tunnel the failed start saved, so a
+  // A new Hyakki Connect link is undone too, with any tunnel the failed start saved, so a
   // rerun sees it as a change and restarts. The sign-in stays.
   const restoreServiceEnv = before.service.installed
     ? CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan }).pipe(
@@ -389,7 +389,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       yield* Console.log(`Keeping installed service version t3@${installedVersion}.`);
     }
     if (update && !interactive) {
-      yield* Console.log("Updating T3 Code. Running agent turns will stop.");
+      yield* Console.log("Updating Hyakki. Running agent turns will stop.");
     }
     const result = newer
       ? ({ changed: false } as const)
@@ -418,16 +418,16 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         (yield* Prompt.run(
           Prompt.Confirm({
             message:
-              "The running service still has T3 Connect on. Restart it? Running agent turns will stop.",
+              "The running service still has Hyakki Connect on. Restart it? Running agent turns will stop.",
             initial: true,
           }),
         ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) })));
       if (!confirmed) {
         const { command } = yield* resolveHostCliCommand("service restart", baseDirArgs);
-        yield* Console.log(`Run \`${command}\` to turn T3 Connect off.`);
+        yield* Console.log(`Run \`${command}\` to turn Hyakki Connect off.`);
       } else {
         if (!interactive && !stopped) {
-          yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
+          yield* Console.log("Restarting Hyakki. Running agent turns will stop.");
         }
         const outcome = yield* service.restart.pipe(Effect.tapError(() => rollBack));
         if (outcome === "queued") {
@@ -459,7 +459,7 @@ export const upCommand = Command.make("up", {
   ...projectLocationFlags,
   connect: Flag.Boolean("connect").pipe(
     Flag.withDescription(
-      "Allow access through T3 Connect with your T3 account. Turn off with --no-connect.",
+      "Allow access through Hyakki Connect with your Hyakki account. Turn off with --no-connect.",
     ),
     Flag.optional,
   ),
@@ -471,19 +471,19 @@ export const upCommand = Command.make("up", {
   ),
   yes: Flag.Boolean("yes").pipe(
     Flag.withDescription(
-      "Ask nothing. Keep the access settings; a new machine gets T3 Connect. A restart stops running agent turns.",
+      "Ask nothing. Keep the access settings; a new machine gets Hyakki Connect. A restart stops running agent turns.",
     ),
     Flag.withDefault(false),
   ),
   headless: headlessFlag,
 }).pipe(
-  Command.withShortDescription("Set up remote access and the T3 Code background service."),
+  Command.withShortDescription("Set up remote access and the Hyakki background service."),
   Command.withDescription(
-    "Set up remote access and the T3 Code background service. Access flags skip the question, and routes not named keep their settings. Without a terminal, a needed restart runs without asking and stops running agent turns.",
+    "Set up remote access and the Hyakki background service. Access flags skip the question, and routes not named keep their settings. Without a terminal, a needed restart runs without asking and stops running agent turns.",
   ),
   Command.withExamples([
     { command: "t3 up", description: "Choose remote access." },
-    { command: "t3 up --connect", description: "Turn on T3 Connect. Keep other settings." },
+    { command: "t3 up --connect", description: "Turn on Hyakki Connect. Keep other settings." },
     { command: "t3 up --lan", description: "Allow LAN access with pairing codes." },
     { command: "t3 up --no-lan", description: "Stop LAN access." },
     { command: "t3 up --yes", description: "Take the defaults with no questions." },
@@ -496,7 +496,7 @@ export const connectCommand = Command.make("connect", {
   ...projectLocationFlags,
   headless: headlessFlag,
 }).pipe(
-  Command.withDescription("Set up T3 Connect for this machine. Same as `t3 up --connect`."),
+  Command.withDescription("Set up Hyakki Connect for this machine. Same as `t3 up --connect`."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
@@ -546,7 +546,7 @@ export const statusCommand = Command.make("status", {
       const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel, {
         quietLogs: flags.json,
       });
-      // Only what readSetup reads: no database, unlike the T3 Connect commands.
+      // Only what readSetup reads: no database, unlike the Hyakki Connect commands.
       const setup = yield* readSetup().pipe(
         Effect.provide(
           Layer.merge(CliService.layer(config), ServerSecretStore.layer).pipe(

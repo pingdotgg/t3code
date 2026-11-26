@@ -505,7 +505,7 @@ describe("MessagesTimeline work rows", () => {
     expect(output!.closest('[role="button"]')).toBeNull();
     expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toContain(output);
   });
-  it("opens a web search result in the thread's Browser when links open in T3 Code", async () => {
+  it("opens a web search result in the thread's Browser when links open in Hyakki", async () => {
     setup();
     previewAccess.granted = true;
     __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, browserLinkTarget: "app" });
@@ -1771,7 +1771,7 @@ describe("MessagesTimeline agent messages", () => {
     expect(screen.buttons("Open thread")).toHaveLength(0);
   });
 
-  it("leaves messages sent by T3 Code as full bubbles", async () => {
+  it("leaves messages sent by Hyakki as full bubbles", async () => {
     setup();
     await using screen = await renderTimeline([
       message(AGENT_MESSAGE, { createdBy: "agent", creationSource: "server" }),
@@ -2603,7 +2603,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   expect(container.textContent).not.toContain("Compacting before");
 });
 
-it("shows T3 Code's push hooks approval as its own question and another server's as before", async () => {
+it("shows Hyakki's push hooks approval as its own question and another server's as before", async () => {
   setup();
   const fixture = makeStreamingTimelineFixture();
   const sentence =

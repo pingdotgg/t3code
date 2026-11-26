@@ -79,7 +79,7 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const scriptTarget = platform === "win32" ? undefined : yield* readPosixLauncherTarget(launcher);
   // The link or script text keeps a pruned (dangling) target; the real path sees through a
-  // symlinked T3 home.
+  // symlinked Hyakki home.
   const targets =
     platform === "win32"
       ? [
@@ -211,7 +211,7 @@ const logOtherHomeService = (plan: UninstallPlan) =>
   plan.otherHomeService === undefined
     ? Effect.void
     : Console.log(
-        `The T3 Code service serves ${plan.otherHomeService}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(plan.otherHomeService)}\` to remove it.`,
+        `The Hyakki service serves ${plan.otherHomeService}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(plan.otherHomeService)}\` to remove it.`,
       );
 
 const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
@@ -263,7 +263,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
 
   // The prompt can wait a long time; keep a service or launcher that changed hands meanwhile.
   if (plan.service && (yield* service.status).otherBaseDir !== undefined) {
-    yield* Console.log("Left the background service: it now serves another T3 home.");
+    yield* Console.log("Left the background service: it now serves another Hyakki home.");
   } else if (plan.service) {
     yield* service.uninstall;
     yield* Console.log("Removed the background service.");
@@ -306,6 +306,6 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     }
   }
   yield* Console.log("");
-  yield* Console.log("t3 is uninstalled. Thanks for trying T3 Code.");
+  yield* Console.log("t3 is uninstalled. Thanks for trying Hyakki.");
   yield* logOtherHomeService(plan);
 });

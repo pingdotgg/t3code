@@ -4361,7 +4361,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         });
         assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
-        // T3 retries a failed steer; this retry's request is refused outright.
+        // Hyakki retries a failed steer; this retry's request is refused outright.
         assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
         // A real status read answers before OpenCode saves the steer's message.
         yield* Effect.yieldNow;

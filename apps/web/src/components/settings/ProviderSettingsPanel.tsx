@@ -222,7 +222,7 @@ function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }
   );
 }
 
-const T3_CONNECT_NAME = "T3 Connect";
+const T3_CONNECT_NAME = "Hyakki Connect";
 
 function providerEnvironmentDetail(
   environment: EnvironmentPresentation,

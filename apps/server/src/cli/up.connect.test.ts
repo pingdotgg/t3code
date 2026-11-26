@@ -15,7 +15,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { upCommand } from "./up.ts";
 
-// T3 Connect's flows run only in builds with its public config, and they call
+// Hyakki Connect's flows run only in builds with its public config, and they call
 // the relay; this file swaps in the link and unlink steps.
 const events = vi.hoisted((): Array<string> => []);
 // The CLI link marker, kept in memory instead of the secret store.
@@ -58,7 +58,7 @@ vi.mock("./connect.ts", async (importOriginal) => {
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
-  "t3 up with T3 Connect",
+  "t3 up with Hyakki Connect",
   (it) => {
     it.effect.each([
       { label: "no link", prior: null, events: ["link", "restart", "unlink", "restart"] },

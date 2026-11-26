@@ -14,7 +14,7 @@ const decodeRuntime = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ pid: Schema.Int })),
 );
 
-/** The scenario's own server: the pid its T3 home records, running from the app checkout. */
+/** The scenario's own server: the pid its Hyakki home records, running from the app checkout. */
 const scenarioServerPid = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

@@ -72,7 +72,7 @@ export function topCounts(lists: ReadonlyArray<ReadonlyArray<typeof Count.Type>>
 export const MachineState = Schema.Struct({
   /** The highest 1-minute load average read through the run; none on Windows. */
   load1: Schema.NullOr(Schema.Number),
-  /** Cores other node, T3 and agent processes kept busy over the run; Linux only. */
+  /** Cores other node, Hyakki and agent processes kept busy over the run; Linux only. */
   otherCpuCores: Schema.NullOr(Schema.Number),
   minutes: Schema.Number,
 });
@@ -87,7 +87,7 @@ export function competingBetween(
 }
 
 /**
- * A run is loaded when other node, T3 and agent processes kept this share of the cores busy, or,
+ * A run is loaded when other node, Hyakki and agent processes kept this share of the cores busy, or,
  * where that is unknown, when the 1-minute load passed this much per CPU. The load counts the
  * run's own agents too, so it is only the fallback.
  */

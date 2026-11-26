@@ -28,7 +28,7 @@ export function resolveProviderInstanceDisplayName(
 
 export function providerInstanceInitials(label: string): string {
   // Punctuation separates words so "Codex (hub)" reads CH, not C(. An apostrophe
-  // inside a word stays ("Theo's Codex" is TC); a quoting one does not
+  // inside a word stays ("Tara's Codex" is TC); a quoting one does not
   // ("Codex 'hub'" is CH). A single camel-case word splits at its humps, so
   // "ClaudeProx" is CP, but "ClaudeProx Work" keeps its own words and is CW.
   const toWords = (text: string) =>

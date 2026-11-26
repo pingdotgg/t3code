@@ -18,7 +18,7 @@ export class CaptureSetupRequiredError extends Schema.TaggedError<CaptureSetupRe
   }
 }
 export const NIRI_CAPTURE_PATH = "/com/t3tools/SnapShot";
-export const NIRI_CAPTURE_INTERFACE = "com.t3tools.SnapShot";
+export const NIRI_CAPTURE_INTERFACE = "dev.ryoku.SnapShot";
 
 function isDesktopSession(env: NodeJS.ProcessEnv, desktop: string): boolean {
   return (

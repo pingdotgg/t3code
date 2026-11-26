@@ -16,7 +16,7 @@ export interface ThreadReferenceCopyTarget {
   readonly value: string;
   /** What a toast or palette row shows for the copy. */
   readonly description: string;
-  /** T3's clipboard format, which pastes a thread back into a composer as a chip. */
+  /** Hyakki's clipboard format, which pastes a thread back into a composer as a chip. */
   readonly fragment?: ComposerContextClipboardFragment;
   readonly clipboardTarget: string;
   readonly successTitle: string;

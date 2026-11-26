@@ -21,7 +21,7 @@ export const FEEDBACK_TRACE_ITEM_TYPES = [
 ] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
 
 // Claude and Codex namespace or mark tools from other MCP servers; other harnesses name them
-// like built-ins, so there every tool that is not T3's could be one.
+// like built-ins, so there every tool that is not Hyakki's could be one.
 const NAMES_BUILT_IN_TOOLS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
 const BUILT_IN_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
 /** Every tool from the user's other MCP servers, whose names describe their setup. */

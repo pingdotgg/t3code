@@ -1,4 +1,4 @@
-// Starts real T3 Code dev environments for staging a launch video: fresh homes, fictional
+// Starts real Hyakki dev environments for staging a launch video: fresh homes, fictional
 // machine labels, the free replay agent, no paid provider. Import from a staging script.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -47,7 +47,7 @@ const identityEnv = (home) => {
 };
 
 /**
- * A fresh T3 home whose server calls itself `label` on a `machine`. `settings` merge into
+ * A fresh Hyakki home whose server calls itself `label` on a `machine`. `settings` merge into
  * settings.json. With `claude` (scripted turns) the real Claude provider runs fake-claude.mjs
  * and `model` is a Claude model id; without it `model` is a replay-agent scenario.
  */

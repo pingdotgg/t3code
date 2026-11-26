@@ -480,7 +480,7 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         },
       ]);
       yield* feedback.submit({ ...input, subject: "mcp__t3_code__t3_thread_read" }, fromThread);
-      // Codex's second server, for T3 tools kept out of Code Mode, in both of its forms.
+      // Codex's second server, for Hyakki tools kept out of Code Mode, in both of its forms.
       for (const subject of [
         "t3-code-direct.t3_thread_read",
         "mcp__t3-code-direct__t3_thread_read",
@@ -518,7 +518,7 @@ it.effect(
         for (const subject of ["", "acme payments roadmap", "mcp__other__t3_thread_read"]) {
           const error = yield* Effect.flip(feedback.submit({ ...input, subject }, fromThread));
           expect(error.message).toBe(
-            "Set subject to the exact T3 tool name, the t3 command, or `general`.",
+            "Set subject to the exact Hyakki tool name, the t3 command, or `general`.",
           );
         }
         const refused = (report: Partial<typeof input>, caller: Feedback.FeedbackCaller) =>

@@ -44,7 +44,7 @@ def shift(value, delta):
 root = pathlib.Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('mode', nargs='?', default='matching', choices=('matching', 'absent', 'unrelated'))
-parser.add_argument('--home', required=True, type=pathlib.Path, help='new T3 home to create; must not exist')
+parser.add_argument('--home', required=True, type=pathlib.Path, help='new Hyakki home to create; must not exist')
 parser.add_argument('--source', type=pathlib.Path, default=root / '.t3/userdata/statev2.sqlite')
 parser.add_argument('--now', nargs='?', const='now', help='shift fixture times so the limit is hit at this ISO time')
 args = parser.parse_args()

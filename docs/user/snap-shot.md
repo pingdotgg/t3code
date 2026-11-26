@@ -10,7 +10,7 @@ Available in the desktop app on **macOS**, **Windows**, and **Linux (Wayland)** 
    - **macOS**: Requires Screen Recording (and Accessibility only if **Include app text** is enabled).
    - **Windows**: No extra permissions required.
    - **Linux (Wayland)**: Uses a compositor-specific helper/extension (see below).
-2. Switch to any window and press the shortcut (default on macOS/Windows: **both Shift keys together**). T3 Code attaches the capture to your active draft (or starts a new draft) and brings itself to the front.
+2. Switch to any window and press the shortcut (default on macOS/Windows: **both Shift keys together**). Hyakki attaches the capture to your active draft (or starts a new draft) and brings itself to the front.
 
 - **Include app text**: Toggle in **Settings → SnapShots** to include or omit accessibility tree data (not every app exposes document/terminal contents; slow apps fall back to screenshot-only).
 - **Sound, flash, and animation**: Each can be toggled independently in Settings.
@@ -18,7 +18,7 @@ Available in the desktop app on **macOS**, **Windows**, and **Linux (Wayland)** 
 
 ## Linux Wayland desktops
 
-- **GNOME**: Installs the per-user **T3 Code SnapShots** extension (sign out and back in once to enable it; revoke via GNOME Extensions).
+- **GNOME**: Installs the per-user **Hyakki SnapShots** extension (sign out and back in once to enable it; revoke via GNOME Extensions).
 - **KDE Plasma 6**: Installs the bundled capture helper (manage shortcuts in **System Settings → Keyboard → Shortcuts**; remove via **Manage capture → Access → Advanced**).
 - **Hyprland / Omarchy**: Installs the helper and previews the exact config binding before saving a backup and reloading (approve screen-sharing if prompted).
 - **Niri**: Previews, validates, and adds the binding to your Niri config (requires `gdbus`).

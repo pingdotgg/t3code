@@ -1,7 +1,7 @@
 import { msg } from "gt-i18n";
 
 export const NETWORK_BLOCKING_HINT = msg(
-  "Your DNS or firewall may be blocking T3 Connect. Try another network, such as a different Wi-Fi or mobile data.",
+  "Your DNS or firewall may be blocking Hyakki Connect. Try another network, such as a different Wi-Fi or mobile data.",
 );
 
 /** For a host that stopped answering on an open connection, so the network path was already working. */

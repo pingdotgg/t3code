@@ -37,7 +37,7 @@ export const AuthPairingLinkRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
-  /** Spendable only once `proofKeyThumbprint` is a trusted T3 Connect device. */
+  /** Spendable only once `proofKeyThumbprint` is a trusted Hyakki Connect device. */
   requiresConnectApproval: SqliteFlag,
   connectApproved: SqliteFlag,
   requestedClient: Schema.NullOr(Schema.fromJsonString(AuthClientMetadata)),
@@ -493,7 +493,7 @@ export const make = Effect.gen(function* () {
     Result: Schema.Struct({ id: Schema.String }),
     execute: ({ proofKeyThumbprint, keepProofKeyThumbprint, includeUnbound, revokedAt }) =>
       sql`
-        -- Only T3 Connect mints bind a proof key, so bound links are that key's connect credentials.
+        -- Only Hyakki Connect mints bind a proof key, so bound links are that key's connect credentials.
         UPDATE auth_pairing_links
         SET revoked_at = ${revokedAt}
         WHERE revoked_at IS NULL

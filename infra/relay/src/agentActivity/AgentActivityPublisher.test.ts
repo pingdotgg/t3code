@@ -415,7 +415,7 @@ describe("AgentActivityPublisher", () => {
             teamId: "team-id",
             keyId: "key-id",
             privateKey: Redacted.make("unused-key"),
-            bundleId: "com.t3tools.t3code.dev",
+            bundleId: "dev.ryoku.hyakki.dev",
           },
           apnsDeliveryJobSigningSecret: Redacted.make("job-signing-secret"),
           clerkSecretKey: Redacted.make("clerk-secret"),

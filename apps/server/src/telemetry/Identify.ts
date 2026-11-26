@@ -12,7 +12,7 @@ import { CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 
 /**
- * Who an install belongs to, from strongest to weakest. `connect` is the T3
+ * Who an install belongs to, from strongest to weakest. `connect` is the Hyakki
  * Connect account. `device` is a client device that connected.
  */
 export const TelemetryOwnerSource = Schema.Literals(["connect", "device"]);
@@ -145,7 +145,7 @@ export const getTelemetryIdentity = upsertAnonymousId.pipe(
 );
 
 /**
- * The owner the server can read without a client: the linked T3 Connect
+ * The owner the server can read without a client: the linked Hyakki Connect
  * account. Clients add `connect` and `device` owners when they connect.
  */
 export const getServerOwners = Effect.gen(function* () {
@@ -153,7 +153,7 @@ export const getServerOwners = Effect.gen(function* () {
   const connectUser = yield* secrets.get(CLOUD_LINKED_USER_ID).pipe(
     Effect.map(Option.map((bytes) => new TextDecoder().decode(bytes))),
     Effect.catch((cause) =>
-      Effect.logWarning("Failed to read the linked T3 Connect account for telemetry", {
+      Effect.logWarning("Failed to read the linked Hyakki Connect account for telemetry", {
         errorTag: cause._tag,
       }).pipe(Effect.as(Option.none<string>())),
     ),

@@ -337,7 +337,7 @@ class MuseReplayController {
       if (host === undefined) return emitted;
       this.cursor += 1;
       emitted = true;
-      // Output a host wrote after T3 released it was never observed.
+      // Output a host wrote after Hyakki released it was never observed.
       if (!host.open) continue;
       const frame = entry.frame;
       // Responses carry the client's request id; server requests carry their own.

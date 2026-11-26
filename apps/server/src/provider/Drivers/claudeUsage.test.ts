@@ -14,7 +14,7 @@ function claudeLine(overrides: {
     type: "assistant",
     timestamp: "2026-08-07T04:05:13.944Z",
     sessionId: "5a128faa-8253-489e-b935-6c08e8e670c0",
-    cwd: "/home/theo/project",
+    cwd: "/home/tara/project",
     message: {
       id: overrides.messageId,
       role: "assistant",

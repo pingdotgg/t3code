@@ -71,7 +71,7 @@ const check = (input: Parameters<OtlpEndpointCheck.OtlpEndpointCheck["Service"][
   });
 
 describe("OtlpEndpointCheck", () => {
-  it.effect("keeps T3 credentials paired with each running signal endpoint", () => {
+  it.effect("keeps Hyakki credentials paired with each running signal endpoint", () => {
     const signalExport = { ...DEFAULT_SIGNAL_EXPORT, headers: { "x-api-key": "secret" } };
     const { requests, layer } = checkWith(200, {
       otlpTracesUrl: "https://collector.example.com/v1/traces",

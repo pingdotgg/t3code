@@ -29,4 +29,4 @@ A case fails when half or more of its graded samples fail, and is `incomplete` w
 
 Cases are data in [`cases.ts`](cases.ts): an `id`, a `kind` (`bad` fails on `main` today, `guard` must keep passing, `control` is ordinary use), its `source` issue, the `scenario` that produces its metrics, a `key` metric, and `checks`. A new flow goes in [`scenarios.ts`](scenarios.ts). Add a case before its fix, so it fails on `main` while the bug exists; flip it from `bad` to `guard` when the fix lands.
 
-Not covered: Live Activities and notification taps (they need a T3 Connect relay and delivered pushes), native editor scroll, the background-work pill and async questions (Fx has no background tasks), and 120 Hz pacing.
+Not covered: Live Activities and notification taps (they need a Hyakki Connect relay and delivered pushes), native editor scroll, the background-work pill and async questions (Fx has no background tasks), and 120 Hz pacing.

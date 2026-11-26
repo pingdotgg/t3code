@@ -423,7 +423,7 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
       result.entries.map(({ host, number }) => [host, number]),
       [["code.example.test", 42]],
     );
-    // Agents get the forge tools only where the host is one T3 reads.
+    // Agents get the forge tools only where the host is one Hyakki reads.
     assert.isTrue(yield* service.servesProject("p1" as ProjectId));
     assert.isFalse(yield* service.servesProject("p2" as ProjectId));
     // ...and those tools build PR URLs through the same refined forge.
@@ -1222,10 +1222,10 @@ it.effect("puts the author a query names exactly ahead of those it only begins",
             queries.push(input.query);
             return Effect.succeed({
               items: [
-                { login: "theo-browne", name: null, avatarUrl: null },
-                { login: "octocat", name: "Theo", avatarUrl: null },
+                { login: "tara-brooks", name: null, avatarUrl: null },
+                { login: "octocat", name: "Tara", avatarUrl: null },
                 { login: "julius", name: "Julius", avatarUrl: null },
-                { login: "t3dotgg", name: "theo", avatarUrl: null },
+                { login: "tabbydev", name: "tara", avatarUrl: null },
               ],
               truncated: true,
             });
@@ -1234,12 +1234,12 @@ it.effect("puts the author a query names exactly ahead of those it only begins",
       ],
     });
 
-    const result = yield* service.filterOptions({ kind: "authors", query: "theo" });
+    const result = yield* service.filterOptions({ kind: "authors", query: "tara" });
 
-    assert.deepStrictEqual(queries, ["theo"]);
+    assert.deepStrictEqual(queries, ["tara"]);
     assert.deepStrictEqual(
       result.authors.map((author) => author.login),
-      ["octocat", "t3dotgg", "theo-browne"],
+      ["octocat", "tabbydev", "tara-brooks"],
     );
     assert.strictEqual(result.truncated, true);
   }),
@@ -2578,7 +2578,7 @@ it.effect.each([
       expect(error).toMatchObject({
         _tag: "PullRequestUnavailableError",
         reason: "repository-without-project",
-        message: `${repository} is not a project in T3 Code. Add it as a project to read its change requests.`,
+        message: `${repository} is not a project in Hyakki. Add it as a project to read its change requests.`,
       });
     }
   }),

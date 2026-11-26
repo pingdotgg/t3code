@@ -404,7 +404,7 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-change-icon="deleted"] {
   color: light-dark(var(--diff-deletion-foreground), var(--diffs-deletion-base)) !important;
 }
-/* The page sets --diff-modified-icon to a muted T3 blue, so the common case stays quiet. */
+/* The page sets --diff-modified-icon to a muted Hyakki blue, so the common case stays quiet. */
 [data-change-icon="change"],
 [data-change-icon="rename-pure"],
 [data-change-icon="rename-changed"] {

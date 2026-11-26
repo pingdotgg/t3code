@@ -98,7 +98,7 @@ const MAX_EXTENSION_STATUSES = 32;
 const MAX_EXTENSION_STATUS_KEY_LENGTH = 256;
 const MAX_EXTENSION_STATUS_TEXT_LENGTH = 4096;
 const PI_UNSOLICITED_ACTIVITY_ERROR =
-  "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
+  "Pi started agent work outside an active Hyakki turn. The session was stopped to prevent invisible tool execution.";
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
 
@@ -3397,7 +3397,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           // Pi before 0.99 acknowledges a handled extension command without a disposition.
           const disposition = recordString(result, "disposition");
           if (disposition !== undefined && disposition !== "handled") {
-            return yield* protocolError("T3 Code's Pi extension did not apply the service tier");
+            return yield* protocolError("Hyakki's Pi extension did not apply the service tier");
           }
           serviceTierMayBeSet = serviceTier !== null;
         }
@@ -4693,7 +4693,7 @@ function piForkEntry<E>(
 }
 
 /**
- * Pi shares the server clock. An adopted wake can precede its T3 turn, so search from the target
+ * Pi shares the server clock. An adopted wake can precede its Hyakki turn, so search from the target
  * turn's end through the boundary turn's end. A boundary turn still running has no end yet, so
  * the window stays open through the tree read. At thread start, use the earlier of thread
  * creation and turn start to include adopted wakes while preserving inherited session history.

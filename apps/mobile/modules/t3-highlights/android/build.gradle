@@ -2,7 +2,7 @@ apply plugin: 'com.android.library'
 apply plugin: 'org.jetbrains.kotlin.android'
 apply from: '../nitrogen/generated/android/t3highlights+autolinking.gradle'
 
-group = 'com.t3tools.highlights'
+group = 'dev.ryoku.highlights'
 version = '0.0.0'
 
 android {

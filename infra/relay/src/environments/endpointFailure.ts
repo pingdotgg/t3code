@@ -38,7 +38,7 @@ export function classifyEndpointResponse(
     case 526:
       return "tls";
     default:
-      // Any other status came from T3 Code itself, in a shape we did not expect.
+      // Any other status came from Hyakki itself, in a shape we did not expect.
       return "invalid_response";
   }
 }

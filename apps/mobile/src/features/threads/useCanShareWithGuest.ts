@@ -7,7 +7,7 @@ import { canShareWithGuest } from "./guestShareAvailability";
 /**
  * Whether this environment offers "Share with guest": the user may create links there, and its
  * Guest links beta is on (Settings > Labs). The server refuses links while the beta is off.
- * Guests arrive through T3 Connect, so a policy that turns Connect off hides sharing too.
+ * Guests arrive through Hyakki Connect, so a policy that turns Connect off hides sharing too.
  */
 export function useCanShareWithGuest(environmentId: EnvironmentId | null): boolean {
   const permitted = useAtomValue(serverEnvironment.createGuestShare.permissionAtom(environmentId));

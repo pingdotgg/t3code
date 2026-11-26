@@ -1,6 +1,6 @@
 # Working with threads
 
-Use a separate thread for each task. Choose **New worktree** when a task needs its own Git branch and working directory; threads sharing a checkout share its branch, so T3 Code blocks branch switches while one is running.
+Use a separate thread for each task. Choose **New worktree** when a task needs its own Git branch and working directory; threads sharing a checkout share its branch, so Hyakki blocks branch switches while one is running.
 
 ## Start a thread
 
@@ -13,7 +13,7 @@ Use a separate thread for each task. Choose **New worktree** when a task needs i
 Threads don't require a project. Pick **No project** (or press `mod+alt+n` on web/desktop) to start a scratch thread in `~/.t3/scratch/<date>-<slug>-<id>`.
 
 - Deleting a scratch thread leaves its folder on disk.
-- Git branch, worktree, and diff controls are hidden (and scratch threads are unavailable if your T3 data directory itself is inside a Git repo).
+- Git branch, worktree, and diff controls are hidden (and scratch threads are unavailable if your Hyakki data directory itself is inside a Git repo).
 - Choose **Turn into project** from the thread menu to promote the folder into a real project in place, then **Initialize Git** if needed.
 
 ### Start in the background and multi-model runs

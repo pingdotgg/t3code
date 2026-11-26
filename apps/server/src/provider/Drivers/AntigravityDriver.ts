@@ -415,7 +415,7 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
-    // The agy CLI ignores T3's browser helper during ACP `authenticate`, so Google sign-in runs its
+    // The agy CLI ignores Hyakki's browser helper during ACP `authenticate`, so Google sign-in runs its
     // remote-friendly `--login`, which stores the sign-in where the ACP process reads it.
     const codeLogin = Effect.fn("AntigravityDriver.codeLogin")(function* (input: {
       readonly onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;

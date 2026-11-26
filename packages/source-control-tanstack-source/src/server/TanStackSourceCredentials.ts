@@ -99,7 +99,7 @@ export class TanStackSourceCredentials extends Context.Service<
   }
 >()("@t3tools/source-control-tanstack-source/server/TanStackSourceCredentials") {}
 
-/** `src` sends SRC_TOKEN only to SRC_HOST (default source.tanstack.com); so does T3. */
+/** `src` sends SRC_TOKEN only to SRC_HOST (default source.tanstack.com); so does Hyakki. */
 export function environmentToken(
   host: string,
   env: Readonly<Record<string, string | undefined>>,

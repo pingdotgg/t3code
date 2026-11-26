@@ -112,9 +112,9 @@ describe("mergeProviderInstanceEnvironment", () => {
     ({ environment, libraryPath, keptLibraryPath }) =>
       Effect.gen(function* () {
         const merged = yield* mergeProviderInstanceEnvironment(environment, {
-          APPIMAGE: "/home/ada/T3-Code.AppImage",
+          APPIMAGE: "/home/ada/Hyakki.AppImage",
           APPDIR: appDir,
-          ARGV0: "/home/ada/T3-Code.AppImage",
+          ARGV0: "/home/ada/Hyakki.AppImage",
           OWD: "/home/ada",
           PATH: `${appDir}:${appDir}/usr/sbin::/usr/bin`,
           LD_LIBRARY_PATH: libraryPath,

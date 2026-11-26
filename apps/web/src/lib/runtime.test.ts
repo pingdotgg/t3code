@@ -57,7 +57,7 @@ describe("web runtime relay telemetry policy", () => {
       exports: true,
     },
     {
-      // The hosted app is served by no T3 server, so nothing can answer for it.
+      // The hosted app is served by no Hyakki server, so nothing can answer for it.
       surface: "hosted app",
       desktopBridge: undefined,
       location: new URL("https://app.example.test/"),

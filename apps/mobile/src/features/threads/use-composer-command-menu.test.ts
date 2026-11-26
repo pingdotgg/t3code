@@ -88,7 +88,7 @@ describe("mobile slash commands", () => {
     ).toEqual({ text: "/plan ", cursor: 6 });
   });
 
-  it("offers T3's /clear in place of the provider's, only at the message start", () => {
+  it("offers Hyakki's /clear in place of the provider's, only at the message start", () => {
     const claude = {
       driver: ProviderDriverKind.make("claudeAgent"),
       slashCommands: [{ name: "clear", description: "Clear conversation history" }],

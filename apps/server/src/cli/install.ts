@@ -30,7 +30,7 @@ export class CliInstallError extends Schema.TaggedError<CliInstallError>()("CliI
   }
 }
 
-/** `<T3 home>/runtime/versions/<version>/t3`: the layout the install scripts and npm launcher share. */
+/** `<Hyakki home>/runtime/versions/<version>/t3`: the layout the install scripts and npm launcher share. */
 const standaloneRuntime = Effect.gen(function* () {
   const path = yield* Path.Path;
   if (!(yield* HostProcess.IsExecutable)) return Option.none();
@@ -75,7 +75,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const link = path.join(binDir, name);
   const failed = (reason: string) => (cause: unknown) => new CliInstallError({ reason, cause });
 
-  // Resolve fully so a link through a symlinked T3 home still counts as ours; a dangling one
+  // Resolve fully so a link through a symlinked Hyakki home still counts as ours; a dangling one
   // (a pruned version) falls back to its own text.
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
@@ -296,7 +296,7 @@ export const inTerminalForeground = Effect.gen(function* () {
 
 /**
  * Before a command run through npx, pnpm dlx, or bunx at a terminal, asks to install the `t3`
- * command. Yes is the default. No, no answer, or a failed install is saved in the T3 home until
+ * command. Yes is the default. No, no answer, or a failed install is saved in the Hyakki home until
  * the next minor release. Returns false when the user quits the prompt, so the command does not run.
  */
 export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E2, R2>(input: {

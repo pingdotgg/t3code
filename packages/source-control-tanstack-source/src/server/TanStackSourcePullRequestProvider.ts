@@ -786,7 +786,7 @@ export const make = Effect.gen(function* () {
         default:
           return yield* failure(
             input.action,
-            `TanStack Source cannot ${input.action} from T3 Code.`,
+            `TanStack Source cannot ${input.action} from Hyakki.`,
           );
       }
     }),

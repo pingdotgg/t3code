@@ -6,7 +6,7 @@ public final class T3BackgroundGraceSubscriber: ExpoAppDelegateSubscriber {
 
   public func applicationWillResignActive(_ application: UIApplication) {
     guard task == .invalid else { return }
-    task = application.beginBackgroundTask(withName: "T3 connection grace") { [weak self] in
+    task = application.beginBackgroundTask(withName: "Hyakki connection grace") { [weak self] in
       self?.endTask(application)
     }
   }

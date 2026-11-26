@@ -115,7 +115,7 @@ it.effect("refuses a session only when a fresh probe still rates the version bro
   Effect.gen(function* () {
     const opened = { ...personalAdapter, openSession: () => Effect.succeed({} as never) };
     const refused = yield* openOn(makeInstance(personalId, opened, "0.100.0"));
-    assert.include(JSON.stringify(refused), "0.100.0 does not work with this T3 Code release");
+    assert.include(JSON.stringify(refused), "0.100.0 does not work with this Hyakki release");
     // Updated since the last probe.
     assert.isTrue(
       Exit.isSuccess(yield* openOn(makeInstance(personalId, opened, "0.100.0", "0.200.0"))),

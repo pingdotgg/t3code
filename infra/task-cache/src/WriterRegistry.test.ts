@@ -38,11 +38,11 @@ it.effect("uses explicit deployment credentials without requiring a local regist
     const keys = yield* readKeys.pipe(
       Effect.provide(
         ConfigProvider.layer(
-          ConfigProvider.fromUnknown({ DEVELOPER_KEYS: '{"theo":"digest"}', READER_KEYS: "{}" }),
+          ConfigProvider.fromUnknown({ DEVELOPER_KEYS: '{"tara":"digest"}', READER_KEYS: "{}" }),
         ),
       ),
     );
-    expect(JSON.parse(Redacted.value(keys))).toEqual({ theo: "digest" });
+    expect(JSON.parse(Redacted.value(keys))).toEqual({ tara: "digest" });
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
@@ -118,7 +118,7 @@ it.effect("refuses a concurrent registry update without changing committed crede
     yield* fs.makeDirectory(`${state}/writers.lock`, { recursive: true });
     yield* fs.writeFileString(`${state}/writers.json`, '{"maria":"digest"}');
     const result = yield* WriterRegistry.WriterRegistry.pipe(
-      Effect.flatMap((registry) => registry.update("theo", false, "https://cache.example")),
+      Effect.flatMap((registry) => registry.update("tara", false, "https://cache.example")),
       Effect.provide(
         WriterRegistry.layer.pipe(
           Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home }))),
@@ -128,7 +128,7 @@ it.effect("refuses a concurrent registry update without changing committed crede
     );
     expect(Exit.isFailure(result)).toBe(true);
     expect(yield* fs.readFileString(`${state}/writers.json`)).toBe('{"maria":"digest"}');
-    expect(yield* fs.exists(`${state}/theo.json`)).toBe(false);
+    expect(yield* fs.exists(`${state}/tara.json`)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
@@ -141,7 +141,7 @@ it.effect("keeps the committed registry intact if a replacement write fails", ()
     const original = '{"maria":"digest"}';
     yield* fs.writeFileString(`${state}/writers.json`, original);
     const result = yield* WriterRegistry.WriterRegistry.pipe(
-      Effect.flatMap((registry) => registry.update("theo", false, "https://cache.example")),
+      Effect.flatMap((registry) => registry.update("tara", false, "https://cache.example")),
       Effect.provide(
         WriterRegistry.layer.pipe(
           Layer.provide([
@@ -174,7 +174,7 @@ it.effect("preserves filesystem errors when acquiring the registry lock", () =>
       method: "makeDirectory",
     });
     const error = yield* WriterRegistry.WriterRegistry.pipe(
-      Effect.flatMap((registry) => registry.update("theo", false, "https://cache.example")),
+      Effect.flatMap((registry) => registry.update("tara", false, "https://cache.example")),
       Effect.provide(
         WriterRegistry.layer.pipe(
           Layer.provide([
@@ -200,7 +200,7 @@ it.effect("refuses to initialize a missing writer registry implicitly", () =>
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped();
     const result = yield* WriterRegistry.WriterRegistry.pipe(
-      Effect.flatMap((registry) => registry.update("theo", false, "https://cache.example")),
+      Effect.flatMap((registry) => registry.update("tara", false, "https://cache.example")),
       Effect.provide(
         WriterRegistry.layer.pipe(
           Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home }))),

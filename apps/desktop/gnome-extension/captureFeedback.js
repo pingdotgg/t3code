@@ -54,7 +54,7 @@ export class CaptureFeedback {
       }
     } catch (error) {
       this._clearActors();
-      console.warn(`T3 capture effects unavailable: ${error.message}`);
+      console.warn(`Hyakki capture effects unavailable: ${error.message}`);
     }
     return Boolean(this._actor);
   }
@@ -83,7 +83,7 @@ export class CaptureFeedback {
         session.pid,
         title,
       );
-    // A command-palette capture temporarily unmaps T3. Wait for its new surface, not a sleep.
+    // A command-palette capture temporarily unmaps Hyakki. Wait for its new surface, not a sleep.
     const target =
       find() ??
       (await new Promise((resolve) => {
@@ -108,7 +108,7 @@ export class CaptureFeedback {
         check();
       }));
     if (this._owned(sender) !== session || !target)
-      throw new Error("T3 Code's window is not available for activation.");
+      throw new Error("Hyakki's window is not available for activation.");
     session.target = target;
     Main.activateWindow(target, global.get_current_time());
   }

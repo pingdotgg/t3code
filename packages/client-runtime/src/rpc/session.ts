@@ -173,7 +173,7 @@ function mapSessionRpcError(
   }
 }
 
-/** Over T3 Connect the relay already reached the host, so a socket that drops failed between this device and the tunnel. */
+/** Over Hyakki Connect the relay already reached the host, so a socket that drops failed between this device and the tunnel. */
 function socketFailureLocation(via: "relay" | "direct") {
   return { hop: via === "relay" ? "tunnel" : "server", via } as const;
 }

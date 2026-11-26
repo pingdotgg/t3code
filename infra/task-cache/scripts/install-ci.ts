@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-if (process.env.GITHUB_REPOSITORY !== "pingdotgg/t3code" || process.env.GITHUB_ACTIONS !== "true")
+if (process.env.GITHUB_REPOSITORY !== "neur0map/hyakki" || process.env.GITHUB_ACTIONS !== "true")
   throw new Error("This setup is only for the maintainer repository's GitHub Actions.");
 const root = NodePath.resolve(import.meta.dirname, "../../..");
 const hookConfig = NodePath.join(NodeOS.homedir(), ".config/vite-plus/run-hook.json");

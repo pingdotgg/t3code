@@ -135,7 +135,7 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
 
 const MAX_NOTE_ENTRIES = 10;
 
-/** Why background work stopped: a T3 server restart, or the provider process exiting under a live server. */
+/** Why background work stopped: a Hyakki server restart, or the provider process exiting under a live server. */
 export type BackgroundWorkLossCause = "server_restart" | "provider_exit";
 
 /** Bounds entries and labels to protect the context budget. */
@@ -145,7 +145,7 @@ export function restartCancelledBackgroundWorkNote(
 ): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    `Note: ${cause === "provider_exit" ? "the agent runtime process exited" : "the T3 server restarted"}, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:`,
+    `Note: ${cause === "provider_exit" ? "the agent runtime process exited" : "the Hyakki server restarted"}, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:`,
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");

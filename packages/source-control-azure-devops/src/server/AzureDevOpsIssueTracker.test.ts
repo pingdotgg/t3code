@@ -21,7 +21,7 @@ const WORK_ITEM = {
     "System.ChangedDate": "2026-07-03T00:00:00Z",
     "Microsoft.VSTS.Common.ClosedDate": "2026-07-03T00:00:00Z",
     "System.CreatedBy": { uniqueName: "octo@acme.test", displayName: "Octo Cat" },
-    "System.AssignedTo": "Theo <theo@acme.test>",
+    "System.AssignedTo": "Tara <tara@acme.test>",
     "System.Tags": "bug; ui; bug",
     "System.TeamProject": "Web App",
     "System.WorkItemType": "Bug",
@@ -71,7 +71,7 @@ function answer(args: ReadonlyArray<string>): string {
         webUrl: "https://dev.azure.com/acme/Web%20App/_git/web",
         project: { id: "p-guid", name: "Web App" },
       },
-      createdBy: { uniqueName: "theo@acme.test", displayName: "Theo" },
+      createdBy: { uniqueName: "tara@acme.test", displayName: "Tara" },
       description: "",
       reviewers: [],
       _links: { web: { href: "https://dev.azure.com/acme/Web%20App/_git/web/pullrequest/50" } },
@@ -114,7 +114,7 @@ function answer(args: ReadonlyArray<string>): string {
           id: 2,
           // The newest revision has not been superseded, which Azure writes as year 9999.
           revisedDate: "9999-01-01T00:00:00Z",
-          revisedBy: { uniqueName: "theo@acme.test" },
+          revisedBy: { uniqueName: "tara@acme.test" },
           fields: {
             "System.ChangedDate": { newValue: "2026-07-03T00:00:00Z" },
             "System.State": { oldValue: "Active", newValue: "Shipped" },
@@ -172,7 +172,7 @@ describe("AzureDevOpsIssueTracker", () => {
           { category: "closed", name: "Shipped" },
         ],
         author: { login: "octo@acme.test", name: "Octo Cat" },
-        assignees: [{ login: "Theo <theo@acme.test>" }],
+        assignees: [{ login: "Tara <tara@acme.test>" }],
         labels: [
           { name: "bug", color: null },
           { name: "ui", color: null },
@@ -316,7 +316,7 @@ describe("AzureDevOpsIssueTracker", () => {
         involvement: "mentioned",
         viewer: "octo@acme.test",
         labels: ["o'hare"],
-        assignee: "theo@acme.test",
+        assignee: "tara@acme.test",
         sort: "created",
         limit: 2,
         cursor: "2026-07-01T00:00:00Z|7",
@@ -336,7 +336,7 @@ describe("AzureDevOpsIssueTracker", () => {
       // Mentions cannot be asked for over REST, so the filter sends no clause for them.
       expect(query).not.toContain("@RecentMentions");
       expect(query).toContain(
-        " AND [System.Tags] CONTAINS 'o''hare' AND [System.AssignedTo] = 'theo@acme.test'" +
+        " AND [System.Tags] CONTAINS 'o''hare' AND [System.AssignedTo] = 'tara@acme.test'" +
           " AND ([System.CreatedDate] < '2026-07-01T00:00:00Z' OR ([System.CreatedDate] = '2026-07-01T00:00:00Z' AND [System.Id] < 7))" +
           " ORDER BY [System.CreatedDate] DESC, [System.Id] DESC",
       );

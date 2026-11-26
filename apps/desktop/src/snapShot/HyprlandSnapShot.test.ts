@@ -119,14 +119,14 @@ it.each([true, false])("uses the active config syntax and user bindings (Lua: %s
     NodePath.join(config, lua ? "bindings.lua" : "bindings.conf"),
     "custom bindings",
   );
-  const result = await hyprlandCaptureShortcut("com.t3tools.T3Code", "/home/test", directory);
+  const result = await hyprlandCaptureShortcut("dev.ryoku.Hyakki", "/home/test", directory);
   expect(result.shortcutConfigPath).toBe(
     NodePath.join(config, lua ? "bindings.lua" : "bindings.conf"),
   );
   expect(result.shortcutBinding).toBe(
     lua
-      ? 'hl.bind("CTRL + SHIFT + 2", hl.dsp.global("com.t3tools.T3Code:capture-window"))'
-      : "bind = CTRL SHIFT, 2, global, com.t3tools.T3Code:capture-window",
+      ? 'hl.bind("CTRL + SHIFT + 2", hl.dsp.global("dev.ryoku.Hyakki:capture-window"))'
+      : "bind = CTRL SHIFT, 2, global, dev.ryoku.Hyakki:capture-window",
   );
   expect(await NodeFSP.readFile(result.shortcutConfigPath, "utf8")).toBe("custom bindings");
 });
@@ -135,10 +135,10 @@ it("captures exact-window metadata for accessibility and focuses only through th
   const result = await captureHyprlandWindow(paths);
   expect(result.png).toEqual(png);
   expect(result.window).toEqual(window);
-  await result.feedback?.activate("T3 destination");
+  await result.feedback?.activate("Hyakki destination");
   expect(execute.mock.calls.find(([, args]) => args[0] === "activate")?.slice(0, 2)).toEqual([
     hyprlandCaptureExecutable(paths),
-    ["activate", String(process.pid), "T3 destination"],
+    ["activate", String(process.pid), "Hyakki destination"],
   ]);
   const captureDirectory = execute.mock.calls.find(([, args]) => args[0] === "capture")![1][1];
   await expect(NodeFSP.stat(captureDirectory)).rejects.toMatchObject({ code: "ENOENT" });

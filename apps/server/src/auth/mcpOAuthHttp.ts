@@ -83,7 +83,7 @@ export const layer = HttpApiBuilder.group(
     const hostedAppUrl = yield* agentApprovalAppUrlConfig.pipe(
       Effect.orElseSucceed(() => DEFAULT_HOSTED_APP_URL),
     );
-    // T3 Connect serves this host, so the owner can approve on the hosted app by signing in there.
+    // Hyakki Connect serves this host, so the owner can approve on the hosted app by signing in there.
     const hostedApprovalUrl = (issuer: string, search: string) =>
       cloudLink.linkState().pipe(
         Effect.flatMap((state) =>

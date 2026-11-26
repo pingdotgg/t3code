@@ -216,7 +216,7 @@ describe("PullRequestWatchService", () => {
       const missing = new PullRequestUnavailableError({
         reason: "cli-missing",
         provider: SourceControlProviderKind.make("gitlab"),
-        requirement: "Install glab on the T3 server's PATH.",
+        requirement: "Install glab on the Hyakki server's PATH.",
       });
       const harness = yield* makeHarness({ readFailure: missing });
       const target = { url: "https://gitlab.example.com/team/project/-/merge_requests/42" };

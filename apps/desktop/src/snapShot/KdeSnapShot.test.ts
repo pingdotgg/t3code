@@ -138,7 +138,7 @@ it("refuses symlink destinations and unrelated desktop entries", async () => {
   expect(await NodeFSP.readFile(paths.bundle, "utf8")).toBe("bundled executable");
 });
 
-it("captures with verified identity, cleans private files, and activates only the owning T3 PID/title", async () => {
+it("captures with verified identity, cleans private files, and activates only the owning Hyakki PID/title", async () => {
   await setup.perform("install-kde-helper");
   const capture = await captureKdeWindow(paths);
   expect(capture.png).toEqual(png);

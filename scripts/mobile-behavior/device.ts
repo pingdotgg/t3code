@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - drives agent-device and the Hermes inspector; the probe types its own JSON.
 /**
- * One simulator, driven two ways: T3's `agent-device` CLI for real touches and system actions,
+ * One simulator, driven two ways: Hyakki's `agent-device` CLI for real touches and system actions,
  * and the dev-only behavior probe (`apps/mobile/src/features/development/behavior-probe.ts`)
  * through Metro's Hermes inspector for exact app state.
  */
@@ -29,7 +29,7 @@ export class DeviceError extends Schema.TaggedError<DeviceError>()("DeviceError"
   message: Schema.String,
 }) {}
 
-export const APP_ID = "com.t3tools.t3code.dev";
+export const APP_ID = "dev.ryoku.hyakki.dev";
 export const SCHEME = "t3code-dev";
 
 export interface ProbeState {

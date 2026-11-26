@@ -78,7 +78,7 @@ export const ConnectionBlockedReason = Schema.Literals([
 ]);
 export type ConnectionBlockedReason = typeof ConnectionBlockedReason.Type;
 
-/** A part of the path to an environment: this device, T3 Connect, the host's tunnel, or T3 Code on the host. */
+/** A part of the path to an environment: this device, Hyakki Connect, the host's tunnel, or Hyakki on the host. */
 export const ConnectionHop = Schema.Literals(["device", "relay", "tunnel", "server"]);
 export type ConnectionHop = typeof ConnectionHop.Type;
 
@@ -97,7 +97,7 @@ export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
 /**
  * Where and why a failure happened, when the code that saw it knows. See
  * `presentConnectionDiagnosis`. `via` names the route when the hop alone does
- * not: T3 Code on the host can fail behind the tunnel or on a direct route.
+ * not: Hyakki on the host can fail behind the tunnel or on a direct route.
  */
 const ConnectionFailureFields = {
   hop: Schema.optionalKey(ConnectionHop),
@@ -153,7 +153,7 @@ export type PreparedHttpAuthorization =
       readonly _tag: "Dpop";
       readonly accessToken: string;
       readonly expiresAtEpochMs: number;
-      /** Set when the token renews directly with the host instead of through T3 Connect. */
+      /** Set when the token renews directly with the host instead of through Hyakki Connect. */
       readonly directConnection?: DirectDpopConnection;
     };
 

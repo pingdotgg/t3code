@@ -18,7 +18,7 @@ export class McpClientInput extends Context.Service<
   McpClientInput,
   {
     readonly request: Ref.Ref<McpSchema.InputRequired | undefined>;
-    /** Where a thread's adapter finds what T3 Code asks through the thread's own client. */
+    /** Where a thread's adapter finds what Hyakki asks through the thread's own client. */
     readonly sessions?: McpProviderSessions.McpProviderSessions["Service"] | undefined;
   }
 >()("t3/mcp/McpClientInput") {}
@@ -26,7 +26,7 @@ export class McpClientInput extends Context.Service<
 /**
  * "asked": the request went out with this call's answer, so the handler ends now and runs again
  * when the client calls back. "unavailable": this client cannot ask a person anything.
- * "unconfirmed": the client replied that the person accepted, and T3 Code, which showed the
+ * "unconfirmed": the client replied that the person accepted, and Hyakki, which showed the
  * request to the person itself, has no approval from them for it.
  */
 export type Approval = "accepted" | "declined" | "unconfirmed" | "asked" | "unavailable";
@@ -55,7 +55,7 @@ const threadRequests = Effect.gen(function* () {
 
 /**
  * Ends the request `id` and reads the client's "accept" for it. Where the thread's adapter shows
- * T3 Code's own requests, only the person's answer in the app, for this request and `state`, is
+ * Hyakki's own requests, only the person's answer in the app, for this request and `state`, is
  * an approval, and a request that is gone has none. Any other client's reply is all there is.
  */
 const accepted = Effect.fnUntraced(function* (id: string | undefined, state?: string) {
@@ -116,7 +116,7 @@ export const askApproval = Effect.fn("McpClientInput.askApproval")(function* (in
   const pending = Option.getOrUndefined(yield* Effect.serviceOption(McpClientInput));
   const requests = yield* threadRequests;
   // A thread's client hands its adapter the message and a server name to show. The request is
-  // left with the thread's MCP session too, so the adapter knows T3 Code asked it and what it
+  // left with the thread's MCP session too, so the adapter knows Hyakki asked it and what it
   // names, and has where to leave the person's answer.
   const record =
     requests === undefined

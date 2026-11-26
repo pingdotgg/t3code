@@ -20,7 +20,7 @@ export function ProviderSubagentBar(props: {
   readonly effortLabel: string | null;
   readonly status: ProviderSubagentStatus | null;
   readonly onOpenParent: (() => void) | null;
-  /** Set for providers whose children T3 reads on demand instead of streaming. */
+  /** Set for providers whose children Hyakki reads on demand instead of streaming. */
   readonly inspect: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null;
 }) {
   const gt = useGT();

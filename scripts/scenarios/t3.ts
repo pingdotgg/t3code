@@ -59,7 +59,7 @@ export interface T3Thread {
   readonly threadId: string;
 }
 
-export interface T3 extends T3State {
+export interface Hyakki extends T3State {
   /**
    * Opens the app, signed in, at a path or on a thread `t3.thread` returned. Opening the thread
    * by its link is the reliable way to reach it: a sidebar row covers its own title text.
@@ -323,7 +323,7 @@ export const rpcClient = Effect.fn("scenario.rpcClient")(function* (home: string
   return yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
 });
 
-export const test = base.extend<{ t3: T3 }>({
+export const test = base.extend<{ t3: Hyakki }>({
   t3: async ({ app, browser }, use) => {
     const { state, cleanup } = makeState(T3_HOME);
     await use({

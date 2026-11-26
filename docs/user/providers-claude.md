@@ -1,6 +1,6 @@
 # Claude
 
-T3 Code drives your Claude Code installation, login, skills, and plugins. See [provider setup](./install.md#providers) for initial installation.
+Hyakki drives your Claude Code installation, login, skills, and plugins. See [provider setup](./install.md#providers) for initial installation.
 
 ## Multiple accounts and presets
 
@@ -36,11 +36,11 @@ Add a second Claude instance in **Settings → Providers** (or **Add Claude acco
 ## Skills and MCP sign-in
 
 - **Skills**: Loaded from `<CLAUDE_CONFIG_DIR>/skills`, the project's `.claude/skills` (config dir wins on name collisions), and enabled Claude plugins (e.g. `plugin:review`). Invoke via `$`. Send `disable-model-invocation` skills one per message.
-- **MCP OAuth**: When a Claude MCP server needs sign-in, click **Sign in** on the thread notice, approve in your browser, and paste the final redirect URL into T3 Code (**Finish sign-in**). Connectors added on `claude.ai` authenticate there instead.
+- **MCP OAuth**: When a Claude MCP server needs sign-in, click **Sign in** on the thread notice, approve in your browser, and paste the final redirect URL into Hyakki (**Finish sign-in**). Connectors added on `claude.ai` authenticate there instead.
 
 ## Claude in Chrome
 
-To use the [Claude in Chrome extension](https://code.claude.com/docs/en/chrome) in T3 Code threads, add `--chrome` to **Launch arguments** in the Claude instance settings (applies to new sessions). Requires a direct Anthropic `/login` plan—not supported with API keys, `setup-token`, Bedrock/Vertex, or WSL.
+To use the [Claude in Chrome extension](https://code.claude.com/docs/en/chrome) in Hyakki threads, add `--chrome` to **Launch arguments** in the Claude instance settings (applies to new sessions). Requires a direct Anthropic `/login` plan—not supported with API keys, `setup-token`, Bedrock/Vertex, or WSL.
 
 ## OpenRouter and local routers
 

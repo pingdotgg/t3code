@@ -194,7 +194,7 @@ export const EnvironmentSpeechModel = Schema.Struct({
   active: Schema.Boolean,
   state: EnvironmentSpeechModelState,
   downloaded: Schema.optionalKey(Schema.Finite),
-  /** The file outside T3 Code's model folder this model is used from. */
+  /** The file outside Hyakki's model folder this model is used from. */
   linkedFrom: Schema.optionalKey(Schema.String),
 });
 export type EnvironmentSpeechModel = typeof EnvironmentSpeechModel.Type;

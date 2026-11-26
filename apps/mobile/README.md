@@ -1,4 +1,4 @@
-# T3 Code Mobile
+# Hyakki Mobile
 
 > [!NOTE]
 > To install the released app from the App Store or Google Play, see [Mobile app](../../docs/user/install.md#mobile-app). This guide covers building it from source.
@@ -10,13 +10,13 @@
 
 This app has three variants:
 
-- `development`: Expo dev client, installable side-by-side as `T3 Code Dev`
-- `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
-- `production`: store/release build as `T3 Code`
+- `development`: Expo dev client, installable side-by-side as `Hyakki Dev`
+- `preview`: persistent internal preview build, installable side-by-side as `Hyakki Preview`
+- `production`: store/release build as `Hyakki`
 
 Run commands from `apps/mobile`.
 
-T3 Connect is optional and disabled in a fresh clone. Public configuration belongs in the
+Hyakki Connect is optional and disabled in a fresh clone. Public configuration belongs in the
 repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
 [`../../.env.example`](../../.env.example).
 
@@ -37,7 +37,7 @@ and reuses a matching client. Otherwise it installs the build for that fingerpri
 `~/.cache/t3code/native-clients/artifacts`, then the shared task cache, and builds only when
 neither has it. A build runs in the `Mobile Dev Client` workflow (Blacksmith runners with warm
 Gradle and ccache state, and a macOS runner for iOS) when `gh` may dispatch workflows on
-`pingdotgg/t3code` and HEAD is pushed; the helper waits for the client in the shared cache.
+`neur0map/hyakki` and HEAD is pushed; the helper waits for the client in the shared cache.
 Otherwise, or when HEAD lacks your native edits or `T3_NATIVE_CLIENT_BUILD=local` is set, it builds
 on this machine. Main's client is built there on every native change, so most checkouts hit. One iOS simulator build serves every iPhone and iPad simulator, and one APK per
 ABI (x86_64 or arm64-v8a) serves every emulator and phone of that ABI. Build output goes to the

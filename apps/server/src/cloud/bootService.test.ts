@@ -56,60 +56,60 @@ vi.mock("node:fs", async (importOriginal) => {
 const SCHTASKS = "D:\\WinNT\\System32\\schtasks.exe";
 
 const windowsTaskOptions = {
-  userId: "PC\\theo",
-  homeDir: "C:\\Users\\theo",
+  userId: "PC\\tara",
+  homeDir: "C:\\Users\\tara",
   conhostPath: "C:\\Windows\\System32\\conhost.exe",
 };
 
-it("reads the served T3 home and log back out of a rendered unit, plist, or task", () => {
+it("reads the served Hyakki home and log back out of a rendered unit, plist, or task", () => {
   const plan = (baseDir: string) => ({
     program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
     baseDir,
     logPath: `${baseDir}/userdata/logs/boot-service.log`,
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    unitPath: "/home/tara/.config/systemd/user/t3code.service",
   });
 
   expect(
-    BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/theo/.t3"))),
-  ).toBe("/home/theo/.t3");
+    BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/tara/.t3"))),
+  ).toBe("/home/tara/.t3");
   expect(
     BootService.bootServiceBaseDirOf(
-      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
+      BootService.renderBootServiceUnit(plan("/home/tara/T3 Data/100%")),
     ),
-  ).toBe("/home/theo/T3 Data/100%");
+  ).toBe("/home/tara/T3 Data/100%");
   expect(
-    serviceUnitLogPathOf(BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%"))),
-  ).toBe("/home/theo/T3 Data/100%/userdata/logs/boot-service.log");
+    serviceUnitLogPathOf(BootService.renderBootServiceUnit(plan("/home/tara/T3 Data/100%"))),
+  ).toBe("/home/tara/T3 Data/100%/userdata/logs/boot-service.log");
   expect(
     serviceUnitLogPathOf(
-      BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
-        homeDir: "/Users/theo",
+      BootService.renderBootServicePlist(plan("/Users/tara/a&b"), {
+        homeDir: "/Users/tara",
         environmentPath: "/usr/bin",
       }),
     ),
-  ).toBe("/Users/theo/a&b/userdata/logs/boot-service.log");
+  ).toBe("/Users/tara/a&b/userdata/logs/boot-service.log");
   expect(
     BootService.bootServiceBaseDirOf(
-      BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
-        homeDir: "/Users/theo",
+      BootService.renderBootServicePlist(plan("/Users/tara/a&b"), {
+        homeDir: "/Users/tara",
         environmentPath: "/usr/bin",
       }),
     ),
-  ).toBe("/Users/theo/a&b");
+  ).toBe("/Users/tara/a&b");
   expect(
     BootService.bootServiceBaseDirOf(
-      BootService.renderBootServiceTask(plan("C:\\Users\\theo\\T3 a&b\\"), windowsTaskOptions),
+      BootService.renderBootServiceTask(plan("C:\\Users\\tara\\T3 a&b\\"), windowsTaskOptions),
     ),
-  ).toBe("C:\\Users\\theo\\T3 a&b\\");
+  ).toBe("C:\\Users\\tara\\T3 a&b\\");
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
 });
 
 it("protects the server unit from agents under CPU and memory pressure", () => {
   const unit = BootService.renderBootServiceUnit({
-    program: ["/home/theo/.t3/runtime/versions/1.2.3/t3", "__service-launcher"],
-    baseDir: "/home/theo/.t3",
-    logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    program: ["/home/tara/.t3/runtime/versions/1.2.3/t3", "__service-launcher"],
+    baseDir: "/home/tara/.t3",
+    logPath: "/home/tara/.t3/userdata/logs/boot-service.log",
+    unitPath: "/home/tara/.config/systemd/user/t3code.service",
   });
   const service = unit.slice(unit.indexOf("[Service]"), unit.indexOf("[Install]"));
   for (const line of [
@@ -124,16 +124,16 @@ it("protects the server unit from agents under CPU and memory pressure", () => {
 });
 
 it.each([
-  ["a unit", "/home/theo/T3 Data/100%$x", BootService.renderBootServiceUnit],
+  ["a unit", "/home/tara/T3 Data/100%$x", BootService.renderBootServiceUnit],
   [
     "a plist",
-    "/Users/theo/a&b <c>",
+    "/Users/tara/a&b <c>",
     (plan: BootService.BootServicePlan) =>
-      BootService.renderBootServicePlist(plan, { homeDir: "/Users/theo", environmentPath: "" }),
+      BootService.renderBootServicePlist(plan, { homeDir: "/Users/tara", environmentPath: "" }),
   ],
   [
     "a task",
-    "C:\\Users\\theo\\T3 a&b <c>",
+    "C:\\Users\\tara\\T3 a&b <c>",
     (plan: BootService.BootServicePlan) =>
       BootService.renderBootServiceTask(plan, windowsTaskOptions),
   ],
@@ -148,18 +148,18 @@ it.each([
 
 // systemd rejects a unit whose executable has a control character, quote or backslash, even quoted.
 it.each([
-  ["a double quote", '/home/theo/T3 "Data"'],
-  ["a single quote", "/home/theo/Theo's T3"],
-  ["a backslash", "/home/theo/T3\\Data"],
-  ["a newline", "/home/theo/T3\nData"],
-])("renders a loadable unit, or refuses, for a T3 home with %s", (_, baseDir) => {
+  ["a double quote", '/home/tara/T3 "Data"'],
+  ["a single quote", "/home/tara/Tara's Hyakki"],
+  ["a backslash", "/home/tara/T3\\Data"],
+  ["a newline", "/home/tara/T3\nData"],
+])("renders a loadable unit, or refuses, for a Hyakki home with %s", (_, baseDir) => {
   let unit: string;
   try {
     unit = BootService.renderBootServiceUnit({
       program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
       baseDir,
       logPath: `${baseDir}/userdata/logs/boot-service.log`,
-      unitPath: "/home/theo/.config/systemd/user/t3code.service",
+      unitPath: "/home/tara/.config/systemd/user/t3code.service",
     });
   } catch {
     return;
@@ -182,7 +182,7 @@ it.each([
 });
 
 const macInstallerPath =
-  "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
+  "/opt/homebrew/bin:/Users/tara/.npm-global/bin:/Users/tara/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
 
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
@@ -420,7 +420,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 LOCALAPPDATA: path.join(home, "AppData", "Local"),
                 USERDOMAIN: "PC",
                 windir: "D:\\WinNT",
-                USERNAME: "theo",
+                USERNAME: "tara",
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
@@ -948,7 +948,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
                 "systemctl --user restart t3code.service",
               ]
             : [
-                "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
+                "launchctl bootout --wait gui/501/dev.ryoku.hyakki.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
               ],
         );
@@ -1302,7 +1302,7 @@ process.disconnect();
     }),
   );
 
-  it.effect("restart and install leave a service that serves another T3 home alone", () =>
+  it.effect("restart and install leave a service that serves another Hyakki home alone", () =>
     Effect.gen(function* () {
       const { service, fs, baseDir, commands, makeService } = yield* makeHarness();
       const plan = yield* service.install();
@@ -1321,7 +1321,7 @@ process.disconnect();
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);
 
-      const quoted = yield* makeService(undefined, "1.2.3", path.join(otherHome, 'T3 "Data"'));
+      const quoted = yield* makeService(undefined, "1.2.3", path.join(otherHome, 'Hyakki "Data"'));
       commands.length = 0;
       const unloadable = yield* quoted.install().pipe(Effect.flip);
       expect(unloadable._tag).toBe("BootServiceBaseDirUnsupportedError");
@@ -1331,7 +1331,7 @@ process.disconnect();
     }),
   );
 
-  it.effect("treats a symlinked T3 home path as the same home", () =>
+  it.effect("treats a symlinked Hyakki home path as the same home", () =>
     Effect.gen(function* () {
       const { service, fs, baseDir, commands, makeService } = yield* makeHarness();
       yield* service.install();
@@ -1358,7 +1358,7 @@ process.disconnect();
       const { fs, commands, invocations, control, makeService } = yield* makeHarness();
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-handoff-" });
-      const baseDir = path.join(home, "T3 Data 100%", "${UNSET}", "$literal");
+      const baseDir = path.join(home, "Hyakki Data 100%", "${UNSET}", "$literal");
       const outside = yield* makeService(undefined, "1.2.3", baseDir);
       const plan = yield* outside.install();
       const statePath = path.join(baseDir, "runtime", "service-state.json");
@@ -1387,7 +1387,7 @@ process.disconnect();
         "service",
         "install",
         "--base-dir",
-        path.join(home, "T3 Data 100%", "$${UNSET}", "$$literal"),
+        path.join(home, "Hyakki Data 100%", "$${UNSET}", "$$literal"),
         "--allow-downgrade",
       ]);
 
@@ -1551,7 +1551,7 @@ process.disconnect();
 
       expect(
         plan.unitPath.endsWith(
-          path.join("Library", "LaunchAgents", "com.t3tools.t3code.service.plist"),
+          path.join("Library", "LaunchAgents", "dev.ryoku.hyakki.service.plist"),
         ),
       ).toBe(true);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
@@ -1585,7 +1585,7 @@ process.disconnect();
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
-      expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
+      expect(timeouts.get("launchctl bootout --wait gui/501/dev.ryoku.hyakki.service")).toEqual(
         Duration.seconds(120),
       );
     }),
@@ -1603,7 +1603,7 @@ process.disconnect();
       );
       expect(BootService.bootServiceProgramOf(task)).toBe(runtime.entryPath);
       expect(BootService.bootServiceBaseDirOf(task)).toBe(plan.baseDir);
-      expect(task).toContain("<UserId>PC\\theo</UserId>");
+      expect(task).toContain("<UserId>PC\\tara</UserId>");
       expect(task).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
       // schtasks decodes undeclared UTF-8 with the ANSI code page; UTF-16LE with a BOM is read as is.
       expect([...(yield* fs.readFile(plan.unitPath)).subarray(0, 2)]).toEqual([0xff, 0xfe]);
@@ -1612,8 +1612,8 @@ process.disconnect();
         activeVersion: "1.2.3",
       });
       expect(commands.filter((command) => command.startsWith(`${SCHTASKS} `))).toEqual([
-        `${SCHTASKS} /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
-        `${SCHTASKS} /Run /TN t3code-PC-theo`,
+        `${SCHTASKS} /Create /XML ${plan.unitPath} /TN t3code-PC-tara /F`,
+        `${SCHTASKS} /Run /TN t3code-PC-tara`,
       ]);
       // No launcher holds the lock here.
       expect(yield* service.status).toMatchObject({
@@ -1623,7 +1623,7 @@ process.disconnect();
       });
 
       // A task that Task Scheduler refuses to delete stays installed, so a retry finds it.
-      control.failCommand = `${SCHTASKS} /Delete /TN t3code-PC-theo /F`;
+      control.failCommand = `${SCHTASKS} /Delete /TN t3code-PC-tara /F`;
       expect((yield* service.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
       expect((yield* service.status).installed).toBe(true);
       control.failCommand = undefined;
@@ -1631,9 +1631,9 @@ process.disconnect();
       commands.length = 0;
       expect(yield* service.uninstall).toBe(true);
       expect(commands).toEqual([
-        `${SCHTASKS} /Change /TN t3code-PC-theo /DISABLE`,
-        `${SCHTASKS} /End /TN t3code-PC-theo`,
-        `${SCHTASKS} /Delete /TN t3code-PC-theo /F`,
+        `${SCHTASKS} /Change /TN t3code-PC-tara /DISABLE`,
+        `${SCHTASKS} /End /TN t3code-PC-tara`,
+        `${SCHTASKS} /Delete /TN t3code-PC-tara /F`,
       ]);
       expect(control.task).toBeUndefined();
       expect((yield* service.status).installed).toBe(false);
@@ -1673,11 +1673,11 @@ process.disconnect();
       commands.length = 0;
       yield* service.withStopped(Effect.sync(() => commands.push("repair")));
       expect(commands.filter((command) => !command.includes("/Query"))).toEqual([
-        `${SCHTASKS} /Change /TN t3code-PC-theo /DISABLE`,
-        `${SCHTASKS} /End /TN t3code-PC-theo`,
+        `${SCHTASKS} /Change /TN t3code-PC-tara /DISABLE`,
+        `${SCHTASKS} /End /TN t3code-PC-tara`,
         "repair",
-        `${SCHTASKS} /Change /TN t3code-PC-theo /ENABLE`,
-        `${SCHTASKS} /Run /TN t3code-PC-theo`,
+        `${SCHTASKS} /Change /TN t3code-PC-tara /ENABLE`,
+        `${SCHTASKS} /Run /TN t3code-PC-tara`,
       ]);
     }),
   );
@@ -1698,9 +1698,9 @@ process.disconnect();
       const inside = yield* makeService(undefined, "1.2.4", undefined, true);
       const relayMarker = `${plan.baseDir}/runtime/${DESKTOP_UPDATE_RESTART_MARKER_FILE}`;
       const handoff = [
-        `${SCHTASKS} /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
-        `${SCHTASKS} /End /TN t3code-PC-theo`,
-        `${SCHTASKS} /Run /TN t3code-PC-theo`,
+        `${SCHTASKS} /Create /XML ${plan.unitPath} /TN t3code-PC-tara /F`,
+        `${SCHTASKS} /End /TN t3code-PC-tara`,
+        `${SCHTASKS} /Run /TN t3code-PC-tara`,
       ];
       commands.length = 0;
 
@@ -1793,7 +1793,7 @@ process.disconnect();
     Effect.gen(function* () {
       const { service, fs } = yield* makeHarness(
         "darwin",
-        "/opt/homebrew/bin:/Users/theo/\u0001invalid:/usr/bin",
+        "/opt/homebrew/bin:/Users/tara/\u0001invalid:/usr/bin",
       );
       const plan = yield* service.install();
       const plist = yield* fs.readFileString(plan.unitPath);
@@ -1810,7 +1810,7 @@ process.disconnect();
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
       yield* service.install();
-      control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
+      control.failCommand = "launchctl bootout --wait gui/501/dev.ryoku.hyakki.service";
 
       yield* service.install();
       expect((yield* service.status).current).toBe(true);

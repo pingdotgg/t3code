@@ -1049,9 +1049,9 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
         return "Change requests cannot be browsed for this project's host yet.";
       case "repository-without-project":
         if (this.host !== undefined) {
-          return `No project in T3 Code is on ${this.host}. Add any ${this.host} project to read its change requests.`;
+          return `No project in Hyakki is on ${this.host}. Add any ${this.host} project to read its change requests.`;
         }
-        return `${this.repository ?? "This repository"} is not a project in T3 Code. Add it as a project to read its change requests.`;
+        return `${this.repository ?? "This repository"} is not a project in Hyakki. Add it as a project to read its change requests.`;
     }
   }
 }
@@ -1065,7 +1065,7 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
     listResult: Schema.optional(PullRequestListResult),
     cause: Schema.optional(Schema.Defect()),
   },
-  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  // Not 502: Cloudflare, in front of Hyakki Connect, swaps an origin 502 for its own page.
   { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {

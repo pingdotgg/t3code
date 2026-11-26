@@ -112,7 +112,7 @@ export interface AntigravityAuthOptions<
   readonly onSignedOut: Effect.Effect<void>;
   readonly forwardCallback?: (callback: URL) => Effect.Effect<void, ProviderSetupError>;
   readonly usesBrowser?: boolean;
-  /** Undefined when the runtime signs in through ACP `authenticate` and T3's browser helper. */
+  /** Undefined when the runtime signs in through ACP `authenticate` and Hyakki's browser helper. */
   readonly codeLogin?: (input: {
     readonly onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
   }) => Effect.Effect<

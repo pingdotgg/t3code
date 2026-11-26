@@ -43,7 +43,7 @@ function processHandle(stdout: string, code: number, answered: Effect.Effect<voi
 }
 
 // `fx status --json` and `fx models --json` from fx 0.0.15, trimmed to the
-// fields T3 reads plus a few it ignores.
+// fields Hyakki reads plus a few it ignores.
 const status = (auth: string, fields: Record<string, unknown> = {}) =>
   JSON.stringify({ kind: "status", model: "default", auth, auth_refreshable: false, ...fields });
 const models = (ids: ReadonlyArray<string>) =>
@@ -323,7 +323,7 @@ describe("checkFxProviderStatus", () => {
       assert.equal(signedOut.draft.auth.status, "unauthenticated");
       assert.equal(signedOut.draft.message, "Run `fx login` to sign in.");
 
-      // An fx whose status output T3 cannot read is not reported as signed out.
+      // An fx whose status output Hyakki cannot read is not reported as signed out.
       const unknown = yield* check({ " status --json": "not json" });
       assert.equal(unknown.draft.status, "warning");
       assert.equal(unknown.draft.auth.status, "unknown");

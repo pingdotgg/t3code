@@ -164,7 +164,7 @@ export function mcpAppToolCallableByApp(meta: unknown): boolean {
   return !Array.isArray(visibility) || visibility.includes("app");
 }
 
-/** Block undeclared origins, including self, which would expose T3's API. */
+/** Block undeclared origins, including self, which would expose Hyakki's API. */
 export function mcpAppContentSecurityPolicy(csp: McpAppCsp | undefined): string {
   const resources = csp?.resourceDomains?.join(" ") ?? "";
   const list = (domains: ReadonlyArray<string> | undefined, fallback: string) =>

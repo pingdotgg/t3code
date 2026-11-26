@@ -1,11 +1,11 @@
 ---
 name: t3-workflows
-description: Author, edit, run, and debug durable T3 Code workflows (`~/.t3/workflows/*.ts`). Use when asked to build or change a multi-step T3 Code automation tying together agent threads, code steps, schedules, webhooks, issue/PR trackers, or human approvals, or to inspect, resume, signal, or cancel workflow runs.
+description: Author, edit, run, and debug durable Hyakki workflows (`~/.t3/workflows/*.ts`). Use when asked to build or change a multi-step Hyakki automation tying together agent threads, code steps, schedules, webhooks, issue/PR trackers, or human approvals, or to inspect, resume, signal, or cancel workflow runs.
 ---
 
-# T3 Code workflows
+# Hyakki workflows
 
-A workflow is a TypeScript function the T3 Code server runs durably on Effect v4 (`effect/workflow`). Every step's result is stored, so restarts replay to where the run left off and a failing step pauses the run instead of losing it. Runs can sleep for days, wait on signals or pull requests, ask a person a question, and launch agents in ordinary threads.
+A workflow is a TypeScript function the Hyakki server runs durably on Effect v4 (`effect/workflow`). Every step's result is stored, so restarts replay to where the run left off and a failing step pauses the run instead of losing it. Runs can sleep for days, wait on signals or pull requests, ask a person a question, and launch agents in ordinary threads.
 
 Use a workflow for multi-stage work that must not be lost or repeated (triage → fix → verify, nightly reports, webhook reactions). For a single prompt on a timer, use a scheduled task instead.
 
@@ -13,9 +13,9 @@ Use a workflow for multi-stage work that must not be lost or repeated (triage �
 
 Workflows are a Labs feature, off by default. If `t3 workflow` says workflows are off, ask the user to turn them on in Settings → Labs → Workflows; do not edit their settings yourself.
 
-Put a `.ts` file in `~/.t3/workflows/` (the `workflows` folder of T3 home, or the path in `T3CODE_WORKFLOWS`). Once workflows are on, the server watches the folder and reloads files automatically—nothing to restart. A file name with a space or other unusual character (`fix issue.ts`) is skipped with a warning in the server log: use letters, digits, `-`, `_` and `.`. Files run with Node's type stripping, so only erasable TypeScript works: no `enum`, `namespace` or parameter properties.
+Put a `.ts` file in `~/.t3/workflows/` (the `workflows` folder of Hyakki home, or the path in `T3CODE_WORKFLOWS`). Once workflows are on, the server watches the folder and reloads files automatically—nothing to restart. A file name with a space or other unusual character (`fix issue.ts`) is skipped with a warning in the server log: use letters, digits, `-`, `_` and `.`. Files run with Node's type stripping, so only erasable TypeScript works: no `enum`, `namespace` or parameter properties.
 
-Workflow files import nothing from T3 or Effect. `T3`, `Effect`, `Schema`, `Option`, `Duration`, and `Schedule` are injected as globals. Never `import` from `effect` (that loads a second runtime copy the engine cannot run). Node built-ins (`node:fs`, `node:crypto`) can be imported normally.
+Workflow files import nothing from Hyakki or Effect. `Hyakki`, `Effect`, `Schema`, `Option`, `Duration`, and `Schedule` are injected as globals. Never `import` from `effect` (that loads a second runtime copy the engine cannot run). Node built-ins (`node:fs`, `node:crypto`) can be imported normally.
 
 ```ts
 const { workflow, agent, ask, stop, title, every, Tick } = T3;
@@ -53,10 +53,10 @@ workflow(
 );
 ```
 
-### What `T3` holds
+### What `Hyakki` holds
 
-Only `T3`, `Effect`, `Schema`, `Option`, `Duration` and `Schedule` are globals. Everything below is a
-property of `T3`: take what you use at the top of the file, as the quick start does
+Only `Hyakki`, `Effect`, `Schema`, `Option`, `Duration` and `Schedule` are globals. Everything below is a
+property of `Hyakki`: take what you use at the top of the file, as the quick start does
 (`const { workflow, step, daily } = T3;`), or write `T3.step(…)` in full. A bare `daily(…)` or
 `step(…)` without that line is a `ReferenceError`.
 
@@ -123,7 +123,7 @@ workflow(
 );
 ```
 
-(`exec` above is your own Effect helper, not part of `T3`.) On normal end, `onEnd` retries 3 times before pausing at the `onEnd` step; on cancel, it waits for any in-flight step to finish, then tries up to 5 times, 5 minutes, 20 minutes, 80 minutes and 5 hours apart. The workflow version stays required until one try succeeds; after the last failed try the `onEnd` step stays `failed` on the run and nothing retries it, so make cleanup something a person can redo by hand.
+(`exec` above is your own Effect helper, not part of `Hyakki`.) On normal end, `onEnd` retries 3 times before pausing at the `onEnd` step; on cancel, it waits for any in-flight step to finish, then tries up to 5 times, 5 minutes, 20 minutes, 80 minutes and 5 hours apart. The workflow version stays required until one try succeeds; after the last failed try the `onEnd` step stays `failed` on the run and nothing retries it, so make cleanup something a person can redo by hand.
 
 ## Body primitives
 
@@ -346,13 +346,13 @@ Effect.fn(function* () {
 
 A workflow's `payload` schema must match what its `triggers` emit.
 
-| Trigger                                          | Payload          | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `every("1 hour")`                                | `Tick`           | `{ scheduledAt }`. Minimum 1 minute. The first run comes one interval after the file loads, not at load. Downtime collapses into one run, not one per missed interval.                                                                                                                                                                                                                                                                                                                     |
-| `daily("09:00", { weekdays?: [1, 2, 3, 4, 5] })` | `Tick`           | Server local time; `0` is Sunday. Missed by more than 10 minutes is skipped.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `webhook("name", { key? })`                      | `WebhookRequest` | `{ method, headers, query, body }` (lowercase header names, text `query`/`body`). Set `payload: WebhookRequest`, taken from `T3`; never write its shape out yourself. `t3 workflow hooks` prints URL paths (includes secret). A retry that repeats a delivery header (`X-GitHub-Delivery`, `Idempotency-Key`, `webhook-id`, and the Gitea, GitLab and Linear ones) starts no second run; for other senders, `key: (r) => …` names the run from the request. Bodies over 1 MiB are refused. |
-| `issues.opened({ project, labels?, query? })`    | `Issue`          | Polls ~once a minute. Only issues opened after the workflow first loaded. Issue must carry all `labels`.                                                                                                                                                                                                                                                                                                                                                                                   |
-| `pullRequests.opened({ project, query? })`       | `PullRequest`    | Polls ~once a minute. Only pull requests opened after the workflow first loaded.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Trigger                                          | Payload          | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `every("1 hour")`                                | `Tick`           | `{ scheduledAt }`. Minimum 1 minute. The first run comes one interval after the file loads, not at load. Downtime collapses into one run, not one per missed interval.                                                                                                                                                                                                                                                                                                                         |
+| `daily("09:00", { weekdays?: [1, 2, 3, 4, 5] })` | `Tick`           | Server local time; `0` is Sunday. Missed by more than 10 minutes is skipped.                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `webhook("name", { key? })`                      | `WebhookRequest` | `{ method, headers, query, body }` (lowercase header names, text `query`/`body`). Set `payload: WebhookRequest`, taken from `Hyakki`; never write its shape out yourself. `t3 workflow hooks` prints URL paths (includes secret). A retry that repeats a delivery header (`X-GitHub-Delivery`, `Idempotency-Key`, `webhook-id`, and the Gitea, GitLab and Linear ones) starts no second run; for other senders, `key: (r) => …` names the run from the request. Bodies over 1 MiB are refused. |
+| `issues.opened({ project, labels?, query? })`    | `Issue`          | Polls ~once a minute. Only issues opened after the workflow first loaded. Issue must carry all `labels`.                                                                                                                                                                                                                                                                                                                                                                                       |
+| `pullRequests.opened({ project, query? })`       | `PullRequest`    | Polls ~once a minute. Only pull requests opened after the workflow first loaded.                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 Filter unwanted deliveries in the body with `skip("not a push to main")` so they stay out of run lists. Verify webhook signatures inside a `step`.
 
@@ -363,7 +363,7 @@ Start any workflow manually with `t3 workflow start <name> --input '<json>' --ke
 1. **The body is replayed from the top.** After every wait or restart, the body runs again and completed primitives return their stored values. Put all side effects, I/O, clock reads, randomness, and `store`/API reads inside `step` or `agent`. Code between calls must be deterministic given `payload` and earlier results.
 2. **Names are journal keys.** Every named primitive (`step`, `agent`, `ask`, `wait`, `sleep`, `invoke`, `pullRequests.wait`) must have a unique name within the run, across all kinds. Loops need distinct names (``step(`check-${i}`, …)``). Never name a body step `"onEnd"` (reserved for cleanup). `invoke("x", …)` also takes `x/start`, `title(…)` takes `title/0`, `title/1`, …, `tags(…)` takes `tags/0`, `tags/1`, …, and `subject(…)` takes `subject/0`, `subject/1`, ….
 3. **Bump `version` when changing a live workflow.** Do not reorder, rename, or change the stored schema of steps in a version that still has unfinished runs. Register the updated body under a higher `version` and keep the old version in the file until its runs finish. Runs started by the CLI, a trigger or a webhook use the highest version; `start` and `invoke` run the version of the definition you pass them, so point callers at the new definition when you bump. Keys still deduplicate across versions.
-4. **Never import `effect`, and take every `T3` name you use.** The globals are `T3`, `Effect`, `Schema`, `Option`, `Duration` and `Schedule`; `step`, `daily`, `WebhookRequest` and the rest come from `const { … } = T3;` at the top of the file, and one left out of that line is a `ReferenceError`. Shared helpers go in a subfolder (dotfiles and folders are ignored by the loader), and changing an imported helper requires a server restart.
+4. **Never import `effect`, and take every `Hyakki` name you use.** The globals are `Hyakki`, `Effect`, `Schema`, `Option`, `Duration` and `Schedule`; `step`, `daily`, `WebhookRequest` and the rest come from `const { … } = T3;` at the top of the file, and one left out of that line is a `ReferenceError`. Shared helpers go in a subfolder (dotfiles and folders are ignored by the loader), and changing an imported helper requires a server restart.
 5. **Payloads and step results must fit their `Schema`.** Everything journaled is serialized as JSON; a value that fails encoding fails the step.
 6. **Steps can run more than once.** A crash mid-step, a retry, or a manual resume re-runs the step. Make external side effects idempotent (derive idempotency keys from `payload` or `run.id`, keep one comment/post per step, wrap dependent store writes in `store.transaction`).
 

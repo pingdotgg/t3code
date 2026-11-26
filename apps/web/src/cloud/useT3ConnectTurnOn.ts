@@ -11,7 +11,7 @@ import { useCloudLinkState } from "./cloudLinkState";
 import { hasCloudPublicConfig } from "./publicConfig";
 import { resolveT3ConnectTurnOn } from "./t3ConnectState";
 
-/** Whether this client can turn on T3 Connect for `environmentId`, and if not, why. */
+/** Whether this client can turn on Hyakki Connect for `environmentId`, and if not, why. */
 export function useT3ConnectTurnOn(environmentId: EnvironmentId | null) {
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
   const canWriteRelay = useEnvironmentScope(environmentId, AuthRelayWriteScope);

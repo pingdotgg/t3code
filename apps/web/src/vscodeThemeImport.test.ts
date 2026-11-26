@@ -93,7 +93,7 @@ describe("theme import text", () => {
     expect(() => parseThemeImport(source)).toThrow("That theme file is not valid JSON.");
   });
 
-  it("preserves native T3 theme parsing and strict JSON syntax", () => {
+  it("preserves native Hyakki theme parsing and strict JSON syntax", () => {
     const nativeTheme = {
       version: THEME_FILE_VERSION,
       name: "Native theme",

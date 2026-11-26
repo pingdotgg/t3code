@@ -84,7 +84,7 @@ export function assertKiroSupervisedWriteOutput(
 
 /**
  * Full access keeps Kiro's Autopilot on, so Kiro skips its review of changes.
- * It still asks the client before the write, and T3 answers that by policy
+ * It still asks the client before the write, and Hyakki answers that by policy
  * without involving the user.
  */
 export function assertKiroFullAccessWriteOutput(

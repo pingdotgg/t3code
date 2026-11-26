@@ -78,7 +78,7 @@ export function TunnelUsageMeter({
       </div>
       <div
         role="meter"
-        aria-label={gt("T3 Connect tunnels in use")}
+        aria-label={gt("Hyakki Connect tunnels in use")}
         aria-valuemin={0}
         aria-valuemax={limit}
         aria-valuenow={used}

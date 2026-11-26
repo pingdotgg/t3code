@@ -9,7 +9,7 @@ import { notifierConfig } from "../monitoring.ts";
 import { isPreviewStage } from "../previewStages.ts";
 
 const RUNBOOK_URL =
-  "https://github.com/pingdotgg/t3code/blob/main/docs/operations/05_relay-observability.md#mobile-crashes-and-errors";
+  "https://github.com/neur0map/hyakki/blob/main/docs/operations/05_relay-observability.md#mobile-crashes-and-errors";
 
 // A new dataset has none of these fields until a report carries them, and an
 // unknown field fails the whole query, so every one has a default.
@@ -72,7 +72,7 @@ const mobileMonitors: ReadonlyArray<MobileMonitor> = [
   {
     id: "MobileCrashSpikeMonitor",
     severity: "page",
-    name: "T3 Code mobile: crash spike",
+    name: "Hyakki mobile: crash spike",
     description:
       "Crashes (JS and native, each counted once) per 15 min well above the same time over the last 7 days. Usually a bad OTA update or store build: compare app versions on the dashboard.",
     query: ({ logs }) => `${crashes(logs)}\n| summarize crashes = count() by bin_auto(_time)`,
@@ -88,7 +88,7 @@ const mobileMonitors: ReadonlyArray<MobileMonitor> = [
   {
     id: "MobileCrashSpreadMonitor",
     severity: "page",
-    name: "T3 Code mobile: one crash hitting many installs",
+    name: "Hyakki mobile: one crash hitting many installs",
     description:
       "The most widespread crash reached this many installs in an hour. Its message and versions are at the top of the dashboard's Top crashes table.",
     query: ({ logs }) =>
@@ -104,7 +104,7 @@ const mobileMonitors: ReadonlyArray<MobileMonitor> = [
   {
     id: "MobileOsKillSpikeMonitor",
     severity: "warn",
-    name: "T3 Code mobile: Android OS kills spike",
+    name: "Hyakki mobile: Android OS kills spike",
     description:
       "Android killing the app (low memory, freezes) per hour well above the same time over the last 7 days. Usually a release that leaks memory or blocks the main thread: compare app versions on the dashboard.",
     query: ({ logs }) => `${osKills(logs)}\n| summarize kills = count() by bin_auto(_time)`,
@@ -122,7 +122,7 @@ const mobileMonitors: ReadonlyArray<MobileMonitor> = [
   {
     id: "MobileTelemetryStoppedMonitor",
     severity: "warn",
-    name: "T3 Code mobile: reports stopped",
+    name: "Hyakki mobile: reports stopped",
     description:
       "No startup metrics forwarded in an hour. Every launch sends some, so the relay route, the Axiom token, or the app's endpoint is broken, and crashes go unseen too.",
     query: ({ traces }) =>
@@ -140,7 +140,7 @@ const mobileMonitors: ReadonlyArray<MobileMonitor> = [
   {
     id: "MobileSymbolicationFailingMonitor",
     severity: "warn",
-    name: "T3 Code mobile: crash stacks not symbolicated",
+    name: "Hyakki mobile: crash stacks not symbolicated",
     description:
       "Share of release JS exceptions over 6 h whose stack stayed minified. Map uploads are failing or the relay cannot read them; relay.symbolication.status says which.",
     query: ({ logs }) =>
@@ -312,7 +312,7 @@ export const MobileMonitoring = Effect.fn("MobileMonitoring")(function* (
       return {
         name: relayResourceNameForStage("t3-code-mobile-health", stage),
         owner: "X-AXIOM-EVERYONE",
-        description: `T3 Code mobile app crashes and errors. Crashes count JS and native once each. Runbook: ${RUNBOOK_URL}`,
+        description: `Hyakki mobile app crashes and errors. Crashes count JS and native once each. Runbook: ${RUNBOOK_URL}`,
         refreshTime: 300,
         schemaVersion: 2,
         timeWindowStart: "qr-now-7d",

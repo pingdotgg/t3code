@@ -57,7 +57,7 @@ if (fixture === undefined || variant === undefined) {
 }
 
 const museBinary = process.env.T3_MUSE_BIN ?? "muse";
-// Match T3's launch so Windows needs no T3_MUSE_BIN for `muse.cmd`.
+// Match Hyakki's launch so Windows needs no T3_MUSE_BIN for `muse.cmd`.
 const museStart = Effect.runSync(museLaunch(museBinary));
 const home = process.env.HOME ?? "";
 

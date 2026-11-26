@@ -1,7 +1,7 @@
 apply plugin: 'com.android.library'
 apply plugin: 'org.jetbrains.kotlin.android'
 
-group = 'com.t3tools.composereditor'
+group = 'dev.ryoku.composereditor'
 version = '0.0.0'
 
 android {

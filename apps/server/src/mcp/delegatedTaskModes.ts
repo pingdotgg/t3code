@@ -100,7 +100,7 @@ const isAgentModePick = (
   descriptors.some((descriptor) => descriptor.id === selection.id && descriptor.role === "mode");
 
 /**
- * An agent's own session mode can skip the approvals a runtime mode asks for, and T3 cannot rank
+ * An agent's own session mode can skip the approvals a runtime mode asks for, and Hyakki cannot rank
  * it against one. So only a full-access caller may pick one. `held` is the selection the caller
  * already runs with or the thread already has; repeating it grants nothing new.
  */
@@ -121,7 +121,7 @@ export function refuseAgentModePick(input: {
     : Effect.fail(
         new OrchestratorMcpFailure({
           code: "runtime_mode_escalation_denied",
-          message: `Option ${pick.id} sets the agent's own mode, which T3 cannot hold to ${input.callerRuntimeMode}. Only a full-access caller may set it; leave it out.`,
+          message: `Option ${pick.id} sets the agent's own mode, which Hyakki cannot hold to ${input.callerRuntimeMode}. Only a full-access caller may set it; leave it out.`,
         }),
       );
 }

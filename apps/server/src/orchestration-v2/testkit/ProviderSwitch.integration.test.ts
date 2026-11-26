@@ -1430,7 +1430,7 @@ describe("orchestration v2 provider switching", () => {
           (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
           "completed",
         );
-        // A second generation means T3 discarded the native session as full.
+        // A second generation means Hyakki discarded the native session as full.
         assert.equal(yield* Ref.get(generation), 1);
       }).pipe(
         Effect.provide(

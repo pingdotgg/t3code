@@ -5,7 +5,7 @@ export interface ClerkSignInProps {
 
 export function resolveClerkSignInProps(href: string, isElectron: boolean): ClerkSignInProps {
   if (isElectron) {
-    // Electron routes through the hash, so reset any Clerk virtual pathname without losing the T3 page.
+    // Electron routes through the hash, so reset any Clerk virtual pathname without losing the Hyakki page.
     const redirectUrl = new URL(href);
     redirectUrl.pathname = "/";
     redirectUrl.search = "";

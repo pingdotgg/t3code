@@ -24,7 +24,7 @@ const BudgetModel = Schema.Struct({
   name: Schema.String,
   spent: Schema.optionalKey(Schema.Finite),
 });
-// Decode only fields needed by T3, independently of the pinned 2.0 client.
+// Decode only fields needed by Hyakki, independently of the pinned 2.0 client.
 const ResponseBody = Schema.Struct({
   location: Schema.Struct({ directory: Schema.String }),
   data: Schema.NullOr(

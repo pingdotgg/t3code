@@ -6,7 +6,7 @@ const TRANSPORT_ERROR_PATTERNS = [
   /\bSocketCloseError\b/i,
   /\bSocketOpenError\b/i,
   /\bSocket is not connected\b/i,
-  /Unable to connect to the T3 server WebSocket\./i,
+  /Unable to connect to the Hyakki server WebSocket\./i,
   // The RPC session appends the network hint for relay connections. Any other
   // trailing text means a different error that the user should still see.
   new RegExp(

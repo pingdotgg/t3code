@@ -1,6 +1,6 @@
 # Kiro
 
-Run the [Kiro CLI](https://kiro.dev/docs/cli/) (V3 engine) in T3 Code with your Kiro account, custom agents, steering, hooks, and MCP config.
+Run the [Kiro CLI](https://kiro.dev/docs/cli/) (V3 engine) in Hyakki with your Kiro account, custom agents, steering, hooks, and MCP config.
 
 ## Set up Kiro
 

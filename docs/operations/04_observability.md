@@ -51,7 +51,7 @@ On macOS and Linux (not Windows), send `SIGUSR2` to the server PID from `server-
 
 ```sh
 pid="$(jq .pid "${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json")"
-ps -p "$pid" -o command=   # verify it is the T3 server—never signal desktop or launcher
+ps -p "$pid" -o command=   # verify it is the Hyakki server—never signal desktop or launcher
 kill -USR2 "$pid"
 ```
 

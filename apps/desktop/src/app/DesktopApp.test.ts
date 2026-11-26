@@ -342,8 +342,8 @@ it.effect(
         baseDir,
         platform: "linux",
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
-      const removedAppImage = path.join(baseDir, "T3-Code-0.1.6-x86_64.AppImage");
-      const updatedAppImage = path.join(baseDir, "T3-Code-0.1.7-x86_64.AppImage");
+      const removedAppImage = path.join(baseDir, "Hyakki-0.1.6-x86_64.AppImage");
+      const updatedAppImage = path.join(baseDir, "Hyakki-0.1.7-x86_64.AppImage");
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
       yield* fs.writeFileString(
         launcher,

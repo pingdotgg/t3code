@@ -191,7 +191,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    it.effect("drops an inherited T3CODE_HOST and T3CODE_LAN from a parent T3 server", () =>
+    it.effect("drops an inherited T3CODE_HOST and T3CODE_LAN from a parent Hyakki server", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
@@ -215,7 +215,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("cli", () => {
-    it("ignores the parent T3 server's T3CODE_PORT and T3CODE_HOST", () => {
+    it("ignores the parent Hyakki server's T3CODE_PORT and T3CODE_HOST", () => {
       const result = NodeChildProcess.spawnSync(
         process.execPath,
         ["scripts/dev-runner.ts", "dev:server", "--dry-run"],
@@ -521,7 +521,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    it.effect("expands a home-relative T3 home the way the server does", () =>
+    it.effect("expands a home-relative Hyakki home the way the server does", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const homeFor = (t3Home: string) =>

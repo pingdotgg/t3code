@@ -248,9 +248,9 @@ describe("CursorAgentSdkWorkerProtocol", () => {
 describe("scrubCursorWorkerEnvironment", () => {
   it("removes the AppImage runtime env the worker inherited before agent shells see it", () => {
     const env: NodeJS.ProcessEnv = {
-      APPIMAGE: "/home/ada/T3-Code.AppImage",
+      APPIMAGE: "/home/ada/Hyakki.AppImage",
       APPDIR: "/tmp/.mount_T3-test",
-      ARGV0: "T3-Code.AppImage",
+      ARGV0: "Hyakki.AppImage",
       OWD: "/home/ada",
       ELECTRON_RUN_AS_NODE: "1",
       LD_LIBRARY_PATH: "/tmp/.mount_T3-test/usr/lib",

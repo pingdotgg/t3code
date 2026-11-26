@@ -19,7 +19,7 @@ const user = (id: string, displayName: string) => ({
   avatarUrl: null,
 });
 const JULIUS = user("usr_julius", "julius");
-const THEO = user("usr_theo", "theo");
+const TARA = user("usr_tara", "tara");
 
 const state = (name: string, type: string, position = 0) => ({
   id: `st_${name.toLowerCase().replaceAll(" ", "-")}`,
@@ -57,7 +57,7 @@ const issue = (
   },
   creator: JULIUS,
   botActor: null,
-  assignee: THEO,
+  assignee: TARA,
   labels: { nodes: [{ id: "lbl_bug", name: "Bug", color: "#f00" }] },
   ...overrides,
 });
@@ -245,7 +245,7 @@ describe("LinearIssueTracker", () => {
             // "Assigned to me" survives an assignee filter: both must hold.
             assignee: { displayName: { eq: "julius" } },
             and: [
-              { assignee: { displayName: { eq: "theo" } } },
+              { assignee: { displayName: { eq: "tara" } } },
               { labels: { some: { name: { eq: "Bug" } } } },
             ],
           });
@@ -274,7 +274,7 @@ describe("LinearIssueTracker", () => {
         involvement: "assigned",
         viewer: "julius",
         labels: ["Bug"],
-        assignee: "theo",
+        assignee: "tara",
         sort: "created",
         limit: 50,
       });
@@ -288,7 +288,7 @@ describe("LinearIssueTracker", () => {
       expect(page.items[0]).toMatchObject({
         closedAt: "2026-07-03T00:00:00.000Z",
         author: { login: "julius", name: "julius" },
-        assignees: [{ login: "theo", name: "theo" }],
+        assignees: [{ login: "tara", name: "tara" }],
         labels: [{ name: "Bug", color: "#f00" }],
       });
       // The stored key goes in as-is, not as a bearer token.
@@ -380,7 +380,7 @@ describe("LinearIssueTracker", () => {
                   body: "hi",
                   createdAt: "2026-07-02T01:00:00.000Z",
                   url: "https://linear.app/acme/issue/ENG-7#comment-cmt_1",
-                  user: THEO,
+                  user: TARA,
                   botActor: null,
                   reactions: after === "reacted" ? [{ id: "r1", emoji: "+1", user: JULIUS }] : [],
                 },
@@ -426,7 +426,7 @@ describe("LinearIssueTracker", () => {
                   body: "hi",
                   createdAt: "2026-07-02T01:00:00.000Z",
                   url: "https://linear.app/acme/issue/ENG-7#comment-cmt_1",
-                  user: THEO,
+                  user: TARA,
                   botActor: null,
                   reactions: [{ id: "r1", emoji: "+1", user: JULIUS }],
                 },
@@ -434,9 +434,9 @@ describe("LinearIssueTracker", () => {
               pageInfo: { hasNextPage: true, endCursor: "cmt_cur" },
             },
             reactions: [
-              { id: "r2", emoji: "🚀", user: THEO },
+              { id: "r2", emoji: "🚀", user: TARA },
               { id: "r3", emoji: "rocket", user: JULIUS },
-              { id: "r4", emoji: "🤷", user: THEO },
+              { id: "r4", emoji: "🤷", user: TARA },
             ],
             attachments: {
               nodes: [
@@ -489,7 +489,7 @@ describe("LinearIssueTracker", () => {
       ]);
       // Grouped per emoji, the viewer left out of the names; an emoji outside the vocabulary is dropped.
       expect(detail.reactions).toEqual([
-        { content: "rocket", count: 2, actors: ["theo"], viewerHasReacted: true },
+        { content: "rocket", count: 2, actors: ["tara"], viewerHasReacted: true },
       ]);
       expect(detail.events.map((event) => [event.kind, event.detail])).toEqual([
         ["closed", "Done"],

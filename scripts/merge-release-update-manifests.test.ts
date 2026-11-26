@@ -23,10 +23,10 @@ it.layer(NodeServices.layer)("merge release update manifests", (it) => {
         prefix: "merge-release-update-manifests-",
       });
       const fixtures = {
-        "latest-mac.yml": manifest("T3-Code-1.2.3-arm64.zip"),
-        "latest-mac-x64.yml": manifest("T3-Code-1.2.3-x64.zip"),
-        "latest-win-arm64.yml": manifest("T3-Code-1.2.3-arm64.exe"),
-        "latest-win-x64.yml": manifest("T3-Code-1.2.3-x64.exe"),
+        "latest-mac.yml": manifest("Hyakki-1.2.3-arm64.zip"),
+        "latest-mac-x64.yml": manifest("Hyakki-1.2.3-x64.zip"),
+        "latest-win-arm64.yml": manifest("Hyakki-1.2.3-arm64.exe"),
+        "latest-win-x64.yml": manifest("Hyakki-1.2.3-x64.exe"),
       };
       yield* Effect.forEach(Object.entries(fixtures), ([fileName, contents]) =>
         fs.writeFileString(path.join(releaseAssetsDir, fileName), contents),
@@ -36,10 +36,10 @@ it.layer(NodeServices.layer)("merge release update manifests", (it) => {
 
       const mac = yield* fs.readFileString(path.join(releaseAssetsDir, "latest-mac.yml"));
       const win = yield* fs.readFileString(path.join(releaseAssetsDir, "latest.yml"));
-      assert.include(mac, "T3-Code-1.2.3-arm64.zip");
-      assert.include(mac, "T3-Code-1.2.3-x64.zip");
-      assert.include(win, "T3-Code-1.2.3-arm64.exe");
-      assert.include(win, "T3-Code-1.2.3-x64.exe");
+      assert.include(mac, "Hyakki-1.2.3-arm64.zip");
+      assert.include(mac, "Hyakki-1.2.3-x64.zip");
+      assert.include(win, "Hyakki-1.2.3-arm64.exe");
+      assert.include(win, "Hyakki-1.2.3-x64.exe");
       assert.isFalse(yield* fs.exists(path.join(releaseAssetsDir, "latest-mac-x64.yml")));
       assert.isFalse(yield* fs.exists(path.join(releaseAssetsDir, "latest-win-arm64.yml")));
       assert.isFalse(yield* fs.exists(path.join(releaseAssetsDir, "latest-win-x64.yml")));

@@ -35,7 +35,7 @@ export class PreviewTunnelPortRefusedError extends Schema.TaggedError<PreviewTun
   { port: Schema.Number },
 ) {
   override get message(): string {
-    return `Port ${this.port} is this T3 Code server's own port.`;
+    return `Port ${this.port} is this Hyakki server's own port.`;
   }
 }
 
@@ -44,7 +44,7 @@ export class PreviewTunnelDisabledError extends Schema.TaggedError<PreviewTunnel
   {},
 ) {
   override get message(): string {
-    return "The preview tunnel is turned off on this T3 Code server.";
+    return "The preview tunnel is turned off on this Hyakki server.";
   }
 }
 
@@ -202,7 +202,7 @@ const handler = Effect.gen(function* () {
         Effect.succeed(
           HttpServerResponse.text(error.message, { status: 403, headers: PORT_REFUSED_HEADERS }),
         ),
-      // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+      // Not 502: Cloudflare, in front of Hyakki Connect, swaps an origin 502 for its own page.
       PreviewTunnelConnectError: (error) =>
         Effect.succeed(
           HttpServerResponse.text(error.message, { status: 403, headers: PORT_REFUSED_HEADERS }),

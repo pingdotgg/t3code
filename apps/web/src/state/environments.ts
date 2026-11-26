@@ -107,7 +107,7 @@ export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscov
 }
 
 /**
- * The account's T3 Connect machines for a view that keeps one in front of the user. A refresh
+ * The account's Hyakki Connect machines for a view that keeps one in front of the user. A refresh
  * empties the list until it answers; the machines last seen stay meanwhile.
  */
 export function useRetainedRelayEnvironments() {

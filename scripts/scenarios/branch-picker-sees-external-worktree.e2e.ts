@@ -6,7 +6,7 @@ import { run } from "./shell.ts";
 import { runPromise, test, WEB } from "./t3.ts";
 
 test(
-  "Reopening the branch picker shows a worktree created outside T3 Code",
+  "Reopening the branch picker shows a worktree created outside Hyakki",
   WEB,
   async ({ t3, app, browser, screen }) => {
     const project = await t3.project("demo");

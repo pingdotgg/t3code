@@ -15,7 +15,7 @@ Permission modes never stop an agent from asking clarifying questions. Subagent 
 
 ## Git push hooks below Full access
 
-When an agent below **Full access** opens a PR using T3 Code's built-in pull request tool and the push would execute local Git hooks (`pre-push`, `reference-transaction`, or `hook.<name>.command`), T3 Code prompts you every time—naming the branch and hook files/commands—before pushing.
+When an agent below **Full access** opens a PR using Hyakki's built-in pull request tool and the push would execute local Git hooks (`pre-push`, `reference-transaction`, or `hook.<name>.command`), Hyakki prompts you every time—naming the branch and hook files/commands—before pushing.
 
 - Declining cancels the push. There is no "always allow" option, and Plan mode prompts too.
 - Providers that can't show this prompt push without running hooks and inform the agent.
@@ -32,6 +32,6 @@ Providers enforce permissions differently, and some read-only actions proceed ev
 - **fx**: No **Auto-accept edits**; **Full access** requires fx 0.0.14+ (otherwise falls back to Supervised).
 - **Muse Code & Kiro**: Only **Supervised** and **Full access** (other modes fall back to Supervised). In Supervised, Kiro also asks you to review turn file changes; see [Kiro](./providers-kiro.md#permission-modes).
 - **Antigravity**: May still send native approval prompts in **Full access**.
-- **ACP Registry agents**: T3 Code answers their approval requests according to the selected mode; see [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
+- **ACP Registry agents**: Hyakki answers their approval requests according to the selected mode; see [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
 See the [provider guides](./install.md#providers) for provider-specific setup and limits.

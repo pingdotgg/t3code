@@ -41,16 +41,14 @@ const { parseXml } = requireFromUpdater("builder-util-runtime") as {
 const semver = requireFromUpdater("semver") as { parse: (version: string) => RunningVersion };
 
 const releaseTitle = (version: string) =>
-  version.includes("-nightly.")
-    ? `T3 Code Nightly ${version} (0123456789ab)`
-    : `T3 Code v${version}`;
+  version.includes("-nightly.") ? `Hyakki Nightly ${version} (0123456789ab)` : `Hyakki v${version}`;
 
 const releaseFeed = (...versions: ReadonlyArray<string>) =>
   parseXml(
     `<feed xmlns="http://www.w3.org/2005/Atom">${versions
       .map(
         (version) =>
-          `<entry><link rel="alternate" type="text/html" href="https://github.com/pingdotgg/t3code/releases/tag/v${version}"/><title>${releaseTitle(version)}</title><content type="html">&lt;ul&gt;&lt;li&gt;${version} change&lt;/li&gt;&lt;/ul&gt;</content></entry>`,
+          `<entry><link rel="alternate" type="text/html" href="https://github.com/neur0map/hyakki/releases/tag/v${version}"/><title>${releaseTitle(version)}</title><content type="html">&lt;ul&gt;&lt;li&gt;${version} change&lt;/li&gt;&lt;/ul&gt;</content></entry>`,
       )
       .join("")}</feed>`,
   );
@@ -648,7 +646,7 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("downloads again when the downloaded update file was deleted before install", () => {
-    const downloadedFile = "/cache/pending/T3-Code-1.2.4-arm64.zip";
+    const downloadedFile = "/cache/pending/Hyakki-1.2.4-arm64.zip";
     let installedFileExists: boolean | undefined;
     const harness = makeHarness({
       checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
@@ -1413,7 +1411,7 @@ describe("describeUpdateErrorCause", () => {
 });
 
 describe("DesktopUpdates under a managed policy", () => {
-  const message = "Example Corp manages T3 Code updates.";
+  const message = "Example Corp manages Hyakki updates.";
   const managed = (
     policy: Partial<DesktopUpdatePolicy.UpdatePolicy>,
   ): DesktopUpdatePolicy.UpdatePolicy => ({

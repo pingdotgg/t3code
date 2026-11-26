@@ -72,7 +72,7 @@ function repositoryNameFromRemote(remoteUrl: string): string | null {
   return name.startsWith("@") ? null : name;
 }
 
-/** The remote T3 selected, which scopes `az` instead of the checkout's primary remote. */
+/** The remote Hyakki selected, which scopes `az` instead of the checkout's primary remote. */
 const remoteOf = (input: { readonly context?: { readonly remoteUrl: string } | undefined }) =>
   input.context === undefined ? {} : { remoteUrl: input.context.remoteUrl };
 

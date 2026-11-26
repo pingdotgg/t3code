@@ -48,7 +48,7 @@ const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
 });
 
 const handlers = {
-  // Local-file access limits this host browser to T3-launched agents.
+  // Local-file access limits this host browser to Hyakki-launched agents.
   html_preview: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const htmlRender = yield* HtmlRender.HtmlRender;

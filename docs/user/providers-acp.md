@@ -1,8 +1,8 @@
 # ACP providers
 
-T3 Code can run any coding agent from the official [ACP Registry](https://agentclientprotocol.com/get-started/registry) or any local ACP-compatible command. Built-in providers (Codex, Claude, Cursor, Grok, OpenCode, Pi, Antigravity) are enabled directly in **Settings → Providers** instead.
+Hyakki can run any coding agent from the official [ACP Registry](https://agentclientprotocol.com/get-started/registry) or any local ACP-compatible command. Built-in providers (Codex, Claude, Cursor, Grok, OpenCode, Pi, Antigravity) are enabled directly in **Settings → Providers** instead.
 
-T3 Code negotiates ACP v2 preview when supported and falls back to ACP v1 automatically. For `claude-agent-acp`, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the instance's environment overrides if you need ACP v1.
+Hyakki negotiates ACP v2 preview when supported and falls back to ACP v1 automatically. For `claude-agent-acp`, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the instance's environment overrides if you need ACP v1.
 
 ## Add an agent
 
@@ -11,7 +11,7 @@ T3 Code negotiates ACP v2 preview when supported and falls back to ACP v1 automa
 
 ## Installation and updates
 
-Registry agents run on your T3 Code server (including when accessed remotely) and install under `<t3-home>/tools/<agent-id>/<version>/` with SHA-256 verification when provided. T3 Code checks for Registry updates in the background and installs them on the next provider refresh. Set **Executable override** to use your own local binary instead.
+Registry agents run on your Hyakki server (including when accessed remotely) and install under `<t3-home>/tools/<agent-id>/<version>/` with SHA-256 verification when provided. Hyakki checks for Registry updates in the background and installs them on the next provider refresh. Set **Executable override** to use your own local binary instead.
 
 ## Sign in
 
@@ -27,18 +27,18 @@ Credentials stay in the agent's own store; changing a shared login stops running
 
 - **Models & options**: Reported automatically by the agent in the model picker. Add unlisted model IDs under **Custom models**.
 - **Commands & skills**: Agent slash commands appear under **Provider** in `/`; `$`-prefixed commands appear in the `$` skill menu.
-- **Native sessions**: When supported by the agent, expand its provider card, choose a project, and select **List sessions** to import existing sessions into T3 Code threads.
+- **Native sessions**: When supported by the agent, expand its provider card, choose a project, and select **List sessions** to import existing sessions into Hyakki threads.
 - **Text generation**: Select an ACP model in **Settings → Threads → Text generation model** to generate titles, commit messages, and PR descriptions.
 
 ## Permissions and terminals
 
-Registry agents enforce their own sandbox and approval rules (switchable via their mode picker in model options). When an agent asks for approval, T3 Code answers according to the thread's [permission mode](./permission-modes.md):
+Registry agents enforce their own sandbox and approval rules (switchable via their mode picker in model options). When an agent asks for approval, Hyakki answers according to the thread's [permission mode](./permission-modes.md):
 
 - **Supervised**: Shows approval requests in chat.
 - **Auto-accept edits**: Auto-approves edits inside the thread's folders; asks for everything else.
 - **Auto** and **Full access**: Approves automatically.
 
-File reads and searches never wait for approval. Devin runs commands in T3 Code terminals; other agents run their own terminals and report output/exit status.
+File reads and searches never wait for approval. Devin runs commands in Hyakki terminals; other agents run their own terminals and report output/exit status.
 
 ## Checkpoints
 

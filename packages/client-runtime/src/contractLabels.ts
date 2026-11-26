@@ -71,7 +71,7 @@ export function managedUpdatesMessage(
   organization: string,
   resolve: MFunctionType = mFallback,
 ): string {
-  return resolve(msg("{organization} manages T3 Code updates.", { organization }));
+  return resolve(msg("{organization} manages Hyakki updates.", { organization }));
 }
 
 /** @public */
@@ -80,7 +80,7 @@ export function managedNightlyDeniedMessage(
   resolve: MFunctionType = mFallback,
 ): string {
   return resolve(
-    msg("{organization} manages T3 Code updates. Only stable releases can be installed.", {
+    msg("{organization} manages Hyakki updates. Only stable releases can be installed.", {
       organization,
     }),
   );
@@ -168,7 +168,9 @@ function managedCapabilityDeniedMessage(
         }),
       );
     case "connect":
-      return resolve(msg("{organization}'s policy does not allow T3 Connect.", { organization }));
+      return resolve(
+        msg("{organization}'s policy does not allow Hyakki Connect.", { organization }),
+      );
     case "webhookTasks":
       return resolve(
         msg("{organization}'s policy does not allow webhook tasks.", { organization }),
@@ -229,7 +231,7 @@ const BROWSER_IMPORT_FAILURE_MESSAGES: Record<BrowserImportFailureReason, string
     "No encryption key in your Keychain. Sign in to that browser once, then retry.",
   ),
   needsFullDiskAccess: msg(
-    "Give T3 Code Full Disk Access in System Settings → Privacy & Security, then retry.",
+    "Give Hyakki Full Disk Access in System Settings → Privacy & Security, then retry.",
   ),
   browserRunning: msg("Quit the browser first so its cookie database can be read."),
   unsupportedPlatform: msg("Importing from this browser isn't possible on this platform."),

@@ -53,7 +53,7 @@ it("opens a render's issue link the way the thread's own links open", async () =
     root.render(<HtmlRenderWebView uri="https://assets.test/render.html" title="Links" nested />),
   );
 
-  const issueUrl = "https://github.com/pingdotgg/t3code/issues/41939";
+  const issueUrl = "https://github.com/neur0map/hyakki/issues/41939";
   await act(async () => harness.openWindow?.({ nativeEvent: { targetUrl: issueUrl } }));
 
   expect(harness.openedLinks).toEqual([issueUrl]);

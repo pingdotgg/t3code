@@ -118,7 +118,7 @@ export const hostedAppUrlConfig = makePublicValueConfig(
 const NIGHTLY_HOSTED_APP_URL = "https://nightly.app.t3.codes";
 
 /**
- * Where agent sign-ins on the T3 Connect address are approved. A nightly build defaults to the
+ * Where agent sign-ins on the Hyakki Connect address are approved. A nightly build defaults to the
  * nightly hosted app, which ships the same approval page; app.t3.codes serves stable.
  */
 export const agentApprovalAppUrlConfig = makePublicValueConfig(

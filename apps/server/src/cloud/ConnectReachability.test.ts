@@ -449,7 +449,7 @@ describe("ConnectReachability DNS failures", () => {
   );
 });
 
-describe("T3 Connect troubleshooting links", () => {
+describe("Hyakki Connect troubleshooting links", () => {
   it("each section names a heading in the user guide", () => {
     const guide = NodeFS.readFileSync(
       new URL("../../../../docs/user/t3-connect-troubleshooting.md", import.meta.url),

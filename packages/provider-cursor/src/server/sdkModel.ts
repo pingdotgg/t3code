@@ -59,7 +59,7 @@ export function cursorContextWindowTokens(
   return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : undefined;
 }
 
-// The SDK infers Max Mode from a model list it never refreshes, so pass it from T3's fresher catalog.
+// The SDK infers Max Mode from a model list it never refreshes, so pass it from Hyakki's fresher catalog.
 function cursorSdkMaxMode(
   sdkModel: SDKModel | undefined,
   params: ReadonlyArray<ModelParameterValue>,
@@ -85,7 +85,7 @@ export function cursorSdkModelSelection(
   const descriptors =
     models.find((model) => model.slug === modelSelection.model)?.capabilities?.optionDescriptors ??
     [];
-  // Some Cursor plans reject runs that leave a catalog parameter unset; T3 keeps Fast off until picked.
+  // Some Cursor plans reject runs that leave a catalog parameter unset; Hyakki keeps Fast off until picked.
   const defaults = descriptors.flatMap((descriptor) => {
     if (explicit.some((option) => option.id === descriptor.id)) return [];
     const value = descriptor.id === "fastMode" ? false : getProviderOptionCurrentValue(descriptor);

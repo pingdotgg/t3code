@@ -55,7 +55,7 @@ const decodeResponse = Schema.decodeUnknownSync(
 );
 
 const instructions = [
-  "You write workflow definitions files for T3 Code. This is everything you know about them:",
+  "You write workflow definitions files for Hyakki. This is everything you know about them:",
   "",
   "<skill>",
   skill,

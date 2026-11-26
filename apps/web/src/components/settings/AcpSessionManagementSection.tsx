@@ -415,7 +415,7 @@ function InstanceSessionManagement(
     <div className="grid gap-3">
       <SettingsRow
         title={gt("Native sessions")}
-        description={gt("Resume agent-owned conversations as T3 threads.")}
+        description={gt("Resume agent-owned conversations as Hyakki threads.")}
         status={
           canList && props.projects.length === 0
             ? gt("Add a project before importing sessions.")

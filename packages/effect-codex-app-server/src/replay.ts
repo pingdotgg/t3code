@@ -251,7 +251,7 @@ function recorderThreadConfigKeys(transcript: CodexAppServerReplayTranscript): R
 
 /**
  * `cwd`, `model`, host-supplied MCP servers (machine-local URLs, short-lived
- * authorization headers) and the T3 thread id vary per machine or run, and
+ * authorization headers) and the Hyakki thread id vary per machine or run, and
  * recorder-only keys are not the client's. The config read before a thread
  * request carries the same `cwd`.
  */

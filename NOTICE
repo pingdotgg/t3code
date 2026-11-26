@@ -1,0 +1,15 @@
+Hyakki
+Copyright (c) 2026 the Hyakki contributors
+
+Hyakki is an unofficial fork of T3 Code (https://github.com/pingdotgg/t3code),
+created by T3 Tools, Inc. and the T3 Code contributors, and distributed under
+the MIT License. The original copyright notice is kept in LICENSE.
+
+Hyakki is not affiliated with, endorsed by, or maintained by T3 Tools, Inc.
+"T3 Code", "T3 Connect", "T3 Tools", the T3 wordmark, logos and icons are marks
+of T3 Tools, Inc.; Hyakki uses none of them as its own branding.
+
+Upstream fixes are brought in with `git cherry-pick -x`, so each one names the
+T3 Code commit it came from.
+
+Third-party software notices are in third-party-licenses/.

@@ -550,7 +550,7 @@ describe("settings mutation authorization", () => {
   );
 
   it.effect(
-    "does not let a settings grant manage providers or turn off T3 Connect device approval",
+    "does not let a settings grant manage providers or turn off Hyakki Connect device approval",
     () =>
       Effect.gen(function* () {
         let handled = false;

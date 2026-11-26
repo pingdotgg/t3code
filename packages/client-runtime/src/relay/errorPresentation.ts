@@ -59,17 +59,17 @@ export function relayProtectedErrorText(error: RelayProtectedError): MarkedText 
       if (error.reason === "environment_link_not_found") {
         return [
           msg(
-            "Relay has no active link for this environment. If it was deregistered from T3 Connect, link it again on that machine.",
+            "Relay has no active link for this environment. If it was deregistered from Hyakki Connect, link it again on that machine.",
           ),
         ];
       }
       if (error.reason === "managed_endpoint_allocation_not_ready") {
-        return [msg("The environment's T3 Connect tunnel is still being set up.")];
+        return [msg("The environment's Hyakki Connect tunnel is still being set up.")];
       }
       if (error.reason === "endpoint_provider_not_managed") {
         return [
           msg(
-            "This environment is linked only to publish agent activity, so it cannot accept connections. On that computer, open Settings > Sharing & access and turn T3 Connect on.",
+            "This environment is linked only to publish agent activity, so it cannot accept connections. On that computer, open Settings > Sharing & access and turn Hyakki Connect on.",
           ),
         ];
       }
@@ -105,7 +105,7 @@ export function relayProtectedErrorText(error: RelayProtectedError): MarkedText 
       return error.maxTunnels < T3CHAT_PLAN_TUNNEL_LIMITS.premier
         ? [
             msg(
-              "Relay refused the link: this account already has its maximum of {maxTunnels} managed tunnels. Unlink an environment, or link a paid T3 Chat account in your T3 Connect account settings on web or desktop. Pro raises the default limit to {pro} and Premier to {premier}.",
+              "Relay refused the link: this account already has its maximum of {maxTunnels} managed tunnels. Unlink an environment, or link a paid T3 Chat account in your Hyakki Connect account settings on web or desktop. Pro raises the default limit to {pro} and Premier to {premier}.",
               {
                 maxTunnels: error.maxTunnels,
                 pro: T3CHAT_PLAN_TUNNEL_LIMITS.pro,
@@ -175,7 +175,7 @@ export function relayOfflineReasonMessage(
     case "tunnel_released":
       return resolve(
         msg(
-          "Offline for a while, so its T3 Connect tunnel was removed. Start T3 Code on that computer and update it to the latest version to reconnect.",
+          "Offline for a while, so its Hyakki Connect tunnel was removed. Start Hyakki on that computer and update it to the latest version to reconnect.",
         ),
       );
     case undefined:

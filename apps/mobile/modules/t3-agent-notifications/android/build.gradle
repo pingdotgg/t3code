@@ -3,7 +3,7 @@ plugins {
   id 'expo-module-gradle-plugin'
 }
 
-group = 'com.t3tools.agentnotifications'
+group = 'dev.ryoku.agentnotifications'
 version = '0.0.0'
 
 android {

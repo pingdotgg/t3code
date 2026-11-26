@@ -139,7 +139,7 @@ export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
     const sessionDirArg = config === undefined ? undefined : piLaunchSessionDir(config.launchArgs);
     const launchDir =
       sessionDirArg === undefined ? undefined : expandHomePath(sessionDirArg, launchHome);
-    // --session-dir moves only T3-launched sessions; terminal sessions stay in Pi's own directory.
+    // --session-dir moves only Hyakki-launched sessions; terminal sessions stay in Pi's own directory.
     return [
       ...(launchDir !== undefined && path.isAbsolute(launchDir)
         ? [{ dir: path.resolve(launchDir) }]

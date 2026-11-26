@@ -19,5 +19,5 @@ export function brokenVersionDetail(input: {
   if (input.advisory?.status !== "broken") return undefined;
   const target =
     input.advisory.recommendedVersion ?? input.advisory.recommendedRange ?? "a newer version";
-  return `${input.name} ${input.version} does not work with this T3 Code release. ${input.action ?? `Update ${input.name}`} to ${target}, then retry.`;
+  return `${input.name} ${input.version} does not work with this Hyakki release. ${input.action ?? `Update ${input.name}`} to ${target}, then retry.`;
 }

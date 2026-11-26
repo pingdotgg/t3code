@@ -119,7 +119,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   // either request can stall while the event stream stays connected.
   const generate = Effect.gen(function* () {
     const session = yield* client.session.create({
-      title: `T3 Code ${input.operation}`,
+      title: `Hyakki ${input.operation}`,
       location: Location.PublicRef.make({ directory: AbsolutePath.make(input.cwd) }),
       model: Model.Ref.make({
         providerID: Provider.ID.make(parsed.providerID),
@@ -135,7 +135,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
         .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
     );
     const images: Array<{ uri: string; name: string }> = [];
-    // As in the adapter: an external server may not share T3's attachment directory, and
+    // As in the adapter: an external server may not share Hyakki's attachment directory, and
     // OpenCode rejects the whole prompt if an attached file is missing.
     for (const attachment of connection.external ? [] : (input.attachments ?? [])) {
       if (!isProviderNativeImageAttachment(attachment)) continue;

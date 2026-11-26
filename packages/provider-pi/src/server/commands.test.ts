@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 
 import { parsePiDiscoveredCommands } from "./commands.ts";
 
-it("maps current Pi skill metadata to T3's user and project skill scopes", () => {
+it("maps current Pi skill metadata to Hyakki's user and project skill scopes", () => {
   expect(
     parsePiDiscoveredCommands({
       commands: [

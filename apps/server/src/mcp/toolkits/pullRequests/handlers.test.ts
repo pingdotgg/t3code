@@ -1811,7 +1811,7 @@ describe("source control tools", () => {
 
     describe("in a thread whose adapter shows the request to the person", () => {
       const UNCONFIRMED =
-        "T3 Code has no approval from the person for this repository's push hooks. Nothing was pushed and no PR was opened. Call again to ask.";
+        "Hyakki has no approval from the person for this repository's push hooks. Nothing was pushed and no PR was opened. Call again to ask.";
       const question = (branch = "tools") =>
         `Push ${branch} and run this repository's hook file .husky/pre-push (contents digest-1)?`;
       /** The thread's requests, kept for an adapter that passes on what the person answered. */

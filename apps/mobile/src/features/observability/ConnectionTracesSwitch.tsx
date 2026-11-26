@@ -32,7 +32,7 @@ async function applyConnectionTracesChange(
   if (value) setConnectionTracesEnabled(true);
 }
 
-/** The phone's T3 Connect connection traces, separate from crash reports. */
+/** The phone's Hyakki Connect connection traces, separate from crash reports. */
 export function ConnectionTracesSwitch() {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomCommand(saveMobilePreferences, { reportFailure: false });

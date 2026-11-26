@@ -1,4 +1,4 @@
-<!-- The T3 mark, full bleed, so it renders as large as other apps' status bar icons. -->
+<!-- The Hyakki mark, full bleed, so it renders as large as other apps' status bar icons. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="120" android:viewportHeight="120">
