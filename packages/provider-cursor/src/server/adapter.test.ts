@@ -939,6 +939,12 @@ describe("CursorAdapterV2", () => {
       assert.equal(checkpointed.terminal?.status, "failed");
       assert.isUndefined(checkpointed.terminal?.promptDropped);
       assert.isUndefined(checkpointed.turn?.promptDropped);
+
+      // After a restart no turn ends to report it, so the next turn start asks instead.
+      const kept = (nativeTurnId: string) =>
+        runtime.nativeTurnKept!({ providerThread, nativeTurnId });
+      assert.isFalse(yield* kept("native-cursor-run-1"));
+      assert.isTrue(yield* kept("native-cursor-run-2"));
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1781,8 +1787,11 @@ describe("CursorAdapterV2", () => {
           toolCall: { type: "shell" as const, args: { command: callId } },
         })),
         {
-          type: "shell-output-delta",
-          event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "slow-shell" },
+          type: "shell-tool-call-delta",
+          callId: "slow-shell",
+          modelCallId: "native-model-call",
+          stream: "stdout",
+          content: "tick 1\n",
         },
         {
           type: "shell-output-delta",

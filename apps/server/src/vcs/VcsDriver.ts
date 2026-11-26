@@ -20,6 +20,24 @@ export interface VcsCaptureCheckpointInput {
   readonly excludePaths?: ReadonlyArray<string>;
 }
 
+/**
+ * A turn's range as its capture found it, so summarizing it need not ask Git again. Commits, not
+ * refs: a later capture cannot move them.
+ */
+export interface VcsCheckpointRange {
+  /** Where the turn started: the previous checkpoint, or its turn start after a branch switch. */
+  readonly from: string;
+  /** The checkpoint just captured. */
+  readonly to: string;
+  /** `from`'s commit time, in epoch seconds. */
+  readonly fromCapturedAt: string;
+  /** The HEAD `from` and `to` recorded as first parent; empty for none. */
+  readonly startHead: string;
+  readonly endHead: string;
+  /** `to` holds the same files as `from`, so the turn changed nothing. */
+  readonly unchanged: boolean;
+}
+
 export interface VcsCaptureHeadCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
@@ -55,12 +73,16 @@ export interface VcsDiffCheckpointsInput {
   readonly filePaths?: ReadonlyArray<string>;
   /** Folders below `cwd` left out of the diff, as in a capture. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** The refs' range as their capture returned it; the refs are then not read. */
+  readonly range?: VcsCheckpointRange;
 }
 
 export interface VcsListAuthoredPathsInput {
   readonly cwd: string;
   readonly fromCheckpointRef: CheckpointRef;
   readonly toCheckpointRef: CheckpointRef;
+  /** The refs' range as their capture returned it; the refs are then not read. */
+  readonly range?: VcsCheckpointRange;
 }
 
 export interface VcsDeleteCheckpointRefsInput {
@@ -69,7 +91,10 @@ export interface VcsDeleteCheckpointRefsInput {
 }
 
 export interface VcsCheckpointOps {
-  readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
+  /** The range from `previousCheckpointRef`, or null when there is none to compare with. */
+  readonly captureCheckpoint: (
+    input: VcsCaptureCheckpointInput,
+  ) => Effect.Effect<VcsCheckpointRange | null, VcsError>;
   /**
    * HEAD's commit when the folder matches it exactly: nothing staged, modified or untracked.
    * Null otherwise. One status, where a capture stages the whole worktree.
