@@ -318,6 +318,39 @@ describe("IssueService", () => {
       }),
   );
 
+  it.effect("refuses a scope that names repositories on two hosts", () =>
+    Effect.gen(function* () {
+      const identities = new Map([
+        ["/w/workspace/a", project({ id: "a", repository: "acme/web" }).repositoryIdentity],
+        [
+          "/w/workspace/b",
+          project({ id: "b", repository: "acme/web", host: "ghe.acme.test" }).repositoryIdentity,
+        ],
+      ]);
+      const service = yield* makeService({
+        projects: [
+          {
+            ...project({ id: "workspace" }),
+            trackedFolders: [
+              { path: "/w/workspace/a", name: "a", discovered: true },
+              { path: "/w/workspace/b", name: "b", discovered: true },
+            ],
+          },
+        ],
+        trackers: [fakeTracker()],
+        resolveRepository: (cwd) => Effect.succeed(identities.get(cwd) ?? null),
+        repositories: ["/w/workspace/a", "/w/workspace/b"],
+      });
+      const result = yield* service
+        .projectScope("workspace" as ProjectId, { scope: "acme/web" })
+        .pipe(Effect.result);
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "IssueOperationError", reason: "not-found" },
+      });
+    }),
+  );
+
   it.effect("keeps a bare key on the project's own repository when it also tracks others", () =>
     Effect.gen(function* () {
       const service = yield* makeService({

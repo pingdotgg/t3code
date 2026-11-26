@@ -785,24 +785,30 @@ const make = Effect.gen(function* () {
     const named = select?.scope?.trim().toLowerCase();
     const prefix = select?.key?.toLowerCase();
     const scopes = [...new Set(supported.map((candidate) => candidate.scope))];
-    const repositories = new Set(
-      supported.map((candidate) => `${candidate.tracker} ${candidate.host} ${candidate.scope}`),
-    );
-    // A bare key in a project whose repositories are all tracked folders could name any of them.
-    const own =
+    const candidates =
       named === undefined
-        ? (supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`)) ??
-          supported.find((candidate) => !candidate.tracked) ??
-          (prefix === undefined || repositories.size === 1 ? supported[0] : undefined))
-        : supported.find((candidate) => candidate.scope.toLowerCase() === named);
+        ? supported
+        : supported.filter((candidate) => candidate.scope.toLowerCase() === named);
+    const repositories = [
+      ...new Set(candidates.map((candidate) => `${candidate.host}/${candidate.scope}`)),
+    ];
+    // Several repositories, all tracked folders or one path on several hosts, could own the key.
+    const own =
+      (named === undefined
+        ? supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`))
+        : undefined) ??
+      candidates.find((candidate) => !candidate.tracked) ??
+      ((named === undefined && prefix === undefined) || repositories.length === 1
+        ? candidates[0]
+        : undefined);
     if (own === undefined) {
       return yield* new IssueOperationError({
         operation: "scope",
         reason: "not-found",
         detail:
-          named === undefined
-            ? `This project has several repositories. Name one: ${scopes.join(", ")}.`
-            : `This project does not track ${select?.scope?.trim()}. Use one of: ${scopes.join(", ")}.`,
+          candidates.length === 0
+            ? `This project does not track ${select?.scope?.trim()}. Use one of: ${scopes.join(", ")}.`
+            : `This project has several repositories that could hold it: ${repositories.join(", ")}.`,
       });
     }
     return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
