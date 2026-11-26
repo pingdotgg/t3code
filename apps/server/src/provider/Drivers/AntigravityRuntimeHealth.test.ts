@@ -54,6 +54,7 @@ const makeHarness = Effect.fn("AntigravityRuntimeHealthTest.makeHarness")(functi
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const node = yield* HostProcess.ExecutablePath;
+  const environment = yield* HostProcess.Environment;
   const agent = yield* path.fromFileUrl(
     new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
   );
@@ -92,7 +93,7 @@ const makeHarness = Effect.fn("AntigravityRuntimeHealthTest.makeHarness")(functi
       ...(source === "override" ? { binaryPath: executable } : {}),
     },
     environment: [
-      { name: "PATH", value: `${root}:${process.env.PATH ?? ""}`, sensitive: false },
+      { name: "PATH", value: `${root}:${environment.PATH ?? ""}`, sensitive: false },
       { name: "T3_ACP_ANTIGRAVITY", value: "1", sensitive: false },
     ],
   }).pipe(Effect.provideService(AntigravityInstallation.AntigravityInstallation, installation));
