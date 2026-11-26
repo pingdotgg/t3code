@@ -223,6 +223,50 @@ describe("buildPendingUserInputAnswers", () => {
       }),
     ).toBeNull();
   });
+
+  it("omits untouched optional single-choice questions while keeping explicit false and empty-string choices", () => {
+    const nameQuestion = { id: "name", options: [] };
+    const extrasQuestion = {
+      id: "extras",
+      options: [
+        { label: "true", value: "true" },
+        { label: "false", value: "false" },
+      ],
+      allowCustomAnswer: false,
+      required: false,
+    };
+    const modeQuestion = {
+      id: "mode",
+      options: [
+        { label: '""', value: "" },
+        { label: "fast", value: "fast" },
+      ],
+      allowCustomAnswer: false,
+      required: false,
+    };
+    const questions = [nameQuestion, extrasQuestion, modeQuestion];
+
+    expect(buildPendingUserInputAnswers(questions, { name: { customAnswer: "Greg" } })).toEqual({
+      name: "Greg",
+    });
+    expect(
+      buildPendingUserInputAnswers(questions, {
+        name: { customAnswer: "Greg" },
+        extras: { selectedOptionValues: ["false"] },
+        mode: { selectedOptionValues: [""] },
+      }),
+    ).toEqual({
+      name: "Greg",
+      extras: "false",
+      mode: "",
+    });
+    expect(
+      buildPendingUserInputAnswers(questions, {
+        name: { customAnswer: "Greg" },
+        extras: { attachmentsBlocked: true },
+      }),
+    ).toBeNull();
+  });
 });
 
 it.each([

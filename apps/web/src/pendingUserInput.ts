@@ -16,6 +16,7 @@ import {
   resolvePendingUserInputAnswer,
   type PendingUserInputAnswer,
   type PendingUserInputDraftAnswer,
+  type PendingUserInputQuestion,
 } from "@t3tools/client-runtime/state/pending-user-input";
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
@@ -74,7 +75,7 @@ export function threadContextsReferencedByAnswer(
   return threadContexts.filter((record) => referencedIds.has(record.contextId));
 }
 
-export interface PendingUserInputProgress<Q extends UserInputQuestion = UserInputQuestion> {
+export interface PendingUserInputProgress<Q extends PendingUserInputQuestion = UserInputQuestion> {
   questionIndex: number;
   activeQuestion: Q | null;
   activeDraft: PendingUserInputDraftAnswer | undefined;
@@ -127,7 +128,7 @@ export function withdrawDisplacedCustomAnswerFromPrompt(
 }
 
 function countAnsweredPendingUserInputQuestions(
-  questions: ReadonlyArray<UserInputQuestion>,
+  questions: ReadonlyArray<PendingUserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
 ): number {
   return questions.reduce((count, question) => {
@@ -137,7 +138,7 @@ function countAnsweredPendingUserInputQuestions(
   }, 0);
 }
 
-export function derivePendingUserInputProgress<Q extends UserInputQuestion>(
+export function derivePendingUserInputProgress<Q extends PendingUserInputQuestion>(
   questions: ReadonlyArray<Q>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
   questionIndex: number,
@@ -169,6 +170,9 @@ export function derivePendingUserInputProgress<Q extends UserInputQuestion>(
     answeredQuestionCount,
     isLastQuestion,
     isComplete: buildPendingUserInputAnswers(questions, draftAnswers) !== null,
-    canAdvance: resolvedAnswer !== null,
+    canAdvance:
+      activeQuestion !== null &&
+      (resolvedAnswer !== null ||
+        (activeQuestion.required === false && !activeDraft?.attachmentsBlocked)),
   };
 }
