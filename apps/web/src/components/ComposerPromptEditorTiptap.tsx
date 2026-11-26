@@ -20,7 +20,7 @@ import { useGT } from "gt-react";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
-  type EditorState,
+  EditorState,
   NodeSelection,
   Plugin,
   PluginKey,
@@ -140,7 +140,6 @@ import {
   ComposerContextRecordsContext,
 } from "./composerContextPresentation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
@@ -156,6 +155,7 @@ import {
   type ComposerAttachmentInsertion,
 } from "./composerAttachmentInsertion";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export interface ComposerPromptEditorHandle {
   focus: () => void;
@@ -329,16 +329,19 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
   );
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
-      <Tooltip>
-        <TooltipTrigger render={chip} />
-        <TooltipPopup side="top" className="pointer-events-auto">
-          <WorkspaceEntryTooltip
-            path={path}
-            environmentId={actions.environmentId}
-            cwd={actions.cwd}
-          />
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={chip}
+        label={
+          <>
+            <WorkspaceEntryTooltip
+              path={path}
+              environmentId={actions.environmentId}
+              cwd={actions.cwd}
+            />
+          </>
+        }
+        className="pointer-events-auto"
+      />
     </NodeViewWrapper>
   );
 }
@@ -469,6 +472,21 @@ const ComposerCitationExtension = Node.create({
   addNodeView() {
     return ReactNodeViewRenderer(ComposerCitationNodeView);
   },
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          handleDOMEvents: {
+            // Tiptap hands a mousedown on the source link to ProseMirror, which would select the
+            // chip, so the next keystroke would replace the citation.
+            mousedown: (_view, event) =>
+              event.target instanceof Element &&
+              event.target.closest("[data-composer-citation-chip] a[href]") !== null,
+          },
+        },
+      }),
+    ];
+  },
 });
 
 function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
@@ -527,12 +545,15 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       if (sent) editor.view.focus();
       return;
     }
+    // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
+    // Mid-text, skipping the space would glue them to the next word instead.
+    const end = pos + current.nodeSize;
+    const { doc } = editor.state;
+    const trailingSpace =
+      doc.textBetween(end, end + 1) === " " && doc.resolve(end).end() === end + 1;
+    const caret = trailingSpace ? end + 1 : end;
     // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
-    editor
-      .chain()
-      .setMeta(SILENT_SELECTION_META, sent)
-      .focus(pos + current.nodeSize)
-      .run();
+    editor.chain().setMeta(SILENT_SELECTION_META, sent).focus(caret).run();
   };
 
   return (
@@ -832,11 +853,12 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
     setSelection({ value, cursor, expandedCursor });
     onPromptChange(value, cursor, expandedCursor, ...rest);
   };
-  // Changing text mode remounts the editor. Its collapsed cursor cannot represent
-  // a caret inside unknown `$name` text, so retain the exact Markdown offset here.
+  // Changing text mode remounts the editor; switching drafts reuses it (see the controlled-value
+  // effect). Its collapsed cursor cannot represent a caret inside unknown `$name` text, so retain
+  // the exact Markdown offset here.
   return (
     <ComposerPromptEditorTiptapInner
-      key={`${props.draftKey ?? ""}:${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}`}
+      key={props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}
       {...props}
       restoreFocusRef={restoreFocusRef}
       initialExpandedCursor={
@@ -1058,6 +1080,14 @@ function ComposerPromptEditorTiptapInner(
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
+  const draftKey = props.draftKey ?? "";
+  const [renderedDraftKey, setRenderedDraftKey] = useState(draftKey);
+  if (renderedDraftKey !== draftKey) {
+    setRenderedDraftKey(draftKey);
+    setOpenCitation(null);
+    setIsEmpty(value.length === 0);
+  }
+  const appliedDraftKeyRef = useRef(draftKey);
 
   const citationCommentActions = {
     openComment: openCitation,
@@ -1549,10 +1579,12 @@ function ComposerPromptEditorTiptapInner(
             return true;
           });
           if (touchesSpecial) return false;
-          const map = serializeEditorDoc(view.state.doc);
-          const startMd = flatToMarkdown(map, pmToFlat(map, from));
-          const endMd = flatToMarkdown(map, pmToFlat(map, to));
-          if (selectionTouchesMentionBoundary(map.value, startMd, endMd)) return false;
+          if (!selectionInOneCodeBlock(view.state)) {
+            const map = serializeEditorDoc(view.state.doc);
+            const startMd = flatToMarkdown(map, pmToFlat(map, from));
+            const endMd = flatToMarkdown(map, pmToFlat(map, to));
+            if (selectionTouchesMentionBoundary(map.value, startMd, endMd)) return false;
+          }
           const markTr = surroundSelectionWithMark(view.state, from, to, text);
           if (markTr) {
             view.dispatch(markTr);
@@ -1739,7 +1771,11 @@ function ComposerPromptEditorTiptapInner(
   useLayoutEffect(() => {
     latestValueRef.current = value;
     if (!editor) return;
-    const initialSelection = !hasAppliedControlledSelectionRef.current;
+    // Switching threads swaps the draft in this same editor, which is far cheaper than rebuilding
+    // it. A fresh state keeps undo from reaching back into the previous thread's draft.
+    const draftChanged = appliedDraftKeyRef.current !== draftKey;
+    appliedDraftKeyRef.current = draftKey;
+    const initialSelection = !hasAppliedControlledSelectionRef.current || draftChanged;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
     const previousSnapshot = snapshotRef.current;
@@ -1770,8 +1806,21 @@ function ComposerPromptEditorTiptapInner(
 
     isApplyingControlledUpdateRef.current = true;
     const pendingCitation =
-      citationRequestRef.current?.value === value ? citationRequestRef.current : null;
-    if (previousSnapshot.value !== value) {
+      !draftChanged && citationRequestRef.current?.value === value
+        ? citationRequestRef.current
+        : null;
+    if (draftChanged) {
+      citationRequestRef.current = null;
+      citationDraftRef.current = null;
+      editor.view.updateState(
+        EditorState.create({
+          doc: editor.schema.nodeFromJSON(
+            buildDocJson(value, skillLabelFor, { styling: richText, literalText, isKnownModel }),
+          ),
+          plugins: editor.state.plugins,
+        }),
+      );
+    } else if (previousSnapshot.value !== value) {
       saveCitationDraft(editor, previousSnapshot.value);
       editor.commands.setContent(
         buildDocJson(value, skillLabelFor, { styling: richText, literalText, isKnownModel }),
@@ -1815,6 +1864,7 @@ function ComposerPromptEditorTiptapInner(
   }, [
     clampEditorCursor,
     cursor,
+    draftKey,
     editor,
     expandEditorCursor,
     initialExpandedCursor,

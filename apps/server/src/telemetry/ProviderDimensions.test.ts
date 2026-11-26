@@ -16,6 +16,7 @@ const provider = (
   ({
     instanceId: ProviderInstanceId.make(instanceId),
     driver,
+    auth: { status: "authenticated" },
     models,
   }) as unknown as ServerProvider;
 
@@ -42,7 +43,7 @@ const thread = (
   ...overrides,
 });
 
-it("reports every model name but never instance names", () => {
+it("reports custom models as custom:<driver> and never instance names", () => {
   expect(
     agentToolProperties({
       tool: "t3_thread_send",
@@ -59,13 +60,13 @@ it("reports every model name but never instance names", () => {
   ).toEqual([
     {
       callerProvider: "claudeAgent",
-      callerModel: "my-private-finetune",
+      callerModel: "custom:claudeAgent",
       targetProvider: "opencode",
-      targetModel: "ollama/acme-internal",
+      targetModel: "custom:opencode",
     },
     {
       callerProvider: "claudeAgent",
-      callerModel: "my-private-finetune",
+      callerModel: "custom:claudeAgent",
       targetProvider: "unknown",
       targetModel: undefined,
     },
