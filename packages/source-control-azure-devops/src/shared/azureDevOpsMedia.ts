@@ -23,8 +23,16 @@ function decodeSegment(segment: string): string {
   }
 }
 
-/** One spelling per segment, so every link to a file shares its fetch URL. */
-const routeValue = (segment: string) => encodeURIComponent(decodeSegment(segment));
+// Azure decodes route values before routing, so an escaped separator, a dot segment or a control
+// character would let one value step into a neighbouring route.
+const UNSAFE_ROUTE_CHARACTER = /[\p{Cc}\\/]/u;
+
+/** One spelling per segment, so every link to a file shares its fetch URL. Null when unsafe. */
+function routeValue(segment: string): string | null {
+  const decoded = decodeSegment(segment);
+  if (decoded === "." || decoded === ".." || UNSAFE_ROUTE_CHARACTER.test(decoded)) return null;
+  return encodeURIComponent(decoded);
+}
 
 /**
  * Azure DevOps Services pull request attachments, the URLs Azure puts in a description or comment
@@ -56,14 +64,18 @@ export function azureDevOpsPullRequestAttachment(
   if (!project || !repository || !pullRequestId || !fileName) return null;
   const number = Number(pullRequestId);
   if (!Number.isSafeInteger(number) || number < 1) return null;
+  const projectValue = routeValue(project);
+  const repositoryValue = routeValue(repository);
+  const fileNameValue = routeValue(fileName);
+  if (projectValue === null || repositoryValue === null || fileNameValue === null) return null;
   return {
     organization: legacy
       ? `https://${organization}.visualstudio.com`
       : `https://dev.azure.com/${organization}`,
-    project: routeValue(project),
-    repository: routeValue(repository),
+    project: projectValue,
+    repository: repositoryValue,
     pullRequestId: number,
-    fileName: routeValue(fileName),
+    fileName: fileNameValue,
   };
 }
 

@@ -42,7 +42,7 @@ layer("AzureDevOpsMediaFetch", (it) => {
       mockedExecute.mockImplementationOnce((input) =>
         Effect.sync(() => {
           outFile = input.args[input.args.indexOf("--out-file") + 1] ?? "";
-          NodeFS.writeFileSync(outFile, png);
+          NodeFS.writeFileSync(`${input.cwd}/${outFile}`, png);
           return empty;
         }),
       );
@@ -79,15 +79,34 @@ layer("AzureDevOpsMediaFetch", (it) => {
         outFile,
         "--only-show-errors",
       ]);
+      // The output path is relative, so a Windows `az` under WSL resolves it inside `cwd`.
+      expect(outFile).toMatch(/^t3-azure-media-[^\\/]+\/media$/u);
       // No checkout scopes the read, and its scratch directory is gone once the bytes are read.
-      const scratch = outFile.slice(0, outFile.lastIndexOf("/"));
-      expect(NodeFS.existsSync(scratch)).toBe(false);
       // `az` runs beside the scratch directory, never in it: what it leaves running would lock it.
-      expect(input.cwd).not.toBe(scratch);
-      expect(scratch.startsWith(input.cwd)).toBe(true);
+      expect(NodeFS.existsSync(`${input.cwd}/${outFile.slice(0, outFile.indexOf("/"))}`)).toBe(
+        false,
+      );
       expect(NodeFS.existsSync(input.cwd)).toBe(true);
     }),
   );
+
+  it("runs az in the scratch directory's parent, keeping a root's separator", () => {
+    expect(AzureDevOpsMediaFetch.azureDevOpsMediaInvokePaths("/tmp/t3-azure-media-1")).toEqual({
+      cwd: "/tmp",
+      outFile: "t3-azure-media-1/media",
+    });
+    expect(AzureDevOpsMediaFetch.azureDevOpsMediaInvokePaths("/t3-azure-media-1")).toEqual({
+      cwd: "/",
+      outFile: "t3-azure-media-1/media",
+    });
+    expect(
+      AzureDevOpsMediaFetch.azureDevOpsMediaInvokePaths("C:\\Users\\me\\Temp\\t3-azure-media-1"),
+    ).toEqual({ cwd: "C:\\Users\\me\\Temp", outFile: "t3-azure-media-1/media" });
+    expect(AzureDevOpsMediaFetch.azureDevOpsMediaInvokePaths("C:\\t3-azure-media-1\\")).toEqual({
+      cwd: "C:\\",
+      outFile: "t3-azure-media-1/media",
+    });
+  });
 
   it.effect("answers null when az cannot read the attachment, and runs az only for one", () =>
     Effect.gen(function* () {

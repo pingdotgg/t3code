@@ -16,6 +16,24 @@ const MEDIA_TIMEOUT_MS = 60_000;
 const MAX_CONCURRENT_READS = 2;
 
 /**
+ * `az` runs in the parent of `directory`: on Windows its leftover telemetry process locks its
+ * working directory. The output path is relative, since a Windows `az` started from WSL reads an
+ * absolute POSIX path as one on its own drive.
+ */
+export function azureDevOpsMediaInvokePaths(directory: string): {
+  readonly cwd: string;
+  readonly outFile: string;
+} {
+  const trimmed = directory.replace(/(?<=[^\\/])[\\/]+$/u, "");
+  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const parent = trimmed.slice(0, separator);
+  // A root keeps its separator: `C:` alone is the drive's current directory, and `` is no path.
+  const cwd = parent === "" || parent.endsWith(":") ? trimmed.slice(0, separator + 1) : parent;
+  // invoke refuses to overwrite its output, so the file gets a name nothing holds yet.
+  return { cwd, outFile: `${trimmed.slice(separator + 1)}/media` };
+}
+
+/**
  * Reads an attachment through `az devops invoke`, so it carries whichever credential the extension
  * holds for the organization: an `az login` account or a PAT from `az devops login`.
  */
@@ -29,13 +47,11 @@ export const make = Effect.gen(function* () {
     const attachment = target === null ? null : azureDevOpsPullRequestAttachment(target);
     if (attachment === null) return null;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-azure-media-" });
-    // invoke refuses to overwrite its output, so the file gets a name nothing holds yet.
+    const { cwd, outFile } = azureDevOpsMediaInvokePaths(directory);
     const file = `${directory}/media`;
     yield* azure.execute({
-      // The organization is named explicitly, so no checkout has to say where `az` runs. Not in
-      // `directory` itself: on Windows the telemetry process `az` leaves behind holds its working
-      // directory for a few seconds, and the scratch directory could not be removed.
-      cwd: directory.replace(/[\\/][^\\/]+$/u, ""),
+      // The organization is named explicitly, so no checkout has to say where `az` runs.
+      cwd,
       timeoutMs: MEDIA_TIMEOUT_MS,
       args: [
         "devops",
@@ -58,7 +74,7 @@ export const make = Effect.gen(function* () {
         "--accept-media-type",
         "application/octet-stream",
         "--out-file",
-        file,
+        outFile,
         "--only-show-errors",
       ],
     });
