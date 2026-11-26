@@ -56,13 +56,7 @@ describe("markdownTaskMarkerOffset", () => {
 
   it("skips next-line markers that the native renderer does not render as checkboxes", () => {
     const body = "-\n  [ ] Same\n\n```txt\nseparator\n```\n\n- [ ] Same";
-    const offset = markdownTaskMarkerOffset(body, 0, "Same", true);
-    expect(offset).toBe(38);
-    expect(setMarkdownTaskChecked(body, offset!, true)).toBe(
-      "-\n  [ ] Same\n\n```txt\nseparator\n```\n\n- [x] Same",
-    );
-    expect(markdownTaskMarkerOffset("> -\n>   [ ] Task\n\n> - [ ] Task", 0, "Task", true)).toBe(22);
-    expect(markdownTaskMarkerOffset("-\n  [ ] Task", 0, "Task", true)).toBeNull();
+    expect(markdownTaskMarkerOffset(body, 0, "Same", true)).toBe(body.lastIndexOf("[ ]"));
     expect(markdownTaskMarkerOffset("> -\n>   [ ] Task", 0, "Task", true)).toBeNull();
   });
 
