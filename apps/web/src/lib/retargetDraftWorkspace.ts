@@ -29,6 +29,8 @@ interface PendingWorkspaceDefault {
 // Keyed by draft, not project: load balancing moves a draft between machines of the same
 // project without retargeting its workspace, and the file's default must still land.
 const pendingWorkspaceDefaults = new Map<DraftId, PendingWorkspaceDefault>();
+// Outlives a branch commit that drops the pending default, so a later move still stops a waiting send.
+const unsettledDefaultReads = new Map<DraftId, PendingWorkspaceDefault["superseded"]>();
 
 function keepsProvisionalWorkspace(
   draft: DraftSessionState | null,
@@ -58,7 +60,8 @@ function clearPendingWorkspaceDefault(draftId: DraftId): void {
 }
 
 export function dropPendingWorkspaceDefault(draftId: DraftId): void {
-  pendingWorkspaceDefaults.get(draftId)?.superseded.resolve(false);
+  unsettledDefaultReads.get(draftId)?.resolve(false);
+  unsettledDefaultReads.delete(draftId);
   pendingWorkspaceDefaults.delete(draftId);
 }
 
@@ -180,6 +183,9 @@ export function prepareDraftWorkspaceDefault(
           if (pendingWorkspaceDefaults.get(draftId) === pending) {
             clearPendingWorkspaceDefault(draftId);
           }
+          if (unsettledDefaultReads.get(draftId) === pending.superseded) {
+            unsettledDefaultReads.delete(draftId);
+          }
         });
       const pending = {
         envMode: workspace.envMode,
@@ -190,6 +196,7 @@ export function prepareDraftWorkspaceDefault(
       };
       dropPendingWorkspaceDefault(draftId);
       pendingWorkspaceDefaults.set(draftId, pending);
+      unsettledDefaultReads.set(draftId, pending.superseded);
     },
   };
 }

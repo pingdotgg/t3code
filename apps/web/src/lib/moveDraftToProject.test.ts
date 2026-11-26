@@ -138,6 +138,22 @@ describe("moveDraftToProject", () => {
     expect(store.getDraftSession(draftId)?.envMode).toBe("local");
   });
 
+  it("stops a waiting send when the draft moves after a branch pick", async () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(draftId, "Plan the next project");
+    vi.mocked(readT3ProjectFile).mockReturnValueOnce(new Promise(() => {}));
+
+    moveDraftToProject(draftId, added);
+    const pending = readPendingWorkspaceDefault(draftId);
+    await withDraftBranchChoice(draftId, async (commit) => {
+      store.setDraftThreadContext(draftId, { branch: "feature" });
+      commit();
+    });
+    moveDraftToProject(draftId, current);
+
+    expect(await pending).toBe(false);
+  });
+
   it.each([
     { committed: false, mode: "worktree", branch: null },
     { committed: true, mode: "local", branch: "feature" },
