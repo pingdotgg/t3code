@@ -1,4 +1,7 @@
 {
+  "6c6e16b9488f8b91": "Desplázate para leerlo todo.",
+  "035aab5e99159bd8": "{count, plural, one {… No se muestra {hidden} carácter del medio.} other {… No se muestran {hidden} caracteres del medio.}} El texto termina con:",
+  "011b1ef726fa9928": "Desplázate en cada parte para leerla entera.",
   "4bcfa3b976a421cf": "Chat lateral",
   "23be753133ae6950": "Hilo",
   "0001ae5846061bb6": "Hilo en {machine}",
@@ -3475,7 +3478,7 @@
   "12170596ff889d5b": "Volver a adjuntar",
   "748efc40dc99b309": "Quítalo para enviar",
   "fd3d4318e7b094fa": "Borrador",
-  "9c421cab815b9905": "{count, plural, one {Mostrar {count} imagen adjunta más} other {Mostrar {count} imágenes adjuntas más}}",
+  "c7f5c98f1e79cc6c": "{count, plural, one {Mostrar {count} imagen adjunta más} other {Mostrar {count} imágenes adjuntas más}}",
   "ae136257600738d3": "Adjuntar archivos",
   "3e04fb123bbf31b4": "No se pudo guardar localmente el adjunto del borrador y puede perderse al navegar.",
   "81709882b9996586": "Adjuntar archivos",
@@ -12988,5 +12991,23 @@
   "1af8d12ac21cb183": "El stash admite {max} prompts. Restaura o elimina uno para hacer sitio; el campo de texto se dejó como estaba.",
   "381ceed77cb8b2b3": "Detener {name}",
   "5b9fda36b610d25c": "Detener",
-  "1d372f6d555dde3c": "Detener todos los dispositivos"
+  "1d372f6d555dde3c": "Detener todos los dispositivos",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " más"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " más en Elementos vinculados"
+  ]
 }
