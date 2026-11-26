@@ -166,6 +166,19 @@ describe("BackgroundPolicy", () => {
     ),
   );
 
+  it.effect("host work follows host constraints without any client lease", () =>
+    Effect.gen(function* () {
+      const nominal = yield* BackgroundPolicy.BackgroundPolicy.pipe(
+        Effect.provide(layerFor({ ...nominalHostPower, stale: false })),
+      );
+      assert.equal(yield* nominal.shouldRunHostWork, true);
+      const locked = yield* BackgroundPolicy.BackgroundPolicy.pipe(
+        Effect.provide(layerFor({ ...nominalHostPower, locked: "true", stale: false })),
+      );
+      assert.equal(yield* locked.shouldRunHostWork, false);
+    }),
+  );
+
   it.effect("keeps background demand visible while preventing scoped work", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;
