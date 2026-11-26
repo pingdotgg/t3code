@@ -25,6 +25,7 @@ import { assert, beforeAll, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
   EnvironmentId,
+  EventId,
   MessageId,
   type ModelSelection,
   ProviderDriverKind,
@@ -36,6 +37,7 @@ import {
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type ProviderOptionDescriptor,
+  type ProviderReplayEntry,
   type ProviderUserInputAnswers,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
@@ -59,6 +61,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -85,6 +88,8 @@ import {
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ProjectionStore from "../ProjectionStore.ts";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -10302,6 +10307,1027 @@ describe("AcpAdapterV2", () => {
         ["old reply from history"],
       );
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  const request = (method: string) => ({
+    type: "expect_outbound" as const,
+    frame: { kind: "request", method, params: "<any>" },
+  });
+  const response = (method: string, result: unknown) => ({
+    type: "emit_inbound" as const,
+    frame: { kind: "response", method, result },
+  });
+  const notifySession = (sessionId: string, update: EffectAcpSchema.SessionUpdate) => ({
+    type: "emit_inbound" as const,
+    frame: { kind: "notification", method: "session/update", params: { sessionId, update } },
+  });
+  const replaySession = Effect.fnUntraced(function* (
+    scenario: string,
+    entries: ReadonlyArray<ProviderReplayEntry>,
+  ) {
+    const transcript = yield* decodeAcpReplayTranscript(
+      {
+        provider: ACP_TEST_DRIVER,
+        protocol: "acp.ndjson-jsonrpc",
+        version: "1",
+        scenario,
+        entries,
+      },
+      ACP_TEST_DRIVER,
+    );
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-replay-" });
+    const statusPath = NodePath.join(directory, "status.json");
+    const makeRuntime = makeAcpReplayRuntime({
+      transcript,
+      statusPath,
+      fileSystem,
+      scriptPath: yield* bundledReplayAgentPath,
+      childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+    });
+    return {
+      directory,
+      makeRuntime,
+      verify: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
+    };
+  });
+
+  it.effect.each([true, false])(
+    "isolates unflagged replay across provisional session/load and prompt admission (newer config: %s)",
+    (newerConfig) =>
+      Effect.gen(function* () {
+        const sessionId = "loaded-session";
+        const instanceId = ProviderInstanceId.make("acp-load-isolation");
+        const threadId = ThreadId.make("thread-load-isolation");
+        const history = (phase: string) => [
+          notifySession(sessionId, {
+            sessionUpdate: "user_message_chunk",
+            messageId: `user-${phase}`,
+            content: { type: "text", text: `question during ${phase}` },
+          }),
+          notifySession(sessionId, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: `assistant-${phase}`,
+            content: { type: "text", text: `old reply during ${phase}` },
+          }),
+          notifySession(sessionId, {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            title: "run_command",
+            kind: "execute",
+            status: "completed",
+            rawInput: { command: "echo old" },
+          }),
+        ];
+        const configOptions = (id: string): EffectAcpSchema.SessionConfigOption[] => [
+          {
+            id,
+            name: id,
+            type: "select",
+            currentValue: "on",
+            options: [{ name: "On", value: "on" }],
+          },
+        ];
+        const commands = (phase: string) =>
+          notifySession(sessionId, {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: `command-${phase}`, description: "Loaded command" }],
+          });
+        const finishLoad = response("session/load", {
+          configOptions: configOptions("response-option"),
+        });
+        const { directory, makeRuntime, verify } = yield* replaySession("load-replay-isolation", [
+          request("initialize"),
+          response("initialize", {
+            protocolVersion: 1,
+            agentCapabilities: { loadSession: true },
+            authMethods: [],
+          }),
+          request("session/load"),
+          ...history("load"),
+          notifySession("child-session", {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "child-only", description: "Child" }],
+          }),
+          ...(newerConfig
+            ? [
+                notifySession(sessionId, {
+                  sessionUpdate: "config_option_update",
+                  configOptions: configOptions("load-option"),
+                }),
+              ]
+            : []),
+          commands("load"),
+          request("_test/idle"),
+          ...history("idle"),
+          commands("idle"),
+          ...(newerConfig
+            ? [
+                notifySession(sessionId, {
+                  sessionUpdate: "config_option_update",
+                  configOptions: configOptions("idle-option"),
+                }),
+              ]
+            : []),
+          response("_test/idle", {}),
+          request("_test/before-prompt"),
+          ...history("before-prompt"),
+          ...(newerConfig ? [finishLoad] : []),
+          response("_test/before-prompt", {}),
+          request("session/prompt"),
+          notifySession(sessionId, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "live-assistant",
+            content: { type: "text", text: "fresh reply" },
+          }),
+          response("session/prompt", { stopReason: "end_turn" }),
+          ...(!newerConfig
+            ? [request("_test/finish-load"), finishLoad, response("_test/finish-load", {})]
+            : []),
+        ]);
+        const native = yield* Deferred.make<AcpSessionRuntime.AcpSessionRuntime["Service"]>();
+        const releaseReplay = (method: string) =>
+          Effect.gen(function* () {
+            const runtime = yield* Deferred.await(native);
+            yield* runtime.request(method, {});
+            yield* runtime.drainEvents;
+          });
+        const continuations: ProviderContinuationRequests.ProviderContinuationRequest[] = [];
+        const publishedOptions: string[][] = [];
+        const loadCommands = yield* Deferred.make<void>();
+        const loadResponses = yield* Queue.unbounded<void>();
+        const runtimeTools: string[] = [];
+        const publishedCommands: string[] = [];
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuations.push(request);
+              }),
+          },
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: true,
+            makeRuntime: (input) => {
+              const options = {
+                ...input,
+                sessionLoadReplayIdleReadiness: true,
+                sessionLoadReplayIdleGap: "25 millis" as const,
+                requestLogger: (event: AcpSessionRuntime.AcpSessionRequestLogEvent) =>
+                  (input.requestLogger?.(event) ?? Effect.void).pipe(
+                    Effect.andThen(
+                      event.method === "session/load" && event.status === "succeeded"
+                        ? Queue.offer(loadResponses, undefined)
+                        : Effect.void,
+                    ),
+                    Effect.asVoid,
+                  ),
+              };
+              return makeRuntime(options).pipe(
+                Effect.tap((runtime) => Deferred.succeed(native, runtime)),
+                Effect.map((runtime) => ({
+                  ...runtime,
+                  prompt: (payload, promptOptions) =>
+                    Effect.gen(function* () {
+                      yield* releaseReplay("_test/before-prompt");
+                      if (newerConfig) yield* Queue.take(loadResponses);
+                      assert.equal(yield* runtime.isSessionLoadInFlight!(sessionId), !newerConfig);
+                      return yield* runtime.prompt(payload, promptOptions);
+                    }),
+                })),
+              );
+            },
+            onSessionEvent: (event) =>
+              Effect.sync(() => {
+                if (event._tag === "ToolCallUpdated") runtimeTools.push(event.toolCall.toolCallId);
+              }),
+            onSessionConfigurationUpdate: (options) =>
+              Effect.sync(() => {
+                publishedOptions.push(options.map((option) => option.id));
+              }),
+            onAvailableCommandsUpdate: (commands) =>
+              Effect.sync(() => {
+                publishedCommands.push(...commands.map((command) => command.name));
+              }).pipe(
+                Effect.andThen(
+                  commands.some((command) => command.name === "command-load")
+                    ? Deferred.succeed(loadCommands, undefined)
+                    : Effect.void,
+                ),
+                Effect.asVoid,
+              ),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: directory,
+        });
+        const modelSelection = { instanceId, model: "default" };
+        const opening = yield* adapter
+          .openSession({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+            providerSessionId: ProviderSessionId.make("session-load-isolation"),
+            initialNativeThreadId: sessionId,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(loadCommands);
+        assert.isEmpty(publishedOptions, "the initial load has not installed its configuration");
+        yield* TestClock.adjust("25 millis");
+        const runtime = yield* Fiber.join(opening);
+        yield* Queue.take(loadResponses);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        yield* releaseReplay("_test/idle");
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        if (newerConfig)
+          assert.includeMembers(publishedOptions.flat(), ["load-option", "idle-option"]);
+        assert.deepEqual(publishedCommands, ["command-load", "command-idle"]);
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        assert.equal(events.find((e) => e.type === "turn.terminal")?.status, "completed");
+        const items = events.flatMap((e) => (e.type === "turn_item.updated" ? [e.turnItem] : []));
+        assert.deepEqual(
+          [
+            ...new Set(
+              items.flatMap((item) => (item.type === "assistant_message" ? [item.text] : [])),
+            ),
+          ],
+          ["fresh reply"],
+        );
+        assert.deepEqual(
+          [
+            ...new Set(
+              events.flatMap((e) =>
+                e.type === "message.updated" && e.message.role === "assistant"
+                  ? [e.message.text]
+                  : [],
+              ),
+            ),
+          ],
+          ["fresh reply"],
+        );
+        assert.isFalse(items.some((item) => item.nativeItemRef?.nativeId === "tool-1"));
+        assert.isFalse(
+          events.some(
+            (e) => e.type === "node.updated" && e.node.nativeItemRef?.nativeId === "tool-1",
+          ),
+        );
+        assert.isEmpty(continuations);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+        const phases = ["load", "idle", "before-prompt"];
+        assert.sameDeepMembers(
+          snapshot.messages.map((message) => [message.role, message.text]),
+          [
+            ...phases.flatMap((phase) => [
+              ["user", `question during ${phase}`],
+              ["assistant", `old reply during ${phase}`],
+            ]),
+            ["user", "test prompt"],
+            ["assistant", "fresh reply"],
+          ],
+        );
+        assert.notInclude(runtimeTools, "tool-1");
+        if (!newerConfig) {
+          yield* releaseReplay("_test/finish-load");
+          yield* Queue.take(loadResponses);
+          yield* (yield* Deferred.await(native)).drainEvents;
+          assert.include(publishedOptions.flat(), "response-option");
+        } else {
+          assert.notInclude(publishedOptions.flat(), "response-option");
+        }
+        yield* verify;
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    { protocolVersion: 1, method: "resume" },
+    { protocolVersion: 1, method: "load" },
+    { protocolVersion: 2, method: "load" },
+  ] as const)(
+    "offers a live wake before any prompt after ACP v$protocolVersion $method",
+    ({ protocolVersion, method }) =>
+      Effect.gen(function* () {
+        const sessionId = "resumed-session";
+        const instanceId = ProviderInstanceId.make("acp-live-wake");
+        const threadId = ThreadId.make("thread-live-wake");
+        const wireMethod = protocolVersion === 2 ? "session/resume" : `session/${method}`;
+        const replay = yield* replaySession("resume-live-wake", [
+          request("initialize"),
+          response(
+            "initialize",
+            protocolVersion === 2
+              ? {
+                  protocolVersion,
+                  info: { name: "replay", version: "1" },
+                  capabilities: { session: {} },
+                }
+              : {
+                  protocolVersion,
+                  agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
+                  authMethods: [],
+                },
+          ),
+          request(wireMethod),
+          response(wireMethod, {}),
+          request("_test/wake"),
+          notifySession(sessionId, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "wake",
+            content: { type: "text", text: "live wake" },
+          }),
+          response("_test/wake", {}),
+          ...(protocolVersion === 2
+            ? [
+                request("_test/continue"),
+                notifySession(sessionId, { sessionUpdate: "state_update", state: "running" }),
+                notifySession(sessionId, {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "live-tool",
+                  title: "Live tool",
+                  status: "completed",
+                }),
+                notifySession(sessionId, {
+                  sessionUpdate: "compaction_update",
+                  compactionId: "live-compaction",
+                  status: "completed",
+                }),
+                notifySession(sessionId, {
+                  sessionUpdate: "state_update",
+                  state: "idle",
+                  stopReason: "end_turn",
+                }),
+                response("_test/continue", {}),
+              ]
+            : []),
+        ]);
+        const native = yield* Deferred.make<AcpSessionRuntime.AcpSessionRuntime["Service"]>();
+        const offers: ProviderContinuationRequests.ProviderContinuationRequest[] = [];
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          continuationRequests: {
+            offer: (wake) =>
+              Effect.sync(() => {
+                offers.push(wake);
+              }),
+          },
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: protocolVersion === 1,
+            followAgentWorkState: protocolVersion === 2,
+            makeRuntime: (input) => {
+              const options = { ...input, resumeMethod: method };
+              return replay
+                .makeRuntime(options)
+                .pipe(Effect.tap((runtime) => Deferred.succeed(native, runtime)));
+            },
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: replay.directory,
+        });
+        const modelSelection = { instanceId, model: "default" };
+        const runtime = yield* adapter.openSession({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          providerSessionId: ProviderSessionId.make("session-live-wake"),
+          initialNativeThreadId: sessionId,
+        });
+        const acp = yield* Deferred.await(native);
+        yield* acp.request("_test/wake", {});
+        yield* acp.drainEvents;
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.deepEqual(
+          offers.map((wake) => [wake.threadId, wake.providerThreadId]),
+          [[threadId, providerThread.id]],
+        );
+        if (protocolVersion === 2) {
+          const turn = makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          });
+          yield* runtime.startTurn({
+            ...turn,
+            message: { ...turn.message, createdBy: "agent", creationSource: "provider" },
+          });
+          yield* acp.request("_test/continue", {});
+          const events = yield* runtime.events.pipe(
+            Stream.takeUntil((e) => e.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          assert.equal(events.find((e) => e.type === "turn.terminal")?.status, "completed");
+          const items = events.flatMap((e) => (e.type === "turn_item.updated" ? [e.turnItem] : []));
+          assert.isTrue(
+            items.some((item) => item.type === "assistant_message" && item.text === "live wake"),
+          );
+          assert.isTrue(
+            items.some(
+              (item) => item.nativeItemRef?.nativeId === "live-tool" && item.status === "completed",
+            ),
+          );
+          assert.isTrue(
+            items.some((item) => item.type === "compaction" && item.status === "completed"),
+          );
+        }
+        yield* replay.verify;
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  const openReusedCommandSession = Effect.fnUntraced(function* (
+    toolCallId: string,
+    ordering: "before" | "during" | "after",
+  ) {
+    const threadId = ThreadId.make(`thread-${toolCallId}`);
+    const instanceId = ProviderInstanceId.make("acp-reused-tool");
+    const sessionId = "mock-session-1";
+    const notify =
+      yield* Deferred.make<
+        Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+      >();
+    const send = (update: EffectAcpSchema.SessionUpdate) =>
+      Deferred.await(notify).pipe(Effect.flatMap((handler) => handler({ sessionId, update })));
+    const complete = (taskId?: string) =>
+      send({
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "completed",
+        ...(taskId === undefined ? {} : { rawInput: { taskId } }),
+      });
+    const promptSettled = yield* Queue.unbounded<void>();
+    let promptCount = 0;
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      testHooks: {
+        afterPromptCallback: () => Queue.offer(promptSettled, undefined).pipe(Effect.asVoid),
+      },
+      continuationRequests: { offer: () => Effect.void },
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        enablePostSettleContinuation: true,
+        deferFinalizeForBackgroundWork: true,
+        toolOutlivesPrompt: () => true,
+        isBackgroundCommandTool: (tool) => tool.kind === "execute",
+        extractBackgroundTaskId: (tool) => {
+          const args = tool.data.rawInput;
+          return typeof args === "object" &&
+            args !== null &&
+            "taskId" in args &&
+            typeof args.taskId === "string"
+            ? args.taskId
+            : undefined;
+        },
+        postSettleCommandHold: { timeout: "1 second" as const, isCommand: () => true },
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          mockAgentPath: yield* bundledMockAgentPath,
+          wrapRuntime: (runtime) => ({
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Deferred.succeed(notify, handler).pipe(
+                Effect.andThen(runtime.handleSessionUpdate(handler)),
+              ),
+            prompt: () =>
+              Effect.gen(function* () {
+                promptCount++;
+                const detach = promptCount === 1 || ordering === "after";
+                yield* send({
+                  sessionUpdate: "tool_call",
+                  toolCallId,
+                  kind: "execute",
+                  title: detach ? "Background command" : "Foreground command",
+                  status: "in_progress",
+                  rawInput: {
+                    command: "echo work",
+                    ...(detach ? { taskId: `task-${promptCount}` } : {}),
+                  },
+                });
+                if (promptCount === 2 && ordering === "during") yield* complete("task-1");
+                if (!detach) yield* complete();
+                return { stopReason: "end_turn" as const };
+              }),
+          }),
+        }),
+      },
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "default" };
+    const runtime = yield* adapter.openSession({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+      providerSessionId: ProviderSessionId.make(sessionId),
+    });
+    const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+    const now = yield* DateTime.now;
+    const run = (ordinal: number) =>
+      Effect.gen(function* () {
+        const input = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal,
+        });
+        yield* runtime.startTurn(input);
+        yield* Queue.take(promptSettled);
+        if (ordinal === 1 || ordering === "after") {
+          yield* TestClock.adjust("1 second");
+        }
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        assert.equal(events.find((e) => e.type === "turn.terminal")?.status, "completed");
+        return { input, events };
+      });
+    return { run, runtime, send, complete };
+  });
+
+  function toolRows(
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    toolCallId: string,
+    runId: RunId,
+    status: "running" | "completed",
+  ) {
+    const nodes = events.flatMap((e) =>
+      e.type === "node.updated" && e.node.nativeItemRef?.nativeId === toolCallId ? [e.node] : [],
+    );
+    const items = events.flatMap((e) =>
+      e.type === "turn_item.updated" && e.turnItem.nativeItemRef?.nativeId === toolCallId
+        ? [e.turnItem]
+        : [],
+    );
+    const node = nodes.at(-1);
+    const item = items.at(-1);
+    assert.isDefined(node, `missing tool node for ${runId}`);
+    assert.isDefined(item, `missing tool item for ${runId}`);
+    assert.deepEqual([...new Set(nodes.map((row) => row.runId))], [runId], "tool node owners");
+    assert.deepEqual([...new Set(items.map((row) => row.runId))], [runId], "tool item owners");
+    assert.deepEqual([...new Set(nodes.map((row) => row.id))], [node.id]);
+    assert.deepEqual([...new Set(items.map((row) => row.id))], [item.id]);
+    assert.equal(item.nodeId, node.id);
+    assert.equal(node.status, status);
+    assert.equal(item.status, status);
+    assert.equal(item.nativeItemRef?.strength, "strong");
+    return { nodeId: node.id, itemId: item.id };
+  }
+
+  it.effect("preserves both runs in SQLite when ACP reuses a tool call ID", () =>
+    Effect.gen(function* () {
+      const toolCallId = "shared-tool-1";
+      const sessionId = "reused-session";
+      const taskId = "shared-subagent";
+      const threadId = ThreadId.make("reused-tool-thread");
+      const instanceId = ProviderInstanceId.make("reused-tool-instance");
+      const replay = yield* replaySession("reused-tool-projections", [
+        request("initialize"),
+        response("initialize", { protocolVersion: 1, agentCapabilities: {}, authMethods: [] }),
+        request("session/new"),
+        response("session/new", { sessionId }),
+        ...[1, 2].flatMap((ordinal) => [
+          request("session/prompt"),
+          notifySession(sessionId, {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Run command",
+            kind: "execute",
+            status: "completed",
+          }),
+          {
+            type: "emit_inbound" as const,
+            frame: {
+              kind: "request",
+              method: "session/request_permission",
+              params: {
+                sessionId,
+                toolCall: { toolCallId },
+                options: [{ optionId: "yes", name: "Yes", kind: "allow_once" }],
+              },
+            },
+          },
+          {
+            type: "expect_outbound" as const,
+            frame: {
+              kind: "response",
+              method: "session/request_permission",
+              result: { outcome: { outcome: "selected", optionId: "yes" } },
+            },
+          },
+          notifySession(sessionId, {
+            sessionUpdate: "tool_call",
+            toolCallId: taskId,
+            title: "Spawn",
+            rawOutput: `child-${ordinal}`,
+            status: "in_progress",
+          }),
+          notifySession(`child-${ordinal}`, {
+            sessionUpdate: "tool_call",
+            toolCallId: "child-tool",
+            title: "Child command",
+            status: "completed",
+          }),
+          notifySession(`child-${ordinal}`, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "result",
+            content: { type: "text", text: `child reply ${ordinal}` },
+          }),
+          notifySession(sessionId, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: taskId,
+            status: "completed",
+          }),
+          response("session/prompt", { stopReason: "end_turn" }),
+        ]),
+      ]);
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: replay.makeRuntime,
+          extractPermissionQuestion: () => ({
+            question: { id: "confirm", header: "Confirm", question: "Continue?", options: [] },
+            respond: (answers) =>
+              answers.confirm === "yes"
+                ? { outcome: { outcome: "selected", optionId: "yes" } }
+                : undefined,
+          }),
+          extractSubagentUpdate: (tool) =>
+            tool.toolCallId === taskId
+              ? {
+                  nativeTaskId: taskId,
+                  childSessionId:
+                    typeof tool.data.rawOutput === "string" ? tool.data.rawOutput : null,
+                  prompt: "Inspect",
+                  title: "Inspect",
+                  model: null,
+                  status: tool.status === "completed" ? "completed" : "running",
+                  result: null,
+                  suppressNormalTool: true,
+                }
+              : undefined,
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: replay.directory,
+      });
+      const modelSelection = { instanceId, model: "default" };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        providerSessionId: ProviderSessionId.make(sessionId),
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const run = (ordinal: number) =>
+        Effect.gen(function* () {
+          const input = makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal,
+          });
+          yield* runtime.startTurn(input);
+          const events = yield* runtime.events.pipe(
+            Stream.tap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "user_input_request" &&
+              event.turnItem.status === "waiting"
+                ? runtime.respondToRuntimeRequest({
+                    requestId: event.turnItem.requestId,
+                    answers: { confirm: "yes" },
+                  })
+                : Effect.void,
+            ),
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "completed");
+          return { input, events };
+        });
+      const first = yield* run(1);
+      let sequence = 0;
+      const event = () => ({
+        id: EventId.make(`tool-event-${++sequence}`),
+        threadId,
+        occurredAt: now,
+      });
+      yield* store.apply({ ...event(), type: "thread.created", payload: first.input.appThread });
+      const second = yield* run(2);
+      for (const { input, events } of [first, second]) {
+        const { runId, rootNodeId, modelSelection } = input;
+        yield* store.apply({
+          ...event(),
+          type: "run.created",
+          runId,
+          nodeId: rootNodeId,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: input.runOrdinal,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            providerThreadId: input.providerThread.id,
+            userMessageId: input.message.messageId,
+            rootNodeId,
+            activeAttemptId: null,
+            status: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        for (const update of events) {
+          if (update.type === "app_thread.created") {
+            yield* store.apply({
+              ...event(),
+              threadId: update.appThread.id,
+              type: "thread.created",
+              payload: update.appThread,
+            });
+          } else if (update.type === "message.updated") {
+            yield* store.apply({
+              ...event(),
+              threadId: update.message.threadId,
+              type: "message.updated",
+              payload: update.message,
+            });
+          } else if (update.type === "subagent.updated") {
+            yield* store.apply({
+              ...event(),
+              runId,
+              nodeId: update.subagent.id,
+              type: "subagent.updated",
+              payload: update.subagent,
+            });
+          } else if (update.type === "node.updated") {
+            yield* store.apply({
+              ...event(),
+              type: "node.updated",
+              threadId: update.node.threadId,
+              runId: update.node.runId ?? undefined,
+              nodeId: update.node.id,
+              driver: update.driver,
+              payload: update.node,
+            });
+          } else if (update.type === "turn_item.updated") {
+            yield* store.apply({
+              ...event(),
+              type: "turn-item.updated",
+              threadId: update.turnItem.threadId,
+              runId: update.turnItem.runId ?? undefined,
+              nodeId: update.turnItem.nodeId ?? undefined,
+              driver: update.driver,
+              payload: update.turnItem,
+            });
+          }
+        }
+      }
+      const a = toolRows(first.events, toolCallId, first.input.runId, "completed");
+      const b = toolRows(second.events, toolCallId, second.input.runId, "completed");
+      const projection = yield* store.getThreadProjection(threadId);
+      for (const [ids, runId] of [
+        [a, first.input.runId],
+        [b, second.input.runId],
+      ] as const) {
+        assert.equal(projection.nodes.find((node) => node.id === ids.nodeId)?.runId, runId);
+        assert.equal(projection.turnItems.find((item) => item.id === ids.itemId)?.runId, runId);
+      }
+      assert.notEqual(a.nodeId, b.nodeId);
+      assert.notEqual(a.itemId, b.itemId);
+      for (const nativeId of [`${sessionId}:question:${toolCallId}`, taskId]) {
+        const nodes = projection.nodes.filter((node) => node.nativeItemRef?.nativeId === nativeId);
+        const items = projection.turnItems.filter(
+          (item) => item.nativeItemRef?.nativeId === nativeId,
+        );
+        assert.sameMembers(
+          nodes.map((node) => node.runId),
+          [first.input.runId, second.input.runId],
+        );
+        assert.sameMembers(
+          items.map((item) => item.runId),
+          [first.input.runId, second.input.runId],
+        );
+        assert.notEqual(nodes[0]!.id, nodes[1]!.id);
+        assert.notEqual(items[0]!.id, items[1]!.id);
+        for (const item of items)
+          assert.equal(nodes.find((node) => node.runId === item.runId)?.id, item.nodeId);
+      }
+      const sql = yield* SqlClient.SqlClient;
+      const ownership = yield* sql<{ kind: string; node_run: string; item_run: string }>`
+        SELECT n.kind, n.run_id AS node_run, i.run_id AS item_run
+        FROM orchestration_v2_projection_nodes n
+        JOIN orchestration_v2_projection_turn_items i ON i.node_id = n.node_id
+        WHERE n.thread_id = ${threadId} AND n.kind IN ('tool_call', 'user_input_request', 'subagent')
+      `;
+      assert.sameDeepMembers(
+        [...ownership],
+        [first, second].flatMap(({ input: { runId } }) =>
+          ["tool_call", "user_input_request", "subagent"].map((kind) => ({
+            kind,
+            node_run: runId,
+            item_run: runId,
+          })),
+        ),
+      );
+      assert.lengthOf(projection.subagents, 2);
+      assert.notEqual(
+        projection.subagents[0]!.childThreadId,
+        projection.subagents[1]!.childThreadId,
+      );
+      for (const [ordinal, turn] of [
+        [1, first],
+        [2, second],
+      ] as const) {
+        const task = projection.subagents.find((task) => task.runId === turn.input.runId);
+        assert.equal(task?.status, "completed");
+        const child = yield* store.getThreadProjection(task!.childThreadId!);
+        assert.sameMembers(
+          child.messages.map((message) => message.text),
+          ["Inspect", `child reply ${ordinal}`],
+        );
+        assert.sameMembers(
+          child.turnItems.map((item) => item.type),
+          ["user_message", "assistant_message", "dynamic_tool"],
+        );
+        assert.lengthOf(child.nodes, 1);
+      }
+      yield* replay.verify;
+    }).pipe(
+      Effect.provide(
+        ProjectionStore.layer.pipe(
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+          Layer.provideMerge(layerTest),
+        ),
+      ),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect.each(["before", "during", "after"] as const)(
+    "routes detached commands sharing a tool ID when the first completion arrives %s the second run",
+    (ordering) =>
+      Effect.gen(function* () {
+        const toolCallId = "shared-bg-tool-1";
+        const session = yield* openReusedCommandSession(toolCallId, ordering);
+        const first = yield* session.run(1);
+        const original = toolRows(first.events, toolCallId, first.input.runId, "running");
+        let used = 0;
+        const collectUpdate = (update: Effect.Effect<void, EffectAcpErrors.AcpError>) =>
+          Effect.gen(function* () {
+            yield* update;
+            used++;
+            yield* session.send({ sessionUpdate: "usage_update", used, size: 100 });
+            return yield* session.runtime.events.pipe(
+              Stream.takeUntil(
+                (e) =>
+                  e.type === "provider_thread.updated" &&
+                  e.providerThread.contextUsage?.usedTokens === used,
+              ),
+              Stream.runCollect,
+            );
+          });
+        if (ordering === "before") {
+          assert.deepEqual(
+            toolRows(
+              yield* collectUpdate(session.complete()),
+              toolCallId,
+              first.input.runId,
+              "completed",
+            ),
+            original,
+          );
+        }
+        const second = yield* session.run(2);
+        const oldEvents = second.events.filter(
+          (event) =>
+            (event.type === "node.updated" && event.node.runId === first.input.runId) ||
+            (event.type === "turn_item.updated" && event.turnItem.runId === first.input.runId),
+        );
+        if (ordering === "during") {
+          assert.deepEqual(
+            toolRows(oldEvents, toolCallId, first.input.runId, "completed"),
+            original,
+          );
+        } else {
+          assert.isEmpty(oldEvents);
+        }
+        const reused = toolRows(
+          second.events.filter((e) => !oldEvents.includes(e)),
+          toolCallId,
+          second.input.runId,
+          ordering === "after" ? "running" : "completed",
+        );
+        assert.notEqual(original.nodeId, reused.nodeId);
+        assert.notEqual(original.itemId, reused.itemId);
+        if (ordering === "after") {
+          const unknown = yield* collectUpdate(session.complete("unknown-task"));
+          assert.isFalse(
+            unknown.some(
+              (e) =>
+                e.type === "turn_item.updated" && e.turnItem.nativeItemRef?.nativeId === toolCallId,
+            ),
+          );
+          const progress = (title: string) =>
+            collectUpdate(
+              session.send({
+                sessionUpdate: "tool_call_update",
+                toolCallId,
+                title,
+                status: "in_progress",
+              }),
+            );
+          assert.deepEqual(
+            toolRows(
+              yield* progress("Newest running command"),
+              toolCallId,
+              second.input.runId,
+              "running",
+            ),
+            reused,
+          );
+          assert.deepEqual(
+            toolRows(
+              yield* collectUpdate(session.complete("task-2")),
+              toolCallId,
+              second.input.runId,
+              "completed",
+            ),
+            reused,
+          );
+          assert.deepEqual(
+            toolRows(
+              yield* progress("Remaining running command"),
+              toolCallId,
+              first.input.runId,
+              "running",
+            ),
+            original,
+          );
+          assert.deepEqual(
+            toolRows(
+              yield* collectUpdate(session.complete("task-1")),
+              toolCallId,
+              first.input.runId,
+              "completed",
+            ),
+            original,
+          );
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("projects completed-root carryover eagerly and drain cannot resurrect it", () =>
