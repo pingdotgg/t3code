@@ -38,7 +38,7 @@ const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 // Bound unmatched-bracket rescans to avoid quadratic work; only basenames survive, and common filesystems cap them at 255.
 const MAX_FILE_LINK_LABEL_LENGTH = 512;
 const FILE_LINK_TOKEN_REGEX = new RegExp(
-  `(^|\\s)\\[((?:\\\\.|[^[\\]\\\\]){0,${MAX_FILE_LINK_LABEL_LENGTH}})\\]\\(([^)\\s]+)\\)(?=\\s)`,
+  `(^|\\s)\\[((?:\\\\.|&#9[13];|&(?!#9[13];)|[^[\\]\\\\&]){0,${MAX_FILE_LINK_LABEL_LENGTH}})\\]\\(([^)\\s]+)\\)(?=\\s)`,
   "g",
 );
 const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
@@ -53,8 +53,14 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   for (const match of text.matchAll(FILE_LINK_TOKEN_REGEX)) {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
-    const label = (match[2] ?? "").replace(/\\(.)/g, "$1");
+    const label = (match[2] ?? "").replace(
+      /\\(.)|&#9(1|3);/g,
+      (_match, escaped?: string, code?: string) => escaped ?? (code === "1" ? "[" : "]"),
+    );
     const encodedPath = match[3] ?? "";
+    if (encodedPath.startsWith("//")) {
+      continue;
+    }
     let path = encodedPath;
     try {
       path = decodeURIComponent(encodedPath);
