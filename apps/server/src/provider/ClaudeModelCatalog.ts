@@ -179,14 +179,20 @@ export function claudeReportedModels(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<CustomModelSetting>,
   reported: ReadonlyArray<ClaudeModelInfo> | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  if (!reported?.length) return [];
-  const known = new Set(
-    [
-      ...catalog.models.flatMap(({ model }) => [model.slug, ...(model.aliases ?? [])]),
-      ...readCustomModelEntries(customModels).map((entry) => entry.slug),
-    ].map((id) => stripClaudeContextWindowSuffix(id).toLowerCase()),
+): { models: ReadonlyArray<ServerProviderModel>; hasNonCatalogModels: boolean } {
+  if (!reported?.length) return { models: [], hasNonCatalogModels: false };
+  const catalogIds = new Set(
+    catalog.models
+      .flatMap(({ model }) => [model.slug, ...(model.aliases ?? [])])
+      .map((id) => stripClaudeContextWindowSuffix(id).toLowerCase()),
   );
+  const known = new Set([
+    ...catalogIds,
+    ...readCustomModelEntries(customModels).map((entry) =>
+      stripClaudeContextWindowSuffix(entry.slug).toLowerCase(),
+    ),
+  ]);
+  let hasNonCatalogModels = false;
   const models: Array<ServerProviderModel> = [];
   for (const info of reported) {
     const slug = info.value.trim();
@@ -195,6 +201,7 @@ export function claudeReportedModels(
     const ids = [slug, info.resolvedModel ?? ""]
       .map((id) => stripClaudeContextWindowSuffix(id).toLowerCase())
       .filter((id) => id.length > 0);
+    if (!ids.some((id) => catalogIds.has(id))) hasNonCatalogModels = true;
     if (ids.some((id) => known.has(id))) continue;
     for (const id of ids) known.add(id);
     const efforts = info.supportsEffort ? (info.supportedEffortLevels ?? []) : [];
@@ -220,7 +227,7 @@ export function claudeReportedModels(
       },
     });
   }
-  return models;
+  return { models, hasNonCatalogModels };
 }
 
 export function resolveClaudeCatalogModel(
