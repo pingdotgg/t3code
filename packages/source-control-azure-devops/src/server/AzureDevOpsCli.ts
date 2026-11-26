@@ -273,10 +273,41 @@ export class AzureDevOpsCli extends Context.Service<
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsCli") {}
 
-function normalizeChangeRequestId(reference: string): string {
+function normalizeChangeRequestId(reference: string): string | null {
   const trimmed = reference.trim().replace(/^#/, "");
   const urlMatch = /(?:pullrequest|pull-request|pull|_pulls?)\/(\d+)(?:\D.*)?$/i.exec(trimmed);
-  return urlMatch?.[1] ?? trimmed;
+  const id = urlMatch?.[1] ?? trimmed;
+  return /^\d+$/.test(id) ? id : null;
+}
+
+// No Azure DevOps name holds a quote or control character, and either could break out of an
+// argument on Windows.
+const UNSAFE_NAME = /[\u0000-\u001f\u007f"]/;
+
+const invalidArgument = (cwd: string, what: string) =>
+  new AzureDevOpsCommandFailedError({
+    operation: "execute",
+    command: "az",
+    cwd,
+    argumentCount: 0,
+    cause: new Error(`Invalid Azure DevOps ${what}.`),
+  });
+
+/** The name and project options naming a repository, as `textOption`s so neither reads a file. */
+function repositoryOptions(
+  input: { readonly cwd: string; readonly repository: string },
+  nameOption: string,
+) {
+  const repository = parseRepositorySpecifier(input.repository);
+  const options = UNSAFE_NAME.test(input.repository)
+    ? null
+    : textOptions([
+        [nameOption, repository.name],
+        ...(repository.project ? [["--project", repository.project] as const] : []),
+      ]);
+  return options === null
+    ? Effect.fail(invalidArgument(input.cwd, "repository name"))
+    : Effect.succeed(options);
 }
 
 function toAzureStatus(state: "open" | "closed" | "merged" | "all"): string {
@@ -519,6 +550,18 @@ export const textOption = (option: string, value: string) =>
     ? { arg: `${option}=@-`, stdin: value }
     : { arg: `${option}=${value}`, stdin: undefined };
 
+/** Several `textOption`s for one command, or `null` when more than one would need stdin. */
+export const textOptions = (options: ReadonlyArray<readonly [option: string, value: string]>) => {
+  const built = options.map(([option, value]) => textOption(option, value));
+  const stdin = built.flatMap((option) => (option.stdin === undefined ? [] : [option.stdin]));
+  return stdin.length > 1
+    ? null
+    : {
+        args: built.map((option) => option.arg),
+        ...(stdin[0] === undefined ? {} : { stdin: stdin[0] }),
+      };
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -611,9 +654,9 @@ export const make = Effect.gen(function* () {
           "list",
           "--detect",
           "true",
-          "--source-branch",
-          // az puts this in the query string unescaped; a `#` would cut the request.
-          refPrefix + encodeURIComponent(branch.slice(refPrefix.length)),
+          // Joined so a branch starting with `-` stays the value; az puts it in the query string
+          // unescaped, so a `#` would cut the request, and encoding also turns `@` into `%40`.
+          `--source-branch=${refPrefix + encodeURIComponent(branch.slice(refPrefix.length))}`,
           "--status",
           toAzureStatus(input.state),
           "--top",
@@ -645,18 +688,22 @@ export const make = Effect.gen(function* () {
       );
     }),
     getPullRequest: Effect.fn("AzureDevOpsCli.getPullRequest")(function (input) {
+      const id = normalizeChangeRequestId(input.reference);
+      if (id === null) {
+        return Effect.fail(
+          new AzureDevOpsPullRequestNotFoundError({
+            operation: "execute",
+            command: "az",
+            cwd: input.cwd,
+            argumentCount: 0,
+            cause: new Error("Invalid Azure DevOps pull request reference."),
+          }),
+        );
+      }
       return executeJson({
         cwd: input.cwd,
         ...remoteOf(input),
-        args: [
-          "repos",
-          "pr",
-          "show",
-          "--detect",
-          "true",
-          "--id",
-          normalizeChangeRequestId(input.reference),
-        ],
+        args: ["repos", "pr", "show", "--detect", "true", "--id", id],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -680,20 +727,13 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
-    getRepositoryCloneUrls: Effect.fn("AzureDevOpsCli.getRepositoryCloneUrls")(function (input) {
-      const repository = parseRepositorySpecifier(input.repository);
-      return executeJson({
+    getRepositoryCloneUrls: Effect.fn("AzureDevOpsCli.getRepositoryCloneUrls")(function* (input) {
+      const repository = yield* repositoryOptions(input, "--repository");
+      return yield* executeJson({
         cwd: input.cwd,
         ...remoteOf(input),
-        args: [
-          "repos",
-          "show",
-          "--detect",
-          "true",
-          "--repository",
-          repository.name,
-          ...(repository.project ? ["--project", repository.project] : []),
-        ],
+        args: ["repos", "show", "--detect", "true", ...repository.args],
+        ...(repository.stdin === undefined ? {} : { stdin: repository.stdin }),
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -707,20 +747,13 @@ export const make = Effect.gen(function* () {
         Effect.map(normalizeRepositoryCloneUrls),
       );
     }),
-    createRepository: Effect.fn("AzureDevOpsCli.createRepository")(function (input) {
-      const repository = parseRepositorySpecifier(input.repository);
+    createRepository: Effect.fn("AzureDevOpsCli.createRepository")(function* (input) {
+      const repository = yield* repositoryOptions(input, "--name");
       // Project/organization permissions control visibility; `az repos create` has no flag.
-      return executeJson({
+      return yield* executeJson({
         cwd: input.cwd,
-        args: [
-          "repos",
-          "create",
-          "--detect",
-          "true",
-          "--name",
-          repository.name,
-          ...(repository.project ? ["--project", repository.project] : []),
-        ],
+        args: ["repos", "create", "--detect", "true", ...repository.args],
+        ...(repository.stdin === undefined ? {} : { stdin: repository.stdin }),
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -753,20 +786,13 @@ export const make = Effect.gen(function* () {
         ...(title.stdin === undefined ? {} : { stdin: title.stdin }),
       }).pipe(Effect.asVoid);
     }),
-    getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
-      const repository = parseRepositorySpecifier(input.repository);
-      return executeJson({
+    getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function* (input) {
+      const repository = yield* repositoryOptions(input, "--repository");
+      return yield* executeJson({
         cwd: input.cwd,
         ...remoteOf(input),
-        args: [
-          "repos",
-          "show",
-          "--detect",
-          "true",
-          // Joined so a name starting with `-` stays the option's value.
-          `--repository=${repository.name}`,
-          ...(repository.project ? ["--project", repository.project] : []),
-        ],
+        args: ["repos", "show", "--detect", "true", ...repository.args],
+        ...(repository.stdin === undefined ? {} : { stdin: repository.stdin }),
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>

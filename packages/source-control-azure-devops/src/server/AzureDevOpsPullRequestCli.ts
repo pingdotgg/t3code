@@ -329,11 +329,13 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly maxOutputBytes?: number;
+    readonly stdin?: string;
   }) =>
     azure.execute({
       cwd: input.cwd,
       args: [...input.args, "--only-show-errors", "--output", "json"],
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+      ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
     });
 
   /** Use the extension's credentials; `az rest` uses the default tenant. */
@@ -419,21 +421,35 @@ export const make = Effect.gen(function* () {
   > => {
     const remaining = input.limit - input.items.length;
     const top = remaining + 1;
+    // As `textOption`s, so a name or author filter starting with `@` or `-` stays a value.
+    const named = AzureDevOpsCli.textOptions([
+      ["--repository", input.repository],
+      ...(input.author === undefined || input.involvement === "authored"
+        ? []
+        : [["--creator", input.author] as const]),
+    ]);
+    if (named === null) {
+      return Effect.fail(
+        new AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: input.cwd,
+          operation: "listPullRequests",
+          cause: new Error("The repository and author filter cannot both start with @."),
+        }),
+      );
+    }
     return executeJson({
       cwd: input.cwd,
       maxOutputBytes: PULL_REQUEST_LIST_MAX_OUTPUT_BYTES,
+      ...(named.stdin === undefined ? {} : { stdin: named.stdin }),
       args: [
         "repos",
         "pr",
         "list",
         ...detectArgs,
-        "--repository",
-        input.repository,
+        ...named.args,
         ...statusArgs(input.state),
         ...involvementArgs(input),
-        ...(input.author === undefined || input.involvement === "authored"
-          ? []
-          : ["--creator", input.author]),
         "--include-links",
         ...(input.skip === 0 ? [] : ["--skip", String(input.skip)]),
         "--top",

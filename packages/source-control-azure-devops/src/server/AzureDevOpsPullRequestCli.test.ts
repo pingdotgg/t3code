@@ -275,8 +275,46 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       });
 
       const args = argsOfCall(0);
-      assert.strictEqual(args[args.indexOf("--creator") + 1], "ana@acme.dev");
+      expect(args).toContain("--repository=web");
+      expect(args).toContain("--creator=ana@acme.dev");
       assert.strictEqual(args[args.indexOf("--reviewer") + 1], "bilal@acme.dev");
+    }),
+  );
+
+  it.effect("keeps a repository or author filter starting with @ or - a value", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 1))))
+        .mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 1))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const list = (repository: string, author: string) =>
+        cli.listPullRequests({
+          cwd: "/w",
+          repository,
+          state: "open",
+          involvement: "all",
+          viewer: "bilal@acme.dev",
+          limit: 10,
+          author,
+        });
+
+      yield* list("-web", "@/home/me/.ssh/id_ed25519");
+      expect(argsOfCall(0)).toEqual(expect.arrayContaining(["--repository=-web", "--creator=@-"]));
+      expect(mockedExecute.mock.calls[0]?.[0].stdin).toBe("@/home/me/.ssh/id_ed25519");
+
+      yield* list("@web", "--organization=https://evil.example");
+      expect(argsOfCall(1)).toEqual(
+        expect.arrayContaining([
+          "--repository=@-",
+          "--creator=--organization=https://evil.example",
+        ]),
+      );
+      expect(mockedExecute.mock.calls[1]?.[0].stdin).toBe("@web");
+
+      // az has one stdin, so two values that need it are refused without running az.
+      const error = yield* Effect.flip(list("@web", "@ana"));
+      assert.strictEqual(error._tag, "AzureDevOpsPullRequestReadError");
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 

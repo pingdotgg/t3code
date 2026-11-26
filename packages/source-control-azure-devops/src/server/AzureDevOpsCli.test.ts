@@ -244,10 +244,8 @@ describe("AzureDevOpsCli.layer", () => {
         "show",
         "--detect",
         "true",
-        "--repository",
-        "repo",
-        "--project",
-        "project",
+        "--repository=repo",
+        "--project=project",
         "--only-show-errors",
         "--output",
         "json",
@@ -267,7 +265,7 @@ describe("AzureDevOpsCli.layer", () => {
       });
 
       const args = mockRun.mock.calls.at(-1)?.[0].args ?? [];
-      assert.strictEqual(args[args.indexOf("--source-branch") + 1], "user%2Ffeat%2F1-(%232)-slug");
+      expect(args).toContain("--source-branch=user%2Ffeat%2F1-(%232)-slug");
 
       for (const prefix of ["refs/heads/", "refs/pull/", "refs/tags/"]) {
         mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
@@ -279,11 +277,81 @@ describe("AzureDevOpsCli.layer", () => {
         });
 
         const refArgs = mockRun.mock.calls.at(-1)?.[0].args ?? [];
-        assert.strictEqual(
-          refArgs[refArgs.indexOf("--source-branch") + 1],
-          `${prefix}user%2Ffeat%2F1-(%232)-slug`,
-        );
+        expect(refArgs).toContain(`--source-branch=${prefix}user%2Ffeat%2F1-(%232)-slug`);
       }
+
+      // A branch named like an option stays the option's value, and `@` cannot name a file.
+      for (const [headSelector, expected] of [
+        ["--debug", "--source-branch=--debug"],
+        ["@/etc/passwd", "--source-branch=%40%2Fetc%2Fpasswd"],
+      ] as const) {
+        mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+        yield* az.listPullRequests({ cwd: "/somewhere", headSelector, state: "open" });
+        expect(mockRun.mock.calls.at(-1)?.[0].args).toContain(expected);
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("passes repository names and pull request references to az only as values", () =>
+    Effect.gen(function* () {
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const repositoryJson = processOutput(
+        JSON.stringify({
+          name: "@repo",
+          webUrl: "https://dev.azure.com/acme/project/_git/repo",
+          remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+          sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+          project: { name: "project" },
+          defaultBranch: "refs/heads/main",
+        }),
+      );
+      const lastRun = () => mockRun.mock.calls.at(-1)?.[0];
+
+      // A name that starts with `@` reaches az through stdin, never as a file to read; one that
+      // starts with `-` stays the option's value.
+      for (const [repository, args, stdin] of [
+        ["project/@repo", ["--repository=@-", "--project=project"], "@repo"],
+        ["@project/repo", ["--repository=repo", "--project=@-"], "@project"],
+        ["project/-repo", ["--repository=-repo", "--project=project"], undefined],
+      ] as const) {
+        mockRun.mockReturnValueOnce(Effect.succeed(repositoryJson));
+        yield* az.getRepositoryCloneUrls({ cwd: "/repo", repository });
+        expect(lastRun()?.args).toEqual(expect.arrayContaining([...args]));
+        expect(lastRun()?.stdin).toBe(stdin);
+
+        mockRun.mockReturnValueOnce(Effect.succeed(repositoryJson));
+        yield* az.getDefaultBranch({ cwd: "/repo", repository });
+        expect(lastRun()?.args).toEqual(expect.arrayContaining([...args]));
+        expect(lastRun()?.stdin).toBe(stdin);
+
+        mockRun.mockReturnValueOnce(Effect.succeed(repositoryJson));
+        yield* az.createRepository({ cwd: "/repo", repository, visibility: "private" });
+        expect(lastRun()?.args).toEqual(
+          expect.arrayContaining([args[0].replace("--repository=", "--name="), args[1]]),
+        );
+        expect(lastRun()?.stdin).toBe(stdin);
+      }
+      const ran = mockRun.mock.calls.length;
+
+      // Two values from one stdin, quotes and control characters are refused without running az.
+      for (const repository of ["@project/@repo", 'project/re"po', "project/repo\nmore"]) {
+        for (const failed of [
+          Effect.flip(az.getRepositoryCloneUrls({ cwd: "/repo", repository })),
+          Effect.flip(az.getDefaultBranch({ cwd: "/repo", repository })),
+          Effect.flip(az.createRepository({ cwd: "/repo", repository, visibility: "private" })),
+        ]) {
+          assert.strictEqual((yield* failed)._tag, "AzureDevOpsCommandFailedError");
+        }
+      }
+      for (const reference of [
+        "@/etc/passwd",
+        "--organization=https://evil.example",
+        "12 & calc",
+      ]) {
+        const error = yield* Effect.flip(az.getPullRequest({ cwd: "/repo", reference }));
+        assert.strictEqual(error._tag, "AzureDevOpsPullRequestNotFoundError");
+      }
+      expect(mockRun.mock.calls.length).toBe(ran);
     }).pipe(Effect.provide(layer)),
   );
 
