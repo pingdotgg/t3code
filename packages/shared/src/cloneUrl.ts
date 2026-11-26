@@ -80,7 +80,7 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
     if (protocol === "ssh") return `git@${host}:${decodeURIComponent(parsed.path)}`;
     const path = parsed.scp
       ? parsed.path.split("/").map(encodeURIComponent).join("/")
-      : parsed.path;
+      : parsed.path.replaceAll("#", "%23").replaceAll("?", "%3F");
     return `https://${host}/${path}`;
   } catch {
     return null;

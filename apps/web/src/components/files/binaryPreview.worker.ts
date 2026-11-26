@@ -237,7 +237,9 @@ async function handle(input: BinaryWorkerRequest) {
           path,
           size: file.bytes.length,
           directory: file.directory,
-          modified: Number.isNaN(file.date.getTime()) ? null : file.date.toISOString(),
+          // ZIP stores the archiver's wall-clock time, but JSZip reads those fields as UTC.
+          // Without the "Z", the viewer parses the time back in its own zone.
+          modified: Number.isNaN(file.date.getTime()) ? null : file.date.toISOString().slice(0, -1),
         };
       });
     } else if (/\.(gz|tgz)$/i.test(input.name) || new Uint8Array(input.bytes)[0] === 0x1f) {
