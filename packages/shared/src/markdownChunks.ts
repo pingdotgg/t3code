@@ -122,7 +122,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
-  let listItem: { indent: number; marker: string } | null = null;
+  let listItemIndent = 0;
+  let listItemMarker = "";
   let listFenceIndent = 0;
   let afterBlankLine = false;
   let afterDefinition = false;
@@ -138,7 +139,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     heldCut = 0;
   };
   for (const line of text.split("\n")) {
-    const whitespace = listItem === null ? "" : /^[ \t]*/.exec(line)![0];
+    const whitespace = listItemIndent === 0 ? "" : /^[ \t]*/.exec(line)![0];
     const indent = markdownColumn(whitespace);
     const blank = line.trim() === "";
     let blockLine = line;
@@ -176,11 +177,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
       let listLine = "";
-      if (listItem !== null && indent >= listItem.indent) {
-        listLine = lineAtIndent(line, whitespace, indent - listItem.indent);
+      if (listItemIndent > 0 && indent >= listItemIndent) {
+        listLine = lineAtIndent(line, whitespace, indent - listItemIndent);
       } else if (!blank) {
-        const previousMarker = listItem?.marker;
-        listItem = null;
+        const previousMarker = listItemMarker;
+        listItemIndent = 0;
+        listItemMarker = "";
         const prefix = LIST_ITEM_PREFIX.exec(line);
         if (prefix !== null && !THEMATIC_BREAK.test(line)) {
           const marker = prefix[1]!;
@@ -195,17 +197,15 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           ) {
             const markerEnd = prefix[0].trimEnd().length;
             const width = markdownColumn(padding, markerEnd) - markerEnd;
-            listItem = {
-              indent: markerEnd + (width >= 1 && width <= 4 ? width : 1),
-              marker: delimiter,
-            };
+            listItemIndent = markerEnd + (width >= 1 && width <= 4 ? width : 1);
+            listItemMarker = delimiter;
             if (width >= 1 && width <= 4) listLine = line.slice(prefix[0].length);
           }
         }
       }
-      if (listItem !== null && FENCE_OPEN.test(listLine)) {
+      if (FENCE_OPEN.test(listLine)) {
         closes = blockCloser(listLine);
-        listFenceIndent = listItem.indent;
+        listFenceIndent = listItemIndent;
       }
       openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
