@@ -1,13 +1,11 @@
-import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import type { VcsListRefsInput, VcsListRefsResult, VcsRef } from "@t3tools/contracts";
 import { RegistryContext } from "@effect/atom-react";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
+
+import { GitBranchesSheet } from "./GitBranchesSheet";
 
 type PressProps = { label: string; disabled?: boolean; onPress: () => void };
 const harness = vi.hoisted(() => ({
@@ -95,36 +93,32 @@ vi.mock("../../../state/vcs", () => ({
   },
 }));
 
-// Pages the repository's real refs the way the server's listRefs does: current branch first,
-// local refs before remote refs, filtered by refKind, then sliced by cursor and limit.
+const localRefs: VcsRef[] = [
+  { name: "main", current: true, isDefault: true, isRemote: false, worktreePath: "/repo" },
+  ...Array.from({ length: 104 }, (_, index) => ({
+    name: `feature/branch-${String(index + 1).padStart(3, "0")}`,
+    current: false,
+    isDefault: false,
+    isRemote: false,
+    worktreePath: null,
+  })),
+];
+const remoteRefs: VcsRef[] = Array.from({ length: 50 }, (_, index) => ({
+  name: `origin/remote-${index + 1}`,
+  current: false,
+  isDefault: false,
+  isRemote: true,
+  worktreePath: null,
+}));
+
+// Pages refs the way the server's listRefs does: filtered by refKind, then sliced by cursor.
 function listRefsPage(input: VcsListRefsInput): VcsListRefsResult {
-  const lines = NodeChildProcess.execFileSync(
-    "git",
-    ["for-each-ref", "--format=%(refname) %(HEAD)", "refs/heads", "refs/remotes"],
-    { cwd: input.cwd, encoding: "utf8" },
-  )
-    .trim()
-    .split("\n");
-  const refs: VcsRef[] = lines
-    .map((line) => {
-      const [refName = "", head] = line.split(" ");
-      const isRemote = refName.startsWith("refs/remotes/");
-      return {
-        name: refName.replace(isRemote ? "refs/remotes/" : "refs/heads/", ""),
-        current: head === "*",
-        isDefault: refName === "refs/heads/main",
-        isRemote,
-        worktreePath: head === "*" ? input.cwd : null,
-      };
-    })
-    .toSorted(
-      (left, right) =>
-        Number(right.current) - Number(left.current) ||
-        Number(left.isRemote) - Number(right.isRemote),
-    )
-    .filter((ref) =>
-      input.refKind === "local" ? !ref.isRemote : input.refKind === "remote" ? ref.isRemote : true,
-    );
+  const refs =
+    input.refKind === "local"
+      ? localRefs
+      : input.refKind === "remote"
+        ? remoteRefs
+        : [...localRefs, ...remoteRefs];
   const start = input.cursor ?? 0;
   const end = start + (input.limit ?? refs.length);
   return {
@@ -141,33 +135,8 @@ function answer(input: VcsListRefsInput) {
   return AsyncResult.success(listRefsPage(input), { waiting: true });
 }
 
-import { GitBranchesSheet } from "./GitBranchesSheet";
-
 function setup() {
-  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mobile-branch-pages-"));
-  const git = (...args: string[]) =>
-    NodeChildProcess.execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
-      cwd: directory,
-      stdio: "pipe",
-    });
-  git("init", "--initial-branch=main");
-  git(
-    "-c",
-    "user.name=Test",
-    "-c",
-    "user.email=test@example.com",
-    "commit",
-    "--allow-empty",
-    "-m",
-    "initial",
-  );
-  for (let index = 1; index <= 104; index++) {
-    git("branch", `feature/branch-${String(index).padStart(3, "0")}`);
-  }
-  for (let index = 1; index <= 50; index++) {
-    git("update-ref", `refs/remotes/origin/remote-${index}`, "HEAD");
-  }
-  harness.cwd = directory;
+  harness.cwd = "/repo";
   harness.pages.clear();
   harness.rows.clear();
   harness.buttons.clear();
@@ -196,7 +165,6 @@ function setup() {
       act(() => root.unmount());
       registry.dispose();
       harness.holds = () => false;
-      NodeFS.rmSync(directory, { recursive: true, force: true });
     },
   };
 }

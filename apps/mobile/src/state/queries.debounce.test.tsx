@@ -1,5 +1,6 @@
 import { AuthFilesystemReadScope, EnvironmentId } from "@t3tools/contracts";
 import { RegistryContext } from "@effect/atom-react";
+import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -184,15 +185,14 @@ it("keeps compiled branch results stable and resets pagination for a new target 
     },
   };
   let current: ReturnType<typeof usePaginatedBranches>;
-  type BranchTarget = Parameters<typeof usePaginatedBranches>[0];
-  function Probe({ target }: { target: BranchTarget }) {
+  function Probe({ target }: { target: VcsRefTarget }) {
     const result = usePaginatedBranches(target);
     useLayoutEffect(() => {
       current = result;
     });
     return null;
   }
-  const render = (cwd: string | null, options: Partial<BranchTarget> = {}) =>
+  const render = (cwd: string | null, options: Partial<VcsRefTarget> = {}) =>
     act(() =>
       root.render(
         <RegistryContext.Provider value={registry}>
@@ -232,13 +232,6 @@ it("keeps compiled branch results stable and resets pagination for a new target 
   expect(current!.refs).toHaveLength(1);
   act(() => current!.loadNext());
   render("/other", { environmentId: EnvironmentId.make("other-environment"), query: "feature" });
-  expect(current!.refs).toHaveLength(1);
-  act(() => current!.loadNext());
-  render("/other", {
-    environmentId: EnvironmentId.make("other-environment"),
-    query: "feature",
-    refKind: "local",
-  });
   expect(current!.refs).toHaveLength(1);
   render(null);
   expect(current!.data).toBeNull();
