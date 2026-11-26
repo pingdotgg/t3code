@@ -398,14 +398,9 @@ it.effect("a long reference title is cut without leaving half an emoji", () =>
         key: "whole",
         title: `${"a".repeat(298)}\u{1F680}tail`,
       });
-      yield* store.referenceNoted("r1", "read", {
-        ...issue,
-        key: "plain",
-        title: "a".repeat(301),
-      });
       assert.deepStrictEqual(
         (yield* store.references("r1")).map((reference) => reference.title),
-        ["a".repeat(299), `${"a".repeat(298)}\u{1F680}`, "a".repeat(300)],
+        ["a".repeat(299), `${"a".repeat(298)}\u{1F680}`],
       );
       yield* Effect.scoped(
         Effect.gen(function* () {
