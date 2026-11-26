@@ -23,6 +23,8 @@ import { useState } from "react";
 import { useGT, useMessages } from "gt-react";
 
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useLayoutStore } from "../layout/layoutStore";
+import { followLayoutCompanions } from "../layout/openRules";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -237,9 +239,14 @@ export function useCommandPaletteThreadItems(input: {
             },
           });
         }
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        // A tab already open in the layout takes focus even if its URL is current.
+        followLayoutCompanions(() =>
+          useLayoutStore.getState().focusChat({ kind: "server", threadRef }),
+        );
         await navigate({
           to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+          params: buildThreadRouteParams(threadRef),
         });
       },
     },

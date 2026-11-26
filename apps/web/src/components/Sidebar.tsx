@@ -1652,6 +1652,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) {
       setOpenMobile(false);
     }
+    // A tab already open in the layout takes focus even if its URL is current.
+    followLayoutCompanions(() => useLayoutStore.getState().focusChat({ kind: "draft", draftId }));
     void router.navigate({ to: "/draft/$draftId", params: { draftId } });
   };
 
