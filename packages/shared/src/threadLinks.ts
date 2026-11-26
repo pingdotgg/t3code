@@ -15,8 +15,9 @@ const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 const LABEL = String.raw`[^[\]\n]*`;
 const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
 const QUOTE_PREFIX = new RegExp(String.raw`^([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "gm");
-// Mask a leading BOM and move inter-marker spacing before the quote so fences match without
-// shifting offsets. Labels and output are read from the original.
+// Mask a leading BOM and move inter-marker spacing before the quote so fences match and offsets
+// stay intact. A label may span \r or U+2028, which multiline `^` follows, so labels and output
+// are read from the original.
 const threadLinkSource = (markdown: string) =>
   markdown
     .replace(/^\uFEFF/, " ")
