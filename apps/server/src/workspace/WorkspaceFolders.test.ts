@@ -12,6 +12,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -309,6 +310,44 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         }
         assert.deepEqual(yield* discover(other), [path.join(other, "web")]);
       }),
+  );
+
+  it.effect("does not count waiting behind a slow listing against the deadline", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* makeTempDir;
+      const slow = ["a", "b", "c"].map((name) => path.join(tmp, name));
+      for (const folder of slow) {
+        yield* fileSystem.makeDirectory(path.join(folder, "repo", ".git"), { recursive: true });
+      }
+      const started = yield* Queue.unbounded<string>();
+      const slowFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        readDirectory: (target, options) =>
+          slow.includes(target)
+            ? Queue.offer(started, target).pipe(
+                Effect.andThen(Effect.sleep("1 second")),
+                Effect.andThen(fileSystem.readDirectory(target)),
+              )
+            : fileSystem.readDirectory(target, options),
+      });
+      const discovering = yield* Effect.forkChild(
+        WorkspaceFolders.discoverFolders(tmp).pipe(
+          Effect.map((folders) => folders.map((folder) => folder.path)),
+          Effect.provideService(FileSystem.FileSystem, slowFileSystem),
+        ),
+      );
+      // The listings run one at a time, so the last waits two seconds before its own read starts.
+      for (const _ of slow) {
+        yield* Queue.take(started);
+        yield* TestClock.adjust("1 second");
+      }
+      assert.deepEqual(
+        yield* Fiber.join(discovering),
+        slow.map((folder) => path.join(folder, "repo")),
+      );
+    }),
   );
 
   it.effect("keeps the folders someone added when a project holds more than fit", () =>

@@ -18,6 +18,7 @@ import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -114,14 +115,20 @@ export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
     return normalized === "" ? [] : [normalized];
   });
 
-// A listing behind a macOS privacy prompt or a hung mount can block in `open()` for good, holding
-// one of the 4 libuv threads all fs, dns and crypto calls share; interruption cannot free it. So a
-// root lists one folder at a time, a listing holds the root's slot until it returns, and a root
-// still busy after the deadline lists nothing more until it does.
+// A listing behind a macOS privacy prompt or a hung mount can pin one of libuv's 4 shared threads
+// for good. So a root lists one folder at a time, holding its slot until `open()` returns, and a
+// root whose read passes the deadline lists nothing more until it does. The deadline starts with
+// the read, so queueing behind a slow but working one never counts.
 const LISTING_DEADLINE = "2 seconds";
 const rootListings = new Map<
   string,
-  { readonly slot: Semaphore.Semaphore; users: number; busy: boolean; overdue: boolean }
+  {
+    readonly slot: Semaphore.Semaphore;
+    users: number;
+    overdue: boolean;
+    /** Completes when the running read passes the deadline; replaced once it returns. */
+    stuck: Deferred.Deferred<void>;
+  }
 >();
 
 const listFolder = Effect.fnUntraced(function* (root: string, folder: string) {
@@ -129,42 +136,38 @@ const listFolder = Effect.fnUntraced(function* (root: string, folder: string) {
   const entry = rootListings.get(root) ?? {
     slot: Semaphore.makeUnsafe(1),
     users: 0,
-    busy: false,
     overdue: false,
+    stuck: Deferred.makeUnsafe<void>(),
   };
   if (entry.overdue) return yield* new Cause.TimeoutError(`A listing in ${root} is overdue.`);
   rootListings.set(root, entry);
   entry.users += 1;
-  const listing = yield* entry.slot
-    .withPermit(
-      Effect.suspend(() => {
-        entry.busy = true;
-        return fileSystem.readDirectory(folder);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            entry.busy = false;
-            entry.overdue = false;
-          }),
-        ),
-        Effect.uninterruptible,
-      ),
-    )
-    .pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          entry.users -= 1;
-          if (entry.users === 0) rootListings.delete(root);
-        }),
-      ),
-      Effect.forkDetach,
-    );
-  const names = yield* Fiber.join(listing).pipe(
-    Effect.timeoutOption(LISTING_DEADLINE),
-    Effect.ensuring(Effect.sync(() => listing.interruptUnsafe())),
+  const stuck = entry.stuck;
+  const read = Effect.gen(function* () {
+    const reading = yield* Effect.forkChild(fileSystem.readDirectory(folder));
+    const early = yield* Fiber.await(reading).pipe(Effect.timeoutOption(LISTING_DEADLINE));
+    if (Option.isSome(early)) return yield* early.value;
+    entry.overdue = true;
+    Deferred.doneUnsafe(entry.stuck, Effect.void);
+    const late = yield* Fiber.await(reading);
+    entry.overdue = false;
+    entry.stuck = Deferred.makeUnsafe();
+    return yield* late;
+  }).pipe(Effect.uninterruptible);
+  const listing = yield* entry.slot.withPermit(read).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        entry.users -= 1;
+        if (entry.users === 0) rootListings.delete(root);
+      }),
+    ),
+    Effect.forkDetach,
   );
+  const names = yield* Effect.raceFirst(
+    Effect.asSome(Fiber.join(listing)),
+    Effect.as(Deferred.await(stuck), Option.none()),
+  ).pipe(Effect.ensuring(Effect.sync(() => listing.interruptUnsafe())));
   if (Option.isSome(names)) return names.value;
-  if (entry.busy) entry.overdue = true;
   return yield* new Cause.TimeoutError(`Listing ${folder} took too long.`);
 });
 
