@@ -195,13 +195,12 @@ function readLinkDefinitions(lines: readonly string[], start: number) {
         : undefined;
   }
   if (partialTitleStart !== undefined) {
-    const candidate = definitions.get(partialTitleStart)!;
-    const titleStart = candidate.end + 1;
-    const opener = LINK_TITLE_START.exec(lines[titleStart] ?? "")!;
     // Retry at the candidate's label before looking beyond the batch limit.
     if (partialTitleStart !== start) {
       definitions.delete(partialTitleStart);
     } else {
+      const titleStart = definitions.get(start)!.end + 1;
+      const opener = LINK_TITLE_START.exec(lines[titleStart]!)!;
       const titleEnd = findTitleEnd(lines, titleStart, opener);
       if (titleEnd !== undefined && titleEnd >= end) {
         const full = definitionParser.parse(lines.slice(start, titleEnd + 1).join("\n"))
