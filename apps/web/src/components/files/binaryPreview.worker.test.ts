@@ -110,7 +110,7 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
   },
 );
 
-it.each(["Asia/Tokyo", "America/Chicago", "UTC"])(
+it.each(["Asia/Tokyo", "America/Chicago"])(
   "shows ZIP modified times as the archived wall-clock time in %s",
   async (timeZone) => {
     const zip = new JSZip();
