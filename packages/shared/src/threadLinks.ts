@@ -17,11 +17,13 @@ const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
 // CommonMark fences start on their own line (optional blockquotes, indentation, or list markers)
 // and close on a line with at least as many of the same marker; backtick info strings hold no `.
 // Quote markers are compared from the first `>`, so lines may indent them differently.
+// Space after the markers is matched only after a `>`: two adjacent `[ \t]*` backtrack quadratically.
+const AFTER_QUOTE = String.raw`(?:(?<=>)[ \t]*)?`;
 const fencedCode = (char: "`" | "~", name: string) => {
   const bq = `${name}Bq`;
   const info = char === "`" ? "[^`\\r\\n]*" : "[^\\r\\n]*";
-  const closer = String.raw`[ \t]*\k<${bq}>[ \t]*\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
-  return String.raw`^[ \t]*(?<${bq}>(?:>(?:[ \t]*>)*)?)[ \t]*${LIST_MARKERS}(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:\r?\n(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:\r?\n${closer})?`;
+  const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
+  return String.raw`^[ \t]*(?<${bq}>(?:>(?:[ \t]*>)*)?)${AFTER_QUOTE}${LIST_MARKERS}(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:\r?\n(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:\r?\n${closer})?`;
 };
 // A code span may wrap lines but ends at a blank line or a fence, as its paragraph does.
 const SPAN_LINE_BREAK = String.raw`\n(?![ \t>]*(?:\r?$|${LIST_MARKERS}(?:\`{3}|~{3})))`;
