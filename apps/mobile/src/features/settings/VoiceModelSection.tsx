@@ -271,7 +271,7 @@ export function VoiceModelRow(props: {
         />
         <Progress
           className="bg-grouped-card px-4 pb-3"
-          value={model.state === "verifying" || percent === undefined ? undefined : percent / 100}
+          percent={model.state === "verifying" ? undefined : percent}
           label={gt("{model} download progress", { model: model.name })}
         />
       </View>
