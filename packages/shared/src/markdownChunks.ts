@@ -1,3 +1,7 @@
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
 import { maskMarkdownFrontmatter } from "./markdownFrontmatter.ts";
 
 // About one screen of rendered Markdown; parsing costs up to ~40 ms per KB with tables and math.
@@ -32,6 +36,7 @@ const HTML_STANDALONE_TAG =
   /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ \t\r"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>|<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>)[ \t]*\r?$/;
 const BLANK_LINE = /^[ \t]*\r?$/;
 const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
+const flowParser = unified().use(remarkParse).use(remarkGfm).freeze();
 
 // A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
@@ -80,8 +85,7 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
     if (opener === undefined) continue;
     return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
   }
-  // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
-  return HTML_BLOCK_TAG.test(line) || HTML_STANDALONE_TAG.test(line) ? closesAtBlankLine : null;
+  return HTML_BLOCK_TAG.test(line) ? closesAtBlankLine : null;
 }
 
 export interface MarkdownChunk {
@@ -155,9 +159,15 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     heldCut = 0;
   };
   const sourceLines = text.split("\n");
-  for (const line of sourceLines) {
+  let flowStart = 0;
+  let parsedThrough = 0;
+  let htmlStarts = new Set<number>();
+  for (const [index, line] of sourceLines.entries()) {
     if (closes !== null) {
-      if (closes(line)) closes = null;
+      if (closes(line)) {
+        closes = null;
+        flowStart = index + 1;
+      }
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
       closes = (next) => {
         openedFence = FRONTMATTER_CLOSE.test(next);
@@ -172,6 +182,28 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
+      if (closes === null && HTML_STANDALONE_TAG.test(line)) {
+        // Type-7 HTML cannot interrupt prose. Consult the parser only for ambiguous runs,
+        // once per run of nonblank lines, to account for headings, tables and containers.
+        if (index >= parsedThrough && index > flowStart) {
+          parsedThrough = index + 1;
+          while (
+            parsedThrough < sourceLines.length &&
+            !BLANK_LINE.test(sourceLines[parsedThrough]!)
+          ) {
+            parsedThrough++;
+          }
+          const flow = flowParser.parse(sourceLines.slice(flowStart, parsedThrough).join("\n"));
+          htmlStarts = new Set(
+            flow.children.flatMap((node) =>
+              node.type === "html" && node.position
+                ? [flowStart + node.position.start.line - 1]
+                : [],
+            ),
+          );
+        }
+        if (index === flowStart || htmlStarts.has(index)) closes = closesAtBlankLine;
+      }
       // Two or more spaces may put a fence in a list item, which this does not track.
       openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
@@ -198,6 +230,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       openWrappers = 0;
     }
     afterBlankLine = BLANK_LINE.test(line);
+    if (afterBlankLine) flowStart = index + 1;
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
