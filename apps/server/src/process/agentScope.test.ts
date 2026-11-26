@@ -445,6 +445,33 @@ describe("AgentScope service", () => {
     );
   });
 
+  it.effect("does not throttle agents whose swap a parent cgroup forbids", () => {
+    memory.total = 16 * GiB;
+    memory.swapKb = 2 * 1024 ** 2;
+    return withFakeSystemd(({ scope, calls, units, cgroupRoot }) =>
+      Effect.gen(function* () {
+        // The host has swap, but MemorySwapMax=0 on user.slice keeps the agents from using it.
+        const slice =
+          "/user.slice/user-1.slice/user@1.service/app.slice/app-t3code.slice/app-t3code-agents.slice";
+        NodeFS.mkdirSync(NodePath.join(cgroupRoot, slice), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(cgroupRoot, slice, "memory.swap.max"), "max\n");
+        NodeFS.writeFileSync(NodePath.join(cgroupRoot, "user.slice", "memory.swap.max"), "0\n");
+        units.set("app-t3code-agents.slice", {
+          activeState: "active",
+          result: "success",
+          controlGroup: slice,
+        });
+        yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        const memoryLimits = calls
+          .filter(
+            ([, verb, , unit]) => verb === "set-property" && unit === "app-t3code-agents.slice",
+          )
+          .map((args) => args.slice(4));
+        expect(memoryLimits.at(-1)).toEqual(["MemoryHigh=infinity", `MemoryMax=${12 * GiB}`]);
+      }),
+    );
+  });
+
   it.effect("stops agents a killed server left before startup completes", () =>
     withFakeSystemd(
       ({ scope, calls, stateDir }) =>
