@@ -26,6 +26,10 @@ const API_ERROR =
   /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
 // Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
 const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
+// The Go genai SSE reader can reject a comment such as ": keep-alive" as an invalid chunk.
+const INVALID_STREAM_CHUNK_PREFIX = "iterateResponseStream: invalid stream chunk:";
+const INVALID_STREAM_CHUNK = /\biterateResponseStream: invalid stream chunk:(\P{Cc}*)/u;
+const MAX_STREAM_CHUNK_LENGTH = 120;
 // Newer Antigravity builds attach the HTTP JSON body (pretty-printed or compact) to the error step.
 const ERROR_JSON_START = /\{\s*"error"\s*:/g;
 const decodeVerificationError = Schema.decodeUnknownOption(
@@ -154,6 +158,19 @@ function statusError(text: string) {
   return match === null ? null : ([match[0], match[2], match[3], match[1]] as const);
 }
 
+function invalidStreamChunk(text: string): string | undefined {
+  const raw = INVALID_STREAM_CHUNK.exec(text)?.[1];
+  if (raw === undefined) return undefined;
+  const repeated = raw.lastIndexOf(INVALID_STREAM_CHUNK_PREFIX);
+  const chunk = (
+    repeated === -1 ? raw : raw.slice(repeated + INVALID_STREAM_CHUNK_PREFIX.length)
+  ).trim();
+  const codePoints = Array.from(chunk);
+  return codePoints.length > MAX_STREAM_CHUNK_LENGTH
+    ? `${codePoints.slice(0, MAX_STREAM_CHUNK_LENGTH - 1).join("")}…`
+    : chunk;
+}
+
 function balancedJsonObject(text: string, start: number): string | undefined {
   let depth = 0;
   let inString = false;
@@ -253,6 +270,20 @@ function turnFailure(
     );
   }
   if (apiError === null) {
+    const streamChunk = invalidStreamChunk(text);
+    if (streamChunk !== undefined) {
+      return reusable(
+        makeProviderFailure({
+          class: "provider_error",
+          message:
+            streamChunk === ""
+              ? "Antigravity's response stream ended on an invalid stream chunk."
+              : `Antigravity's response stream ended on an invalid stream chunk (${streamChunk}).`,
+          code: "INVALID_STREAM_CHUNK",
+          retryable: true,
+        }),
+      );
+    }
     return reusable(
       makeProviderFailure({
         class: "provider_error",
