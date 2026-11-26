@@ -719,6 +719,7 @@ const make = Effect.gen(function* () {
   const accessChangesPubSub = yield* PubSub.unbounded<TeamAccessChangeEvent>();
   const turnInterruptHooks = new Set<TeamTurnInterruptHook>();
   const noteStateLock = yield* Semaphore.make(1);
+  const remoteEnvLifecycleLock = yield* Semaphore.make(1);
   const NOTE_RESERVATION_TTL_MS = 60_000;
   const activeNoteReservations = new Map<
     TeamThreadNoteId,
@@ -756,8 +757,9 @@ const make = Effect.gen(function* () {
         .getWorkspace()
         .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
       if (Option.isNone(workspaceOption)) return;
+      const teamId = workspaceOption.value.id;
       const pending = yield* repository
-        .listPendingRemoteRevocations(workspaceOption.value.id)
+        .listPendingRemoteRevocations(teamId)
         .pipe(Effect.orElseSucceed(() => []));
       for (const item of pending) {
         if (input.environmentId !== undefined && item.environmentId !== input.environmentId) {
@@ -771,14 +773,36 @@ const make = Effect.gen(function* () {
           item.subjectPrefix,
         );
         if (result.ok || result.reason === "unknown_link") {
-          if (item.unlinkAfterRevoke && result.ok && input.peerLinks) {
-            const unlinked = yield* input.peerLinks.unlink(item.environmentId).pipe(
-              Effect.as(true),
-              Effect.orElseSucceed(() => false),
-            );
-            if (!unlinked) continue;
-          }
-          yield* repository.deletePendingRemoteRevocation(item.id).pipe(Effect.ignore);
+          // Serialize unlink decisions with attachEnvironment so a concurrent re-attach during
+          // remote revocation never loses its newly attached peer link.
+          yield* remoteEnvLifecycleLock.withPermits(1)(
+            Effect.gen(function* () {
+              const currentRows = yield* repository
+                .listPendingRemoteRevocations(teamId)
+                .pipe(Effect.orElseSucceed(() => []));
+              const currentItem = currentRows.find((candidate) => candidate.id === item.id);
+              if (!currentItem) return;
+              const attachedEnv = yield* repository
+                .getEnvironmentByEnvironmentId({
+                  teamId,
+                  environmentId: item.environmentId,
+                })
+                .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()));
+              if (
+                currentItem.unlinkAfterRevoke &&
+                Option.isNone(attachedEnv) &&
+                result.ok &&
+                input.peerLinks
+              ) {
+                const unlinked = yield* input.peerLinks.unlink(item.environmentId).pipe(
+                  Effect.as(true),
+                  Effect.orElseSucceed(() => false),
+                );
+                if (!unlinked) return;
+              }
+              yield* repository.deletePendingRemoteRevocation(item.id).pipe(Effect.ignore);
+            }),
+          );
         }
       }
     },
@@ -814,16 +838,25 @@ const make = Effect.gen(function* () {
           const pendingId = yield* random
             .uuidV4()
             .pipe(Effect.orElseSucceed(() => `${environmentId}:${subjectPrefix}`));
-          yield* repository
-            .enqueuePendingRemoteRevocation({
-              id: pendingId,
-              teamId,
-              environmentId,
-              subjectPrefix,
-              unlinkAfterRevoke,
-              createdAt: nowIso,
-            })
-            .pipe(Effect.ignore);
+          yield* remoteEnvLifecycleLock.withPermits(1)(
+            Effect.gen(function* () {
+              const attachedEnv = unlinkAfterRevoke
+                ? yield* repository
+                    .getEnvironmentByEnvironmentId({ teamId, environmentId })
+                    .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()))
+                : Option.none<TeamEnvironment>();
+              yield* repository
+                .enqueuePendingRemoteRevocation({
+                  id: pendingId,
+                  teamId,
+                  environmentId,
+                  subjectPrefix,
+                  unlinkAfterRevoke: unlinkAfterRevoke && Option.isNone(attachedEnv),
+                  createdAt: nowIso,
+                })
+                .pipe(Effect.ignore);
+            }),
+          );
         }
       }
     }
@@ -4655,23 +4688,27 @@ const make = Effect.gen(function* () {
       createdAt: nowIso,
       updatedAt: nowIso,
     };
-    yield* repository.createEnvironment(environment).pipe(
-      Effect.catchTags({
-        TeamEnvironmentAlreadyAttachedError: (error) =>
-          Effect.fail(
-            new TeamOperationError({
-              code: "environment_already_attached",
-              message: error.message,
-            }),
-          ),
-        TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+    yield* remoteEnvLifecycleLock.withPermits(1)(
+      Effect.gen(function* () {
+        yield* repository.createEnvironment(environment).pipe(
+          Effect.catchTags({
+            TeamEnvironmentAlreadyAttachedError: (error) =>
+              Effect.fail(
+                new TeamOperationError({
+                  code: "environment_already_attached",
+                  message: error.message,
+                }),
+              ),
+            TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+          }),
+        );
+        // Clear any stale unlink_after_revoke flag from an earlier offline detach so background
+        // revocation drain revokes old sessions without tearing down this re-attached environment.
+        yield* repository
+          .clearPendingRemoteRevocationUnlinkFlag({ teamId: team.id, environmentId })
+          .pipe(Effect.mapError(toInternalError));
       }),
     );
-    // Clear any stale unlink_after_revoke flag from an earlier offline detach so background
-    // revocation drain revokes old sessions without tearing down this re-attached environment.
-    yield* repository
-      .clearPendingRemoteRevocationUnlinkFlag({ teamId: team.id, environmentId })
-      .pipe(Effect.mapError(toInternalError));
     yield* publish({ version: 1, type: "environmentUpserted", payload: environment });
     yield* publishAccessChange({ type: "environment", environmentId });
     return environment;
@@ -4788,7 +4825,20 @@ const make = Effect.gen(function* () {
       }
       // Retain the peer link when the remote is unreachable so pending revocations can drain later.
       if (shouldUnlink && revocationComplete && input.peerLinks !== undefined) {
-        yield* input.peerLinks.unlink(input.payload.environmentId).pipe(Effect.ignore);
+        const peerLinks = input.peerLinks;
+        yield* remoteEnvLifecycleLock.withPermits(1)(
+          Effect.gen(function* () {
+            const reattached = yield* repository
+              .getEnvironmentByEnvironmentId({
+                teamId: team.id,
+                environmentId: input.payload.environmentId,
+              })
+              .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()));
+            if (Option.isNone(reattached)) {
+              yield* peerLinks.unlink(input.payload.environmentId).pipe(Effect.ignore);
+            }
+          }),
+        );
       }
       yield* publish({
         version: 1,

@@ -170,7 +170,7 @@ export function TeamLocalThreadSyncCoordinator() {
 
   const syncedPayloadFingerprintByKeyRef = useRef(new Map<string, string>());
   const syncedShellFingerprintByKeyRef = useRef(new Map<string, string>());
-  const syncInFlightRef = useRef(new Set<string>());
+  const syncInFlightFingerprintByKeyRef = useRef(new Map<string, string>());
   const pendingRetryByKeyRef = useRef(new Map<string, SyncEntry>());
   const latestEntryByKeyRef = useRef(new Map<string, SyncEntry>());
   const pendingClosingEntriesByKeyRef = useRef(new Map<string, SyncEntry>());
@@ -384,7 +384,7 @@ export function TeamLocalThreadSyncCoordinator() {
       const entry = latestEntryByKeyRef.current.get(syncKey);
       if (!entry) return;
       const isClosingRequest = pendingClosingEntriesByKeyRef.current.get(syncKey) === entry;
-      if (!currentLiveTeamEnvIds.has(entry.teamEnvironmentId)) {
+      if (!liveTeamEnvIdsRef.current.has(entry.teamEnvironmentId)) {
         return;
       }
       const payload = buildLocalSyncPayload({
@@ -414,15 +414,18 @@ export function TeamLocalThreadSyncCoordinator() {
       if (!options?.force) {
         const scheduledFingerprint = retryScheduledFingerprintByKeyRef.current.get(syncKey);
         if (
-          scheduledFingerprint === entry.shellFingerprint &&
+          scheduledFingerprint === fingerprint &&
           (retryTimerByKeyRef.current.has(syncKey) ||
             (retryAttemptsByKeyRef.current.get(syncKey) ?? 0) >= MAX_SYNC_RETRIES)
         ) {
           return;
         }
       }
-      if (syncInFlightRef.current.has(syncKey)) {
-        pendingRetryByKeyRef.current.set(syncKey, entry);
+      const inFlightFingerprint = syncInFlightFingerprintByKeyRef.current.get(syncKey);
+      if (inFlightFingerprint !== undefined) {
+        if (inFlightFingerprint !== fingerprint) {
+          pendingRetryByKeyRef.current.set(syncKey, entry);
+        }
         return;
       }
       const existingTimer = retryTimerByKeyRef.current.get(syncKey);
@@ -430,7 +433,7 @@ export function TeamLocalThreadSyncCoordinator() {
         clearTimeout(existingTimer);
         retryTimerByKeyRef.current.delete(syncKey);
       }
-      syncInFlightRef.current.add(syncKey);
+      syncInFlightFingerprintByKeyRef.current.set(syncKey, fingerprint);
       pendingRetryByKeyRef.current.delete(syncKey);
       void syncLocalThread({
         environmentId: entry.teamEnvironmentId,
@@ -473,7 +476,7 @@ export function TeamLocalThreadSyncCoordinator() {
             }
             const attempt = (retryAttemptsByKeyRef.current.get(syncKey) ?? 0) + 1;
             retryAttemptsByKeyRef.current.set(syncKey, attempt);
-            retryScheduledFingerprintByKeyRef.current.set(syncKey, entry.shellFingerprint);
+            retryScheduledFingerprintByKeyRef.current.set(syncKey, fingerprint);
             if (attempt <= MAX_SYNC_RETRIES) {
               const delayMs = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
               const timer = setTimeout(() => {
@@ -485,11 +488,11 @@ export function TeamLocalThreadSyncCoordinator() {
           }
         })
         .finally(() => {
-          syncInFlightRef.current.delete(syncKey);
+          syncInFlightFingerprintByKeyRef.current.delete(syncKey);
           const pending = pendingRetryByKeyRef.current.get(syncKey);
           if (pending) {
             pendingRetryByKeyRef.current.delete(syncKey);
-            triggerSync(pending.syncKey, { force: true });
+            triggerSync(pending.syncKey);
           }
         });
     };

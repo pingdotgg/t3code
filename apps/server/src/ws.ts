@@ -2138,8 +2138,14 @@ export const layerWsRpc = (
         [WS_METHODS.issuesSetState]: (input) => issues.setState(input),
         [WS_METHODS.issuesReact]: (input) => issues.react(input),
         [WS_METHODS.issueTrackersList]: () => issueTrackers.list,
-        [WS_METHODS.issueTrackersConnect]: (input) => issueTrackers.connect(input),
-        [WS_METHODS.issueTrackersBindProject]: (input) => issueTrackers.bindProject(input),
+        [WS_METHODS.issueTrackersConnect]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(issueTrackers.connect(input))),
+        [WS_METHODS.issueTrackersBindProject]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(issueTrackers.bindProject(input))),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3236,6 +3242,7 @@ export const layerWsRpc = (
         [WS_METHODS.providerConsumeResetCredit]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
+            yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
             if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
             const instance = yield* providerInstances.getInstance(input.instanceId);
             if (instance === undefined || !instance.enabled) {
@@ -3670,9 +3677,18 @@ export const layerWsRpc = (
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
             .pipe(Effect.andThen(sourceControlRepositories.cloneRepository(input))),
-        [WS_METHODS.sourceControlSignInStart]: (input) => sourceControlSignIn.start(input),
-        [WS_METHODS.sourceControlSignInWait]: (input) => sourceControlSignIn.wait(input),
-        [WS_METHODS.sourceControlSignInCancel]: (input) => sourceControlSignIn.cancel(input),
+        [WS_METHODS.sourceControlSignInStart]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(sourceControlSignIn.start(input))),
+        [WS_METHODS.sourceControlSignInWait]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(sourceControlSignIn.wait(input))),
+        [WS_METHODS.sourceControlSignInCancel]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(sourceControlSignIn.cancel(input))),
         [WS_METHODS.sourceControlAppAccess]: (input) => sourceControlSignIn.access(input),
         [WS_METHODS.sourceControlStarred]: (input) => sourceControlSignIn.starred(input),
         [WS_METHODS.sourceControlStar]: (input) => sourceControlSignIn.star(input),
@@ -4455,9 +4471,13 @@ export const layerWsRpc = (
             : authorizeEffect(
                 requiredScopeForDeviceList(input),
                 input.updateTool
-                  ? deviceService.updateTool(input.updateTool)
+                  ? teamService
+                      .assertCanAccessLocalEnvironment(currentSessionId)
+                      .pipe(Effect.andThen(deviceService.updateTool(input.updateTool)))
                   : input.retryHostId
-                    ? deviceService.retryHost(input.retryHostId)
+                    ? teamService
+                        .assertCanAccessLocalEnvironment(currentSessionId)
+                        .pipe(Effect.andThen(deviceService.retryHost(input.retryHostId)))
                     : deviceService.list,
               )
           ).pipe(

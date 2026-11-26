@@ -28,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -2671,6 +2672,54 @@ describe("TeamService", () => {
         });
         expect(revokedCalls.length).toBe(1);
         expect(revokedCalls[0]?.environmentId).toBe(envB);
+        expect(unlinkedEnvs).toEqual([]);
+
+        // 6. Concurrent re-attach WHILE drainPendingRemoteRevocations is mid-revokeSubject must
+        // never lose its newly re-attached peer link when the in-flight drain finishes.
+        remoteOnline = false;
+        unlinkedEnvs.length = 0;
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: envB },
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        const revokeStarted = yield* Deferred.make<void>();
+        const releaseRevoke = yield* Deferred.make<void>();
+        const slowPeerClientPairing = {
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.gen(function* () {
+              revokedCalls.push({ environmentId, prefix });
+              yield* Deferred.succeed(revokeStarted, undefined);
+              yield* Deferred.await(releaseRevoke);
+              return { ok: true as const, revokedSessions: 1, revokedPairingLinks: 0 };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+
+        revokedCalls.length = 0;
+        const drainFiber = yield* Effect.forkChild(
+          team.drainPendingRemoteRevocations({
+            peerClientPairing: slowPeerClientPairing,
+            peerLinks: mockPeerLinks,
+          }),
+        );
+        yield* Deferred.await(revokeStarted);
+        // Re-attach envB while the drain's revokeSubject call is still in flight.
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envB,
+            name: "Remote B Concurrent Reattach",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+        yield* Deferred.succeed(releaseRevoke, undefined);
+        yield* Fiber.join(drainFiber);
+        expect(revokedCalls.length).toBe(1);
         expect(unlinkedEnvs).toEqual([]);
       }).pipe(Effect.provide(makeTestLayer())),
   );
