@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { GitBranchIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   useEffect,
   useEffectEvent,
@@ -30,6 +31,8 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { shortcutLabelForCommand } from "../keybindings";
+import { primaryServerKeybindingsAtom } from "../state/server";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
@@ -73,6 +76,7 @@ import {
 } from "./ThreadStatusIndicators";
 
 import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
@@ -128,6 +132,10 @@ export function BranchToolbarBranchSelector({
   const gt = useGT();
   const messages = useMessages();
   const composerFloatingLayerProps = useComposerMenuProps();
+  const shortcutLabel = shortcutLabelForCommand(
+    useAtomValue(primaryServerKeybindingsAtom),
+    "composer.branch",
+  );
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
@@ -885,14 +893,26 @@ export function BranchToolbarBranchSelector({
             }}
           />
         ) : null}
-        <span
-          className="flex min-w-0"
-          onMouseDownCapture={(event) => {
-            if (event.button !== 0 || event.ctrlKey) {
-              event.stopPropagation();
-            }
-          }}
-          onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
+        <SharedTooltipTrigger
+          render={
+            <span
+              className="flex min-w-0"
+              onMouseDownCapture={(event) => {
+                if (event.button !== 0 || event.ctrlKey) {
+                  event.stopPropagation();
+                }
+              }}
+              onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
+            />
+          }
+          // The panel row spells out the branch already; the composer chip can truncate it.
+          disabled={displayMode === "panel"}
+          label={
+            <>
+              {triggerLabel}
+              {shortcutLabel ? ` · ${shortcutLabel}` : null}
+            </>
+          }
         >
           <ComboboxTrigger
             render={
@@ -922,7 +942,7 @@ export function BranchToolbarBranchSelector({
               />
             </ComposerContextLabel>
           </ComboboxTrigger>
-        </span>
+        </SharedTooltipTrigger>
         {displayMode === "panel" ? (
           <ThreadDetailsThreadPrRows
             threadRef={threadRef}
