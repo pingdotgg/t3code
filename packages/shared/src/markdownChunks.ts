@@ -197,9 +197,11 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           ) {
             const markerEnd = prefix[0].trimEnd().length;
             const width = markdownColumn(padding, markerEnd) - markerEnd;
-            listItemIndent = markerEnd + (width >= 1 && width <= 4 ? width : 1);
+            // Content padded past four columns is indented code, and the item indents by one.
+            const contentFollows = width >= 1 && width <= 4;
+            listItemIndent = markerEnd + (contentFollows ? width : 1);
             listItemMarker = delimiter;
-            if (width >= 1 && width <= 4) listLine = line.slice(prefix[0].length);
+            if (contentFollows) listLine = line.slice(prefix[0].length);
           }
         }
       }
