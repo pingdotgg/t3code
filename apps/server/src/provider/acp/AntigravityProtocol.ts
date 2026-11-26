@@ -99,9 +99,7 @@ function antigravitySecurityWarning(option: EffectAcpSchema.PermissionOption): s
   const warning = Option.getOrUndefined(decodeSecurityWarning(meta[SECURITY_WARNING_META_KEY]));
   const text = warning?.message?.trim() || warning?.title?.trim();
   if (!text) return undefined;
-  return text.length > WARNING_TEXT_LIMIT
-    ? copyBoundedText(`${text.slice(0, WARNING_TEXT_LIMIT - 3)}...`)
-    : text;
+  return boundQuestionText(text, WARNING_TEXT_LIMIT);
 }
 
 export function antigravityApprovalOptions(

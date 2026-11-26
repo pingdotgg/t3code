@@ -234,6 +234,21 @@ describe("Antigravity permissions and questions", () => {
       { decision: "cancel", label: "Cancel" },
     ]);
     expect(antigravityApprovalOptions(permissionRequest)[1]).not.toHaveProperty("warning");
+
+    const longWarning = {
+      ...permissionRequest,
+      options: [
+        {
+          optionId: "remember-this-command",
+          name: "Allow Always (risky)",
+          kind: "allow_always",
+          _meta: {
+            "agy.security.warning": { message: `${"a".repeat(508)}😀${"b".repeat(10)}` },
+          },
+        },
+      ],
+    } satisfies EffectAcpSchema.RequestPermissionRequest;
+    expect(antigravityApprovalOptions(longWarning)[0]?.warning).toBe(`${"a".repeat(508)}...`);
   });
 
   it("routes the captured native question to single-choice input, not approval", () => {
