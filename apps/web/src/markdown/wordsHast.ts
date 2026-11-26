@@ -1348,7 +1348,7 @@ export function markdownReferenceDefinitions(markdown: string): string[] {
     lookups.set(probe.length, label);
     probe += `[${label}]\n\n`;
   }
-  probe += markdown;
+  probe += markdown.replace(/^\uFEFF/, "");
   const definitions: string[] = [];
   const visit = (node: Root | Element) => {
     for (const child of node.children) {
