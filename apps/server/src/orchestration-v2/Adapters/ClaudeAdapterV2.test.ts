@@ -74,7 +74,6 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -14753,61 +14752,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect(
-    "records roster updates only after enqueue and keeps concurrent publishes ordered",
-    () =>
-      Effect.gen(function* () {
-        const { providerThread } = yield* makeWakeHarness;
-        const event = {
-          type: "provider_thread.updated",
-          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-          providerThread,
-        } as const;
-
-        // Unexecuted publish must not populate the dedupe cache.
-        const unexecutedEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-        const unexecutedPublisher =
-          ClaudeAdapterV2.makeClaudeThreadUpdatePublisher(unexecutedEvents);
-        void unexecutedPublisher.publish(event, "always");
-        assert.deepEqual(yield* Queue.poll(unexecutedEvents), Option.none());
-        yield* unexecutedPublisher.publish(event, "ifChanged");
-        assert.deepEqual(yield* Queue.poll(unexecutedEvents), Option.some(event));
-
-        // An interrupted Queue.offer must not suppress an identical retry.
-        const boundedEvents = yield* Queue.bounded<ProviderAdapter.ProviderAdapterV2Event>(1);
-        const boundedPublisher = ClaudeAdapterV2.makeClaudeThreadUpdatePublisher(boundedEvents);
-        yield* Queue.offer(boundedEvents, event);
-        const blocked = yield* boundedPublisher.publish(event, "always").pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        yield* Fiber.interrupt(blocked);
-        yield* Queue.take(boundedEvents);
-        yield* boundedPublisher.publish(event, "ifChanged");
-        assert.deepEqual(yield* Queue.poll(boundedEvents), Option.some(event));
-
-        // Competing always + ifChanged publishes under a tight yield budget enqueue only once.
-        const racedEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-        const racedPublisher = ClaudeAdapterV2.makeClaudeThreadUpdatePublisher(racedEvents);
-        const first = yield* racedPublisher
-          .publish(event, "always")
-          .pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 2), Effect.forkChild);
-        const second = yield* racedPublisher
-          .publish(event, "ifChanged")
-          .pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 2), Effect.forkChild);
-        yield* Fiber.join(first);
-        yield* Fiber.join(second);
-        assert.strictEqual((yield* Queue.takeAll(racedEvents)).length, 1);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
-  );
-
   it.effect("publishes each background roster change once", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -14859,8 +14803,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         // Claude Code reports each start and end both as a task event and as a roster level.
+        const beforeTick = DateTime.toEpochMillis(yield* DateTime.now);
         yield* harness.offerAndWait(wakeTaskStarted);
         yield* TestClock.adjust("1 millis");
+        const afterTick = DateTime.toEpochMillis(yield* DateTime.now);
         yield* harness.offerAndWait(roster([shell], "00000000-0000-4000-8000-000000000502"));
         yield* harness.offerAndWait(
           roster([shell, subagent], "00000000-0000-4000-8000-000000000503"),
@@ -14885,12 +14831,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           providerThreadRosterEvents(harness.events).map((event) => [
             (event.providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId),
             event.pendingBackgroundWork === true,
+            DateTime.toEpochMillis(event.providerThread.updatedAt),
           ]),
           [
-            [[], false],
-            [[WAKE_TASK_ID], false],
-            [[WAKE_TASK_ID], true],
-            [["b2"], false],
+            [[], false, beforeTick],
+            [[WAKE_TASK_ID], false, beforeTick],
+            [[WAKE_TASK_ID], true, afterTick],
+            [["b2"], false, afterTick],
           ],
         );
       }).pipe(
