@@ -1810,6 +1810,104 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("closes a suspended session and stays parked until the app is active again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-suspended");
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+
+      // A parked state can only show a new network after the loop took that
+      // change, so each awaited state proves the change left it parked.
+      yield* harness.setNetworkStatus("offline");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "offline" && state.network === "offline",
+      );
+      yield* harness.setNetworkStatus("online");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "offline" && state.network === "online",
+      );
+      // The retry is queued ahead of the network change that follows it.
+      yield* supervisor.retryNow;
+      yield* harness.setNetworkStatus("offline");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "offline" && state.network === "offline",
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      yield* harness.setNetworkStatus("online");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "offline" && state.network === "online",
+      );
+
+      yield* harness.wake("application-active-long");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("abandons connection setup on suspension and reconnects on resume", () =>
+    Effect.gen(function* () {
+      const setupStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        ready: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(setupStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(setupStarted);
+      yield* harness.wake("application-suspended");
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+
+      yield* harness.wake("application-active-probe");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }),
+  );
+
+  it.effect("closes a session whose resume probe is still running when the app is suspended", () =>
+    Effect.gen(function* () {
+      const probeStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        probe: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active");
+      yield* Deferred.await(probeStarted);
+      yield* harness.wake("application-suspended");
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+    }),
+  );
+
   it.effect(
     "keeps a live session when the automatic follow-up to a slow foreground probe answers",
     () =>

@@ -18,3 +18,4 @@ Get push alerts, Live Activities, and home-screen widgets on iOS and Android whe
 
 - Ordinary alerts are muted while the mobile app is in the foreground, though viewing a thread on another device does not silence your phone.
 - Force-stopping T3 Code in Android system Settings pauses push delivery until you reopen the app.
+- **Battery saver (Android, beta)**: **Settings → Labs → Battery saver** closes the app's server connections 30 seconds after you leave it, and tells your machines when Android Battery Saver is on so they pause background work. Push notifications still arrive; reopening the app reconnects.

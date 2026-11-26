@@ -5772,5 +5772,10 @@
   "5d9bc70d1cb3b596": "{count} Rechnern geht der Speicherplatz aus",
   "7bb6d3c4fe5cea0f": "{count} Rechner sind überlastet",
   "b48a4b390016a4f0": "Belegt {usage}, während Arbeitsspeicher Agents ausbremst. Ihn zu stoppen hilft den übrigen.",
-  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen."
+  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen.",
+  "8c6a3ffe43dae6da": "Akku sparen",
+  "d03fe37bf2f2eeb3": "Im Hintergrund Akku sparen",
+  "424a9796c9f38ac8": "Trennt die Serververbindungen dieses Telefons nach 30 Sekunden im Hintergrund und teilt deinen Rechnern mit, wenn der Energiesparmodus an ist, damit sie Hintergrundarbeit pausieren können. Beim erneuten Öffnen der App wird wieder verbunden. Benachrichtigungen kommen weiterhin an.",
+  "ba0963c7d1a8335b": "akku sparen",
+  "20bfe4d123b19bf0": "hintergrundverbindungen"
 }

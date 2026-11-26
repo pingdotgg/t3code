@@ -40,6 +40,37 @@ vi.mock("@t3tools/client-runtime/rpc", async (importOriginal) => {
   };
 });
 
+const power = vi.hoisted(() => {
+  const state: {
+    enabled: boolean;
+    powerSaveMode: boolean | null;
+    onSettingChange: (() => void) | undefined;
+    onPowerSaveChange: ((enabled: boolean) => void) | undefined;
+  } = {
+    enabled: false,
+    powerSaveMode: null,
+    onSettingChange: undefined,
+    onPowerSaveChange: undefined,
+  };
+  return state;
+});
+
+vi.mock("../lib/androidBatterySaver", () => ({
+  isAndroidBatterySaverEnabled: () => power.enabled,
+  subscribeAndroidBatterySaver: (onChange: () => void) => {
+    power.onSettingChange = onChange;
+    return () => (power.onSettingChange = undefined);
+  },
+}));
+
+vi.mock("../native/androidPower", () => ({
+  readAndroidPowerSaveMode: () => power.powerSaveMode,
+  subscribeAndroidPowerSaveMode: (listener: (enabled: boolean) => void) => {
+    power.onPowerSaveChange = listener;
+    return () => (power.onPowerSaveChange = undefined);
+  },
+}));
+
 vi.mock("expo-secure-store", () => ({
   deleteItemAsync: vi.fn(),
   getItemAsync: vi.fn(),
@@ -49,6 +80,7 @@ vi.mock("expo-secure-store", () => ({
 import * as MobileSecureStorage from "../persistence/mobile-secure-storage";
 import * as MobileStorage from "../persistence/mobile-storage";
 import { layerReporter } from "./background-activity";
+import { reportedLowPowerMode } from "./background-activity-power";
 import {
   onRetainedMobileBackgroundScopesChange,
   observeMobileBackgroundActivitySubscription,
@@ -59,6 +91,37 @@ function setup() {
   appState.current = "active";
   appState.listener = undefined;
   reports.length = 0;
+  power.enabled = false;
+  power.powerSaveMode = null;
+}
+
+function buildReporter() {
+  return Effect.gen(function* () {
+    const entries = yield* SubscriptionRef.make(
+      new Map([[EnvironmentId.make("environment-reporter-test"), {}]]),
+    );
+    let calls = 0;
+    const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+      entries,
+      run: () => {
+        calls += 1;
+        return Effect.void;
+      },
+    } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+    const secureStorage = MobileSecureStorage.MobileSecureStorage.of({
+      getItem: () => Effect.succeed("device"),
+      setItem: () => Effect.void,
+      removeItem: () => Effect.void,
+    });
+    yield* Layer.build(
+      layerReporter.pipe(
+        Layer.provide(MobileStorage.layer),
+        Layer.provide(Layer.succeed(MobileSecureStorage.MobileSecureStorage, secureStorage)),
+        Layer.provide(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry)),
+      ),
+    );
+    return { calls: () => calls };
+  });
 }
 
 function changeAppState(next: string) {
@@ -67,6 +130,19 @@ function changeAppState(next: string) {
 }
 
 describe("mobile background activity", () => {
+  it.each([
+    { enabled: false, powerSaveMode: true, expected: {} },
+    { enabled: true, powerSaveMode: true, expected: { lowPowerMode: "true" } },
+    { enabled: true, powerSaveMode: false, expected: { lowPowerMode: "false" } },
+    // An older dev client without the native module.
+    { enabled: true, powerSaveMode: null, expected: { lowPowerMode: "unknown" } },
+  ] as const)(
+    "reports Battery Saver $powerSaveMode only while the Labs setting is $enabled",
+    ({ enabled, powerSaveMode, expected }) => {
+      expect(reportedLowPowerMode(enabled, powerSaveMode)).toEqual(expected);
+    },
+  );
+
   it.effect("retains VCS demand only while the mobile subscription is active", () =>
     Effect.gen(function* () {
       const environmentId = EnvironmentId.make("mobile-environment");
@@ -147,50 +223,27 @@ describe("mobile background activity", () => {
   it.effect("ignores inactive and skips periodic reports while backgrounded", () =>
     Effect.gen(function* () {
       setup();
-      const entries = yield* SubscriptionRef.make(
-        new Map([[EnvironmentId.make("environment-reporter-test"), {}]]),
-      );
-      let calls = 0;
-      const registry = EnvironmentRegistry.EnvironmentRegistry.of({
-        entries,
-        run: () => {
-          calls += 1;
-          return Effect.void;
-        },
-      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
-      const secureStorage = MobileSecureStorage.MobileSecureStorage.of({
-        getItem: () => Effect.succeed("device"),
-        setItem: () => Effect.void,
-        removeItem: () => Effect.void,
-      });
-
-      yield* Layer.build(
-        layerReporter.pipe(
-          Layer.provide(MobileStorage.layer),
-          Layer.provide(Layer.succeed(MobileSecureStorage.MobileSecureStorage, secureStorage)),
-          Layer.provide(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry)),
-        ),
-      );
+      const reporter = yield* buildReporter();
       yield* TestClock.adjust("1 second");
-      expect(calls).toBe(1);
+      expect(reporter.calls()).toBe(1);
 
       changeAppState("background");
       yield* TestClock.adjust("1 second");
-      expect(calls).toBe(2);
+      expect(reporter.calls()).toBe(2);
 
       yield* TestClock.adjust("60 seconds");
-      expect(calls).toBe(2);
+      expect(reporter.calls()).toBe(2);
 
       changeAppState("active");
       yield* TestClock.adjust("1 second");
-      expect(calls).toBe(3);
+      expect(reporter.calls()).toBe(3);
 
       yield* TestClock.adjust("25 seconds");
-      expect(calls).toBe(4);
+      expect(reporter.calls()).toBe(4);
 
       changeAppState("inactive");
       yield* TestClock.adjust("25 seconds");
-      expect(calls).toBe(5);
+      expect(reporter.calls()).toBe(5);
       expect(reports.at(-1)).toMatchObject({
         appState: "inactive",
         visible: true,
@@ -200,16 +253,41 @@ describe("mobile background activity", () => {
 
       changeAppState("active");
       yield* TestClock.adjust("1 second");
-      expect(calls).toBe(5);
+      expect(reporter.calls()).toBe(5);
 
       changeAppState("background");
       yield* TestClock.adjust("1 second");
-      expect(calls).toBe(6);
+      expect(reporter.calls()).toBe(6);
       expect(reports.at(-1)).toMatchObject({ appState: "background", visible: false });
 
       changeAppState("unknown");
       yield* TestClock.adjust("30 seconds");
-      expect(calls).toBe(6);
+      expect(reporter.calls()).toBe(6);
+    }),
+  );
+
+  it.effect("reports Battery Saver only while the Labs setting is on, even in the background", () =>
+    Effect.gen(function* () {
+      setup();
+      power.powerSaveMode = false;
+      const reporter = yield* buildReporter();
+      yield* TestClock.adjust("1 second");
+      expect(reporter.calls()).toBe(1);
+      expect(reports.at(-1)).not.toHaveProperty("lowPowerMode");
+
+      power.enabled = true;
+      power.onSettingChange?.();
+      yield* TestClock.adjust("1 second");
+      expect(reporter.calls()).toBe(2);
+      expect(reports.at(-1)).toMatchObject({ lowPowerMode: "false" });
+
+      changeAppState("background");
+      yield* TestClock.adjust("1 second");
+      power.powerSaveMode = true;
+      power.onPowerSaveChange?.(true);
+      yield* TestClock.adjust("1 second");
+      expect(reporter.calls()).toBe(4);
+      expect(reports.at(-1)).toMatchObject({ appState: "background", lowPowerMode: "true" });
     }),
   );
 });

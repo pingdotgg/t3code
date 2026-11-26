@@ -5766,5 +5766,10 @@
   "5d9bc70d1cb3b596": "{count} máquinas estão quase sem espaço em disco",
   "7bb6d3c4fe5cea0f": "{count} máquinas estão sobrecarregadas",
   "b48a4b390016a4f0": "Usando {usage} enquanto a memória deixa os agentes lentos. Pará-lo ajuda os demais.",
-  "0d23483df1d6fc87": "Usando {usage} enquanto esta máquina está sobrecarregada. Pará-lo ajuda os demais."
+  "0d23483df1d6fc87": "Usando {usage} enquanto esta máquina está sobrecarregada. Pará-lo ajuda os demais.",
+  "8c6a3ffe43dae6da": "Economia de bateria",
+  "d03fe37bf2f2eeb3": "Economizar bateria em segundo plano",
+  "424a9796c9f38ac8": "Fecha as conexões deste celular com os servidores após 30 segundos em segundo plano e avisa suas máquinas quando a Economia de bateria está ativada, para que pausem o trabalho em segundo plano. Reabrir o app reconecta. As notificações continuam chegando.",
+  "ba0963c7d1a8335b": "economia de bateria",
+  "20bfe4d123b19bf0": "conexões em segundo plano"
 }

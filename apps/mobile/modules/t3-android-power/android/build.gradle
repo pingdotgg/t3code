@@ -1,0 +1,19 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.t3tools.androidpower'
+version = '0.0.0'
+
+android {
+  namespace 'expo.modules.t3androidpower'
+  defaultConfig {
+    versionCode 1
+    versionName '0.0.0'
+  }
+}
+
+dependencies {
+  implementation 'androidx.core:core:1.17.0'
+}

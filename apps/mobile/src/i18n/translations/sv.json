@@ -5772,5 +5772,10 @@
   "5d9bc70d1cb3b596": "{count} datorer har nästan slut på diskutrymme",
   "7bb6d3c4fe5cea0f": "{count} datorer är överbelastade",
   "b48a4b390016a4f0": "Använder {usage} medan minnet gör agenterna långsamma. Att stoppa den hjälper resten.",
-  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten."
+  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten.",
+  "8c6a3ffe43dae6da": "Batterisparande",
+  "d03fe37bf2f2eeb3": "Spara batteri i bakgrunden",
+  "424a9796c9f38ac8": "Stänger telefonens serveranslutningar efter 30 sekunder i bakgrunden och meddelar dina datorer när Batterisparläge är på så att de kan pausa bakgrundsarbete. När du öppnar appen igen återansluts den. Aviseringar kommer fortfarande fram.",
+  "ba0963c7d1a8335b": "batterisparande",
+  "20bfe4d123b19bf0": "bakgrundsanslutningar"
 }

@@ -150,6 +150,8 @@ export interface Preferences {
   readonly darkThemeId?: MobileThemeId;
   readonly themeMode?: MobileThemeMode;
   readonly androidNavigationStyle?: AndroidNavigationStyle;
+  /** Labs, Android only: suspend connections in the background and report Battery Saver. */
+  readonly enableAndroidBatterySaver?: boolean;
   readonly baseFontSize?: number;
   readonly fontId?: MobileFontId;
   readonly monoFontId?: MobileMonoFontId;
@@ -252,6 +254,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     darkThemeId?: MobileThemeId;
     themeMode?: MobileThemeMode;
     androidNavigationStyle?: AndroidNavigationStyle;
+    enableAndroidBatterySaver?: boolean;
     baseFontSize?: number;
     fontId?: MobileFontId;
     monoFontId?: MobileMonoFontId;
@@ -322,6 +325,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
+  }
+  if (typeof parsed.enableAndroidBatterySaver === "boolean") {
+    preferences.enableAndroidBatterySaver = parsed.enableAndroidBatterySaver;
   }
   if (
     typeof parsed.themeId === "string" &&
