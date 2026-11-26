@@ -187,7 +187,7 @@ function unsettledStoppedProviderTurn(
   if (
     turn === undefined ||
     nativeTurnId == null ||
-    turn.status !== previous.status ||
+    (turn.status !== "cancelled" && turn.status !== "interrupted") ||
     turn.promptDropped === true ||
     (turn.nativeThreadRef !== undefined &&
       turn.nativeThreadRef.nativeId !== providerThread.nativeThreadRef?.nativeId)
@@ -1014,6 +1014,7 @@ export const layer: Layer.Layer<
       // restart superseded, and the session cannot be reused until those turns stop.
       const abandonedTurns = abandonedProviderTurns(projection, run, providerThread.id);
       const abandonedTurn = abandonedTurns.at(-1)?.turn;
+      let providerTurns = projection.providerTurns;
       if (abandonedTurn !== undefined) {
         const liveSession = yield* providerSessions.get(providerSessionId);
         if (Option.isSome(liveSession)) {
@@ -1038,27 +1039,32 @@ export const layer: Layer.Layer<
           }
         }
         const completedAt = yield* DateTime.now;
+        const repairEvents = yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
+          Effect.gen(function* () {
+            return {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "provider-turn.updated" as const,
+              threadId: projection.thread.id,
+              runId: abandonedRun.id,
+              nodeId: turn.nodeId,
+              providerInstanceId: abandonedRun.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...turn, status: "interrupted" as const, completedAt },
+            };
+          }),
+        );
         const repaired = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
-            Effect.gen(function* () {
-              return {
-                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                type: "provider-turn.updated" as const,
-                threadId: projection.thread.id,
-                runId: abandonedRun.id,
-                nodeId: turn.nodeId,
-                providerInstanceId: abandonedRun.providerInstanceId,
-                occurredAt: completedAt,
-                payload: { ...turn, status: "interrupted" as const, completedAt },
-              };
-            }),
-          ),
+          events: repairEvents,
         });
         if (!repaired.committed) return;
+        const repairedTurns = new Map(
+          repairEvents.map((event) => [event.payload.id, event.payload]),
+        );
+        providerTurns = providerTurns.map((turn) => repairedTurns.get(turn.id) ?? turn);
       }
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
@@ -1108,7 +1114,11 @@ export const layer: Layer.Layer<
       }
       const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
-      const cutTurn = unsettledStoppedProviderTurn(projection, run, providerThread);
+      const cutTurn = unsettledStoppedProviderTurn(
+        { runs: projection.runs, providerTurns },
+        run,
+        providerThread,
+      );
       if (
         cutTurn !== undefined &&
         session.nativeTurnKept !== undefined &&
