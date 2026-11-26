@@ -1635,8 +1635,11 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
         if (!isCoveredBySystemRoBinds(validatedExecutable)) {
           extraRoBinds.push(validatedExecutable);
         }
-        const cmdHops = yield* Effect.promise(() => collectNonSystemSymlinkHops(input.command));
-        for (const hop of cmdHops) {
+        const cmdCandidates = new Set<string>([
+          normalizePosixPath(input.command),
+          ...(yield* Effect.promise(() => collectNonSystemSymlinkHops(input.command))),
+        ]);
+        for (const hop of cmdCandidates) {
           if (hop === validatedExecutable || isCoveredBySystemRoBinds(hop)) continue;
           const lexicalHopError = assertLexicalPathNotForbidden({
             candidate: hop,
@@ -1705,10 +1708,11 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
             if (!isCoveredBySystemRoBinds(validatedInterpreter)) {
               extraRoBinds.push(validatedInterpreter);
             }
-            const interpHops = yield* Effect.promise(() =>
-              collectNonSystemSymlinkHops(shebangInterpreter),
-            );
-            for (const hop of interpHops) {
+            const interpCandidates = new Set<string>([
+              normalizePosixPath(shebangInterpreter),
+              ...(yield* Effect.promise(() => collectNonSystemSymlinkHops(shebangInterpreter))),
+            ]);
+            for (const hop of interpCandidates) {
               if (hop === validatedInterpreter || isCoveredBySystemRoBinds(hop)) continue;
               const lexicalHopError = assertLexicalPathNotForbidden({
                 candidate: hop,

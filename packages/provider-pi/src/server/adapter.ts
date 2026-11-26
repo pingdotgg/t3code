@@ -550,7 +550,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         (yield* sessionHeaderNamesCwd(input.initialNativeThreadId))
           ? input.initialNativeThreadId
           : undefined;
-      // Writes into a sandbox-writable profile directory without ever following symlinks on the host.
+      // Writes into a sandbox-writable profile directory without ever following symlinks or FIFOs.
       const writeSandboxProfileFileNoFollow = (
         destPath: string,
         bytes: Uint8Array,
@@ -558,30 +558,48 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       ) =>
         Effect.tryPromise({
           try: async () => {
-            if (opts?.exclusive !== true) {
+            const exclusiveFlags =
+              NodeFS.constants.O_WRONLY |
+              NodeFS.constants.O_CREAT |
+              NodeFS.constants.O_EXCL |
+              (NodeFS.constants.O_NOFOLLOW ?? 0);
+            if (opts?.exclusive === true) {
+              const handle = await NodeFSP.open(destPath, exclusiveFlags, 0o600);
+              try {
+                await handle.writeFile(bytes);
+                await handle.chmod(0o600);
+              } finally {
+                await handle.close();
+              }
+              return;
+            }
+            // Write to an unpredictable temp file with O_EXCL|O_NOFOLLOW, then atomically rename into place.
+            const tmpPath = `${destPath}.${NodeCrypto.randomUUID()}.tmp`;
+            const handle = await NodeFSP.open(tmpPath, exclusiveFlags, 0o600);
+            try {
+              await handle.writeFile(bytes);
+              await handle.chmod(0o600);
+            } catch (writeError) {
+              await handle.close().catch(() => {});
+              await NodeFSP.unlink(tmpPath).catch(() => {});
+              throw writeError;
+            }
+            await handle.close();
+            try {
               try {
                 const existing = await NodeFSP.lstat(destPath);
                 if (existing.isDirectory()) {
                   await NodeFSP.rm(destPath, { recursive: true, force: true });
-                } else {
-                  // Unlink unconditionally so symlinks and 0444 read-only regular files are replaced safely.
-                  await NodeFSP.unlink(destPath);
                 }
-              } catch {
-                // Destination does not exist yet.
+              } catch (statError) {
+                if ((statError as NodeJS.ErrnoException)?.code !== "ENOENT") {
+                  throw statError;
+                }
               }
-            }
-            const flags =
-              NodeFS.constants.O_WRONLY |
-              NodeFS.constants.O_CREAT |
-              (opts?.exclusive === true ? NodeFS.constants.O_EXCL : NodeFS.constants.O_TRUNC) |
-              (NodeFS.constants.O_NOFOLLOW ?? 0);
-            const handle = await NodeFSP.open(destPath, flags, 0o600);
-            try {
-              await handle.writeFile(bytes);
-              await handle.chmod(0o600);
-            } finally {
-              await handle.close();
+              await NodeFSP.rename(tmpPath, destPath);
+            } catch (renameError) {
+              await NodeFSP.unlink(tmpPath).catch(() => {});
+              throw renameError;
             }
           },
           catch: (cause) => protocolError("Failed to write Pi sandbox profile file", cause),

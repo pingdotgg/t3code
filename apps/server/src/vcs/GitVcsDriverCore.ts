@@ -1110,7 +1110,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           });
         let spawnEnv: NodeJS.ProcessEnv = longPathEnv;
         let sandboxWrapConfig:
-          | { readonly eligible: true; readonly extraRwBinds: ReadonlyArray<string> }
+          | {
+              readonly eligible: true;
+              readonly sandboxCwd: string;
+              readonly sandboxChdir: string;
+              readonly extraRwBinds: ReadonlyArray<string>;
+              readonly extraRoBinds: ReadonlyArray<string>;
+            }
           | undefined;
         if (teamBwrapSandbox === true) {
           const sandboxCheck = canRunHostGitInWorkspaceSandbox({
@@ -1121,7 +1127,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ownStateDir: stateDir,
           });
           if (sandboxCheck.eligible) {
-            sandboxWrapConfig = { eligible: true, extraRwBinds: sandboxCheck.extraRwBinds };
+            sandboxWrapConfig = sandboxCheck;
           }
           const safeOverrides = yield* resolveSandboxSafeGitConfigEnv({
             cwd: commandInput.cwd,
@@ -1138,6 +1144,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                     ChildProcess.make(probeExe, probeArgs, {
                       ...(probeCwd !== undefined ? { cwd: probeCwd } : {}),
                       env: probeEnv,
+                      stdin: "ignore",
+                      stderr: "ignore",
                       forceKillAfter: "1 second",
                     }),
                   );
@@ -1187,10 +1195,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             .wrap({
               command: executable,
               args: commandInput.args,
-              cwd: commandInput.cwd,
+              cwd: sandboxWrapConfig.sandboxCwd,
+              chdir: sandboxWrapConfig.sandboxChdir,
               env: spawnEnv,
               ...(sandboxWrapConfig.extraRwBinds.length > 0
                 ? { extraRwBinds: sandboxWrapConfig.extraRwBinds }
+                : {}),
+              ...(sandboxWrapConfig.extraRoBinds.length > 0
+                ? { extraRoBinds: sandboxWrapConfig.extraRoBinds }
                 : {}),
               name: "git",
             })
@@ -1201,9 +1213,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             );
           executable = wrapped.command;
           launchArgs = wrapped.args;
-          if (wrapped.hostEnv !== undefined) {
-            spawnEnv = wrapped.hostEnv;
-          }
+          spawnEnv = wrapped.hostEnv ?? {};
           extendEnvOption = false;
         }
         const child = yield* commandSpawner

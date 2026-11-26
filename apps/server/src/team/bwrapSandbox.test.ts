@@ -530,6 +530,28 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           );
           expect(homeRoBinds).toContain(homeScript);
           expect(homeRoBinds).not.toContain(fakeHome);
+
+          // Parent-directory symlink (`.../current/bin/tool` where `current -> v22` and `tool` is
+          // a regular file) must bind both the lexical path and its canonical target RO.
+          const versionedDir = NodePath.join(fakeHome, ".local", "versions", "v22", "bin");
+          const realTool = NodePath.join(versionedDir, "tool");
+          const currentLink = NodePath.join(fakeHome, ".local", "versions", "current");
+          NodeFS.mkdirSync(versionedDir, { recursive: true });
+          NodeFS.writeFileSync(realTool, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+          NodeFS.symlinkSync(NodePath.join(fakeHome, ".local", "versions", "v22"), currentLink);
+          const lexicalTool = NodePath.join(currentLink, "bin", "tool");
+          const wrappedParentSymlink = yield* wrapCommandWithBwrap({
+            bwrapBinaryPath: "/usr/bin/bwrap",
+            command: lexicalTool,
+            args: [],
+            cwd,
+            env: { HOME: fakeHome, PATH: "/usr/bin:/bin" },
+          });
+          const parentSymRoBinds = wrappedParentSymlink.args.filter(
+            (_, idx) => wrappedParentSymlink.args[idx - 1] === "--ro-bind",
+          );
+          expect(parentSymRoBinds).toContain(lexicalTool);
+          expect(parentSymRoBinds).toContain(realTool);
         } finally {
           NodeFS.rmSync(root, { recursive: true, force: true });
         }
@@ -1194,7 +1216,7 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           );
           NodeFS.appendFileSync(
             NodePath.join(mainRepo, ".git", "config"),
-            `\n# ${"x".repeat(300_000)}\n[core] sshCommand = ${evilScript}\n[include] path = ${includedCommentCfg} # inline comment\n[remote "origin"]\n\tuploadpack = ${evilScript}\n`,
+            `\n# ${"x".repeat(300_000)}\n[core] sshCommand = ${evilScript}\n[core] gitProxy = ${evilScript} for example.invalid\n[include] path = ${includedCommentCfg} # inline comment\n[remote "origin"]\n\tuploadpack = ${evilScript}\n`,
           );
           NodeChildProcess.execFileSync("git", ["config", "core.fsmonitor", evilScript], {
             cwd: mainRepo,
@@ -1267,7 +1289,7 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
               GIT_CONFIG_GLOBAL: globalCfg,
             },
             platform: "linux",
-            allowWorkspaceIncludes: false,
+            allowWorkspaceIncludes: true,
             runProbe: runLocalGitProbe,
           });
           const computedPairs = extractPairs(computedGitEnv);
@@ -1278,6 +1300,7 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           // Global host credential.helper MUST NOT be clobbered when only global scope sets it.
           expect(computedPairs.has("credential.helper")).toBe(false);
           expect(computedPairs.get("core.sshcommand")).toBe("false");
+          expect(computedGitEnv.GIT_PROXY_COMMAND).toBe("false");
           expect(computedPairs.get("remote.origin.uploadpack")).toBe("git-upload-pack");
           expect(computedPairs.get("gpg.program")).toBe("false");
 
@@ -1319,9 +1342,11 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           );
           expect(Result.isFailure(truncatedProbeResult)).toBe(true);
 
-          // Fail-closed for unsandboxed host Git when repo config includes a file inside writable cwd.
+          // Fail-closed for unsandboxed host Git on any repo-local include, including an
+          // outward-pointing workspace symlink (`symlink.cfg -> /dev/null`) to prevent TOCTOU swaps.
           const wsIncludeRepo = NodePath.join(root, "ws-include-repo");
-          NodeFS.mkdirSync(wsIncludeRepo, { recursive: true });
+          const wsSubDir = NodePath.join(wsIncludeRepo, "packages", "app");
+          NodeFS.mkdirSync(wsSubDir, { recursive: true });
           NodeChildProcess.execFileSync("git", ["init", "-b", "main"], { cwd: wsIncludeRepo });
           NodeFS.writeFileSync(NodePath.join(wsIncludeRepo, "mutable.cfg"), "[core]\n");
           NodeChildProcess.execFileSync("git", ["config", "include.path", "../mutable.cfg"], {
@@ -1337,6 +1362,121 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             }),
           );
           expect(Result.isFailure(wsIncludeRefused)).toBe(true);
+
+          const symlinkIncludeRepo = NodePath.join(root, "ws-symlink-include-repo");
+          NodeFS.mkdirSync(symlinkIncludeRepo, { recursive: true });
+          NodeChildProcess.execFileSync("git", ["init", "-b", "main"], { cwd: symlinkIncludeRepo });
+          NodeFS.symlinkSync("/dev/null", NodePath.join(symlinkIncludeRepo, "symlink.cfg"));
+          NodeChildProcess.execFileSync("git", ["config", "include.path", "../symlink.cfg"], {
+            cwd: symlinkIncludeRepo,
+          });
+          const symlinkIncludeRefused = yield* Effect.result(
+            VcsProcess.resolveSandboxSafeGitConfigEnv({
+              cwd: symlinkIncludeRepo,
+              env: { PATH: hostPath, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+              platform: "linux",
+              allowWorkspaceIncludes: false,
+              runProbe: runLocalGitProbe,
+            }),
+          );
+          expect(Result.isFailure(symlinkIncludeRefused)).toBe(true);
+
+          // Config-writing / global-identity subcommands, explicit `-C`/`--git-dir`, and relative
+          // temp env paths must stay outside workspace sandbox wrapping.
+          for (const ineligibleArgs of [
+            ["config", "user.name", "Alice"],
+            ["commit", "-m", "msg"],
+            ["branch", "feat"],
+            ["checkout", "main"],
+            ["stash", "push"],
+            ["tag", "v1"],
+            ["-C", mainRepo, "status"],
+            ["--git-dir", NodePath.join(mainRepo, ".git"), "status"],
+          ]) {
+            expect(
+              VcsProcess.canRunHostGitInWorkspaceSandbox({
+                processSandboxEnabled: true,
+                cwd: wsIncludeRepo,
+                args: ineligibleArgs,
+                env: {},
+                ownStateDir: baseDir,
+              }).eligible,
+            ).toBe(false);
+          }
+          expect(
+            VcsProcess.canRunHostGitInWorkspaceSandbox({
+              processSandboxEnabled: true,
+              cwd: wsIncludeRepo,
+              args: ["status"],
+              env: { GIT_INDEX_FILE: "relative/index" },
+              ownStateDir: baseDir,
+            }).eligible,
+          ).toBe(false);
+
+          // Real bwrap ProcessSandbox + VcsProcess running from a repository subdirectory mounts
+          // the enclosing repo root with `.git` locks, passes `--chdir <subDir>`, and disables
+          // ProcessRunner `extendEnv` so host `LD_PRELOAD` is never re-merged onto bwrap.
+          const subdirBinDir = NodePath.join(root, "subdir-bin");
+          const subdirFakeBwrap = NodePath.join(subdirBinDir, "bwrap");
+          NodeFS.mkdirSync(subdirBinDir, { recursive: true });
+          NodeFS.writeFileSync(subdirFakeBwrap, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+          const realSubdirSpawns: Array<ProcessRunner.ProcessRunInput> = [];
+          const mockSubdirRunner = ProcessRunner.ProcessRunner.of({
+            run: (runInput) => {
+              if (runInput.command === subdirFakeBwrap && runInput.args.includes("true")) {
+                return Effect.succeed(makeProcessOutput(""));
+              }
+              if (runInput.command === "git" && runInput.args.includes("--get-regexp")) {
+                return Effect.succeed(makeProcessOutput("", "", 1));
+              }
+              realSubdirSpawns.push(runInput);
+              return Effect.succeed(makeProcessOutput(""));
+            },
+          });
+          const subdirServerConfigLayer = Layer.effect(
+            ServerConfig.ServerConfig,
+            Effect.gen(function* () {
+              const cfg = yield* ServerConfig.ServerConfig;
+              return { ...cfg, teamBwrapSandbox: true };
+            }),
+          ).pipe(Layer.provide(ServerConfig.layerTest(wsIncludeRepo, baseDir)));
+          const realBwrapSandbox = yield* makeBwrapProcessSandbox.pipe(
+            Effect.provide(subdirServerConfigLayer),
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Environment, { PATH: subdirBinDir }),
+            Effect.provideService(ProcessRunner.ProcessRunner, mockSubdirRunner),
+          );
+          yield* Effect.gen(function* () {
+            const vcsProc = yield* VcsProcess.VcsProcess;
+            yield* vcsProc.run({
+              operation: "GitVcsDriver.listWorkspaceFiles",
+              command: "git",
+              args: ["status", "--porcelain=2", "--branch", "-z"],
+              cwd: wsSubDir,
+              env: { LD_PRELOAD: "/tmp/should-not-leak-to-bwrap.so" },
+            });
+          }).pipe(
+            Effect.provide(
+              Layer.effect(VcsProcess.VcsProcess, VcsProcess.make).pipe(
+                Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, mockSubdirRunner)),
+                Layer.provide(subdirServerConfigLayer),
+                Layer.provide(Layer.succeed(ProcessSandbox, realBwrapSandbox)),
+                Layer.provide(NodeServices.layer),
+              ),
+            ),
+          );
+          expect(realSubdirSpawns).toHaveLength(1);
+          const subdirSpawn = realSubdirSpawns[0]!;
+          expect(subdirSpawn.command).toBe(subdirFakeBwrap);
+          expect(subdirSpawn.extendEnv).toBe(false);
+          expect(subdirSpawn.env?.LD_PRELOAD).toBeUndefined();
+          const subdirBinds = subdirSpawn.args.filter(
+            (_, idx) => subdirSpawn.args[idx - 1] === "--bind",
+          );
+          expect(subdirBinds).toContain(wsIncludeRepo);
+          expect(subdirBinds).toContain(NodePath.join(wsIncludeRepo, ".git"));
+          const subdirChdirIdx = subdirSpawn.args.indexOf("--chdir");
+          expect(subdirSpawn.args[subdirChdirIdx + 1]).toBe(wsSubDir);
 
           // When ProcessSandbox is enabled, workspace-local host git commands run inside ProcessSandbox.
           const wrappedGitCalls: Array<ReadonlyArray<string>> = [];
@@ -1403,10 +1543,12 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
 
           const driverLayer = GitVcsDriver.layer.pipe(
             Layer.provide(sandboxServerConfigLayer),
+            Layer.provide(Layer.succeed(ProcessSandbox, trackingSandbox)),
             Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           );
           const vcsProcessLayer = VcsProcess.layer.pipe(
             Layer.provide(sandboxServerConfigLayer),
+            Layer.provide(Layer.succeed(ProcessSandbox, trackingSandbox)),
             Layer.provide(NodeServices.layer),
           );
 
