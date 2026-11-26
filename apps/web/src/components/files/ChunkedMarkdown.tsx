@@ -101,7 +101,9 @@ export function ChunkedMarkdown(props: {
   if (awaitingSaved) return spinner;
 
   const handleFragmentClickCapture = (event: ReactMouseEvent<HTMLDivElement>) => {
+    // Without shared footnotes each piece keeps its own section, which ChatMarkdown resolves.
     if (
+      !props.footnotes ||
       event.defaultPrevented ||
       event.button !== 0 ||
       event.metaKey ||
@@ -136,7 +138,7 @@ export function ChunkedMarkdown(props: {
     let targetIndex: number | null = null;
     if (isFootnoteTarget) {
       targetIndex = footnotesItemIndex;
-    } else if (refMatch && props.footnotes) {
+    } else if (refMatch) {
       const fnNumber = Number(refMatch[1]);
       const occurrence = refMatch[2] ? Number(refMatch[2]) : 1;
       targetIndex = findFootnoteRefChunkIndex(props.footnotes, fnNumber, occurrence);
