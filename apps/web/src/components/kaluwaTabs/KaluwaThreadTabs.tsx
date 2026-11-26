@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -47,7 +48,7 @@ import {
 } from "../../kaluwa/kaluwaTabsSettings";
 import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
-import { useProjects, useThreadShell } from "../../state/entities";
+import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
 import {
   useEnvironmentMachines,
   useEnvironments,
@@ -141,35 +142,28 @@ type Renaming =
   | { readonly kind: "group"; readonly id: string }
   | null;
 
-/** Groups the list's children into drag units, in content coordinates. */
+/**
+ * The drag units, in content coordinates: every tab for a tab drag; each group's frame and each
+ * ungrouped unpinned tab for a group drag.
+ */
 function measureDragUnits(list: HTMLElement, groupDrag: boolean): DragUnit[] {
   const listLeft = list.getBoundingClientRect().left - list.scrollLeft;
   const units: Array<{ elements: HTMLElement[]; first: string | null; last: string | null }> = [];
-  let open: { id: string; unit: (typeof units)[number] } | null = null;
-  for (const child of list.children) {
-    if (!(child instanceof HTMLElement)) continue;
-    const key = child.dataset.kaluwaTabKey ?? null;
-    const chip = child.dataset.kaluwaGroupChip;
-    const group = child.dataset.kaluwaGroup;
-    if (!groupDrag) {
-      if (key !== null) units.push({ elements: [child], first: key, last: key });
-      continue;
+  if (!groupDrag) {
+    for (const tab of list.querySelectorAll<HTMLElement>("[data-kaluwa-tab-key]")) {
+      const key = tab.dataset.kaluwaTabKey!;
+      units.push({ elements: [tab], first: key, last: key });
     }
-    if (child.dataset.pinned !== undefined) continue;
-    if (chip !== undefined) {
-      const unit = { elements: [child], first: null, last: null };
-      units.push(unit);
-      open = { id: chip, unit };
-      continue;
+  } else {
+    for (const child of list.children) {
+      if (!(child instanceof HTMLElement) || child.dataset.pinned !== undefined) continue;
+      const keys = [
+        ...(child.dataset.kaluwaTabKey !== undefined ? [child] : []),
+        ...child.querySelectorAll<HTMLElement>("[data-kaluwa-tab-key]"),
+      ].map((tab) => tab.dataset.kaluwaTabKey!);
+      if (child.dataset.kaluwaGroupFrame === undefined && keys.length === 0) continue;
+      units.push({ elements: [child], first: keys[0] ?? null, last: keys.at(-1) ?? null });
     }
-    if (group !== undefined && open?.id === group && key !== null) {
-      open.unit.elements.push(child);
-      open.unit.first ??= key;
-      open.unit.last = key;
-      continue;
-    }
-    open = null;
-    if (key !== null) units.push({ elements: [child], first: key, last: key });
   }
   return units.map((unit) => {
     const rects = unit.elements.map((element) => element.getBoundingClientRect());
@@ -201,6 +195,8 @@ function KaluwaThreadTabStrip({
   const machines = useEnvironmentMachines();
   const { environments } = useEnvironments();
   const projects = useProjects();
+  const shells = useQuietThreadShells();
+  const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const dragRef = useRef<TabDrag | null>(null);
   const suppressClickRef = useRef(false);
   const [renaming, setRenaming] = useState<Renaming>(null);
@@ -324,10 +320,10 @@ function KaluwaThreadTabStrip({
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, subject: TabDrag["subject"]) => {
     if (event.button !== 0 || !event.isPrimary || renaming !== null) return;
-    if ((event.target as HTMLElement).closest("button:not([data-kaluwa-group-chip]), input")) {
+    if ((event.target as HTMLElement).closest("button:not([data-kaluwa-group-dot]), input")) {
       return;
     }
-    const list = event.currentTarget.parentElement;
+    const list = event.currentTarget.closest<HTMLElement>(".kaluwa-tabs-list");
     if (list === null) return;
     suppressClickRef.current = false;
     dragRef.current = {
@@ -353,7 +349,9 @@ function KaluwaThreadTabStrip({
       if (Math.abs(pointerDx) < DRAG_THRESHOLD_PX) return;
       drag.units = measureDragUnits(drag.list, drag.subject.kind === "group");
       drag.startScroll = drag.list.scrollLeft;
-      drag.from = drag.units.findIndex((unit) => unit.elements.includes(drag.element));
+      drag.from = drag.units.findIndex((unit) =>
+        unit.elements.some((element) => element.contains(drag.element)),
+      );
       if (drag.from === -1) {
         dragRef.current = null;
         return;
@@ -414,11 +412,10 @@ function KaluwaThreadTabStrip({
     }
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const sibling =
-      event.key === "ArrowLeft"
-        ? event.currentTarget.previousElementSibling
-        : event.currentTarget.nextElementSibling;
-    if (sibling instanceof HTMLElement) sibling.focus();
+    const list = event.currentTarget.closest(".kaluwa-tabs-list");
+    const tabs = list ? [...list.querySelectorAll<HTMLElement>('[role="tab"]')] : [];
+    const index = tabs.indexOf(event.currentTarget);
+    tabs[index + (event.key === "ArrowLeft" ? -1 : 1)]?.focus();
   };
 
   const handleWheel = (event: ReactWheelEvent<HTMLElement>) => {
@@ -435,47 +432,31 @@ function KaluwaThreadTabStrip({
   const projectFor: ProjectLookup = (environmentId, projectId) =>
     projectByKey.get(threadTabProjectKey(environmentId, projectId)) ?? null;
   const groupsById = new Map(state.groups.map((group) => [group.id, group]));
-  const items: ReactNode[] = [];
-  const chippedGroups = new Set<string>();
-  for (const key of state.tabs) {
+  const shellByKey = new Map(shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell]));
+  const tabSummaryOf = (key: ThreadTabKey): ThreadTabSummary => {
     const target = parseThreadTabKey(key);
-    if (target === null) continue;
-    const group = groupsById.get(state.groupOf[key] ?? "") ?? null;
-    if (group !== null && !chippedGroups.has(group.id)) {
-      chippedGroups.add(group.id);
-      items.push(
-        <ThreadTabGroupChip
-          key={`group:${group.id}`}
-          group={group}
-          project={group.project === undefined ? null : (projectByKey.get(group.project) ?? null)}
-          count={state.tabs.filter((tab) => state.groupOf[tab] === group.id).length}
-          renaming={renaming?.kind === "group" && renaming.id === group.id}
-          onToggle={() => {
-            if (consumeDragClick()) return;
-            updateThreadTabs((current) => ({
-              ...current,
-              groups: current.groups.map((candidate) =>
-                candidate.id === group.id
-                  ? { ...candidate, collapsed: !candidate.collapsed }
-                  : candidate,
-              ),
-            }));
-          }}
-          onContextMenu={(event) => handleGroupContextMenu(event, group)}
-          onCommitRename={(name) => commitGroupRename(group.id, name)}
-          onCancelRename={() => setRenaming(null)}
-          onPointerDown={(event) => startDrag(event, { kind: "group", id: group.id })}
-          onPointerMove={handlePointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-        />,
-      );
+    if (target?.kind === "thread") {
+      const shell = shellByKey.get(scopedThreadKey(target.ref));
+      return {
+        key,
+        title: shell?.title ?? gt("Loading thread"),
+        project: shell ? projectFor(shell.environmentId, shell.projectId) : null,
+      };
     }
-    const active = key === activeKey;
-    if (group?.collapsed && !active) continue;
+    const draft = target ? draftThreadsByThreadKey[target.draftId] : undefined;
+    return {
+      key,
+      title: gt("New thread"),
+      project: draft ? projectFor(draft.environmentId, draft.projectId) : null,
+    };
+  };
+  const items: ReactNode[] = [];
+  const renderTab = (key: ThreadTabKey, group: ThreadTabGroup | null): ReactNode => {
+    const target = parseThreadTabKey(key);
+    if (target === null) return null;
     const tabProps: TabProps = {
       tabKey: key,
-      active,
+      active: key === activeKey,
       pinned: state.pinned.includes(key),
       group,
       renaming: renaming?.kind === "thread" && renaming.key === key,
@@ -498,12 +479,54 @@ function KaluwaThreadTabStrip({
       environmentLabel,
       projectFor,
     };
+    return target.kind === "thread" ? (
+      <ServerThreadTab key={key} threadRef={target.ref} {...tabProps} />
+    ) : (
+      <DraftThreadTab key={key} draftId={target.draftId} {...tabProps} />
+    );
+  };
+  const framedGroups = new Set<string>();
+  for (const key of state.tabs) {
+    const group = groupsById.get(state.groupOf[key] ?? "") ?? null;
+    if (group === null) {
+      items.push(renderTab(key, null));
+      continue;
+    }
+    if (framedGroups.has(group.id)) continue;
+    framedGroups.add(group.id);
+    // Members are contiguous (the model guarantees it), so one frame holds them all.
+    const members = state.tabs.filter((tab) => state.groupOf[tab] === group.id);
+    const shown = group.collapsed ? members.filter((tab) => tab === activeKey) : members;
+    const project = group.project === undefined ? null : (projectByKey.get(group.project) ?? null);
     items.push(
-      target.kind === "thread" ? (
-        <ServerThreadTab key={key} threadRef={target.ref} {...tabProps} />
-      ) : (
-        <DraftThreadTab key={key} draftId={target.draftId} {...tabProps} />
-      ),
+      <ThreadTabGroupFrame
+        key={`group:${group.id}`}
+        group={group}
+        project={project}
+        members={members.map((tab) => tabSummaryOf(tab))}
+        shownCount={shown.length}
+        renaming={renaming?.kind === "group" && renaming.id === group.id}
+        onToggle={() => {
+          if (consumeDragClick()) return;
+          updateThreadTabs((current) => ({
+            ...current,
+            groups: current.groups.map((candidate) =>
+              candidate.id === group.id
+                ? { ...candidate, collapsed: !candidate.collapsed }
+                : candidate,
+            ),
+          }));
+        }}
+        onContextMenu={(event) => handleGroupContextMenu(event, group)}
+        onCommitRename={(name) => commitGroupRename(group.id, name)}
+        onCancelRename={() => setRenaming(null)}
+        onPointerDown={(event) => startDrag(event, { kind: "group", id: group.id })}
+        onPointerMove={handlePointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        {shown.map((tab) => renderTab(tab, group))}
+      </ThreadTabGroupFrame>,
     );
   }
 
@@ -611,12 +634,24 @@ function RenameInput(props: {
 
 type ProjectLookup = (environmentId: string, projectId: string) => EnvironmentProject | null;
 
-function ThreadTabGroupChip(
+type ThreadTabSummary = {
+  readonly key: ThreadTabKey;
+  readonly title: string;
+  readonly project: EnvironmentProject | null;
+};
+
+/**
+ * A group: a dot in the group's colour, then its tabs, all inside one frame of that colour. The
+ * dot collapses and expands the group, drags it, and opens its menu; collapsed, it shows a count.
+ */
+function ThreadTabGroupFrame(
   props: PointerHandlers & {
     readonly group: ThreadTabGroup;
     readonly project: EnvironmentProject | null;
-    readonly count: number;
+    readonly members: ReadonlyArray<ThreadTabSummary>;
+    readonly shownCount: number;
     readonly renaming: boolean;
+    readonly children: ReactNode;
     readonly onToggle: () => void;
     readonly onContextMenu: (event: ReactMouseEvent) => void;
     readonly onCommitRename: (name: string) => void;
@@ -624,16 +659,20 @@ function ThreadTabGroupChip(
   },
 ) {
   const gt = useGT();
-  const { group, project } = props;
+  const { group, project, members } = props;
   const name = project?.title ?? group.name;
   const label = name.length > 0 ? name : gt("Unnamed group");
-  if (props.renaming) {
-    return (
-      <span
-        className="kaluwa-tab-group-chip max-md:hidden"
-        data-kaluwa-group-chip={group.id}
-        data-kaluwa-group-color={group.color}
-      >
+  return (
+    <div
+      className="kaluwa-tab-group"
+      role="group"
+      aria-label={label}
+      data-kaluwa-group-frame={group.id}
+      data-kaluwa-group-color={group.color}
+      data-collapsed={group.collapsed || undefined}
+      style={{ "--kaluwa-group-tabs": props.shownCount } as CSSProperties}
+    >
+      {props.renaming ? (
         <RenameInput
           initial={group.name}
           label={gt("Group name")}
@@ -641,60 +680,73 @@ function ThreadTabGroupChip(
           onCommit={props.onCommitRename}
           onCancel={props.onCancelRename}
         />
-      </span>
-    );
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        delay={500}
-        render={
-          <button
-            type="button"
-            className="kaluwa-tab-group-chip max-md:hidden"
-            data-kaluwa-group-chip={group.id}
-            data-kaluwa-group-color={group.color}
-            data-collapsed={group.collapsed || undefined}
-            data-unnamed={name.length === 0 || undefined}
-            data-project-group={project !== null || undefined}
-            aria-expanded={!group.collapsed}
-            aria-label={
-              group.collapsed
-                ? gt("Expand group {name}", { name: label })
-                : gt("Collapse group {name}", { name: label })
-            }
-            onClick={props.onToggle}
-            onContextMenu={props.onContextMenu}
-            onPointerDown={props.onPointerDown}
-            onPointerMove={props.onPointerMove}
-            onPointerUp={props.onPointerUp}
-            onPointerCancel={props.onPointerCancel}
-          />
-        }
-      >
-        {project !== null ? (
-          <ProjectFavicon project={project} className="kaluwa-folder-icon kaluwa-tab-group-icon" />
-        ) : null}
-        {name.length > 0 ? <span className="kaluwa-tab-group-name">{name}</span> : null}
-        {group.collapsed ? <span className="kaluwa-tab-group-count">{props.count}</span> : null}
-      </TooltipTrigger>
-      <TooltipPopup side="bottom">
-        <span className="kaluwa-tab-card">
-          <span className="kaluwa-tab-card-row">
-            {project !== null ? (
-              <ProjectFavicon
-                project={project}
-                className="kaluwa-folder-icon kaluwa-tab-card-icon"
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            delay={400}
+            render={
+              <button
+                type="button"
+                className="kaluwa-tab-group-dot"
+                data-kaluwa-group-dot={group.id}
+                aria-expanded={!group.collapsed}
+                aria-label={
+                  group.collapsed
+                    ? gt("Expand group {name}", { name: label })
+                    : gt("Collapse group {name}", { name: label })
+                }
+                onClick={props.onToggle}
+                onContextMenu={props.onContextMenu}
+                onPointerDown={props.onPointerDown}
+                onPointerMove={props.onPointerMove}
+                onPointerUp={props.onPointerUp}
+                onPointerCancel={props.onPointerCancel}
               />
+            }
+          >
+            {group.collapsed ? (
+              <span className="kaluwa-tab-group-count">{members.length}</span>
             ) : null}
-            <span className="kaluwa-tab-card-title">{label}</span>
-          </span>
-          <span className="kaluwa-tab-card-meta">
-            {gt("{count, plural, one {{count} tab} other {{count} tabs}}", { count: props.count })}
-          </span>
-        </span>
-      </TooltipPopup>
-    </Tooltip>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            <span className="kaluwa-tab-card">
+              <span className="kaluwa-tab-card-row">
+                {project !== null ? (
+                  <ProjectFavicon
+                    project={project}
+                    className="kaluwa-folder-icon kaluwa-tab-card-icon"
+                  />
+                ) : (
+                  <span className="kaluwa-tab-card-swatch" data-kaluwa-group-color={group.color} />
+                )}
+                <span className="kaluwa-tab-card-title">{label}</span>
+                <span className="kaluwa-tab-card-meta">
+                  {gt("{count, plural, one {{count} tab} other {{count} tabs}}", {
+                    count: members.length,
+                  })}
+                </span>
+              </span>
+              {members.map((member) => (
+                <span key={member.key} className="kaluwa-tab-card-row kaluwa-tab-card-member">
+                  {member.project !== null && member.project !== project ? (
+                    <ProjectFavicon
+                      project={member.project}
+                      className="kaluwa-folder-icon kaluwa-tab-card-icon"
+                    />
+                  ) : (
+                    <span className="kaluwa-tab-card-bullet" />
+                  )}
+                  <span className="kaluwa-tab-card-member-title" dir={textDirection(member.title)}>
+                    {member.title}
+                  </span>
+                </span>
+              ))}
+            </span>
+          </TooltipPopup>
+        </Tooltip>
+      )}
+      {props.children}
+    </div>
   );
 }
 
@@ -895,7 +947,7 @@ function ThreadTabFrame(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the newly active tab into the visible part of the strip
   useEffect(() => {
     const tab = tabRef.current;
-    const list = tab?.parentElement;
+    const list = tab?.closest<HTMLElement>(".kaluwa-tabs-list");
     if (!props.active || !tab || !list) return;
     // Scrolls only the strip; scrollIntoView would also shift the clipped chat column.
     const tabRect = tab.getBoundingClientRect();
@@ -920,8 +972,6 @@ function ThreadTabFrame(
             role="tab"
             data-kaluwa-tab=""
             data-kaluwa-tab-key={props.tabKey}
-            data-kaluwa-group={props.group?.id}
-            data-kaluwa-group-color={props.group?.color}
             data-pinned={props.pinned || undefined}
             aria-selected={props.active}
             aria-label={project !== null ? `${project.title} · ${props.title}` : props.title}

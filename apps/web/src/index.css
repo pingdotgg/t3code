@@ -3827,7 +3827,7 @@ html.dark[data-kaluwa-look]
   display: none;
 }
 
-/* Tab groups: a chip in the group's palette colour, and a line of it under each of its tabs. */
+/* Group colours are palette swatches. */
 [data-kaluwa-group-color="steel"] {
   --kaluwa-group: var(--kaluwa-swatch-steel, #7ea6c9);
 }
@@ -3867,67 +3867,109 @@ html.dark[data-kaluwa-look]
 [data-kaluwa-group-color="slate"] {
   --kaluwa-group: var(--kaluwa-swatch-slate, #8796ad);
 }
-.kaluwa-tab[data-kaluwa-group-color] {
-  background-image: linear-gradient(var(--kaluwa-group), var(--kaluwa-group));
-  background-position: center bottom 1px;
-  background-repeat: no-repeat;
-  background-size: calc(100% - 10px) 2px;
-}
-.kaluwa-tab-group-chip {
+/* A group is one frame in its colour around a dot and its tabs, like a browser's tab group but
+   enclosed. Members are contiguous in the model, so the frame is always one shape. */
+.kaluwa-tab-group {
+  --kaluwa-group-frame: color-mix(in srgb, var(--kaluwa-group) 55%, transparent);
   position: relative;
+  display: flex;
+  /* Sized like its tabs (the strip sets --kaluwa-group-tabs), so it shrinks with them. */
+  flex: 0 1 calc(var(--kaluwa-group-tabs, 1) * 202px + 32px);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: calc(var(--kaluwa-tab-height, 30px) + 6px);
+  margin-inline: 2px;
+  padding: 0 3px 0 0;
+  border-radius: calc(var(--kaluwa-tab-radius, 8px) + 3px);
+  background: color-mix(in srgb, var(--kaluwa-group) 7%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--kaluwa-group-frame);
+  -webkit-app-region: no-drag;
+}
+.kaluwa-tab-group[data-dragging] {
+  z-index: 3;
+}
+.kaluwa-tab-group-dot {
   display: inline-flex;
   flex: none;
-  align-self: center;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  max-width: 10rem;
-  height: 20px;
-  padding: 0 8px;
-  border-radius: 6px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: color-mix(in srgb, var(--kaluwa-group) 70%, var(--foreground));
-  background: color-mix(in srgb, var(--kaluwa-group) 20%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kaluwa-group) 40%, transparent);
-  white-space: nowrap;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
   cursor: default;
   user-select: none;
   -webkit-app-region: no-drag;
 }
-.kaluwa-tab-group-chip:hover {
-  background: color-mix(in srgb, var(--kaluwa-group) 30%, transparent);
+.kaluwa-tab-group-dot::before {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--kaluwa-group);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--kaluwa-group) 22%, transparent);
 }
-.kaluwa-tab-group-chip:focus-visible {
+.kaluwa-tab-group-dot:hover {
+  background: color-mix(in srgb, var(--kaluwa-group) 16%, transparent);
+}
+.kaluwa-tab-group-dot:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px var(--ring);
 }
-.kaluwa-tab-group-chip[data-unnamed] {
-  margin-inline: 3px;
-  width: 14px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0;
-  border-radius: 50%;
-  background: var(--kaluwa-group);
-}
-.kaluwa-tab-group-chip[data-unnamed][data-collapsed] {
-  width: auto;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 9px;
-  color: var(--background);
-}
-.kaluwa-tab-group-chip[data-dragging] {
-  z-index: 3;
-}
-.kaluwa-tab-group-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .kaluwa-tab-group-count {
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
-  opacity: 0.85;
+  color: color-mix(in srgb, var(--kaluwa-group) 65%, var(--foreground));
+}
+/* Collapsed: the dot and its count in a compact pill; the frame only stays around a tab still
+   shown (the active one). */
+.kaluwa-tab-group[data-collapsed] .kaluwa-tab-group-dot {
+  height: 20px;
+  padding: 0 7px 0 6px;
+  background: color-mix(in srgb, var(--kaluwa-group) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kaluwa-group) 45%, transparent);
+}
+.kaluwa-tab-group-input {
+  align-self: center;
+  width: 8rem;
+  margin-left: 4px;
+  padding: 1px 4px;
+}
+.kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab-group {
+  align-self: flex-end;
+  align-items: flex-end;
+  height: auto;
+  padding-top: 3px;
+  border-radius: calc(var(--kaluwa-tab-radius, 8px) + 3px) calc(var(--kaluwa-tab-radius, 8px) + 3px)
+    0 0;
+  box-shadow:
+    inset 1.5px 0 0 var(--kaluwa-group-frame),
+    inset -1.5px 0 0 var(--kaluwa-group-frame),
+    inset 0 1.5px 0 var(--kaluwa-group-frame);
+}
+.kaluwa-tabs[data-tab-style="line"] .kaluwa-tab-group {
+  align-self: stretch;
+  align-items: stretch;
+  height: auto;
+  margin-top: 6px;
+  border-radius: 8px 8px 0 0;
+  box-shadow: inset 0 -2px 0 var(--kaluwa-group-frame);
+}
+.kaluwa-tabs:is([data-tab-style="folder"], [data-tab-style="line"]) .kaluwa-tab-group-dot {
+  align-self: center;
+}
+.kaluwa-tabs .kaluwa-tab-group[data-collapsed]:not(:has(.kaluwa-tab)) {
+  align-self: center;
+  height: auto;
+  margin-top: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
 }
 .kaluwa-tab-group-input,
 .kaluwa-tab-title-input {
@@ -3939,10 +3981,6 @@ html.dark[data-kaluwa-look]
   color: var(--foreground);
   background: color-mix(in srgb, var(--foreground) 8%, transparent);
   box-shadow: inset 0 0 0 1px var(--ring);
-}
-.kaluwa-tab-group-input {
-  width: 8rem;
-  padding: 1px 4px;
 }
 .kaluwa-tab-title-input {
   flex: 1;
@@ -4052,14 +4090,8 @@ html[data-kaluwa-shadow] [data-slot="composer-host"] {
   margin-right: 5px;
   color: var(--muted-foreground);
 }
-.kaluwa-tab-group-chip[data-project-group] {
-  padding-left: 4px;
-}
-.kaluwa-tab-group-icon {
-  --kaluwa-proj-icon: 13px;
-}
 
-/* The hover card on tabs and group chips. */
+/* The hover card on tabs and group dots. */
 .kaluwa-tab-card {
   display: grid;
   gap: 4px;
@@ -4100,6 +4132,29 @@ html[data-kaluwa-shadow] [data-slot="composer-host"] {
   line-height: 1.3;
   color: var(--background);
   background: var(--muted-foreground);
+}
+.kaluwa-tab-card-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--kaluwa-group);
+}
+.kaluwa-tab-card-bullet {
+  flex: none;
+  width: 14px;
+  height: 4px;
+  background: radial-gradient(circle, var(--muted-foreground) 1.5px, transparent 2px);
+}
+.kaluwa-tab-card-member {
+  color: var(--foreground);
+  font-weight: 450;
+}
+.kaluwa-tab-card-member-title {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .kaluwa-tab-card-dot {
   width: 7px;

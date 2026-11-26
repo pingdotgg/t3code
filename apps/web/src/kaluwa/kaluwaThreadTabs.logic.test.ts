@@ -480,3 +480,70 @@ describe("groupThreadTabsByProject", () => {
     expect(decodeThreadTabs(encodeThreadTabs(state))).toEqual(state);
   });
 });
+
+describe("group adjacency", () => {
+  /** Every group's tabs are one run, and pinned tabs lead. */
+  const expectInvariants = (state: ThreadTabsState) => {
+    const seen = new Set<string>();
+    let previous: string | undefined;
+    for (const key of state.tabs) {
+      const groupId = state.groupOf[key];
+      if (groupId !== undefined && groupId !== previous) {
+        expect(seen.has(groupId), `group ${groupId} is split`).toBe(false);
+        seen.add(groupId);
+      }
+      previous = groupId;
+    }
+    expect(state.tabs.slice(0, state.pinned.length)).toEqual(state.pinned);
+    for (const key of state.pinned) expect(state.groupOf[key]).toBeUndefined();
+  };
+  const projectOfKey: Record<string, string> = {
+    [a]: "p1",
+    [c]: "p1",
+    [e]: "p1",
+    [b]: "p2",
+    [d]: "p2",
+  };
+  const byProject: ProjectGroupingInput = {
+    enabled: true,
+    projectOf: (key) => projectOfKey[key] ?? null,
+    colorOf: () => "sage",
+  };
+
+  it("holds through opening, moving, closing, reopening and grouping", () => {
+    let state = groupThreadTabsByProject(tabs([a, b, c, d], a), byProject);
+    expectInvariants(state);
+    const steps: Array<(current: ThreadTabsState) => ThreadTabsState> = [
+      (current) => followThreadTabRoute(current, e, { newTab: true }),
+      (current) => groupThreadTabsByProject(current, byProject),
+      (current) => dropThreadTab(current, b, a, "after"),
+      (current) => groupThreadTabsByProject(current, byProject),
+      (current) => pinThreadTab(current, c),
+      (current) => createThreadTabGroup(current, [d, a], { id: "mine", color: "plum" }),
+      (current) => moveThreadTabGroup(current, "mine", null, "after"),
+      (current) => closeThreadTabs(current, [a, e]).state,
+      (current) => reopenClosedThreadTabs(current).state,
+      (current) => groupThreadTabsByProject(current, byProject),
+      (current) => unpinThreadTab(current, c),
+      (current) => groupThreadTabsByProject(current, byProject),
+      (current) => decodeThreadTabs(encodeThreadTabs(current)),
+    ];
+    for (const step of steps) {
+      state = step(state);
+      expectInvariants(state);
+    }
+  });
+
+  it("gathers a split group from storage", () => {
+    const state = decodeThreadTabs(
+      JSON.stringify({
+        tabs: [a, b, c],
+        active: a,
+        groupOf: { [a]: "g", [c]: "g" },
+        groups: [{ id: "g", name: "", color: "steel", collapsed: false }],
+      }),
+    );
+    expect(state.tabs).toEqual([a, c, b]);
+    expectInvariants(state);
+  });
+});
