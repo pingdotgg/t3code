@@ -2517,8 +2517,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const goalActivations = new Map<string, { stopped: boolean }>();
         const pausedGoalTurns = new Map<
           string,
-          { readonly nativeTurnId: string; readonly startedAt: DateTime.Utc }
+          {
+            readonly nativeTurnId: string;
+            readonly startedAt: DateTime.Utc;
+            readonly subagentEvents: Array<
+              CodexSubAgentActivityItem | CodexCollabAgentToolCallItem
+            >;
+          }
         >();
+        const rememberPausedGoalSubagentEvent = (
+          threadId: string,
+          turnId: string,
+          item: CodexSubAgentActivityItem | CodexCollabAgentToolCallItem,
+        ) => {
+          const turn = pausedGoalTurns.get(threadId);
+          if (turn?.nativeTurnId !== turnId) return false;
+          turn.subagentEvents.push(item);
+          return true;
+        };
         // Held runs must not complete while Stop resolves its target.
         const goalStops = new Map<string, number>();
         // Goals paused because a delegated task will wake the thread; the next ordinary turn resumes them.
@@ -5597,6 +5613,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               pausedGoalTurns.set(payload.threadId, {
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
+                subagentEvents: [],
               });
               return;
             }
@@ -5772,6 +5789,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // their command items, while the shared provider session stays alive.
         yield* client.handleServerNotification("thread/closed", (payload) =>
           Effect.gen(function* () {
+            pausedGoalTurns.delete(payload.threadId);
             const closing = threadClosings.get(payload.threadId);
             threadClosings.delete(payload.threadId);
             if (closing !== undefined) yield* Deferred.succeed(closing, undefined);
@@ -5802,6 +5820,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
+            if (
+              payload.item.type === "subAgentActivity" &&
+              rememberPausedGoalSubagentEvent(payload.threadId, payload.turnId, payload.item)
+            )
+              return;
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
@@ -5958,6 +5981,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
+            if (
+              (payload.item.type === "subAgentActivity" ||
+                payload.item.type === "collabAgentToolCall") &&
+              rememberPausedGoalSubagentEvent(payload.threadId, payload.turnId, payload.item)
+            )
+              return;
             if (payload.item.type === "contextCompaction")
               yield* Ref.update(threadsAwaitingContextRestore, (current) =>
                 new Set(current).add(payload.threadId),
@@ -8074,6 +8103,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
             codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
+            adoptPausedTurn?: Effect.Effect<boolean, ProviderAdapter.ProviderAdapterProtocolError>,
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             // A thread can reach its first turn without ensureThread or resumeThread, like a fork.
@@ -8106,6 +8136,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
             });
+            if (adoptPausedTurn !== undefined && (yield* adoptPausedTurn)) return;
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
               updated.set(threadId, turnInput);
@@ -8174,21 +8205,34 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           // Hold fast first turns until activation.
           const activation = { stopped: false };
           goalActivations.set(threadId, activation);
+          const adoptPausedTurn = resumePaused
+            ? turnTerminalizationPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  if (activation.stopped) return true;
+                  const running = pausedGoalTurns.get(threadId);
+                  if (running === undefined) return false;
+                  pausedGoalTurns.delete(threadId);
+                  const context = yield* registerRootTurn({ turnInput, ...running });
+                  for (const item of running.subagentEvents) {
+                    if (item.type === "subAgentActivity") {
+                      markSubagentUsage(context);
+                      yield* registerSubagentActivity({ context, item });
+                    } else {
+                      if (item.tool === "spawnAgent") markSubagentUsage(context);
+                      yield* registerSubagentThreads({ context, item });
+                      yield* updateSubagentStates({ item });
+                    }
+                  }
+                  return true;
+                }),
+              )
+            : undefined;
           yield* Effect.gen(function* () {
             yield* applyThreadName(threadId, turnInput.appThread.title);
-            const adopted = resumePaused
-              ? yield* turnTerminalizationPermit.withPermits(1)(
-                  Effect.gen(function* () {
-                    const running = pausedGoalTurns.get(threadId);
-                    if (running === undefined || activation.stopped) return false;
-                    pausedGoalTurns.delete(threadId);
-                    yield* registerRootTurn({ turnInput, ...running });
-                    return true;
-                  }),
-                )
-              : false;
             if (activation.stopped) return;
-            if (!adopted) yield* startNativeTurn(turnInput, yield* codexInput);
+            if (adoptPausedTurn === undefined || !(yield* adoptPausedTurn)) {
+              yield* startNativeTurn(turnInput, yield* codexInput, adoptPausedTurn);
+            }
             if (activation.stopped) return;
             const { goal } = yield* client.request("thread/goal/set", {
               threadId,
@@ -8830,6 +8874,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }
                 yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
               }
+              yield* turnTerminalizationPermit.withPermits(1)(
+                Effect.sync(() => pausedGoalTurns.delete(nativeThreadId)),
+              );
               // No turn/completed arrives for an unloaded thread, so a Stop Codex never
               // confirmed would otherwise keep its turn open for the life of the session.
               const interrupting = yield* Ref.get(interruptingNativeTurns);

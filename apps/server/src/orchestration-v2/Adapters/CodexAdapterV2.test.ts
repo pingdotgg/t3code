@@ -12563,78 +12563,116 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "provider_thread.updated" ? [event.providerThread.goal?.status ?? null] : [],
       );
 
-    it.effect("resumes a paused goal while its native continuation is still running", () =>
-      Effect.gen(function* () {
-        const requests: string[] = [];
-        const turnId = "native-goal-continuation";
-        const transcript = makeCodexReplayTranscript({
-          scenario: "paused-goal-with-running-continuation",
-          entries: [
-            ...sessionStart,
-            notification("goal paused", "thread/goal/updated", {
-              threadId: nativeThreadId,
-              goal: codexGoal("paused", 10),
-            }),
+    it.effect.each(["before resume", "during config read"] as const)(
+      "resumes a paused goal when its native continuation starts %s",
+      (when) =>
+        Effect.gen(function* () {
+          const requests: string[] = [];
+          const turnId = "native-goal-continuation";
+          const childId = "native-goal-child";
+          const continuation = [
             notification("continuation started", "turn/started", {
               threadId: nativeThreadId,
               turn: makeCodexReplayTurn({ id: turnId, status: "inProgress" }),
             }),
-            ...request(
-              3,
-              "thread/goal/get",
-              { threadId: nativeThreadId },
-              { goal: codexGoal("paused", 10) },
-            ),
-            ...request(
-              4,
-              "thread/name/set",
-              { threadId: nativeThreadId, name: CODEX_TEST_THREAD_TITLE },
-              {},
-            ),
-            ...request(
-              5,
-              "thread/goal/set",
-              { threadId: nativeThreadId, status: "active" },
-              { goal: codexGoal("active", 10) },
-            ),
-            notification("goal complete", "thread/goal/updated", {
+            notification("child turn started", "turn/started", {
+              threadId: childId,
+              turn: makeCodexReplayTurn({ id: "native-goal-child-turn", status: "inProgress" }),
+            }),
+            notification("child spawned", "item/completed", {
               threadId: nativeThreadId,
               turnId,
-              goal: codexGoal("complete", 20),
+              completedAtMs: 1782622441000,
+              item: {
+                type: "collabAgentToolCall",
+                id: "native-goal-spawn",
+                tool: "spawnAgent",
+                status: "completed",
+                senderThreadId: nativeThreadId,
+                receiverThreadIds: [childId],
+                model: "gpt-5.4",
+                agentsStates: { [childId]: { status: "running", message: null } },
+              },
             }),
-            notification("continuation completed", "turn/completed", {
-              threadId: nativeThreadId,
-              turn: makeCodexReplayTurn({ id: turnId, status: "completed" }),
-            }),
-          ],
-        });
-        const harness = yield* makeCodexReplayHarness(
-          transcript,
-          () => Effect.void,
-          (method) => Effect.sync(() => void requests.push(method)),
-        );
-        const result = yield* harness.runtime
-          .startTurn(yield* goalTurnInput(harness, "/goal resume"))
-          .pipe(Effect.result);
+          ];
+          const duringConfigRead = when === "during config read";
+          const configRead = request(
+            5,
+            "config/read",
+            { cwd: "/workspace", includeLayers: false },
+            { config: {}, origins: {} },
+          );
+          const transcript = makeCodexReplayTranscript({
+            scenario: "paused-goal-with-running-continuation",
+            entries: [
+              ...sessionStart,
+              notification("goal paused", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                goal: codexGoal("paused", 10),
+              }),
+              ...(duringConfigRead ? [] : continuation),
+              ...request(
+                3,
+                "thread/goal/get",
+                { threadId: nativeThreadId },
+                { goal: codexGoal("paused", 10) },
+              ),
+              ...request(
+                4,
+                "thread/name/set",
+                { threadId: nativeThreadId, name: CODEX_TEST_THREAD_TITLE },
+                {},
+              ),
+              ...(duringConfigRead
+                ? [...configRead.slice(0, 1), ...continuation, ...configRead.slice(1)]
+                : []),
+              ...request(
+                duringConfigRead ? 6 : 5,
+                "thread/goal/set",
+                { threadId: nativeThreadId, status: "active" },
+                { goal: codexGoal("active", 10) },
+              ),
+              notification("goal complete", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId,
+                goal: codexGoal("complete", 20),
+              }),
+              notification("continuation completed", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: turnId, status: "completed" }),
+              }),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            () => Effect.void,
+            (method) => Effect.sync(() => void requests.push(method)),
+          );
+          const result = yield* harness.runtime
+            .startTurn(yield* goalTurnInput(harness, "/goal resume"))
+            .pipe(Effect.result);
 
-        assert.notInclude(requests, "turn/start");
-        if (result._tag === "Failure") throw result.failure;
-        yield* harness.firstTerminal;
-        assert.deepEqual(
-          harness.terminalEvents().map((event) => event.status),
-          ["completed"],
-        );
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+          assert.notInclude(requests, "turn/start");
+          if (result._tag === "Failure") throw result.failure;
+          yield* harness.firstTerminal;
+          assert.isTrue(
+            harness.subagentUpdates().some(({ subagent }) => subagent.status === "running"),
+          );
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => event.status),
+            ["completed"],
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
-      ),
     );
 
     it.effect("keeps a /goal run open across the turns Codex continues on its own", () =>
