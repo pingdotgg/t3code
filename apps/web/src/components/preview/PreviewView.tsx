@@ -169,7 +169,13 @@ function focusPreviewWebview(runtimeTabId: string) {
 
 function focusPreviewPage(runtimeTabId: string) {
   const active = document.activeElement;
-  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
+  if (
+    active &&
+    active !== document.body &&
+    !active.closest("[data-preview-panel-mode], [data-browser-surface-overlay]")
+  ) {
+    return;
+  }
   focusPreviewWebview(runtimeTabId);
 }
 
