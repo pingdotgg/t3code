@@ -1,5 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { applyUsageLimitsUpdate } from "@t3tools/provider-core/server/usageLimits";
 import { exhaustedUsageWindow, paceRemainingPercent } from "@t3tools/shared/usageLimits";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { describe, expect, it } from "vite-plus/test";
@@ -82,6 +83,19 @@ describe("codexRateLimitsToLimits", () => {
     expect(
       codexRateLimitsToUpdate({ individualLimit: rollover }, cached)?.windows[0],
     ).toMatchObject({ resetsAt: "2027-01-01T00:00:00.000Z", windowDurationMins: 31 * 24 * 60 });
+  });
+
+  it("drops the inferred month when a notification moves the credit reset off the calendar boundary", () => {
+    const cached = {
+      individualLimit: { remainingPercent: 39, resetsAt: Date.parse("2026-12-01") / 1_000 },
+    };
+    const moved = { remainingPercent: 39, resetsAt: Date.parse("2026-12-15") / 1_000 };
+    const previous = codexRateLimitsToLimits({ snapshot: cached, checkedAt });
+    const update = codexRateLimitsToUpdate({ individualLimit: moved }, cached);
+    const updated = applyUsageLimitsUpdate({ previous, update: update!, checkedAt });
+    const fresh = codexRateLimitsToLimits({ snapshot: { individualLimit: moved }, checkedAt });
+    expect(previous.windows[0]?.windowDurationMins).toBe(30 * 24 * 60);
+    expect(updated?.windows).toEqual(fresh.windows);
   });
 
   it("keeps a seat-based workspace with a zero credit cap usable while its plan windows have room", () => {
