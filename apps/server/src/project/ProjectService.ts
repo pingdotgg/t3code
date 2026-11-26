@@ -10,6 +10,8 @@ import {
   type ProjectSnapshot,
   type ThreadId,
   type ServerSettingsPatch,
+  disallowedProviderMessage,
+  managedSettingMessage,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -118,6 +120,25 @@ export class ProjectInvalidError extends Schema.TaggedError<ProjectInvalidError>
   }
 }
 
+/** Project Settings an administrator's policy refuses: a locked setting or a disallowed provider. */
+export class ProjectSettingsManagedError extends Schema.TaggedError<ProjectSettingsManagedError>()(
+  "ProjectSettingsManagedError",
+  {
+    projectId: ProjectId,
+    managedSetting: Schema.optional(Schema.String),
+    /** Set only when the refusal is a disallowed provider. */
+    providerLabel: Schema.optional(Schema.String),
+    managedBy: Schema.optional(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return this.providerLabel === undefined
+      ? managedSettingMessage(this.managedSetting, this.managedBy)
+      : disallowedProviderMessage(this.managedBy, this.providerLabel);
+  }
+}
+
 export class ProjectOperationError extends Schema.TaggedError<ProjectOperationError>()(
   "ProjectOperationError",
   {
@@ -144,6 +165,7 @@ export type ProjectServiceError =
   | ProjectConflictError
   | ProjectNotEmptyError
   | ProjectInvalidError
+  | ProjectSettingsManagedError
   | ProjectOperationError;
 
 export class ProjectService extends Context.Service<
@@ -605,14 +627,26 @@ export const make = Effect.gen(function* () {
               : projectSettingsPatch(projectId, input).pipe(
                   Effect.flatMap(serverSettings.checkSettingsUpdate),
                   Effect.mapError((cause) =>
-                    cause.operation === "write-managed-setting" ||
-                    cause.operation === "use-disallowed-provider"
-                      ? new ProjectInvalidError({ projectId, detail: cause.message })
-                      : new ProjectOperationError({
-                          operation: "dispatch-project-command",
+                    cause.operation === "write-managed-setting"
+                      ? new ProjectSettingsManagedError({
                           projectId,
+                          managedSetting: cause.managedSetting,
+                          managedBy: cause.managedBy,
                           cause,
-                        }),
+                        })
+                      : cause.operation === "use-disallowed-provider"
+                        ? new ProjectSettingsManagedError({
+                            projectId,
+                            providerLabel:
+                              cause.providerLabel ?? cause.providerInstanceId ?? "this",
+                            managedBy: cause.managedBy,
+                            cause,
+                          })
+                        : new ProjectOperationError({
+                            operation: "dispatch-project-command",
+                            projectId,
+                            cause,
+                          }),
                   ),
                 ),
           ),

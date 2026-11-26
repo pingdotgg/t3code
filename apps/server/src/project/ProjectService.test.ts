@@ -1305,7 +1305,7 @@ it.effect("a project update a policy refuses changes nothing and says why", () =
     // The check reads the settings already loaded, so a refusal saves nothing either.
     const config = yield* ServerConfig.ServerConfig;
     assert.isFalse(yield* (yield* FileSystem.FileSystem).exists(config.settingsPath));
-    assert.strictEqual(refused._tag, "ProjectInvalidError");
+    assert.strictEqual(refused._tag, "ProjectSettingsManagedError");
     assert.include(refused.message, "defaultModelSelection is managed by Example Corp");
 
     // Changes that leave Settings alone still go through.
@@ -1340,7 +1340,7 @@ it.effect("a project create whose actions a policy refuses creates nothing", () 
     assert.isTrue(Option.isNone(yield* service.getById(projectId)));
     // Refused before the folder is prepared, which can create it.
     assert.deepEqual(preparedRoots, []);
-    assert.strictEqual(refused._tag, "ProjectInvalidError");
+    assert.strictEqual(refused._tag, "ProjectSettingsManagedError");
   }).pipe(
     Effect.provide(
       layerProjectServiceUnderPolicy(lockedModelPolicy, {
@@ -1392,7 +1392,7 @@ it.effect("a project update accepted before a policy lock still replays after it
       const refused = yield* Effect.flip(
         service.update({ ...accepted, commandId: CommandId.make("command:policy-replay:new") }),
       );
-      assert.strictEqual(refused._tag, "ProjectInvalidError");
+      assert.strictEqual(refused._tag, "ProjectSettingsManagedError");
     }).pipe(Effect.provide(layerProjectServiceUnderPolicy(lockedModelPolicy, { baseDir })));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
