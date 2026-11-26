@@ -612,6 +612,7 @@ it("keeps uppercase FILE link and image URLs by lowercasing the scheme before sa
       src: "file://host/tmp/Fallback.png",
       dataDarkSrc: "file:///tmp/Dark.png",
       dataLightSrc: "file:///tmp/Light.png",
+      dataStandalone: true,
     },
   ]);
   expect(chatMarkdownImageSources(markdown)).toHaveLength(4);
@@ -1137,6 +1138,31 @@ it("marks block and linked <picture> images standalone but not inline ones", () 
       ].join("\n"),
     ),
   ).toEqual([{ src: "prefix.png", alt: "Prefix" }]);
+
+  expect(
+    imageProperties(
+      [
+        "<picture>",
+        '<img src="gallery-1.png" alt="Gallery1">',
+        "</picture><picture>",
+        '<img src="gallery-2.png" alt="Gallery2">',
+        "</picture>",
+        "",
+        "Divider",
+        "",
+        "<picture>",
+        '<img src="inline-1.png" alt="Inline1">',
+        "</picture><picture>",
+        '<img src="inline-2.png" alt="Inline2">',
+        "</picture> caption",
+      ].join("\n"),
+    ),
+  ).toEqual([
+    { src: "gallery-1.png", alt: "Gallery1", dataStandalone: true },
+    { src: "gallery-2.png", alt: "Gallery2", dataStandalone: true },
+    { src: "inline-1.png", alt: "Inline1" },
+    { src: "inline-2.png", alt: "Inline2" },
+  ]);
 
   expect(
     imageProperties(

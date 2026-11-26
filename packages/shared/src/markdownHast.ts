@@ -75,15 +75,37 @@ function isRootBlockElement(node: MarkdownImageHastNode): boolean {
   return node.type === "element" && Boolean(node.tagName && ROOT_BLOCK_ELEMENTS.has(node.tagName));
 }
 
-function hasInlineTextSibling(children: readonly MarkdownImageHastNode[], index: number): boolean {
-  for (const step of [-1, 1] as const) {
-    for (let cursor = index + step; cursor >= 0 && cursor < children.length; cursor += step) {
-      const sibling = children[cursor];
+function markRootStandalonePictures(children: readonly MarkdownImageHastNode[]) {
+  let runStart = 0;
+  while (runStart < children.length) {
+    let runEnd = runStart;
+    let hasPicture = false;
+    while (runEnd < children.length) {
+      const sibling = children[runEnd];
       if (!sibling || isRootBlockElement(sibling)) break;
-      if (hasVisibleText(sibling)) return true;
+      if (sibling.type === "element" && sibling.tagName === "picture") hasPicture = true;
+      runEnd += 1;
     }
+    if (hasPicture) {
+      let runHasVisibleText = false;
+      for (let index = runStart; index < runEnd; index += 1) {
+        const sibling = children[index];
+        if (sibling && hasVisibleText(sibling)) {
+          runHasVisibleText = true;
+          break;
+        }
+      }
+      if (!runHasVisibleText) {
+        for (let index = runStart; index < runEnd; index += 1) {
+          const child = children[index];
+          if (child?.type !== "element" || child.tagName !== "picture") continue;
+          const image = soleImageDescendant(child);
+          if (image) image.properties = { ...image.properties, dataStandalone: true };
+        }
+      }
+    }
+    runStart = runEnd + 1;
   }
-  return false;
 }
 
 function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode | undefined {
@@ -107,12 +129,7 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   }
   // A raw-HTML `<picture>` block sits directly under the root, beside the other blocks.
   if (node.type === "root") {
-    const children = meaningfulHastChildren(node);
-    children.forEach((child, index) => {
-      if (child.tagName !== "picture") return;
-      const image = hasInlineTextSibling(children, index) ? undefined : soleImageDescendant(child);
-      if (image) image.properties = { ...image.properties, dataStandalone: true };
-    });
+    markRootStandalonePictures(meaningfulHastChildren(node));
   }
   node.children?.forEach((child) => {
     if (child.type === "element") markStandaloneImages(child);
