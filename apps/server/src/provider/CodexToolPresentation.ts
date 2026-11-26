@@ -9,6 +9,7 @@ import * as Hex from "effect/encoding/Hex";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import {
+  type McpServerPresentation,
   mcpToolPresentation as integrationToolPresentation,
   normalizeMcpHttpUrl as normalizedHttpUrl,
   normalizeMcpText as normalizedDisplayName,
@@ -133,6 +134,7 @@ export interface McpToolPresentation {
 export const mcpToolPresentation = Effect.fn("CodexToolPresentation.mcpToolPresentation")(
   function* (
     item: Extract<CodexLifecycleItem, { readonly type: "mcpToolCall" }>,
+    server?: McpServerPresentation,
   ): Effect.fn.Return<McpToolPresentation, never, Digest.Digest> {
     const result = asUnknownRecord(item.result);
     const metadata = asUnknownRecord(result?._meta);
@@ -231,6 +233,7 @@ export const mcpToolPresentation = Effect.fn("CodexToolPresentation.mcpToolPrese
       source: sourceMetadata,
       iconUrl: sourceLogo?._tag === "themed-logo" ? sourceLogo.logoUrl : undefined,
       iconUrlDark: sourceLogo?._tag === "themed-logo" ? sourceLogo.logoUrlDark : undefined,
+      server,
     });
   },
 );

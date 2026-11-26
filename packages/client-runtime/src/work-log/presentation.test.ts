@@ -7,6 +7,7 @@ import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
 import {
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
+  toolGroupSourceIcons,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
@@ -229,6 +230,83 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("toolGroupSourceIcons", () => {
+  const logo = (name: string) => ({
+    _tag: "themed-logo" as const,
+    logoUrl: `https://${name}.dev/logo.svg`,
+  });
+  const tool = (
+    id: string,
+    fields: Partial<WorkLogPresentationEntry>,
+  ): WorkLogPresentationEntry => ({
+    id,
+    createdAt: "2026-09-08T00:00:00.000Z",
+    label: id,
+    tone: "tool",
+    itemType: "dynamic_tool",
+    ...fields,
+  });
+
+  it("lists each named source's logo once, in summary order", () => {
+    expect(
+      toolGroupSourceIcons([
+        tool("thought", {
+          itemType: "reasoning",
+          toolSource: {
+            key: "mcp:hidden",
+            name: "Hidden",
+            kind: "integration",
+            icon: logo("hidden"),
+          },
+        }),
+        tool("sentry", {
+          toolSource: {
+            key: "mcp:sentry",
+            name: "Sentry",
+            kind: "integration",
+            icon: logo("sentry"),
+          },
+        }),
+        tool("gmail-work", {
+          toolSource: { key: "mcp:gmail-work", name: "gmail", kind: "integration" },
+        }),
+        tool("exa-plugin", {
+          toolSource: { key: "mcp:exa", name: "Exa", kind: "integration", icon: logo("exa") },
+        }),
+        tool("exa-connector", {
+          toolSource: {
+            key: "mcp:claude.ai Exa",
+            name: "claude.ai Exa",
+            kind: "integration",
+            icon: logo("exa"),
+          },
+        }),
+        tool("ref", {
+          toolSource: { key: "mcp:ref", name: "Ref", kind: "integration" },
+          toolIcon: logo("ref"),
+        }),
+        tool("sentry-again", {
+          toolSource: {
+            key: "mcp:sentry",
+            name: "Sentry",
+            kind: "integration",
+            icon: logo("other"),
+          },
+        }),
+        tool("gmail-personal", {
+          toolSource: {
+            key: "mcp:gmail-personal",
+            name: "gmail",
+            kind: "integration",
+            icon: logo("gmail"),
+          },
+        }),
+        tool("command", { itemType: "command_execution" }),
+      ]),
+    ).toEqual([logo("sentry"), logo("gmail"), logo("exa"), logo("ref")]);
   });
 });
 
