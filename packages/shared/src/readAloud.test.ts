@@ -66,6 +66,12 @@ it("reads file chips as they show, and bare addresses as a person would say them
   );
 });
 
+it("reads shortcut symbols as key names, leaving arrows in prose to the voice", () => {
+  expect(readAloudText("Press ⌘K or `⌥⇧↓`, then ⎋. A → B.", true)).toBe(
+    "Press Command K or Option Shift Down, then Escape. A → B.",
+  );
+});
+
 it("reads emoji by the names it is given, mapped back to the emoji", () => {
   const markdown = "Done 🎉, all pass 👍.";
   const names: Record<string, string> = { "🎉": "party popper", "👍": "thumbs up" };

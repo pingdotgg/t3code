@@ -104,15 +104,14 @@ export interface ReadAloudWords {
 const EMOJI =
   /\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*(?:\u200D\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*)*/gu;
 
-/** Says each emoji `speakEmoji` names as its name, spread over the emoji's source. */
-function voiceEmoji(run: Run, speakEmoji: SpeakEmoji | undefined): Run {
-  if (!speakEmoji) return run;
+/** Says each match of `pattern` that `wordsFor` has words for, spread over the match's source. */
+function sayAs(run: Run, pattern: RegExp, wordsFor: (match: string) => string | undefined): Run {
   const parts: Run[] = [];
   let from = 0;
-  for (const match of run.text.matchAll(EMOJI)) {
-    const name = speakEmoji(match[0]);
-    if (!name) continue;
-    const words = ` ${name} `;
+  for (const match of run.text.matchAll(pattern)) {
+    const said = wordsFor(match[0]);
+    if (!said) continue;
+    const words = ` ${said} `;
     const sources = run.sources.slice(match.index, match.index + match[0].length);
     parts.push(
       { text: run.text.slice(from, match.index), sources: run.sources.slice(from, match.index) },
@@ -130,6 +129,27 @@ function voiceEmoji(run: Run, speakEmoji: SpeakEmoji | undefined): Run {
   parts.push({ text: run.text.slice(from), sources: run.sources.slice(from) });
   return concat(parts);
 }
+
+// Apple's names for the key symbols in shortcuts such as ⌘K or ⌥⇧↓.
+const KEY_NAMES: Record<string, string> = {
+  "⌘": "Command",
+  "⌥": "Option",
+  "⇧": "Shift",
+  "⌃": "Control",
+  "⎋": "Escape",
+  "⏎": "Return",
+  "↵": "Return",
+  "⌫": "Delete",
+  "⌦": "Forward Delete",
+  "⇥": "Tab",
+  "↑": "Up",
+  "↓": "Down",
+  "←": "Left",
+  "→": "Right",
+};
+// An arrow is a key only after a modifier; elsewhere, as in "a → b", the voice reads it.
+const KEYS = /[⌘⌥⇧⌃]+[↑↓←→]?|[⎋⏎↵⌫⌦⇥]/gu;
+const sayKeys = (keys: string) => Array.from(keys, (key) => KEY_NAMES[key]).join(" ");
 
 /** What a file chip shows, as words: its file name and lines. */
 function spokenFile(href: string) {
@@ -252,7 +272,11 @@ export function readAloudSpeech(
       if (bare) return spread(` ${spokenUrl(node.url)} `, node);
     }
     if ("children" in node) return concat(node.children.map(inline));
-    if (node.type === "text") return voiceEmoji(located(markdown, node.value, node), words.emoji);
+    if (node.type === "text" || node.type === "inlineCode") {
+      const keys = sayAs(located(markdown, node.value, node), KEYS, sayKeys);
+      const emoji = words.emoji;
+      return node.type === "text" && emoji ? sayAs(keys, EMOJI, emoji) : keys;
+    }
     return "value" in node ? located(markdown, node.value, node) : added("");
   };
   const block = (node: Root | RootContent) => {
