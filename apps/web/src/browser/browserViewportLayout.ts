@@ -95,6 +95,15 @@ export function resolveHiddenBrowserViewportSize(input: {
   return { width: lastRect?.width ?? 1280, height: lastRect?.height ?? 800 };
 }
 
+export function resolveHiddenBrowserViewportFitScale(
+  hiddenSize: { readonly width: number; readonly height: number },
+  windowSize: { readonly width: number; readonly height: number },
+): number {
+  // A minimized window can report a zero viewport; scale(0) would stop the guest compositing.
+  if (windowSize.width <= 0 || windowSize.height <= 0) return 1;
+  return Math.min(1, windowSize.width / hiddenSize.width, windowSize.height / hiddenSize.height);
+}
+
 export function resolveBrowserDeviceViewportArea(container: {
   readonly width: number;
   readonly height: number;

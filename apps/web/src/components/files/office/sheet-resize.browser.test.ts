@@ -1,7 +1,9 @@
 import { createElement } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 import JSZip from "jszip";
 import "~/index.css";
+import { RightPanelSheet } from "~/components/RightPanelSheet";
 import { act, render } from "../../../../test/render";
 import Spreadsheet from "./Spreadsheet";
 import { createWorkerClient } from "./worker-rpc";
@@ -301,4 +303,69 @@ it("requests current dimensions after resizing and scrolling away and back befor
     ]).toEqual([211, 236, 221, 255]);
   });
   expect(onError).not.toHaveBeenCalled();
+});
+
+it("Escape cancels a column resize without closing the panel sheet", async () => {
+  const archive = new JSZip();
+  archive.file(
+    "xl/workbook.xml",
+    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sample" sheetId="1" r:id="sheet"/></sheets></workbook>',
+  );
+  archive.file(
+    "xl/_rels/workbook.xml.rels",
+    '<Relationships><Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+  );
+  archive.file(
+    "xl/worksheets/sheet1.xml",
+    '<worksheet><sheetData><row r="1"><c r="A1"><v>42</v></c></row></sheetData></worksheet>',
+  );
+  const bytes = await archive.generateAsync({ type: "arraybuffer" });
+  const onCloseSheet = vi.fn();
+  await using _screen = await render(
+    createElement(RightPanelSheet, {
+      animationDurationMs: 0,
+      open: true,
+      onClose: onCloseSheet,
+      children: createElement(
+        "div",
+        { style: { display: "flex", width: "300px", height: "300px" } },
+        createElement(Spreadsheet, {
+          bytes,
+          view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+          onDetails: vi.fn(),
+          onError: vi.fn(),
+        }),
+      ),
+    }),
+  );
+  const grid = page.getByRole("grid", { name: "Sample" });
+  await expect.element(grid).toBeVisible();
+  const root = grid.element();
+  const canvas = root.querySelector("canvas")!;
+  await vi.waitFor(() => {
+    expect(canvas.getContext("2d")!.getImageData(10, 10, 1, 1).data[0]).toBeGreaterThan(0);
+    expect(canvas.getContext("2d")!.getImageData(10, 10, 1, 1).data[0]).toBeLessThan(255);
+  });
+  // Synthetic pointer events have no browser pointer to capture.
+  using _capture = vi.spyOn(root, "setPointerCapture").mockImplementation(() => {});
+  using release = vi.spyOn(root, "releasePointerCapture").mockImplementation(() => {});
+  const rect = canvas.getBoundingClientRect();
+  const pointer = { bubbles: true, pointerId: 1, button: 0, clientY: rect.top + 10 };
+  await act(() => {
+    root.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: rect.left + 108 }));
+    root.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX: rect.left + 148 }));
+  });
+  await userEvent.keyboard("{Escape}");
+  expect(onCloseSheet).not.toHaveBeenCalled();
+  expect(release).toHaveBeenCalledWith(1);
+  // Holding Escape repeats the keydown, which must not also close the sheet.
+  await act(() => {
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", repeat: true, bubbles: true }),
+    );
+  });
+  expect(onCloseSheet).not.toHaveBeenCalled();
+
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(onCloseSheet).toHaveBeenCalledOnce());
 });

@@ -4084,3 +4084,57 @@ index 0000000..5b53d08
 +    size: Effect.sync(() => subscriptions.size)
 +  } satisfies Webhooks
 +})
+diff --git a/dist/sql/SqlClient.js b/dist/sql/SqlClient.js
+--- a/dist/sql/SqlClient.js
++++ b/dist/sql/SqlClient.js
+@@ -238,6 +238,9 @@
+   log: "Unhandled",
+   message: "Unhandled error in SqlClient.afterCommit callback"
+ });
++// The transaction context extends the fiber's own, so merging the two would only copy every
++// service twice per transaction and savepoint.
++const provideTransactionContext = (effect, services, context) => Effect.updateContext(effect, current => current === services ? context : Context.merge(current, context));
+ const makeAfterCommit = transactionService => effect => Effect.withFiber(fiber => {
+   const transaction = Context.getOrUndefined(fiber.context, transactionService);
+   const buffer = transaction && afterCommitBuffers.get(transaction);
+@@ -328,7 +331,7 @@
+     const transaction = Effect.flatMap(conn, ([scope, conn]) => start(conn).pipe(Effect.flatMap(() => {
+       const level = [conn, id];
+       afterCommitBuffers.set(level, buffer);
+-      return Effect.onExitPrimitive(Effect.provideContext(restore(effect), services.pipe(Context.add(options.transactionService, level), Context.add(CurrentTransactionService, options.transactionService), reactivity ? Context.add(Reactivity, deferInvalidations(reactivity)) : identity, Context.add(transactionSemaphore, Semaphore.makeUnsafe(1)), Context.add(Tracer.ParentSpan, span))), exit => {
++      return Effect.onExitPrimitive(provideTransactionContext(restore(effect), services, services.pipe(Context.add(options.transactionService, level), Context.add(CurrentTransactionService, options.transactionService), reactivity ? Context.add(Reactivity, deferInvalidations(reactivity)) : identity, Context.add(transactionSemaphore, Semaphore.makeUnsafe(1)), Context.add(Tracer.ParentSpan, span))), exit => {
+         buffer.open = false;
+         // The savepoint ended with its parent, and the connection
+         // may already be in another transaction.
+diff --git a/src/sql/SqlClient.ts b/src/sql/SqlClient.ts
+--- a/src/sql/SqlClient.ts
++++ b/src/sql/SqlClient.ts
+@@ -596,6 +596,17 @@
+ const runAfterCommit = <R>(effect: Effect.Effect<void, never, R>): Effect.Effect<void, never, R> =>
+   Effect.ignoreCause(effect, { log: "Unhandled", message: "Unhandled error in SqlClient.afterCommit callback" })
+ 
++// The transaction context extends the fiber's own, so merging the two would only copy every
++// service twice per transaction and savepoint.
++const provideTransactionContext = <A, E, R, XR>(
++  effect: Effect.Effect<A, E, R>,
++  services: Context.Context<never>,
++  context: Context.Context<XR>
++): Effect.Effect<A, E, Exclude<R, XR>> =>
++  Effect.updateContext(effect, (current: Context.Context<Exclude<R, XR>>) =>
++    (current === services ? context : Context.merge(current, context)) as Context.Context<R>
++  )
++
+ const makeAfterCommit =
+   (transactionService: Context.Key<any, any>) =>
+   <R>(effect: Effect.Effect<void, never, R>): Effect.Effect<void, never, R> =>
+@@ -747,8 +758,9 @@
+                     const level = [conn, id] as const
+                     afterCommitBuffers.set(level, buffer)
+                     return Effect.onExitPrimitive(
+-                      Effect.provideContext(
++                      provideTransactionContext(
+                         restore(effect),
++                        services,
+                         services.pipe(
+                           Context.add(options.transactionService, level),
+                           Context.add(CurrentTransactionService, options.transactionService),
