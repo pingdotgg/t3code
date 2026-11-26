@@ -357,8 +357,11 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
         if (!child.hasText) continue;
         yield LINE_START;
       }
+      const block = ["li", "div", "section", "dt", "dd"].includes(child.name);
+      // Like a thematic break, a nested block starts a new line once its content arrives.
+      if (block) yield THEMATIC_BREAK;
       yield* paragraphs(child);
-      if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
+      if (block) yield "\n";
     }
   }
 }
@@ -641,9 +644,11 @@ function* notebook(source: string): Generator<string, void> {
           "data" in output &&
           output.data &&
           typeof output.data === "object" &&
-          "text/plain" in output.data
+          ("text/plain" in output.data || "text/markdown" in output.data)
         )
-          yield outputText(output.data["text/plain"]);
+          yield outputText(
+            "text/plain" in output.data ? output.data["text/plain"] : output.data["text/markdown"],
+          );
         else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {

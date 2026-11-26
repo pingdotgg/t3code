@@ -551,6 +551,22 @@ describe("question answer paths", () => {
                 metadata: {},
               },
               {
+                output_type: "display_data",
+                data: { "text/markdown": ["| Region | Tonnes |\n", "| North | 120 |"] },
+                metadata: {},
+              },
+              {
+                output_type: "execute_result",
+                execution_count: 2,
+                data: { "text/markdown": "*Markdown summary*", "text/plain": "Plain summary" },
+                metadata: {},
+              },
+              {
+                output_type: "display_data",
+                data: { "image/png": "iVBORw0KGgo=", "text/html": "<script>chart()</script>" },
+                metadata: {},
+              },
+              {
                 output_type: "error",
                 ename: "ZeroDivisionError",
                 evalue: "division by zero",
@@ -579,6 +595,11 @@ describe("question answer paths", () => {
       expect(extracted).not.toContain("10%|#");
       expect(extracted).toContain("42\nNext line");
       expect(extracted).toContain("raw\rvalue");
+      expect(extracted).toContain("| Region | Tonnes |\n| North | 120 |\n");
+      expect(extracted).toContain("Plain summary\n");
+      expect(extracted).not.toContain("*Markdown summary*");
+      expect(extracted).not.toContain("iVBORw0KGgo");
+      expect(extracted).not.toContain("<script>");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
@@ -735,6 +756,24 @@ describe("question answer paths", () => {
           expected: [
             "Departure information.\nCheck local time.\nBoard promptly.\nKeep walking.",
             "Contact the duty editor.\nHarbor Office\nPier 7\nInclude your reference.",
+          ],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Deposit: $100<div>Balance: $500</div></div><div>Purchased in June<section>Delivered in July</section></div><div>Keep <div></div>walking</div><div>Order <span>number</span> 42</div><div>Name<div>\nValue</div></div><div>Note<div>  <em>indented</em></div></div></body></html>',
+          },
+          expected: [
+            "Deposit: $100\nBalance: $500\n",
+            "Purchased in June\nDelivered in July\n",
+            "Keep \nwalking\n",
+            "Order number 42",
+            "Name\nValue",
+            "Note\n  indented",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
