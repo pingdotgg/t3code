@@ -218,6 +218,7 @@ function resolveWindowOriginPrimaryTarget(): PrimaryEnvironmentTarget {
     source: "window-origin",
     urlKind: "http-base-url",
   });
+  url.pathname = import.meta.env.BASE_URL;
   const httpBaseUrl = url.toString();
   if (url.protocol === "http:") {
     url.protocol = "ws:";
@@ -233,7 +234,7 @@ function resolveWindowOriginPrimaryTarget(): PrimaryEnvironmentTarget {
     source: "window-origin",
     target: {
       httpBaseUrl,
-      wsBaseUrl: url.toString(),
+      wsBaseUrl: url.pathname === "/" ? url.toString() : new URL("ws", url).toString(),
     },
   };
 }
@@ -284,7 +285,7 @@ export function resolvePrimaryEnvironmentHttpUrl(
     source: primaryTarget.source,
     urlKind: "http-base-url",
   });
-  url.pathname = pathname;
+  url.pathname = url.pathname.replace(/\/+$/, "") + "/" + pathname.replace(/^\/+/, "");
   if (searchParams) {
     url.search = new URLSearchParams(searchParams).toString();
   }

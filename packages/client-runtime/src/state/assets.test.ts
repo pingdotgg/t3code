@@ -31,7 +31,28 @@ import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   makeRevisionedAssetUrlFamily,
+  resolveAssetUrl,
 } from "./assets.ts";
+
+describe("resolveAssetUrl", () => {
+  it.each(["/api/assets/token/image.png?download=1", "/api/attachments/upload/token"])(
+    "keeps the environment prefix on signed route %s",
+    (route) => {
+      expect(resolveAssetUrl("https://remote.test/t3/one", route)).toBe(
+        `https://remote.test/t3/one${route}`,
+      );
+      expect(resolveAssetUrl("https://remote.test/t3/two/", route)).toBe(
+        `https://remote.test/t3/two${route}`,
+      );
+      expect(resolveAssetUrl("https://remote.test/", route)).toBe(`https://remote.test${route}`);
+    },
+  );
+
+  it("leaves absolute asset URLs on their original environment", () => {
+    const asset = "https://other.test/api/assets/token/image.png";
+    expect(resolveAssetUrl("https://remote.test/t3/one/", asset)).toBe(asset);
+  });
+});
 
 describe("project favicon URL cache", () => {
   it("does not reuse another environment, workspace, or selected icon's cached URL", () => {

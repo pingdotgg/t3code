@@ -2,6 +2,24 @@
 
 Drive T3 Code from your phone, browser (`app.t3.codes`), or another desktop app while your agents run on a host computer or server. The host must stay awake and running while you work.
 
+## Serve the web client under a reverse-proxy path
+
+For a self-hosted web build, set Vite's base when building the web package:
+
+```sh
+pnpm --filter @t3tools/web build --base=/t3/team/
+```
+
+Serve this build from `t3 serve`. Configure the proxy to redirect `/t3/team` to
+`/t3/team/` and forward requests under `/t3/team/` to T3 with the prefix
+removed. Forward WebSocket upgrades on the same path. Open
+`https://code.example.com/t3/team/pair` in the browser to enter a pairing code.
+CLI-generated links still use the server's advertised address.
+
+If you publish multiple instances on one origin, scope each server's session
+cookies to its proxy path. Browser storage is shared by an origin, so use
+separate browser profiles for separate T3 accounts on that origin.
+
 ## T3 Connect (recommended)
 
 T3 Connect links your host to your other devices without router port-forwarding.

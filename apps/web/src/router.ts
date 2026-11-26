@@ -5,6 +5,7 @@ import { routeTree } from "./routeTree.gen";
 export function getRouter(history: RouterHistory) {
   return createRouter({
     routeTree,
+    basepath: import.meta.env.BASE_URL,
     history,
     context: {},
     defaultPreload: "intent",
