@@ -177,6 +177,60 @@ describe("ComposerContextRecord", () => {
       }).records,
     ).toEqual([{ ...knownRecords.skill, contextId: "ctx_skill" }]);
   });
+
+  it("preserves leading and trailing whitespace in review comment and mention paths", () => {
+    const encodeContext = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext));
+    const records = [
+      {
+        ...knownRecords["review-comment"],
+        contextId: "ctx_1",
+        sectionId: "file:trailing.txt ",
+        filePath: " leading.txt",
+      },
+      {
+        ...knownRecords.mention,
+        contextId: "ctx_2",
+        path: "trailing.txt ",
+      },
+      {
+        ...knownRecords["review-comment"],
+        contextId: "ctx_3",
+        sectionId: "file: ",
+        filePath: " ",
+      },
+      {
+        ...knownRecords.mention,
+        contextId: "ctx_4",
+        path: " ",
+      },
+    ];
+
+    const decoded = decodeContext({ version: 1, records });
+    const roundTripped = decodeContext(encodeContext(decoded));
+
+    expect(decoded.records).toEqual(records);
+    expect(roundTripped.records).toEqual(records);
+    expect(Option.isNone(decodeRecord({ ...knownRecords["review-comment"], sectionId: "" }))).toBe(
+      true,
+    );
+    expect(Option.isNone(decodeRecord({ ...knownRecords["review-comment"], filePath: "" }))).toBe(
+      true,
+    );
+    expect(Option.isNone(decodeRecord({ ...knownRecords.mention, path: "" }))).toBe(true);
+    expect(
+      Option.isNone(
+        decodeRecord({ ...knownRecords["review-comment"], sectionId: "x".repeat(256) }),
+      ),
+    ).toBe(true);
+    expect(
+      Option.isNone(
+        decodeRecord({ ...knownRecords["review-comment"], filePath: "x".repeat(2_049) }),
+      ),
+    ).toBe(true);
+    expect(Option.isNone(decodeRecord({ ...knownRecords.mention, path: "x".repeat(2_049) }))).toBe(
+      true,
+    );
+  });
 });
 
 describe("OrchestrationMessageContext", () => {
