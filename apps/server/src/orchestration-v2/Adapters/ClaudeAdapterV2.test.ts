@@ -19082,6 +19082,211 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // Claude queues a task notification that lands mid-turn and hands it to the model with the
+  // first request after the next tool step. One that lands during the last request stays
+  // queued, and Claude answers it in a turn of its own after the result, so the task is still
+  // owed when the turn ends. A Stop hook's follow-up request carries no queued notifications.
+  it.effect.each([
+    { name: "awaited, after the last request", awaited: true, foldedBy: null },
+    { name: "unawaited, after the last request", awaited: false, foldedBy: null },
+    { name: "a Stop hook's request follows", awaited: true, foldedBy: "stop-hook" },
+    { name: "folded after a tool step", awaited: true, foldedBy: "tool-step" },
+    { name: "sibling folded, task after the last request", awaited: true, foldedBy: "sibling" },
+  ] as const)(
+    "keeps a task that finishes during a turn owed until Claude answers it ($name)",
+    ({ awaited, foldedBy }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const siblingTaskId = "sibling-folded-task";
+        const requesting = (uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "requesting",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const toolStep = (index: number) => [
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: `msg_in_turn_tool_${index}`,
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: `toolu_in_turn_${index}`,
+                  name: "Bash",
+                  input: { command: "git status" },
+                },
+              ],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+            parent_tool_use_id: null,
+            uuid: `00000000-0000-4000-8000-00000000031${index}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                { type: "tool_result", tool_use_id: `toolu_in_turn_${index}`, content: "clean" },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: `00000000-0000-4000-8000-00000000032${index}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        ];
+        const roster = (tasks: ReadonlyArray<string>, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: tasks.map((task_id) => ({
+              task_id,
+              task_type: "local_bash",
+              description: WAKE_TASK_DESCRIPTION,
+            })),
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const latestRoster = () =>
+          (
+            providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+              .pendingBackgroundTasks ?? []
+          ).map((task) => task.taskId);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-in-turn-notification-1"),
+            text: "Run the build in the background and wait for it.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        if (foldedBy === "sibling")
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeTaskStarted,
+              task_id: siblingTaskId,
+              tool_use_id: "toolu_sibling_folded_task",
+              uuid: "00000000-0000-4000-8000-000000000301",
+            }),
+          );
+        if (awaited) {
+          yield* harness.runtime.awaitBackgroundTasks!({
+            providerThread: harness.providerThread,
+            taskIds: [WAKE_TASK_ID],
+            awaited: true,
+          });
+        }
+        yield* harness.offerAndWait(requesting("00000000-0000-4000-8000-000000000302"));
+        if (foldedBy === "sibling") {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeNotification,
+              task_id: siblingTaskId,
+              tool_use_id: "toolu_sibling_folded_task",
+              summary: "Sibling finished",
+              uuid: "00000000-0000-4000-8000-000000000303",
+            }),
+          );
+          yield* harness.offerAndWait(
+            roster([WAKE_TASK_ID], "00000000-0000-4000-8000-000000000304"),
+          );
+          // The request after the next tool step carries the sibling's notification.
+          for (const frame of toolStep(1)) yield* harness.offerAndWait(frame);
+          yield* harness.offerAndWait(requesting("00000000-0000-4000-8000-000000000305"));
+        }
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(roster([], "00000000-0000-4000-8000-000000000306"));
+        if (foldedBy === "tool-step") {
+          for (const frame of toolStep(2)) yield* harness.offerAndWait(frame);
+          yield* harness.offerAndWait(requesting("00000000-0000-4000-8000-000000000307"));
+        }
+        if (foldedBy === "stop-hook") {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "user",
+              message: {
+                role: "user",
+                content: [{ type: "text", text: "Stop hook feedback:\nCheck the board first." }],
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000000308",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(requesting("00000000-0000-4000-8000-000000000309"));
+        }
+        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.awaitTerminal(1);
+
+        // The turn's final roster is what a settle or a finished delegate's release reads.
+        const owed = foldedBy !== "tool-step";
+        assert.deepEqual(latestRoster(), owed ? [WAKE_TASK_ID] : []);
+        assert.equal(
+          providerThreadRosterEvents(harness.events).at(-1)?.pendingBackgroundWork === true,
+          owed,
+        );
+        assert.lengthOf(harness.continuationRequests, 0);
+        if (!owed) return;
+
+        // Claude dequeues the notification and opens its own turn for it.
+        yield* harness.offerAndWait(wakeTurnInit);
+        assert.lengthOf(harness.continuationRequests, 1);
+        assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-in-turn-notification-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+        yield* harness.awaitTerminal(2);
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+        assert.lengthOf(harness.continuationRequests, 1);
+        // Claude's answer reaches the thread once.
+        assert.lengthOf(
+          new Set(
+            harness.events.flatMap((event) =>
+              event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT
+                ? [event.message.id]
+                : [],
+            ),
+          ),
+          1,
+        );
+        assert.deepEqual(latestRoster(), []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect.each([true, false])(
     "carries a rejected wake rate limit into the continuation failure (event=%s)",
     (standaloneEvent) =>
