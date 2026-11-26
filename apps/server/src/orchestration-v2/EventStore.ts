@@ -69,6 +69,7 @@ export interface EventStoreV2Shape {
     readonly threadId?: ThreadId;
   }) => Effect.Effect<number, EventStoreV2Error>;
   readonly latestApplicationSequence: Effect.Effect<number, EventStoreV2Error>;
+  readonly prunedThroughSequence: Effect.Effect<number, EventStoreV2Error>;
   readonly publishCommitted: (events: ReadonlyArray<ApplicationStoredEvent>) => Effect.Effect<void>;
 }
 
@@ -142,6 +143,9 @@ const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
           );
         }),
         latestApplicationSequence: applicationEvents.latestApplicationSequence.pipe(
+          Effect.mapError((cause) => new EventStoreReadEventsError({ cause })),
+        ),
+        prunedThroughSequence: applicationEvents.prunedThroughSequence.pipe(
           Effect.mapError((cause) => new EventStoreReadEventsError({ cause })),
         ),
         publishCommitted: applicationEvents.publishCommitted,

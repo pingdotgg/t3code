@@ -310,6 +310,22 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         JOIN orchestration_v2_projection_threads AS fork ON fork.thread_id = shown.thread_id
         WHERE json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
       ),
+      legacy_cascade_threads(thread_id, project_id, deleted_at) AS (
+        SELECT thread.thread_id, thread.project_id, thread.deleted_at
+        FROM orchestration_v2_effect_outbox AS effect
+        JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = effect.thread_id
+        WHERE effect.status IN ('pending', 'running')
+          AND effect.effect_type = 'subagent-threads.cascade'
+          AND json_extract(effect.payload_json, '$.operation') IN ('thread.archive', 'thread.unarchive')
+          AND json_extract(effect.payload_json, '$.stableSkipPrefix') IS NOT 1
+        UNION
+        SELECT child.thread_id, child.project_id, child.deleted_at
+        FROM legacy_cascade_threads AS parent
+        JOIN orchestration_v2_projection_threads AS child ON child.project_id = parent.project_id
+        WHERE parent.deleted_at IS NULL
+          AND json_extract(child.payload_json, '$.lineage.parentThreadId') = parent.thread_id
+          AND json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+      ),
       candidate(thread_id) AS (${
         deletedThreadId === undefined
           ? sql`SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NOT NULL`
@@ -329,6 +345,8 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
       JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = candidate.thread_id
       WHERE thread.deleted_at IS NOT NULL
         AND thread.thread_id NOT IN (SELECT thread_id FROM shown WHERE thread_id IS NOT NULL)
+        -- An older cascade can read a deleted descendant's retained membership history.
+        AND thread.thread_id NOT IN (SELECT thread_id FROM legacy_cascade_threads)
         -- Earlier effects still read the thread; a later purge or sweep takes it.
         AND NOT EXISTS (
           SELECT 1 FROM orchestration_v2_effect_outbox AS effect

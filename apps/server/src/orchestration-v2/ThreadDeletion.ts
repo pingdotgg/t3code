@@ -6,7 +6,7 @@ import type {
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
+import type { PendingOrchestrationEffectV2, SubagentCascadeEffect } from "./EffectOutbox.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 export interface ThreadDeletionPlan {
@@ -21,6 +21,7 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
+  readonly subagentCascades?: ReadonlyArray<SubagentCascadeEffect>;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocator.IdAllocatorV2Error> {
@@ -236,7 +237,8 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       request: { type: "attachment.cleanup", attachmentIds },
     });
   }
-  effects.push({
+  // A purge claimed before its cascade would skip the thread and leave it to the sweep.
+  effects.push(...(input.subagentCascades ?? []), {
     id: `effect:${command.commandId}:thread-content.purge`,
     commandId: command.commandId,
     threadId: command.threadId,
