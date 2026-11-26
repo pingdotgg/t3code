@@ -240,6 +240,11 @@ it.each([true, false])(
     await screen.rerender(view(1, false, true));
     await expect.element(previous()).toBeDisabled();
     await expect.element(next()).toBeDisabled();
+    await expect
+      .element(
+        screen.getByRole("button", { name: compact ? "Next" : "Next question", exact: true }),
+      )
+      .toBeDisabled();
 
     await screen.rerender(view(0, true));
     expect(previous().query()).toBeNull();
