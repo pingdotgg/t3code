@@ -5723,19 +5723,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return false;
             owner = detached.get(incomingTaskId);
           } else {
-            if (
-              active?.finalized === false &&
-              (active.tools.has(update.toolCallId) || update.sessionUpdate === "tool_call")
-            )
-              return false;
+            if (update.sessionUpdate === "tool_call") return false;
+            if (active?.finalized === false && active.tools.has(update.toolCallId)) return false;
             owner = [...detached.values()].findLast((turn) => {
+              if (turn.nativeThreadId !== notification.sessionId) return false;
               const owned = turn.tools.get(update.toolCallId);
               if (owned?.backgroundCommandTaskId === undefined) return false;
               const status = toolStatus(owned.status);
               return status === "pending" || status === "running";
             });
           }
-          if (owner === undefined) return false;
+          if (owner === undefined || owner.nativeThreadId !== notification.sessionId) return false;
           yield* emitTool(owner, event.toolCall);
           return true;
         });
