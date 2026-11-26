@@ -153,3 +153,50 @@ describe("copying a table as HTML", () => {
     }
   });
 });
+
+describe("copying a table as PNG", () => {
+  it("writes the drawn table as one image/png clipboard item", async () => {
+    await using screen = await render(
+      <MarkdownTable>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Ada</td>
+            <td>11 Oct</td>
+          </tr>
+        </tbody>
+      </MarkdownTable>,
+      // The table renders no links and reads no route.
+      { router: false },
+    );
+    const items: ClipboardItem[] = [];
+    const write = vi.spyOn(navigator.clipboard, "write").mockImplementation(async (data) => {
+      items.push(...data);
+      // Settle the promised image as the browser would before the write resolves.
+      await Promise.all(data.flatMap((item) => item.types.map((type) => item.getType(type))));
+    });
+
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "Copy table" }));
+      await userEvent.click(page.getByRole("menuitem", { name: "Copy as PNG" }));
+      await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+
+      const [item] = items;
+      expect(item?.types).toEqual(["image/png"]);
+      const png = await item!.getType("image/png");
+      expect(png.type).toBe("image/png");
+      const table = screen.container.querySelector("table")!.getBoundingClientRect();
+      const bitmap = await createImageBitmap(png);
+      // The table plus a 16px margin on each side, at the screen's pixel density.
+      expect(bitmap.width / devicePixelRatio).toBeCloseTo(table.width + 32, 0);
+      expect(bitmap.height / devicePixelRatio).toBeCloseTo(table.height + 32, 0);
+    } finally {
+      write.mockRestore();
+    }
+  });
+});

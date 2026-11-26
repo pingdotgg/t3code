@@ -255,7 +255,7 @@ async function runInImageWorker<Task extends ImageWorkerTask>(
     : null;
 }
 
-const encodeCanvas: EncodeCanvas = async (canvas, colorSpace, quality, mimeType) => {
+export const encodeCanvas: EncodeCanvas = async (canvas, colorSpace, quality, mimeType) => {
   if (
     typeof OffscreenCanvas === "function" &&
     canvas instanceof OffscreenCanvas &&
