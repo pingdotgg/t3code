@@ -31,7 +31,10 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { cancelPendingWorkspaceDefault } from "../lib/retargetDraftWorkspace";
+import {
+  cancelPendingWorkspaceDefault,
+  holdPendingWorkspaceDefault,
+} from "../lib/retargetDraftWorkspace";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
@@ -445,8 +448,10 @@ export function BranchToolbarBranchSelector({
       );
       return;
     }
+    const releaseWorkspace =
+      draftId && !hasServerThread ? holdPendingWorkspaceDefault(draftId) : undefined;
     startBranchActionTransition(async () => {
-      await action();
+      await action().finally(() => releaseWorkspace?.());
       branchRefState.refresh();
     });
   };

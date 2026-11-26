@@ -227,13 +227,15 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       );
       const workspace = waitForPendingWorkspaceDefault(draftId);
       if (workspace === null) return true;
+      const routedComposer = getComposerDraft(draftId);
       await workspace;
       const routedDraft = getDraftSession(draftId);
       return (
         readRouting().input.draftId === draftId &&
         routedDraft?.environmentId === projectRef.environmentId &&
         routedDraft.projectId === projectRef.projectId &&
-        routedDraft.promotedTo == null
+        routedDraft.promotedTo == null &&
+        getComposerDraft(draftId) === routedComposer
       );
     });
   };

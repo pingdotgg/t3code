@@ -1,3 +1,6 @@
+import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
@@ -19,6 +22,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
@@ -30,6 +34,7 @@ import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
+  checkout: null as Promise<AtomCommandResult<{ refName: string }, never>> | null,
   projectFiles: new Map<EnvironmentId, Promise<T3ProjectFile | null>>(),
   pickedEnvironmentId: null as EnvironmentId | null,
   refreshSelection: vi.fn<(ids: readonly EnvironmentId[]) => Promise<EnvironmentId | null>>(),
@@ -78,7 +83,8 @@ vi.mock("../../state/queries", async (original) => ({
 }));
 vi.mock("../../state/use-atom-command", async (original) => ({
   ...(await original<typeof import("../../state/use-atom-command")>()),
-  useAtomCommand: () => async () => ({ _tag: "Success", value: { refName: "feature" } }),
+  useAtomCommand: () => async () =>
+    resources.checkout ?? AsyncResult.success({ refName: "feature" }),
 }));
 vi.mock("../../lib/t3ProjectFileDefaults", () => ({
   peekT3ProjectFile: () => undefined,
@@ -104,6 +110,7 @@ vi.mock("../../hooks/useScratchProject", () => ({ useScratchProject: () => ({}) 
 function setup() {
   resources.refreshSelection.mockReset();
   resources.projectFiles.clear();
+  resources.checkout = null;
   resources.pickedEnvironmentId = null;
   const a = EnvironmentId.make("machine-a");
   const b = EnvironmentId.make("machine-b");
@@ -285,7 +292,7 @@ it("refreshes a stored automatic choice before sending an unsent draft", async (
   expect(appAtomRegistry.get(destinationSelections)).toEqual(selections);
 });
 
-it.each(["initial routing", "pre-send refresh"] as const)(
+it.each(["initial routing", "pre-send refresh", "an edit during pre-send refresh"] as const)(
   "loads the destination workspace default during %s",
   async (route) => {
     const { b, draftId, input, store } = setup();
@@ -302,7 +309,7 @@ it.each(["initial routing", "pre-send refresh"] as const)(
         onPrepared={onPrepared}
       />,
     );
-    if (route === "pre-send refresh") {
+    if (route !== "initial routing") {
       await screen.getByRole("button", { name: "Send" }).click();
     }
     await expect.element(screen.getByText(b)).toBeInTheDocument();
@@ -310,11 +317,14 @@ it.each(["initial routing", "pre-send refresh"] as const)(
     expect(onPrepared).not.toHaveBeenCalled();
 
     await act(async () => {
+      if (route === "an edit during pre-send refresh") store.setPrompt(draftId, "Edited draft");
       destinationFile.resolve({ defaultThreadEnvMode: "worktree" });
       await destinationFile.promise;
     });
     expect(store.getDraftSession(draftId)?.envMode).toBe("worktree");
-    if (route === "pre-send refresh") expect(onPrepared).toHaveBeenCalledWith(true);
+    if (route !== "initial routing") {
+      expect(onPrepared).toHaveBeenCalledWith(route === "pre-send refresh");
+    }
   },
 );
 
@@ -494,29 +504,51 @@ it("keeps a workspace the user picked when the draft switches machine by hand", 
   expect(store.getDraftSession(draftId)?.envMode).toBe("local");
 });
 
-it("keeps the current checkout when a branch is picked before a manually selected machine's default loads", async () => {
-  const { b, draftId, input, store } = fanoutSetup();
-  const destinationFile = Promise.withResolvers<T3ProjectFile | null>();
-  resources.projectFiles.set(b, destinationFile.promise);
-  await using screen = await render(
-    <Harness
-      showBranchPicker
-      input={{ ...input, automaticEnvironment: false, draftThread: store.getDraftSession(draftId) }}
-    />,
-  );
-  await screen.getByRole("button", { name: `Switch to ${b}` }).click();
-  await expect.element(screen.getByText(b)).toBeInTheDocument();
-  const pending = waitForPendingWorkspaceDefault(draftId);
-  expect(pending).not.toBeNull();
+it.each(["success", "failure"] as const)(
+  "waits for the branch checkout before resolving the workspace on %s",
+  async (outcome) => {
+    const { b, draftId, input, store } = fanoutSetup();
+    const destinationFile = Promise.withResolvers<T3ProjectFile | null>();
+    const checkout = Promise.withResolvers<Awaited<NonNullable<typeof resources.checkout>>>();
+    resources.projectFiles.set(b, destinationFile.promise);
+    await using screen = await render(
+      <Harness
+        showBranchPicker
+        input={{
+          ...input,
+          automaticEnvironment: false,
+          draftThread: store.getDraftSession(draftId),
+        }}
+      />,
+    );
+    await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+    await expect.element(screen.getByText(b)).toBeInTheDocument();
 
-  await screen.getByRole("combobox", { name: /Branch:/ }).click();
-  await screen.getByRole("option", { name: "feature" }).click();
-  expect(store.getDraftSession(draftId)?.branch).toBe("feature");
-  expect(waitForPendingWorkspaceDefault(draftId)).toBeNull();
+    await screen.getByRole("combobox", { name: /Branch:/ }).click();
+    resources.checkout = checkout.promise;
+    await page.getByRole("option", { name: "feature" }).click();
+    const pending = waitForPendingWorkspaceDefault(draftId);
+    expect(pending).not.toBeNull();
 
-  await act(async () => {
-    destinationFile.resolve({ defaultThreadEnvMode: "worktree" });
-    await pending;
-  });
-  expect(store.getDraftSession(draftId)).toMatchObject({ branch: "feature", envMode: "local" });
-});
+    await act(async () => {
+      destinationFile.resolve({ defaultThreadEnvMode: "worktree" });
+      await destinationFile.promise;
+    });
+    expect(store.getDraftSession(draftId)?.envMode).toBe("local");
+    await expect(Promise.race([pending, Promise.resolve("waiting")])).resolves.toBe("waiting");
+
+    await act(async () => {
+      checkout.resolve(
+        outcome === "success"
+          ? AsyncResult.success({ refName: "feature" })
+          : AsyncResult.failure(Cause.interrupt()),
+      );
+      await pending;
+    });
+    expect(store.getDraftSession(draftId)).toMatchObject(
+      outcome === "success"
+        ? { branch: "feature", envMode: "local" }
+        : { branch: null, envMode: "worktree" },
+    );
+  },
+);

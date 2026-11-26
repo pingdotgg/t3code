@@ -22,6 +22,7 @@ interface PendingWorkspaceDefault {
   readonly envMode: DraftSessionState["envMode"];
   readonly openedManual: boolean;
   readonly settled: Promise<void>;
+  readonly branchActions: Set<Promise<void>>;
   readonly finish: () => void;
 }
 
@@ -67,6 +68,18 @@ export function cancelPendingWorkspaceDefault(draftId: DraftId): void {
   const pending = pendingWorkspaceDefaults.get(draftId);
   pendingWorkspaceDefaults.delete(draftId);
   pending?.finish();
+}
+
+/** Keep the provisional workspace until a branch checkout has succeeded or failed. */
+export function holdPendingWorkspaceDefault(draftId: DraftId) {
+  const pending = pendingWorkspaceDefaults.get(draftId);
+  if (!pending) return;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  pending.branchActions.add(promise);
+  return () => {
+    pending.branchActions.delete(promise);
+    resolve();
+  };
 }
 
 export function resolveDraftWorkspace(
@@ -132,6 +145,7 @@ export function resolveDraftWorkspace(
         envMode: workspace.envMode,
         openedManual: store.getDraftSession(draftId)?.environmentSelection === "manual",
         settled: promise,
+        branchActions: new Set(),
         finish: () => {
           unsubscribe();
           resolve();
@@ -148,25 +162,29 @@ export function resolveDraftWorkspace(
       });
       pendingWorkspaceDefaults.set(draftId, pending);
       void readT3ProjectFile(projectRef.environmentId, workspaceRoot)
-        .then(
-          (projectFile) => {
-            if (pendingWorkspaceDefaults.get(draftId) !== pending) return;
-            const draft = store.getDraftSession(draftId);
-            if (!keepsProvisionalWorkspace(draft, pending)) return;
-            const resolved = resolveWorkspace(projectFile);
-            if (resolved.envMode === workspace.envMode) return;
-            // Commit before a waiting send reads the composer's workspace.
-            flushSync(() =>
-              store.setDraftThreadContext(draftId, {
-                envMode: resolved.envMode,
-                ...(draft.startFromOrigin === workspace.startFromOrigin
-                  ? { startFromOrigin: resolved.startFromOrigin }
-                  : {}),
-              }),
-            );
-          },
-          () => undefined,
-        )
+        .catch(() => null)
+        .then(async (projectFile) => {
+          while (
+            pendingWorkspaceDefaults.get(draftId) === pending &&
+            pending.branchActions.size > 0
+          ) {
+            await Promise.all(pending.branchActions);
+          }
+          if (pendingWorkspaceDefaults.get(draftId) !== pending) return;
+          const draft = store.getDraftSession(draftId);
+          if (!keepsProvisionalWorkspace(draft, pending)) return;
+          const resolved = resolveWorkspace(projectFile);
+          if (resolved.envMode === workspace.envMode) return;
+          // Commit before a waiting send reads the composer's workspace.
+          flushSync(() =>
+            store.setDraftThreadContext(draftId, {
+              envMode: resolved.envMode,
+              ...(draft.startFromOrigin === workspace.startFromOrigin
+                ? { startFromOrigin: resolved.startFromOrigin }
+                : {}),
+            }),
+          );
+        })
         .finally(() => {
           if (pendingWorkspaceDefaults.get(draftId) === pending) {
             cancelPendingWorkspaceDefault(draftId);
