@@ -5398,7 +5398,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} arrêt} other {{count} arrêts}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} arrêt} other {{count} arrêts}}",
   "9830004326e7d8c0": "{count, plural, one {sur {count} fichier} other {sur {count} fichiers}}",
   "e6035bad35419efa": "Options du guide",
   "4d7635a2bf1f5816": "Réécrire le guide",

@@ -5406,7 +5406,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} stops} other {{count} stops}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} stop} other {{count} stops}}",
   "9830004326e7d8c0": "{count, plural, one {through {count} file} other {through {count} files}}",
   "e6035bad35419efa": "Guide options",
   "4d7635a2bf1f5816": "Rewrite guide",
