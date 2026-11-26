@@ -999,11 +999,8 @@ export function workflowOneLine(text: string): string {
     .replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, inner: string) => `\0${code.push(inner) - 1}\0`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/(?<![\p{L}\p{M}\p{N}_/])(__|_)(\S(?:.*?\S)?)\1(?![\p{L}\p{M}\p{N}_/])/gu, "$2")
-    // Globs like `src/**/*.ts` and `a*.ts` stay literal: an opener follows a space or bracket, or is glued to a word.
-    .replace(
-      /(?<!\*)(?:(?<=^|[\s([{"'])|(?=(?:\*\*\*|\*\*|\*)[^\s\p{P}]))(\*\*\*|\*\*|\*)(?!\*)(\S(?:.*?\S)?)\1/gu,
-      "$2",
-    )
+    // Emphasis opens only after a space, bracket or quote, so globs like `src/*/a*.ts` stay literal.
+    .replace(/(?<!\*)(?<=^|[\s([{"'])(\*\*\*|\*\*|\*)(?!\*)(\S(?:.*?\S)?)\1/gu, "$2")
     .replace(/\0(\d+)\0/g, (match, index: string) => code[Number(index)] ?? match);
   const end = plain.search(/[.!?](\s|$)/);
   return end === -1 ? plain : plain.slice(0, end + 1);
