@@ -127,6 +127,21 @@ function withOffsets(code: string, lines: HighlightedLines): SyntaxToken[][] {
   });
 }
 
+/** Pairs each token with its start in the lines joined by "\n", a stable React key. */
+export function withTokenStarts(
+  lines: HighlightedLines,
+): ReadonlyArray<ReadonlyArray<{ readonly token: HighlightedToken; readonly start: number }>> {
+  let offset = 0;
+  return lines.map((line, index) => {
+    if (index > 0) offset += 1;
+    return line.map((token) => {
+      const start = offset;
+      offset += token.content.length;
+      return { token, start };
+    });
+  });
+}
+
 /** LF and CRLF split lines; a trailing line break yields a final empty line. */
 export function highlightCode(
   code: string,

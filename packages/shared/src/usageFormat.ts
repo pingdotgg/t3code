@@ -6,6 +6,8 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 
+import { sourceIdentity } from "./usageMerge.ts";
+
 const CURRENCY = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -48,6 +50,7 @@ export function usageSourceMessages(
   sources: readonly UsageSource[],
   malformedWarning: (count: number) => string = formatMalformedUsageWarning,
 ): readonly string[] {
+  const sourceKey = sourceIdentity(sources.map((source) => source.fingerprint));
   const messages = new Set<string>();
   const malformedBySource = new Map<string, number>();
   for (const source of sources) {
@@ -61,8 +64,7 @@ export function usageSourceMessages(
     }
     let message = source.message;
     if (source.malformedRecords > 0) {
-      const { hostId, provider, resolvedHomePath, volumeId } = source.fingerprint;
-      const key = JSON.stringify([hostId, provider, resolvedHomePath, volumeId]);
+      const key = sourceKey(source.fingerprint);
       malformedBySource.set(
         key,
         Math.max(malformedBySource.get(key) ?? 0, source.malformedRecords),
@@ -189,7 +191,7 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
 }
 
 function hourOptions(hour12: boolean): Intl.DateTimeFormatOptions {
-  return hour12 ? { hour: "numeric" } : { hour: "2-digit", hourCycle: "h23" };
+  return hour12 ? { hour: "numeric", hour12: true } : { hour: "2-digit", hourCycle: "h23" };
 }
 
 function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean): string {
