@@ -73,8 +73,21 @@ export function ChunkedMarkdown(props: {
       onCopy={(event) => {
         // Select All only reaches rendered pieces; copying all of it copies the whole file.
         const list = event.currentTarget.firstElementChild;
-        if (!list || !window.getSelection()?.containsNode(list)) return;
+        const selection = window.getSelection();
+        if (!list || !selection?.rangeCount) return;
+        // Chromium's containsNode says false for a list selected through its parent's children.
+        const range = selection.getRangeAt(0);
+        const listRange = document.createRange();
+        listRange.selectNode(list);
+        if (
+          range.compareBoundaryPoints(Range.START_TO_START, listRange) > 0 ||
+          range.compareBoundaryPoints(Range.END_TO_END, listRange) < 0
+        ) {
+          return;
+        }
         event.preventDefault();
+        // A rendered piece's own handler already wrote just its part.
+        event.clipboardData.clearData();
         event.clipboardData.setData("text/plain", joinMarkdownChunks(chunks));
       }}
     >
