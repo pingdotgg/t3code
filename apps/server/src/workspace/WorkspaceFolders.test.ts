@@ -266,7 +266,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         const home = path.join(tmp, "home");
         const other = path.join(tmp, "other");
         const blocked = path.join(home, "Desktop");
-        for (const folder of ["home/api/.git", "home/Desktop", "other/web/.git"]) {
+        for (const folder of ["home/api/.git", "home/Desktop/notes/.git", "other/web/.git"]) {
           yield* fileSystem.makeDirectory(path.join(tmp, folder), { recursive: true });
         }
         const gate = path.join(tmp, "gate");
@@ -299,15 +299,18 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             Effect.provideService(FileSystem.FileSystem, hanging),
           );
 
+        const found = [path.join(home, "Desktop", "notes"), path.join(home, "api")];
+        assert.deepEqual(
+          (yield* WorkspaceFolders.discoverFolders(home)).map((folder) => folder.path),
+          found,
+        );
         const first = yield* Effect.forkChild(discover(home));
         yield* Deferred.await(listing);
         yield* TestClock.adjust("2 seconds");
-        assert.deepEqual(yield* Fiber.join(first), [path.join(home, "api")]);
+        // The stuck root keeps what it last found, so its repositories do not drop out meanwhile.
+        assert.deepEqual(yield* Fiber.join(first), found);
         // Each pass would otherwise pin another thread, and four leave the server unanswered.
-        // The stuck root keeps what it found, so its repositories do not drop out meanwhile.
-        for (let pass = 0; pass < 4; pass++) {
-          assert.deepEqual(yield* discover(home), [path.join(home, "api")]);
-        }
+        for (let pass = 0; pass < 4; pass++) assert.deepEqual(yield* discover(home), found);
         assert.deepEqual(yield* discover(other), [path.join(other, "web")]);
       }),
   );

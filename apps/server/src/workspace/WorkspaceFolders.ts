@@ -355,18 +355,19 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
   ).map((entry) => path.resolve(root, entry));
   // Everything the scan could find would be dropped, so skip the walk.
   if (ignored.some((entry) => isWithinRoot(path, root, entry))) return [];
+  const isIgnored = (folderPath: string) =>
+    ignored.some((entry) => folderPath === entry || isWithinRoot(path, folderPath, entry));
+  // A scan that met a stuck listing missed what lies behind it.
+  const previous = () =>
+    rootListings.get(root)?.overdue === true
+      ? lastDiscovered.get(root)?.filter((folder) => !isIgnored(folder.path))
+      : undefined;
   // Uncapped: the folders outside the project are dropped below, and must not use up the room.
   const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
-  if (Option.isNone(scan)) {
-    return rootListings.get(root)?.overdue === true ? (lastDiscovered.get(root) ?? []) : [];
-  }
+  if (Option.isNone(scan)) return previous() ?? [];
   const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
-    scan.value.folders.filter(
-      (folder) =>
-        folder.isGitRepository &&
-        !ignored.some((entry) => folder.path === entry || isWithinRoot(path, folder.path, entry)),
-    ),
+    scan.value.folders.filter((folder) => folder.isGitRepository && !isIgnored(folder.path)),
     // A link to a repository elsewhere is not inside the project, whatever its name says, and a
     // worktree a workspace file lists follows another repository.
     (folder) =>
@@ -377,6 +378,8 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
       ),
     { concurrency: DETECTION_CONCURRENCY },
   );
+  const kept = previous();
+  if (kept !== undefined) return kept;
   const found = inside.map((folder) => ({
     path: folder.path,
     name: folder.name,
