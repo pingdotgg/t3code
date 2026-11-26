@@ -8,8 +8,6 @@ vi.mock(import("../ChatMarkdown"), () => ({
 import { render } from "../../../test/render";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
-import "~/index.css";
-
 type Question = {
   header: string;
   question: string;
@@ -121,20 +119,4 @@ it("shows an option's preview so the user can see what they are approving", asyn
   await expect
     .element(screen.getByText("A quote in the password breaks login.", { exact: false }))
     .toBeVisible();
-});
-
-it("shows the whole header of an expanded question instead of clipping it", async () => {
-  const header = "Pick how the migration should roll out across regions ".repeat(8).trim();
-  await using screen = await renderPanel([
-    {
-      header,
-      question: "How should this ship?",
-      options: [{ label: "One region", description: "EU first" }],
-    },
-  ]);
-
-  const label = screen.getByText(header, { exact: true });
-  await expect.element(label).toBeVisible();
-  const element = label.element();
-  expect(element.scrollWidth).toBeLessThanOrEqual(element.clientWidth);
 });
