@@ -1416,20 +1416,12 @@ describe("CursorAdapterV2", () => {
       );
       assert(started.type === "provider_turn.updated");
       yield* runtime.interruptTurn({ providerThread, providerTurnId: started.providerTurn.id });
-      const stoppedRun = { providerThread, nativeTurnId: "native-cursor-run-1" };
       assert.isTrue(
-        yield* runtime.nativeTurnKept!(stoppedRun),
-        "the session that saw the Stop sends its request with the next turn",
-      );
-      const reopened = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("cursor-steer-session-reopened"),
-        modelSelection,
-        runtimePolicy,
-      });
-      assert.isFalse(
-        yield* reopened.nativeTurnKept!(stoppedRun),
-        "a session opened after the Stop has nothing to send it with",
+        yield* runtime.nativeTurnKept!({
+          providerThread,
+          nativeTurnId: started.providerTurn.nativeTurnRef!.nativeId!,
+        }),
+        "a live session replays the stopped request itself, so the server must not resend it too",
       );
       yield* runtime.startTurn(turnInput(2, steerText));
 

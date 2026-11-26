@@ -154,12 +154,11 @@ export function abandonedProviderTurns(
 const CUT_TURN_SETTLED = "cut-turn-settled";
 
 /**
- * The latest cancelled or stopped turn when no adapter said whether it kept the request. A restart
- * cancels the turn with no adapter left to tell. A Stop leaves its request with the session, which
- * carries it into the next turn and is gone once the session closes. Later runs whose request the
- * provider never got are passed over: a stopped request they carried was lost with them.
+ * The latest cancelled or interrupted turn when no adapter said whether it kept the request. Later
+ * runs whose request the provider never got are passed over, since a session carries a stopped
+ * request into the next turn and anything they carried was lost with them.
  */
-function unsettledCutProviderTurn(
+function unsettledStoppedProviderTurn(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
   run: Pick<OrchestrationV2Run, "ordinal">,
   providerThread: Pick<OrchestrationV2ProviderThread, "id" | "nativeThreadRef">,
@@ -1014,6 +1013,7 @@ export const layer: Layer.Layer<
       // restart superseded, and the session cannot be reused until those turns stop.
       const abandonedTurns = abandonedProviderTurns(projection, run, providerThread.id);
       const abandonedTurn = abandonedTurns.at(-1)?.turn;
+      let providerTurns = projection.providerTurns;
       if (abandonedTurn !== undefined) {
         const liveSession = yield* providerSessions.get(providerSessionId);
         if (Option.isSome(liveSession)) {
@@ -1038,27 +1038,32 @@ export const layer: Layer.Layer<
           }
         }
         const completedAt = yield* DateTime.now;
+        const repairEvents = yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
+          Effect.gen(function* () {
+            return {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "provider-turn.updated" as const,
+              threadId: projection.thread.id,
+              runId: abandonedRun.id,
+              nodeId: turn.nodeId,
+              providerInstanceId: abandonedRun.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...turn, status: "interrupted" as const, completedAt },
+            };
+          }),
+        );
         const repaired = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
-            Effect.gen(function* () {
-              return {
-                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                type: "provider-turn.updated" as const,
-                threadId: projection.thread.id,
-                runId: abandonedRun.id,
-                nodeId: turn.nodeId,
-                providerInstanceId: abandonedRun.providerInstanceId,
-                occurredAt: completedAt,
-                payload: { ...turn, status: "interrupted" as const, completedAt },
-              };
-            }),
-          ),
+          events: repairEvents,
         });
         if (!repaired.committed) return;
+        const repairedTurns = new Map(
+          repairEvents.map((event) => [event.payload.id, event.payload]),
+        );
+        providerTurns = providerTurns.map((turn) => repairedTurns.get(turn.id) ?? turn);
       }
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
@@ -1108,7 +1113,11 @@ export const layer: Layer.Layer<
       }
       const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
-      const cutTurn = unsettledCutProviderTurn(projection, run, providerThread);
+      const cutTurn = unsettledStoppedProviderTurn(
+        { runs: projection.runs, providerTurns },
+        run,
+        providerThread,
+      );
       // A cut turn the provider did not keep may itself have carried an earlier stopped request,
       // which is lost with it, so keep asking back to a turn the provider kept.
       const droppedCutTurns: Array<NonNullable<typeof cutTurn>> = [];
@@ -1122,14 +1131,18 @@ export const layer: Layer.Layer<
             // As when the turn ends: an unknown answer resends the request rather than losing it.
             .pipe(Effect.orElseSucceed(() => false))
         ));
-        candidate = unsettledCutProviderTurn(projection, candidate.run, providerThread)
+        candidate = unsettledStoppedProviderTurn(
+          { runs: projection.runs, providerTurns },
+          candidate.run,
+          providerThread,
+        )
       ) {
         droppedCutTurns.push(candidate);
       }
       const earliestCutTurn = droppedCutTurns.at(-1);
       if (earliestCutTurn !== undefined) {
-        // Settle them as a failed turn is settled: mark each request dropped and take back their
-        // inline context, so this turn resends all of it. Starting again reads the settled state.
+        // Settle them as a Stop would: mark each request dropped and take back their inline
+        // context, so this turn resends all of it. Starting again reads the settled state.
         const occurredAt = yield* DateTime.now;
         const allocateEventId = () =>
           idAllocator.allocate.event({ threadId: projection.thread.id });

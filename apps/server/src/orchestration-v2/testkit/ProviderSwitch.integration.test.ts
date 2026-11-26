@@ -6552,8 +6552,6 @@ describe("orchestration v2 provider switching", () => {
     "same-provider-retry",
     "cancelled-dropped",
     "cancelled-by-restart",
-    "stopped-session-closed",
-    "stopped-session-kept",
     "switch-away-and-return",
     "persisted-failure",
   ] as const)("handles an inline context handoff after a failed returning turn (%s)", (variant) =>
@@ -6562,10 +6560,7 @@ describe("orchestration v2 provider switching", () => {
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
       // A restart cancels the turn with no adapter left to report the drop.
       const cutByRestart = variant === "cancelled-by-restart";
-      // A Stop leaves the request with the session; once that closes, nothing carries it.
-      const stopped = variant === "stopped-session-closed" || variant === "stopped-session-kept";
-      const unsettled = cutByRestart || variant === "stopped-session-closed";
-      const dropped = variant !== "persisted-failure" && !cutByRestart && !stopped;
+      const dropped = variant !== "persisted-failure" && !cutByRestart;
       const cancelled = variant === "cancelled-dropped" || cutByRestart;
       const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
         makeTestAdapter({
@@ -6580,17 +6575,13 @@ describe("orchestration v2 provider switching", () => {
             5: "Recovered Codex after round-trip.",
           },
           capturedTurns,
-          ...(stopped
-            ? { interruptedRunOrdinals: new Set([3]) }
-            : cancelled
-              ? { cancelledRunOrdinals: new Set([3]) }
-              : { failedRunOrdinals: new Set([3]) }),
+          ...(cancelled
+            ? { cancelledRunOrdinals: new Set([3]) }
+            : { failedRunOrdinals: new Set([3]) }),
           ...(dropped ? { promptDroppedRunOrdinals: new Set([3]) } : {}),
-          ...(unsettled
+          ...(cutByRestart
             ? { nativeTurnKept: (nativeTurnId: string) => !nativeTurnId.endsWith(":3") }
-            : stopped
-              ? { nativeTurnKept: () => true }
-              : {}),
+            : {}),
         }),
         makeTestAdapter({
           instanceId: CLAUDE_MODEL_SELECTION.instanceId,
@@ -6652,7 +6643,7 @@ describe("orchestration v2 provider switching", () => {
         // Run 3: switch back to Codex (delta handoff covering run 2); fails.
         const afterRun3 = yield* send("Resume after failure", CODEX_MODEL_SELECTION);
         const run3 = afterRun3.runs.find((run) => run.ordinal === 3)!;
-        assert.equal(run3.status, stopped ? "interrupted" : cancelled ? "cancelled" : "failed");
+        assert.equal(run3.status, cancelled ? "cancelled" : "failed");
         const run3Handoff = afterRun3.contextHandoffs.find(
           (handoff) => handoff.targetRunId === run3.id,
         );
@@ -6672,7 +6663,7 @@ describe("orchestration v2 provider switching", () => {
           assert.equal(run3Handoff?.delivery?.status, "inline");
         }
 
-        if (variant === "same-provider-retry" || variant === "cancelled-dropped" || unsettled) {
+        if (variant === "same-provider-retry" || variant === "cancelled-dropped" || cutByRestart) {
           // Run 4: stay on Codex; must re-deliver run 2's handoff.
           const afterRun4 = yield* send("Resume", CODEX_MODEL_SELECTION);
           const turns = yield* Ref.get(capturedTurns);
@@ -6702,18 +6693,108 @@ describe("orchestration v2 provider switching", () => {
           assert.include(run5Turn.text, "Afternoon Claude shipped b63 live draft.");
           assert.include(run5Turn.text, "Extra Claude turn after dropped handoff.");
         } else {
-          // Control: run 3 persisted its prompt before failing, or its live session still carries
-          // the stopped request, so run 4 must not send run 2 or run 3 again.
+          // Control: run 3 persisted its prompt before failing, so run 4 must not re-send run 2.
           yield* send("Resume", CODEX_MODEL_SELECTION);
           const run4Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
           assert.notInclude(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
-          assert.notInclude(run4Turn.text, "Resume after failure");
         }
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
             {
               name: `dropped-handoff-${variant}`,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("resends a stopped request the provider dropped once its session closed", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("stopped-request-dropped");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: { 1: "hello", 2: "", 3: "Answer." },
+          capturedTurns,
+          interruptedRunOrdinals: new Set([2]),
+          // Stopped before its first checkpoint: the provider never kept run 2.
+          nativeTurnKept: (nativeTurnId) => !nativeTurnId.endsWith(":2"),
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make("thread:stopped-request-dropped");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:stopped-request-dropped:create"),
+          threadId: testThreadId,
+          projectId,
+          title: "Stopped request dropped",
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:stopped-request-dropped:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:stopped-request-dropped:${step}`),
+              text,
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        yield* send("Say hello");
+        const afterStop = yield* send("List every prime number below 300");
+        const stopped = afterStop.runs.find((run) => run.ordinal === 2)!;
+        assert.equal(stopped.status, "interrupted");
+
+        const afterNext = yield* send("Did I ask you anything about math?");
+        const nextTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
+        assert.include(nextTurn.text, "List every prime number below 300");
+        const stoppedTurn = afterNext.providerTurns.find(
+          (turn) => turn.runAttemptId === stopped.activeAttemptId,
+        );
+        assert.equal(stoppedTurn?.promptDropped, true);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "stopped-request-dropped",
               runtimePolicyOverride: {
                 cwd,
                 approvalPolicy: "never",
