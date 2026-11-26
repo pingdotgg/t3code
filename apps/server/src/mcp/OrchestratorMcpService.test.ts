@@ -1610,6 +1610,24 @@ describe("OrchestratorMcpService provider resolution", () => {
     skills: [],
   });
 
+  it.effect.each([
+    { case: "an incomplete inventory", modelsIncomplete: true, accepted: true },
+    { case: "a complete inventory", modelsIncomplete: false, accepted: false },
+  ] as const)("validates an explicit model for $case", (row) =>
+    Effect.gen(function* () {
+      const provider = providerSnapshot({
+        instanceId: ProviderInstanceId.make("test"),
+        driver: ProviderDriverKind.make("pi"),
+        model: "default",
+      });
+      const result = yield* OrchestratorMcpService.requireAdvertisedModel(
+        { ...provider, ...(row.modelsIncomplete ? { modelsIncomplete: true } : {}) },
+        "anthropic/claude-opus",
+      ).pipe(Effect.result);
+      assert.equal(Result.isSuccess(result), row.accepted);
+    }),
+  );
+
   const providerRegistryLayer = (providers: ReadonlyArray<ServerProvider>) =>
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(providers),

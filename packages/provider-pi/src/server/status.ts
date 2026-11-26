@@ -594,36 +594,42 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         ? { operation: failure.value.operation }
         : {}),
     });
-    return buildServerProvider({
-      presentation: PI_PRESENTATION,
-      enabled: piSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "ready",
-        auth: { status: "unknown" },
-        message:
-          "Pi is available, but T3 Code could not refresh its models and commands. The live session will retry startup.",
-      },
-    });
+    return {
+      ...buildServerProvider({
+        presentation: PI_PRESENTATION,
+        enabled: piSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "ready",
+          auth: { status: "unknown" },
+          message:
+            "Pi is available, but T3 Code could not refresh its models and commands. The live session will retry startup.",
+        },
+      }),
+      modelsIncomplete: true,
+    };
   }
   if (Option.isNone(discoveryExit.value)) {
-    return buildServerProvider({
-      presentation: PI_PRESENTATION,
-      enabled: piSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "ready",
-        auth: { status: "unknown" },
-        message:
-          "Pi is available, but model and command discovery needs interactive input. The live session will handle it.",
-      },
-    });
+    return {
+      ...buildServerProvider({
+        presentation: PI_PRESENTATION,
+        enabled: piSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "ready",
+          auth: { status: "unknown" },
+          message:
+            "Pi is available, but model and command discovery needs interactive input. The live session will handle it.",
+        },
+      }),
+      modelsIncomplete: true,
+    };
   }
 
   const discovery = discoveryExit.value.value;

@@ -207,6 +207,7 @@ describe("PiProvider", () => {
         ["default"],
       );
       assert.include(snapshot.message ?? "", "could not refresh its models and commands");
+      assert.equal(snapshot.modelsIncomplete, true);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
