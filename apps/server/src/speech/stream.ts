@@ -99,7 +99,7 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
     ).pipe(Effect.forkChild);
     // Stop the worker before the caller's scope releases the speech stream, so an in-flight
     // transcription cannot answer a socket that was closed for revocation.
-    yield* Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       while (true) {
         const frames = yield* reader.pull;
         unanswered += frames.length;
