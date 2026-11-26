@@ -118,7 +118,9 @@ const autoEditRules = (name: string) => [
 ];
 
 const planRules = (name: string) => [
-  { action: "*", resource: "*", effect: "allow" },
+  { action: "shell", resource: "*", effect: "ask" },
+  { action: "edit", resource: "*", effect: "ask" },
+  { action: "external_directory", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "deny" },
   ...PLAN_PATHS,
   ...mcpRules(name),
