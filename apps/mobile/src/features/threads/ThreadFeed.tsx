@@ -1,3 +1,4 @@
+import { formatAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
@@ -7,10 +8,17 @@ import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Sheet } from "../../components/ui/Sheet";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListSection } from "../../components/ui/ListSection";
-import { collectMobileAssistantTextSelectors } from "../../lib/assistantCitationSelection";
+import {
+  captureMobileAssistantMessageOpening,
+  collectMobileAssistantTextSelectors,
+} from "../../lib/assistantCitationSelection";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
-import { ASSISTANT_CITATION_MAX_TEXT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import {
+  ASSISTANT_CITATION_MAX_TEXT_LENGTH,
+  type AssistantCitation,
+  type ResponseContextRecord,
+} from "@t3tools/contracts";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -249,6 +257,7 @@ import {
   isFeedbackRequestActivityGroup,
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
+  type ThreadFeedMessage,
   type ThreadFeedLatestRun,
   messageFoldRunId,
 } from "../../lib/threadActivity";
@@ -419,6 +428,11 @@ export interface ThreadFeedProps {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   readonly onCiteAssistantText?: (citation: AssistantCitation) => void;
+  readonly onReplyToResponse?:
+    | ((response: Pick<ResponseContextRecord, "citation" | "itemId">) => void)
+    | undefined;
+  readonly rewindTargets?: ReadonlyMap<MessageId, number> | undefined;
+  readonly onRewindMessage?: (message: ThreadFeedMessage) => void;
 }
 
 const USER_MESSAGE_COPY_MENU_ACTIONS = [
@@ -1969,6 +1983,9 @@ function renderFeedEntry(
     | "environmentId"
     | "onUseArtifactTemplate"
     | "onCiteAssistantText"
+    | "onReplyToResponse"
+    | "rewindTargets"
+    | "onRewindMessage"
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
@@ -2643,6 +2660,17 @@ function renderFeedEntry(
                   <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
                 </Pressable>
               ) : null}
+              {props.rewindTargets?.has(message.id) && presentation.attribution === null ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={m(msg("Edit from here"))}
+                  hitSlop={8}
+                  className="size-7 items-center justify-center"
+                  onPress={() => props.onRewindMessage?.(message)}
+                >
+                  <SymbolView name="arrow.uturn.backward" size={14} tintColor={iconSubtleColor} />
+                </Pressable>
+              ) : null}
               {presentation.text.trim().length > 0 ? (
                 <UserMessageCopyButton
                   text={presentation.text}
@@ -2711,6 +2739,39 @@ function renderFeedEntry(
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}
             />
+            {props.onReplyToResponse && message.projectedItem && renderedText.trim().length > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={m(msg("Reply to this response"))}
+                hitSlop={8}
+                className="items-center justify-center"
+                style={{
+                  width: props.replyActionSize.button,
+                  height: props.replyActionSize.button,
+                }}
+                onPress={() => {
+                  const opening = captureMobileAssistantMessageOpening(renderedText);
+                  const itemId = message.projectedItem?.sourceItemId;
+                  if (opening === null || itemId === undefined) return;
+                  props.onReplyToResponse?.({
+                    itemId,
+                    citation: {
+                      version: 1,
+                      environmentId: props.environmentId,
+                      threadId: message.sourceThreadId,
+                      messageId: message.id,
+                      ...opening,
+                    },
+                  });
+                }}
+              >
+                <SymbolView
+                  name="arrow.uturn.backward"
+                  size={props.replyActionSize.icon}
+                  tintColor={iconSubtleColor}
+                />
+              </Pressable>
+            ) : null}
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
@@ -2780,8 +2841,11 @@ function UserMessageContent(props: UserMessageContentProps) {
   );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
-    const available = props.context?.records.some((record) => record.contextId === ref.contextId);
-    const label = available ? ref.label : gt("{label} (unavailable)", { label: ref.label });
+    const record = props.context?.records.find((record) => record.contextId === ref.contextId);
+    if (record?.kind === "response" && "citation" in record) {
+      return `[${ref.label}](${formatAssistantCitationHref(record.citation)})`;
+    }
+    const label = record ? ref.label : gt("{label} (unavailable)", { label: ref.label });
     return `[${label}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
   const onLinkPress = (href: string) => {
@@ -3754,6 +3818,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     disclosureLayout,
     reduceMotion,
     onCiteAssistantText: props.onCiteAssistantText,
+    onReplyToResponse: props.onReplyToResponse,
+    rewindTargets: props.rewindTargets,
+    onRewindMessage: props.onRewindMessage,
     formatMessageTime,
     worktreeSetup: props.worktreeSetup,
     preparingWorktree: props.preparingWorktree,
@@ -4240,6 +4307,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
             onCiteAssistantText: props.onCiteAssistantText,
+            onReplyToResponse: props.onReplyToResponse,
+            rewindTargets: props.rewindTargets,
+            onRewindMessage: props.onRewindMessage,
             threadId: props.threadId,
             copiedRowId,
             expandedWorkRows,

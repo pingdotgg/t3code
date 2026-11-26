@@ -6,7 +6,9 @@ import {
   type ElementContextDetails,
   type EnvironmentId,
   type KnownComposerContextRecord,
+  type ResponseContextRecord,
   type ScopedThreadRef,
+  type ThreadId,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
@@ -55,6 +57,43 @@ export function toKindScopedComposerContextId(
 ): ComposerContextId {
   const prefix = `${kind}_`;
   return toComposerContextId(`${prefix}${producerId}`);
+}
+
+const RESPONSE_LABEL_MAX_CHARS = 64;
+
+function responseContextLabel(text: string): string {
+  const last = text.charCodeAt(RESPONSE_LABEL_MAX_CHARS - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff ? RESPONSE_LABEL_MAX_CHARS - 1 : RESPONSE_LABEL_MAX_CHARS;
+  return sanitizeComposerContextLabel(text.slice(0, end), "response");
+}
+
+/** One record per response, so replying to it again reuses the same reference. */
+export function responseContextRecord(
+  input: Pick<ResponseContextRecord, "citation" | "itemId"> & {
+    readonly subagents: ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly environmentId?: EnvironmentId;
+    }>;
+  },
+): ResponseContextRecord {
+  return {
+    version: 1,
+    kind: "response",
+    contextId: toKindScopedComposerContextId("response", input.citation.messageId),
+    label: responseContextLabel(input.citation.text),
+    citation: input.citation,
+    itemId: input.itemId,
+    ...(input.subagents.length > 0
+      ? {
+          subagents: input.subagents.slice(0, 20).map(({ title, ...subagent }) => ({
+            ...subagent,
+            title: sanitizeComposerContextLabel(title, "response"),
+          })),
+        }
+      : {}),
+  };
 }
 
 export function formatComposerContextHref(kind: ComposerContextKind, contextId: ComposerContextId) {

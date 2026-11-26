@@ -217,6 +217,13 @@ export function splitsSurrogatePair(text: string, offset: number): boolean {
   return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
 }
 
+export function assistantMessageOpening(text: string) {
+  const start = text.length - text.trimStart().length;
+  let end = Math.min(text.trimEnd().length, start + 300);
+  if (splitsSurrogatePair(text, end)) end -= 1;
+  return createAssistantTextSelector(text, start, end);
+}
+
 export function createAssistantTextSelector(
   text: string,
   rawStart: number,

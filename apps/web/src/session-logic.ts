@@ -3,8 +3,6 @@ import { msg } from "gt-react";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
-  type OrchestrationV2Checkpoint,
-  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -32,8 +30,10 @@ import {
   contextCompactionLabel,
   workEntryIndicatesToolFailure,
 } from "@t3tools/client-runtime/work-log/presentation";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { repositoryCheckpointScopeIds } from "@t3tools/client-runtime/state/thread-repositories";
+export {
+  deriveRevertTurnCountByUserMessageId,
+  findRevertCheckpoint,
+} from "@t3tools/client-runtime/state/thread-checkpoints";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -1098,87 +1098,6 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
       return before.attempt === entry.attempt ? before : { ...entry, message: before.message };
     }),
   };
-}
-
-// Run ordinals keep increasing after a rewind; only visible local runs define predecessors.
-export function deriveRevertTurnCountByUserMessageId(input: {
-  readonly timelineEntries: ReadonlyArray<TimelineEntry>;
-  readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
-  readonly threadStartCheckpointAvailable: boolean;
-  readonly availableRevertTurnCounts?: ReadonlySet<number> | undefined;
-  readonly unsettledRunId?: RunId | null;
-}): Map<ChatMessage["id"], number> {
-  const turnCountByRunId = new Map<RunId, number>();
-  for (const checkpoint of input.checkpoints) {
-    if (isRewindableCheckpoint(checkpoint)) {
-      turnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
-    }
-  }
-  const targetByRunId = new Map<RunId, number | undefined>();
-  const byUserMessageId = new Map<ChatMessage["id"], number>();
-  let previousRunId: RunId | null = null;
-  for (const entry of input.timelineEntries) {
-    // Inherited history belongs to the source thread, not our checkpoint scope.
-    if (entry.kind !== "message" && entry.kind !== "work") continue;
-    const projectedItem =
-      entry.kind === "message" ? entry.projectedItem : entry.entry.projectedItem;
-    if (projectedItem?.visibility === "inherited") continue;
-    const runId =
-      entry.kind === "message"
-        ? entry.message.runId
-        : entry.entry.itemType === "notification"
-          ? entry.entry.runId
-          : null;
-    if (runId == null) continue;
-    if (!targetByRunId.has(runId)) {
-      targetByRunId.set(
-        runId,
-        previousRunId === null
-          ? input.threadStartCheckpointAvailable
-            ? 0
-            : undefined
-          : turnCountByRunId.get(previousRunId),
-      );
-      previousRunId = runId;
-    }
-    if (entry.kind !== "message") continue;
-    const { message } = entry;
-    if (message.role !== "user" || message.runId === input.unsettledRunId) continue;
-    if (message.inputIntent !== "turn_start" && message.inputIntent !== "queued_turn") continue;
-    const target = targetByRunId.get(runId);
-    if (
-      target !== undefined &&
-      (input.availableRevertTurnCounts === undefined || input.availableRevertTurnCounts.has(target))
-    )
-      byUserMessageId.set(message.id, target);
-  }
-  return byUserMessageId;
-}
-
-// A missing or failed snapshot (no git, a side chat, a capture error) still pins a
-// conversation position; only restoring files needs a ready one.
-function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "status">) {
-  return checkpoint.status !== "stale";
-}
-
-export function findRevertCheckpoint(
-  projection:
-    | Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">
-    | null
-    | undefined,
-  turnCount: number,
-): OrchestrationV2Checkpoint | undefined {
-  if (projection == null) return undefined;
-  // A tracked repository's baseline also sits at ordinal zero; it is never a rewind target.
-  const repositoryScopeIds = repositoryCheckpointScopeIds(projection.checkpointScopes);
-  return projection.checkpoints.findLast(
-    (checkpoint) =>
-      !repositoryScopeIds.has(checkpoint.scopeId) &&
-      isRewindableCheckpoint(checkpoint) &&
-      (turnCount === 0
-        ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
-        : checkpoint.appRunOrdinal === turnCount),
-  );
 }
 
 export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {
