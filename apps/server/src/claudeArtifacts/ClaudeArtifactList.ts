@@ -8,12 +8,15 @@ export interface ClaudeArtifactListPage {
   /** Item lines (`- ...`) that did not parse. */
   readonly skippedLines: number;
   readonly nextPageToken: string | undefined;
+  /** The tool left items out and gave no page token to reach them. */
+  readonly truncated: boolean;
 }
 
 // Claude Code's headers: "3 artifacts, ...", "Showing 200 of at least 201 artifacts, ...",
 // and for an empty list "No published or shared artifacts yet."
 const LIST_HEADER =
   /^(?:(?:Showing \d+ of (?:at least )?)?\d+ (?:published )?artifacts?\b|No [^\n]*artifacts[^\n]* yet\.)/im;
+const MORE_NOT_SHOWN = /^\((?:At least )?\d+ more not shown\b/im;
 const NEXT_PAGE = /\(More exist: pass `page_token` "([^"\s]+)"/;
 // `- (mine, web page, pinned) Title — https://claude.ai/artifact/ID — updated 2026-11-18`
 const ITEM =
@@ -53,11 +56,13 @@ export function parseClaudeArtifactListPage(text: string): ClaudeArtifactListPag
     if (artifact === undefined) skippedLines += 1;
     else artifacts.push(artifact);
   }
+  const nextPageToken = NEXT_PAGE.exec(text)?.[1];
   return {
     hasList: LIST_HEADER.test(text),
     artifacts,
     skippedLines,
-    nextPageToken: NEXT_PAGE.exec(text)?.[1],
+    nextPageToken,
+    truncated: nextPageToken === undefined && MORE_NOT_SHOWN.test(text),
   };
 }
 

@@ -25,6 +25,7 @@ describe("parseClaudeArtifactListPage", () => {
       hasList: true,
       skippedLines: 0,
       nextPageToken: "YCWDEk3R-QW_Gw~hc",
+      truncated: false,
       artifacts: [
         {
           title: "YT Signal Board",
@@ -74,6 +75,7 @@ describe("parseClaudeArtifactListPage", () => {
       artifacts: [],
       skippedLines: 0,
       nextPageToken: undefined,
+      truncated: false,
     });
     expect(parseClaudeArtifactListPage("No published or shared artifacts yet.")).toMatchObject({
       hasList: true,
@@ -89,6 +91,13 @@ describe("parseClaudeArtifactListPage", () => {
     );
     expect(page).toMatchObject({ hasList: true, nextPageToken: "next" });
     expect(page.artifacts).toHaveLength(1);
+    expect(
+      parseClaudeArtifactListPage(
+        `Showing 1 of 3 artifacts, published by you or shared with you (newest first):
+- (mine) A — https://claude.ai/artifact/A
+(2 more not shown — one call lists at most 200 and there is no next page.)`,
+      ),
+    ).toMatchObject({ hasList: true, nextPageToken: undefined, truncated: true });
   });
 });
 

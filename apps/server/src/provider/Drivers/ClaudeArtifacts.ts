@@ -131,8 +131,10 @@ export function makeClaudeArtifactListTracker() {
         for (const block of content) {
           if (block.type !== "tool_result" || !listCallIds.has(block.tool_use_id)) continue;
           const text = toolResultText(block.content);
-          if (block.is_error === true) lastToolError = text.trim().slice(0, 500) || undefined;
-          else pages.push(text);
+          // A reply without a list is no page, so the cursor it was asked for stays outstanding.
+          if (block.is_error !== true && parseClaudeArtifactListPage(text).hasList)
+            pages.push(text);
+          else lastToolError = text.trim().slice(0, 500) || undefined;
         }
         return { _tag: "continue" };
       }

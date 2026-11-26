@@ -332,6 +332,9 @@ function AccountSection({
           {account.message}
         </p>
       ) : null}
+      {account.status === "ok" && account.message !== undefined ? (
+        <p className="text-muted-foreground text-xs">{account.message}</p>
+      ) : null}
       {account.skippedLines > 0 ? (
         <p className="text-muted-foreground text-xs">
           <T>

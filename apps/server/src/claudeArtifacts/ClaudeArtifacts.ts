@@ -72,10 +72,15 @@ function nextCachedAccount(
       message: reply ? `Claude did not return a list: ${reply}` : "Claude did not return a list.",
     };
   }
+  const lists = pages.filter((page) => page.hasList);
   return {
     status: "ok",
     fetchedAt,
-    ...mergeClaudeArtifactListPages(pages.filter((page) => page.hasList)),
+    // Without a page token the rest cannot be reached, so the partial list is shown as such.
+    ...(lists.at(-1)?.truncated
+      ? { message: "Claude Code listed only part of this account's artifacts." }
+      : {}),
+    ...mergeClaudeArtifactListPages(lists),
   };
 }
 

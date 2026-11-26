@@ -54,7 +54,8 @@ describe("makeClaudeArtifactListTracker", () => {
     tracker.onMessage(toolResult("t1", PAGE_ONE));
     expect(tracker.onMessage(result())).toEqual({ _tag: "followUp", pageToken: "tok2" });
     tracker.onMessage(toolUse("t2", { action: "list", page_token: "tok2" }));
-    tracker.onMessage(toolResult("t2", "Invalid page_token.", true));
+    // Neither an error nor a list: still not a page.
+    tracker.onMessage(toolResult("t2", "Invalid page_token."));
     expect(tracker.onMessage(result())).toEqual({
       _tag: "done",
       result: { _tag: "failed", message: "Invalid page_token." },
