@@ -1,20 +1,20 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- Runs synchronously via --require before Effect starts; stderr is its only fallback.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- Runs before the server and Effect start; stderr is its only fallback.
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
-import * as NodeWorkerThreads from "node:worker_threads";
 import type * as Ffi from "ffi-rs";
 
 import {
-  BACKEND_PRELOAD_ENV,
   BACKEND_SETTLED_ACK_FD,
   BACKEND_SETTLED_LINE,
   keepOpenAcrossExec,
   macHelperExecutable,
 } from "./macHelperExec.ts";
 
-// macOS files everything a process starts under its "responsible" app. The backend loads this
-// with --require and re-executes in place as the app's Dock-less Helper, disclaiming the desktop
-// app, so what agents launch is filed under the Helper. Any failure leaves the backend as it was.
+// The macOS desktop starts its backend as `<this entry> <server entry> ...args`. macOS files
+// everything a process starts under its "responsible" app, so this re-executes in place as the
+// app's Dock-less Helper, disclaiming the desktop app, and what agents launch is filed under the
+// Helper. The exec keeps argv, so the Helper image runs this entry again. Failure falls back.
 function reexecAsHelper() {
   try {
     const helper = macHelperExecutable(process.execPath);
@@ -79,7 +79,16 @@ function settleWithDesktop() {
   try {
     NodeFS.writeSync(5, BACKEND_SETTLED_LINE);
     const ack = Buffer.alloc(1);
-    if (NodeFS.readSync(BACKEND_SETTLED_ACK_FD, ack) !== 1 || ack[0] !== 1) {
+    let read: number | undefined;
+    while (read === undefined) {
+      try {
+        read = NodeFS.readSync(BACKEND_SETTLED_ACK_FD, ack);
+      } catch (error) {
+        // A signal can interrupt the blocking read; it is not the desktop going away.
+        if ((error as NodeJS.ErrnoException).code !== "EINTR") throw error;
+      }
+    }
+    if (read !== 1 || ack[0] !== 1) {
       throw new Error("the desktop app did not acknowledge the backend");
     }
     NodeFS.closeSync(BACKEND_SETTLED_ACK_FD);
@@ -89,16 +98,8 @@ function settleWithDesktop() {
   }
 }
 
-// Worker threads and forks inherit --require, and workers share the descriptors. Only the main
-// thread of the process the desktop started acts; the marker survives the exec, then is removed.
-if (NodeWorkerThreads.isMainThread && process.env[BACKEND_PRELOAD_ENV] === "1") {
-  if (!NodePath.basename(process.execPath).endsWith(" Helper")) reexecAsHelper();
-  settleWithDesktop();
-  delete process.env[BACKEND_PRELOAD_ENV];
-  const preload = process.execArgv.findIndex(
-    (arg, index) =>
-      process.execArgv[index - 1] === "--require" &&
-      NodePath.basename(arg, NodePath.extname(arg)) === "disclaimResponsibility",
-  );
-  if (preload > 0) process.execArgv.splice(preload - 1, 2);
-}
+if (!NodePath.basename(process.execPath).endsWith(" Helper")) reexecAsHelper();
+settleWithDesktop();
+// Run the server entry as the main module, as if Node had started it directly.
+process.argv.splice(1, 1);
+NodeModule.runMain();

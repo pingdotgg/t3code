@@ -23,7 +23,7 @@ if (!Number.isInteger(port) || port <= 0) {
 
 const requiredFiles = [
   "dist-electron/main.cjs",
-  "dist-electron/disclaimResponsibility.cjs",
+  "dist-electron/macBackendEntry.cjs",
   "dist-electron/electron/WindowsForegroundFocusWorker.cjs",
   "dist-electron/preload.cjs",
   "dist-electron/snapShot/GlobalShiftShortcutWorker.cjs",
@@ -34,7 +34,7 @@ const requiredFiles = [
 const watchedDirectories = [
   {
     directory: "dist-electron",
-    files: new Set(["main.cjs", "disclaimResponsibility.cjs", "preload.cjs"]),
+    files: new Set(["main.cjs", "macBackendEntry.cjs", "preload.cjs"]),
   },
   {
     directory: "dist-electron/electron",

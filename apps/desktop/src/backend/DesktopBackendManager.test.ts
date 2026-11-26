@@ -558,10 +558,11 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
-  it.effect("stops a backend whose control channel ends before it settles, unrecorded", () =>
+  it.effect("stops a frozen backend whose control channel ends before it settles, unrecorded", () =>
     Effect.gen(function* () {
       const recorded = yield* Ref.make(false);
       const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const killRequested = yield* Deferred.make<void>();
       const layerSpawner = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(() =>
@@ -569,20 +570,87 @@ describe("DesktopBackendManager", () => {
             makeProcess({
               getOutputFd: () => Stream.empty,
               exitCode: Deferred.await(exit),
-              kill: () =>
-                Deferred.succeed(exit, ChildProcessSpawner.ExitCode(143)).pipe(Effect.asVoid),
+              // A stopped process ignores SIGTERM; only the forced SIGKILL ends it.
+              kill: (options) =>
+                Deferred.succeed(killRequested, undefined).pipe(
+                  Effect.andThen(
+                    options?.forceKillAfter === undefined
+                      ? Effect.never
+                      : Effect.sleep(options.forceKillAfter),
+                  ),
+                  Effect.andThen(Deferred.succeed(exit, ChildProcessSpawner.ExitCode(137))),
+                  Effect.asVoid,
+                ),
             }),
           ),
         ),
       );
-      const result = yield* DesktopBackendManager.runBackendProcess({
+      const run = yield* DesktopBackendManager.runBackendProcess({
         ...baseConfig,
         settledAckFd: 8,
         desktopTelemetryStream: Stream.empty,
         trackProcess: () => Ref.set(recorded, true).pipe(Effect.as(Effect.void)),
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
-      assert.deepEqual(result.code, Option.some(143));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(killRequested);
+      yield* TestClock.adjust(Duration.seconds(5));
+      assert.deepEqual((yield* Fiber.join(run)).code, Option.some(137));
       assert.isFalse(yield* Ref.get(recorded));
+    }),
+  );
+
+  it.effect("closes the ack without acknowledging when recording is interrupted", () =>
+    Effect.gen(function* () {
+      const recording = yield* Deferred.make<void>();
+      const ackStream =
+        yield* Deferred.make<Stream.Stream<Uint8Array, PlatformError.PlatformError>>();
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(
+          Effect.fnUntraced(function* (command) {
+            const fd = ChildProcess.isStandardCommand(command)
+              ? command.options.additionalFds?.fd8
+              : undefined;
+            if (fd?.type === "input" && fd.stream !== undefined) {
+              yield* Deferred.succeed(ackStream, fd.stream);
+            }
+            return makeProcess({
+              getOutputFd: (output) =>
+                output === 5
+                  ? Stream.encodeText(Stream.make(BACKEND_SETTLED_LINE)).pipe(
+                      Stream.concat(Stream.never),
+                    )
+                  : Stream.empty,
+              exitCode: Effect.never,
+            });
+          }),
+        ),
+      );
+      const run = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        settledAckFd: 8,
+        desktopTelemetryStream: Stream.empty,
+        trackProcess: () =>
+          Deferred.succeed(recording, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.as(Effect.void),
+          ),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)),
+        Effect.forkChild,
+      );
+      const ack = yield* (yield* Deferred.await(ackStream)).pipe(
+        Stream.decodeText(),
+        Stream.mkString,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(recording);
+      yield* Fiber.interrupt(run);
+      assert.equal(yield* Fiber.join(ack), "");
     }),
   );
 

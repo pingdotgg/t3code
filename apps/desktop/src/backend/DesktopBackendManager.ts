@@ -93,7 +93,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
   /**
-   * Set when the backend's preload says `backendSettled` on its control channel, then waits on this
+   * Set when the macOS backend entry says `backendSettled` on its control channel, then waits on this
    * input fd. The desktop records the backend first, so it is recorded before it can take the home.
    */
   readonly settledAckFd?: number;
@@ -481,12 +481,16 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   const onOutput = options.onOutput ?? (() => Effect.void);
   const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
   const settled = yield* Deferred.make<boolean>();
-  const acknowledged = yield* Deferred.make<void>();
+  // False closes the ack fd without the byte, so the backend exits instead of starting unrecorded.
+  const acknowledged = yield* Deferred.make<boolean>();
   const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
   if (options.settledAckFd !== undefined) {
     additionalFds[`fd${options.settledAckFd}`] = {
       type: "input",
-      stream: Stream.fromEffect(Deferred.await(acknowledged).pipe(Effect.as(new Uint8Array([1])))),
+      stream: Stream.fromEffect(Deferred.await(acknowledged)).pipe(
+        Stream.filter((acked) => acked),
+        Stream.map(() => new Uint8Array([1])),
+      ),
     };
   }
   if (options.bootstrapDelivery === "fd3") {
@@ -555,7 +559,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           Effect.flatMap((isSettled) =>
             isSettled && track !== undefined ? track : Effect.succeed(Effect.void),
           ),
-          Effect.ensuring(Deferred.succeed(acknowledged, undefined)),
+          Effect.onExit((exit) => Deferred.succeed(acknowledged, Exit.isSuccess(exit))),
           Effect.forkScoped,
         );
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
@@ -598,7 +602,11 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           ? Effect.void
           : Deferred.isDone(settled).pipe(
               Effect.flatMap((isSettled) =>
-                isSettled ? Effect.void : handle.kill().pipe(Effect.ignore),
+                isSettled
+                  ? Effect.void
+                  : handle
+                      .kill({ forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE })
+                      .pipe(Effect.ignore),
               ),
             ),
       ),

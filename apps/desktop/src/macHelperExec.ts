@@ -1,11 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Shared with the --require preload, which runs before Effect.
+// @effect-diagnostics nodeBuiltinImport:off -- Shared with the macOS backend entry, which runs before Effect.
 import * as NodePath from "node:path";
 
-/** Set only on the backend the desktop starts, so the preload acts there and nowhere else. */
-export const BACKEND_PRELOAD_ENV = "T3CODE_DESKTOP_BACKEND_PRELOAD";
-/** The preload says this on the backend's control channel (fd 5) from its final process. */
+/** The macOS backend entry says this on the control channel (fd 5) from its final process. */
 export const BACKEND_SETTLED_LINE = '{"version":1,"type":"backendSettled"}\n';
-/** The preload then blocks reading this fd until the desktop has recorded the backend. */
+/** The entry then blocks reading this fd until the desktop has recorded the backend. */
 export const BACKEND_SETTLED_ACK_FD = 8;
 
 // sys/filio.h on Darwin.

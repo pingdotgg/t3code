@@ -61,7 +61,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly preloadPath: string;
     readonly previewPickPreloadPath: string;
     readonly compileCachePath: string;
-    readonly disclaimResponsibilityPath: string;
+    readonly macBackendEntryPath: string;
     readonly appUpdateYmlPath: string;
     readonly devServerUrl: Option.Option<URL>;
     readonly devRemoteT3ServerEntryPath: Option.Option<string>;
@@ -215,7 +215,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     preloadPath: path.join(input.dirname, "preload.cjs"),
     previewPickPreloadPath: path.join(input.dirname, "preview-pick-preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),
-    disclaimResponsibilityPath: path.join(input.dirname, "disclaimResponsibility.cjs"),
+    macBackendEntryPath: path.join(input.dirname, "macBackendEntry.cjs"),
     appUpdateYmlPath: input.isPackaged
       ? path.join(resourcesPath, "app-update.yml")
       : path.join(input.appPath, "dev-app-update.yml"),

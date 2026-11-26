@@ -23,7 +23,7 @@ import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import serverPackageJson from "../../../server/package.json" with { type: "json" };
-import { BACKEND_PRELOAD_ENV, BACKEND_SETTLED_ACK_FD } from "../macHelperExec.ts";
+import { BACKEND_SETTLED_ACK_FD } from "../macHelperExec.ts";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopCliShim from "../app/DesktopCliShim.ts";
@@ -569,10 +569,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       executablePath: process.execPath,
       // Packaged builds have a separate cache; --require prevents cache settings leaking to provider subprocesses.
       args: [
-        ...(environment.platform === "darwin"
-          ? ["--require", environment.disclaimResponsibilityPath]
-          : []),
         ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
+        // Runs the server entry after the handoff; nothing a worker or fork inherits loads it.
+        ...(environment.platform === "darwin" ? [environment.macBackendEntryPath] : []),
         environment.backendEntryPath,
         "--bootstrap-fd",
         "3",
@@ -585,7 +584,6 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
         [DESKTOP_HOST_SCOPE_ENV]: input.hostScope,
-        ...(environment.platform === "darwin" ? { [BACKEND_PRELOAD_ENV]: "1" } : {}),
       },
       extendEnv: true,
       bootstrap,

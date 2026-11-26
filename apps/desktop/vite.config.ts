@@ -136,7 +136,7 @@ export default defineConfig({
       entry: [
         "src/boot.ts",
         "src/compileCache.ts",
-        "src/disclaimResponsibility.ts",
+        "src/macBackendEntry.ts",
         "src/serverCompileCache.ts",
       ],
       clean: false,

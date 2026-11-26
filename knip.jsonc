@@ -91,7 +91,7 @@
         "src/snapShot/SnapShotAccessibilityWorker.ts!",
         "src/boot.ts!",
         "src/compileCache.ts!",
-        "src/disclaimResponsibility.ts!",
+        "src/macBackendEntry.ts!",
         "src/serverCompileCache.ts!",
         "src/main.ts!",
         "src/preload.ts!",
