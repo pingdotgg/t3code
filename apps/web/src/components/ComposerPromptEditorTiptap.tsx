@@ -534,10 +534,11 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     (editor.isEditable ? chain.focus() : chain).deleteRange({ from, to }).run();
   };
 
-  const sentRef = useRef(false);
-  const onRestoreFocus = () => {
-    const sent = sentRef.current;
-    sentRef.current = false;
+  const commentActionRef = useRef<"saved" | "sent" | null>(null);
+  const onRestoreFocus = (afterComment = false) => {
+    const action = afterComment ? commentActionRef.current : null;
+    commentActionRef.current = null;
+    const sent = action === "sent";
     if (!editor.isEditable) return;
     const pos = nodePos();
     const current = pos === null ? null : editor.state.doc.nodeAt(pos);
@@ -545,15 +546,26 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       if (sent) editor.view.focus();
       return;
     }
-    // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
-    // Mid-text, skipping the space would glue them to the next word instead.
     const end = pos + current.nodeSize;
     const { doc } = editor.state;
-    const trailingSpace =
-      doc.textBetween(end, end + 1) === " " && doc.resolve(end).end() === end + 1;
-    const caret = trailingSpace ? end + 1 : end;
+    const hasSpace = doc.textBetween(end, end + 1) === " ";
+    const blockEnd = doc.resolve(end).end();
+    const chain = editor.chain();
+    if (action === "saved" && hasSpace && end + 1 < blockEnd) {
+      // Leave a separator on each side of the restored caret for typing, paste, and composition.
+      if (!/\s/.test(doc.textBetween(end + 1, end + 2, undefined, "\uFFFC"))) {
+        chain.command(({ tr }) => {
+          tr.insertText(" ", end);
+          tr.setSelection(TextSelection.create(tr.doc, end + 1));
+          return true;
+        });
+      }
+      chain.focus(end + 1).run();
+      return;
+    }
+    const caret = hasSpace && blockEnd === end + 1 ? end + 1 : end;
     // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
-    editor.chain().setMeta(SILENT_SELECTION_META, sent).focus(caret).run();
+    chain.setMeta(SILENT_SELECTION_META, sent).focus(caret).run();
   };
 
   return (
@@ -587,17 +599,22 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           sourceAnchor: commentTarget?.sourceAnchor,
           onOpenChange: (open) => {
             if (open && !editor.isEditable) return;
+            if (open) commentActionRef.current = null;
             commentContext.onOpenChange(citeKey, open);
           },
           ...(removeOnCancel ? { onCancel: onRemove } : {}),
-          onSave: onSaveComment,
+          onSave: (comment) => {
+            if (!onSaveComment(comment)) return false;
+            commentActionRef.current = "saved";
+            return true;
+          },
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;
-            sentRef.current = commentContext.onSubmitAndSend();
+            commentActionRef.current = commentContext.onSubmitAndSend() ? "sent" : null;
             return true;
           },
-          onRestoreFocus,
+          onRestoreFocus: () => onRestoreFocus(true),
         }}
       />
     </NodeViewWrapper>
@@ -1552,22 +1569,9 @@ function ComposerPromptEditorTiptapInner(
           return handled;
         },
         handleTextInput: (view, from, to, text) => {
-          if (literalText || view.composing) return false;
-          const { doc, selection } = view.state;
-          const cursor = selection instanceof TextSelection ? selection.$cursor : null;
-          if (
-            from === to &&
-            cursor?.pos === from &&
-            cursor.nodeBefore?.type.name === "composer-citation" &&
-            from + 1 < cursor.end() &&
-            doc.textBetween(from, from + 1) === " " &&
-            /^\S/.test(text)
-          ) {
-            view.dispatch(view.state.tr.insertText(` ${text}`, from, to).scrollIntoView());
-            return true;
-          }
-          if (text.length !== 1) return false;
+          if (literalText || view.composing || text.length !== 1) return false;
           const closer = SURROUND_CLOSE[text];
+          const { selection } = view.state;
           // Compose preedit updates replace a range even without a user selection.
           if (
             !closer ||
