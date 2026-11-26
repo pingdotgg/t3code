@@ -15,10 +15,11 @@ function composerFileLinkBasename(path: string): string {
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
-// Emphasis markers too: `__init__.py` would otherwise render as bold "init.py",
-// which no longer matches the path, so the label shows beside the chip.
+// Numeric bracket entities avoid TeX `\[…\]` math delimiters; emphasis and tildes stay escaped.
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replace(/[\\[\]*_&]/g, "\\$&");
+  return label.replace(/[\\[\]*_~&]/g, (char) =>
+    char === "[" ? "&#91;" : char === "]" ? "&#93;" : `\\${char}`,
+  );
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
