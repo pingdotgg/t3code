@@ -170,10 +170,53 @@ export function createIssueEnvironmentAtoms<R, E>(
     mode: "serial",
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   } as const;
-  const detail = createEnvironmentRpcQueryAtomFamily(runtime, {
+  // Atoms owed an explicit refresh: their next read asks the server to skip what it shares.
+  const pendingRefreshes = new WeakMap<
+    AtomRegistry.AtomRegistry,
+    WeakMap<Atom.Atom<unknown>, symbol>
+  >();
+  const owe = (registry: AtomRegistry.AtomRegistry, atom: Atom.Atom<unknown>) => {
+    let pending = pendingRefreshes.get(registry);
+    if (pending === undefined) {
+      pending = new WeakMap();
+      pendingRefreshes.set(registry, pending);
+    }
+    pending.set(atom, Symbol());
+  };
+  const readOwing = Effect.fn("IssueEnvironment.readOwing")(function* <A, E, R>(
+    atom: Atom.Atom<unknown>,
+    read: (refresh: boolean) => Effect.Effect<A, E, R>,
+  ) {
+    const pending = pendingRefreshes.get(yield* AtomRegistry.AtomRegistry);
+    const intent = pending?.get(atom);
+    if (pending === undefined || intent === undefined) return yield* read(false);
+    return yield* read(true).pipe(
+      // Invalidation interrupts the read; its replacement still owes the explicit refresh.
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          if (!Exit.hasInterrupts(exit) && pending.get(atom) === intent) pending.delete(atom);
+        }),
+      ),
+    );
+  });
+  type DetailRequest = ReturnType<typeof request<typeof WS_METHODS.issuesDetail>>;
+  const detail = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:issues:detail",
-    tag: WS_METHODS.issuesDetail,
     staleTimeMs: 30_000,
+    execute: Effect.fnUntraced(function* (
+      input: IssueRef,
+    ): Effect.fn.Return<
+      IssueDetail,
+      Effect.Error<DetailRequest>,
+      Effect.Services<DetailRequest> | AtomRegistry.AtomRegistry
+    > {
+      const {
+        target: { environmentId },
+      } = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+      return yield* readOwing(detail({ environmentId, input }), (refresh) =>
+        request(WS_METHODS.issuesDetail, refresh ? { ...input, refresh } : input),
+      );
+    }),
   });
   const detailRef = ({ projectId, tracker, host, scope, key }: IssueRef): IssueRef => ({
     projectId,
@@ -190,10 +233,6 @@ export function createIssueEnvironmentAtoms<R, E>(
     label: "environment-data:issues:linked-thread-refreshes",
     tag: WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
   });
-  const pendingListRefreshes = new WeakMap<
-    AtomRegistry.AtomRegistry,
-    WeakMap<Atom.Atom<unknown>, symbol>
-  >();
   type ListRequest = ReturnType<typeof request<typeof WS_METHODS.issuesList>>;
   const list = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:issues:list",
@@ -205,22 +244,11 @@ export function createIssueEnvironmentAtoms<R, E>(
       Effect.Error<ListRequest>,
       Effect.Services<ListRequest> | AtomRegistry.AtomRegistry
     > {
-      const registry = yield* AtomRegistry.AtomRegistry;
       const {
         target: { environmentId },
       } = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-      const pending = pendingListRefreshes.get(registry);
-      if (pending === undefined) return yield* request(WS_METHODS.issuesList, input);
-      const atom = list({ environmentId, input });
-      const intent = pending.get(atom);
-      if (intent === undefined) return yield* request(WS_METHODS.issuesList, input);
-      return yield* request(WS_METHODS.issuesList, { ...input, refresh: true }).pipe(
-        // Invalidation interrupts the read; its replacement still owes the explicit refresh.
-        Effect.onExit((exit) =>
-          Effect.sync(() => {
-            if (!Exit.hasInterrupts(exit) && pending.get(atom) === intent) pending.delete(atom);
-          }),
-        ),
+      return yield* readOwing(list({ environmentId, input }), (refresh) =>
+        request(WS_METHODS.issuesList, refresh ? { ...input, refresh } : input),
       );
     }),
   });
@@ -239,14 +267,7 @@ export function createIssueEnvironmentAtoms<R, E>(
       mode: IssueListRefreshMode,
     ) {
       const atom = list(target);
-      if (mode === "manual") {
-        let pending = pendingListRefreshes.get(registry);
-        if (pending === undefined) {
-          pending = new WeakMap();
-          pendingListRefreshes.set(registry, pending);
-        }
-        pending.set(atom, Symbol());
-      }
+      if (mode === "manual") owe(registry, atom);
       registry.refresh(atom);
     },
     /**
@@ -263,6 +284,8 @@ export function createIssueEnvironmentAtoms<R, E>(
       },
     }),
     detail,
+    /** Marks a detail atom so its next read skips the server's shared copy of the issue. */
+    oweDetailRefresh: owe,
     /** Older comments past the cursor the detail handed over; the panel prepends what arrives. */
     comments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:comments",

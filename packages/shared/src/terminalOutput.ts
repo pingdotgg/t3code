@@ -321,6 +321,10 @@ function escapeLength(input: string, index: number): number {
   if (next === "[") {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
+      // Like xterm.js, a new ESC cancels an unfinished CSI so the next sequence parses intact.
+      if (code === 0x1b) return cursor - index;
+      // CAN and SUB cancel the CSI and are consumed.
+      if (code === 0x18 || code === 0x1a) return cursor - index + 1;
       if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
     }
     return -1;
@@ -329,6 +333,7 @@ function escapeLength(input: string, index: number): number {
     // BEL/ST ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       if (input[cursor] === "\u0007") return cursor - index + 1;
+      if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor - index + 1;
       if (input[cursor] === "\n") return cursor - index;
       // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
       if (input[cursor] === ESC) {
@@ -351,6 +356,11 @@ function escapeLength(input: string, index: number): number {
   // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
   const final = input.charCodeAt(cursor);
   if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
+  if (final >= 0xd800 && final <= 0xdbff) {
+    if (cursor + 1 >= input.length) return -1;
+    const low = input.charCodeAt(cursor + 1);
+    if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+  }
   return cursor - index + 1;
 }
 
@@ -743,16 +753,14 @@ export function appendTerminalOutput(
 export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
-  // Moves are relative to the last line, and a viewer only holds the lines in `text`.
-  let reachable = 0;
-  let cursor = 0;
-  while (reachable < LIVE_LINES - 1) {
-    const newline = state.text.indexOf("\n", cursor);
-    if (newline === -1) break;
-    reachable += 1;
-    cursor = newline + 1;
+  // A full live window can hide retained scrollback from the display tail until the next redraw.
+  let replay = screen.settled.join("");
+  if (replay !== "" && lastRow < LIVE_LINES - 1) {
+    // Scroll the history out with blank rows, then clear them before replaying the live window.
+    replay += "\n".repeat(LIVE_LINES - 1) + `${ESC}[2J`;
   }
-  const up = (row: number) => Math.min(lastRow - row, reachable);
+  replay += screen.lines.map(serializeLine).join("\n");
+  const up = (row: number) => lastRow - row;
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
@@ -768,7 +776,7 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
     suffix += goTo(screen.row, screen.col);
   }
   if (screen.pen !== "") suffix += sgr(screen.pen);
-  return state.text + suffix + state.pending;
+  return replay + suffix + state.pending;
 }
 
 export function normalizeTerminalOutput(
