@@ -3160,7 +3160,6 @@
   "2bc714a245998c04": "Neutral",
   "b28db58c44b25db3": "{passed} of {total}",
   "8e64d98f747bf650": "{count, plural, one {{count} check failing} other {{count} checks failing}}",
-  "ff4514103a353d8e": "{count, plural, one {{count} need attention} other {{count} need attention}}",
   "078bb63ea2f3ee40": "Checks need attention",
   "fd63b391898889f9": "{count, plural, one {{count} awaiting action} other {{count} awaiting action}}",
   "a39948e68089494f": "{count, plural, one {{count} pending} other {{count} pending}}",

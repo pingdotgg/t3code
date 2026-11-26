@@ -3155,7 +3155,6 @@
   "2bc714a245998c04": "중립",
   "b28db58c44b25db3": "{total}개 중 {passed}개",
   "8e64d98f747bf650": "{count, plural, other {검사 {count}개 실패}}",
-  "ff4514103a353d8e": "{count, plural, other {{count}개 확인 필요}}",
   "078bb63ea2f3ee40": "검사에 확인이 필요합니다",
   "fd63b391898889f9": "{count, plural, other {{count}개 조치 대기 중}}",
   "a39948e68089494f": "{count, plural, other {{count}개 대기 중}}",

@@ -3208,7 +3208,6 @@
   "2bc714a245998c04": "Нейтрально",
   "b28db58c44b25db3": "{passed} из {total}",
   "8e64d98f747bf650": "{count, plural, one {{count} проверка не проходит} few {{count} проверки не проходят} many {{count} проверок не проходят} other {{count} проверки не проходят}}",
-  "ff4514103a353d8e": "{count, plural, one {{count} требует внимания} few {{count} требуют внимания} many {{count} требуют внимания} other {{count} требуют внимания}}",
   "078bb63ea2f3ee40": "Проверки требуют внимания",
   "fd63b391898889f9": "{count, plural, one {{count} ожидает действия} few {{count} ожидают действия} many {{count} ожидают действия} other {{count} ожидают действия}}",
   "a39948e68089494f": "{count, plural, one {Ожидает: {count}} few {Ожидает: {count}} many {Ожидает: {count}} other {Ожидает: {count}}}",

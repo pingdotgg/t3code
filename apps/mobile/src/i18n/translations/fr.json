@@ -3154,7 +3154,6 @@
   "2bc714a245998c04": "Neutre",
   "b28db58c44b25db3": "{passed} sur {total}",
   "8e64d98f747bf650": "{count, plural, one {{count} vérification en échec} other {{count} vérifications en échec}}",
-  "ff4514103a353d8e": "{count, plural, one {{count} demande votre attention} other {{count} demandent votre attention}}",
   "078bb63ea2f3ee40": "Les vérifications requièrent votre attention",
   "fd63b391898889f9": "{count, plural, one {{count} en attente d’action} other {{count} en attente d’action}}",
   "a39948e68089494f": "{count, plural, one {{count} en attente} other {{count} en attente}}",
