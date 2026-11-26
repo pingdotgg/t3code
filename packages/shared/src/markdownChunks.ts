@@ -4,7 +4,7 @@ const CHUNK_TARGET_CHARS = 4 * 1024;
 export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
-const LIST_FENCE_PREFIX = /^( {0,3}(?:[-+*]|\d{1,9}[.)]))([ \t]+)(?=[`~])/;
+const LIST_ITEM_PREFIX = /^ {0,3}([-+*]|\d{1,9}[.)])(?:([ \t]+)(?=[^ \t\r])|[ \t]*\r?$)/;
 const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
 // A thematic break, or a "---" setext underline; no paragraph stays open after either. A lone
 // "===" is paragraph text unless it underlines one, so it is left out.
@@ -56,6 +56,12 @@ function openedWrappers(line: string): number {
 function markdownColumn(text: string, column = 0): number {
   for (const character of text) column += character === "\t" ? 4 - (column % 4) : 1;
   return column;
+}
+
+function lineAtIndent(line: string, whitespace: string, relativeIndent: number): string {
+  return relativeIndent >= 0 && relativeIndent <= 3
+    ? " ".repeat(relativeIndent) + line.slice(whitespace.length)
+    : "";
 }
 
 /** Returns how to recognize the end of a block that `line` opens, or null for none. */
@@ -116,6 +122,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
+  let listItem: { indent: number; marker: string } | null = null;
   let listFenceIndent = 0;
   let afterBlankLine = false;
   let afterDefinition = false;
@@ -131,20 +138,19 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     heldCut = 0;
   };
   for (const line of text.split("\n")) {
+    const whitespace = listItem === null ? "" : /^[ \t]*/.exec(line)![0];
+    const indent = markdownColumn(whitespace);
+    const blank = line.trim() === "";
     let blockLine = line;
     if (listFenceIndent > 0) {
-      const whitespace = /^[ \t]*/.exec(line)![0];
-      const relativeIndent = markdownColumn(whitespace) - listFenceIndent;
-      if (relativeIndent < 0 && line.trim() !== "") {
+      const relativeIndent = indent - listFenceIndent;
+      if (relativeIndent < 0 && !blank) {
         // An outdent ends the fence with its list item. Scan this line in the outer block.
         closes = null;
         listFenceIndent = 0;
         afterHeading = true;
       } else {
-        blockLine =
-          relativeIndent >= 0 && relativeIndent <= 3
-            ? " ".repeat(relativeIndent) + line.slice(whitespace.length)
-            : "";
+        blockLine = lineAtIndent(line, whitespace, relativeIndent);
       }
     }
     if (closes !== null) {
@@ -169,16 +175,38 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      const prefix = LIST_FENCE_PREFIX.exec(line);
-      if (prefix !== null) {
-        const markerEnd = prefix[1]!.length;
-        const indent = markdownColumn(prefix[2]!, markerEnd);
-        if (indent - markerEnd <= 4) {
-          closes = blockCloser(line.slice(prefix[0].length));
-          if (closes !== null) listFenceIndent = indent;
+      let listLine = "";
+      if (listItem !== null && indent >= listItem.indent) {
+        listLine = lineAtIndent(line, whitespace, indent - listItem.indent);
+      } else if (!blank) {
+        const previousMarker = listItem?.marker;
+        listItem = null;
+        const prefix = LIST_ITEM_PREFIX.exec(line);
+        if (prefix !== null && !THEMATIC_BREAK.test(line)) {
+          const marker = prefix[1]!;
+          const delimiter = marker.at(-1)!;
+          const padding = prefix[2] ?? "";
+          const startsBlock = first || afterBlankLine || afterDefinition || afterHeading;
+          // Only a nonempty bullet or a list starting at 1 can interrupt a paragraph.
+          if (
+            startsBlock ||
+            delimiter === previousMarker ||
+            (padding && (marker.length === 1 || Number(marker.slice(0, -1)) === 1))
+          ) {
+            const markerEnd = prefix[0].trimEnd().length;
+            const width = markdownColumn(padding, markerEnd) - markerEnd;
+            listItem = {
+              indent: markerEnd + (width >= 1 && width <= 4 ? width : 1),
+              marker: delimiter,
+            };
+            if (width >= 1 && width <= 4) listLine = line.slice(prefix[0].length);
+          }
         }
       }
-      // An indented fence opener without a list marker may sit in a list item.
+      if (listItem !== null && FENCE_OPEN.test(listLine)) {
+        closes = blockCloser(listLine);
+        listFenceIndent = listItem.indent;
+      }
       openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
@@ -203,7 +231,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
       openWrappers = 0;
     }
-    afterBlankLine = line.trim() === "";
+    afterBlankLine = blank;
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }

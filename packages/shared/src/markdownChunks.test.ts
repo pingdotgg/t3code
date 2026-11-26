@@ -164,6 +164,8 @@ describe("splitMarkdown", () => {
   it.each([
     ["a closed bullet fence", "- ```md", "  ", "  ```"],
     ["an ordered fence ending at an outdent", "1. ~~~md", "   ", ""],
+    ["a fence starting an ordered list at two", "2. ```md", "   ", "   ```"],
+    ["a fence on a list continuation", "- item\n\n    ```md", "  ", "    ```"],
   ])("ignores definitions in %s", (_, opener, indent, closer) => {
     const text = [
       "[Release notes][release]",
@@ -176,6 +178,21 @@ describe("splitMarkdown", () => {
       closer,
       " # Real references",
       "[real]: /real",
+    ].join("\n");
+
+    expect(splitMarkdown(text, 1).definitions).toBe("[real]: /real");
+  });
+
+  it("collects definitions after an ordered marker that cannot interrupt a paragraph", () => {
+    const text = [
+      "[Earlier][real]",
+      "",
+      "## Appendix",
+      "",
+      "Paragraph",
+      "2. ```md",
+      "   # References",
+      "   [real]: /real",
     ].join("\n");
 
     expect(splitMarkdown(text, 1).definitions).toBe("[real]: /real");
