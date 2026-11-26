@@ -343,6 +343,9 @@ export function ReadAloudSection() {
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
               className="rounded-lg border border-border-subtle px-3 py-2 text-foreground"
               value={key}
               onChangeText={setKey}

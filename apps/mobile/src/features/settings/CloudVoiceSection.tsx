@@ -478,6 +478,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoComplete="off"
+                textContentType="none"
                 importantForAutofill="no"
                 maxLength={4096}
                 editable={!saving}
