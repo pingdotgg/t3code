@@ -3,6 +3,10 @@ import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  renderCodexDirectivesForCopy,
+  renderCodexInlineDirectivesAsMarkdown,
+} from "./markdownText";
+import {
   codexDirectiveSources,
   markdownReferenceDefinitions,
   wordsHast,
@@ -385,12 +389,37 @@ describe("wordsHast", () => {
   });
 
   it.each([
+    [
+      ':codex-followup[try :codex-followup[inner]{prompt="i"} then]{prompt="o"} end',
+      "try inner then end",
+    ],
+    [
+      '😀 :codex-followup[[see :codex-file-citation[a]{path="a.ts"}][ref]]{prompt="o"} and :codex-followup[again]{prompt="a"} end\n\n[ref]: https://x.dev',
+      '😀 [see :codex-file-citation[a]{path="a.ts"}][ref] and again end\n\n[ref]: https://x.dev',
+    ],
+    [
+      ':codex-followup[    read :codex-file-citation[a]{path="a.ts"} then]{prompt="o"} end',
+      "    read [a.ts](<a.ts>) then end",
+    ],
+    [
+      ':codex-followup[read :codex-file-citation[a]{path="a.ts"}] end',
+      ":codex-followup[read [a.ts](<a.ts>)] end",
+    ],
+  ])("copies nested directives without losing surrounding text: %s", (markdown, expected) => {
+    expect(renderCodexDirectivesForCopy(markdown)).toBe(expected);
+    expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(expected);
+  });
+
+  it.each([
     ["# Title\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
     ['> [a]:\n> https://x.dev "The\n> guide"', ['[a]: <https://x.dev> "The guide"']],
     ["- [a]: https://x.dev\n\n[A]: https://second.dev", ["[a]: <https://x.dev>"]],
     ["<div>\n[a]: https://x.dev\n</div>", []],
     ["- ```\n  [a]: https://x.dev\n  ```", []],
     ["text\n[a]: https://x.dev", []],
+    ["[doc]: https://example.com\n\nSee [doc].\n\n```js\nx", ["[doc]: <https://example.com>"]],
+    ["[a]: https://x.dev\n\n<!--\nunclosed", ["[a]: <https://x.dev>"]],
+    ["[not\n```\ndef]: x\n```\n\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
   ])("finds the reference definitions in %j as Words reads them", (markdown, definitions) => {
     expect(markdownReferenceDefinitions(markdown)).toEqual(definitions);
   });
