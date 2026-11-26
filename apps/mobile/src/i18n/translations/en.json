@@ -5708,5 +5708,7 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
-  "46d614fa7b4bf1e5": "Workflow runs"
+  "46d614fa7b4bf1e5": "Workflow runs",
+  "0b20ecfdf1b9ac73": "Note: {note}",
+  "111a9660615511c6": "Add a note to your choice (optional)"
 }

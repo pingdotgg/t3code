@@ -27,6 +27,7 @@ import {
   type ProviderRequestKind,
   type ProviderThreadId,
   type ProviderUserInputAnswers,
+  type UserInputNotes,
   type RuntimeMode,
   type RuntimeRequestId,
   type ThreadTokenUsageSnapshot,
@@ -174,6 +175,24 @@ const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
 // pi-agent-core agents (oh-my-pi) end a turn while background work runs and reject
 // prompts until it finishes; the prompt is resent rather than failing the turn.
+/** A question an extension marks `supportsNote` gets its note as one more answer entry. */
+export function withAcpNoteEntries(
+  answers: ProviderUserInputAnswers,
+  notesByQuestionId: UserInputNotes | undefined,
+): ProviderUserInputAnswers {
+  const notes = Object.entries(notesByQuestionId ?? {});
+  if (notes.length === 0) return answers;
+  const merged = new Map(Object.entries(answers));
+  for (const [questionId, note] of notes) {
+    const answer = merged.get(questionId);
+    merged.set(questionId, [
+      ...(Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : []),
+      note,
+    ]);
+  }
+  return Object.fromEntries(merged);
+}
+
 function isAgentBusyPromptError(error: EffectAcpErrors.AcpError): boolean {
   return (
     error._tag === "AcpRequestError" && error.errorMessage.startsWith("Agent is already processing")
@@ -11745,7 +11764,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   const settled =
                     pending.type === "user_input"
-                      ? yield* Deferred.succeed(pending.answers, requestInput.answers ?? null)
+                      ? yield* Deferred.succeed(
+                          pending.answers,
+                          requestInput.answers === undefined
+                            ? null
+                            : withAcpNoteEntries(
+                                requestInput.answers,
+                                requestInput.notesByQuestionId,
+                              ),
+                        )
                       : requestInput.decision === undefined
                         ? yield* new ProviderAdapter.ProviderAdapterProtocolError({
                             driver,

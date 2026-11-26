@@ -489,7 +489,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           SET payload_json = CASE
             WHEN json_type(payload_json, '$.title') = 'text'
               THEN json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE})
-            ELSE json_remove(payload_json, '$.feedback', '$.answers')
+            ELSE json_remove(payload_json, '$.feedback', '$.answers', '$.notesByQuestionId')
           END,
             last_error = NULL
           WHERE thread_id = ${threadId} AND status = 'failed'

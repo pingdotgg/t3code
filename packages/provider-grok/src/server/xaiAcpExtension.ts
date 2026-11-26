@@ -1152,6 +1152,8 @@ export function extractXAiAskUserQuestions(
     header: "Question",
     question: question.question,
     multiSelect: question.multiSelect === true,
+    // Typed text that is not an option label reaches Grok as the question's `notes`.
+    ...(question.options.length > 0 ? { supportsNote: true } : {}),
     options:
       question.options.length > 0
         ? question.options.map((option) => ({

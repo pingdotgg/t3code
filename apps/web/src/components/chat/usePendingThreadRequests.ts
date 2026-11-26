@@ -36,6 +36,7 @@ import {
 import { composerDraftContentChanged } from "./composerSend.logic";
 import {
   buildPendingUserInputAnswers,
+  buildPendingUserInputNotes,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
@@ -184,6 +185,14 @@ function deriveActivePendingDraft(
     activePendingProgress,
     activePendingResolvedAnswers,
   };
+}
+
+function readPendingUserInputNotes(scope: PendingUserInputDraftScope) {
+  if (!scope.activePendingUserInput) return {};
+  return buildPendingUserInputNotes(
+    scope.activePendingUserInput.questions,
+    readPendingUserInputDraft(scope).activePendingDraftAnswers,
+  );
 }
 
 /**
@@ -391,6 +400,7 @@ export function usePendingThreadRequests(input: {
   const onRespondToUserInput = async (
     requestId: RuntimeRequestId,
     answers: Record<string, unknown>,
+    notes: Record<string, string> = {},
   ) => {
     if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
       return;
@@ -407,6 +417,7 @@ export function usePendingThreadRequests(input: {
     const prepareAndRespond = async () => {
       const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
       const providerAnswers = { ...answers };
+      const providerNotes: Record<string, string> = {};
       const threadDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       const questionDrafts = pendingInput.questions.map((question) => {
         const target = questionAttachmentDraftId(
@@ -425,6 +436,12 @@ export function usePendingThreadRequests(input: {
           providerAnswers[question.id] = projectPendingUserInputAnswer(
             answers[question.id],
             answerContextRecords(draft, threadDraft),
+          );
+        }
+        const note = notes[question.id];
+        if (note !== undefined) {
+          providerNotes[question.id] = String(
+            projectPendingUserInputAnswer(note, answerContextRecords(draft, threadDraft)),
           );
         }
         const attachments = draft ? [...draft.images, ...draft.files] : [];
@@ -482,6 +499,7 @@ export function usePendingThreadRequests(input: {
           ...(attachmentsByQuestionId.size > 0
             ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
             : {}),
+          ...(Object.keys(providerNotes).length > 0 ? { notesByQuestionId: providerNotes } : {}),
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -535,10 +553,15 @@ export function usePendingThreadRequests(input: {
     if (!activePendingUserInput) {
       return;
     }
-    // The option replaces the custom answer. Anything typed there is the
-    // user's text, so it goes back to the thread draft instead of vanishing.
-    const displacedAnswer =
-      readPendingUserInputDraft(draftScope).activePendingDraftAnswers[questionId]?.customAnswer;
+    const takesNote = activePendingUserInput.questions.some(
+      (entry) =>
+        entry.id === questionId && entry.supportsNote === true && entry.allowCustomAnswer !== false,
+    );
+    // The option replaces the custom answer, unless the text becomes a note on it. Replaced
+    // text is the user's, so it goes back to the thread draft instead of vanishing.
+    const displacedAnswer = takesNote
+      ? undefined
+      : readPendingUserInputDraft(draftScope).activePendingDraftAnswers[questionId]?.customAnswer;
     const currentPrompt =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
@@ -591,6 +614,7 @@ export function usePendingThreadRequests(input: {
         },
       };
     });
+    if (takesNote) return;
     promptRef.current = "";
     composerRef.current?.resetCursorState({ cursor: 0 });
   };
@@ -644,7 +668,11 @@ export function usePendingThreadRequests(input: {
     if (!activePendingProgress) return;
     if (activePendingProgress.isLastQuestion) {
       if (activePendingResolvedAnswers) {
-        void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+        void onRespondToUserInput(
+          activePendingUserInput.requestId,
+          activePendingResolvedAnswers,
+          readPendingUserInputNotes(draftScope),
+        );
       }
       return;
     }

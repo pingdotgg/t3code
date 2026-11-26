@@ -28,6 +28,7 @@ import {
   XAiAskUserQuestionRequest,
 } from "./xaiAcpExtension.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { withAcpNoteEntries } from "@t3tools/provider-acp/server/adapter";
 import {
   type AcpToolCallState,
   extractMcpToolCallIdentity,
@@ -1076,6 +1077,7 @@ describe("XAiAcpExtension", () => {
         header: "Question",
         question: "Which scope should Grok use?",
         multiSelect: false,
+        supportsNote: true,
         options: [
           { label: "Workspace", description: "Use the current workspace" },
           { label: "Session", description: "Only use this session" },
@@ -1109,6 +1111,7 @@ describe("XAiAcpExtension", () => {
         header: "Question",
         question: "Which changes should be included?",
         multiSelect: true,
+        supportsNote: true,
         options: [
           { label: "Tests", description: "Tests" },
           { label: "Docs", description: "Docs" },
@@ -1141,6 +1144,7 @@ describe("XAiAcpExtension", () => {
         header: "Question",
         question: "Which label should Grok use?",
         multiSelect: false,
+        supportsNote: true,
         options: [
           { label: "Alpha", description: "Use the Alpha label" },
           { label: "Beta", description: "Use the Beta label" },
@@ -1175,6 +1179,33 @@ describe("XAiAcpExtension", () => {
       answers: {
         "Which scope should Grok use?": ["workspace"],
       },
+    });
+  });
+
+  it("sends a note typed with a picked option as the question's xAI notes", () => {
+    const response = makeXAiAskUserQuestionResponse(
+      {
+        sessionId: "session-1",
+        toolCallId: "tool-call-1",
+        mode: "default",
+        questions: [
+          {
+            id: "scope",
+            question: "Which scope should Grok use?",
+            options: [
+              { label: "workspace", description: "Use the current workspace" },
+              { label: "session", description: "Only use this session" },
+            ],
+          },
+        ],
+      },
+      withAcpNoteEntries({ scope: "workspace" }, { scope: "only the api folder" }),
+    );
+
+    expect(response).toEqual({
+      outcome: "accepted",
+      answers: { "Which scope should Grok use?": ["workspace"] },
+      annotations: { "Which scope should Grok use?": { notes: "only the api folder" } },
     });
   });
 

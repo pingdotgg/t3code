@@ -3982,9 +3982,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             ? gt("Choose an option above")
                             : activePendingProgress.activeQuestion?.options.length === 0
                               ? gt("Type your answer")
-                              : gt(
-                                  "Type your own answer, or leave this blank to use the selected option",
-                                )
+                              : activePendingProgress.activeQuestion?.supportsNote === true
+                                ? activePendingProgress.selectedOptionValues.length > 0
+                                  ? gt("Add a note to your choice, or leave this blank")
+                                  : gt(
+                                      "Type your own answer, or type a note and then pick an option",
+                                    )
+                                : gt(
+                                    "Type your own answer, or leave this blank to use the selected option",
+                                  )
                           : projectSelectionRequired
                             ? gt("Choose a project above to start a thread")
                             : showProviderUnavailable

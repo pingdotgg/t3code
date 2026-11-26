@@ -99,7 +99,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // Keep question identity stable for its shortcut listener.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
-  const customAnswerActive = progress.customAnswer.trim().length > 0;
+  // Typed text replaces the pick, unless the question takes it as a note.
+  const customAnswerActive =
+    activeQuestion?.supportsNote !== true && progress.customAnswer.trim().length > 0;
   // Read before later hooks to preserve the question's compiler cache.
   const draftSelectedOptions = activeQuestion?.options.map(
     (option) =>

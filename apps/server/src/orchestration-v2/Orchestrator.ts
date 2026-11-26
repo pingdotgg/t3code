@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2ThreadLinkMetadata,
+  OrchestrationV2UserInputQuestion,
   GuestShareId,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -233,6 +234,13 @@ import * as ServerSettings from "../serverSettings.ts";
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
+
+// A note rides with picked options only; typed text with no pick is the answer itself.
+function answerPicksOptions(question: OrchestrationV2UserInputQuestion, answer: unknown): boolean {
+  const values = typeof answer === "string" ? [answer] : Array.isArray(answer) ? answer : [];
+  const offered = new Set(question.options.map((option) => option.value ?? option.label));
+  return values.length > 0 && values.every((value) => offered.has(value));
+}
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -11709,6 +11717,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const approvalTurnItem = context.item;
+      const notesByQuestionId =
+        command.notesByQuestionId !== undefined && Object.keys(command.notesByQuestionId).length > 0
+          ? command.notesByQuestionId
+          : undefined;
+      if (notesByQuestionId !== undefined) {
+        const questions =
+          approvalTurnItem?.type === "user_input_request" ? approvalTurnItem.questions : [];
+        const notesFit = Object.keys(notesByQuestionId).every((questionId) => {
+          const question = questions.find((entry) => entry.id === questionId);
+          return (
+            question?.supportsNote === true && answerPicksOptions(question, answers?.[questionId])
+          );
+        });
+        if (!notesFit) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Only a question that takes notes can carry one, alongside a picked option.",
+          });
+        }
+      }
       const resolvedNodeStatus =
         command.decision === "decline" || command.decision === "cancel"
           ? ("cancelled" as const)
@@ -11781,7 +11810,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             continue;
           }
           const text = typeof answer === "string" ? answer : answer.join(", ");
-          replies.push(`${question.question}\n${text.trim()}`);
+          const note = notesByQuestionId?.[question.id];
+          replies.push(
+            `${question.question}\n${text.trim()}${note === undefined ? "" : `\nNote: ${note}`}`,
+          );
         }
         if (replies.length === 0) {
           return yield* new OrchestratorDispatchError({
@@ -11921,6 +11953,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     requestId: command.requestId,
                     answers,
                     attachmentsByQuestionId: command.attachmentsByQuestionId ?? {},
+                    ...(notesByQuestionId === undefined ? {} : { notesByQuestionId }),
                     questionTextById: Object.fromEntries(
                       approvalTurnItem.questions.map((question) => [
                         question.id,
@@ -12013,6 +12046,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.decision === undefined ? {} : { decision: command.decision }),
             ...(command.feedback === undefined ? {} : { feedback: command.feedback }),
             ...(answers === undefined ? {} : { answers }),
+            ...(notesByQuestionId === undefined ? {} : { notesByQuestionId }),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);

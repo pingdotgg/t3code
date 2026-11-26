@@ -10,6 +10,7 @@ import {
   RunAttemptId,
   ProviderApprovalDecision,
   ProviderUserInputAnswers,
+  UserInputNotes,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -100,6 +101,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     decision: Schema.optional(ProviderApprovalDecision),
     feedback: Schema.optional(Schema.String),
     answers: Schema.optional(ProviderUserInputAnswers),
+    notesByQuestionId: Schema.optional(UserInputNotes),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-thread.rollback"),

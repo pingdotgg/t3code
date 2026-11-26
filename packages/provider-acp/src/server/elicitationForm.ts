@@ -246,8 +246,9 @@ export function parseElicitationForm(
     parsedFields.push({ id, property, options: parsed.options });
   }
   // An optional `<id>__other` or `<id>_other` text field is the free-text answer to optional
-  // single choice `<id>`: ask them as one question and send custom text to the companion.
-  // Multi-select keeps both fields, since it can answer with options and text.
+  // single choice `<id>`: ask them as one question and send custom text to the companion, or,
+  // as a note beside a pick, both. Multi-select keeps both fields, since it can answer with
+  // options and text.
   const companions = new Map<string, string>();
   for (const [id, field] of fields) {
     if (field.kind !== "choice" || required.has(id)) continue;
@@ -275,6 +276,7 @@ export function parseElicitationForm(
       (allowOther && kind === "choice")
         ? {}
         : { allowCustomAnswer: false }),
+      ...(companions.has(id) ? { supportsNote: true } : {}),
       ...(kind === "multiChoice" ? { multiSelect: true } : {}),
       // An empty selection answers "none" unless the schema demands a choice.
       ...(field?.kind === "multiChoice" && field.minItems > 0 && required.has(id)
@@ -290,9 +292,16 @@ export function parseElicitationForm(
       for (const [id, field] of fields) {
         if (folded.has(id)) continue;
         const answer = Object.hasOwn(answers, id) ? answers[id] : undefined;
-        const typed = answer === undefined ? undefined : typedAnswer(field, answer);
         const companionId = companions.get(id);
-        if (typed !== undefined) entries.push([id, typed]);
+        // A pick with a note arrives as `[pick, note]`.
+        const [pick, note] =
+          companionId !== undefined && Array.isArray(answer) && answer.length === 2
+            ? answer
+            : [answer, undefined];
+        const typed = pick === undefined ? undefined : typedAnswer(field, pick);
+        if (typed !== undefined && companionId !== undefined && typeof note === "string") {
+          entries.push([id, typed], [companionId, note]);
+        } else if (typed !== undefined) entries.push([id, typed]);
         else if (
           allowOther &&
           field.kind === "choice" &&

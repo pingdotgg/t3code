@@ -126,6 +126,21 @@ describe("CodexAdapterV2 context usage", () => {
   });
 });
 
+describe("CodexAdapterV2 question notes", () => {
+  it("appends a note after the picked options the way Codex's TUI does", () => {
+    assert.deepEqual(
+      CodexAdapterV2.withCodexUserNotes(
+        { scope: "Workspace", checks: ["Unit", "E2E"] },
+        { scope: "only the api folder", checks: "skip the flaky one" },
+      ),
+      {
+        scope: ["Workspace", "user_note: only the api folder"],
+        checks: ["Unit", "E2E", "user_note: skip the flaky one"],
+      },
+    );
+  });
+});
+
 describe("CodexAdapterV2 assistant message streaming", () => {
   it.effect("flushes buffered text synchronously before item and turn completion", () =>
     Effect.gen(function* () {

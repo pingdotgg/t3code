@@ -46,6 +46,7 @@ import { Atom } from "effect/reactivity";
 import { environmentThreadDetails, threadEnvironment } from "./threads";
 import {
   buildPendingUserInputAnswers,
+  buildPendingUserInputNotes,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
@@ -421,6 +422,10 @@ export function useSelectedThreadRequests() {
         ...(attachmentsByQuestionId.size > 0
           ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
           : {}),
+        notesByQuestionId: buildPendingUserInputNotes(
+          activePendingUserInput.questions,
+          activePendingUserInputDrafts,
+        ),
       },
     });
     userInputResponsesInFlight.current.delete(responseKey);

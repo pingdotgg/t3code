@@ -39,6 +39,8 @@ export function QuestionAttachments(props: {
   value: string;
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
+  /** An option is picked and the question sends typed text as a note on it. */
+  takesNote?: boolean;
 }) {
   const gt = useGT();
   const { selectedThread } = useThreadSelection();
@@ -211,7 +213,11 @@ export function QuestionAttachments(props: {
             focusedRef.current = false;
             onInputFocusChange?.(false);
           }}
-          placeholder={gt("Or type a custom answer")}
+          placeholder={
+            props.takesNote
+              ? gt("Add a note to your choice (optional)")
+              : gt("Or type a custom answer")
+          }
           className="min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground"
         />
       </TextInputWrapper>

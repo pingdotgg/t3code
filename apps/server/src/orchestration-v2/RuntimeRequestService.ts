@@ -2,6 +2,7 @@ import {
   ProviderApprovalDecision,
   ProviderSessionId,
   ProviderUserInputAnswers,
+  UserInputNotes,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -56,6 +57,7 @@ export interface RuntimeRequestServiceV2Shape {
     readonly decision?: ProviderApprovalDecision;
     readonly feedback?: string;
     readonly answers?: ProviderUserInputAnswers;
+    readonly notesByQuestionId?: UserInputNotes;
   }) => Effect.Effect<void, RuntimeRequestResponseExecutionError>;
 }
 
@@ -120,6 +122,9 @@ export const layer: Layer.Layer<
             ...(input.decision === undefined ? {} : { decision: input.decision }),
             ...(input.feedback === undefined ? {} : { feedback: input.feedback }),
             ...(input.answers === undefined ? {} : { answers: input.answers }),
+            ...(input.notesByQuestionId === undefined
+              ? {}
+              : { notesByQuestionId: input.notesByQuestionId }),
           });
         },
         (effect, input) =>
