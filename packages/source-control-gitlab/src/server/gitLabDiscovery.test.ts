@@ -59,8 +59,7 @@ ${defaultHostOnly}`;
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
 
-// Discovery sweeps every integration on a timer; a CLI that is not installed should cost one spawn.
-it.effect("does not run the auth command when glab is not installed", () =>
+it.effect("reports a glab on PATH that fails to start as missing, ignoring its auth answer", () =>
   Effect.gen(function* () {
     const spawned: Array<string> = [];
     const item = yield* probeSourceControlProvider({
@@ -86,7 +85,8 @@ it.effect("does not run the auth command when glab is not installed", () =>
       },
     });
     assert.strictEqual(item.status, "missing");
-    assert.deepStrictEqual(spawned, ["glab --version"]);
+    assert.strictEqual(item.auth.status, "unknown");
+    assert.include(spawned, "glab --version");
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
 

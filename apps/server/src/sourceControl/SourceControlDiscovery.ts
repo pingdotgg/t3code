@@ -139,28 +139,31 @@ export const make = Effect.gen(function* () {
   return SourceControlDiscovery.of({
     discover: Effect.andThen(
       refreshPath,
-      Effect.all({
-        versionControlSystems: Effect.all(
-          VCS_PROBES.map((entry) =>
-            Effect.flatMap(isExecutableOnPath(entry.executable), (found) =>
-              found
-                ? probe(entry)
-                : Effect.succeed({
-                    kind: entry.kind,
-                    label: entry.label,
-                    executable: entry.executable,
-                    implemented: entry.implemented,
-                    status: "missing" as const,
-                    version: Option.none<string>(),
-                    installHint: entry.installHint,
-                    detail: Option.none<string>(),
-                  }),
-            ),
-          ) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
-          { concurrency: "unbounded" },
-        ),
-        sourceControlProviders: sourceControlProviders.discover,
-      }),
+      Effect.all(
+        {
+          versionControlSystems: Effect.all(
+            VCS_PROBES.map((entry) =>
+              Effect.flatMap(isExecutableOnPath(entry.executable), (found) =>
+                found
+                  ? probe(entry)
+                  : Effect.succeed({
+                      kind: entry.kind,
+                      label: entry.label,
+                      executable: entry.executable,
+                      implemented: entry.implemented,
+                      status: "missing" as const,
+                      version: Option.none<string>(),
+                      installHint: entry.installHint,
+                      detail: Option.none<string>(),
+                    }),
+              ),
+            ) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
+            { concurrency: "unbounded" },
+          ),
+          sourceControlProviders: sourceControlProviders.discover,
+        },
+        { concurrency: "unbounded" },
+      ),
     ),
   });
 });
