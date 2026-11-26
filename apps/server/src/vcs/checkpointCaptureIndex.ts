@@ -249,7 +249,7 @@ export const make = (
         if (
           !staged(entryPath) ||
           oldMode === "000000" ||
-          // Kept, a nested checkout HEAD does not track makes add -A run git status inside it.
+          // A kept gitlink HEAD lacks makes add -A run git status inside that nested checkout.
           (oldMode === "160000" && newMode === "000000")
         ) {
           // HEAD's entry, as a rebuilt index holds it; add -A then decides as it would there.

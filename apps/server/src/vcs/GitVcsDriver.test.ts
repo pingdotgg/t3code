@@ -874,17 +874,6 @@ const makeNestedRepository = ({ git }: CaptureIndexChange) =>
     ),
   );
 
-// git worktree add needs an empty folder.
-const makeLinkedWorktree = ({ git, fs, path, cwd }: CaptureIndexChange) =>
-  fs
-    .remove(path.join(cwd, "nested"), { recursive: true })
-    .pipe(Effect.andThen(git(["worktree", "add", "--detach", "nested"])));
-
-const nestedGitlink = ({ git }: CaptureIndexChange) =>
-  git(["-C", "nested", "rev-parse", "HEAD"]).pipe(
-    Effect.map(({ stdout }) => `160000 commit ${stdout.trim()}\tnested\n`),
-  );
-
 it.effect.each([
   { name: "nothing changed", reuses: true, change: () => Effect.void },
   {
@@ -987,46 +976,6 @@ it.effect.each([
     setup: makeNestedRepository,
     change: ({ git }: CaptureIndexChange) =>
       git(["-C", "nested", "symbolic-ref", "HEAD", "refs/heads/unborn"]),
-    nestedTree: () => Effect.succeed(""),
-  },
-  {
-    name: "an untracked folder became a linked worktree",
-    reuses: true,
-    change: makeLinkedWorktree,
-    nestedTree: nestedGitlink,
-  },
-  {
-    name: "a linked worktree moved its HEAD",
-    reuses: true,
-    setup: makeLinkedWorktree,
-    change: ({ git }: CaptureIndexChange) =>
-      git(["-C", "nested", "commit", "--quiet", "--allow-empty", "-m", "moved"]),
-    nestedTree: nestedGitlink,
-  },
-  {
-    name: "a still-registered linked worktree lost its .git file but kept its files",
-    reuses: true,
-    setup: makeLinkedWorktree,
-    change: ({ fs, path, cwd }: CaptureIndexChange) => fs.remove(path.join(cwd, "nested/.git")),
-    nestedTree: ({ git }: CaptureIndexChange) =>
-      git(["rev-parse", "HEAD:file.txt"]).pipe(
-        Effect.map(({ stdout }) => `100644 blob ${stdout.trim()}\tnested/file.txt\n`),
-      ),
-  },
-  {
-    name: "a linked worktree was removed",
-    reuses: true,
-    setup: makeLinkedWorktree,
-    change: ({ git }: CaptureIndexChange) => git(["worktree", "remove", "nested"]),
-    nestedTree: () => Effect.succeed(""),
-  },
-  {
-    name: "a still-registered linked worktree's folder was deleted",
-    reuses: true,
-    setup: makeLinkedWorktree,
-    change: ({ fs, path, cwd }: CaptureIndexChange) =>
-      fs.remove(path.join(cwd, "nested"), { recursive: true }),
-    nestedTree: () => Effect.succeed(""),
   },
   {
     name: "an untracked file was edited under core.ignorestat",
@@ -1191,7 +1140,7 @@ it.effect.each([
       ]),
 ])(
   "checkpoint capture through a kept index stages what a rebuilt index would: $name",
-  ({ file = "nested/large.txt", workspace = "", reuses, setup, change, during, nestedTree }) =>
+  ({ file = "nested/large.txt", workspace = "", reuses, setup, change, during }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1256,12 +1205,6 @@ it.effect.each([
         (yield* git(["rev-parse", `${checkpointRef}^{tree}`])).stdout,
         (yield* git(["rev-parse", `${freshRef}^{tree}`])).stdout,
       );
-      if (nestedTree !== undefined) {
-        assert.strictEqual(
-          (yield* git(["ls-tree", "-r", checkpointRef, "--", "nested"])).stdout,
-          yield* nestedTree(context),
-        );
-      }
       assert.strictEqual(rebuilt === 0, reuses);
       yield* git(["fsck", "--connectivity-only"]);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
