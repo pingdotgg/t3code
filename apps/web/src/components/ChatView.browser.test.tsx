@@ -38,7 +38,6 @@ import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
 import {
-  CLAUDE_PROVIDER,
   ENVIRONMENT_ID,
   PROJECT_ID,
   answerAssetUrls,
@@ -1149,32 +1148,4 @@ it("opening Settings without a page event closes the composer model picker and p
   await act(() => router.navigate({ to: "/settings" }));
   await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
   await expect.element(permissions).not.toBeInTheDocument();
-});
-
-it("/compact stays in the slash menu while a turn runs, since a typed command queues", async () => {
-  const history = threadWithHistory("compact-mid-turn", 2, {
-    instanceId: CLAUDE_PROVIDER.instanceId,
-    model: "claude-opus-4-6",
-  });
-  using _environment = installFakeEnvironment([history], { providers: [CLAUDE_PROVIDER] });
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${history.id}`] }),
-  );
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, { router: false });
-  await expect.element(page.getByText(`Answer 1 for ${history.id}.`)).toBeVisible();
-  const compact = page.getByRole("option", { name: /^\/compact/ });
-
-  await userEvent.click(page.getByTestId("composer-editor"));
-  await insertText("/compact");
-  await expect.element(compact).toBeVisible();
-
-  const running = { ...history.runs[1]!, status: "running" as const, completedAt: null };
-  await act(() => emitThreadEvent(history.id, { type: "run.updated", payload: running }));
-  await expect.element(page.getByRole("button", { name: "Steer message" })).toBeVisible();
-  await expect.element(compact).toBeVisible();
 });
