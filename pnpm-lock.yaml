@@ -275,6 +275,7 @@ catalogs:
 
 overrides:
   react-native-image-viewing: 0.2.2
+  '@exodus/bytes': 1.15.1
   mdast-util-math: 3.0.0
   micromark-extension-llm-math: 3.1.0
   micromark: 4.0.2
@@ -370,6 +371,7 @@ patchedDependencies:
   '@cursor/sdk@1.5.0': 7fe8889d7916196c56006cf15a39abba4099feb2c567b4030b82a09364cee500
   '@effect/platform-node-shared@4.1.5': 06952843c6f431ca83c78762fd18d23cda76883801049ee311feced2438ecf14
   '@effect/vitest@4.1.5': dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5
+  '@exodus/bytes@1.15.1': ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8
   '@expo/ui@58.0.29': 2346ac02073363a401e85357e541055e9737bcbc1cdcb63e056cda9368fa79f6
   '@ff-labs/fff-node@0.11.0': 93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252
   '@generaltranslation/format@0.1.9': 5712dc73770a30134376f9ef883e1a2e1814f007f95532725ba5ecc7b7812db3
@@ -558,6 +560,9 @@ importers:
       '@effect/atom-react':
         specifier: 4.1.5
         version: 4.1.5(effect@4.1.5(patch_hash=14a7acd734809d8dddbf2c19c4ec01fdd2ffae60a612de42b5ed29860216052a))(react@19.3.0)(scheduler@0.28.0)
+      '@exodus/bytes':
+        specifier: 1.15.1
+        version: 1.15.1(patch_hash=ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8)(@noble/hashes@1.8.0)
       '@expo-google-fonts/dm-sans':
         specifier: ^0.4.2
         version: 0.4.2
@@ -14895,7 +14900,7 @@ snapshots:
     dependencies:
       '@types/json-schema': 7.0.15
 
-  '@exodus/bytes@1.15.1(@noble/hashes@1.8.0)':
+  '@exodus/bytes@1.15.1(patch_hash=ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8)(@noble/hashes@1.8.0)':
     optionalDependencies:
       '@noble/hashes': 1.8.0
 
@@ -20469,7 +20474,7 @@ snapshots:
 
   html-encoding-sniffer@6.0.0(@noble/hashes@1.8.0):
     dependencies:
-      '@exodus/bytes': 1.15.1(@noble/hashes@1.8.0)
+      '@exodus/bytes': 1.15.1(patch_hash=ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8)(@noble/hashes@1.8.0)
     transitivePeerDependencies:
       - '@noble/hashes'
 
@@ -20699,7 +20704,7 @@ snapshots:
       '@asamuzakjp/dom-selector': 9.2.1
       '@bramus/specificity': 2.4.2
       '@csstools/css-syntax-patches-for-csstree': 1.1.14(css-tree@3.2.1)
-      '@exodus/bytes': 1.15.1(@noble/hashes@1.8.0)
+      '@exodus/bytes': 1.15.1(patch_hash=ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8)(@noble/hashes@1.8.0)
       css-tree: 3.2.1
       data-urls: 7.0.0(@noble/hashes@1.8.0)
       decimal.js: 10.6.0
@@ -24186,7 +24191,7 @@ snapshots:
 
   whatwg-url@16.0.1(@noble/hashes@1.8.0):
     dependencies:
-      '@exodus/bytes': 1.15.1(@noble/hashes@1.8.0)
+      '@exodus/bytes': 1.15.1(patch_hash=ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8)(@noble/hashes@1.8.0)
       tr46: 6.0.0
       webidl-conversions: 8.0.1
     transitivePeerDependencies:
@@ -24194,7 +24199,7 @@ snapshots:
 
   whatwg-url@17.1.2(@noble/hashes@1.8.0):
     dependencies:
-      '@exodus/bytes': 1.15.1(@noble/hashes@1.8.0)
+      '@exodus/bytes': 1.15.1(patch_hash=ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8)(@noble/hashes@1.8.0)
       tr46: 6.0.0
       webidl-conversions: 8.0.1
     transitivePeerDependencies:
