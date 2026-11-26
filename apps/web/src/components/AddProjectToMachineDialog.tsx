@@ -94,10 +94,18 @@ function close() {
 export function AddProjectToMachineDialogHost() {
   const request = useRequest((state) => state.request);
   const session = useRequest((state) => state.session);
-  return request ? <AddProjectToMachineDialog key={session} request={request} /> : null;
+  return request ? (
+    <AddProjectToMachineDialog key={session} request={request} session={session} />
+  ) : null;
 }
 
-function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRequest }) {
+function AddProjectToMachineDialog({
+  request,
+  session,
+}: {
+  request: AddProjectToMachineRequest;
+  session: number;
+}) {
   const gt = useGT();
   const id = useId();
   const project = useProject(request.projectRef);
@@ -237,6 +245,8 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         destinationPath: destinationPath.trim(),
         files: [...selectedFiles.keys()],
       });
+      const current = useRequest.getState();
+      if (current.request === null || current.session !== session) return;
       close();
       openClonedProject(scopeProjectRef(target.environmentId, projectId));
     } catch (cause) {
