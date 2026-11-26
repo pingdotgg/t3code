@@ -960,7 +960,7 @@ const threadStartCommand = Command.make("start", {
   outputSchema: outputSchemaFlag,
   runtimeMode: Flag.Literals("runtime-mode", RuntimeMode.literals).pipe(
     Flag.withDescription(
-      "Runtime mode for the new thread. Defaults to the project's defaultRuntimeMode.",
+      "Runtime mode for the new thread. Defaults to the project's default, stepped down to what the provider offers.",
     ),
     Flag.optional,
   ),

@@ -382,49 +382,6 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
   }),
 );
 
-it.effect("a client launch keeps the project's default mode when the provider omits it", () =>
-  Effect.gen(function* () {
-    // Pi offers no Auto; the default is a choice, not an inherited ceiling to step down.
-    const pi = ProviderInstanceId.make("pi");
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-    const { projectId, dependencies } = clientLaunchHarness({
-      runtimeModeCeiling: "full-access",
-      defaultRuntimeMode: "auto",
-      launched,
-      providers: [
-        {
-          instanceId: pi,
-          driver: ProviderDriverKind.make("pi"),
-          enabled: true,
-          installed: true,
-          status: "ready",
-          version: null,
-          auth: { status: "authenticated" },
-          checkedAt: "2026-01-01T00:00:00Z",
-          models: [],
-          slashCommands: [],
-          skills: [],
-          supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
-        },
-      ],
-    });
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-    const result = yield* toolkit
-      .handle("t3_thread_launch", {
-        projectId,
-        title: "Fix",
-        modelSelection: { instanceId: pi, model: "pi-model" },
-      })
-      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-    expect(result.at(-1)?.result).toMatchObject({ projectId });
-    expect(launched[0]?.runtimeMode).toBe("auto");
-  }),
-);
-
 it.effect("a launch with a model its provider does not advertise creates no thread", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
