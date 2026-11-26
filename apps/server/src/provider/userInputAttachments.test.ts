@@ -790,12 +790,20 @@ describe("question answer paths", () => {
             "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
-            "chapter.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Departure information.<aside>Check local time.</aside>Board promptly.</div><div>Keep <aside></aside>walking.</div><div>Contact the duty editor.<address><strong>Harbor Office</strong><br/>Pier 7</address>Include your reference.</div></body></html>',
+            "chapter.xhtml": [
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body>',
+              "<div>Departure information.<aside>Check local time.</aside>Board promptly.</div>",
+              "<div>Keep <aside></aside>walking.</div>",
+              "<div>Contact the duty editor.<address><strong>Harbor Office</strong><br/>Pier 7</address>Include your reference.</div>",
+              "<section>Updated timetable.<header><strong>Harbor departures</strong></header>Confirm your berth.<footer>Source: Harbor Office</footer>Keep this guide.</section>",
+              "<section>Keep <header></header><footer></footer>reading.</section>",
+              "</body></html>",
+            ].join(""),
           },
           expected: [
             "Departure information.\nCheck local time.\nBoard promptly.\nKeep walking.",
             "Contact the duty editor.\nHarbor Office\nPier 7\nInclude your reference.",
+            "Updated timetable.\nHarbor departures\nConfirm your berth.\nSource: Harbor Office\nKeep this guide.\nKeep reading.",
           ],
         },
         {
