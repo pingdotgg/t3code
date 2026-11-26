@@ -680,18 +680,18 @@ describe("share cleanup ownership", () => {
         cacheUri: `${data}/cache/`,
         otherRootUris: [`${data}/files/`],
       });
-    const copy = `${data}/cache/shared-0b0e3f0c-6c1d-4b53-9d0a-2f6f1c3a9e11`;
+    const copy = `${data}/cache/expo-sharing/0b0e3f0c-6c1d-4b53-9d0a-2f6f1c3a9e11`;
     expect(owned(`file:${copy.slice("file://".length)}/report.pdf`)).toBe(true);
     expect(
       owned(
-        "file:///data/data/codes.t3.app/cache/shared-0b0e3f0c-6c1d-4b53-9d0a-2f6f1c3a9e11/a.png",
+        "file:///data/data/codes.t3.app/cache/expo-sharing/0b0e3f0c-6c1d-4b53-9d0a-2f6f1c3a9e11/a.png",
       ),
     ).toBe(true);
     for (const uri of [
       `${data}/files/t3-composer-attachments/id-report.pdf`,
       `${data}/files/SQLite/state.db`,
       `${data}/cache/http-cache/journal`,
-      `${data}/cache/shared-notes/notes.txt`,
+      `${data}/cache/expo-sharing/notes/notes.txt`,
       `${copy}/..%2F..%2Ffiles%2FSQLite%2Fstate.db`,
       copy,
     ]) {

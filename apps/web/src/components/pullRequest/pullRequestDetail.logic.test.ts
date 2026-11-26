@@ -60,6 +60,7 @@ import {
   pullRequestLinkSubject,
   writePullRequestDetailSnapshot,
   readableFailure,
+  samePullRequestReadExceptStamps,
   seenPullRequestHead,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
@@ -380,6 +381,14 @@ describe("pull request timeline", () => {
     const cut = pullRequestLinkSubject(`${pr}#issuecomment-5`, long);
     const excerpt = cut && "excerpt" in cut ? cut.excerpt : null;
     expect(excerpt).toMatch(/^(?:i ?)+…$/u);
+    const between = {
+      ...activity,
+      comments: [{ ...activity.comments[0]!, body: `${"a".repeat(278)} word` }],
+    };
+    const cutBetween = pullRequestLinkSubject(`${pr}#issuecomment-5`, between);
+    expect(cutBetween && "excerpt" in cutBetween ? cutBetween.excerpt : null).toBe(
+      `${"a".repeat(278)}…`,
+    );
   });
 
   it("orders host timestamps by instant across offsets and fractional seconds", () => {
@@ -989,6 +998,9 @@ describe("what to say when an action fails", () => {
     const reason = "The worktree directory already exists. Choose another directory.";
     expect(checkoutFailureDescription(diagnostic(reason))).toBe(reason);
     expect(checkoutFailureDescription(diagnostic("x".repeat(900)))).toBe(`${"x".repeat(319)}…`);
+    expect(checkoutFailureDescription(diagnostic(`${"x".repeat(318)}😀 tail`))).toBe(
+      `${"x".repeat(318)}…`,
+    );
     for (const failure of [undefined, diagnostic(""), diagnostic("exited with code 1")]) {
       expect(checkoutFailureDescription(failure)).toBe(
         "Check that the branch still exists and is not checked out elsewhere, then try again.",
@@ -2084,5 +2096,35 @@ describe("readableFailure", () => {
     expect(readableFailure(new Error("Branch is protected."), "Try again.")).toBe(
       "Branch is protected.",
     );
+  });
+});
+
+describe("samePullRequestReadExceptStamps", () => {
+  const read = {
+    title: "Fix it",
+    observedAt: 1,
+    checks: [{ name: "ci", state: "success", readAt: 1 }],
+    comments: [{ id: "1", body: "ok" }],
+  };
+
+  it("treats a refresh that only restamps the read as the same", () => {
+    expect(
+      samePullRequestReadExceptStamps(read, {
+        ...read,
+        observedAt: 2,
+        checks: [{ ...read.checks[0], readAt: 2 }],
+      }),
+    ).toBe(true);
+  });
+
+  it("sees any other change", () => {
+    expect(samePullRequestReadExceptStamps(read, { ...read, title: "Fix it again" })).toBe(false);
+    expect(
+      samePullRequestReadExceptStamps(read, {
+        ...read,
+        comments: [...read.comments, { id: "2", body: "more" }],
+      }),
+    ).toBe(false);
+    expect(samePullRequestReadExceptStamps(read, { ...read, draft: true })).toBe(false);
   });
 });

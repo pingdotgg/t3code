@@ -10,6 +10,7 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { memo, use, useRef } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { shortcutLabelForCommand } from "../../keybindings";
+import type { FileManagerAction } from "./OpenInPicker.logic";
 import { OPEN_FAVORITE_EDITOR_ATTRIBUTE } from "./OpenInPickerShortcut";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
@@ -35,7 +36,7 @@ import {
   MenuSubPopup,
   MenuTrigger,
 } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { type EditorIconOption, editorIconOptions } from "../editorIcons";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
@@ -81,7 +82,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact = false,
   enableShortcut = true,
   displayMode = "toolbar",
-  revealFileManager = false,
+  fileManagerAction = "open",
 }: {
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
@@ -92,7 +93,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact?: boolean;
   enableShortcut?: boolean;
   displayMode?: "toolbar" | "panel";
-  revealFileManager?: boolean;
+  fileManagerAction?: FileManagerAction;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -111,11 +112,13 @@ export const OpenInPicker = memo(function OpenInPicker({
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
+  const isEditorUnavailable = (editor: EditorId | null) =>
+    editor === "file-manager" && fileManagerAction === "unavailable";
 
   const openInEditor = async (editorId: EditorId | null): Promise<boolean> => {
     if (!openInCwd) return false;
     const editor = editorId ?? preferredEditor;
-    if (!editor) return false;
+    if (!editor || isEditorUnavailable(editor)) return false;
     if (remote.mode === "remote-unavailable") return false;
     if (remote.mode === "remote-links") {
       const url = buildRemoteOpenUrl({
@@ -139,7 +142,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       input: {
         cwd: openInCwd,
         editor,
-        ...(revealFileManager && editor === "file-manager" ? { reveal: true } : {}),
+        ...(fileManagerAction === "reveal" && editor === "file-manager" ? { reveal: true } : {}),
       },
     });
     setPreferredEditor(editor);
@@ -187,7 +190,11 @@ export const OpenInPicker = memo(function OpenInPicker({
           {options.map(({ label, Icon, value, kind }) => (
             <MenuItem
               density={presentation === "menu" ? "touch" : "default"}
-              disabled={!openInCwd || !canOpenEditor}
+              disabled={
+                !openInCwd ||
+                !canOpenEditor ||
+                (presentation === "menu" && isEditorUnavailable(value))
+              }
               key={value}
               onClick={() => {
                 if (presentation === "menu") {
@@ -223,8 +230,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         {primaryOption && (
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
-
-            disabled={!openInCwd || !canOpenEditor}
+            disabled={!openInCwd || !canOpenEditor || isEditorUnavailable(preferredEditor)}
             onClick={() => openInEditor(preferredEditor)}
           >
             <primaryOption.Icon className={cn("size-4", getOpenInIconClass(primaryOption.kind))} />
@@ -261,7 +267,9 @@ export const OpenInPicker = memo(function OpenInPicker({
       variant={isPanel ? "ghost" : "outline"}
       part="primary"
       panel={isPanel}
-      disabled={!preferredEditor || !openInCwd || !canOpenEditor}
+      disabled={
+        !preferredEditor || !openInCwd || !canOpenEditor || isEditorUnavailable(preferredEditor)
+      }
       {...(enableShortcut && !backgroundThread ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" } : {})}
       onClick={() => {
         if (!preferredEditor) return;
@@ -303,43 +311,40 @@ export const OpenInPicker = memo(function OpenInPicker({
         ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
         : {})}
     >
-      <Tooltip>
-        <TooltipTrigger render={primaryControl} />
-        <TooltipPopup side="top">{primaryControlLabel}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger render={primaryControl} label={primaryControlLabel} />
       {isPanel ? (
         <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
       ) : (
         <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       )}
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <MenuTrigger
-                disabled={isHostEditorDenied}
-                render={
-                  <ThreadDetailsControl
-                    aria-label={gt("Choose editor")}
-                    data-toolbar-control=""
-                    size={isPanel ? "sm" : "icon-xs"}
-                    variant={isPanel ? "ghost" : "outline"}
-                    part="secondary"
-                    panel={isPanel}
-                  />
-                }
-              />
-            }
-          >
-            <ChevronDownIcon
-              aria-hidden="true"
-              className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+        <SharedTooltipTrigger
+          render={
+            <MenuTrigger
+              disabled={isHostEditorDenied}
+              render={
+                <ThreadDetailsControl
+                  aria-label={gt("Choose editor")}
+                  data-toolbar-control=""
+                  size={isPanel ? "sm" : "icon-xs"}
+                  variant={isPanel ? "ghost" : "outline"}
+                  part="secondary"
+                  panel={isPanel}
+                />
+              }
             />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            <T>Choose editor</T>
-          </TooltipPopup>
-        </Tooltip>
+          }
+          label={
+            <>
+              <T>Choose editor</T>
+            </>
+          }
+        >
+          <ChevronDownIcon
+            aria-hidden="true"
+            className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+          />
+        </SharedTooltipTrigger>
         <MenuPopup
           align="end"
           {...(isPanel ? { anchor: panelAnchorRef } : {})}
