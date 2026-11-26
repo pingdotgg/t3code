@@ -411,7 +411,7 @@ it.effect("reports a provider failure when Pi has already streamed valid commit 
         "Pi could not generate text: the model provider reported an error.",
       );
     }
-  }),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("keeps Pi's raw error text out of the error", () =>
