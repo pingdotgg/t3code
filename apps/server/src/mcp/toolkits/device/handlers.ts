@@ -262,6 +262,22 @@ const handlers = {
       }
       const hostId = yield* resolveHostId(state.hosts, input.hostId);
       const target = yield* pickDevice(state, { ...input, hostId });
+      // A machine host's agent-device daemon lets one thread's session claim a device; Simlock and
+      // EAS bind every thread to the device's shared session.
+      const targetHost = state.hosts.find((host) => host.id === target.hostId);
+      const heldElsewhere =
+        (targetHost?.kind === "local" || targetHost?.kind === "ssh") &&
+        state.sessions.some(
+          (session) =>
+            session.threadId !== scope.thread.threadId &&
+            session.hostId === target.hostId &&
+            session.deviceId === target.id,
+        );
+      if (heldElsewhere) {
+        return yield* new DeviceToolUnavailableError({
+          reason: `Device ${target.id} is already open in another thread, which holds it for its agent. Pick another device, or ask the user to close it in that thread first.`,
+        });
+      }
       // Resolve consent and agent connectivity before booting or registering a session.
       if (!(yield* devices.agentReadinessIfSupported(target.hostId))) {
         return yield* new DeviceToolUnavailableError({
