@@ -139,7 +139,7 @@ class T3ScrollPullView(
 
   private fun update(next: Int, x: Float) {
     val density = resources.displayMetrics.density
-    val startX = pullStartX ?: x.takeIf { next > 0 }
+    val startX = if (next > 0) pullStartX ?: x else null
     pullStartX = startX
     val nextSwing = startX?.let { (x - it) / density } ?: 0f
     if (next == pull && (next == 0 || nextSwing == swing)) return

@@ -139,8 +139,11 @@ export function usePullActionWheel(actions: ReadonlyArray<PullAction>, defaultIn
   const update = (next: number) => {
     "worklet";
     if (drag.get() !== "pulling" || next === distance.get()) return;
-    if (SCROLL_PULL_SWING_FROM_FEED_TOUCHES && next > 0 && pullStartX.get() === null)
+    if (next === 0) pullStartX.set(null);
+    else if (SCROLL_PULL_SWING_FROM_FEED_TOUCHES && pullStartX.get() === null) {
       pullStartX.set(fingerX.get());
+      choose(choices.get().defaultIndex, true);
+    }
     distance.set(next);
     const nextArmedAt = trackPull(armedAt.get(), next, THRESHOLD, Date.now());
     if (nextArmedAt === armedAt.get()) return;

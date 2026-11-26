@@ -17,12 +17,15 @@ export function useThreadPullActions(input: {
   readonly threadId: ThreadId;
   readonly canSettle: boolean;
   readonly canSnooze: boolean;
+  readonly now: string;
   readonly snoozePresets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }): ReadonlyArray<PullAction> {
   const gt = useGT();
   const { startNewTaskInThreadProject } = useAdaptiveWorkspaceLayout();
   const { settleThread, snoozeThread } = useThreadListActions();
   const { environmentId, threadId, snoozePresets } = input;
+  const firstSnoozePreset = (now: Date) =>
+    resolveSnoozePresets(now, snoozePresets ? { presets: snoozePresets } : {}, m)[0];
   // Read when the pull lets go, so the actions don't change while a reply streams into the shell.
   const liveThread = () =>
     appAtomRegistry.get(environmentThreadShells.threadShellAtom({ environmentId, threadId }));
@@ -51,14 +54,10 @@ export function useThreadPullActions(input: {
       icon: "clock",
       label: gt("Snooze", { $context: "verb, thread action" }),
       tone: "warning",
-      enabled: input.canSnooze,
+      enabled: input.canSnooze && firstSnoozePreset(new Date(input.now)) !== undefined,
       run: () => {
         const thread = liveThread();
-        const preset = resolveSnoozePresets(
-          new Date(),
-          snoozePresets ? { presets: snoozePresets } : {},
-          m,
-        )[0];
+        const preset = firstSnoozePreset(new Date());
         if (thread && preset) void snoozeThread(thread, preset.snoozedUntil);
       },
     },

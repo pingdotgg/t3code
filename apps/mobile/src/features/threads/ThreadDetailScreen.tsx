@@ -662,6 +662,7 @@ function ThreadDetailBody(
     threadId: props.selectedThread.id,
     canSettle: configLoaded && !settled,
     canSnooze: configLoaded && !snoozed && canSnooze(props.selectedThread, { now: lifecycleNow }),
+    now: lifecycleNow,
     snoozePresets: props.serverConfig?.settings.snoozePresets,
   });
   const wokeAt = configLoaded ? threadWokeAt(props.selectedThread, { now: lifecycleNow }) : null;
