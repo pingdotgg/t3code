@@ -78,6 +78,20 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
   return HTML_BLOCK_TAG.test(line) || HTML_STANDALONE_TAG.test(line) ? closesAtBlankLine : null;
 }
 
+/** Whether `line`, ignoring its indentation, opens a block instead of continuing a paragraph. */
+function startsBlock(line: string): boolean {
+  const content = line.trimStart();
+  return (
+    FENCE_OPEN.test(content) ||
+    LIST_ITEM.test(content) ||
+    BLOCK_QUOTE.test(content) ||
+    ATX_HEADING.test(content) ||
+    THEMATIC_BREAK.test(content) ||
+    HTML_BLOCK_TAG.test(content) ||
+    SPANNING_BLOCKS.some(([open]) => open.test(content))
+  );
+}
+
 function fenceCloser(fence: string, contentColumn: number): (line: string) => boolean {
   return (line) => {
     const match = /^([ \t]*)(`{3,}|~{3,})[ \t]*\r?$/.exec(line);
@@ -150,6 +164,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let openedFence = false;
   let fenceContentIndent = 0;
   let listContentIndent = Infinity;
+  const parentListIndents: number[] = [];
   let listMarker = "";
   let emptyListItem = false;
   let paragraphOpen = false;
@@ -169,6 +184,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     const indent = indentationColumn(whitespace);
     if (emptyListItem && (blank || indent < listContentIndent)) listContentIndent = Infinity;
     emptyListItem = false;
+    if (closes === null && !blank && (afterBlankLine || !paragraphOpen || startsBlock(line))) {
+      // Leaving a nested item returns to its parent's content column.
+      while (parentListIndents.length > 0 && indent < listContentIndent) {
+        listContentIndent = parentListIndents.pop()!;
+      }
+    }
     const dedented = indent < listContentIndent;
     if (closes !== null && openedFence && indent < fenceContentIndent && !blank) {
       // A dedent ends the list fence before this line, which may open a new fence.
@@ -224,8 +245,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       const fence = FENCE_OPEN.exec(fenceLine)?.[1];
       closes = fence ? fenceCloser(fence, contentColumn) : blockCloser(line);
       fenceContentIndent = fence ? contentColumn : 0;
-      if (dedented) {
+      if (!dedented && opensItem) {
+        parentListIndents.push(listContentIndent);
+        listContentIndent = contentColumn;
+      } else if (dedented) {
         if (opensItem) {
+          parentListIndents.length = 0;
           listContentIndent = contentColumn;
           listMarker = markerKind!;
         } else if (
@@ -233,6 +258,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           (afterBlankLine || afterFence || heading || thematicBreak || quote || fence || htmlOrMath)
         ) {
           // Dedented prose can still be a lazy continuation until a block boundary.
+          parentListIndents.length = 0;
           listContentIndent = Infinity;
         }
       }

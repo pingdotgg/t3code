@@ -267,6 +267,10 @@ describe("splitMarkdown", () => {
   it.each([
     ["after a list fence", ["- Item", "  ```", "  code", "```", "[ref]: /fake", "```"]],
     ["after a paragraph", ["Paragraph", "2. continuation", "   ```", "[ref]: /fake", "   ```"]],
+    [
+      "in a parent item after a nested item",
+      ["- outer", "  - inner", "    ```", "  ```", "  [ref]: /fake", "  ```"],
+    ],
   ])("keeps definitions inside a top-level fence %s literal", (_, lines) => {
     expect(splitMarkdown(lines.join("\n")).definitions).toBe("");
   });
