@@ -59,6 +59,7 @@ import {
 import { SettingsRow, SettingsSearchTarget, SettingsSection } from "./settingsLayout";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useCloudRead } from "./CloudVoiceConfiguration";
+import { CatalogCombobox } from "./CatalogCombobox";
 import { ReadAloudKeyDialog } from "./ReadAloudKeyDialog";
 import { SpeechProviderIcon } from "./SpeechProviderIcon";
 
@@ -647,30 +648,23 @@ export function ReadAloudSettingsSection() {
           )}
           {cloudProvider && catalog.supportsModelSelection && catalog.models.length > 0 && (
             <SettingsRow
-              title={gt("Speech model")}
-              description={gt("Choose a speech model from the provider catalog.")}
+              title={gt("Model", { $context: "text-to-speech model setting" })}
+              description={gt("The {company} model that reads replies aloud.", {
+                company: CLOUD_SPEECH_PROVIDER_NAMES[cloudProvider],
+              })}
               control={
-                <Select
-                  value={model}
-                  onValueChange={(value) => {
-                    if (value) change({ model: value, voice: "" });
-                  }}
-                >
-                  <SelectTrigger size="sm" aria-label={gt("Read-aloud model")}>
-                    <SelectValue>
-                      {catalog.models.find((entry) => entry.id === model)?.name ||
-                        model ||
-                        gt("Choose a model")}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup align="end" alignItemWithTrigger={false}>
-                    {catalog.models.map((model) => (
-                      <SelectItem key={model.id} value={model.id}>
-                        {model.name}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
+                <div className="w-64 max-w-full">
+                  <CatalogCombobox
+                    items={catalog.models}
+                    value={model}
+                    onChange={(next) => {
+                      if (next && next !== model) change({ model: next, voice: "" });
+                    }}
+                    label={gt("Read-aloud model")}
+                    placeholder={gt("Search speech models")}
+                    empty={<T>No speech model matches.</T>}
+                  />
+                </div>
               }
             />
           )}
@@ -680,38 +674,31 @@ export function ReadAloudSettingsSection() {
               title={gt("Voice", { $context: "the speaker voice used to read text aloud" })}
               description={gt("An empty value uses the provider’s default voice.")}
               control={
-                voices.length ? (
-                  <Select
-                    value={settings.voice || "default"}
-                    onValueChange={(value) => {
-                      if (value) change({ voice: value === "default" ? "" : value });
-                    }}
-                  >
-                    <SelectTrigger size="sm" aria-label={gt("Read-aloud voice")}>
-                      <SelectValue>
-                        {voices.find((entry) => entry.id === settings.voice)?.name ||
-                          gt("Default", { $context: "default voice" })}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end" alignItemWithTrigger={false}>
-                      <SelectItem value="default">
-                        {gt("Default", { $context: "default voice" })}
-                      </SelectItem>
-                      {voices.map((voice) => (
-                        <SelectItem key={voice.id} value={voice.id}>
-                          {voice.name}
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                ) : (
-                  <Input
-                    aria-label={gt("Read-aloud voice")}
-                    placeholder={gt("Default voice")}
-                    value={settings.voice}
-                    onChange={(event) => change({ voice: event.target.value })}
-                  />
-                )
+                <div className="w-64 max-w-full">
+                  {voices.length ? (
+                    <CatalogCombobox
+                      items={[
+                        { id: "", name: gt("Default", { $context: "default voice" }) },
+                        ...voices,
+                      ]}
+                      value={settings.voice}
+                      onChange={(voice) => {
+                        if (voice !== settings.voice) change({ voice });
+                      }}
+                      label={gt("Read-aloud voice")}
+                      placeholder={gt("Search voices")}
+                      empty={<T>No voice matches.</T>}
+                      showIds={false}
+                    />
+                  ) : (
+                    <Input
+                      aria-label={gt("Read-aloud voice")}
+                      placeholder={gt("Default voice")}
+                      value={settings.voice}
+                      onChange={(event) => change({ voice: event.target.value })}
+                    />
+                  )}
+                </div>
               }
             />
           )}

@@ -13015,7 +13015,6 @@
   "951a30714876977f": "Codeblöcke beim Vorlesen überspringen",
   "26aafec418058787": "Auf diesem Gerät",
   "5a640ef031aed4a2": "Vorlese-Stimme",
-  "3fb69cb2e760f23d": "Sprachmodell",
   "81923647f1ef9740": "Sprachausgabe abbrechen",
   "60609aae479dd41c": "Das Modell konnte nicht heruntergeladen werden. Prüfen Sie die Verbindung und den Speicherplatz der Umgebung.",
   "c10f66d628754b10": "Geschwindigkeit",
@@ -13036,7 +13035,6 @@
   "0fed42221c860bd6": "Liest Fließtext und Inline-Bezeichner, ohne Codeblöcke vorzulesen.",
   "88f2bec553b72827": "Vorschau abspielen",
   "d33ab3b324ba0b36": "Vorlese-Modelle",
-  "2d2ee6c94580e79f": "Wählen Sie ein Sprachmodell aus dem Katalog des Anbieters.",
   "bff81cb00fc73544": "Wiedergabegeschwindigkeit.",
   "6793112a0a873441": "Schlüssel verwalten",
   "b9c9fc9b61d7243e": "Standardstimme",
@@ -13144,5 +13142,11 @@
   ],
   "b1404122fa62a7d8": "OpenRouter hat diese Anmeldung nicht akzeptiert. Melde dich erneut an.",
   "0d5aac55ed15a52c": "OpenRouter ist nicht erreichbar. Versuche es erneut.",
-  "796ab9d04e7b4f96": "Diese OpenRouter-Anmeldung ist abgelaufen. Melde dich erneut an."
+  "796ab9d04e7b4f96": "Diese OpenRouter-Anmeldung ist abgelaufen. Melde dich erneut an.",
+  "dc9228502657dbbb": "Modell",
+  "237c4c5de290ff24": "Das {company}-Modell, das Antworten vorliest.",
+  "82573760cc3a84a0": "Sprachmodelle suchen",
+  "f53ecfde9e26b2b9": "Stimmen suchen",
+  "172bd168010e1783": "Kein Sprachmodell passt.",
+  "15cf1e5f6faf65ee": "Keine Stimme passt."
 }

@@ -13022,7 +13022,6 @@
   "951a30714876977f": "Hoppa över kodblock vid uppläsning",
   "26aafec418058787": "På den här enheten",
   "5a640ef031aed4a2": "Uppläsningsröst",
-  "3fb69cb2e760f23d": "Talmodell",
   "81923647f1ef9740": "Avbryt talgenereringen",
   "60609aae479dd41c": "Det gick inte att ladda ned modellen. Kontrollera miljöns anslutning och diskutrymme.",
   "c10f66d628754b10": "Hastighet",
@@ -13043,7 +13042,6 @@
   "0fed42221c860bd6": "Läser upp text och inbäddade identifierare utan att läsa upp kodblock.",
   "88f2bec553b72827": "Spela upp förhandsvisning",
   "d33ab3b324ba0b36": "Uppläsningsmodeller",
-  "2d2ee6c94580e79f": "Välj en talmodell från leverantörens katalog.",
   "bff81cb00fc73544": "Uppspelningshastighet.",
   "6793112a0a873441": "Hantera nyckel",
   "b9c9fc9b61d7243e": "Standardröst",
@@ -13151,5 +13149,11 @@
   ],
   "b1404122fa62a7d8": "OpenRouter godtog inte den här inloggningen. Logga in igen.",
   "0d5aac55ed15a52c": "Det gick inte att nå OpenRouter. Försök igen.",
-  "796ab9d04e7b4f96": "Den här OpenRouter-inloggningen har gått ut. Logga in igen."
+  "796ab9d04e7b4f96": "Den här OpenRouter-inloggningen har gått ut. Logga in igen.",
+  "dc9228502657dbbb": "Modell",
+  "237c4c5de290ff24": "{company}-modellen som läser upp svar.",
+  "82573760cc3a84a0": "Sök talmodeller",
+  "f53ecfde9e26b2b9": "Sök röster",
+  "172bd168010e1783": "Ingen talmodell matchar.",
+  "15cf1e5f6faf65ee": "Ingen röst matchar."
 }

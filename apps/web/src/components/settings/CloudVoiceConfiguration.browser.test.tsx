@@ -316,7 +316,7 @@ it("confirms a read-aloud provider in its key dialog, after the key lookup", asy
         await expect.element(provider).toHaveTextContent("Grok TTS via Laptop");
         await expect
           .element(screen.getByRole("combobox", { name: "Read-aloud model" }))
-          .toHaveTextContent("Server default");
+          .toHaveValue("Server default");
       },
     );
   } finally {

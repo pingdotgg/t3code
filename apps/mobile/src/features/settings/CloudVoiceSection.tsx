@@ -3,6 +3,7 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { cloudSpeechDisclosure } from "@t3tools/shared/speechCopy";
 import { setCloudSpeechKey } from "@t3tools/client-runtime/voice-input";
 import { OpenRouterSignIn } from "./OpenRouterSignIn";
+import { CatalogPicker } from "./CatalogPicker";
 import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import {
   configuredSecretSources,
@@ -49,7 +50,6 @@ import {
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
 type Props = { environment: EnvironmentPresentation; active: CloudDestination | null };
 const isApiKey = Schema.is(CloudSpeechApiKey);
-const MODEL_ROWS = 6;
 
 /** The cloud method row for one environment; opens the provider sheet. */
 export function CloudVoiceChoice({
@@ -102,17 +102,13 @@ function ModelPicker({
   onChange: (model: CloudSpeechModelId) => void;
 }) {
   const gt = useGT();
-  const [query, setQuery] = useState("");
-  const [showAll, setShowAll] = useState(false);
-  const needle = query.trim().toLowerCase();
-  const selected = models.find((model) => model.id === value);
-  const matches = models.filter((model) =>
-    `${model.name} ${model.id}`.toLowerCase().includes(needle),
-  );
-  const shown = showAll ? matches : matches.slice(0, MODEL_ROWS);
   const delisted = current !== undefined && !models.some((model) => model.id === current);
   return (
-    <ListSection
+    <CatalogPicker
+      items={models}
+      value={value}
+      disabled={disabled}
+      onChange={(model) => onChange(model.id)}
       title={gt("Model")}
       footer={
         delisted
@@ -122,58 +118,15 @@ function ModelPicker({
             )
           : undefined
       }
-    >
-      <View className="px-4 py-3">
-        <TextInput
-          accessibilityLabel={gt("Search {provider} models", { provider: "OpenRouter" })}
-          placeholder={gt("Search transcription models")}
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!disabled}
-          value={query}
-          onChangeText={setQuery}
-          className="rounded-lg bg-background px-3 py-2 text-foreground"
-        />
-      </View>
-      {selected && !shown.some((model) => model.id === selected.id) ? (
-        <ListChoiceRow
-          label={selected.name}
-          description={selected.id}
-          selected
-          separated
-          disabled={disabled}
-          onPress={() => {}}
-        />
-      ) : null}
-      {shown.map((model) => (
-        <ListChoiceRow
-          key={model.id}
-          label={model.name}
-          description={model.id}
-          selected={model.id === value}
-          separated
-          disabled={disabled}
-          onPress={() => onChange(model.id)}
-        />
-      ))}
-      {matches.length === 0 ? (
-        <Separated>
-          <Text className="px-4 py-3 text-sm text-foreground-muted">
-            <T>No transcription model matches.</T>
-          </Text>
-        </Separated>
-      ) : matches.length > shown.length ? (
-        <Separated>
-          <ListActionRow
-            label={gt(
-              "{count, plural, one {Show all {count} models} other {Show all {count} models}}",
-              { count: matches.length },
-            )}
-            onPress={() => setShowAll(true)}
-          />
-        </Separated>
-      ) : null}
-    </ListSection>
+      searchLabel={gt("Search {provider} models", { provider: "OpenRouter" })}
+      placeholder={gt("Search transcription models")}
+      empty={<T>No transcription model matches.</T>}
+      showAllLabel={(count) =>
+        gt("{count, plural, one {Show all {count} models} other {Show all {count} models}}", {
+          count,
+        })
+      }
+    />
   );
 }
 

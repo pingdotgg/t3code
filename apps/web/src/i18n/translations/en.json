@@ -13024,7 +13024,6 @@
   "951a30714876977f": "Skip code blocks when reading",
   "26aafec418058787": "On this device",
   "5a640ef031aed4a2": "Read-aloud voice",
-  "3fb69cb2e760f23d": "Speech model",
   "81923647f1ef9740": "Cancel speech generation",
   "60609aae479dd41c": "Could not download the model. Check the environment’s connection and disk space.",
   "c10f66d628754b10": "Speed",
@@ -13045,7 +13044,6 @@
   "0fed42221c860bd6": "Read the prose and inline identifiers without narrating fenced code blocks.",
   "88f2bec553b72827": "Play preview",
   "d33ab3b324ba0b36": "Read-aloud models",
-  "2d2ee6c94580e79f": "Choose a speech model from the provider catalog.",
   "bff81cb00fc73544": "Playback speed.",
   "6793112a0a873441": "Manage key",
   "b9c9fc9b61d7243e": "Default voice",
@@ -13157,5 +13155,11 @@
   ],
   "b1404122fa62a7d8": "OpenRouter didn’t accept this sign-in. Sign in again.",
   "0d5aac55ed15a52c": "Couldn’t reach OpenRouter. Try again.",
-  "796ab9d04e7b4f96": "This OpenRouter sign-in expired. Sign in again."
+  "796ab9d04e7b4f96": "This OpenRouter sign-in expired. Sign in again.",
+  "dc9228502657dbbb": "Model",
+  "237c4c5de290ff24": "The {company} model that reads replies aloud.",
+  "82573760cc3a84a0": "Search speech models",
+  "f53ecfde9e26b2b9": "Search voices",
+  "172bd168010e1783": "No speech model matches.",
+  "15cf1e5f6faf65ee": "No voice matches."
 }

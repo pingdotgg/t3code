@@ -5716,7 +5716,6 @@
   "7ff35ae96a60e0a9": "Provedores hospedados recebem o texto pelo ambiente selecionado, usam cobrança por API e compartilham chaves com o ditado. Um modelo local é executado nesse ambiente. A reprodução para quando você sai da conversa.",
   "8ee326cccca4ffe0": "{percent}% baixado",
   "15126dd4380d9809": "{speed}×",
-  "3fb69cb2e760f23d": "Modelo de voz",
   "61088464d1b7174d": "ambiente indisponível",
   "8cbd6854fc18ea5d": "Ambiente indisponível",
   "b9c9fc9b61d7243e": "Voz padrão",
@@ -5758,5 +5757,11 @@
   "bc5e8f45269a432e": "ou cole uma chave de API",
   "b1404122fa62a7d8": "O OpenRouter não aceitou este login. Entre novamente.",
   "0d5aac55ed15a52c": "Não foi possível acessar o OpenRouter. Tente novamente.",
-  "796ab9d04e7b4f96": "Este login do OpenRouter expirou. Entre novamente."
+  "796ab9d04e7b4f96": "Este login do OpenRouter expirou. Entre novamente.",
+  "dc9228502657dbbb": "Modelo",
+  "82573760cc3a84a0": "Pesquisar modelos de voz",
+  "f53ecfde9e26b2b9": "Pesquisar vozes",
+  "8316084813411801": "{count, plural, one {Mostrar a voz} other {Mostrar todas as {count} vozes}}",
+  "172bd168010e1783": "Nenhum modelo de voz corresponde.",
+  "15cf1e5f6faf65ee": "Nenhuma voz corresponde."
 }

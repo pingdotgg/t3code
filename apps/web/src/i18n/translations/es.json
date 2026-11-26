@@ -13010,7 +13010,6 @@
   "951a30714876977f": "Omitir bloques de código al leer",
   "26aafec418058787": "En este dispositivo",
   "5a640ef031aed4a2": "Voz de lectura en voz alta",
-  "3fb69cb2e760f23d": "Modelo de voz",
   "81923647f1ef9740": "Cancelar la generación de voz",
   "60609aae479dd41c": "No se pudo descargar el modelo. Comprueba la conexión y el espacio en disco del entorno.",
   "c10f66d628754b10": "Velocidad",
@@ -13031,7 +13030,6 @@
   "0fed42221c860bd6": "Lee la prosa y los identificadores en línea sin narrar los bloques de código.",
   "88f2bec553b72827": "Reproducir vista previa",
   "d33ab3b324ba0b36": "Modelos de lectura en voz alta",
-  "2d2ee6c94580e79f": "Elige un modelo de voz del catálogo del proveedor.",
   "bff81cb00fc73544": "Velocidad de reproducción.",
   "6793112a0a873441": "Gestionar clave",
   "b9c9fc9b61d7243e": "Voz predeterminada",
@@ -13139,5 +13137,11 @@
   ],
   "b1404122fa62a7d8": "OpenRouter no aceptó este inicio de sesión. Vuelve a iniciar sesión.",
   "0d5aac55ed15a52c": "No se pudo contactar con OpenRouter. Inténtalo de nuevo.",
-  "796ab9d04e7b4f96": "Este inicio de sesión de OpenRouter caducó. Vuelve a iniciar sesión."
+  "796ab9d04e7b4f96": "Este inicio de sesión de OpenRouter caducó. Vuelve a iniciar sesión.",
+  "dc9228502657dbbb": "Modelo",
+  "237c4c5de290ff24": "El modelo de {company} que lee las respuestas en voz alta.",
+  "82573760cc3a84a0": "Buscar modelos de voz",
+  "f53ecfde9e26b2b9": "Buscar voces",
+  "172bd168010e1783": "Ningún modelo de voz coincide.",
+  "15cf1e5f6faf65ee": "Ninguna voz coincide."
 }

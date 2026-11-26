@@ -5716,7 +5716,6 @@
   "7ff35ae96a60e0a9": "Los proveedores alojados reciben el texto a través del entorno seleccionado, usan facturación por API y comparten claves con el dictado. Un modelo local se ejecuta en ese entorno. La reproducción se detiene al salir del hilo.",
   "8ee326cccca4ffe0": "{percent}% descargado",
   "15126dd4380d9809": "{speed}×",
-  "3fb69cb2e760f23d": "Modelo de voz",
   "61088464d1b7174d": "entorno no disponible",
   "8cbd6854fc18ea5d": "Entorno no disponible",
   "b9c9fc9b61d7243e": "Voz predeterminada",
@@ -5758,5 +5757,11 @@
   "bc5e8f45269a432e": "o pega una clave de API",
   "b1404122fa62a7d8": "OpenRouter no aceptó este inicio de sesión. Vuelve a iniciar sesión.",
   "0d5aac55ed15a52c": "No se pudo contactar con OpenRouter. Inténtalo de nuevo.",
-  "796ab9d04e7b4f96": "Este inicio de sesión de OpenRouter caducó. Vuelve a iniciar sesión."
+  "796ab9d04e7b4f96": "Este inicio de sesión de OpenRouter caducó. Vuelve a iniciar sesión.",
+  "dc9228502657dbbb": "Modelo",
+  "82573760cc3a84a0": "Buscar modelos de voz",
+  "f53ecfde9e26b2b9": "Buscar voces",
+  "8316084813411801": "{count, plural, one {Mostrar {count} voz} other {Mostrar las {count} voces}}",
+  "172bd168010e1783": "Ningún modelo de voz coincide.",
+  "15cf1e5f6faf65ee": "Ninguna voz coincide."
 }

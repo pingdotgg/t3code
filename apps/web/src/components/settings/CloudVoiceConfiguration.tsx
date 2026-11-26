@@ -45,15 +45,7 @@ import {
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { Button } from "../ui/button";
-import {
-  Combobox,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxPopup,
-  useComboboxFilter,
-} from "../ui/combobox";
+import { CatalogCombobox } from "./CatalogCombobox";
 import {
   Dialog,
   DialogDescription,
@@ -103,45 +95,20 @@ function ModelPicker({
   current: string | undefined;
 }) {
   const gt = useGT();
-  const { contains } = useComboboxFilter();
   const selected = models.find((model) => model.id === value) ?? null;
   const delisted = current !== undefined && !models.some((model) => model.id === current);
   return (
     <div className="grid gap-1">
-      <Combobox
+      <CatalogCombobox
         items={models}
-        itemToStringLabel={(model: CloudSpeechModel) => model.name}
-        itemToStringValue={(model: CloudSpeechModel) => model.id}
-        filter={(model: CloudSpeechModel, query) =>
-          contains(model.name, query) || contains(model.id, query)
-        }
-        value={selected}
-        onValueChange={(model) => onChange(model?.id ?? "")}
-        autoHighlight
+        value={value}
+        onChange={onChange}
         disabled={disabled}
-      >
-        <ComboboxInput
-          id="voice-cloud-model"
-          aria-label={gt("OpenRouter model")}
-          placeholder={gt("Search transcription models")}
-          size="sm"
-        />
-        <ComboboxPopup>
-          <ComboboxEmpty>
-            <T>No transcription model matches.</T>
-          </ComboboxEmpty>
-          <ComboboxList scrollAreaClassName="max-h-64">
-            {(model: CloudSpeechModel) => (
-              <ComboboxItem key={model.id} value={model}>
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate">{model.name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{model.id}</span>
-                </span>
-              </ComboboxItem>
-            )}
-          </ComboboxList>
-        </ComboboxPopup>
-      </Combobox>
+        id="voice-cloud-model"
+        label={gt("OpenRouter model")}
+        placeholder={gt("Search transcription models")}
+        empty={<T>No transcription model matches.</T>}
+      />
       {delisted ? (
         <p className="text-sm text-destructive" role="alert">
           <T>

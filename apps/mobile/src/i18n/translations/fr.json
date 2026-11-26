@@ -5716,7 +5716,6 @@
   "7ff35ae96a60e0a9": "Les fournisseurs hébergés reçoivent le texte via l’environnement sélectionné, utilisent la facturation d’API et partagent leurs clés avec la dictée. Un modèle local s’exécute sur cet environnement. La lecture s’arrête lorsque vous quittez le fil.",
   "8ee326cccca4ffe0": "{percent} % téléchargé",
   "15126dd4380d9809": "{speed}×",
-  "3fb69cb2e760f23d": "Modèle vocal",
   "61088464d1b7174d": "environnement indisponible",
   "8cbd6854fc18ea5d": "Environnement indisponible",
   "b9c9fc9b61d7243e": "Voix par défaut",
@@ -5758,5 +5757,11 @@
   "bc5e8f45269a432e": "ou collez une clé d’API",
   "b1404122fa62a7d8": "OpenRouter n’a pas accepté cette connexion. Reconnectez-vous.",
   "0d5aac55ed15a52c": "Impossible de joindre OpenRouter. Réessayez.",
-  "796ab9d04e7b4f96": "Cette connexion OpenRouter a expiré. Reconnectez-vous."
+  "796ab9d04e7b4f96": "Cette connexion OpenRouter a expiré. Reconnectez-vous.",
+  "dc9228502657dbbb": "Modèle",
+  "82573760cc3a84a0": "Rechercher des modèles vocaux",
+  "f53ecfde9e26b2b9": "Rechercher des voix",
+  "8316084813411801": "{count, plural, one {Afficher la voix} other {Afficher les {count} voix}}",
+  "172bd168010e1783": "Aucun modèle vocal ne correspond.",
+  "15cf1e5f6faf65ee": "Aucune voix ne correspond."
 }

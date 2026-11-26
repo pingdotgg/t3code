@@ -5724,7 +5724,6 @@
   "7ff35ae96a60e0a9": "Hosted providers receive response text through your selected environment, use API billing, and share keys with dictation. A local model runs on that environment. Playback stops when you leave the thread.",
   "8ee326cccca4ffe0": "{percent}% downloaded",
   "15126dd4380d9809": "{speed}×",
-  "3fb69cb2e760f23d": "Speech model",
   "61088464d1b7174d": "unavailable environment",
   "8cbd6854fc18ea5d": "Unavailable environment",
   "b9c9fc9b61d7243e": "Default voice",
@@ -5766,5 +5765,11 @@
   "bc5e8f45269a432e": "or paste an API key",
   "b1404122fa62a7d8": "OpenRouter didn’t accept this sign-in. Sign in again.",
   "0d5aac55ed15a52c": "Couldn’t reach OpenRouter. Try again.",
-  "796ab9d04e7b4f96": "This OpenRouter sign-in expired. Sign in again."
+  "796ab9d04e7b4f96": "This OpenRouter sign-in expired. Sign in again.",
+  "dc9228502657dbbb": "Model",
+  "82573760cc3a84a0": "Search speech models",
+  "f53ecfde9e26b2b9": "Search voices",
+  "8316084813411801": "{count, plural, one {Show all {count} voices} other {Show all {count} voices}}",
+  "172bd168010e1783": "No speech model matches.",
+  "15cf1e5f6faf65ee": "No voice matches."
 }

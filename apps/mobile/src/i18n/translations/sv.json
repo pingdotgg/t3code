@@ -5722,7 +5722,6 @@
   "7ff35ae96a60e0a9": "Värdbaserade leverantörer tar emot svarstexten via den valda miljön, debiteras via API och delar nycklar med dikteringen. En lokal modell körs på den miljön. Uppspelningen stoppas när du lämnar tråden.",
   "8ee326cccca4ffe0": "{percent} % nedladdat",
   "15126dd4380d9809": "{speed}×",
-  "3fb69cb2e760f23d": "Talmodell",
   "61088464d1b7174d": "otillgänglig miljö",
   "8cbd6854fc18ea5d": "Otillgänglig miljö",
   "b9c9fc9b61d7243e": "Standardröst",
@@ -5764,5 +5763,11 @@
   "bc5e8f45269a432e": "eller klistra in en API-nyckel",
   "b1404122fa62a7d8": "OpenRouter godtog inte den här inloggningen. Logga in igen.",
   "0d5aac55ed15a52c": "Det gick inte att nå OpenRouter. Försök igen.",
-  "796ab9d04e7b4f96": "Den här OpenRouter-inloggningen har gått ut. Logga in igen."
+  "796ab9d04e7b4f96": "Den här OpenRouter-inloggningen har gått ut. Logga in igen.",
+  "dc9228502657dbbb": "Modell",
+  "82573760cc3a84a0": "Sök talmodeller",
+  "f53ecfde9e26b2b9": "Sök röster",
+  "8316084813411801": "{count, plural, one {Visa alla {count} röster} other {Visa alla {count} röster}}",
+  "172bd168010e1783": "Ingen talmodell matchar.",
+  "15cf1e5f6faf65ee": "Ingen röst matchar."
 }

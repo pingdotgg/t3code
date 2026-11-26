@@ -13015,7 +13015,6 @@
   "951a30714876977f": "Pular blocos de código ao ler",
   "26aafec418058787": "Neste dispositivo",
   "5a640ef031aed4a2": "Voz de leitura em voz alta",
-  "3fb69cb2e760f23d": "Modelo de voz",
   "81923647f1ef9740": "Cancelar geração de voz",
   "60609aae479dd41c": "Não foi possível baixar o modelo. Verifique a conexão e o espaço em disco do ambiente.",
   "c10f66d628754b10": "Velocidade",
@@ -13036,7 +13035,6 @@
   "0fed42221c860bd6": "Lê o texto e os identificadores em linha sem narrar os blocos de código.",
   "88f2bec553b72827": "Reproduzir prévia",
   "d33ab3b324ba0b36": "Modelos de leitura em voz alta",
-  "2d2ee6c94580e79f": "Escolha um modelo de voz do catálogo do provedor.",
   "bff81cb00fc73544": "Velocidade de reprodução.",
   "6793112a0a873441": "Gerenciar chave",
   "b9c9fc9b61d7243e": "Voz padrão",
@@ -13144,5 +13142,11 @@
   ],
   "b1404122fa62a7d8": "O OpenRouter não aceitou este login. Entre novamente.",
   "0d5aac55ed15a52c": "Não foi possível acessar o OpenRouter. Tente novamente.",
-  "796ab9d04e7b4f96": "Este login do OpenRouter expirou. Entre novamente."
+  "796ab9d04e7b4f96": "Este login do OpenRouter expirou. Entre novamente.",
+  "dc9228502657dbbb": "Modelo",
+  "237c4c5de290ff24": "O modelo da {company} que lê as respostas em voz alta.",
+  "82573760cc3a84a0": "Pesquisar modelos de voz",
+  "f53ecfde9e26b2b9": "Pesquisar vozes",
+  "172bd168010e1783": "Nenhum modelo de voz corresponde.",
+  "15cf1e5f6faf65ee": "Nenhuma voz corresponde."
 }

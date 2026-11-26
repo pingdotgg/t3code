@@ -13015,7 +13015,6 @@
   "951a30714876977f": "Ignorer les blocs de code pendant la lecture",
   "26aafec418058787": "Sur cet appareil",
   "5a640ef031aed4a2": "Voix de lecture à voix haute",
-  "3fb69cb2e760f23d": "Modèle vocal",
   "81923647f1ef9740": "Annuler la génération vocale",
   "60609aae479dd41c": "Impossible de télécharger le modèle. Vérifiez la connexion et l’espace disque de l’environnement.",
   "c10f66d628754b10": "Vitesse",
@@ -13036,7 +13035,6 @@
   "0fed42221c860bd6": "Lit le texte et les identifiants en ligne sans lire les blocs de code.",
   "88f2bec553b72827": "Lire l’aperçu",
   "d33ab3b324ba0b36": "Modèles de lecture à voix haute",
-  "2d2ee6c94580e79f": "Choisissez un modèle vocal dans le catalogue du fournisseur.",
   "bff81cb00fc73544": "Vitesse de lecture.",
   "6793112a0a873441": "Gérer la clé",
   "b9c9fc9b61d7243e": "Voix par défaut",
@@ -13144,5 +13142,11 @@
   ],
   "b1404122fa62a7d8": "OpenRouter n’a pas accepté cette connexion. Reconnectez-vous.",
   "0d5aac55ed15a52c": "Impossible de joindre OpenRouter. Réessayez.",
-  "796ab9d04e7b4f96": "Cette connexion OpenRouter a expiré. Reconnectez-vous."
+  "796ab9d04e7b4f96": "Cette connexion OpenRouter a expiré. Reconnectez-vous.",
+  "dc9228502657dbbb": "Modèle",
+  "237c4c5de290ff24": "Le modèle {company} qui lit les réponses à voix haute.",
+  "82573760cc3a84a0": "Rechercher des modèles vocaux",
+  "f53ecfde9e26b2b9": "Rechercher des voix",
+  "172bd168010e1783": "Aucun modèle vocal ne correspond.",
+  "15cf1e5f6faf65ee": "Aucune voix ne correspond."
 }

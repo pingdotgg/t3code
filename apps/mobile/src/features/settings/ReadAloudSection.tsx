@@ -3,7 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import * as Speech from "expo-speech";
-import { useGT, useLocale } from "gt-react-native";
+import { T, useGT, useLocale } from "gt-react-native";
 import { ScrollView, TextInput, View } from "react-native";
 import {
   AuthSettingsWriteScope,
@@ -34,6 +34,7 @@ import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { Sheet } from "../../components/ui/Sheet";
 import { Button } from "../../components/ui/Button";
 import { OpenRouterSignIn } from "./OpenRouterSignIn";
+import { CatalogPicker } from "./CatalogPicker";
 import { runSpeech } from "../voice-input/voiceDestination";
 import { readAloudController } from "../read-aloud/playback";
 
@@ -229,7 +230,7 @@ export function ReadAloudSection() {
               catalog.supportsModelSelection &&
               catalog.models.length > 0 && (
                 <ListActionRow
-                  label={gt("Speech model")}
+                  label={gt("Model", { $context: "text-to-speech model setting" })}
                   detail={selectedModel?.name || model || gt("Choose a model")}
                   onPress={() => setSheet("model")}
                 />
@@ -409,7 +410,7 @@ export function ReadAloudSection() {
             sheet === "source"
               ? gt("Speech provider")
               : sheet === "model"
-                ? gt("Speech model")
+                ? gt("Model", { $context: "text-to-speech model setting" })
                 : gt("Voice", { $context: "the speaker voice used to read text aloud" })
           }
           onClose={() => setSheet(null)}
@@ -485,37 +486,45 @@ export function ReadAloudSection() {
                 ))}
               </>
             ) : sheet === "model" ? (
+              <CatalogPicker
+                items={catalog.models}
+                value={settings.model || catalog.defaultModel}
+                onChange={(model) => {
+                  change({ model: model.id, voice: "" });
+                  setSheet(null);
+                }}
+                searchLabel={gt("Search speech models")}
+                placeholder={gt("Search speech models")}
+                empty={<T>No speech model matches.</T>}
+                showAllLabel={(count) =>
+                  gt(
+                    "{count, plural, one {Show all {count} models} other {Show all {count} models}}",
+                    {
+                      count,
+                    },
+                  )
+                }
+                describe={(model) =>
+                  model.install
+                    ? model.id === catalog.defaultModel
+                      ? gt("Recommended")
+                      : undefined
+                    : model.id
+                }
+              />
+            ) : voiceChoices.length === 0 ? (
               <ListSection>
-                {catalog.models.map((model) => (
-                  <ListChoiceRow
-                    key={model.id}
-                    label={model.name}
-                    {...(model.install && model.id === catalog.defaultModel
-                      ? { description: gt("Recommended") }
-                      : {})}
-                    selected={(settings.model || catalog.defaultModel) === model.id}
-                    onPress={() => {
-                      change({ model: model.id, voice: "" });
-                      setSheet(null);
-                    }}
+                <View className="p-4">
+                  <TextInput
+                    accessibilityLabel={gt("Read-aloud voice")}
+                    placeholder={gt("Default voice")}
+                    value={settings.voice}
+                    onChangeText={(voice) => change({ voice })}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="rounded-lg border border-border-subtle px-3 py-2 text-foreground"
                   />
-                ))}
-              </ListSection>
-            ) : (
-              <ListSection>
-                {voiceChoices.length === 0 && (
-                  <View className="p-4">
-                    <TextInput
-                      accessibilityLabel={gt("Read-aloud voice")}
-                      placeholder={gt("Default voice")}
-                      value={settings.voice}
-                      onChangeText={(voice) => change({ voice })}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      className="rounded-lg border border-border-subtle px-3 py-2 text-foreground"
-                    />
-                  </View>
-                )}
+                </View>
                 <ListChoiceRow
                   label={gt("Default", { $context: "default voice" })}
                   selected={!settings.voice}
@@ -524,18 +533,31 @@ export function ReadAloudSection() {
                     setSheet(null);
                   }}
                 />
-                {voiceChoices.map((voice) => (
-                  <ListChoiceRow
-                    key={voice.id}
-                    label={voice.name}
-                    selected={settings.voice === voice.id}
-                    onPress={() => {
-                      change({ voice: voice.id });
-                      setSheet(null);
-                    }}
-                  />
-                ))}
               </ListSection>
+            ) : (
+              <CatalogPicker
+                items={[
+                  { id: "", name: gt("Default", { $context: "default voice" }) },
+                  ...voiceChoices,
+                ]}
+                value={settings.voice}
+                onChange={(voice) => {
+                  change({ voice: voice.id });
+                  setSheet(null);
+                }}
+                searchLabel={gt("Search voices")}
+                placeholder={gt("Search voices")}
+                empty={<T>No voice matches.</T>}
+                showAllLabel={(count) =>
+                  gt(
+                    "{count, plural, one {Show all {count} voices} other {Show all {count} voices}}",
+                    {
+                      count,
+                    },
+                  )
+                }
+                describe={() => undefined}
+              />
             )}
           </ScrollView>
         </Sheet>
