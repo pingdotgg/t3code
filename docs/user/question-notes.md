@@ -8,5 +8,5 @@ When an agent asks you to pick from options, you can pick and also add a note, s
 ## Behavior
 
 - **One note per question**: A note covers everything you picked for that question.
-- **Nothing picked**: Typed text with no option picked is your own answer, as before.
+- **Nothing picked**: Typed text with no option picked is your own answer, as before. Tap a picked option again to clear it.
 - **Which agents**: Claude, Codex and Grok take notes, as do agents whose questions come with an "Other" text field. Where an agent can't take one, typing replaces the pick as before, and the field asks for your own answer instead of a note. Requires an up-to-date server.

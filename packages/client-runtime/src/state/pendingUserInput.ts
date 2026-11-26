@@ -181,6 +181,15 @@ export function togglePendingUserInputOptionSelection(
     };
   }
 
+  // With a note in play, tapping the pick again clears it so the text can be the answer.
+  if (
+    takesNote(question) &&
+    normalizeSelectedOptionValues(question, draft?.selectedOptionValues).includes(
+      resolvedOptionValue,
+    )
+  ) {
+    return { customAnswer };
+  }
   return {
     customAnswer,
     selectedOptionValues: [resolvedOptionValue],

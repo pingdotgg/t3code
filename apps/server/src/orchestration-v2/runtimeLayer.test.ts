@@ -2987,8 +2987,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       for (const [index, invalid] of [
         // The question does not take notes.
         { answers: { color: "Blue", shade: "Red" }, notesByQuestionId: { shade: "darker" } },
-        // Typed text with no pick is the answer, not a note.
-        { answers: { color: "Teal", shade: "Red" }, notesByQuestionId: { color: "darker" } },
+        // A note needs an answer to sit beside.
+        { answers: { color: " ", shade: "Red" }, notesByQuestionId: { color: "darker" } },
       ].entries()) {
         const result = yield* orchestrator
           .dispatch({

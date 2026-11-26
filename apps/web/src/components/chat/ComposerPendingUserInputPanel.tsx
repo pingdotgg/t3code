@@ -134,7 +134,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   const handleOptionSelection = (questionId: string, optionValue: string) => {
     if (disabled || isResponding) return;
-    if (activeQuestion?.multiSelect) {
+    const clearsPick =
+      activeQuestion?.supportsNote === true && progress.selectedOptionValues.includes(optionValue);
+    if (activeQuestion?.multiSelect || clearsPick) {
       onToggleOption(questionId, optionValue);
       return;
     }

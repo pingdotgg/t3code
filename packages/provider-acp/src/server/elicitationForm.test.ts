@@ -84,7 +84,7 @@ describe("parseElicitationForm", () => {
       form.questions.map((question) => question.supportsNote),
       [true, true],
     );
-    assert.deepStrictEqual(form.content({ q0: ["Yes", "but on a new host"], q1: "No" }), {
+    assert.deepStrictEqual(form.content({ q0: "Yes", q1: "No" }, { q0: "but on a new host" }), {
       q0: "Yes",
       q0__other: "but on a new host",
       q1: "No",

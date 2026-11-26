@@ -1,6 +1,5 @@
 import type {
   OrchestrationV2ThreadLinkMetadata,
-  OrchestrationV2UserInputQuestion,
   GuestShareId,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -234,13 +233,6 @@ import * as ServerSettings from "../serverSettings.ts";
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
-
-// A note rides with picked options only; typed text with no pick is the answer itself.
-function answerPicksOptions(question: OrchestrationV2UserInputQuestion, answer: unknown): boolean {
-  const values = typeof answer === "string" ? [answer] : Array.isArray(answer) ? answer : [];
-  const offered = new Set(question.options.map((option) => option.value ?? option.label));
-  return values.length > 0 && values.every((value) => offered.has(value));
-}
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -11724,17 +11716,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (notesByQuestionId !== undefined) {
         const questions =
           approvalTurnItem?.type === "user_input_request" ? approvalTurnItem.questions : [];
-        const notesFit = Object.keys(notesByQuestionId).every((questionId) => {
-          const question = questions.find((entry) => entry.id === questionId);
-          return (
-            question?.supportsNote === true && answerPicksOptions(question, answers?.[questionId])
-          );
-        });
+        // Attachment paths may already follow the picks, so only the answer's presence is checked.
+        const notesFit = Object.keys(notesByQuestionId).every(
+          (questionId) =>
+            questions.some((entry) => entry.id === questionId && entry.supportsNote === true) &&
+            isMessageQuestionAnswer(answers?.[questionId]),
+        );
         if (!notesFit) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: "Only a question that takes notes can carry one, alongside a picked option.",
+            cause: "Only an answered question that takes notes can carry one.",
           });
         }
       }

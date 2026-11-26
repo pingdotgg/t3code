@@ -339,6 +339,17 @@ describe("question notes", () => {
     expect(buildPendingUserInputNotes([multiNoteQuestion], { targets: cleared })).toEqual({});
   });
 
+  it("clears a single pick on a second tap, so the typed text becomes the answer", () => {
+    const picked = togglePendingUserInputOptionSelection(noteQuestion, undefined, "Node.js");
+    const typed = setPendingUserInputCustomAnswer(noteQuestion, picked, "Deno instead");
+    const cleared = togglePendingUserInputOptionSelection(noteQuestion, typed, "Node.js");
+
+    expect(buildPendingUserInputAnswers([noteQuestion], { scope: cleared })).toEqual({
+      scope: "Deno instead",
+    });
+    expect(buildPendingUserInputNotes([noteQuestion], { scope: cleared })).toEqual({});
+  });
+
   it("keeps the old behavior for a question that does not take notes", () => {
     const picked = togglePendingUserInputOptionSelection(
       singleSelectQuestion,

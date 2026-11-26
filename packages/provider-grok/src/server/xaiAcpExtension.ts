@@ -1,4 +1,8 @@
-import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
+import type {
+  ProviderUserInputAnswers,
+  UserInputNotes,
+  UserInputQuestion,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1152,7 +1156,6 @@ export function extractXAiAskUserQuestions(
     header: "Question",
     question: question.question,
     multiSelect: question.multiSelect === true,
-    // Typed text that is not an option label reaches Grok as the question's `notes`.
     ...(question.options.length > 0 ? { supportsNote: true } : {}),
     options:
       question.options.length > 0
@@ -1210,6 +1213,7 @@ function answerValues(answer: unknown): ReadonlyArray<string> {
 function normalizeAnswerForXAi(
   question: XAiAskUserQuestionRequestParams["questions"][number],
   answer: unknown,
+  note: string | undefined,
 ): NormalizedXAiAnswer | undefined {
   const values = answerValues(answer);
   if (values.length === 0) {
@@ -1224,7 +1228,10 @@ function normalizeAnswerForXAi(
     option: optionByLabel.get(value),
   }));
   const selectedLabels = resolvedValues.flatMap(({ option }) => (option ? [option.label] : []));
-  const notes = resolvedValues.flatMap(({ option, value }) => (option ? [] : [value]));
+  const notes = [
+    ...resolvedValues.flatMap(({ option, value }) => (option ? [] : [value])),
+    ...(note === undefined ? [] : [note]),
+  ];
   const preview =
     question.multiSelect === true
       ? undefined
@@ -1245,10 +1252,10 @@ function normalizeAnswerForXAi(
   };
 }
 
-function findQuestionAnswer(
-  answers: ProviderUserInputAnswers,
+function findQuestionAnswer<A>(
+  answers: Readonly<Record<string, A>>,
   question: XAiAskUserQuestionRequestParams["questions"][number],
-): unknown {
+): A | undefined {
   const key = question.id ?? question.question;
   return answers[key] ?? answers[question.question];
 }
@@ -1256,10 +1263,15 @@ function findQuestionAnswer(
 export function makeXAiAskUserQuestionResponse(
   params: XAiAskUserQuestionRequest,
   answers: ProviderUserInputAnswers,
+  notesByQuestionId: UserInputNotes = {},
 ): XAiAskUserQuestionAcceptedResponse {
   const questions = unwrapAskUserQuestionParams(params).questions;
   const normalized = questions.flatMap((question) => {
-    const entry = normalizeAnswerForXAi(question, findQuestionAnswer(answers, question));
+    const entry = normalizeAnswerForXAi(
+      question,
+      findQuestionAnswer(answers, question),
+      findQuestionAnswer(notesByQuestionId, question),
+    );
     return entry ? [entry] : [];
   });
   const annotations = Object.fromEntries(

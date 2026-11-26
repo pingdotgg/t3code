@@ -28,7 +28,6 @@ import {
   XAiAskUserQuestionRequest,
 } from "./xaiAcpExtension.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { withAcpNoteEntries } from "@t3tools/provider-acp/server/adapter";
 import {
   type AcpToolCallState,
   extractMcpToolCallIdentity,
@@ -1199,13 +1198,15 @@ describe("XAiAcpExtension", () => {
           },
         ],
       },
-      withAcpNoteEntries({ scope: "workspace" }, { scope: "only the api folder" }),
+      { scope: "workspace" },
+      // A note that matches another option's label stays a note.
+      { scope: "session" },
     );
 
     expect(response).toEqual({
       outcome: "accepted",
       answers: { "Which scope should Grok use?": ["workspace"] },
-      annotations: { "Which scope should Grok use?": { notes: "only the api folder" } },
+      annotations: { "Which scope should Grok use?": { notes: "session" } },
     });
   });
 

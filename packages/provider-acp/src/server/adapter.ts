@@ -175,22 +175,10 @@ const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
 // pi-agent-core agents (oh-my-pi) end a turn while background work runs and reject
 // prompts until it finishes; the prompt is resent rather than failing the turn.
-/** A question an extension marks `supportsNote` gets its note as one more answer entry. */
-export function withAcpNoteEntries(
-  answers: ProviderUserInputAnswers,
-  notesByQuestionId: UserInputNotes | undefined,
-): ProviderUserInputAnswers {
-  const notes = Object.entries(notesByQuestionId ?? {});
-  if (notes.length === 0) return answers;
-  const merged = new Map(Object.entries(answers));
-  for (const [questionId, note] of notes) {
-    const answer = merged.get(questionId);
-    merged.set(questionId, [
-      ...(Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : []),
-      note,
-    ]);
-  }
-  return Object.fromEntries(merged);
+/** A user's answers, and the notes beside picks on questions marked `supportsNote`. */
+interface AcpUserInputAnswers {
+  readonly answers: ProviderUserInputAnswers;
+  readonly notesByQuestionId?: UserInputNotes;
 }
 
 function isAgentBusyPromptError(error: EffectAcpErrors.AcpError): boolean {
@@ -348,6 +336,7 @@ export interface AcpAdapterV2ExtensionContext {
     {
       readonly acknowledgeNativeResponse: Effect.Effect<void, EffectAcpErrors.AcpError>;
       readonly answers: ProviderUserInputAnswers | null;
+      readonly notesByQuestionId?: UserInputNotes;
     },
     EffectAcpErrors.AcpError
   >;
@@ -2363,7 +2352,7 @@ type PendingRuntimeRequest = {
     }
   | {
       readonly type: "user_input";
-      readonly answers: Deferred.Deferred<ProviderUserInputAnswers | null>;
+      readonly answers: Deferred.Deferred<AcpUserInputAnswers | null>;
     }
 );
 
@@ -7389,7 +7378,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             providerTurnId: context.providerTurnId,
             nativeRequestId: request.nativeRequestId,
           });
-          const answers = yield* Deferred.make<ProviderUserInputAnswers | null>();
+          const answers = yield* Deferred.make<AcpUserInputAnswers | null>();
           const nativeResponseAcknowledgement = yield* Deferred.make<
             void,
             EffectAcpErrors.AcpError
@@ -7534,7 +7523,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                                 generation,
                                 transportRequestId,
                               ),
-                              answers: checked.value,
+                              answers: checked.value?.answers ?? null,
+                              ...(checked.value?.notesByQuestionId === undefined
+                                ? {}
+                                : { notesByQuestionId: checked.value.notesByQuestionId }),
                             })
                           : Effect.never,
                       ),
@@ -8528,8 +8520,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ? undefined
                     : {
                         questions: parsedForm.questions,
-                        respond: (answers) => {
-                          const content = parsedForm.content(answers);
+                        respond: (answers, notesByQuestionId) => {
+                          const content = parsedForm.content(answers, notesByQuestionId);
                           return content === undefined
                             ? { action: "cancel" }
                             : { action: "accept", content };
@@ -8558,7 +8550,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const response =
                 userInput.answers === null
                   ? ({ action: "cancel" } as const)
-                  : form.respond(userInput.answers);
+                  : form.respond(userInput.answers, userInput.notesByQuestionId);
               yield* userInput.acknowledgeNativeResponse;
               return response;
             }).pipe(holdingAgentRequest(handlerGeneration)),
@@ -11768,10 +11760,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           pending.answers,
                           requestInput.answers === undefined
                             ? null
-                            : withAcpNoteEntries(
-                                requestInput.answers,
-                                requestInput.notesByQuestionId,
-                              ),
+                            : {
+                                answers: requestInput.answers,
+                                ...(requestInput.notesByQuestionId === undefined
+                                  ? {}
+                                  : { notesByQuestionId: requestInput.notesByQuestionId }),
+                              },
                         )
                       : requestInput.decision === undefined
                         ? yield* new ProviderAdapter.ProviderAdapterProtocolError({
