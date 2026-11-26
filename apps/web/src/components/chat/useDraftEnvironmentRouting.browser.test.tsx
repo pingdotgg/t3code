@@ -441,23 +441,49 @@ it.each([
 });
 
 it.each([
-  { branch: "main", selection: "auto", ready: true },
-  { branch: "feature", selection: "manual", ready: false },
+  { phase: "host selection", selection: "auto", ready: true },
+  { phase: "host selection", selection: "manual", ready: false },
+  { phase: "base lookup", selection: "auto", ready: true },
+  { phase: "base lookup", selection: "manual", ready: false },
+  { phase: "destination workspace read", selection: "auto", ready: true },
 ] as const)(
-  "handles a $selection branch update while preparing Send",
-  async ({ branch, selection, ready }) => {
-    const { a, draftId, input, store } = fanoutSetup();
+  "handles a $selection branch update during $phase",
+  async ({ phase, selection, ready }) => {
+    const { a, b, draftId, input, store } = fanoutSetup();
+    const destination = phase === "destination workspace read" ? b : a;
+    const branch = selection === "auto" ? "main" : "feature";
+    const destinationBranch = destination === a ? "main" : "remote-base";
     store.setDraftThreadContext(draftId, {
       branch: null,
       envMode: "worktree",
       environmentSelection: "auto",
       loadBalancedEnvironmentId: a,
     });
-    resources.refreshSelection.mockResolvedValue(a);
-    resources.refsEnvironment = a;
-    resources.refs = [{ name: "main", current: true, isDefault: true, worktreePath: null }];
-    const refsReady = Promise.withResolvers<void>();
-    resources.beforeRefs.mockReturnValue(refsReady.promise);
+    resources.refreshSelection.mockResolvedValue(destination);
+    resources.refsEnvironment = destination;
+    resources.refs = [
+      { name: destinationBranch, current: true, isDefault: true, worktreePath: null },
+    ];
+    const gate = Promise.withResolvers<void>();
+    if (phase === "host selection") {
+      resources.refreshSelection.mockImplementation(async () => {
+        await gate.promise;
+        return destination;
+      });
+    } else if (phase === "base lookup") {
+      resources.beforeRefs.mockReturnValue(gate.promise);
+    } else {
+      resources.readProjectFile.mockImplementation(async () => {
+        await gate.promise;
+        return { defaultThreadEnvMode: "worktree" };
+      });
+    }
+    const pendingRead =
+      phase === "host selection"
+        ? resources.refreshSelection
+        : phase === "base lookup"
+          ? resources.beforeRefs
+          : resources.readProjectFile;
     const onPrepared = vi.fn();
     await using screen = await render(
       <Harness
@@ -466,13 +492,16 @@ it.each([
       />,
     );
     await screen.getByRole("button", { name: "Send" }).click();
-    await vi.waitFor(() => expect(resources.beforeRefs).toHaveBeenCalled());
+    await vi.waitFor(() => expect(pendingRead).toHaveBeenCalled());
     await act(async () => {
       store.setDraftThreadContext(draftId, { branch, environmentSelection: selection });
-      refsReady.resolve();
+      gate.resolve();
     });
     await vi.waitFor(() => expect(onPrepared).toHaveBeenCalledWith(ready));
-    expect(store.getDraftSession(draftId)?.branch).toBe(branch);
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      environmentId: ready ? destination : a,
+      branch: ready ? destinationBranch : branch,
+    });
   },
 );
 

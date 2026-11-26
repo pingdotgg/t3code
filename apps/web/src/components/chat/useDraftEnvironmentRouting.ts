@@ -211,13 +211,21 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const scope = mountedRoutingScope.current;
     if (!originalDraft || !scope) return null;
     const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
-    const readCurrentRouting = (equivalentBase: string | null = null) => {
+    const readCurrentRouting = () => {
       const current = readRouting();
       const latestDraft = getDraftSession(draftId);
       const draftMatches =
         latestDraft === originalDraft ||
-        (equivalentBase !== null &&
-          shallow(latestDraft, { ...originalDraft, branch: equivalentBase }));
+        // The picker may fill an empty base while any of the routing reads are pending.
+        // Its automatic write keeps the routing mode; a manual pick switches it to manual.
+        (originalDraft.envMode === "worktree" &&
+          originalDraft.branch === null &&
+          latestDraft?.branch != null &&
+          shallow(latestDraft, {
+            ...originalDraft,
+            branch: latestDraft.branch,
+            environmentSelection: originalDraft.environmentSelection ?? "auto",
+          }));
       return mountedRoutingScope.current === scope &&
         current.input.draftId === draftId &&
         current.input.automaticEnvironment &&
@@ -261,10 +269,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           : moved
             ? null
             : originalDraft.branch;
-      // The picker can seed the same default while the destination refs load.
-      const equivalentBase = !moved && originalDraft.branch === null ? branch : null;
       if (
-        !readCurrentRouting(equivalentBase)?.input.logicalProjectEnvironments.some(
+        !readCurrentRouting()?.input.logicalProjectEnvironments.some(
           (candidate) =>
             candidate.environmentId === environmentId && candidate.projectId === target.projectId,
         )
