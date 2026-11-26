@@ -411,46 +411,65 @@ describe("RelayClient", () => {
     ),
   );
 
-  it.effect.skipIf(windowsHost)("leaves only the managed binary after cancellation and retry", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cloudflared-test-" });
-      const directory = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64`;
-      const staged = yield* Deferred.make<void>();
-      const acknowledgeRename = yield* Deferred.make<void>();
-      let holdStaging = true;
-      const manager = yield* RelayClient.makeCloudflaredRelayClient({
-        baseDir,
-        releaseAsset: testReleaseAsset,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fileSystem,
-          rename: (from, to) =>
-            fileSystem
-              .rename(from, to)
-              .pipe(
-                Effect.tap(() =>
-                  holdStaging && to.endsWith(".tmp")
-                    ? Deferred.succeed(staged, undefined).pipe(
-                        Effect.andThen(Deferred.await(acknowledgeRename)),
-                      )
-                    : Effect.void,
-                ),
-              ),
-        }),
-      );
+  it.effect.skipIf(windowsHost)(
+    "removes a staged client whose rename lands after cancellation",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const scope = yield* Effect.scope;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-cloudflared-test-",
+        });
+        const directory = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64`;
+        const renamePending = yield* Deferred.make<void>();
+        const allowRename = yield* Deferred.make<void>();
+        const renameFinished = yield* Deferred.make<void, PlatformError.PlatformError>();
+        const manager = yield* RelayClient.makeCloudflaredRelayClient({
+          baseDir,
+          releaseAsset: testReleaseAsset,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            // Like Node's rename, the staging rename completes even if its caller is interrupted.
+            rename: (from, to) =>
+              to.endsWith(".tmp")
+                ? Effect.forkIn(
+                    Deferred.complete(
+                      renameFinished,
+                      Deferred.await(allowRename).pipe(Effect.andThen(fileSystem.rename(from, to))),
+                    ),
+                    scope,
+                  ).pipe(
+                    Effect.andThen(Deferred.succeed(renamePending, undefined)),
+                    Effect.andThen(Deferred.await(renameFinished)),
+                  )
+                : fileSystem.rename(from, to),
+            // Land the rename before the install temp directory is removed.
+            remove: (path, options) =>
+              path.endsWith(".tmp")
+                ? fileSystem
+                    .remove(path, options)
+                    .pipe(
+                      Effect.andThen(Deferred.succeed(allowRename, undefined)),
+                      Effect.andThen(Deferred.await(renameFinished)),
+                    )
+                : fileSystem.remove(path, options),
+          }),
+        );
 
-      const installing = yield* manager.install.pipe(Effect.forkChild);
-      yield* Deferred.await(staged);
-      const cancelling = yield* Fiber.interrupt(installing).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
-      yield* Deferred.succeed(acknowledgeRename, undefined);
-      yield* Fiber.join(cancelling);
-      holdStaging = false;
-      expect(yield* manager.install).toMatchObject({ status: "available" });
-      expect((yield* fileSystem.readDirectory(directory)).sort()).toEqual(["cloudflared"]);
-    }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
+        const installing = yield* manager.install.pipe(Effect.forkChild);
+        yield* Deferred.await(renamePending);
+        yield* Effect.yieldNow;
+        const cancelling = yield* Fiber.interrupt(installing).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(allowRename, undefined);
+        yield* Fiber.join(cancelling);
+        yield* Deferred.await(renameFinished);
+
+        expect(yield* fileSystem.readDirectory(directory)).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
   );
 
   it.effect.skipIf(windowsHost)(
