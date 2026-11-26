@@ -3722,7 +3722,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const found = start === null || read.at(-1)?.id === start;
           if (!found) return undefined;
           const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
-          if (commandBefore !== undefined) {
+          if (
+            state.subagent === undefined &&
+            recent.some((message) => message.type === "user" && !isOwnPrompt(message.id))
+          ) {
             const prompt = recent.find((message) => message.type === "user");
             if (prompt !== undefined) {
               state.providerThread = {
@@ -3760,7 +3763,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             if (state.active !== turn) break;
             if (
               message.type === "user" &&
-              commandBefore !== undefined &&
+              state.subagent === undefined &&
               !isOwnPrompt(message.id)
             ) {
               state.externalPrompts.delete(message.id);
@@ -4927,16 +4930,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (boundary === undefined || !isBoundary(boundary)) return;
       yield* lock.withPermit(
         Effect.gen(function* () {
-          if (
-            state.active !== turn ||
-            turn.interrupted ||
-            busy.has(state.sessionId) ||
-            state.providerThread.nativeConversationHeadRef?.nativeId !== head
-          )
-            return;
+          if (state.active !== turn || turn.interrupted) return;
+          const headUnchanged = state.providerThread.nativeConversationHeadRef?.nativeId === head;
           let foreignExchange = false;
           for (const message of history.slice(0, -1).reverse()) {
             if (message.type === "user") {
+              if (turn.ordinals.has(message.id)) break;
               foreignExchange = true;
               state.externalPrompts.delete(message.id);
               yield* emitExternalPrompt(
@@ -4946,10 +4945,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 message.text,
                 message.time.created,
               );
-              state.providerThread = {
-                ...state.providerThread,
-                nativeConversationHeadRef: ref(message.id, "weak"),
-              };
+              if (headUnchanged) {
+                state.providerThread = {
+                  ...state.providerThread,
+                  nativeConversationHeadRef: ref(message.id, "weak"),
+                };
+              }
             } else if (message.type === "assistant" && foreignExchange) {
               let ordinal = 0;
               for (const part of message.content) {

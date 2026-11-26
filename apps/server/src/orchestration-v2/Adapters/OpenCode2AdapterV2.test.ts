@@ -3528,7 +3528,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         },
         ...(deliveredSteer === undefined
           ? []
-          : [{ id: deliveredSteer, time: { created: 2 }, text: "steered", type: "user" }]),
+          : [
+              { id: deliveredSteer, time: { created: 2 }, text: "steered", type: "user" },
+              {
+                id: "msg_external_gap",
+                time: { created: 1 },
+                text: "External steer",
+                type: "user",
+              },
+            ]),
         {
           id: "msg_0eb735d41001NJee1EvVePJAK5",
           time: { created: 1 },
@@ -3627,6 +3635,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         });
         const collected = yield* Fiber.join(events);
         assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+        if (delivery === "delivered") {
+          assert.deepEqual(
+            collected.flatMap((e) =>
+              e.type === "message.updated" && e.message.role === "user" ? [e.message.text] : [],
+            ),
+            ["External steer"],
+          );
+        }
         if (delivery === "pending")
           assert.isTrue(
             collected.some(
@@ -8662,6 +8678,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
                   reply("message.list", {
                     data: [
+                      ...(execution === "completed"
+                        ? [
+                            {
+                              id: "msg_missed_before_live",
+                              time: { created: 2 },
+                              text: "Earlier external question",
+                              type: "user",
+                            },
+                          ]
+                        : []),
                       {
                         id: previous,
                         time: { created: 1 },
@@ -8742,7 +8768,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               ? [`${event.message.role}: ${event.message.text}`]
               : [],
           ),
-          ["user: External question", "assistant: External answer", "assistant: T3 answer"],
+          [
+            "user: External question",
+            "assistant: External answer",
+            ...(execution === "completed" ? ["user: Earlier external question"] : []),
+            "assistant: T3 answer",
+          ],
         );
         assert.deepEqual(
           seen.flatMap((event) => (event.type === "turn.terminal" ? [event.status] : [])),
