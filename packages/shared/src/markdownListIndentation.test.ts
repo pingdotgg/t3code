@@ -71,9 +71,11 @@ describe("remarkNormalizeListItemIndentation", () => {
 
     expect(html).toContain("<strong>first block</strong>");
     expect(html).toContain('<a href="https://example.com">second block</a>');
-    expect(renderMarkdown("-       Read [the guide][local].\n\n        [local]: /local")).toContain(
-      '<a href="/local">the guide</a>',
-    );
+    expect(
+      renderMarkdown(
+        "-       Read [the guide][guide].\n\n        [guide]: /local\n\n[guide]: /document",
+      ),
+    ).toContain('<a href="/local">the guide</a>');
     expect(renderMarkdown("-       first\n\n        ```\n        \tcode\n        ```")).toContain(
       "<pre><code>\tcode\n</code></pre>",
     );

@@ -211,6 +211,12 @@ describe("wordsHast", () => {
     expect(segments(markdown)?.join("")).toBe("Read the guide.");
   });
 
+  it("keeps a recovered item's own reference definition ahead of the document's", () => {
+    const markdown =
+      "-       Read [the guide][guide].\n\n        [guide]: https://example.com/local\n\n[guide]: https://example.com/document";
+    expect(wordsHtml(markdown)).toContain('<a href="https://example.com/local">the guide</a>');
+  });
+
   it("breaks soft lines as remark-breaks did", () => {
     const markdown = "one\ntwo **three\nfour**\n\n- item\n  next\n  - sub\n\n```\nkept\nlines\n```";
     expect(wordsHtml(markdown, { breaks: true })).toBe(
