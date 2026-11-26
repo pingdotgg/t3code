@@ -1,8 +1,10 @@
 import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
+import { extractMarkdownLinkHrefs } from "@t3tools/shared/markdownLinks";
 
 import {
+  decodeMarkdownLinkEscapes,
   renderCodexDirectivesForCopy,
   renderCodexInlineDirectivesAsMarkdown,
 } from "./markdownText";
@@ -10,6 +12,7 @@ import {
   codexDirectiveSources,
   markdownReferenceDefinitions,
   wordsHast,
+  markdownTree,
   type WordsHastOptions,
 } from "./wordsHast";
 
@@ -23,6 +26,25 @@ const ASSISTANT: WordsHastOptions = {
 
 const wordsHtml = (markdown: string, options: Partial<WordsHastOptions> = {}) =>
   toHtml(wordsHast(markdown, { ...ASSISTANT, ...options }));
+
+it.each([
+  [String.raw`/tmp/a\&amp;b/index.ts`, "/tmp/a&amp;b/index.ts"],
+  ["/tmp/a&#92;&amp;b/index.ts", String.raw`/tmp/a\&b/index.ts`],
+  [String.raw`C:\work\&amp;b\index.ts`, String.raw`C:\work\&b\index.ts`],
+])("decodes file destinations in source order: %s", (href, expected) => {
+  const markdown = `[index.ts](${href}) [index.ts](/tmp/z/index.ts)`;
+  const tree = markdownTree(markdown);
+  const paragraph = tree.children[0];
+  expect(paragraph?.type).toBe("element");
+  if (paragraph?.type !== "element") return;
+  const anchor = paragraph.children.find(
+    (child) => child.type === "element" && child.tagName === "a",
+  );
+  expect(anchor?.type === "element" && decodeURIComponent(String(anchor.properties.href))).toBe(
+    expected,
+  );
+  expect(decodeMarkdownLinkEscapes(extractMarkdownLinkHrefs(markdown)[0]!)).toBe(expected);
+});
 
 // The chat's syntax in the shapes agents and review bots write it, and raw HTML, with the HTML
 // remark and the chat's plugins rendered for it before Words replaced them.
