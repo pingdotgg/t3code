@@ -74,7 +74,8 @@ export class AzureDevOpsCliRateLimitError extends Schema.TaggedError<AzureDevOps
 
 export class AzureDevOpsPullRequestNotFoundError extends Schema.TaggedError<AzureDevOpsPullRequestNotFoundError>()(
   "AzureDevOpsPullRequestNotFoundError",
-  azureDevOpsCommandErrorFields,
+  // No cause when T3 refuses a reference that names no pull request before running az.
+  { ...azureDevOpsCommandErrorFields, cause: Schema.optional(Schema.Defect()) },
 ) {
   get detail(): string {
     return "Pull request not found. Check the PR number or URL and try again.";
@@ -715,7 +716,6 @@ export const make = Effect.gen(function* () {
             command: "az",
             cwd: input.cwd,
             argumentCount: 0,
-            cause: new Error("Invalid Azure DevOps pull request reference."),
           }),
         );
       }

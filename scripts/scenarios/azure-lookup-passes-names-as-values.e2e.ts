@@ -2,10 +2,8 @@ import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { ScenarioError } from "./shell.ts";
 import { rpcClient, runPromise, test, WEB } from "./t3.ts";
 
 // Stands in for `az`: logs each call's argv and stdin, then resolves `--repository` the way az
@@ -84,20 +82,6 @@ test(
         yield* client["server.updateSettings"]({
           patch: { offeredSourceControlProviders: { "azure-devops": true } },
         });
-        // Discovery is cached for 10 seconds, so a probe from before the shim can linger.
-        yield* client["server.discoverSourceControl"]({}).pipe(
-          Effect.filterOrFail(
-            (discovery) =>
-              discovery.sourceControlProviders.some(
-                (provider) =>
-                  provider.kind === "azure-devops" &&
-                  provider.status === "available" &&
-                  provider.auth.status === "authenticated",
-              ),
-            () => new ScenarioError({ message: "Azure DevOps is not discovered yet." }),
-          ),
-          Effect.retry({ schedule: Schedule.spaced("1 second"), times: 20 }),
-        );
         return path.join(T3_HOME, "az-calls.log");
       }).pipe(Effect.scoped),
     );
