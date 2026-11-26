@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Editor, Node } from "@tiptap/core";
+import { Editor, getSchema, Node } from "@tiptap/core";
 import { newlineInCode } from "@tiptap/pm/commands";
-import { TextSelection } from "@tiptap/pm/state";
+import { history, undo, undoDepth } from "@tiptap/pm/history";
+import { EditorState, TextSelection, type Transaction } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 
 import {
   indentCodeBlock,
@@ -17,6 +19,11 @@ import {
   ComposerListExtensions,
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
+import {
+  COMPOSER_UNDO_GROUP_DELAY,
+  type ComposerChangeKind,
+  groupUndoByChangeKind,
+} from "./composer-undo-grouping";
 
 const extensions = [
   StarterKit.configure({ codeBlock: false, trailingNode: false }),
@@ -92,6 +99,48 @@ describe("exitCodeBlockOnTrailingBlankLines", () => {
     pressEnter(editor);
     pressEnter(editor);
     expect(editor.state.doc.firstChild?.attrs.close).toBe("\n```");
+  });
+
+  it.each([
+    ["a closed", "\n```"],
+    ["an open", ""],
+  ])("reverses exiting a code block with %s fence in a single undo", (_, close) => {
+    const schema = getSchema(extensions);
+    let previous: ComposerChangeKind | null = null;
+    let state = EditorState.create({
+      schema,
+      doc: schema.node("doc", null, [schema.node("codeBlock", { close }, [schema.text("a\n\n")])]),
+      plugins: [history({ newGroupDelay: COMPOSER_UNDO_GROUP_DELAY })],
+    });
+    const dispatch = (tr: Transaction) => {
+      previous = groupUndoByChangeKind(tr, previous);
+      state = state.apply(tr);
+    };
+    dispatch(state.tr.setSelection(TextSelection.atEnd(state.doc)));
+    const view = {
+      get state() {
+        return state;
+      },
+      dispatch,
+    } as EditorView;
+
+    const beforeDoc = state.doc.toJSON();
+    const beforeFrom = state.selection.from;
+    const beforeTo = state.selection.to;
+
+    expect(undoDepth(state)).toBe(0);
+    expect(exitCodeBlockOnTrailingBlankLines(view)).toBe(true);
+    expect(state.doc.childCount).toBe(2);
+    expect(state.doc.firstChild?.textContent).toBe("a");
+    expect(state.doc.firstChild?.attrs.close).toBe("\n```");
+    expect(state.selection.$from.parent.type.name).toBe("paragraph");
+    expect(undoDepth(state)).toBe(1);
+
+    expect(undo(state, dispatch)).toBe(true);
+    expect(state.doc.toJSON()).toEqual(beforeDoc);
+    expect(state.selection.from).toBe(beforeFrom);
+    expect(state.selection.to).toBe(beforeTo);
+    expect(undoDepth(state)).toBe(0);
   });
 });
 
