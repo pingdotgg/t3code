@@ -24,10 +24,9 @@ Every file is byte-identical to upstream except these:
   `orchestrator_capabilities`, and says which one stood in. It still reports when three providers
   cannot be reached.
 - `sol-loop` used to report a blocker when no route ran GPT Sol, and told Claude Code users to use
-  a custom subagent set up for Sol. It now falls back to the closest strong model from a different
-  provider than the agent's own, says which one it used, and writes that model's name in place of
-  `Sol` in the PR line. It reports the blocker only when no such model is reachable. The
-  Claude Code-only sentence is gone.
+  a custom subagent set up for Sol. It now reviews with Sol only and never with Grok or another xAI
+  model, whose quota is kept for image and video generation. When no Sol is reachable it skips, and
+  `full-send` goes on without it. The Claude Code-only sentence is gone.
 - `babysit-pr` told Claude Code users to run `pr-wait` with the Monitor tool. It now says to use
   the harness's monitor tool, if it has one that wakes on each output line, with a one-hour
   timeout.

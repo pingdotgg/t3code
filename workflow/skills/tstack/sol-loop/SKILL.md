@@ -47,16 +47,17 @@ missing or pre-failing checks in the brief.
 
 In T3, call `orchestrator_capabilities`. Pick the latest Sol unless the user
 named a version. Do not hardcode an ID. Record provider, model, and effort
-only if exposed. If no Sol is listed, use the closest strong model from a
-different provider than yours and say which one you used. Use `delegate_task`
+only if exposed. Sol is the only reviewer. Never use Grok or any other xAI
+model: Leo keeps that quota for image and video generation. If no Sol is
+listed, sol-loop does not run: say "sol-loop skipped: no Sol available" and
+return to the caller, which goes on without it. Use `delegate_task`
 every round (`role: "review"`, `mode: "async"`). Save `taskId`. New `clientRequestId` per round.
 `childThreadId` is storage, not the next target. Do not use
 `t3_thread_send`, `create_threads`, or `t3_thread_launch` for review.
 
 If T3 tools are not listed, try one direct capability call. Outside T3, use
-a native subagent that runs Sol, or else the closest strong model from a
-different provider than yours, and keep its ID. If no route reaches such a
-model, report the blocker.
+a native subagent that runs Sol and keep its ID. If no route reaches Sol,
+skip sol-loop the same way.
 
 Do not edit scoped files while review runs. Wait for the notice. Do not
 poll or start a second reviewer. Timeout, error, or no reply is not
@@ -116,8 +117,7 @@ blurb:
 
 `Reviewed with sol-loop: <N> rounds with <model>. Sol verdict: approved`.
 
-Add `on <effort>` only if verified. If a stand-in model reviewed, write its
-name in place of `Sol`.
+Add `on <effort>` only if verified.
 
 Report: rounds, model, what Sol changed, diff size before/after, fixed and
 declined findings with reasons, usage if exposed (else say not), pushed or not.
