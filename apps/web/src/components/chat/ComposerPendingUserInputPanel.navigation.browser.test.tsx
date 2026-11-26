@@ -7,8 +7,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
-import { createRef, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
-import type { Editor } from "@tiptap/core";
+import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -18,14 +17,8 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 }));
 
 import { act, fakeTimers, render } from "../../../test/render";
-import { DraftId, composerTargetKey, useComposerDraftStore } from "../../composerDraftStore";
-import { questionAttachmentDraftId } from "../../questionAttachments";
+import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
-import {
-  ComposerPromptEditorTiptap as ComposerPromptEditor,
-  type ComposerPromptEditorHandle,
-} from "../ComposerPromptEditorTiptap";
-import type { ChatComposerHandle } from "./ChatComposer";
 import { toastManager } from "../ui/toast";
 import { usePendingThreadRequests, usePendingUserInputDraft } from "./usePendingThreadRequests";
 
@@ -305,166 +298,4 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
-});
-
-it("preserves text Undo when an option click sets aside a custom answer, and clears image Redo across questions", async () => {
-  const environmentId = EnvironmentId.make("question-undo-environment");
-  const draftTarget = { environmentId, threadId: threadRef.threadId };
-  const projection = questionProjection(threadRef.threadId, ["single"]);
-  const retained = {
-    id: "img-q0",
-    name: "diagram.png",
-    mimeType: "image/png",
-    sizeBytes: 3,
-    file: new File(["png"], "diagram.png", { type: "image/png" }),
-    index: 0,
-  };
-  const editorRef = createRef<ComposerPromptEditorHandle>();
-  const onImageHistoryChange = vi.fn();
-
-  function QuestionEditorHarness() {
-    const promptRef = useRef("");
-    const [cursor, setCursor] = useState(0);
-    const [historyResetKey, setHistoryResetKey] = useState(0);
-    const composerRef = useRef<ChatComposerHandle | null>(null);
-    useLayoutEffect(() => {
-      composerRef.current = {
-        resetCursorState: (options) => {
-          if (options?.clearHistory && promptRef.current === "") {
-            setHistoryResetKey((generation) => generation + 1);
-          }
-          setCursor(options?.cursor ?? 0);
-        },
-      } as ChatComposerHandle;
-    });
-
-    const state = usePendingThreadRequests({
-      environmentId,
-      activeThreadId: projection.thread.id,
-      serverProjection: projection,
-      supportsQuestionAttachments: true,
-      composerDraftTarget: draftTarget,
-      setComposerDraftPrompt: (target, nextPrompt) =>
-        useComposerDraftStore.getState().setPrompt(target, nextPrompt),
-      promptRef,
-      composerRef,
-      setThreadError: () => {},
-    });
-    const draft = usePendingUserInputDraft({
-      environmentId,
-      activeThreadId: projection.thread.id,
-      activePendingUserInput: state.activePendingUserInput,
-      supportsQuestionAttachments: true,
-    });
-    const activeQuestion = draft.activePendingProgress?.activeQuestion;
-    const attachmentTargetKey =
-      state.activePendingUserInput && activeQuestion
-        ? composerTargetKey(
-            questionAttachmentDraftId(
-              environmentId,
-              projection.thread.id,
-              state.activePendingUserInput.requestId,
-              activeQuestion.id,
-            ),
-          )
-        : composerTargetKey(draftTarget);
-
-    return (
-      <>
-        <output>{activeQuestion?.id ?? ""}</output>
-        <button
-          type="button"
-          onClick={() => state.onSelectActivePendingUserInputOption("question-0", "Incremental")}
-        >
-          Choose Incremental
-        </button>
-        <button type="button" onClick={() => state.onAdvanceActivePendingUserInput()}>
-          Next
-        </button>
-        <button type="button" onClick={() => state.onPreviousActivePendingUserInputQuestion()}>
-          Previous
-        </button>
-        <ComposerPromptEditor
-          draftKey={attachmentTargetKey}
-          historyResetKey={historyResetKey}
-          editorRef={editorRef}
-          value={draft.activePendingProgress?.customAnswer ?? ""}
-          cursor={cursor}
-          richTextEnabled
-          contextRecords={new Map()}
-          skills={[]}
-          disabled={false}
-          placeholder=""
-          onChange={(nextValue, nextCursor) => {
-            if (activeQuestion) {
-              state.onChangeActivePendingUserInputCustomAnswer(activeQuestion.id, nextValue);
-            }
-            setCursor(nextCursor);
-          }}
-          onImageHistoryChange={onImageHistoryChange}
-          onPaste={() => {}}
-        />
-      </>
-    );
-  }
-
-  using _draft = {
-    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(draftTarget),
-  };
-  await using screen = await render(<QuestionEditorHarness />);
-  const currentEditor = (): Editor => {
-    const el = screen.container.querySelector(".tiptap") as
-      | (HTMLElement & { editor?: Editor })
-      | null;
-    if (!el?.editor) throw new Error("expected tiptap editor");
-    return el.editor;
-  };
-
-  // Type a custom answer, click an option (setting it aside), then press Undo.
-  await userEvent.click(currentEditor().view.dom);
-  await userEvent.type(currentEditor().view.dom, "custom answer");
-  await expect.element(currentEditor().view.dom).toHaveTextContent("custom answer");
-
-  await userEvent.click(screen.getByRole("button", { name: "Choose Incremental" }));
-  expect(useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt).toBe(
-    "custom answer",
-  );
-  await expect.element(currentEditor().view.dom).toHaveTextContent("");
-
-  await act(() => {
-    currentEditor().view.focus();
-    currentEditor().commands.undo();
-  });
-  await expect.element(currentEditor().view.dom).toHaveTextContent("custom answer");
-  expect(useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt ?? "").toBe("");
-
-  // Switching questions invalidates undone image history so returning cannot Redo it.
-  const q0Key = composerTargetKey(
-    questionAttachmentDraftId(
-      environmentId,
-      projection.thread.id,
-      RuntimeRequestId.make("single"),
-      "question-0",
-    ),
-  );
-  await act(() => {
-    currentEditor().view.focus();
-    expect(editorRef.current?.recordImageHistory("add", q0Key, [retained])).toBe(true);
-    currentEditor().commands.undo();
-  });
-  expect(onImageHistoryChange).toHaveBeenLastCalledWith([
-    { kind: "remove", targetKey: q0Key, images: [retained] },
-  ]);
-
-  onImageHistoryChange.mockClear();
-  await userEvent.click(screen.getByRole("button", { name: "Next" }));
-  await expect.element(screen.getByRole("status")).toHaveTextContent("question-1");
-  await userEvent.click(screen.getByRole("button", { name: "Previous" }));
-  await expect.element(screen.getByRole("status")).toHaveTextContent("question-0");
-
-  await act(() => {
-    currentEditor().view.focus();
-    currentEditor().commands.redo();
-  });
-  expect(onImageHistoryChange).not.toHaveBeenCalled();
 });

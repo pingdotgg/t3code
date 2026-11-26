@@ -880,10 +880,20 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   );
 }
 
+interface ComposerImageHistoryFilterStorage {
+  canApply: ((changes: ReadonlyArray<ComposerImageHistoryChange>) => boolean) | null;
+}
+
+declare module "@tiptap/core" {
+  interface Storage {
+    "composer-image-history-filter": ComposerImageHistoryFilterStorage;
+  }
+}
+
 /** Preflight history image restores before ProseMirror pops undo/redo or reinserts chips. */
 const ComposerImageHistoryFilterExtension = Extension.create<
   Record<string, never>,
-  { canApply: ((changes: ReadonlyArray<ComposerImageHistoryChange>) => boolean) | null }
+  ComposerImageHistoryFilterStorage
 >({
   name: "composer-image-history-filter",
   priority: 200,
@@ -1674,14 +1684,8 @@ function ComposerPromptEditorTiptapInner(
         },
       },
       onCreate: ({ editor: created }) => {
-        const storage = created.storage as unknown as Record<
-          string,
-          { canApply?: ((changes: ReadonlyArray<ComposerImageHistoryChange>) => boolean) | null }
-        >;
-        if (storage["composer-image-history-filter"]) {
-          storage["composer-image-history-filter"].canApply = (changes) =>
-            readCallbacks().onBeforeImageHistoryChange?.(changes) ?? true;
-        }
+        created.storage["composer-image-history-filter"].canApply = (changes) =>
+          readCallbacks().onBeforeImageHistoryChange?.(changes) ?? true;
       },
       onTransaction: ({ transaction, appendedTransactions }) => {
         if (isApplyingControlledUpdateRef.current || !isHistoryTransaction(transaction)) return;

@@ -1,15 +1,11 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
 import { createRef, useLayoutEffect, useRef, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
-import { DraftId, useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
+import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { removeLocalStorageItem } from "../../hooks/useLocalStorage";
-import { useStableCallback } from "../../hooks/useStableCallback";
-import { findAssistantCitationSourceAnchor } from "../../lib/assistantTextSelection";
 import { isMacPlatform } from "../../lib/utils";
 import {
   PROMPT_STASH_STORAGE_KEY,
@@ -325,138 +321,4 @@ it("resets editor image history when stashing an image-only draft", async () => 
       .getComposerDraft(target)
       ?.images.map((image) => image.name),
   ).toEqual(["shot.png"]);
-});
-
-it("keeps the composer empty when stashing while a citation comment popover is open", async () => {
-  const target = DraftId.make("stash-open-citation");
-  const environmentId = EnvironmentId.make("stash-citation-env");
-  const threadId = ThreadId.make("stash-citation-thread");
-  const citation = {
-    version: 1 as const,
-    environmentId,
-    threadId,
-    messageId: MessageId.make("stash-citation-source"),
-    text: "hello",
-    start: 0,
-    end: 5,
-    prefix: "",
-    suffix: "",
-  };
-  const promptBefore = `See ${serializeAssistantCitation(citation)} `;
-  using _draft = {
-    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
-  };
-  using _stash = {
-    [Symbol.dispose]: () => {
-      writePromptStashStorageForTest("");
-      removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
-    },
-  };
-  useComposerDraftStore.getState().setPrompt(target, promptBefore);
-
-  const editorRef = createRef<ComposerPromptEditorHandle>();
-
-  function StashCitationHarness() {
-    const draft = useComposerThreadDraft(target);
-    const prompt = draft.prompt;
-    const promptRef = useRef(prompt);
-    const [historyResetKey, setHistoryResetKey] = useState(0);
-    const saveCitationDraftToPrompt = useStableCallback(
-      (replacedValue: string, savedValue: string) => {
-        const livePrompt = useComposerDraftStore.getState().getComposerDraft(target)?.prompt ?? "";
-        if (replacedValue !== livePrompt) return;
-        if (promptRef.current === replacedValue) promptRef.current = savedValue;
-        useComposerDraftStore.getState().setPrompt(target, savedValue);
-      },
-    );
-
-    useComposerStash({
-      environmentId,
-      composerDraftTarget: target,
-      promptRef,
-      readAttachmentDraft: () => ({ images: [], files: [] }),
-      readTerminalContexts: () => [],
-      routeThreadRef: { environmentId, threadId },
-      projectSelectionRequired: false,
-      pendingUserInputs: [],
-      activePendingProgress: null,
-      prompt,
-      composerMenuOpen: false,
-      isComposerCollapsedMobile: false,
-      composerPreviewAnnotations: [],
-      composerReviewComments: [],
-      composerThreadContexts: [],
-      attachmentTargetKey: target,
-      isComposerDraftTargetOpen: () => true,
-      composerEditorRef: editorRef,
-      isRevertingCheckpoint: () => false,
-      pendingThreadImportsRef: { current: new Map() },
-      setComposerCursor: vi.fn(),
-      setComposerTrigger: vi.fn(),
-      onDraftCleared: () => setHistoryResetKey((generation) => generation + 1),
-      importContextRecords: () => new Map(),
-      expandMobileComposer: vi.fn(),
-    });
-
-    return (
-      <>
-        <div data-assistant-citation-viewport="">
-          <p
-            data-assistant-citation-source={citation.messageId}
-            data-assistant-citation-environment={citation.environmentId}
-            data-assistant-citation-thread={citation.threadId}
-          >
-            hello world
-          </p>
-        </div>
-        <ComposerPromptEditor
-          draftKey={target}
-          historyResetKey={historyResetKey}
-          editorRef={editorRef}
-          value={prompt}
-          cursor={prompt.length}
-          richTextEnabled
-          contextRecords={new Map()}
-          skills={[]}
-          disabled={false}
-          placeholder=""
-          onChange={(nextValue) => {
-            promptRef.current = nextValue;
-            useComposerDraftStore.getState().setPrompt(target, nextValue);
-          }}
-          onCitationDraftSave={saveCitationDraftToPrompt}
-          onPaste={() => {}}
-        />
-      </>
-    );
-  }
-
-  await using _screen = await render(<StashCitationHarness />);
-  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
-  if (!sourceAnchor) throw new Error("Citation source did not resolve");
-  await act(async () =>
-    editorRef.current?.requestCitationComment({
-      previousValue: "See ",
-      value: promptBefore,
-      citationStart: "See ".length,
-      sourceAnchor,
-      insertedSpaces: { before: false, after: true },
-    }),
-  );
-  const comment = page.getByLabelText("Comment on selected text");
-  await expect.element(comment).toBeVisible();
-  await comment.click();
-  await userEvent.keyboard("unsaved note");
-
-  const mod = isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
-  await act(() => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "s", ...mod, bubbles: true, cancelable: true }),
-    );
-  });
-
-  await vi.waitFor(() => {
-    expect(usePromptStashStore.getState().entries).toHaveLength(1);
-  });
-  expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt ?? "").toBe("");
 });

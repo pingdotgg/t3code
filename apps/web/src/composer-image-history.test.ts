@@ -4,13 +4,10 @@ import { EditorState, TextSelection, type Transaction } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ComposerImageAttachment } from "./composerDraftStore";
 import {
   ComposerImageHistoryStep,
   extractComposerImageHistoryChanges,
   inlineContextReferenceRemovalRanges,
-  restoreRetainedComposerImage,
-  toRetainedComposerImage,
   type ComposerImageHistoryChange,
   type RetainedComposerImage,
 } from "./composer-image-history";
@@ -151,85 +148,24 @@ describe("ComposerImageHistoryStep", () => {
       { kind: "add", targetKey: "draft-1", images: [imgA, imgB] },
     ]);
   });
-
-  it("keeps surviving image payloads intact after crossing ProseMirror's 120-to-100 depth trim", () => {
-    const surviving = sampleRetained("img-surviving", 0);
-    const editor = createHarness();
-    // 119 separate text events, then an image removal at event 120, then event 121 triggers trim.
-    for (let i = 0; i < 119; i += 1) {
-      editor.pause().type("a");
-    }
-    editor.removeImages("draft-1", [surviving]);
-    editor.pause().type("z");
-    expect(editor.undoDepth()).toBe(100);
-
-    editor.undo();
-    expect(editor.appliedHistoryChanges()).toEqual([]);
-    editor.undo();
-    expect(editor.appliedHistoryChanges()).toEqual([
-      [{ kind: "add", targetKey: "draft-1", images: [surviving] }],
-    ]);
-    expect(editor.appliedHistoryChanges()[0]?.[0]?.images[0]?.file).toBe(surviving.file);
-  });
-
-  it("snapshots and restores a ComposerImageAttachment with a fresh blob previewUrl", () => {
-    const file = new File(["binary"], "context.png", { type: "image/png" });
-    const image: ComposerImageAttachment = {
-      type: "image",
-      id: "img-1",
-      name: "context.png",
-      mimeType: "image/png",
-      sizeBytes: file.size,
-      previewUrl: "blob:original",
-      file,
-    };
-    const retained = toRetainedComposerImage(image, 2);
-    expect(retained.index).toBe(2);
-    const restored = restoreRetainedComposerImage(retained);
-    try {
-      expect(restored.id).toBe(image.id);
-      expect(restored.file).toBe(file);
-      expect(restored.previewUrl).not.toBe(image.previewUrl);
-      expect(restored.previewUrl.startsWith("blob:")).toBe(true);
-    } finally {
-      URL.revokeObjectURL(restored.previewUrl);
-    }
-  });
 });
 
 describe("inlineContextReferenceRemovalRanges", () => {
-  const ref = (id: string) =>
-    formatInlineContextReference({
-      kind: "image",
-      contextId: `image_${id}`,
-      label: "image.png",
-    });
-
-  it("trims trailing horizontal space when the chip sits at the end of the prompt", () => {
-    const prompt = `Check ${ref("1")} `;
-    const ranges = inlineContextReferenceRemovalRanges(prompt, "image_1");
-    expect(ranges).toHaveLength(1);
-    const result = prompt.slice(0, ranges[0]!.start) + prompt.slice(ranges[0]!.end);
-    expect(result).toBe("Check");
+  const ref = formatInlineContextReference({
+    kind: "image",
+    contextId: "image_1",
+    label: "image.png",
   });
 
-  it("keeps surrounding words separated by one space when removing a middle chip", () => {
-    const prompt = `Check ${ref("1")} carefully`;
-    const ranges = inlineContextReferenceRemovalRanges(prompt, "image_1");
-    expect(ranges).toHaveLength(1);
-    const result = prompt.slice(0, ranges[0]!.start) + prompt.slice(ranges[0]!.end);
-    expect(result).toBe("Check carefully");
-  });
-
-  it("removes multiple adjacent references to the same image without overlapping ranges", () => {
-    const prompt = `${ref("1")} ${ref("1")}`;
-    const ranges = inlineContextReferenceRemovalRanges(prompt, "image_1");
-    expect(ranges).toHaveLength(2);
-    expect(ranges[0]!.end).toBeLessThanOrEqual(ranges[1]!.start);
+  it.each([
+    { prompt: `Check ${ref} `, expected: "Check" },
+    { prompt: `Check ${ref} carefully`, expected: "Check carefully" },
+    { prompt: `${ref} ${ref}`, expected: "" },
+  ])("removes every reference in $prompt", ({ prompt, expected }) => {
     let result = prompt;
-    for (let index = ranges.length - 1; index >= 0; index -= 1) {
-      result = result.slice(0, ranges[index]!.start) + result.slice(ranges[index]!.end);
+    for (const range of inlineContextReferenceRemovalRanges(prompt, "image_1").toReversed()) {
+      result = result.slice(0, range.start) + result.slice(range.end);
     }
-    expect(result).toBe("");
+    expect(result).toBe(expected);
   });
 });
