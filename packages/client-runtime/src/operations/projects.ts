@@ -258,7 +258,8 @@ export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | und
   if (hasHost && segments.length === 2 && /^\d+$/.test(lastSegment)) {
     return "";
   }
-  return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
+  const name = lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
+  return name === "." || name === ".." ? "" : name;
 }
 
 /** The folder a clone gets below its base: `<repo>`, or `<host>/<owner>/<repo>` like ghq. */
