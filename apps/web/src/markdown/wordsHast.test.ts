@@ -43,6 +43,18 @@ it.each([
 // remark and the chat's plugins rendered for it before Words replaced them.
 const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
   [
+    '<ol start="3">\n<li><a href="https://example.com/a">Alpha</a>\n<li><a href="https://example.com/b">Beta</a>\n</ol>',
+    '<ol start="3" dir="ltr">\n<li><a href="https://example.com/a">Alpha</a>\n</li><li><a href="https://example.com/b">Beta</a>\n</li></ol>',
+  ],
+  [
+    '<ul><li>Outer<ul><li><div><p><a href="https://example.com/a">Alpha</a><li>Beta</ul><li>Next</ul>',
+    '<ul dir="ltr"><li>Outer<ul><li><div><p><a href="https://example.com/a">Alpha</a></p></div></li><li>Beta</li></ul></li><li>Next</li></ul>',
+  ],
+  [
+    "<ul><li><blockquote><li>quoted</li></blockquote><li>next</ul>",
+    '<ul dir="ltr"><li><blockquote><li>quoted</li></blockquote></li><li>next</li></ul>',
+  ],
+  [
     "| a | b |\n|:-|-:|\n| `x \\| y` | **2** |\n| 3 |",
     '<table dir="ltr">\n<thead>\n<tr>\n<th align="left">a</th>\n<th align="right">b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align="left"><code data-inline-code="" dir="ltr">x | y</code></td>\n<td align="right"><strong>2</strong></td>\n</tr>\n<tr>\n<td align="left">3</td>\n<td align="right"></td>\n</tr>\n</tbody>\n</table>',
   ],
@@ -229,6 +241,15 @@ describe("wordsHast", () => {
   });
 
   it("renders insight blocks as remarkAssistantInsights did", () => {
+    for (const ending of ["\n", "\r\n", "\r"]) {
+      expect(
+        wordsHtml(["★ Insight ─────", "Cache is warm.", "─────", "After."].join(ending), {
+          insights: true,
+        }),
+      ).toBe(
+        '<blockquote data-alert="insight" dir="ltr">\n<p>Cache is warm.</p>\n</blockquote>\n<p dir="ltr">After.</p>',
+      );
+    }
     const markdown =
       "Intro\n\n`★ Insight ─────────────────────────────────────`\n- one\n- two\n`─────────────────────────────────────────────────`\n\nAfter\n\n```\n★ Insight ─────\n```";
     expect(wordsHtml(markdown, { insights: true })).toBe(
@@ -246,14 +267,27 @@ describe("wordsHast", () => {
       '<ul dir="ltr">\n<li>x\n<pre><code>★ Insight ─────\n</code></pre>\n</li>\n</ul>\n<div dir="ltr">\n★ Insight ─────\n</div>\n<blockquote dir="ltr">\n<p>q\n★ Insight ─────</p>\n</blockquote>',
     );
     // What follows an opening keeps its offsets in the message, which components slice.
-    const insight = "★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────";
+    const insight =
+      "[x](./x.ts)\n\n★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────\n\n[y](./y.ts)\n\n★ Insight ─────\n[z](./z.ts)\n─────";
     const tree = wordsHast(insight, { ...ASSISTANT, insights: true });
-    const quote = tree.children.find((child): child is Element => child.type === "element")!;
-    const sliced = (node: Element) =>
-      insight.slice(node.position!.start.offset, node.position!.end.offset);
-    const [paragraph, pre] = quote.children.filter((child) => child.type === "element");
-    const link = paragraph!.children.find((child): child is Element => child.type === "element")!;
-    expect([sliced(link), sliced(pre!)]).toEqual(["[a](./a.ts)", "```sh\nls\n```"]);
+    const sliced: string[] = [];
+    const visit = (node: Root | Element) => {
+      for (const child of node.children) {
+        if (child.type !== "element") continue;
+        if (child.tagName === "a" || child.tagName === "pre") {
+          sliced.push(insight.slice(child.position!.start.offset, child.position!.end.offset));
+        }
+        visit(child);
+      }
+    };
+    visit(tree);
+    expect(sliced).toEqual([
+      "[x](./x.ts)",
+      "[a](./a.ts)",
+      "```sh\nls\n```",
+      "[y](./y.ts)",
+      "[z](./z.ts)",
+    ]);
   });
 
   it("shows raw HTML as its text when asked", () => {
