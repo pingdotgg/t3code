@@ -2327,6 +2327,7 @@ describe("AcpAdapterV2", () => {
         { label: "Blue", description: "Blue", value: "blue" },
       ],
       allowCustomAnswer: true,
+      required: false,
     },
   ];
 
@@ -2339,6 +2340,8 @@ describe("AcpAdapterV2", () => {
         answers: { q0: "Please wait" },
         content: { q0__other: "Please wait" },
       },
+      // regression: #43335 a choice the schema leaves optional could not be skipped
+      { scenario: "OMP skipped optional choice", answers: {}, content: {} },
     ].map((fixture) => ({
       ...fixture,
       settings: OMP_SETTINGS,
@@ -2367,6 +2370,7 @@ describe("AcpAdapterV2", () => {
             { label: "Approve", value: "Approve", description: "Commit the verified fix." },
             { label: "Hold", value: "Hold", description: "Hold" },
           ],
+          required: false,
         },
       ],
       result: { action: "accept", content: fixture.content },
@@ -2456,6 +2460,22 @@ describe("AcpAdapterV2", () => {
       questions: openCodeQuestions,
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
+    },
+    {
+      scenario: "OpenCode skipped optional choice",
+      settings: OPENCODE_SETTINGS,
+      schema: openCodeSchema,
+      questions: openCodeQuestions,
+      answers: {},
+      result: { action: "accept", content: {} },
+    },
+    {
+      scenario: "OpenCode required choice left unanswered is cancelled",
+      settings: OPENCODE_SETTINGS,
+      schema: { ...openCodeSchema, required: ["q0"] },
+      questions: openCodeQuestions.map(({ required: _, ...question }) => question),
+      answers: {},
+      result: { action: "cancel" },
     },
     {
       scenario: "Devin allowOther choice accepts a typed answer",

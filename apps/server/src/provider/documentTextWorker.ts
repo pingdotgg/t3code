@@ -334,6 +334,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield LINE_START;
     } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
+      yield THEMATIC_BREAK;
       const style =
         all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =
@@ -345,7 +346,10 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       if (level) yield `${"#".repeat(Math.min(6, level))} `;
       yield* text(child);
       yield "\n";
-    } else if (["blockquote", "figcaption", "aside"].includes(child.name) && child.hasText) {
+    } else if (
+      ["blockquote", "figcaption", "aside", "address", "header", "footer"].includes(child.name) &&
+      child.hasText
+    ) {
       yield LINE_START;
       yield* paragraphs(child);
       yield LINE_START;
@@ -354,8 +358,11 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
         if (!child.hasText) continue;
         yield LINE_START;
       }
+      const block = ["li", "div", "section", "dt", "dd"].includes(child.name);
+      // Like a thematic break, a nested block starts a new line once its content arrives.
+      if (block) yield THEMATIC_BREAK;
       yield* paragraphs(child);
-      if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
+      if (block) yield "\n";
     }
   }
 }
@@ -493,10 +500,14 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     while (cells.length && !hasCellText(cells.at(-1)!)) cells.pop();
     if (!cells.length) continue;
     const repeat = repeatCount(row.attrs["number-rows-repeated"]);
+    // Word emits no cells for the grid columns w:gridBefore skips at the start of a row.
+    const trPr = row.name === "tr" ? children(row).find((c) => c.name === "trPr") : undefined;
+    const before = trPr && children(trPr).find((c) => c.name === "gridBefore")?.attrs.val;
+    const skipped = before ? Math.max(0, Number.parseInt(before, 10) || 0) : 0;
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
-      let column = 0;
-      let gap = 0;
+      let column = skipped;
+      let gap = skipped;
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
         // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
@@ -624,7 +635,7 @@ function* notebook(source: string): Generator<string, void> {
     const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
-    if ("outputs" in cell && Array.isArray(cell.outputs)) {
+    if ("outputs" in cell && Array.isArray(cell.outputs) && cell.outputs.length > 0) {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
@@ -634,10 +645,15 @@ function* notebook(source: string): Generator<string, void> {
           "data" in output &&
           output.data &&
           typeof output.data === "object" &&
-          "text/plain" in output.data
-        )
-          yield outputText(output.data["text/plain"]);
-        else if ("output_type" in output && output.output_type === "error") {
+          ("text/plain" in output.data || "text/markdown" in output.data)
+        ) {
+          const plain = outputText(
+            "text/plain" in output.data ? output.data["text/plain"] : undefined,
+          );
+          yield "text/markdown" in output.data && !plain.replaceAll("\0", "").trim()
+            ? outputText(output.data["text/markdown"])
+            : plain;
+        } else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {
             yield ": ";

@@ -40,7 +40,14 @@ interface SharedTooltipState extends SharedTooltipContent {
   readonly open: boolean;
 }
 
+interface HoveredTrigger {
+  readonly content: SharedTooltipContent;
+  readonly onHover: () => void;
+}
+
 interface SharedTooltipApi {
+  hover(anchor: HTMLElement, content: SharedTooltipContent, onHover: () => void): void;
+  leave(anchor: HTMLElement, relatedTarget: EventTarget | null): void;
   show(anchor: HTMLElement, content: SharedTooltipContent, immediate: boolean): void;
   refresh(anchor: HTMLElement, content: SharedTooltipContent): void;
   hide(anchor: HTMLElement): void;
@@ -75,6 +82,7 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
   const pending = useRef<SharedTooltipState | null>(null);
   const lastClosedAt = useRef(0);
   const current = useRef<SharedTooltipState | null>(null);
+  const hovered = useRef<WeakMap<HTMLElement, HoveredTrigger>>(new WeakMap());
 
   const commit = (next: SharedTooltipState | null) => {
     current.current = next;
@@ -85,8 +93,21 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
     timer.current = null;
     pending.current = null;
   };
-  const [api] = useState<SharedTooltipApi>(() => ({
-    show(anchor, content, immediate) {
+  const findHoveredAncestor = (
+    relatedTarget: EventTarget | null,
+  ): [HTMLElement, HoveredTrigger] | null => {
+    let node: Node | null = relatedTarget instanceof Node ? relatedTarget : null;
+    while (node) {
+      if (node instanceof HTMLElement) {
+        const entry = hovered.current.get(node);
+        if (entry) return [node, entry];
+      }
+      node = node.parentNode;
+    }
+    return null;
+  };
+  const [api] = useState<SharedTooltipApi>(() => {
+    const show: SharedTooltipApi["show"] = (anchor, content, immediate) => {
       clearTimer();
       // A Root that mounts open skips Base UI's mount transition, so the popup would slide in from (0,0).
       if (!current.current) flushSync(() => commit({ ...content, anchor, open: false }));
@@ -102,52 +123,81 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
         pending.current = null;
         if (next) commit(next);
       }, OPEN_DELAY_MS);
-    },
-    refresh(anchor, content) {
+    };
+    const hover: SharedTooltipApi["hover"] = (anchor, content, onHover) => {
+      hovered.current.set(anchor, { content, onHover });
+      show(anchor, content, false);
+      onHover();
+    };
+    const hide: SharedTooltipApi["hide"] = (anchor) => {
       if (pending.current?.anchor === anchor) {
-        pending.current = { ...pending.current, ...content };
-      }
-      const active = current.current;
-      if (!active || active.anchor !== anchor) return;
-      if (
-        active.contentKey === content.contentKey &&
-        active.side === content.side &&
-        active.align === content.align &&
-        active.sideOffset === content.sideOffset &&
-        active.variant === content.variant &&
-        active.className === content.className
-      ) {
-        return;
-      }
-      commit({ ...active, ...content });
-    },
-    hide(anchor) {
-      if (current.current && current.current.anchor !== anchor) {
         clearTimer();
         return;
       }
+      if (current.current?.anchor !== anchor || !current.current.open) return;
       clearTimer();
       timer.current = setTimeout(() => {
         if (current.current?.open) lastClosedAt.current = performance.now();
         if (current.current) commit({ ...current.current, open: false });
       }, CLOSE_GRACE_MS);
-    },
-    dismiss(anchor) {
-      clearTimer();
-      if (current.current?.anchor !== anchor) return;
-      if (current.current.open) lastClosedAt.current = 0;
-      commit({ ...current.current, open: false });
-    },
-    release(anchor) {
-      if (pending.current?.anchor === anchor) clearTimer();
-      if (current.current?.anchor === anchor && current.current.open) {
+    };
+    return {
+      hover,
+      leave(anchor, relatedTarget) {
+        hovered.current.delete(anchor);
+        const isOwnActive = current.current?.anchor === anchor && current.current.open;
+        const isOwnPending = pending.current?.anchor === anchor;
+        if (isOwnActive || isOwnPending) {
+          // Moving back onto an enclosing trigger fires no pointerenter there, so restore it here.
+          const ancestor = findHoveredAncestor(relatedTarget);
+          if (ancestor) {
+            const [parentAnchor, parentEntry] = ancestor;
+            hover(parentAnchor, parentEntry.content, parentEntry.onHover);
+            return;
+          }
+        }
+        hide(anchor);
+      },
+      show,
+      refresh(anchor, content) {
+        const existingHover = hovered.current.get(anchor);
+        if (existingHover) hovered.current.set(anchor, { ...existingHover, content });
+        if (pending.current?.anchor === anchor) {
+          pending.current = { ...pending.current, ...content };
+        }
+        const active = current.current;
+        if (!active || active.anchor !== anchor) return;
+        if (
+          active.contentKey === content.contentKey &&
+          active.side === content.side &&
+          active.align === content.align &&
+          active.sideOffset === content.sideOffset &&
+          active.variant === content.variant &&
+          active.className === content.className
+        ) {
+          return;
+        }
+        commit({ ...active, ...content });
+      },
+      hide,
+      dismiss(anchor) {
+        clearTimer();
+        if (current.current?.anchor !== anchor) return;
+        if (current.current.open) lastClosedAt.current = 0;
         commit({ ...current.current, open: false });
-      }
-    },
-    holdOpen() {
-      clearTimer();
-    },
-  }));
+      },
+      release(anchor) {
+        hovered.current.delete(anchor);
+        if (pending.current?.anchor === anchor) clearTimer();
+        if (current.current?.anchor === anchor && current.current.open) {
+          commit({ ...current.current, open: false });
+        }
+      },
+      holdOpen() {
+        clearTimer();
+      },
+    };
+  });
 
   const activeAnchor = state?.open ? state.anchor : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- links the active trigger DOM element to the shared tooltip popup via aria-describedby
@@ -226,11 +276,12 @@ export function useSharedTooltip(
       if (event.pointerType === "touch" || !enabled) return;
       const trigger = event.currentTarget;
       anchorRef.current = trigger;
-      api.show(trigger, content, false);
       // Scrolling the timeline closes it, as it does a TooltipTrigger's.
-      scrollTracker?.hover(trigger, api, () => api.dismiss(trigger));
+      api.hover(trigger, content, () =>
+        scrollTracker?.hover(trigger, api, () => api.dismiss(trigger)),
+      );
     },
-    onPointerLeave: (event) => api.hide(event.currentTarget),
+    onPointerLeave: (event) => api.leave(event.currentTarget, event.relatedTarget),
     // Keyboard focus shows it at once, as Base UI does.
     onFocus: (event) => {
       // A wrapper's handler sees focus bubble from the control inside it, so check the focused element.

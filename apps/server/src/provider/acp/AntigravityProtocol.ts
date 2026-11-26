@@ -15,6 +15,8 @@ import {
   ACP_RAW_INPUT_PATH_KEYS,
   acpChangedPathsOfToolCall,
 } from "@t3tools/provider-acp/server/clientPolicy";
+import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
+import { parseElicitationForm } from "@t3tools/provider-acp/server/elicitationForm";
 import {
   extractMcpToolCallIdentity,
   type AcpToolCallState,
@@ -170,6 +172,36 @@ export function extractAntigravityUserInputQuestion(
     })),
   };
 }
+
+const isAskQuestionForm = Schema.is(
+  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
+);
+const isAskQuestionField = Schema.is(
+  Schema.Struct({ title: Schema.String, description: Schema.optional(Schema.String) }),
+);
+
+/** agy's ask_question puts each question in its field's title and a count in the message. */
+export const extractAntigravityElicitationForm: NonNullable<
+  AcpAdapterV2Flavor["extractElicitationForm"]
+> = (request) => {
+  if (request.mode !== "form" || !isAskQuestionForm(request.requestedSchema)) return undefined;
+  const form = parseElicitationForm(request.requestedSchema, request.message);
+  if (form === undefined) return undefined;
+  const { properties } = request.requestedSchema;
+  return {
+    questions: form.questions.map((question, index) => {
+      const field = properties[question.id];
+      if (!isAskQuestionField(field) || field.description?.trim() || !field.title.trim()) {
+        return question;
+      }
+      return { ...question, header: `Question ${index + 1}`, question: field.title.trim() };
+    }),
+    respond: (answers) => {
+      const content = form.content(answers);
+      return content === undefined ? { action: "cancel" } : { action: "accept", content };
+    },
+  };
+};
 
 export function makeAntigravityUserInputResponse(
   request: EffectAcpSchema.RequestPermissionRequest,

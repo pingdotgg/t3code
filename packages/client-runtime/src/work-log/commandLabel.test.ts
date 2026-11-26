@@ -193,6 +193,8 @@ describe("commandDisplayText with Windows shell wrappers", () => {
       'rg -n -F "new Date()" .',
     ],
     ['cmd.exe /c "npm test"', "npm test"],
+    ['Bash.exe -lc "git status"', "git status"],
+    ['"C:\\Program Files\\Git\\bin\\Bash.exe" -lc "rg foo"', "rg foo"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
   });
