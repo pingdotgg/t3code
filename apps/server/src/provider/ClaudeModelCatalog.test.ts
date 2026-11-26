@@ -229,6 +229,25 @@ describe("Claude model catalog", () => {
     });
   });
 
+  it.each([
+    { configured: true, resolvedModel: "gateway/current", hasNonCatalogModels: true },
+    { configured: false, resolvedModel: "gateway/current", hasNonCatalogModels: false },
+    { configured: true, resolvedModel: "", hasNonCatalogModels: false },
+    { configured: true, resolvedModel: "SYNTHETIC[1m]", hasNonCatalogModels: false },
+    { configured: true, resolvedModel: "claude-synthetic-next", hasNonCatalogModels: false },
+  ])(
+    "checks gateway inventory for a catalog alias (configured=$configured, target=$resolvedModel)",
+    ({ configured, resolvedModel, hasNonCatalogModels }) => {
+      const catalog = catalogFromManifest(manifest());
+      const reported = [{ value: "synthetic", resolvedModel, displayName: "", description: "" }];
+
+      assert.deepStrictEqual(
+        claudeReportedModels(catalog, configured ? ["synthetic"] : [], reported),
+        { models: [], hasNonCatalogModels },
+      );
+    },
+  );
+
   it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "synthetic",
