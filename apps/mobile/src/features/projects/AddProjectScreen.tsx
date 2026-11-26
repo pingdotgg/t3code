@@ -65,6 +65,7 @@ import {
 import {
   StackActions,
   useNavigation,
+  useRoute,
   type NavigationState,
   type ParamListBase,
 } from "@react-navigation/native";
@@ -966,6 +967,7 @@ export function AddProjectRepositoryScreen(props: {
     reportFailure: false,
   });
   const navigation = useNavigation();
+  const originRoute = useRoute();
   const environment = useEnvironmentFromParam(props.environmentId);
   const source = sourceFromParam(props.source);
   const [repositoryInput, setRepositoryInput] = useState("");
@@ -980,6 +982,7 @@ export function AddProjectRepositoryScreen(props: {
 
   const lookupRepository = async () => {
     if (!environment || repositoryInput.trim().length === 0 || pendingLookup.current) return;
+    if (!isActiveRoute(navigation, originRoute)) return;
     const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(
       source,
       repositoryInput,
@@ -1007,7 +1010,6 @@ export function AddProjectRepositoryScreen(props: {
       return;
     }
 
-    const originRoute = getActiveRoute(navigation);
     const lookup = new AbortController();
     pendingLookup.current = lookup;
     const result = await lookupRepositoryQuery(
