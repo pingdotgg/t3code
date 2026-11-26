@@ -324,6 +324,40 @@ describe("withMarkdownDefinitions", () => {
     return toHtml(processor.runSync(processor.parse(text)));
   };
 
+  it.each([
+    [String.raw`https://example.com/a\<b`, "https://example.com/a%3Cb"],
+    [String.raw`https://example.com/a\>b`, "https://example.com/a%3Eb"],
+    [String.raw`https://example.com/a\\`, "https://example.com/a%5C"],
+  ])("resolves escaped angle destinations across chunks: %s", (destination, href) => {
+    const definition = `[ref]: <${destination}>`;
+    const text = `[guide][ref]\n\n# ${"x".repeat(4100)}\n\n# Appendix\n\n${definition}`;
+    const { chunks, definitions } = splitMarkdown(text);
+
+    expect(html(text)).toContain(`href="${href}"`);
+    expect(chunks).toHaveLength(2);
+    expect(html(withMarkdownDefinitions(chunks[0]!.text, definitions))).toContain(`href="${href}"`);
+    expect(definitions).toBe(definition);
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+  });
+
+  it.each([
+    "https://example.com/a<b",
+    "https://example.com/a>b",
+    String.raw`https://example.com/a\\<b`,
+    "https://example.com/a\\",
+    "https://example.com/a\rb",
+    "https://example.com/a\nb",
+    "https://example.com/a\\\rb",
+    "https://example.com/a\\\nb",
+  ])("rejects invalid angle destinations: %j", (destination) => {
+    const text = `[guide][ref]\n\n# ${"x".repeat(4100)}\n\n# Appendix\n\n[ref]: <${destination}>`;
+    const { chunks, definitions } = splitMarkdown(text);
+
+    expect(html(text)).not.toContain(">guide</a>");
+    expect(definitions).toBe("");
+    expect(html(withMarkdownDefinitions(chunks[0]!.text, definitions))).not.toContain(">guide</a>");
+  });
+
   it("keeps the first document definition ahead of later chunk definitions", () => {
     const text = "[id]: /first\n\n" + "x".repeat(4100) + "\n\n# Next\n[id]: /later\n\n[id]";
     const { chunks, definitions } = splitMarkdown(text);
