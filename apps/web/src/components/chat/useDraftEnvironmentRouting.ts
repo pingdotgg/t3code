@@ -84,14 +84,6 @@ function carryFanoutSelections(
   );
 }
 
-function automaticDraftContext(projectRef: ScopedProjectRef) {
-  return {
-    projectRef,
-    environmentSelection: "auto" as const,
-    loadBalancedEnvironmentId: projectRef.environmentId,
-  };
-}
-
 function changesProject(draft: DraftSessionState, projectRef: ScopedProjectRef) {
   return (
     draft.environmentId !== projectRef.environmentId || draft.projectId !== projectRef.projectId
@@ -260,7 +252,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       // The send must read the target project's composer and provider context after retargeting.
       flushSync(() =>
         setDraftThreadContext(draftId, {
-          ...automaticDraftContext(projectRef),
+          projectRef,
+          environmentSelection: "auto",
+          loadBalancedEnvironmentId: target.environmentId,
           ...workspace,
           branch,
         }),
@@ -283,7 +277,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       : null;
     carryFanoutSelections(draft, target.environmentId);
     setDraftThreadContext(draftId, {
-      ...automaticDraftContext(projectRef),
+      projectRef,
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: target.environmentId,
       ...defaults?.workspace,
     });
     if (defaults?.load) {
