@@ -208,7 +208,7 @@ describe("thread links", () => {
   });
 
   it("keeps multiline code literal when a line only resembles a block boundary", () => {
-    for (const line of ["--- text", "== =", "-_*"]) {
+    for (const line of ["--- text", "== =", "-_*", "    ===", ">     ---"]) {
       const markdown = ["Use `example", line, "<t3-thread://v2/local/t1> end`"].join("\n");
       expect(threadLinkRefs(markdown, local)).toEqual([]);
       expect(relabelThreadLinks(markdown, local, () => "New")).toBe(markdown);
