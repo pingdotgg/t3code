@@ -20,8 +20,7 @@ PR still belongs in the product.
   authorize merging, closing, changing the base branch, or expanding scope.
 - Never use an unqualified force push. Update a rebased branch with
   `--force-with-lease` against the head SHA observed before the rebase.
-- Do not post a PR comment unless the user asked for one. Use the
-  `leaving-pr-comments` skill for every comment posted on the user's behalf.
+- Do not post a PR comment unless the user asked for one.
 
 ## Establish the PR's intent
 
@@ -83,7 +82,7 @@ For a `MODERNIZE` disposition:
    and no already-landed behavior was reintroduced.
 5. Run the repository's focused checks for the touched area. Distinguish real
    failures from pre-existing or infrastructure failures. If a conflict
-   resolution changed logic, run `validate-change` before pushing.
+   resolution changed logic, run `review-change` before pushing.
 6. Push with `--force-with-lease` tied to the previously observed remote head.
    If the lease fails, fetch and reassess rather than overwriting new work.
 

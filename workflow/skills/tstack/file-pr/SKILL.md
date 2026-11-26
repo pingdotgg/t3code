@@ -49,5 +49,4 @@ because the GraphQL rate limit is used up, open it through REST with
 `gh api repos/<owner>/<repo>/pulls -f title=... -f head=... -f base=... -F body=@<file>`. If the user also asked
 to babysit it, continue with the `babysit-pr` skill.
 
-Do not post a follow-up PR comment unless it serves the user's request. When a
-comment is needed, use the `leaving-pr-comments` skill.
+Do not post a follow-up PR comment unless it serves the user's request.

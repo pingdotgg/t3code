@@ -87,8 +87,7 @@ CodeRabbit is advisory. Treat its findings like any other finding, but never
 wait for it and never hold a merge for it.
 
 If a review bot leaves feedback you believe is not worth addressing, reply with
-a written reason and resolve the comment. Use the `leaving-pr-comments` skill
-for every comment posted on the user's behalf.
+a written reason and resolve the comment.
 
 Screenshots and videos help as well, when you have a way to upload them.
 

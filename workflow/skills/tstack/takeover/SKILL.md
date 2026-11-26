@@ -34,9 +34,8 @@ Independently verify the original failure and realistic workflows, following
 repository guidance and permissions. Green mocked tests do not prove the user
 experience works. State what remains unverified.
 
-When you changed code beyond importing commits, run `validate-change` on your added diff. When the requested finish includes a PR, use `file-pr` to file or update it,
-then `babysit-pr` rather than stopping at creation. Use `leaving-pr-comments`
-for replies. Merge or close the original PR only when authorized.
+When you changed code beyond importing commits, run `review-change` on your added diff. When the requested finish includes a PR, use `file-pr` to file or update it,
+then `babysit-pr` rather than stopping at creation. Merge or close the original PR only when authorized.
 
 Report what you inherited, what you changed, how you verified it, how credit
 was preserved, and any remaining decision.

@@ -1,27 +1,37 @@
 ---
 name: maestro-worker
-description: Implement one GitHub issue as a maestro worker, from branch to merged PR. Use when a task says to use the maestro-worker skill for an issue.
+description: Build one GitHub issue as a maestro worker, from branch to an open PR handed to review. Use when a task says to use the maestro-worker skill for an issue.
 ---
 
-You are a maestro worker. Your task names the issue `<n>` and the repo. You own it end to end, through `full-send`: implement, prove, validate, open the PR, merge. The maestro reads GitHub, not this thread. You already run in an isolated checkout prepared for you.
+You are a maestro worker, the builder. Your task names the issue `<n>` and the repo. You implement it, prove it, open the PR, and hand it to review. A different agent, the `maestro-reviewer`, validates, reviews and merges it. The maestro reads GitHub, not this thread. You already run in an isolated checkout prepared for you. Read the user's mode skill, `~/.agents/skills/*-mode/SKILL.md`, when one exists, and work the way it says wherever it does not conflict with this skill. Read the Build and Debug groups of the `principles` skill too.
 
 ## Pick up
 
-1. `gh issue view <n>`. Read it whole, and its parent for context: `gh api repos/{owner}/{repo}/issues/<n>/parent --jq '.number, .title, .body'`. Older issues name the parent with a `Part of #<epic>` line instead.
-2. Put the checkout on the task branch: `git fetch origin && git checkout -B task/<n> origin/main`. If `origin/task/<n>` exists, an earlier round left work behind: use `git checkout -B task/<n> origin/task/<n>` instead and read `gh pr view task/<n> --comments` for what went wrong.
+1. `gh issue view <n>`. Read it whole, and its parent for context: `gh api repos/{owner}/{repo}/issues/<n>/parent --jq '.number, .title, .body'`. Older issues name the parent with a `Part of #<epic>` line instead. Read the parent's `maestro: notes` comments before you explore, as `maestro`'s [Shared notes](../maestro/SKILL.md#shared-notes) says, and add one when you learn what a sibling would need.
+2. Put the checkout on the task branch: `git fetch origin && git checkout -B task/<n> origin/<base>`, where `<base>` is the base branch your task names, or `main` when it names none. If `origin/task/<n>` exists, an earlier attempt left work behind: use `git checkout -B task/<n> origin/task/<n>` instead. Read its `maestro: retry` and `maestro: decided` comments on the issue and `gh pr view task/<n> --comments`: keep its decisions unless they caused the failure, and try what its report says to try next.
 3. If `.t3/setup-done` is missing and `.t3/setup-running` names no live PID, run the repo's install step.
-4. If the issue lacks what you need to start, ask for help (below). Do not guess. Judge it by `bcheck`'s Step 3 table, after reading the code: any ❌ or a scope over about 5 files means needs-help, do not start.
+4. Judge the issue by `bcheck`'s Step 3 table, after reading the code. A ❌ is a gap to close, not a reason to stop: close it with a decision as `maestro`'s [Decide or escalate](../maestro/SKILL.md#decide-or-escalate) says, and escalate only what that section names. A scope over about 5 files gets split (below).
 
-## Ship it with full-send
+## Build
 
-5. Follow the `full-send` skill from its step 1 to its merge. It runs `validate-change` and `sol-loop`, files the PR with `file-pr`, and merges once its merge gate passes. The issue's request is the user's request, and its merge closes the issue. Three overrides, because you are a delegated child:
-   - **Waiting.** Never call `watch_pull_request`. When the repo runs CI or review bots on the PR, wait with `~/.agents/skills/babysit-pr/scripts/pr-wait`, as `babysit-pr` describes. With neither, the gate needs only your proof, validation, and a mergeable branch.
-   - **Asking.** Wherever `full-send` would ask the user, ask for help (below) instead.
-   - **Reporting.** End with the final message below, not `full-send`'s report.
+5. Follow the first half of the `full-send` skill: its step 1 (finish the change), the proof in its step 2 (per its Proof section), and its step 4 (file the PR with `file-pr`, against `<base>`). The reviewer runs the second half: step 2's `review-change`, step 3's `sol-loop`, babysitting and the merge. Do not run them; reviewing your own work is what the split exists to avoid. Wherever `full-send` would ask the user, follow Decide or escalate instead. Build test-first with `tdd` only where a test pays: logic, state, protocol translation, persistence, and bugs in data or behavior. Prove UI, copy and wiring by running them, as `full-send`'s Proof section says, and add no test for them. `tdd`'s seams are a call to decide: log them in a `maestro: decided` comment, with what each one catches, before the first test.
+6. Push `task/<n>` after your first commit and after each one that follows. The maestro reads pushes, comments and label changes as signs of life; a worker that shows none for an hour is stopped and retried.
 
-## Ask for help
+## Hand off
 
-Do not merge when the change adds or edits a database migration, when a rebase conflict touches logic you do not understand or would drop someone else's work, or when you are stuck after a real attempt. Push what you have, open the PR if there is one, and hand over. Write the comment body per `leaving-pr-comments`:
+7. With the PR open, put the issue in the review queue:
+
+   ```bash
+   gh label create ready-for-review --force --color ededed >/dev/null
+   gh issue comment <n> --body "maestro: handed off <PR url>"
+   gh issue edit <n> --add-label ready-for-review --remove-label in-progress
+   ```
+
+   The handoff comment starts the reviewer's own retry budget.
+
+## Decide, give up, or ask for help
+
+Follow `maestro`'s Decide or escalate. Decide reversible calls and log each one. When you are stuck after a real attempt, give up as that section says, so a fresh worker tries next. Ask for help only for what it names: push what you have, open the PR if there is one:
 
 ```bash
 gh issue edit <n> --add-label needs-help
@@ -30,18 +40,19 @@ gh issue comment <n> --body "<what needs a decision, and what you would do>"
 
 ## Split the issue
 
-When the issue is too big for one PR and you split it instead of shipping it, file the parts as sub-issues of `<n>` without `ready-for-agent`, link every blocked-by edge, and only then add `ready-for-agent` to each. A labelled part with its blocker not yet linked gets dispatched early. Then close `<n>`, or label it `needs-help` when the split itself needs a decision.
+When the issue is too big for one PR and you split it instead of building it, file the parts as sub-issues of `<n>` without `ready-for-agent`, link every blocked-by edge, and only then add `ready-for-agent` to each. A labelled part with its blocker not yet linked gets dispatched early. Then close `<n>`, or label it `needs-help` when the split itself needs a decision.
 
 ## Settle
 
-Before your final message, settle every thread you started (review and research children, by their `childThreadId`) with `t3_thread_organize` and `action: "settle"`. When you end without a merged PR (help, split, blocked), settle your own thread too: the same call without `threadId`. A merged PR settles it already.
+Before your final message, settle every thread you started (research children, by their `childThreadId`) and then your own: `t3_thread_organize` with `action: "settle"`, the last call without `threadId`. Your part ends without a merge, so nothing else settles it.
 
 ## Final message
 
 Exactly one line, nothing else:
 
-- `#<n> merged <PR url>`
+- `#<n> pr <PR url>`
+- `#<n> retry: <why>`
 - `#<n> needs-help: <why>`
 - `#<n> split into #<a>, #<b>, …`
 
-If the maestro tells you the issue is still open, finish it or ask for help, then end with that line again.
+If the maestro tells you the issue is still open, hand it off, give up, or ask for help, then end with that line again.

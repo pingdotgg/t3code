@@ -113,4 +113,6 @@ Cause: `to-spec` and `plan-to-issues` label the parent `epic`, and only `maestro
 
 New since the first run, and what the model made of it: the maestro heartbeat staying on while an issue is `needs-help` or blocked keeps a paused maestro from missing a blocker that finishes; the first tick reaping an `in-progress` plus `needs-help` orphan removes the requeue of someone else's claim; `maestro-worker` following `full-send` changes no worker state, since `full-send` ends merged or asking for help.
 
-Still open: `implement-spec` never labels its tickets (`NoDoubleWork`); and the epic stays open when the maestro sleeps or does not exist while the last ticket is finished by hand (`NoSleepingFrontier`, `NoSilentStall`, `FiledStatesCanStillReachMerged`, `EveryStateCanReachMergedOrStop`).
+Later: `implement-spec` and `triage` were removed from the skills and the model, which closes `NoDoubleWork` (PASS, 3,934 states on `Pipeline.cfg`). The four rules below still fail for the same open-epic cause, on fewer states.
+
+Still open: the epic stays open when the maestro sleeps or does not exist while the last ticket is finished by hand (`NoSleepingFrontier`, `NoSilentStall`, `FiledStatesCanStillReachMerged`, `EveryStateCanReachMergedOrStop`).

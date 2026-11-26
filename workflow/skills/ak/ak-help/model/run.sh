@@ -3,7 +3,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out=${1:?usage: sh run.sh OUT_DIR}
-sc=$here/../../../pstack/statechart/scripts/statechart
+sc=$here/../../../pstack/factory/statechart/scripts/statechart
 jar=${TLA2TOOLS:-$(mise where "http:tla2tools")/tla2tools.jar}
 java=${JAVA:-$(mise which java --tool java@temurin-25)}
 cap() { systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 -- "$@"; }

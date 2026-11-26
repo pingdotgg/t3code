@@ -1,6 +1,7 @@
 import {
   NonNegativeInt,
   OrchestratorMcpFailure,
+  OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
@@ -1046,6 +1047,43 @@ const threadSendCommand = Command.make("send", {
   ),
 );
 
+const threadStopCommand = Command.make("stop", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  reason: Flag.String("reason").pipe(
+    Flag.withDescription("Why the thread is stopped, shown with the stop."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Stop a thread as its Stop button does: end its running turn, hold its queued messages, and stop the tasks it delegated.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.stop")(function* (tools) {
+          const stopped = yield* tools.call(
+            "t3_thread_interrupt",
+            {
+              threadId,
+              stop: true,
+              ...Option.match(flags.reason, {
+                onNone: () => ({}),
+                onSome: (reason) => ({ reason }),
+              }),
+            },
+            OrchestratorMcpThreadInterruptResult,
+          );
+          yield* flags.json ? printJson(stopped) : Console.log(stopped.status);
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -1111,11 +1149,12 @@ const threadShowCommand = Command.make("show", {
 );
 
 export const threadCommand = Command.make("thread").pipe(
-  Command.withDescription("Start, message, and read threads on the running server."),
+  Command.withDescription("Start, message, stop, and read threads on the running server."),
   Command.withSubcommands([
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
+    threadStopCommand,
     threadShowCommand,
   ]),
 );

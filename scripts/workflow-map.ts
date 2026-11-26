@@ -31,7 +31,7 @@ export function buildSkillMap(skillsRoot: string): SkillMap {
   const group = new Map<string, string>();
   const userOnly = new Set<string>();
   for (const [name, dir] of skills) {
-    group.set(name, NodePath.basename(NodePath.dirname(dir)));
+    group.set(name, NodePath.relative(skillsRoot, dir).split(NodePath.sep)[0] ?? "");
     const text = readSkillText(dir);
     if (/^disable-model-invocation:\s*true/m.test(text)) userOnly.add(name);
     const mentioned = names.filter((other) => {
@@ -56,7 +56,7 @@ export function renderSkillMap(map: SkillMap): string {
     names.filter(filter).map(tag).join(", ") || "none";
 
   // The principles all hang off the same few skills; one node keeps the chart readable.
-  const node = (name: string) => (name.startsWith("principle-") ? "principles" : name);
+  const node = (name: string) => (name.startsWith("principle-") ? "principle-leaves" : name);
   const id = (name: string) => node(name).replaceAll("-", "_");
   const groups = [...new Set(map.group.values())].toSorted();
   const mermaid = ["flowchart LR"];
@@ -67,7 +67,7 @@ export function renderSkillMap(map: SkillMap): string {
     ))
       mermaid.push(`    ${id(name)}["${tag(name)}"]`);
     if (names.some((n) => map.group.get(n) === g && n.startsWith("principle-")))
-      mermaid.push(`    principles["principle-* (see lists above)"]`);
+      mermaid.push(`    principle_leaves["principle-* (see lists above)"]`);
     mermaid.push("  end");
   }
   const edges = new Set<string>();

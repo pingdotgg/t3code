@@ -7,8 +7,8 @@ full license text is kept alongside this file as `LICENSE.pstack`.
 
 ## What was taken
 
-Twenty `principle-*` skills (twenty-three upstream, three removed after review; see below), plus `architect`, `arena`, `automate-me`, `benchmark-checklist`,
-`blast-radius`, `bro`, `correct`, `create-verification-skill`, `explain-work`, `figure-it-out`, `how`, `interrogate`,
+Twenty `principle-*` skills (twenty-three upstream, three removed after review; see below), plus `architect`, `automate-me`, `benchmark-checklist`,
+`blast-radius`, `bro`, `correct`, `create-verification-skill`, `figure-it-out`, `how`, `interrogate`,
 `maintain-verification-skill`, `no-comments`, `recall`, `reflect`, `show-me-your-work`, `swarm`,
 `technical-writing`, `typescript-best-practices`, `unslop`, `why`, `in-your-own-words`, `sharpen`,
 `ketchup`, `ketchup-video`, and `statechart`. The `comment-sicko` agent
@@ -47,7 +47,7 @@ came across too, since `no-comments` spawns it.
 
 ## Local modifications
 
-- `how` and `why` end with one `**Related:**` line pointing at `explain-work`.
+- `how` and `why` end with one `**Related:**` line pointing at `teach`'s Explain mode.
 - `bro` absorbed Matt Pocock's `wait-what`: one added sentence asking for a little context and the
   repo's `GLOSSARY.md` terms.
 
@@ -58,7 +58,7 @@ equivalents. Where a skill got reviewer or candidate diversity by mixing model v
 diversity now comes from an assigned lens or a distinct starting constraint, because one vendor
 is all this plugin has. Beyond that:
 
-- `interrogate` follows upstream's rewrite: adversaries run through `arena`'s Phase A steps 3 and 4
+- `interrogate` follows upstream's rewrite: adversaries run through `arena`'s Phase A steps 3 and 4 (now the `council` skill's Build mode)
   and Phase B, and only findings proven by a run survive. Its four reference files went with the
   old reviewer flow. Adversaries spawn as `general-purpose`, and the `pstack-models.mdc` role line
   is gone.
@@ -67,10 +67,14 @@ is all this plugin has. Beyond that:
   output path. Its Phase A called `why` to recover the rationale behind an existing shape; it now
   names concrete sources (git history, the PRs that introduced the files, ADRs) and says to flag
   what it cannot find rather than assume it away.
-- `arena` and `swarm` were capped. Upstream took N from the user with no ceiling and no cost
+- `arena` is now the Build mode of tstack's `council` (see `tstack/ATTRIBUTION.md`); sync its upstream changes into that section. Before the merge, `arena` and `swarm` were capped. Upstream took N from the user with no ceiling and no cost
+  `interrogate`, `swarm` and `figure-it-out` name `council`'s Build mode, or a design bakeoff, where they named `arena`.
   disclosure. `arena` defaults to three runners, `swarm` caps at twelve workers, and both have to
   state N and the reason when they go higher. `swarm` also lost `environment: "cloud"`, which has
   no Claude Code equivalent, so its workers run locally.
+- `automate-me` also mines the harness's saved feedback and user memories, which count as confirmed
+  instances, and in update mode mines only the signals a caller hands over. `reflect` routes findings
+  about the user's general preferences to `mode: <handle>-mode`, handled by `automate-me`.
 - `automate-me` was ported off Cursor's built-in `create-skill`, which has no Claude Code
   equivalent. Authoring routes to `writing-for-agents` in the vendored Matt Pocock set.
   `AskQuestion` became `AskUserQuestion` (`allow_multiple` became `multiSelect`, four options
@@ -82,8 +86,9 @@ is all this plugin has. Beyond that:
   guard; `why` now matches them, as one sentence since upstream cut `why` to a single paragraph.
 - `figure-it-out` lost its citation of `principle-never-block-on-the-human` and its instruction to
   read poteto-mode's principles index, which point at things not vendored here.
-- `teach` was renamed `explain-work`. Its job is explaining a body of work in this codebase, which
-  is a different job from the `teach` in the Matt Pocock set, and two skills cannot share a name.
+- `teach` became Explain mode of the Matt Pocock set's `teach` (see `mattpocock/ATTRIBUTION.md`).
+  It was first renamed `explain-work`, since two skills cannot share a name, then merged. Sync its
+  upstream changes into that section of `mattpocock/on-demand/teach/SKILL.md`.
 - `comment-sicko`'s agent name was lowercased to `comment-sicko` so `subagent_type` resolves.
 - `show-me-your-work`'s transcript audit moved to `~/.claude/projects/<project-slug>/`, and its
   mandatory cross-model review became a reviewer with an assigned skeptic's lens.
@@ -95,7 +100,7 @@ is all this plugin has. Beyond that:
   "the **x** principle skill" citation of a hidden principle reads "the **x** principle
   (`~/.agents/skills/principle-x/SKILL.md`)", a path every provider can open, subagents included.
   `figure-it-out` reads the matching `principle-*` folders there. Skills in the other groups cite
-  them the same way (`maestro-worker`, `diff-review`, `diagnosing-bugs`, `tdd`, `implement`,
+  them the same way (`maestro-worker`, `diff-review`, `diagnosing-bugs`, `tdd`,
   `codebase-design`, `retro`, `to-spec`), as do `architect`, `benchmark-checklist`, and `swarm` here.
 - `principle-exhaust-the-design-space` was deleted: its body was one fragment, and `arena`,
   `architect`, and `codebase-design/DESIGN-IT-TWICE.md` carry the procedure. `architect` now says
@@ -103,7 +108,7 @@ is all this plugin has. Beyond that:
   rule folded into `principle-outcome-oriented-execution` as a guardrail. Skip both when syncing.
 - The subtract-before-you-add principle skill was deleted and its one line not already in
   `principle-laziness-protocol` (add no speculative validators or guards beyond the spec) moved
-  there as a "Subtract before you add" bullet. `validate-change` and `architect` cite
+  there as a "Subtract before you add" bullet. `review-change` and `architect` cite
   `laziness-protocol` instead. Skip it when syncing.
 - Every other vendored skill had `disable-model-invocation` removed. Upstream ships most of them as
   user-invoked only. Here the agent should reach for them on its own: a skill helps when the
@@ -113,7 +118,7 @@ is all this plugin has. Beyond that:
   because those are a user's personal register and should not switch on by themselves.
 - `how` and `why` follow upstream down to one file each. `how` spawns one read-only explainer and
   `why` reads the record itself, so their `references/` folders are gone, and `architect`,
-  `blast-radius`, `no-comments`, `recall`, and `explain-work` no longer point into them.
+  `blast-radius`, `no-comments`, `recall`, and `teach` no longer point into them.
 - `no-comments` spawned `subagent_type: "Comment Sicko"`, which never resolved after the agent was
   renamed. It now spawns `ak:comment-sicko`.
 - `reflect` routed new skills and description tuning to Cursor's `create-skill`. Both now go to
@@ -122,6 +127,7 @@ is all this plugin has. Beyond that:
   start unasked. `ketchup` lost its references to `/visualize`, a skill from another plugin, and
   just asks for a chart.
 - `swarm` lost its last two references to Cursor's cloud workers.
+- `swarm` sends code-shipping work to `maestro` alone; it also named `implement-spec`, which this fork removed.
 - `correct` also keeps `disable-model-invocation: true`. It reads the
   history, then commits lint rules, CI checks, type changes, and edits to the agent instruction file,
   one commit per mistake class. That is too much change to start on the model's own judgment, so
@@ -136,15 +142,14 @@ is all this plugin has. Beyond that:
   - `architect` judges depth with `codebase-design`'s terms and deletion test, and
     `principle-minimize-reader-load` points its layer bullets there. `blast-radius` hands a big and
     wide change to `interrogate`. `figure-it-out` points at `swarm`, `to-tickets`, `maestro`, and
-    `wayfinder` when it fans out, and at `validate-change` and `full-send` for code to merge.
+    `wayfinder` when it fans out, and at `review-change` and `full-send` for code to merge.
     `swarm` sends shipping code to `to-tickets` and competing attempts to `arena`.
   - `recall`, `reflect`, `automate-me`, and `show-me-your-work` share one history-scope rule from
     `recall`. `recall` routes a single chat to `takeover`, this chat to `ketchup`, and counts a
     `handoff` document as a state capsule; its description now says "across chats". `automate-me`
     leaves prose style to `writing-for-agents`. `show-me-your-work` briefs its reviewer as
     `second-opinion` does.
-  - `explain-work` drops the sentence rules `unslop` already owns, and its heading no longer says
-    "Teach". `technical-writing` drops the short-word rule and the passive-voice clause that
+  - `teach`'s Explain mode drops the sentence rules `unslop` already owns. `technical-writing` drops the short-word rule and the passive-voice clause that
     `unslop` already covers.
   - `correct` judges tests by `principle-test-behavior-not-implementation`.
 
@@ -185,6 +190,8 @@ Its scripts were reviewed before they came across:
 - Nothing runs as root, uses `sudo`, edits shell profiles, or reads credentials.
 
 ## Upstream sync
+
+Skills here sit in role folders (`factory/`, `on-demand/`, `guidance/`), as `workflow/README.md` describes; upstream keeps them flat, so each upstream `<skill>/` maps to the one `<role>/<skill>/` folder of that name.
 
 Last synced against `cursor/plugins` commit `bf0c7cd` (2026-11-14). Earlier syncs were taken at
 `ae5650f` (2026-10-31), `ccb5507` (2026-10-06), `12d587d` (2026-09-23), and the first import at `63d938c` (2026-08-13). Each sync is a three-way merge per file with the previous sync commit as

@@ -2,25 +2,39 @@ flowchart LR
   %% lifecycle of one issue (A), every full-model step that changes it, faithful variant
   n0("ready-for-agent")
   n1("claimed, worker not started")
-  n2("worker running")
-  n3("merged")
-  n4("needs-help raised, worker ending, maestro not yet looked")
-  n5("worker ended, maestro not yet looked")
+  n2("builder running")
+  n3("worker ended, maestro not yet looked")
+  n4("ready-for-review")
+  n5("needs-help raised, worker ending, maestro not yet looked")
   n6("needs-help, master decides")
+  n7("merged")
+  n8("reviewer running")
+  n2 -->|"<W> labels <issue> needs-help"| n5
+  n2 -->|"<W> opens the PR, labels <issue> ready-for-review"| n4
+  n2 -->|"<W> dies or gives up on <issue>"| n3
+  n2 -->|"<W> quits early on <issue>"| n3
+  n2 -->|"maestro stops <W>, stalled on <issue>"| n3
   n1 -->|"maestro spawns <W> on <issue>"| n2
-  n4 -->|"maestro reaps <W>: <issue> needs-help, tells master"| n6
-  n6 -->|"master finishes <issue> by hand"| n3
+  n1 -->|"maestro spawns <W> on <issue>"| n8
+  n5 -->|"maestro reaps <W>: <issue> needs-help, tells master"| n6
+  n6 -->|"master finishes <issue> by hand"| n7
   n6 -->|"master removes needs-help on <issue>"| n0
+  n6 -->|"master removes needs-help on <issue>"| n4
   n0 -->|"maestro claims <issue> (adds in-progress)"| n1
-  n5 -->|"maestro gives up nudging <W>: <issue> needs-help"| n6
-  n5 -->|"maestro gives up on <issue>: died twice, needs-help"| n6
-  n5 -->|"maestro requeues <issue> (worker <W> died)"| n0
-  n5 -->|"maestro nudges <W>: <issue> still open"| n2
-  n2 -->|"<W> merges <issue>"| n3
-  n2 -->|"<W> labels <issue> needs-help"| n4
-  n2 -->|"<W> dies on <issue>"| n5
-  n2 -->|"<W> quits early on <issue>"| n5
+  n4 -->|"maestro claims review of <issue> (adds in-progress)"| n1
+  n8 -->|"<W> reviews and merges <issue>"| n7
+  n8 -->|"<W> labels <issue> needs-help"| n5
+  n8 -->|"<W> dies or gives up on <issue>"| n3
+  n8 -->|"<W> quits early on <issue>"| n3
+  n8 -->|"maestro stops <W>, stalled on <issue>"| n3
+  n3 -->|"maestro nudges <W>: <issue> still open"| n2
+  n3 -->|"maestro gives up on <issue>: attempts used, needs-help"| n6
+  n3 -->|"maestro retries <issue> (worker <W> died)"| n0
+  n3 -->|"maestro retries <issue> (worker <W> quit)"| n0
+  n3 -->|"maestro retries <issue> (worker <W> died)"| n4
+  n3 -->|"maestro retries <issue> (worker <W> quit)"| n4
+  n3 -->|"maestro nudges <W>: <issue> still open"| n8
   classDef warn fill:#fff3e6,stroke:#e8730c
   classDef done fill:#e3ffe8,stroke:#2a9d4a
-  class n3 done
-  class n4 warn
+  class n5 warn
+  class n7 done

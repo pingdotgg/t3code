@@ -6,14 +6,16 @@ kept alongside this file as `LICENSE.tstack`.
 
 ## What was taken
 
-All nine skills in upstream's `skills/`: `babysit-pr` (with `scripts/pr-wait`), `council`,
-`file-pr`, `full-send`, `full-stop`, `leaving-pr-comments`, `modernize`, `sol-loop`, and
+Eight of the nine skills in upstream's `skills/`: `babysit-pr` (with `scripts/pr-wait`), `council`,
+`file-pr`, `full-send`, `full-stop`, `modernize`, `sol-loop`, and
 `takeover`.
 
 ## What was left behind
 
 - Each skill's `agents/openai.yaml`. It configures another vendor's agent and nothing here reads it.
 - Upstream's `README.md`.
+- `leaving-pr-comments`, removed after it came across, and every skill's pointer to it. Skip it when
+  syncing.
 
 ## Local modifications
 
@@ -23,6 +25,12 @@ Every file is byte-identical to upstream except these:
   uses the closest strong model from a provider the council does not already have, taken from
   `orchestrator_capabilities`, and says which one stood in. It still reports when three providers
   cannot be reached.
+- `council` has two modes. Review mode is upstream's `council`, now judged against a rubric of 3 to 6
+  criteria, so each PR cell counts the criteria met instead of a score out of 10, and a round ends
+  when every member finds every criterion met. Build mode is pstack's `arena`, merged in, with the
+  council's members and provider fallback as its runners and a judge from another provider. When
+  three providers cannot be reached, it reports and runs with the providers it has. pstack upstream
+  changes to `arena` land in Build mode.
 - `sol-loop` used to report a blocker when no route ran GPT Sol, and told Claude Code users to use
   a custom subagent set up for Sol. It now reviews with Sol only and never with Grok or another xAI
   model, whose quota is kept for image and video generation. When no Sol is reachable it skips, and
@@ -34,7 +42,7 @@ Every file is byte-identical to upstream except these:
   `pr` prescribed a body template (summary visual, evidence, merge danger), while `file-pr`
   prescribes a title and plain-language description.
 
-- `full-send` runs this fork's `validate-change` skill (in `ak/`) right after its Prove step, one
+- `full-send` runs this fork's `review-change` skill (in `ak/`) right after its Prove step, one
   added line, so every full send gets the checks, simplify, test, no-comments and native-review pass
   before `sol-loop`.
 
@@ -42,9 +50,8 @@ Every file is byte-identical to upstream except these:
   routes a bug to `diagnosing-bugs` and new behavior to `tdd`, says the skills that pause for
   approval (`tdd`, `verify`, `frontend-design`) are not on its ask list, names `verify` and
   `benchmark-checklist` in Proof, and keeps decisions with `show-me-your-work` on a multi-phase run.
-  `council` briefs a question or design as `second-opinion` does. `file-pr` and `leaving-pr-comments`
-  run their text through `technical-writing` and `unslop`. `takeover` and `modernize` run
-  `validate-change` after logic changes of their own.
+  `council` briefs a question or design as `second-opinion` does. `file-pr` runs its text through `technical-writing` and `unslop`. `takeover` and `modernize` run
+  `review-change` after logic changes of their own.
 
 Otherwise `full-send` is unchanged. It names `AskUserQuestion` (Claude Code) and `request_user_input`
 (Codex) and falls back to "the question tool your harness has", so it already works under every

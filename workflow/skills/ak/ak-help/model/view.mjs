@@ -7,9 +7,6 @@ const grill = {
 const exec = (v) => {
   const st = Object.values(v.s);
   if (st.every((x) => x === "Merged" || x === "-")) return "Last ticket merged, closing out";
-  if (v.tr !== "-") return "Triage of review findings";
-  if (v.is === "run") return "implement-spec running on an integration branch";
-  if (v.is === "pr") return "Integration PR waiting for you";
   if (["bcq", "bcp"].includes(v.hd)) return "bcheck planning with you";
   if (v.hd === "bca") return "bcheck's full-send is asking you";
   if (["bc", "bci", "bcs"].includes(v.hd)) return "bcheck working a ticket";
@@ -171,16 +168,6 @@ const words = {
   BcheckShipAsks: "full-send asks the user",
   UserAnswersShipAsk: "you answer full-send",
   BcheckMerges: "full-send merges the PR and closes the issue",
-  UserRunsImplementSpec: "you run implement-spec",
-  ImplementSpecFinishes: "implement-spec marks the PR ready",
-  UserMergesIntegrationPR: "you merge the integration PR",
-  UserRunsTriage: "you run triage",
-  UserAnswersBatch: "you answer a batch",
-  NextBatch: "more findings",
-  SummarizeFindings: "all findings discussed",
-  UserApprovesFixes: "you approve the fixes",
-  FixesDone: "fixes applied",
-  FixTooBig: "a fix needs a new planning cycle",
   Finish: "every ticket is merged",
 };
 export const step = (action) => words[action] ?? null;

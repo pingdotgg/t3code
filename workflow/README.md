@@ -18,6 +18,8 @@ Skills are grouped by where they came from, so each vendored set can be updated 
 
 Each vendored folder has an `ATTRIBUTION.md` naming the upstream commit it was last synced to and every local change made since. Sync by hand: diff the upstream at the new commit against the recorded one, apply that diff to our copy file by file, then update `ATTRIBUTION.md`.
 
+Inside `pstack/` and `mattpocock/`, skills sit one level down in a role folder: `factory/` for the steps the wayfinder and maestro pipeline runs on its own, `on-demand/` for skills a person calls for one situation, and `guidance/` (pstack only) for the principles and style rules that apply whenever their situation comes up. A role folder holds no `SKILL.md` of its own. Upstream keeps each skill at `<skill>/`, so a sync maps it to `<role>/<skill>/` here.
+
 Skill folder names are unique across all groups, because providers see one flat list. `vp run workflow:link` refuses to run when two groups share a name.
 
 ## Installing
@@ -26,7 +28,7 @@ Skill folder names are unique across all groups, because providers see one flat 
 vp run workflow:link
 ```
 
-It symlinks every skill into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills`, which between them cover every provider. The links point into the main checkout, so pulling the fork updates skill content in place. Rerun it after adding or removing a skill. The in-app source update and the `t3code-update` skill run it for you.
+It symlinks every skill into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills`, which between them cover every provider. The links point into the main checkout, so pulling the fork updates skill content in place. Rerun it after adding or removing a skill. The in-app source update and the `update-t3` skill run it for you.
 
 `vp run workflow:map` rewrites `skills/ak/ak-help/skill-map.md`, the chart of which skill names which. Rerun it and commit the result when skills change.
 

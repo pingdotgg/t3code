@@ -28,6 +28,7 @@ it("links new skills, drops removed ones, and leaves foreign entries alone", () 
   using f = fixture();
   const keep = f.addSkill("ak", "keep");
   const gone = f.addSkill("pstack", "gone");
+  const nested = f.addSkill("pstack/factory", "nested");
   NodeFS.mkdirSync(NodePath.join(f.target, "mine"), { recursive: true });
   NodeFS.symlinkSync(NodePath.join(f.skillsRoot, "ak", "keep"), NodePath.join(f.target, "taken"));
   f.addSkill("ak", "mine");
@@ -36,6 +37,7 @@ it("links new skills, drops removed ones, and leaves foreign entries alone", () 
     NodePath.join(f.target, "mine"),
   ]);
   expect(NodeFS.realpathSync(NodePath.join(f.target, "keep"))).toBe(NodeFS.realpathSync(keep));
+  expect(NodeFS.realpathSync(NodePath.join(f.target, "nested"))).toBe(NodeFS.realpathSync(nested));
   expect(NodeFS.existsSync(NodePath.join(f.target, "taken"))).toBe(false);
 
   NodeFS.rmSync(gone, { recursive: true });

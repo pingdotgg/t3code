@@ -13,18 +13,24 @@ export interface LinkReport {
   readonly skipped: ReadonlyArray<string>;
 }
 
-/** Every `skills/<source>/<name>/SKILL.md` folder, keyed by skill folder name. */
+/** Every skill folder, keyed by its name. Skills sit at `<source>/<skill>` or one level down in a role folder, `<source>/<role>/<skill>`. */
 export function listWorkflowSkills(skillsRoot: string): Map<string, string> {
   const skills = new Map<string, string>();
-  for (const source of NodeFS.readdirSync(skillsRoot, { withFileTypes: true })) {
-    if (!source.isDirectory()) continue;
-    const sourceDir = NodePath.join(skillsRoot, source.name);
-    for (const skill of NodeFS.readdirSync(sourceDir, { withFileTypes: true })) {
-      const dir = NodePath.join(sourceDir, skill.name);
-      if (!skill.isDirectory() || !NodeFS.existsSync(NodePath.join(dir, "SKILL.md"))) continue;
-      const existing = skills.get(skill.name);
-      if (existing) throw new Error(`Skill "${skill.name}" exists in both ${existing} and ${dir}`);
-      skills.set(skill.name, dir);
+  const add = (dir: string) => {
+    const name = NodePath.basename(dir);
+    const existing = skills.get(name);
+    if (existing) throw new Error(`Skill "${name}" exists in both ${existing} and ${dir}`);
+    skills.set(name, dir);
+  };
+  const subdirs = (dir: string) =>
+    NodeFS.readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => NodePath.join(dir, entry.name));
+  const isSkill = (dir: string) => NodeFS.existsSync(NodePath.join(dir, "SKILL.md"));
+  for (const source of subdirs(skillsRoot)) {
+    for (const entry of subdirs(source)) {
+      if (isSkill(entry)) add(entry);
+      else subdirs(entry).filter(isSkill).forEach(add);
     }
   }
   return skills;

@@ -1,0 +1,120 @@
+---
+name: to-tickets
+description: Break a plan, spec, or the current conversation into a set of tracer-bullet tickets, each declaring its blocking edges, published to the configured tracker (edges as text in one file per ticket locally, or native blocking links on a real tracker).
+---
+
+# To Tickets
+
+Break a plan, spec, or conversation into a set of **tickets**: tracer-bullet vertical slices, each declaring the tickets that **block** it.
+
+The issue tracker and triage label vocabulary should have been provided to you. If not, use the `setup-matt-pocock-skills` skill (it confirms before writing).
+
+## Process
+
+### 1. Gather context
+
+Work from whatever is already in the conversation context. If the user passes a reference (a spec path, an issue number or URL) as an argument, fetch it and read its full body and comments.
+
+### 2. Explore the codebase (optional)
+
+If you have not already explored the codebase, do so to understand the current state of the code. Ticket titles and descriptions should use the project's domain glossary vocabulary, and respect ADRs in the area you're touching.
+
+Look for opportunities to prefactor the code to make the implementation easier. "Make the change easy, then make the easy change."
+
+Read the Plan group of the `principles` skill before drafting.
+
+### 3. Sketch the shared shape
+
+When the work adds or changes types, signatures or module boundaries in more than one module, and no agreed sketch exists yet, run the `architect` skill's Phases A to C first, with its checkpoint on: the user signs off the shape before any slice is drafted. Skip it when the work stays inside one module.
+
+The agreed sketch becomes the **first ticket**, a scaffold: commit the types, signatures and module map with `not implemented` bodies, and nothing else. Put the synthesized design itself in that ticket's body (the caller's usage, the type sketch, the signatures, the module map and the rationale), since the runners' files are temporary and builders work in other checkouts. Every other ticket is blocked by it and fills in its part of the sketch instead of inventing a shape; a slice that needs something the sketch lacks says so in its ticket. When the repo's checks reject unused stubs (an unused-export lint, for one), file the work under an `integration` epic, so the scaffold lands on the epic's branch and never on main alone.
+
+### 4. Draft vertical slices
+
+Break the work into **tracer bullet** tickets. If reshaping a module first would make the slices simpler, judge the shape with the `codebase-design` skill and make that refactor the first ticket.
+
+<vertical-slice-rules>
+
+- Each slice cuts a narrow but COMPLETE path through every layer (schema, API, UI, tests): vertical, NOT a horizontal slice of one layer
+- A completed slice is demoable or verifiable on its own
+- Each slice is sized to fit in a single fresh context window
+- Any prefactoring should be done first
+
+</vertical-slice-rules>
+
+Give each ticket its **blocking edges**: the other tickets that must complete before it can start. A ticket with no blockers can start immediately.
+
+**Wide refactors are the exception to vertical slicing.** A **wide refactor** is one mechanical change (rename a column, retype a shared symbol) whose **blast radius** fans across the whole codebase, so a single edit breaks thousands of call sites at once and no vertical slice can land green. Don't force it into a tracer bullet; sequence it as **expand–contract**. First expand: add the new form beside the old so nothing breaks. Then migrate the call sites over in batches sized by blast radius (per package, per directory), each batch its own ticket blocked by the expand, keeping CI green batch to batch because the old form still exists. Finally contract: delete the old form once no caller remains, in a ticket blocked by every migrate batch. When even the batches can't stay green alone, keep the sequence but let them share an integration branch that all block a final integrate-and-verify ticket; green is promised only there.
+
+### 5. Quiz the user
+
+When the source is the conversation or a plan, not a spec issue, run `replan` on the draft breakdown first so every stated requirement has a ticket.
+
+Present the proposed breakdown as a numbered list. For each ticket, show:
+
+- **Title**: short descriptive name
+- **Blocked by**: which other tickets (if any) must complete first
+- **What it delivers**: the end-to-end behaviour this ticket makes work
+
+Ask the user, as structured questions if your harness offers them:
+
+- Does the granularity feel right? (too coarse / too fine)
+- Are the blocking edges correct: does each ticket only depend on tickets that genuinely gate it?
+- Should any tickets be merged or split further?
+
+Iterate until the user approves the breakdown.
+
+### 6. Publish the tickets to the configured tracker
+
+Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock-skills` configured; the tickets are the same either way, only the shape of the blocking edges changes:
+
+- **Local files** → write one file per ticket under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` in dependency order (blockers first). Each file's "Blocked by" lists the numbers/titles it depends on. Use the per-ticket file template below: one ticket per file, never a single combined file.
+- **A real issue tracker (GitHub, Linear, …)** → publish one issue per ticket in dependency order (blockers first) so each ticket's blocking edges can reference real identifiers. Use the platform's native blocking relationship where it has one; otherwise set each ticket's "Blocked by" to the blocking issues. If the source was an existing issue, make each ticket its sub-issue (tracker doc's operation). Apply the `ready-for-agent` triage label unless instructed otherwise; the tickets are agent-grabbable by construction. Add it last, after every ticket and every blocking edge exists: a dispatcher can claim a labelled ticket whose blockers are not linked yet.
+
+Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
+
+For a ticket only a person can do (credentials, a third-party dashboard), label it `ready-for-human` instead and write its steps as a numbered checklist: the links, the values to enter, and how to confirm each step worked.
+
+Do NOT close or modify any parent issue.
+
+If a `maestro <owner/repo>` thread exists (`t3_thread_list` with `titleContains`), send it `dispatch now` with `t3_thread_send`, so a paused maestro picks the new issues up.
+
+<local-ticket-template>
+
+# <NN>: <Ticket title>
+
+**What to build:** the end-to-end behaviour this ticket makes work, from the user's perspective, not a layer-by-layer implementation list.
+
+**Blocked by:** the numbers/titles of the tickets that gate this one, or "None (can start immediately)".
+
+**Status:** ready-for-agent
+
+- [ ] Acceptance criterion 1
+- [ ] Acceptance criterion 2
+
+</local-ticket-template>
+
+<issue-template>
+
+## Parent
+
+A reference to the parent issue on the tracker (if the source was an existing issue, otherwise omit this section).
+
+## What to build
+
+The end-to-end behaviour this ticket makes work, from the user's perspective, not layer-by-layer implementation.
+
+## Acceptance criteria
+
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+## Blocked by
+
+- A reference to each blocking ticket, or "None (can start immediately)". Omit this section when blockers were set as native edges.
+
+</issue-template>
+
+In either form, avoid specific file paths or code snippets: they go stale fast. Exception: if a prototype produced a snippet that encodes a decision more precisely than prose can (state machine, reducer, schema, type shape), inline it and note briefly that it came from a prototype. Trim to the decision-rich parts, not a working demo, just the important bits.
+
+**Related:** It needs a spec or plan (`to-spec`, `replan`). After it, offer `maestro`, with an integration branch when the tickets cannot each land green on main. Ask before switching skills.

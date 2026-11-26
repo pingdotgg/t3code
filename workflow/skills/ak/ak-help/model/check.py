@@ -107,7 +107,7 @@ def show(name, bad, note):
 
 def describe(st):
     s = ",".join(f"{k}:{v}" for k, v in st["s"].items() if v != "-")
-    extra = " ".join(f"{k}={st[k]}" for k in ("hd", "is", "tr", "mst", "owe") if st[k] not in ("-", "FALSE"))
+    extra = " ".join(f"{k}={st[k]}" for k in ("hd", "mst", "owe") if st[k] not in ("-", "FALSE"))
     return f"{st['ph']} [{s}] {extra}".strip()
 
 
@@ -127,13 +127,13 @@ WAITS = {"GAsked", "GConfirm", "SAsked", "TQuiz", "PPresent", "PBlocked", "PAmbi
 
 def attention(n):
     st = states[n]
-    if terminal(n) or st["ph"] in WAITS or st["hd"] in ("bcq", "bcp", "bca") or st["is"] == "pr" or st["tr"] in ("batch", "sum"):
+    if terminal(n) or st["ph"] in WAITS or st["hd"] in ("bcq", "bcp", "bca"):
         return True
     if {"Help", "HAnn"} & set(st["s"].values()):
         return True  # the maestro messaged the master
     if st["ph"] in ("Idea", "WIdle"):
         return True  # the user holds the baton by design
-    started = st["hd"] != "-" or st["is"] != "-" or st["tr"] != "-" or "Claimed" in st["s"].values()
+    started = st["hd"] != "-" or "Claimed" in st["s"].values()
     if st["ph"] == "Exec" and st["mst"] == "none" and st["owe"] == "FALSE" and not started:
         return True  # no maestro exists: the user picks the executor
     return False
@@ -151,7 +151,7 @@ def why(n):
     tk = [v for v in st["s"].values() if v != "-"]
     if st["s"]["S"] == "Epic" and all(st["s"][t] == "Merged" for t in st["s"] if t != "S"):
         return "every ticket merged, epic still open, maestro asleep, nobody nudges it"
-    if st["mst"] == "off" and "Ready" in tk and st["hd"] == "-" and st["is"] != "run":
+    if st["mst"] == "off" and "Ready" in tk and st["hd"] == "-":
         return "tickets ready, maestro asleep (heartbeat paused or deleted), nobody told to wake it"
     if set(tk) <= {"Merged", "HReady"} and "HReady" in tk:
         return "only ready-for-human tasks left; nobody tells the person"
@@ -184,7 +184,7 @@ else:
         print(f"       {i}. {w}")
 
 # 4. approval points really require the user: every step that leaves a wait for the user is a user step
-AWAIT_VAR = [("ph", WAITS), ("hd", {"bcp", "bca"}), ("is", {"pr"}), ("tr", {"sum"})]
+AWAIT_VAR = [("ph", WAITS), ("hd", {"bcp", "bca"})]
 bad_edges = []
 for u, v, d in G.edges(data=True):
     for var, vals in AWAIT_VAR:
