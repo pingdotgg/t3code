@@ -1070,6 +1070,14 @@ it("marks block and linked <picture> images standalone but not inline ones", () 
         '<img src="trailing.png" alt="Trailing">',
         "</picture> text",
         "",
+        "<picture>",
+        '<img src="caption.png" alt="Caption">',
+        "</picture> <em>caption</em>",
+        "",
+        "<picture>",
+        '<img src="adjacent-em.png" alt="Adjacent">',
+        "</picture><em>inline</em>",
+        "",
         '<div align="center"><a href="https://example.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Linked"></picture></a></div>',
         "",
         'Inline <picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Badge"></picture> icon',
@@ -1080,6 +1088,8 @@ it("marks block and linked <picture> images standalone but not inline ones", () 
   expect(images(tree).map((image) => image.properties)).toEqual([
     { src: "missing.png", alt: "Block", dataStandalone: true },
     { src: "trailing.png", alt: "Trailing" },
+    { src: "caption.png", alt: "Caption" },
+    { src: "adjacent-em.png", alt: "Adjacent" },
     {
       src: "https://example.com/light.png",
       alt: "Linked",

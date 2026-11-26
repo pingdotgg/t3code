@@ -35,6 +35,51 @@ const STANDALONE_IMAGE_BLOCKS = new Set([
   "blockquote",
 ]);
 
+const ROOT_BLOCK_ELEMENTS = new Set([
+  "blockquote",
+  "dd",
+  "details",
+  "div",
+  "dl",
+  "dt",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "summary",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
+
+function hasVisibleText(node: MarkdownImageHastNode): boolean {
+  if (node.type === "text") return Boolean(node.value?.trim());
+  if (node.type !== "element") return false;
+  return (node.children ?? []).some(hasVisibleText);
+}
+
+function isInlineTextSibling(node: MarkdownImageHastNode | undefined): boolean {
+  if (!node) return false;
+  if (node.type === "text") return Boolean(node.value?.trim());
+  if (node.type !== "element" || !node.tagName || ROOT_BLOCK_ELEMENTS.has(node.tagName)) {
+    return false;
+  }
+  return hasVisibleText(node);
+}
+
 function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode | undefined {
   const children = meaningfulHastChildren(node);
   if (children.length !== 1) return undefined;
@@ -56,12 +101,10 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   }
   // A raw-HTML `<picture>` block sits directly under the root, beside the other blocks.
   if (node.type === "root") {
-    const children = node.children ?? [];
+    const children = meaningfulHastChildren(node);
     children.forEach((child, index) => {
       if (child.tagName !== "picture") return;
-      const besideText = [children[index - 1], children[index + 1]].some(
-        (sibling) => sibling?.type === "text" && sibling.value?.trim(),
-      );
+      const besideText = [children[index - 1], children[index + 1]].some(isInlineTextSibling);
       const image = besideText ? undefined : soleImageDescendant(child);
       if (image) image.properties = { ...image.properties, dataStandalone: true };
     });
