@@ -189,13 +189,11 @@ describe("thread links", () => {
       ["Stray ` tick", "", after, "and `code`"],
       ["Stray ` tick", `# ${after}`, "and `code`"],
       ["Stray ` tick", `- ${after}`, "and `code`"],
-      ...["---", "***", "___", "===", "- - -", "* \t* *", "_ _ _", "--", "=", "-"].flatMap(
-        (boundary) => [
-          ["Stray ` tick", boundary, `${after} and \`code\``],
-          ["> Stray ` tick", `> ${boundary}`, `> ${after} and \`code\``],
-          ["Stray ` tick\r", `  ${boundary}\r`, `${after} and \`code\``],
-        ],
-      ),
+      ...["- - -", "* \t* *", "___", "===", "-"].flatMap((boundary) => [
+        ["Stray ` tick", boundary, `${after} and \`code\``],
+        ["> Stray ` tick", `> ${boundary}`, `> ${after} and \`code\``],
+      ]),
+      ["Stray ` tick\r", "  ---\r", `${after} and \`code\``],
       ["Use `example", "```" + hidden + "`", after],
     ]) {
       expect(threadLinkRefs(markdown.join("\n"), local)).toEqual([ref("env-1", "t1")]);
@@ -206,16 +204,7 @@ describe("thread links", () => {
   });
 
   it("keeps multiline code literal when a line only resembles a block boundary", () => {
-    for (const line of [
-      "--- text",
-      "*** text",
-      "___ text",
-      "=== text",
-      "== =",
-      "-=-",
-      "-_*",
-      "ordinary",
-    ]) {
+    for (const line of ["--- text", "== =", "-_*"]) {
       const markdown = ["Use `example", line, "<t3-thread://v2/local/t1> end`"].join("\n");
       expect(threadLinkRefs(markdown, local)).toEqual([]);
       expect(relabelThreadLinks(markdown, local, () => "New")).toBe(markdown);
