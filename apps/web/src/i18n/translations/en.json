@@ -5354,6 +5354,7 @@
   "c928303400ccaf24": "The device hub failed to start.",
   "4cb21672153c1f18": "No simulators or emulators were found on this environment.",
   "c82410197256eb53": "iOS Simulators",
+  "31a71fec6b5f2bf3": "Android Devices",
   "ac18a5e35195a258": "Android Emulators",
   "94215375ea2558b8": "Running",
   "f8a65d4d662389b0": "Stopped",

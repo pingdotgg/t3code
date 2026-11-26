@@ -128,7 +128,11 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (closes(line)) closes = null;
     } else if (first && FRONTMATTER_OPEN.test(line)) {
       let seen = 0;
-      closes = (next) => FRONTMATTER_CLOSE.test(next) || ++seen >= FRONTMATTER_MAX_LINES;
+      closes = (next) => {
+        // Only a real closer lets a definition follow; an opener with none was a thematic break.
+        openedFence = FRONTMATTER_CLOSE.test(next);
+        return openedFence || ++seen >= FRONTMATTER_MAX_LINES;
+      };
     } else {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cutPoint =
@@ -141,7 +145,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       // An indented fence may sit in a list item, which this does not track.
       openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
-      // a closing code fence or another definition.
+      // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
         (first || afterBlankLine || afterDefinition || afterHeading) && LINK_DEFINITION.test(line);
       afterDefinition = definition;
