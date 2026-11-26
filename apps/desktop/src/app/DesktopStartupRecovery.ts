@@ -167,7 +167,7 @@ pre{flex:1;min-height:60px;margin:0;overflow:auto;background:var(--code);border:
 <p>${escapeHtml(input.failure.reason)}</p>
 <p>${escapeHtml(offer.text)}</p>
 <div class="actions">${offer.action}${actionLink("copy", m(msg("Copy details")))}${actionLink("quit", m(msg("Quit", { $context: "button, quits the app" })))}</div>
-<pre dir="ltr">${escapeHtml(output.length > 0 ? output : m(msg("The server wrote no output.")))}</pre>
+${output.length > 0 ? `<pre dir="ltr">${escapeHtml(output)}</pre>` : `<pre>${escapeHtml(m(msg("The server wrote no output.")))}</pre>`}
 <p class="muted">${escapeHtml(m(msg("Version {version}. T3 Code tries again in the background. Logs: {logDir}"), { version: input.appVersion, logDir: input.logDir }))}</p>
 </body></html>`;
 }

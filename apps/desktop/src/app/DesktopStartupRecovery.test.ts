@@ -104,11 +104,11 @@ describe("resolveStartupRecoveryOffer", () => {
 });
 
 it.effect.each([
-  { visible: false, started: false, closeMain: false },
-  { visible: true, started: false, closeMain: false },
-  { visible: true, started: true, closeMain: false },
-  { visible: true, started: false, closeMain: true },
-])("closes recovery safely with closeMain=$closeMain", ({ visible, started, closeMain }) =>
+  { visible: false, started: false, closeMain: false, output: "Failure details" },
+  { visible: true, started: false, closeMain: false, output: "" },
+  { visible: true, started: true, closeMain: false, output: "Failure details" },
+  { visible: true, started: false, closeMain: true, output: "Failure details" },
+])("closes recovery safely with closeMain=$closeMain", ({ visible, started, closeMain, output }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const checked = yield* Deferred.make<void>();
@@ -188,14 +188,15 @@ it.effect.each([
         _tag: "Failing",
         reason: "Server failed before readiness",
         managedPolicy: false,
-        output: "Failure details",
+        output,
       });
       yield* Deferred.await(checked);
       expect(loaded.length).toBe(shouldRecover ? 1 : 0);
       if (shouldRecover) {
         const html = decodeURIComponent(loaded[0]!);
         expect(html).toContain('<html lang="he" dir="rtl">');
-        expect(html).toContain('<pre dir="ltr">Failure details</pre>');
+        if (output) expect(html).toContain('<pre dir="ltr">Failure details</pre>');
+        else expect(html).toMatch(/<pre>[^<]+<\/pre>/);
         if (closeMain) yield* Ref.set(mainRef, Option.none());
         yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
         yield* Deferred.await(remembered);
