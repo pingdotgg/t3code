@@ -20,6 +20,14 @@ type Field =
 
 type Option = OrchestrationV2UserInputQuestion["options"][number];
 
+/** A form as the user answers it, and the elicitation response their answers make. */
+export interface ElicitationQuestionForm {
+  readonly questions: ReadonlyArray<OrchestrationV2UserInputQuestion>;
+  readonly respond: (
+    answers: ProviderUserInputAnswers,
+  ) => EffectAcpSchema.CreateElicitationResponse;
+}
+
 export interface ElicitationForm {
   readonly questions: ReadonlyArray<OrchestrationV2UserInputQuestion>;
   /**
@@ -176,6 +184,44 @@ function typedAnswer(
   }
 }
 
+function requiredIds(schema: Readonly<Record<string, unknown>> | undefined): ReadonlySet<string> {
+  return new Set(
+    Array.isArray(schema?.required)
+      ? schema.required.filter((key): key is string => typeof key === "string")
+      : [],
+  );
+}
+
+/**
+ * Applies the schema's `required` list to a form mapped outside `parseElicitationForm`: a single
+ * choice the schema leaves optional can be skipped, and one it requires must be answered.
+ */
+export function withOptionalChoices(
+  form: ElicitationQuestionForm,
+  requestedSchema: unknown,
+): ElicitationQuestionForm {
+  const schema = unknownRecord(requestedSchema);
+  const properties = unknownRecord(schema?.properties) ?? {};
+  const required = requiredIds(schema);
+  return {
+    questions: form.questions.map((question) =>
+      question.required === undefined &&
+      question.multiSelect !== true &&
+      question.options.length > 0 &&
+      Object.hasOwn(properties, question.id) &&
+      !required.has(question.id)
+        ? { ...question, required: false }
+        : question,
+    ),
+    respond: (answers) =>
+      form.questions.some(
+        (question) => required.has(question.id) && !Object.hasOwn(answers, question.id),
+      )
+        ? { action: "cancel" }
+        : form.respond(answers),
+  };
+}
+
 // Decline unaskable forms; validate types and selection counts, leaving other constraints to the agent.
 // `allowOther` lets single choices take typed text, sent as the field's value.
 export function parseElicitationForm(
@@ -184,11 +230,7 @@ export function parseElicitationForm(
   { allowOther = false }: { readonly allowOther?: boolean } = {},
 ): ElicitationForm | undefined {
   const schema = unknownRecord(requestedSchema);
-  const required = new Set(
-    Array.isArray(schema?.required)
-      ? schema.required.filter((key): key is string => typeof key === "string")
-      : [],
-  );
+  const required = requiredIds(schema);
   const fields = new Map<string, Field>();
   const parsedFields: Array<{
     readonly id: string;
@@ -238,7 +280,7 @@ export function parseElicitationForm(
       ...(field?.kind === "multiChoice" && field.minItems > 0 && required.has(id)
         ? { required: true }
         : {}),
-      ...((kind === "text" || kind === "number") && !required.has(id) ? { required: false } : {}),
+      ...(kind !== "multiChoice" && !required.has(id) ? { required: false } : {}),
     });
   }
   return {
