@@ -1,5 +1,6 @@
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@t3tools/contracts";
+import { fileBasename } from "@t3tools/shared/path";
 import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 import * as Arr from "effect/Array";
@@ -28,17 +29,7 @@ const terminalMenuSessionOrder = Order.make<TerminalMenuSession>((left, right) =
 });
 
 export function basename(input: string | null): string | null {
-  if (!input) {
-    return null;
-  }
-
-  const normalized = input.replace(/\/+$/, "");
-  if (normalized.length === 0) {
-    return "/";
-  }
-
-  const segments = normalized.split("/");
-  return segments[segments.length - 1] ?? normalized;
+  return input ? fileBasename(input) : null;
 }
 
 export function getTerminalStatusLabel(
