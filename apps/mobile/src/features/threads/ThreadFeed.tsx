@@ -1944,9 +1944,10 @@ function RunFoldButton({
         />
       </Pressable>
       {loading ? (
-        <View
+        <Animated.View
           accessible={false}
           importantForAccessibility="no-hide-descendants"
+          entering={RUN_FOLD_LOADING_ENTER}
           className="gap-2 px-1 pb-2"
         >
           {(["40%", "60%", "33%"] as const).map((width) => (
@@ -1955,7 +1956,7 @@ function RunFoldButton({
               <View className="h-2.5 rounded-full bg-subtle-strong" style={{ width }} />
             </View>
           ))}
-        </View>
+        </Animated.View>
       ) : null}
     </View>
   );
@@ -3019,6 +3020,11 @@ type DisclosureLayout = {
 };
 const DISCLOSURE_DETAIL_DELAY_MS = 135;
 const DISCLOSURE_DETAIL_FADE_MS = 70;
+const DISCLOSURE_SETTLE_MAX_MS = 100;
+// The fold's loading bars wait out the longest hold and slide that move the next row below them.
+const RUN_FOLD_LOADING_ENTER = FadeIn.delay(
+  DISCLOSURE_SETTLE_MAX_MS + THREAD_DISCLOSURE_TRANSITION_MS,
+).duration(DISCLOSURE_DETAIL_FADE_MS);
 const unsubscribeNothing = () => {};
 
 function feedContentEnd(state: ReturnType<LegendListRef["getState"]>): number | undefined {
@@ -3977,32 +3983,39 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [],
   );
 
-  const settleDisclosureAfterLayout = () => {
+  const cancelDisclosureSettleFrames = () => {
     if (disclosureSettleFrameRef.current !== null) {
       cancelAnimationFrame(disclosureSettleFrameRef.current);
     }
     if (disclosureSettleSecondFrameRef.current !== null) {
       cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
     }
+    disclosureSettleFrameRef.current = null;
+    disclosureSettleSecondFrameRef.current = null;
+  };
+
+  const playDisclosure = () => {
+    cancelDisclosureSettleFrames();
+    const motion = disclosureMotionRef.current;
+    if (!motion || motion.playing) return;
+    if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
+    const playing = { ...motion, playing: true };
+    disclosureMotionRef.current = playing;
+    setDisclosureLayout(playing);
+    disclosureMotionTimer.current = setTimeout(
+      () => {
+        disclosureMotionRef.current = null;
+        setDisclosureLayout(null);
+        disclosureMotionTimer.current = null;
+      },
+      DISCLOSURE_DETAIL_DELAY_MS + DISCLOSURE_DETAIL_FADE_MS + 16,
+    );
+  };
+
+  const settleDisclosureAfterLayout = () => {
+    cancelDisclosureSettleFrames();
     disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        const motion = disclosureMotionRef.current;
-        if (motion && !motion.playing) {
-          const playing = { ...motion, playing: true };
-          disclosureMotionRef.current = playing;
-          setDisclosureLayout(playing);
-          disclosureMotionTimer.current = setTimeout(
-            () => {
-              disclosureMotionRef.current = null;
-              setDisclosureLayout(null);
-              disclosureMotionTimer.current = null;
-            },
-            DISCLOSURE_DETAIL_DELAY_MS + DISCLOSURE_DETAIL_FADE_MS + 16,
-          );
-        }
-        disclosureSettleFrameRef.current = null;
-        disclosureSettleSecondFrameRef.current = null;
-      });
+      disclosureSettleSecondFrameRef.current = requestAnimationFrame(playDisclosure);
     });
   };
 
@@ -4014,7 +4027,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       list.cancelScroll();
       list.anchorVisibleContent({ key: anchorKey });
     }
-    if (list && anchorKey && !reduceMotion) {
+    // A working turn keeps adding and resizing rows, and held rows would cover or blank them.
+    if (list && anchorKey && !reduceMotion && !working) {
       const state = list.getState();
       const anchorIndex = state.indexByKey(anchorKey);
       if (anchorIndex !== undefined) {
@@ -4045,6 +4059,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         disclosureMotionRef.current = motion;
         setDisclosureLayout(motion);
         settleDisclosureAfterLayout();
+        // A streaming turn resizes rows every frame, restarting the settle wait until it ends.
+        disclosureMotionTimer.current = setTimeout(playDisclosure, DISCLOSURE_SETTLE_MAX_MS);
       }
     }
   };
@@ -4148,7 +4164,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     switch (entry.type) {
       case "run-fold":
-        return resolveThreadFeedFixedItemSize(entry.type);
+        // An open fold with deferred history shows loading bars under its label until it loads.
+        return entry.expanded && entry.deferredWorkItemIds
+          ? undefined
+          : resolveThreadFeedFixedItemSize(entry.type);
       case "work-toggle":
         return entry.thought ? undefined : WORK_GROUP_TOGGLE_HEIGHT;
       case "thinking":
