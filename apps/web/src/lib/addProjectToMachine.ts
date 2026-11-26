@@ -17,7 +17,7 @@ import { create } from "zustand";
 import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
-import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
+import { environmentProjectClonesAtom } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
 
@@ -132,8 +132,6 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
 
   const requestedRef = { environmentId: input.target.environmentId, projectId: input.projectId };
   const requestedKey = scopedProjectKey(requestedRef);
-  // Marked before the start request, since the clone list can arrive before its reply.
-  silenceProjectCloneToasts(requestedRef);
   if (reads.length > 0) setFileCopy(requestedKey, { phase: "copying" });
   const started = await runAtomCommand(
     appAtomRegistry,
@@ -159,7 +157,6 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   const targetRef = { environmentId: input.target.environmentId, projectId };
   const copyKey = scopedProjectKey(targetRef);
   if (projectId !== input.projectId) {
-    silenceProjectCloneToasts(targetRef);
     if (reads.length > 0) {
       setFileCopy(copyKey, { phase: "copying" });
       setFileCopy(requestedKey, null);
