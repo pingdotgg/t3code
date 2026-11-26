@@ -775,7 +775,7 @@ describe("workflowOneLine", () => {
         "> ```sh\n> printf sample\n> ```\n>\n> # Report\n> | a | b |\n>     code\n> Build passed.",
       ),
     ).toBe("Build passed.");
-    expect(workflowOneLine("> > ~~~sh\n> > printf sample\n> > ~~~\n> >\n> > Build passed.")).toBe(
+    expect(workflowOneLine("> ```sh\n> printf sample\n> ```\n>Build passed.")).toBe(
       "Build passed.",
     );
     expect(workflowOneLine("````md\n```ts\nconst x = 1;\n```\n````\nDone.")).toBe("Done.");

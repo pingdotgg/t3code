@@ -994,7 +994,7 @@ export function workflowOneLine(text: string): string {
     "";
   const code: string[] = [];
   const plain = line
-    .replace(/^(?:>\s+)+/, "")
+    .replace(/^(?:>\s*)+/, "")
     .replace(/^([-*]|\d+\.)\s+/, "")
     .replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, inner: string) => `\0${code.push(inner) - 1}\0`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
