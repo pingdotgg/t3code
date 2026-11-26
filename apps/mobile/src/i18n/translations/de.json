@@ -20,6 +20,10 @@
   "2aa1c01bf8014725": "{organization} beschränkt Threads auf „Änderungen automatisch annehmen“.",
   "89563a8fff8bb751": "{organization} beschränkt Threads auf „Auto“.",
   "5b7ff1208620c2c2": "{organization} beschränkt Threads auf „Vollzugriff“.",
+  "069e0382ff2496f5": "Die Claude-Einstellungen deiner Organisation schalten den Auto-Modus ab.",
+  "8ccf7e0def66d339": "Deine Claude-Einstellungen schalten den Auto-Modus ab.",
+  "04ac2410d2cc0666": "Die Claude-Einstellungen dieses Projekts schalten den Auto-Modus ab.",
+  "7e27789f5d58960e": "Die Claude-Einstellungen schalten den Auto-Modus ab.",
   "9bf017edd3847eb1": "Die Richtlinie von {organization} erlaubt keine Verbindungen von anderen Geräten.",
   "ef9533bcc048f17b": "Die Richtlinie von {organization} erlaubt T3 Connect nicht.",
   "986b0873f913a840": "Die Richtlinie von {organization} erlaubt keine Webhook-Aufgaben.",
@@ -66,7 +70,7 @@
   "2f6e4f7cd364da73": "Erwartet",
   "9d11c93d4035de3e": "Tatsächlich passiert",
   "c87d0595693704f9": "Stattdessen getan",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} Zeichen",
+  "ed5c85bb4aecb472": "{count, plural, one {{speaker} · {count} Zeichen} other {{speaker} · {count} Zeichen}}",
   "f5114fb9c40fd929": "Du",
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Runde {turn} · {what}",
@@ -497,7 +501,7 @@
   "bc24c300d53d61c5": "{host} hat auf keiner gespeicherten Route geantwortet.",
   "b0dd3cd876937ca8": "Verbindungsprofil {connectionId} ist nicht verfügbar.",
   "5ce46783e79ca9d1": "Zugangsdaten der Verbindung {connectionId} sind nicht verfügbar.",
-  "0bda0cac7f5acc20": "Die verbundene Umgebung {actual} stimmt nicht mit {expected} überein.",
+  "b39d1428ec8b23f5": "Unter dieser Adresse läuft jetzt eine andere T3 Code-Installation ({actual}, nicht {expected}). Entferne diese Verbindung und füge sie erneut hinzu.",
   "ea0d3e4e51d5706f": "Die Zugangsdaten der Umgebung sind ungültig.",
   "7283ebfd16d09677": "Die Zugangsdaten der Umgebung gewähren nicht den erforderlichen Zugriff.",
   "d3e9a9cb543b4b7b": "Die Umgebung hat die Authentifizierungsanfrage abgelehnt.",
@@ -686,6 +690,7 @@
   "56b4ff3993c93eca": "{host} hat eine inkompatible Serverkonfiguration gesendet.",
   "368c4d4f99c66bfb": "Aktualisiere Client und Server auf kompatible Versionen.",
   "e5fd422e445391fc": "Upload fehlgeschlagen. Zum Wiederholen tippen.",
+  "13b14784f8707ddd": "0 Byte",
   "b2bc6bd92ea24e5c": "{size} MB",
   "88f84178edbb7f57": "{size} KB",
   "5a78fd0a1d8e9945": "{count} MB",
@@ -817,6 +822,7 @@
   "21872f69ccbc711d": "{provider}-MCP-Server werden gestartet",
   "fedaa29ff8815a77": "{provider}-Hooks werden geladen",
   "57025ae4de5beb57": "{provider}-Regeln und -Skills werden geladen",
+  "1cbfbcad9f0d04fe": "{provider}-Sitzung wird fortgesetzt",
   "4729a188600f1501": "Verbindung zu {provider} wird hergestellt",
   "8c8977097681630f": "{provider} wird gestartet",
   "f1d27d127ab27ac6": "Wird gestartet",
@@ -871,6 +877,10 @@
   "05b16c85cb1e18bd": "Keine Repositorys",
   "04ea9e0e663983fd": "Alle Repositorys",
   "c07bd24ff49e85d9": "{count, plural, one {{count} Repository} other {{count} Repositorys}}",
+  "1b799ebfa94c2408": "Genehmigung für Push-Hooks",
+  "81d703184fe5112e": "Push-Hooks dieses Repositorys ausführen?",
+  "027b0d65c7a67af6": "Hook-Datei",
+  "ade585910165bb52": "Konfigurierter Hook",
   "e94aa66471dae6aa": "Warum werde ich das gefragt?",
   "228a325b5708e675": "Vollzugriff überspringt Genehmigungen, aber eine Nachfrageregel in den Einstellungen des Agenten trifft auf diese Aktion zu, daher fragt er trotzdem. Entferne diese Regel oder schränke sie ein, um diese Nachfragen zu beenden.",
   "3f9101f696c738a8": "Vollzugriff überspringt Genehmigungen, aber der Agent hält trotzdem für einige eigene Sicherheitsprüfungen an, die keine Einstellung überspringen kann, etwa beim Löschen eines Pfads, den er nicht prüfen kann. T3 Code kann diese nicht abschalten. Prüfe also die Anfrage und genehmige sie, wenn sie deinen Erwartungen entspricht.",
@@ -1296,7 +1306,7 @@
   "c13753167634f7aa": "Datei gelesen",
   "5ce648cd03020fd9": "{path} gelesen +{count} weitere",
   "5d6c2898401c94e6": "{path} gelesen",
-  "612170d804b03320": "{count, plural, one {{count} fehlerhafter oder inkonsistenter Nutzungseintrag wurde übersprungen; die Nutzung ist möglicherweise unvollständig.} other {{count} fehlerhafte oder inkonsistente Nutzungseinträge wurden übersprungen; die Nutzung ist möglicherweise unvollständig.}}",
+  "69150fe436b3a0c2": "{count, plural, one {{count} fehlerhafter oder inkonsistenter Nutzungseintrag wurde übersprungen; die Nutzung ist möglicherweise unvollständig.} other {{count} fehlerhafte oder inkonsistente Nutzungseinträge wurden übersprungen; die Nutzung ist möglicherweise unvollständig.}}",
   "ee448ceb6820ce2f": "{environment} verwendet eine ältere Serverversion und wird nicht in die Summen einbezogen.",
   "732708950237004e": "Dieser Client ist älter als der Server auf {environment}; seine Nutzung wird nicht in die Summen einbezogen.",
   "9758c2ede06aa19b": "heute {hour}",
@@ -1915,6 +1925,7 @@
   "69c659d8b6e271cc": "Die Seite fordert eine Datei an.",
   "a6efeb99b479990a": "Dateien auswählen",
   "59c87648d44b958c": "Datei auswählen",
+  "6f321f153b8711bb": "Option auswählen",
   "61a552a67e9e3eac": "Antwort auf Dialog",
   "1d9bd868fafea18a": "Ablehnen",
   "1d0a7acef4a95536": "Akzeptieren",
@@ -4338,6 +4349,21 @@
     },
     " hat ihre Seite verlassen und wurde gestoppt"
   ],
+  "796b81c4875c4feb": [
+    "Die App ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " benötigt einen neueren ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-Server in dieser Umgebung. Aktualisiere den Server, um sie zu nutzen."
+  ],
   "5ef18e4d39b398bf": [
     "Die App ",
     {
@@ -4900,6 +4926,7 @@
   "306a6f95ad9d52f7": "Nicht gesendet",
   "11276ab6c58b7a25": "Öffnet den Entwurf im Eingabefeld für neue Aufgaben. Nach links wischen zum Verwerfen.",
   "99950f3a28d425fa": "Wird gesendet, sobald die Umgebung wieder verbunden ist. Öffnet die Aufgabe zum Bearbeiten. Nach links wischen zum Löschen.",
+  "d71048f4fb9cf44a": "Wartet auf Synchronisierung",
   "0a260c7744afd0be": "Wartet",
   "ad78fae7d373cf21": "Arbeitet",
   "be451f475c514b37": "Aufgeweckt-Hinweis schließen",
@@ -5191,7 +5218,7 @@
   "0b363b02a7e17bcb": "Rohe Token-Kosten",
   "ea4beda46b22b8b0": "Verarbeitete Tokens",
   "212d974007cacf3f": "* bei Abrechnung zum vollen API-Preis",
-  "82bc7f1cc5a039fc": "{count, plural, one {Über {sessions} Sitzung} other {Über {sessions} Sitzungen}}",
+  "45340a7dc1f89d51": "{count, plural, one {Über {sessions} Sitzung} other {Über {sessions} Sitzungen}}",
   "2a57181a9d128463": "{share} der Kosten · {tokens} Tokens",
   "d8a6a99fbdda0d3e": "{share} der Tokens · {cost}",
   "19a3f4f2ba09e787": "Summen",
@@ -5328,6 +5355,9 @@
   "744127f8dfad7d22": "Verbinde eine Umgebung, um ihre Workflow-Ausführungen zu sehen.",
   "b9aae2f7cdb1a379": "Noch keine Workflow-Ausführungen",
   "ace8fc1c643cf9f6": "Ein Workflow verbindet Agenten, Code, Zeitpläne und Fragen an dich zu einer Ausführung, die Neustarts übersteht. Schreib einen auf deinem Computer, unter Workflows, dann Definitionen.",
+  "fc9c3a00cfc18b55": "Alle Arten",
+  "e4d1316c85ed7066": "Keine Fragen dieser Art warten auf dich.",
+  "45a94c724845ec1d": "Sonstige",
   "86798f07ba2d7f4d": "Issues durchsuchen",
   "484cd83bb303bab8": "Pull Requests durchsuchen",
   "75ed31fcea4f741a": "Issues filtern",
@@ -5615,5 +5645,67 @@
   "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
-  "892f08d21b8e48a9": "{layers} per {kind, select, squash {Squash} merge {Merge} rebase {Rebase} fastForward {Fast-Forward} other {{method}}} in {base} mergen, sobald die Anforderungen erfüllt sind. Das kann sofort passieren."
+  "892f08d21b8e48a9": "{layers} per {kind, select, squash {Squash} merge {Merge} rebase {Rebase} fastForward {Fast-Forward} other {{method}}} in {base} mergen, sobald die Anforderungen erfüllt sind. Das kann sofort passieren.",
+  "89bf40eb2503b6c5": "Neues Gerät bei {environment} angemeldet",
+  "c94b5fe9ef372bc0": "{device} hat sich über {product} verbunden. Warst du das nicht, entferne es in T3 Code auf diesem Computer unter Einstellungen → Zugriff.",
+  "bec67d0ed485f885": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht, entferne sie in T3 Code auf diesem Computer unter Einstellungen → Zugriff.",
+  "18c30aa94d0a807f": "Verbindungsdiagnose",
+  "eb287395a09cd288": "Verbindungs-Traces senden",
+  "6787f93bbf6ce0b6": "Hilft dem T3 Code-Team, Verbindungsprobleme zu beheben. Traces enthalten Zeiten, Fehlertypen, eine ID für diese App-Sitzung und die App-Version, nie deine Threads, Prompts oder deinen Code. Du kannst das unter Einstellungen > Über T3 Code > Diagnose ändern.",
+  "0b1e4aecbd38e0cf": "Wenn die App über {product} eine Verbindung zu einem Computer herstellt, sendet sie dem T3 Code-Team, wie lange jeder Schritt gedauert hat, den Fehlertyp, eine ID für diese App-Sitzung und die App-Version. Traces enthalten nie deine Threads, Prompts oder deinen Code.",
+  "e0856d6a402ad821": "Die Richtlinie von {organization} erlaubt keine Worktree-Layout-Befehle von Projekten.",
+  "7150557773b3818b": "In der Warteschlange",
+  "efbeb3993ee2c3f5": "Wartet auf {pool}",
+  "0398ca6c1d24b92d": "wartet, als Nächstes dran",
+  "0af6d5ffd5166214": "{count, plural, one {wartet, {count} davor} other {wartet, {count} davor}}",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " braucht eine Begründung."
+  ],
+  "7e1fd2eb570a372b": "{who} hat {choice} geantwortet",
+  "a3c43735e1a81498": "Begründung für {title}",
+  "bfad234f016cfa3f": "Warum, in einem Satz. Gilt für die Antwort, die du wählst.",
+  "3759768c5d342c22": [
+    "beantwortet",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "von ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "Du hast {choice} geantwortet",
+  "235902a19e95833b": [
+    "von dir,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Google-Konto bestätigen",
+  "99451a5d2d40440f": "Zurückgezogen von {by}.",
+  "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
+  "201490988858b511": "zurückgezogen von {by}",
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
 }
