@@ -831,3 +831,23 @@ describe("project name composition", () => {
     ]);
   });
 });
+
+it("shows the saved project name again after an empty name is rejected", async () => {
+  setup();
+  await using screen = await mountPanel();
+  const input = nameInput(screen);
+
+  await userEvent.fill(input, "   ");
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(input).toHaveValue("Shared repo");
+  expect(state.toast).toHaveBeenCalledWith({
+    type: "warning",
+    title: "Project title cannot be empty",
+  });
+
+  await userEvent.click(input);
+  await userEvent.keyboard("{Tab}");
+  expect(state.toast).toHaveBeenCalledOnce();
+  expect(state.update).not.toHaveBeenCalled();
+});

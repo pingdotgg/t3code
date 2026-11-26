@@ -201,7 +201,7 @@ function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
 
 export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const trimmed = codeText.trim();
-  if (trimmed.length === 0 || trimmed.includes("`")) return null;
+  if (trimmed.length === 0 || trimmed.includes("`") || /[<>]/.test(trimmed)) return null;
   if (INLINE_CODE_WHITESPACE_PATTERN.test(trimmed) && !isSpacedAbsoluteFilePath(trimmed)) {
     return null;
   }
@@ -356,22 +356,36 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   if (!destination) return false;
   const normalize = (path: string) =>
     path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
-  const labelPosition = splitFilePathPosition(label.trim());
-  if (
-    (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
-    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
-  ) {
-    return false;
+  const trimmed = label.trim();
+  const isWindowsDestination = isWindowsAbsolutePath(destination.path);
+  const destinationPath = isWindowsDestination
+    ? normalize(destination.path).toLowerCase()
+    : normalize(destination.path);
+  const matchesLabelPosition = (labelPosition: FilePathPosition): boolean => {
+    if (
+      (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
+      (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
+      (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
+    ) {
+      return false;
+    }
+    let labelPath = normalize(labelPosition.path);
+    if (labelPath.length === 0) return true;
+    if (isWindowsDestination) {
+      labelPath = labelPath.toLowerCase();
+    }
+    return destinationPath === labelPath || destinationPath.endsWith(`/${labelPath}`);
+  };
+  const hashIndex = trimmed.lastIndexOf("#");
+  if (hashIndex >= 0) {
+    const path = trimmed.slice(0, hashIndex);
+    const anchored = splitFilePathPosition(path, trimmed.slice(hashIndex));
+    // A `:line` suffix before the hash wins in splitFilePathPosition; only a position from the anchor counts here.
+    if (anchored.line !== undefined && anchored.path === path && matchesLabelPosition(anchored)) {
+      return true;
+    }
   }
-  let labelPath = normalize(labelPosition.path);
-  let destinationPath = normalize(destination.path);
-  if (labelPath.length === 0) return true;
-  if (isWindowsAbsolutePath(destination.path)) {
-    labelPath = labelPath.toLowerCase();
-    destinationPath = destinationPath.toLowerCase();
-  }
-  return destinationPath === labelPath || destinationPath.endsWith(`/${labelPath}`);
+  return matchesLabelPosition(splitFilePathPosition(trimmed));
 }
 
 export function isRelativeFilePath(path: string): boolean {
@@ -455,7 +469,9 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
     if (start >= runStart && start <= runEnd) return runEnd;
     delimiter.lastIndex = start;
     runStart = start;
-    runEnd = delimiter.exec(markdown)?.index ?? markdown.length;
+    let match = delimiter.exec(markdown);
+    while (match?.[0].length === 2 && match[0][0] === "\\") match = delimiter.exec(markdown);
+    runEnd = match?.index ?? markdown.length;
     return runEnd;
   };
 }
@@ -463,16 +479,20 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
 function markdownLinkTailScanner(markdown: string) {
   // A blank line ends the paragraph, so no part of a link's tail runs past one.
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
-  const doubleQuoteEnd = markdownRunEndFinder(markdown, /"|\n[ \t\r]*\n/g);
-  const singleQuoteEnd = markdownRunEndFinder(markdown, /'|\n[ \t\r]*\n/g);
+  // Escape pairs (`\"`, `\\`) match so the finder can skip them.
+  const doubleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\"]|"|\n[ \t\r]*\n/g);
+  const singleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\']|'|\n[ \t\r]*\n/g);
+  const parenthesisEnd = markdownRunEndFinder(markdown, /\\[\\()]|[()]|\n[ \t\r]*\n/g);
   const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
   return (start: number) => {
     const end = whitespaceEnd(start);
     const quote = markdown[end];
     if (quote === ")") return end + 1;
-    if (end === start || (quote !== '"' && quote !== "'")) return null;
-    const quoteEnd = (quote === '"' ? doubleQuoteEnd : singleQuoteEnd)(end + 1);
-    if (markdown[quoteEnd] !== quote) return null;
+    if (end === start || (quote !== '"' && quote !== "'" && quote !== "(")) return null;
+    const titleEnd =
+      quote === '"' ? doubleQuoteEnd : quote === "'" ? singleQuoteEnd : parenthesisEnd;
+    const quoteEnd = titleEnd(end + 1);
+    if (markdown[quoteEnd] !== (quote === "(" ? ")" : quote)) return null;
     const close = titleWhitespaceEnd(quoteEnd + 1);
     return markdown[close] === ")" ? close + 1 : null;
   };
@@ -530,21 +550,21 @@ function markdownLinkDestinationScanner(markdown: string) {
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  const bracket = /[[\]\\]|\n[ \t\r]*\n/g;
-  let openBrackets = 0;
+  const bracket = /!\[|[[\]\\]|\n[ \t\r]*\n/g;
+  const openers: boolean[] = [];
   for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
     if (match[0] === "\\") {
       bracket.lastIndex = match.index + 2;
     } else if (match[0].startsWith("\n")) {
-      openBrackets = 0;
-    } else if (match[0] === "[") {
-      openBrackets += 1;
-    } else if (openBrackets > 0) {
-      openBrackets -= 1;
+      openers.length = 0;
+    } else if (match[0].endsWith("[")) {
+      openers.push(match[0] === "![");
+    } else if (openers.length > 0) {
+      const image = openers.pop();
       const destination = scanDestination(match.index + 1);
       if (!destination) continue;
-      // A link cannot contain a link, so the brackets still open around it become text.
-      openBrackets = 0;
+      // A link cannot contain a link, but it can contain an image.
+      if (!image) openers.length = 0;
       bracket.lastIndex = destination.end;
       const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
       if (href) hrefs.push(href);

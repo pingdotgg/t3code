@@ -321,6 +321,8 @@ function escapeLength(input: string, index: number): number {
   if (next === "[") {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
+      // Like xterm.js, a new ESC cancels an unfinished CSI so the next sequence parses intact.
+      if (code === 0x1b) return cursor - index;
       if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
     }
     return -1;
@@ -351,6 +353,11 @@ function escapeLength(input: string, index: number): number {
   // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
   const final = input.charCodeAt(cursor);
   if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
+  if (final >= 0xd800 && final <= 0xdbff) {
+    if (cursor + 1 >= input.length) return -1;
+    const low = input.charCodeAt(cursor + 1);
+    if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+  }
   return cursor - index + 1;
 }
 
@@ -964,4 +971,20 @@ const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;:]*m`, "gu");
 
 export function terminalOutputPlainText(text: string): string {
   return text.replace(SGR_PATTERN, "");
+}
+
+// tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
+// redraws leave on the line. Walking the frames from the last keeps this linear.
+function lastFrame(line: string): string {
+  let row = "";
+  for (const frame of line.split("\r").reverse())
+    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
+    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
+  return row;
+}
+
+export function terminalOutputCollapseRedraws(text: string): string {
+  return /\r(?!\n)/.test(text)
+    ? text.replaceAll("\r\n", "\n").split("\n").map(lastFrame).join("\n")
+    : text;
 }

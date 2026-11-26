@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "scripts": {
@@ -33,7 +33,7 @@
     "@legendapp/list": "catalog:",
     "@noble/hashes": "catalog:",
     "@pierre/diffs": "catalog:",
-    "@pierre/trees": "1.0.0-beta.6",
+    "@pierre/trees": "catalog:",
     "@pierre/words": "file:deps/pierre-words-0.2.2-t3.4-7c04b7f1.tgz",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
@@ -102,7 +102,7 @@
     "@types/use-sync-external-store": "^0.0.6",
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "@vitest/browser-playwright": "5.0.5",
+    "@vitest/browser-playwright": "5.1.1",
     "compression": "^1.8.2",
     "gt": "2.27.0",
     "oxc-transform-react": "~0.152.0",
