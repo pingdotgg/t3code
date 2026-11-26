@@ -50,6 +50,16 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
               !hasRelayRoute(saved)
             )
               continue;
+            // The label was saved when the environment was added; the signed descriptor is current.
+            if (saved.target.label !== descriptor.label) {
+              yield* registry
+                .setRelayLabel(environmentId, descriptor.label)
+                .pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("Could not rename a discovered environment.", { error }),
+                  ),
+                );
+            }
             const previous = seenChecks.get(environmentId);
             const fresh =
               previous?.checkedAt !== status.checkedAt ||

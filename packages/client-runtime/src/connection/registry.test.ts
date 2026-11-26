@@ -841,6 +841,90 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("discovery renames saved T3 Connect environments after their signed descriptor", () =>
+    Effect.gen(function* () {
+      const alice = new RelayConnectionTarget({ ...RELAY_TARGET, label: "DESKTOP-PC" });
+      const bob = new RelayConnectionTarget({ ...SECOND_RELAY_TARGET, label: "DESKTOP-PC" });
+      const harness = yield* makeHarness([alice, bob], [], [], {
+        initialDisabled: [alice.environmentId],
+      });
+      const discovered = (environmentId: EnvironmentId, label: string) => {
+        const endpoint = {
+          httpBaseUrl: "https://relay.example.test",
+          wsBaseUrl: "wss://relay.example.test",
+          providerKind: "manual" as const,
+        };
+        return {
+          environment: { environmentId, label, endpoint, linkedAt: "2026-09-15T00:00:00Z" },
+          availability: "online" as const,
+          status: Option.some<RelayEnvironmentStatusResponse>({
+            environmentId,
+            endpoint,
+            status: "online",
+            checkedAt: "2026-09-15T00:00:00Z",
+            descriptor: {
+              environmentId,
+              label,
+              platform: { os: "windows", arch: "x64" },
+              serverVersion: "1.0.0",
+              orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+              capabilities: { repositoryIdentity: true },
+            },
+          }),
+          error: Option.none(),
+        };
+      };
+      const discoveryState =
+        yield* SubscriptionRef.make<RelayEnvironmentDiscovery.RelayEnvironmentDiscoveryState>({
+          ...RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
+          environments: new Map([
+            [alice.environmentId, discovered(alice.environmentId, "DESKTOP-PC (alice)")],
+            [bob.environmentId, discovered(bob.environmentId, "DESKTOP-PC (bob)")],
+          ]),
+        });
+      const renamed = yield* Deferred.make<void>();
+      let renames = 0;
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* watchDiscoveredCompatibility().pipe(
+          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, {
+            ...registry,
+            setRelayLabel: (environmentId, label) =>
+              registry
+                .setRelayLabel(environmentId, label)
+                .pipe(
+                  Effect.andThen(
+                    Effect.suspend(() =>
+                      ++renames === 2 ? Deferred.succeed(renamed, undefined) : Effect.void,
+                    ),
+                  ),
+                ),
+          }),
+          Effect.provideService(
+            RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
+            RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
+              state: discoveryState,
+              refresh: Effect.void,
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(renamed);
+
+        const entries = yield* SubscriptionRef.get(registry.entries);
+        expect(entries.get(alice.environmentId)).toMatchObject({
+          enabled: false,
+          target: { label: "DESKTOP-PC (alice)" },
+        });
+        expect(entries.get(bob.environmentId)?.target.label).toBe("DESKTOP-PC (bob)");
+        expect((yield* Ref.get(harness.storedTargets)).map((target) => target.label)).toEqual([
+          "DESKTOP-PC (alice)",
+          "DESKTOP-PC (bob)",
+        ]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("discovery leaves direct connections that share an environment id alone", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET, RELAY_TARGET]);
@@ -920,7 +1004,10 @@ describe("EnvironmentRegistry", () => {
 
         const entries = yield* SubscriptionRef.get(registry.entries);
         expect(entries.get(RELAY_TARGET.environmentId)?.unsupportedReason).toBeDefined();
-        expect(entries.get(TARGET.environmentId)).toMatchObject({ enabled: true });
+        expect(entries.get(TARGET.environmentId)).toMatchObject({
+          enabled: true,
+          target: { label: TARGET.label },
+        });
         expect(entries.get(TARGET.environmentId)?.unsupportedReason).toBeUndefined();
         expect((yield* registry.state(TARGET.environmentId)).phase).toBe("connected");
       }).pipe(Effect.provide(harness.layer), Effect.scoped);

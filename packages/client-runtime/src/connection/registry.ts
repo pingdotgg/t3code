@@ -35,7 +35,7 @@ import type {
   PersistedConnectionTarget,
   SupervisorConnectionState,
 } from "./model.ts";
-import { ConnectionBlockedError } from "./model.ts";
+import { ConnectionBlockedError, RelayConnectionTarget } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -172,6 +172,11 @@ export class EnvironmentRegistry extends Context.Service<
     readonly setCompatibility: (
       environmentId: EnvironmentId,
       error: ConnectionBlockedError | null,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    /** Renames an environment saved only through T3 Connect; other entries keep their own names. */
+    readonly setRelayLabel: (
+      environmentId: EnvironmentId,
+      label: string,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly state: (
       environmentId: EnvironmentId,
@@ -1194,6 +1199,41 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const setRelayLabel = Effect.fn("EnvironmentRegistry.setRelayLabel")(function* (
+    environmentId: EnvironmentId,
+    label: string,
+  ) {
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        if (
+          entry === undefined ||
+          entry.target._tag !== "RelayConnectionTarget" ||
+          entry.alternateRoutes !== undefined ||
+          entry.target.label === label ||
+          (yield* Ref.get(platformEnvironmentIds)).has(environmentId)
+        )
+          return;
+        const next: ConnectionCatalogEntry = {
+          ...entry,
+          target: new RelayConnectionTarget({ ...entry.target, label }),
+        };
+        yield* registrations.setRoutes(environmentId, persistedRoutes(next));
+        // In place, like `setEnabled`: a new name does not need a new connection.
+        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+        if (lease !== undefined) {
+          yield* SubscriptionRef.update(serviceScopes, (current) =>
+            new Map(current).set(environmentId, { ...lease, entry: next }),
+          );
+        }
+        yield* SubscriptionRef.update(entries, (current) =>
+          new Map(current).set(environmentId, next),
+        );
+      }),
+    );
+  });
+
   return EnvironmentRegistry.of({
     entries,
     networkStatus,
@@ -1208,6 +1248,7 @@ export const make = Effect.gen(function* () {
     retryNow,
     setEnabled,
     setCompatibility,
+    setRelayLabel,
     state,
     stateChanges,
     run,
