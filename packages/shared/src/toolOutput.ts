@@ -122,6 +122,14 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     const nested = readResult(content, budget, depth + 1);
     return { ...nested, failed: failed || nested.failed };
   }
+  // Other terminal tools report an `acp-mcp-call` result's stdout without Antigravity's marker.
+  const stdout = [value.stdout, value.combinedOutput, value.output].find(
+    (text) => typeof text === "string",
+  );
+  if (stdout !== undefined) {
+    const nested = readResult(stdout, budget, depth + 1);
+    if (nested.data !== undefined) return { ...nested, failed: failed || nested.failed };
+  }
   return { data: value, failed };
 }
 

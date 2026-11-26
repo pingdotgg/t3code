@@ -1109,8 +1109,10 @@ export interface AcpMcpToolCallIdentity {
   readonly input?: Record<string, unknown>;
 }
 
-// Unanchored: heredocs, multi-line JSON, wrapper scripts and truncation suffixes span lines.
-const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)/gu;
+// Unanchored: heredocs, multi-line JSON, wrapper scripts and truncation suffixes span lines. Also
+// matches the Windows launcher (`acp-mcp-call.cmd`, `$env:T3_ACP_MCP_CALL`) and argv arrays.
+const ACP_MCP_FALLBACK_CALL =
+  /(?:^|[\s"'=/\\:$%{])(?:acp-mcp-call(?:\.cmd)?|T3_ACP_MCP_CALL[%}]?)[\s"',]+([A-Za-z0-9_.-]+)/gu;
 
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;

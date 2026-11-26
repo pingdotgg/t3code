@@ -1706,6 +1706,30 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers T3 identity from wrapped and Windows acp-mcp-call fallback commands", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-wrapped",
+      kind: "execute",
+      title: "Ran command",
+      status: "in_progress",
+    });
+    const nodeWrapper = [
+      `node -e 'const cp = require("child_process");`,
+      `const args = ["acp-mcp-call", "html_render", JSON.stringify({ path: "/abs/page.html", title: "Report" })];`,
+      `cp.execFileSync(process.env.T3_ACP_MCP_NODE, args, { stdio: "inherit" });'`,
+    ].join("\n");
+    const powershell =
+      '\'{"path":"C:/page.html","title":"Report"}\' | & $env:T3_ACP_MCP_CALL html_render -';
+    const launcher = "C:\\Users\\me\\.t3\\acp\\acp-mcp-call.cmd html_render -";
+
+    for (const command of [nodeWrapper, powershell, launcher]) {
+      expect(
+        extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [command] }),
+      ).toMatchObject({ server: "t3-code", tool: "html_render" });
+    }
+  });
+
   it("does not treat a command that only mentions acp-mcp-call as a T3 tool call", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
