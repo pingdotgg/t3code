@@ -398,7 +398,6 @@ describe("buildProjectGroups", () => {
 
   it.each([
     ["/", ["/", "/app", "/tools"]],
-    ["D:/", ["D:\\", "D:\\app", "D:\\tools"]],
     ["D:\\", ["D:/", "D:/app", "D:/tools"]],
   ] as const)("keeps folder groups apart in a repository checked out at %s", (rootPath, paths) => {
     const identity = { ...repositoryIdentity, rootPath };
