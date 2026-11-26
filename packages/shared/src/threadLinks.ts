@@ -25,8 +25,10 @@ const fencedCode = (char: "`" | "~", name: string) => {
   const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
   return String.raw`^[ \t]*${LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]*${LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:\r?\n(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:\r?\n${closer})?`;
 };
-// A code span may wrap lines but ends where its paragraph does: a blank line, heading, list item, or fence.
-const SPAN_LINE_BREAK = String.raw`\n(?![ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|\`{3,}[^\`\r\n]*\r?$|~{3,}))`;
+// A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, or deeper blockquote.
+const SPAN_BREAK_LINE =
+  /[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|`{3,}[^`\r\n]*\r?$|~{3,})/my;
+const LINE_PREFIX = /[ \t]*(?:>[ \t]*|(?:[-*+]|\d{1,9}[.)])[ \t]+)*/y;
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
@@ -34,9 +36,7 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
     String.raw`\\[!-/:-@[-\`{-~]`,
     fencedCode("`", "bt"),
     fencedCode("~", "tl"),
-    String.raw`(?<span>(?<spanTicks>\`+)(?!\`)(?:[^\n]|${SPAN_LINE_BREAK})*?(?<!\`)\k<spanTicks>(?!\`))`,
-    // An unmatched backtick run is literal as a whole, so no span opens partway through it.
-    String.raw`\`+`,
+    String.raw`(?<spanTicks>\`+)`,
     // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
     String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
     String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
@@ -46,6 +46,30 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
   ].join("|"),
   "gm",
 );
+
+function quoteDepthAt(markdown: string, lineStart: number): number {
+  LINE_PREFIX.lastIndex = lineStart;
+  return LINE_PREFIX.exec(markdown)?.[0].replace(/[^>]/g, "").length ?? 0;
+}
+
+function findCodeSpanEnd(markdown: string, openIndex: number, tickCount: number): number {
+  const openDepth = quoteDepthAt(
+    markdown,
+    openIndex === 0 ? 0 : markdown.lastIndexOf("\n", openIndex - 1) + 1,
+  );
+  for (let i = openIndex + tickCount; i < markdown.length; i++) {
+    if (markdown[i] === "`") {
+      let runEnd = i + 1;
+      while (markdown[runEnd] === "`") runEnd++;
+      if (runEnd - i === tickCount) return runEnd;
+      i = runEnd - 1;
+    } else if (markdown[i] === "\n") {
+      SPAN_BREAK_LINE.lastIndex = i + 1;
+      if (SPAN_BREAK_LINE.test(markdown) || quoteDepthAt(markdown, i + 1) > openDepth) return -1;
+    }
+  }
+  return -1;
+}
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
@@ -182,17 +206,12 @@ export function threadLinkRefs(
   messageEnvironmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
   const refs = new Map<string, ScopedThreadRef>();
-  // Hermes' matchAll yields matches without `groups`; exec keeps them.
-  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
-    const href =
-      match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
-    const link = href === undefined ? null : parseThreadLinkHref(href);
-    if (link === null) continue;
+  replaceThreadLinks(markdown, (link) => {
     for (const ref of threadLinkCandidates(link, messageEnvironmentId)) {
       refs.set(`${ref.environmentId}/${ref.threadId}`, ref);
     }
-  }
+    return undefined;
+  });
   return [...refs.values()];
 }
 
@@ -202,12 +221,24 @@ export function replaceThreadLinks(
   replace: (link: ThreadLink, label: string | undefined) => string | undefined,
 ): string {
   if (!hasThreadLinks(markdown)) return markdown;
-  return markdown.replace(THREAD_LINK_OUTSIDE_CODE, (source, ...args) => {
-    const groups = args.at(-1) as Partial<
-      Record<"angleHref" | "href" | "autolink" | "bare" | "label", string>
-    >;
-    const href = groups.angleHref ?? groups.href ?? groups.autolink ?? groups.bare;
+  // Hermes' matchAll yields matches without `groups`; exec keeps them.
+  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
+  let result = "";
+  let cursor = 0;
+  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
+    const spanTicks = match.groups?.spanTicks;
+    if (spanTicks !== undefined) {
+      const spanEnd = findCodeSpanEnd(markdown, match.index, spanTicks.length);
+      if (spanEnd !== -1) pattern.lastIndex = spanEnd;
+      continue;
+    }
+    const href =
+      match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
-    return (link && replace(link, groups.label)) ?? source;
-  });
+    const rewritten = link === null ? undefined : replace(link, match.groups?.label);
+    if (rewritten === undefined) continue;
+    result += markdown.slice(cursor, match.index) + rewritten;
+    cursor = match.index + match[0].length;
+  }
+  return cursor === 0 ? markdown : result + markdown.slice(cursor);
 }
