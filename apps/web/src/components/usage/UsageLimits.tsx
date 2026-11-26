@@ -9,7 +9,7 @@ import {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import { kaluwaInstanceAccent } from "../../kaluwa/kaluwaAccent";
 import {
   type LimitPace,
   paceOf,
@@ -228,7 +228,8 @@ export function LimitWindows({
   readonly now: number;
   readonly compact?: boolean;
 }) {
-  const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
+  // Fork: on Kaluwa an accent paints as its palette swatch.
+  const color = kaluwaInstanceAccent(accentColor) ?? barColor(driver);
   const gt = useGT();
   const m = useMessages();
   return (

@@ -38,16 +38,18 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
-import { useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { barColor } from "../usage/UsageLimits";
 import { useWorkflowEnvironmentIds } from "../workflows/useWorkflowEnvironmentIds";
+import { kaluwaAccentColorFor } from "../../kaluwa/kaluwaAccent";
+import { IS_KALUWA_BUILD, useKaluwaLook, type KaluwaLookSnapshot } from "../../kaluwa/kaluwaLook";
 import { accountInitials, collectUsageRingGroups, type UsageRingGroup } from "./kaluwaUsageRings";
 
 const SCHEDULED_TASKS_PATH = "/settings/scheduled-tasks";
 
+// Raised active state, separators and the attention dot live in the rail block of index.css.
 const RAIL_BUTTON_CLASS =
-  "relative flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-sidebar-muted-foreground outline-none transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [-webkit-app-region:no-drag] [&_svg]:size-[18px]";
+  "kaluwa-rail-btn relative flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-(--control-radius) text-sidebar-muted-foreground outline-none transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [-webkit-app-region:no-drag]";
 
 function RailButton({
   label,
@@ -71,7 +73,7 @@ function RailButton({
             onClick={onClick}
             className={cn(
               RAIL_BUTTON_CLASS,
-              active && "bg-sidebar-row-hover text-sidebar-foreground",
+              active && "bg-sidebar-row-active text-sidebar-foreground",
             )}
           />
         }
@@ -83,8 +85,17 @@ function RailButton({
   );
 }
 
-function accountColor(account: LimitAccount): string {
-  return normalizeProviderAccentColor(account.accentColor) ?? barColor(account.driver);
+/** A thin rule between the rail's groups: places, tools, then accounts. */
+function RailSeparator() {
+  return <span aria-hidden className="kaluwa-rail-sep" />;
+}
+
+function accountColor(account: LimitAccount, look: KaluwaLookSnapshot): string {
+  const accent = normalizeProviderAccentColor(account.accentColor);
+  // An old vivid accent paints as its nearest palette swatch, like every other accent.
+  if (accent) return kaluwaAccentColorFor(accent, look);
+  // Without an accent the arc stays quiet instead of painting the brand colour at full strength.
+  return IS_KALUWA_BUILD ? "var(--sidebar-muted-foreground)" : barColor(account.driver);
 }
 
 function accountTitle(account: LimitAccount): string {
@@ -124,8 +135,7 @@ function UsageRings({
               cy={center}
               r={radius}
               fill="none"
-              stroke="currentColor"
-              strokeOpacity={0.18}
+              className="kaluwa-rail-ring-track"
               strokeWidth={RING_STROKE}
             />
             {used > 0 ? (
@@ -153,7 +163,7 @@ function UsageRingDetails({ group }: { readonly group: UsageRingGroup }) {
   const m = useMessages();
   const now = useNowSecond();
   const { account } = group;
-  const color = accountColor(account);
+  const color = accountColor(account, useKaluwaLook());
   return (
     <div className="flex min-w-48 flex-col gap-1.5 py-0.5">
       <div className="flex items-center gap-2">
@@ -193,6 +203,7 @@ function UsageRingButton({
   readonly onClick: () => void;
 }) {
   const gt = useGT();
+  const look = useKaluwaLook();
   const { account } = group;
   const summary = group.windows
     .map((window) => `${window.label} ${Math.round(window.usedPercent)}%`)
@@ -208,12 +219,12 @@ function UsageRingButton({
               summary,
             })}
             onClick={onClick}
-            className="flex w-10 shrink-0 cursor-pointer flex-col items-center gap-0.5 rounded-lg py-1 outline-none transition-colors hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [-webkit-app-region:no-drag]"
+            className="flex w-10 shrink-0 cursor-pointer flex-col items-center gap-0.5 rounded-(--control-radius) py-1 outline-none transition-colors hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [-webkit-app-region:no-drag]"
           />
         }
       >
         <span className="relative flex size-9 items-center justify-center">
-          <UsageRings rings={group.rings} color={accountColor(account)} />
+          <UsageRings rings={group.rings} color={accountColor(account, look)} />
           <ProviderInstanceIcon
             driverKind={account.driver}
             displayName={accountTitle(account)}
@@ -222,7 +233,7 @@ function UsageRingButton({
             iconClassName="size-3"
           />
         </span>
-        <span className="w-full truncate text-center text-3xs leading-tight font-medium text-sidebar-muted-foreground">
+        <span className="w-full truncate text-center text-3xs leading-tight font-semibold tracking-wide text-sidebar-muted-foreground">
           {providerInstanceInitials(accountTitle(account))}
         </span>
         {showInitials && account.email ? (
@@ -248,16 +259,19 @@ function UsageRingStack({ onOpenUsage }: { readonly onOpenUsage: () => void }) {
     titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
   }
   return (
-    <div className="flex flex-col items-center gap-1">
-      {groups.map((group) => (
-        <UsageRingButton
-          key={group.key}
-          group={group}
-          showInitials={(titleCounts.get(accountTitle(group.account)) ?? 0) > 1}
-          onClick={onOpenUsage}
-        />
-      ))}
-    </div>
+    <>
+      <div className="flex flex-col items-center gap-1">
+        {groups.map((group) => (
+          <UsageRingButton
+            key={group.key}
+            group={group}
+            showInitials={(titleCounts.get(accountTitle(group.account)) ?? 0) > 1}
+            onClick={onOpenUsage}
+          />
+        ))}
+      </div>
+      <RailSeparator />
+    </>
   );
 }
 
@@ -274,7 +288,10 @@ function ExtensionsRailButton({ active }: { readonly active: boolean }) {
     >
       <PuzzleIcon />
       {needsAttention ? (
-        <span aria-hidden className="absolute end-1.5 top-1.5 size-1.5 rounded-full bg-warning" />
+        <span
+          aria-hidden
+          className="kaluwa-rail-dot absolute end-1.5 top-1.5 size-1.5 rounded-full"
+        />
       ) : null}
     </RailButton>
   );
@@ -287,7 +304,6 @@ export const KaluwaNavRail = memo(function KaluwaNavRail() {
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
   const workflowsReachable = useWorkflowEnvironmentIds().length > 0;
-  const { open: threadSidebarOpen } = useSidebar();
   const openUsage = () => void navigate({ to: "/usage" });
   return (
     <nav
@@ -300,17 +316,9 @@ export const KaluwaNavRail = memo(function KaluwaNavRail() {
         isElectron && "[-webkit-app-region:drag]",
       )}
     >
-      {/* The strip starts below the titlebar row, so its edge never cuts through the window
-          controls; while the thread sidebar shows, its header runs across that row instead. */}
-      <div
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute inset-x-0 bottom-0 -z-10 bg-sidebar",
-          threadSidebarOpen
-            ? "top-(--workspace-topbar-height) [mask-image:linear-gradient(to_bottom,transparent,black_1.75rem)]"
-            : "top-0",
-        )}
-      />
+      {/* One flat chrome layer from the window's top edge, so the titlebar row above the strip
+          joins the rail cleanly instead of letting the sidebar's header band bleed into it. */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 bg-sidebar" />
       <div
         aria-hidden
         className="pointer-events-none absolute right-0 bottom-0 top-(--workspace-topbar-height) w-px bg-sidebar-border"
@@ -345,6 +353,7 @@ export const KaluwaNavRail = memo(function KaluwaNavRail() {
           <IssueGlyph.issue />
         </RailButton>
       ) : null}
+      <RailSeparator />
       {workflowsReachable ? (
         <RailButton
           label={gt("Workflows")}

@@ -6,13 +6,18 @@ import type { ThemeAppearance } from "@t3tools/shared/themePalettes";
 import { APP_STAGE_LABEL } from "../branding";
 import {
   KALUWA_PALETTE_MOODS,
+  KALUWA_STATUS_SWATCHES,
+  KALUWA_SWATCH_SLOTS,
   kaluwaPalette,
   kaluwaPaletteVariables,
   kaluwaPresetForThemeId,
   type KaluwaPalette,
   type KaluwaPaletteMood,
   type KaluwaPreset,
+  type KaluwaStatus,
+  type KaluwaSwatchSlot,
 } from "./kaluwaPalette";
+import { kaluwaStudioPresetForThemeId, subscribeKaluwaStudio } from "./kaluwaStudioStore";
 
 /** The local build ("-local" version) is Kaluwa; every other flavour keeps upstream's look. */
 export const IS_KALUWA_BUILD = APP_STAGE_LABEL.trim().toLowerCase() === "local";
@@ -22,6 +27,10 @@ export const KALUWA_STATUS_COLOR_SETS = ["palette", "classic"] as const;
 export const KALUWA_BADGE_STYLES = ["tinted", "outline", "mono"] as const;
 export const KALUWA_TILE_STYLES = ["tinted", "mono"] as const;
 export const KALUWA_LOGO_STYLES = ["soft", "original", "mono"] as const;
+const KALUWA_STATUSES = Object.keys(KALUWA_STATUS_SWATCHES) as ReadonlyArray<KaluwaStatus>;
+
+/** A status colour: a palette swatch by name, or a custom `#rrggbb`. */
+export type KaluwaStatusPick = KaluwaSwatchSlot | `#${string}`;
 
 export type KaluwaLook = Readonly<{
   mood: KaluwaPaletteMood;
@@ -32,6 +41,8 @@ export type KaluwaLook = Readonly<{
   logos: (typeof KALUWA_LOGO_STYLES)[number];
   /** Depth, 0 to 100: top highlights on raised surfaces and an accent tint on selected rows. */
   lift: number;
+  /** Per-status picks over the palette's defaults, used while statusColors is "palette". */
+  statusSwatches: Readonly<Partial<Record<KaluwaStatus, KaluwaStatusPick>>>;
 }>;
 
 export const DEFAULT_KALUWA_LOOK: KaluwaLook = {
@@ -42,6 +53,7 @@ export const DEFAULT_KALUWA_LOOK: KaluwaLook = {
   tiles: "tinted",
   logos: "soft",
   lift: 50,
+  statusSwatches: {},
 };
 
 const KALUWA_LOOK_STORAGE_KEY = "kaluwa:look:v1";
@@ -50,6 +62,21 @@ function pick<T extends string>(options: ReadonlyArray<T>, value: unknown, fallb
   return typeof value === "string" && (options as ReadonlyArray<string>).includes(value)
     ? (value as T)
     : fallback;
+}
+
+function parseStatusSwatches(value: unknown): KaluwaLook["statusSwatches"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const picks: Partial<Record<KaluwaStatus, KaluwaStatusPick>> = {};
+  for (const status of KALUWA_STATUSES) {
+    const pick: unknown = (value as Record<string, unknown>)[status];
+    if (typeof pick !== "string") continue;
+    if ((KALUWA_SWATCH_SLOTS as ReadonlyArray<string>).includes(pick)) {
+      picks[status] = pick as KaluwaSwatchSlot;
+    } else if (/^#[0-9a-f]{6}$/i.test(pick)) {
+      picks[status] = pick.toLowerCase() as KaluwaStatusPick;
+    }
+  }
+  return picks;
 }
 
 /** Reads a stored look, keeping each valid field and defaulting the rest. */
@@ -71,6 +98,7 @@ export function parseKaluwaLook(raw: string | null): KaluwaLook {
     tiles: pick(KALUWA_TILE_STYLES, value.tiles, d.tiles),
     logos: pick(KALUWA_LOGO_STYLES, value.logos, d.logos),
     lift: Number.isNaN(lift) ? d.lift : Math.round(Math.min(100, Math.max(0, lift))),
+    statusSwatches: parseStatusSwatches(value.statusSwatches),
   };
 }
 
@@ -98,7 +126,9 @@ function readLook(): KaluwaLook {
 function readSnapshot(): KaluwaLookSnapshot {
   const root = document.documentElement;
   const current = readLook();
-  const preset = kaluwaPresetForThemeId(root.dataset.themeId);
+  const preset =
+    kaluwaStudioPresetForThemeId(root.dataset.themeId) ??
+    kaluwaPresetForThemeId(root.dataset.themeId);
   const scheme: ThemeAppearance = root.classList.contains("dark") ? "dark" : "light";
   if (
     snapshot !== null &&
@@ -125,6 +155,21 @@ function paint(): void {
   root.style.setProperty("--kaluwa-lift", String(current.lift / 100));
   root.style.setProperty("--radius", `${preset.radius / 16}rem`);
   root.style.setProperty("--control-radius", `${preset.controlRadius / 16}rem`);
+  // Theme studio extras: only studio themes set them, so built-in presets keep the app's own.
+  if (preset.composerRadius === undefined) root.style.removeProperty("--kaluwa-composer-radius");
+  else root.style.setProperty("--kaluwa-composer-radius", `${preset.composerRadius / 16}rem`);
+  // A shadow of 0 keeps the app's own composer shadow.
+  if (!preset.shadow) root.style.removeProperty("--kaluwa-shadow");
+  else root.style.setProperty("--kaluwa-shadow", String(preset.shadow / 100));
+  for (const status of KALUWA_STATUSES) {
+    const pick = current.statusColors === "palette" ? current.statusSwatches[status] : undefined;
+    if (pick === undefined) root.style.removeProperty(`--kaluwa-st-${status}`);
+    else
+      root.style.setProperty(
+        `--kaluwa-st-${status}`,
+        pick.startsWith("#") ? pick : `var(--kaluwa-swatch-${pick})`,
+      );
+  }
   const data = root.dataset;
   data.kaluwaLook = "";
   data.kaluwaEmphasis = current.statusEmphasis;
@@ -133,6 +178,10 @@ function paint(): void {
   data.kaluwaTiles = current.tiles;
   data.kaluwaLogos = current.logos;
   data.kaluwaFont = preset.font;
+  if (preset.composerRadius === undefined) delete data.kaluwaShape;
+  else data.kaluwaShape = "";
+  if (!preset.shadow) delete data.kaluwaShadow;
+  else data.kaluwaShadow = "";
   for (const listener of listeners) listener();
 }
 
@@ -156,7 +205,9 @@ export function startKaluwaLook(): () => void {
     paint();
   };
   window.addEventListener("storage", handleStorage);
+  const stopStudio = subscribeKaluwaStudio(paint);
   return () => {
+    stopStudio();
     observer.disconnect();
     window.removeEventListener("storage", handleStorage);
     started = false;
@@ -193,4 +244,9 @@ export function useKaluwaLook(): KaluwaLookSnapshot {
     () => (typeof document === "undefined" ? SERVER_SNAPSHOT : readSnapshot()),
     () => SERVER_SNAPSHOT,
   );
+}
+
+/** The look as painted right now, for code outside React that resolves colours at call time. */
+export function getKaluwaLookSnapshot(): KaluwaLookSnapshot {
+  return typeof document === "undefined" ? SERVER_SNAPSHOT : readSnapshot();
 }

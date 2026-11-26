@@ -2,6 +2,7 @@
 // they also show in the theme library and command palette; the rest is stored per device.
 import type { CSSProperties } from "react";
 import { useGT, useMessages } from "gt-react";
+import { PaletteIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { useTheme } from "../../hooks/useTheme";
@@ -25,6 +26,8 @@ import {
   useKaluwaLook,
   type KaluwaLook,
 } from "../../kaluwa/kaluwaLook";
+import { openKaluwaThemeStudio } from "../kaluwaStudio/kaluwaStudioPanelStore";
+import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { notifyThemeSaveFailure } from "../CommandPaletteThemeItems";
 import {
@@ -39,9 +42,9 @@ import {
 } from "./kaluwaLookLabels";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 
-type ChoiceKey = Exclude<keyof KaluwaLook, "lift">;
+type ChoiceKey = Exclude<keyof KaluwaLook, "lift" | "statusSwatches">;
 
-function PresetThumbnail({
+export function KaluwaPresetThumbnail({
   preset,
   scheme,
   look,
@@ -145,97 +148,109 @@ function ChoiceRow<K extends ChoiceKey>(props: {
   );
 }
 
-export function KaluwaLookSettings() {
+/** The built-in presets as cards; picking one switches the app theme. */
+export function KaluwaPresetPicker(props: { readonly onPicked?: () => void }) {
   const gt = useGT();
   const m = useMessages();
-  const { appearanceMode, setAppearanceMode, setTheme, theme } = useTheme();
-  const { look, preset: activePreset, scheme, palette } = useKaluwaLook();
+  const { appearanceMode, setTheme, theme } = useTheme();
+  const { look, preset: activePreset, scheme } = useKaluwaLook();
   const stockThemeActive = theme === "system" || theme === "light" || theme === "dark";
-  const liftSliderStyle = {
-    "--settings-slider-progress": `${look.lift}%`,
-    "--settings-slider-fill-offset": `${0.5 - look.lift / 100}rem`,
-  } as CSSProperties;
 
   const choosePreset = (preset: KaluwaPreset) => {
     const next = preset.themeId ?? (appearanceMode === "system" ? "system" : appearanceMode);
     if (!setTheme(next)) notifyThemeSaveFailure();
+    else props.onPicked?.();
   };
 
   return (
-    <SettingsSection id="kaluwa-look" title={gt("Kaluwa look")}>
-      <div className="grid gap-3 p-4">
-        <div
-          role="radiogroup"
-          aria-label={gt("Preset")}
-          className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
-        >
-          {KALUWA_PRESET_IDS.map((id) => {
-            const preset = KALUWA_PRESETS[id];
-            const active =
-              preset.themeId === null
-                ? stockThemeActive
-                : activePreset.id === id && theme === preset.themeId;
-            return (
-              <button
-                key={id}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => choosePreset(preset)}
-                className={cn(
-                  "flex cursor-pointer flex-col gap-1.5 rounded-lg border p-1.5 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                  active ? "border-primary" : "border-border",
-                )}
-              >
-                <PresetThumbnail preset={preset} scheme={scheme} look={look} />
-                <span className="px-0.5 text-xs font-medium text-foreground">
-                  {m(KALUWA_PRESET_LABELS[id].name)}
-                </span>
-                <span className="px-0.5 text-2xs leading-tight text-muted-foreground">
-                  {m(KALUWA_PRESET_LABELS[id].blurb)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+    <div className="@container">
+      <div
+        role="radiogroup"
+        aria-label={gt("Preset")}
+        className="grid grid-cols-2 gap-2 @md:grid-cols-3 @2xl:grid-cols-5"
+      >
+        {KALUWA_PRESET_IDS.map((id) => {
+          const preset = KALUWA_PRESETS[id];
+          const active =
+            preset.themeId === null
+              ? stockThemeActive
+              : activePreset.id === id && theme === preset.themeId;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => choosePreset(preset)}
+              className={cn(
+                "flex cursor-pointer flex-col gap-1.5 rounded-lg border p-1.5 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                active ? "border-primary" : "border-border",
+              )}
+            >
+              <KaluwaPresetThumbnail preset={preset} scheme={scheme} look={look} />
+              <span className="px-0.5 text-xs font-medium text-foreground">
+                {m(KALUWA_PRESET_LABELS[id].name)}
+              </span>
+              <span className="px-0.5 text-2xs leading-tight text-muted-foreground">
+                {m(KALUWA_PRESET_LABELS[id].blurb)}
+              </span>
+            </button>
+          );
+        })}
       </div>
+    </div>
+  );
+}
 
-      <SettingsRow
-        title={gt("Mode")}
-        description={gt("Use the preset's dark or light version, or follow the system.")}
-        control={
-          <Select
-            value={appearanceMode}
-            onValueChange={(next) => {
-              if (next === "system" || next === "light" || next === "dark") {
-                if (!setAppearanceMode(next)) notifyThemeSaveFailure();
-              }
-            }}
-          >
-            <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Mode")}>
-              <SelectValue>
-                {appearanceMode === "system"
-                  ? gt("System")
-                  : appearanceMode === "light"
-                    ? gt("Light")
-                    : gt("Dark")}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem hideIndicator value="dark">
-                {gt("Dark")}
-              </SelectItem>
-              <SelectItem hideIndicator value="light">
-                {gt("Light")}
-              </SelectItem>
-              <SelectItem hideIndicator value="system">
-                {gt("System")}
-              </SelectItem>
-            </SelectPopup>
-          </Select>
-        }
-      />
+export function KaluwaModeRow() {
+  const gt = useGT();
+  const { appearanceMode, setAppearanceMode } = useTheme();
+  return (
+    <SettingsRow
+      title={gt("Mode")}
+      description={gt("Use the preset's dark or light version, or follow the system.")}
+      control={
+        <Select
+          value={appearanceMode}
+          onValueChange={(next) => {
+            if (next === "system" || next === "light" || next === "dark") {
+              if (!setAppearanceMode(next)) notifyThemeSaveFailure();
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Mode")}>
+            <SelectValue>
+              {appearanceMode === "system"
+                ? gt("System")
+                : appearanceMode === "light"
+                  ? gt("Light")
+                  : gt("Dark")}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="dark">
+              {gt("Dark")}
+            </SelectItem>
+            <SelectItem hideIndicator value="light">
+              {gt("Light")}
+            </SelectItem>
+            <SelectItem hideIndicator value="system">
+              {gt("System")}
+            </SelectItem>
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
 
+/** Palette mood, its swatches, and where status colours come from. */
+export function KaluwaPaletteRows() {
+  const gt = useGT();
+  const m = useMessages();
+  const { look, palette } = useKaluwaLook();
+  return (
+    <>
       <ChoiceRow
         field="mood"
         look={look}
@@ -279,6 +294,16 @@ export function KaluwaLookSettings() {
         options={KALUWA_STATUS_EMPHASES}
         labels={KALUWA_EMPHASIS_LABELS}
       />
+    </>
+  );
+}
+
+/** Badge, project tile and provider logo styles. */
+export function KaluwaStyleRows() {
+  const gt = useGT();
+  const { look } = useKaluwaLook();
+  return (
+    <>
       <ChoiceRow
         field="badges"
         look={look}
@@ -305,45 +330,80 @@ export function KaluwaLookSettings() {
         options={KALUWA_LOGO_STYLES}
         labels={KALUWA_LOGO_LABELS}
       />
-      <SettingsRow
-        title={gt("Lift")}
-        description={gt(
-          "Add a faint top highlight to raised surfaces and tint selected rows with the accent.",
-        )}
-        resetAction={
-          look.lift !== DEFAULT_KALUWA_LOOK.lift ? (
-            <SettingResetButton
-              ariaLabel={gt("Reset lift to default")}
-              onClick={() => setKaluwaLook({ lift: DEFAULT_KALUWA_LOOK.lift })}
-            />
-          ) : null
-        }
-        control={
-          <div className="flex w-full items-center gap-3 sm:w-52">
-            <output
-              className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-              htmlFor="kaluwa-lift"
-            >
-              {look.lift}%
-            </output>
-            <input
-              aria-label={gt("Lift")}
-              className="settings-slider min-w-0 flex-1"
-              id="kaluwa-lift"
-              max={100}
-              min={0}
-              onChange={(event) => {
-                const lift = Number(event.currentTarget.value);
-                if (Number.isInteger(lift)) setKaluwaLook({ lift });
-              }}
-              step={5}
-              style={liftSliderStyle}
-              type="range"
-              value={look.lift}
-            />
-          </div>
-        }
-      />
+    </>
+  );
+}
+
+export function KaluwaLiftRow() {
+  const gt = useGT();
+  const { look } = useKaluwaLook();
+  const liftSliderStyle = {
+    "--settings-slider-progress": `${look.lift}%`,
+    "--settings-slider-fill-offset": `${0.5 - look.lift / 100}rem`,
+  } as CSSProperties;
+  return (
+    <SettingsRow
+      title={gt("Lift")}
+      description={gt(
+        "Add a faint top highlight to raised surfaces and tint selected rows with the accent.",
+      )}
+      resetAction={
+        look.lift !== DEFAULT_KALUWA_LOOK.lift ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset lift to default")}
+            onClick={() => setKaluwaLook({ lift: DEFAULT_KALUWA_LOOK.lift })}
+          />
+        ) : null
+      }
+      control={
+        <div className="flex w-full items-center gap-3 sm:w-52">
+          <output
+            className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+            htmlFor="kaluwa-lift"
+          >
+            {look.lift}%
+          </output>
+          <input
+            aria-label={gt("Lift")}
+            className="settings-slider min-w-0 flex-1"
+            id="kaluwa-lift"
+            max={100}
+            min={0}
+            onChange={(event) => {
+              const lift = Number(event.currentTarget.value);
+              if (Number.isInteger(lift)) setKaluwaLook({ lift });
+            }}
+            step={5}
+            style={liftSliderStyle}
+            type="range"
+            value={look.lift}
+          />
+        </div>
+      }
+    />
+  );
+}
+
+export function KaluwaLookSettings() {
+  const gt = useGT();
+  return (
+    <SettingsSection
+      id="kaluwa-look"
+      title={gt("Kaluwa look")}
+      headerAction={
+        <Button size="xs" variant="outline" onClick={() => openKaluwaThemeStudio()}>
+          <PaletteIcon aria-hidden />
+          {gt("Open Theme studio")}
+        </Button>
+      }
+    >
+      <div className="grid gap-3 p-4">
+        <KaluwaPresetPicker />
+      </div>
+      <KaluwaModeRow />
+      <KaluwaPaletteRows />
+      <KaluwaStyleRows />
+      <KaluwaLiftRow />
     </SettingsSection>
   );
 }

@@ -3793,6 +3793,33 @@ html.dark[data-kaluwa-look]
   background: var(--primary);
 }
 
+/* Fork: Kaluwa's navigation rail. Muted icons that brighten on hover; the current page is a
+   raised square with Lift's top highlight and a faint accent tint; rules split the groups. */
+.kaluwa-rail-btn > svg {
+  width: 18px;
+  height: 18px;
+}
+.kaluwa-rail-btn[aria-current="page"]:not(:focus-visible) {
+  background-color: color-mix(in srgb, var(--primary) 8%, var(--sidebar-row-active));
+  box-shadow:
+    inset 0 1px 0 var(--kaluwa-hl, transparent),
+    0 1px 2px rgb(0 0 0 / 8%);
+}
+.kaluwa-rail-sep {
+  flex: none;
+  width: 20px;
+  height: 1px;
+  margin-block: 4px;
+  background: var(--sidebar-border);
+}
+.kaluwa-rail-dot {
+  background: var(--kaluwa-swatch-ochre, var(--warning));
+  box-shadow: 0 0 0 1.5px var(--sidebar);
+}
+.kaluwa-rail-ring-track {
+  stroke: color-mix(in srgb, var(--sidebar-foreground) 12%, transparent);
+}
+
 /* Pinned tabs: icon only, at the start, with no close button. */
 .kaluwa-tab[data-pinned] {
   flex: none;
@@ -3913,4 +3940,39 @@ html.dark[data-kaluwa-look]
 .kaluwa-tab-title-input {
   flex: 1;
   padding: 2px 4px;
+}
+
+/* Fork: Kaluwa's theme studio (components/kaluwaStudio), docked over the app below the titlebar
+   so edits show on the real UI. Popovers (z 130) still open above it. */
+.kaluwa-studio-panel {
+  position: fixed;
+  z-index: 105;
+  top: 2.75rem;
+  bottom: 0.5rem;
+  width: min(27rem, calc(100vw - 1rem));
+}
+.kaluwa-studio-panel[data-dock="right"] {
+  right: 0.5rem;
+}
+.kaluwa-studio-panel[data-dock="left"] {
+  left: 0.5rem;
+}
+
+/* Theme studio shape: a studio theme's composer radius and shadow depth (kaluwaLook.ts). */
+html[data-kaluwa-shape] [data-slot="composer-shell"] {
+  --radius-2xl: var(--kaluwa-composer-radius);
+}
+html[data-kaluwa-shadow] {
+  --kaluwa-shadow-ink: 0.32;
+}
+html.dark[data-kaluwa-shadow] {
+  --kaluwa-shadow-ink: 1;
+}
+html[data-kaluwa-shadow] [data-slot="composer-host"] {
+  box-shadow:
+    0 calc(var(--kaluwa-shadow) * 22px) calc(var(--kaluwa-shadow) * 54px)
+      calc(var(--kaluwa-shadow) * -18px)
+      rgb(0 0 0 / calc(var(--kaluwa-shadow) * var(--kaluwa-shadow-ink) * 70%)),
+    0 calc(var(--kaluwa-shadow) * 3px) calc(var(--kaluwa-shadow) * 8px)
+      rgb(0 0 0 / calc(var(--kaluwa-shadow) * var(--kaluwa-shadow-ink) * 30%));
 }

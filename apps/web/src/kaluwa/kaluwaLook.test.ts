@@ -12,6 +12,7 @@ describe("parseKaluwaLook", () => {
       tiles: "tinted",
       logos: "soft",
       lift: 50,
+      statusSwatches: {},
     });
   });
 
@@ -25,5 +26,15 @@ describe("parseKaluwaLook", () => {
     expect(parseKaluwaLook("{not json")).toEqual(DEFAULT_KALUWA_LOOK);
     expect(parseKaluwaLook("[1,2]")).toEqual(DEFAULT_KALUWA_LOOK);
     expect(parseKaluwaLook(JSON.stringify({ lift: "high" })).lift).toBe(50);
+  });
+
+  it("keeps status picks that name a swatch or a hex colour", () => {
+    expect(
+      parseKaluwaLook(
+        JSON.stringify({
+          statusSwatches: { working: "lagoon", failed: "#AA3311", done: "neon", nope: "clay" },
+        }),
+      ).statusSwatches,
+    ).toEqual({ working: "lagoon", failed: "#aa3311" });
   });
 });

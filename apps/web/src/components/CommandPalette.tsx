@@ -566,7 +566,8 @@ function OpenCommandPaletteDialog(props: {
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
-  const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
+  const { changeThemeItem, changeAppearanceItem, themeEditorItem, themeStudioItem } =
+    useCommandPaletteThemeItems();
   const portForwardItem = useCommandPalettePortForwardItem({
     activeThread: activeThread ?? null,
     query: deferredQuery,
@@ -1714,6 +1715,8 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push(changeAppearanceItem);
 
   actionItems.push(themeEditorItem);
+  // Fork: Kaluwa's theme studio.
+  if (themeStudioItem) actionItems.push(themeStudioItem);
 
   if (environments.some((environment) => environment.serverConfig !== null)) {
     actionItems.push({

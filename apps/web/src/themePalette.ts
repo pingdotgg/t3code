@@ -36,7 +36,7 @@ import { applyThemeBackground } from "./themeBackground";
 import { applyThemeCss } from "./themeCss";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 import { IS_KALUWA_BUILD } from "./kaluwa/kaluwaLook";
-import { buildKaluwaThemes } from "./kaluwa/kaluwaThemes";
+import { buildKaluwaThemes, isKaluwaStudioThemeId } from "./kaluwa/kaluwaThemes";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -1253,6 +1253,8 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
 
 export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
   const themeId = themeIdFromPreference(theme);
+  // Fork: themes made in Kaluwa's theme studio keep the sidebar band, like Kaluwa's presets.
+  if (IS_KALUWA_BUILD && isKaluwaStudioThemeId(themeId)) return true;
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId)?.sidebarArtwork ===
     true

@@ -231,7 +231,7 @@ export function kaluwaSwatchSlotForHex(hex: string): KaluwaSwatchSlot | null {
   return swatchIndex.get(hex.trim().toLowerCase()) ?? null;
 }
 
-type PresetSchemeColors = Readonly<{
+export type KaluwaSchemeColors = Readonly<{
   bg: string;
   chrome: string;
   sidebar: string;
@@ -255,8 +255,11 @@ export type KaluwaPreset = Readonly<{
   controlRadius: number;
   /** Only Inter is bundled; other lab fonts fall back to the system stack. */
   font: "system" | "inter";
-  dark: PresetSchemeColors;
-  light: PresetSchemeColors;
+  dark: KaluwaSchemeColors;
+  light: KaluwaSchemeColors;
+  /** Theme studio shape extras, in px and percent; built-in presets leave them to the app. */
+  composerRadius?: number;
+  shadow?: number;
 }>;
 
 export const KALUWA_PRESETS: Readonly<Record<KaluwaPresetId, KaluwaPreset>> = {
@@ -438,7 +441,7 @@ function parseHex(hex: string): readonly [number, number, number] {
   return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
 }
 
-function mixHex(from: string, to: string, amount: number): string {
+export function mixHex(from: string, to: string, amount: number): string {
   const a = parseHex(from);
   const b = parseHex(to);
   return `#${a.map((channel, index) => hexChannel(channel + (b[index]! - channel) * amount)).join("")}`;

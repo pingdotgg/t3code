@@ -286,7 +286,7 @@ export function KaluwaBackdropSettings() {
     >
       <div
         className={cn(
-          "space-y-2 rounded-lg px-3 py-3 sm:px-4",
+          "@container space-y-2 rounded-lg px-3 py-3 sm:px-4",
           dropping && "outline-2 -outline-offset-2 outline-primary outline-dashed",
         )}
         onDragEnter={(event) => {
@@ -302,7 +302,7 @@ export function KaluwaBackdropSettings() {
         }}
         onDrop={onDrop}
       >
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+        <div className="grid grid-cols-3 gap-2 @lg:grid-cols-4 @2xl:grid-cols-5">
           {GENERATED_ARTS.map((art) => (
             <GalleryCard
               key={art}

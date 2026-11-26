@@ -14,7 +14,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { T, Var, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import { kaluwaInstanceAccent } from "../../kaluwa/kaluwaAccent";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
@@ -569,7 +569,8 @@ function PoolBar({
               window={member.window}
               reset={restores.get(member.account.key)}
               refillPercent={member.refillPercent}
-              color={normalizeProviderAccentColor(member.account.accentColor) ?? color}
+              // Fork: on Kaluwa an accent paints as its palette swatch.
+              color={kaluwaInstanceAccent(member.account.accentColor) ?? color}
               now={now}
               index={position + 1}
               showAccountName={pool.columns.length > 1}

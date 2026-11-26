@@ -42,22 +42,44 @@ function presetColors(
   return colors;
 }
 
+/** Theme studio themes are custom app themes under this id prefix (see kaluwaStudio.ts). */
+export const KALUWA_STUDIO_THEME_PREFIX = "kaluwa-studio-";
+
+export function isKaluwaStudioThemeId(themeId: string | null | undefined): boolean {
+  return typeof themeId === "string" && themeId.startsWith(KALUWA_STUDIO_THEME_PREFIX);
+}
+
+/** One preset (built-in or made in the theme studio) as a theme with both appearances. */
+export function kaluwaPresetThemeDefinition(
+  preset: KaluwaPreset,
+  identity: Readonly<{ id: string; label: string }>,
+  builders: KaluwaThemeBuilders,
+): ThemeDefinition {
+  const other: ThemeAppearance = preset.scheme === "dark" ? "light" : "dark";
+  return {
+    id: identity.id,
+    label: identity.label,
+    appearance: preset.scheme,
+    colors: presetColors(preset, preset.scheme, builders),
+    variants: { [other]: presetColors(preset, other, builders) },
+    // Keeps Kaluwa's sidebar band, which the stock theme shows too.
+    sidebarArtwork: true,
+  };
+}
+
 /** Every Kaluwa preset except "Kaluwa today", which is the stock theme, as a theme definition. */
 export function buildKaluwaThemes(builders: KaluwaThemeBuilders): ReadonlyArray<ThemeDefinition> {
   const themes: ThemeDefinition[] = [];
   for (const id of KALUWA_PRESET_IDS) {
     const preset = KALUWA_PRESETS[id];
     if (preset.themeId === null) continue;
-    const other: ThemeAppearance = preset.scheme === "dark" ? "light" : "dark";
-    themes.push({
-      id: preset.themeId,
-      label: KALUWA_THEME_LABELS[id] ?? id,
-      appearance: preset.scheme,
-      colors: presetColors(preset, preset.scheme, builders),
-      variants: { [other]: presetColors(preset, other, builders) },
-      // Keeps Kaluwa's sidebar band, which the stock theme shows too.
-      sidebarArtwork: true,
-    });
+    themes.push(
+      kaluwaPresetThemeDefinition(
+        preset,
+        { id: preset.themeId, label: KALUWA_THEME_LABELS[id] ?? id },
+        builders,
+      ),
+    );
   }
   return themes;
 }

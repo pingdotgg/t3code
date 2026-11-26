@@ -13,6 +13,8 @@ import {
   type CommandPaletteSubmenuItem,
 } from "./CommandPalette.logic";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
+import { IS_KALUWA_BUILD } from "../kaluwa/kaluwaLook";
+import { openKaluwaThemeStudio } from "./kaluwaStudio/kaluwaStudioPanelStore";
 import {
   STANDARD_THEME_CARDS,
   getThemeCardDefinition,
@@ -172,5 +174,17 @@ export function useCommandPaletteThemeItems() {
     },
   };
 
-  return { changeThemeItem, changeAppearanceItem, themeEditorItem };
+  // Fork: Kaluwa's theme studio, on the local build only.
+  const themeStudioItem: CommandPaletteActionItem | null = IS_KALUWA_BUILD
+    ? {
+        kind: "action",
+        value: "action:kaluwa-theme-studio",
+        searchTerms: ["theme studio", "theme", "appearance", "palette", "customize", "kaluwa"],
+        title: gt("Open Theme studio"),
+        icon: <PaletteIcon className={ITEM_ICON_CLASS} />,
+        run: async () => openKaluwaThemeStudio(),
+      }
+    : null;
+
+  return { changeThemeItem, changeAppearanceItem, themeEditorItem, themeStudioItem };
 }
