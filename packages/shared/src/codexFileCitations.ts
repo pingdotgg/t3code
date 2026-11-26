@@ -30,6 +30,9 @@ function markdownDestinationPath(path: string): string {
     .replaceAll("#", "%23")
     .replaceAll("?", "%3F")
     .replace(/^\s+|\s+$/g, (whitespace) => encodeURIComponent(whitespace));
+  if (/^\/\/[^/\\]+[\\/][^/\\]/.test(path)) {
+    return `\\\\${destination.slice(2).replaceAll("/", "\\")}`;
+  }
   if (ABSOLUTE_OR_URI_PATH_PATTERN.test(path)) return destination;
   // Relative paths with a colon before the first slash look like URI schemes to HTML sanitizers.
   return COLON_BEFORE_SLASH_PATTERN.test(path) || !parseMarkdownFileLink(destination)
