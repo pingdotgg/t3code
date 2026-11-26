@@ -4,7 +4,7 @@ import {
   ThreadId,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import type { RunVcsStackedActionInput } from "@t3tools/client-runtime/state/vcsAction";
+import type { RunVcsStackedActionInput } from "@t3tools/client-runtime/state/vcs";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";

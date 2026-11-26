@@ -1,4 +1,7 @@
-import type { RunVcsStackedActionInput } from "@t3tools/client-runtime/state/vcsAction";
+import type {
+  GitActionRequestInput,
+  RunVcsStackedActionInput,
+} from "@t3tools/client-runtime/state/vcs";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -69,7 +72,10 @@ vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({
     canWriteSourceControl: true,
     canCreateFeatureBranch: true,
-    onRunSelectedThreadGitAction: ({ onProgress, ...input }: RunVcsStackedActionInput) => {
+    onRunSelectedThreadGitAction: ({
+      onProgress,
+      ...input
+    }: GitActionRequestInput & Pick<RunVcsStackedActionInput, "onProgress">) => {
       state.ran.push(input);
       if (state.createdBranch) {
         onProgress?.({
