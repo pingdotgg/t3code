@@ -324,9 +324,11 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const rejected = yield* h.refresh().pipe(Effect.flip);
         expect(rejected.detail).toContain("Update it in Antigravity setup");
 
-        const snapshot = yield* h.instance.snapshot.refresh;
-        expect(snapshot.status).toBe("error");
-        expect(snapshot.message).toContain("Update it in Antigravity setup");
+        expect(yield* h.instance.snapshot.refresh).toMatchObject({
+          status: "error",
+          version: "1.5.0",
+          message: rejected.detail,
+        });
       }),
   );
 
