@@ -223,7 +223,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
           external: turnSettings.exitCode === undefined,
           exitCode: turnSettings.exitCode ?? null,
         }),
-      createOpenCodeSdkClient: () => client,
+      createOpenCodeSdkClient: () => ({ config: { get: async () => ({ data: {} }) }, ...client }),
     } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },

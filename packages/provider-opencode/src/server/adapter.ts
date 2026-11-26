@@ -1193,18 +1193,21 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ),
           );
 
-        // OpenCode adds a child deny per configured primary tool; without the config, keep no extra denies.
-        const childToolDenies = yield* Effect.cached(
-          sdkCall("config.get", {}, () => client.config.get()).pipe(
-            Effect.map((response): PermissionRuleset =>
-              (response.data?.experimental?.primary_tools ?? []).map((permission) => ({
-                permission,
-                pattern: "*",
-                action: "deny",
-              })),
-            ),
-            Effect.orElseSucceed((): PermissionRuleset => []),
-          ),
+        // OpenCode adds a child deny per configured primary tool. A failed read fails the update
+        // rather than guessing none, which would drop such a deny when it matches a parent rule.
+        let cachedChildToolDenies: PermissionRuleset | undefined;
+        const childToolDenies = Effect.suspend(() =>
+          cachedChildToolDenies !== undefined
+            ? Effect.succeed(cachedChildToolDenies)
+            : sdkCall("config.get", {}, () => client.config.get()).pipe(
+                Effect.map((response): PermissionRuleset => {
+                  const config = unwrapData("config.get", response);
+                  cachedChildToolDenies = (config.experimental?.primary_tools ?? []).map(
+                    (permission) => ({ permission, pattern: "*", action: "deny" }),
+                  );
+                  return cachedChildToolDenies;
+                }),
+              ),
         );
 
         const abortDescendants = Effect.fn("OpencodeAdapter.abortDescendants")(function* (
