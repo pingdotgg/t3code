@@ -110,15 +110,23 @@ describe("FileBrowserPanel", () => {
     );
     using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
     using clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
-    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
-    findTreeRow("README.md")!.dispatchEvent(
-      new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        button: 2,
-      }),
-    );
+    async function openRowMenu(path: string) {
+      await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
+      findTreeRow(path)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+    }
+
+    await openRowMenu("src/");
+    await userEvent.click(page.getByRole("menuitem", { name: "Copy path", exact: true }));
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("/repo/src"));
+
+    await openRowMenu("README.md");
     const action = page.getByRole("menuitem", { name: "Copy mention", exact: true });
     await expect.element(action).toBeVisible();
     await userEvent.click(action);
