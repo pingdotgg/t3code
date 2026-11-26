@@ -1029,7 +1029,6 @@ function CheckoutGitActionsControl({
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [featureCommitSelection, setFeatureCommitSelection] = useState<{
-    readonly files: ReadonlySet<string>;
     readonly createdBranch: string | null;
   } | null>(null);
   const [isEditingFiles, setIsEditingFiles] = useState(false);
@@ -1113,17 +1112,15 @@ function CheckoutGitActionsControl({
     : null;
 
   const [selectionBranch, setSelectionBranch] = useState(gitStatusForActions?.refName ?? null);
-  const selectionTransfer =
-    featureCommitSelection?.files === excludedFiles ? featureCommitSelection : null;
   // Status can announce the checkout before the commit action reports its outcome.
   if (
     gitStatusForActions &&
     selectionBranch !== gitStatusForActions.refName &&
-    selectionTransfer?.createdBranch !== null
+    featureCommitSelection?.createdBranch !== null
   ) {
     setSelectionBranch(gitStatusForActions.refName);
     setFeatureCommitSelection(null);
-    if (selectionTransfer?.createdBranch !== gitStatusForActions.refName) {
+    if (featureCommitSelection?.createdBranch !== gitStatusForActions.refName) {
       setExcludedFiles(new Set());
     }
   }
@@ -1255,9 +1252,7 @@ function CheckoutGitActionsControl({
     const scopedToastData = threadToastData ? { ...threadToastData } : undefined;
     const actionId = randomUUID();
     const submittedSelection =
-      action === "commit" && featureBranch && filePaths
-        ? { files: excludedFiles, createdBranch: null }
-        : null;
+      action === "commit" && featureBranch && filePaths ? { createdBranch: null } : null;
     let createdBranch: string | undefined;
     if (submittedSelection) setFeatureCommitSelection(submittedSelection);
 
@@ -1279,7 +1274,7 @@ function CheckoutGitActionsControl({
         current === submittedSelection
           ? createdBranch === undefined
             ? null
-            : { files: submittedSelection.files, createdBranch }
+            : { createdBranch }
           : current,
       );
     }

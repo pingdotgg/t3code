@@ -31,7 +31,11 @@ type GitCommitSheetProps = StaticScreenProps<
 // The sheet unmounts on submit, so a failed commit's exclusions are kept here for the retry.
 const retainedExclusions = new Map<
   string,
-  { readonly refName: string | null; readonly excluded: ReadonlySet<string> }
+  {
+    readonly refName: string | null;
+    readonly excluded: ReadonlySet<string>;
+    readonly createdBranch: string | undefined;
+  }
 >();
 
 export function GitCommitSheet(props: GitCommitSheetProps) {
@@ -70,9 +74,13 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
   const [selectionBranch, setSelectionBranch] = useState(
     retained !== undefined ? retained.refName : (gitStatus.data?.refName ?? null),
   );
+  const [createdBranch, setCreatedBranch] = useState(retained?.createdBranch);
   if (gitStatus.data && selectionBranch !== gitStatus.data.refName) {
     setSelectionBranch(gitStatus.data.refName);
-    setExcludedFiles(new Set());
+    setCreatedBranch(undefined);
+    if (createdBranch !== gitStatus.data.refName) {
+      setExcludedFiles(new Set());
+    }
   }
 
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
@@ -84,8 +92,9 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
   const runCommitAction = async (featureBranch: boolean) => {
     if (!canWriteSourceControl || (featureBranch && !canCreateFeatureBranch)) return;
     const commitMessage = dialogCommitMessage.trim();
+    const submitted = { refName: selectionBranch, excluded: excludedFiles, createdBranch };
     if (selectionKey !== null) {
-      retainedExclusions.set(selectionKey, { refName: selectionBranch, excluded: excludedFiles });
+      retainedExclusions.set(selectionKey, submitted);
     }
     navigation.goBack();
     const result = await gitActions.onRunSelectedThreadGitAction({
@@ -93,11 +102,24 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
       featureBranch,
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
+      onProgress: (event) => {
+        if (
+          event.kind === "action_failed" &&
+          event.createdBranch !== undefined &&
+          selectionKey !== null &&
+          retainedExclusions.get(selectionKey) === submitted
+        ) {
+          retainedExclusions.set(selectionKey, {
+            ...submitted,
+            createdBranch: event.createdBranch,
+          });
+        }
+      },
     });
     if (
       selectionKey !== null &&
       result?.commit.status === "created" &&
-      retainedExclusions.get(selectionKey)?.excluded === excludedFiles
+      retainedExclusions.get(selectionKey) === submitted
     ) {
       retainedExclusions.delete(selectionKey);
     }
