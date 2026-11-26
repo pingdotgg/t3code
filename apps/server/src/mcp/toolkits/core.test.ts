@@ -507,18 +507,17 @@ it.effect("inlines a supervised thread's local images only from its workspace", 
     for (const name of ["html_preview", "html_render"] as const) {
       const refused = yield* call(name, `<img src="${chart}"><img src="${secret}">`, scope);
       expect(refused.isError, name).toBe(true);
-      // Decoded, so Windows paths compare as written: html_render declares its failure,
-      // html_preview reports it as plain text.
-      const text =
+      // Decoded, so Windows paths compare as written. html_preview returns image content, so
+      // its failure sits in structuredContent instead of a declared JSON result.
+      const failure =
         name === "html_render"
-          ? String(declaredFailure(refused)?.message)
-          : refused.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+          ? declaredFailure(refused)
+          : (refused.structuredContent as { readonly error?: unknown } | undefined)?.error;
+      expect(failure, name).toMatchObject({ code: "capability_denied" });
+      const text = String(failure?.message);
       expect(text, name).toContain("outside this thread's workspace");
       expect(text, name).toContain(secret);
       expect(text, name).not.toContain(chart);
-      if (name === "html_render") {
-        expect(declaredFailure(refused)).toMatchObject({ code: "capability_denied" });
-      }
     }
 
     const fullAccessImages = yield* published(

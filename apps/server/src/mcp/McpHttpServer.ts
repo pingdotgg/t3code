@@ -869,6 +869,7 @@ const imageToolFailure =
           _tag: errorTag,
           operation,
           failureCount: failures.length,
+          ...(isOrchestratorMcpFailure(firstFailure) ? { code: firstFailure.code } : {}),
           ...(message === undefined ? {} : { message }),
         },
       },
