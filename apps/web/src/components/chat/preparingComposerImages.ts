@@ -1,5 +1,6 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
@@ -167,7 +168,7 @@ function composerSendSettingsChanged(
 ): boolean {
   const modelsChanged =
     before && after
-      ? before.modelSelectionByProvider !== after.modelSelectionByProvider
+      ? !Equal.equals(before.modelSelectionByProvider, after.modelSelectionByProvider)
       : Object.keys((before ?? after)?.modelSelectionByProvider ?? {}).length > 0;
   return (
     modelsChanged ||

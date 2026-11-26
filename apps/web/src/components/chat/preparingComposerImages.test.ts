@@ -71,6 +71,15 @@ it("distinguishes draft edits from attachment progress while routing a send", ()
   };
   const file = new File(["text"], "notes.txt", { type: "text/plain" });
   drafts.setPrompt(draftTarget, "read these");
+  const setEffort = (value: string) =>
+    drafts.setProviderModelOptions(draftTarget, ProviderDriverKind.make("codex"), [
+      { id: "reasoningEffort", value },
+    ]);
+  setEffort("medium");
+  const finishSameEffortSend = watchComposerSendEdits(draftTarget);
+  setEffort("medium");
+  expect(finishSameEffortSend()).toBe("ready");
+
   drafts.addFiles(draftTarget, [
     { type: "file", id: "notes", name: file.name, mimeType: file.type, sizeBytes: file.size, file },
   ]);
@@ -97,10 +106,7 @@ it("distinguishes draft edits from attachment progress while routing a send", ()
 
   for (const edit of [
     () => drafts.setPrompt(draftTarget, "replacement"),
-    () =>
-      drafts.setProviderModelOptions(draftTarget, ProviderDriverKind.make("codex"), [
-        { id: "reasoningEffort", value: "high" },
-      ]),
+    () => setEffort("high"),
     () => addPreparingComposerImages(target, [preparingImage("unsubmitted")]),
   ]) {
     const finishEditedSend = watchComposerSendEdits(draftTarget);
