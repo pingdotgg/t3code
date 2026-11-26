@@ -2246,7 +2246,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           fetchCwd,
           ["--git-dir", gitCommonDir, "remote"],
           { allowNonZeroExit: true },
-        ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim().length > 0));
+        ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.length > 0));
       }),
     {
       capacity: 2_048,

@@ -9109,18 +9109,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("ensureRemote reuses a remote whose name contains Unicode whitespace", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const url = "https://github.com/example/repository.git";
-        const remoteName = "team\u00a0remote";
-        yield* git(cwd, ["init"]);
-        yield* git(cwd, ["remote", "add", remoteName, url]);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+    it.effect.each(["team\u00a0remote", "\u00a0"])(
+      "ensureRemote reuses a remote whose name contains Unicode whitespace (%j)",
+      (remoteName) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const url = "https://github.com/example/repository.git";
+          yield* git(cwd, ["init"]);
+          yield* git(cwd, ["remote", "add", remoteName, url]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
 
-        assert.equal(yield* driver.ensureRemote({ cwd, preferredName: "fork", url }), remoteName);
-        assert.equal(yield* git(cwd, ["remote"]), remoteName);
-      }),
+          assert.equal(yield* driver.ensureRemote({ cwd, preferredName: "fork", url }), remoteName);
+          assert.equal(
+            yield* git(cwd, ["config", "--get-regexp", "^remote\\..*\\.url$"]),
+            `remote.${remoteName}.url ${url}`,
+          );
+          assert.isTrue((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote);
+          assert.isTrue((yield* driver.listRefs({ cwd })).hasPrimaryRemote);
+        }),
     );
 
     it.effect.each(["\n", "\r\n"])(

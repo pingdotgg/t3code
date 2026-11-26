@@ -57,7 +57,7 @@ function isLocalRemoteUrl(url: string): boolean {
 function parseConfiguredRemoteUrls(config: string): Map<string, string> {
   const urls = new Map<string, string>();
   for (const line of config.split("\n")) {
-    const match = /^remote\.(\S+)\.url (.+)$/u.exec(line);
+    const match = /^remote\.([^ ]+)\.url (.+)$/u.exec(line);
     // Git fetches from the first of several configured URLs.
     if (match?.[1] && match[2] && !urls.has(match[1])) urls.set(match[1], match[2]);
   }
@@ -72,7 +72,7 @@ function parseRemoteFetchUrls(
   for (const line of stdout.split(/\r?\n/)) {
     // Git uses a tab before the URL and one space before the direction; both can occur in URLs.
     // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
+    const match = /^([^\t]+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
     if (!match) continue;
     const [, remoteName = "", fetchUrl = "", direction = ""] = match;
     const configuredUrl = configuredUrls.get(remoteName);
