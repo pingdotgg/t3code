@@ -555,6 +555,30 @@ describe("instance-scoped model selection", () => {
     ).toEqual(stored);
   });
 
+  it("keeps a Codex thread's stored model when a catalog refresh omits it", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const driver = ProviderDriverKind.make("codex");
+    const stored = createModelSelection(instanceId, "gpt-6.2-sol", [
+      { id: "effort", value: "high" },
+    ]);
+    const codex = provider({ provider: driver, instanceId, models: ["gpt-6-astra"] });
+    const providers = [
+      { ...codex, models: codex.models.map((model) => ({ ...model, isDefault: true })) },
+    ];
+    const state = deriveEffectiveComposerModelState({
+      threadStarted: true,
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: stored,
+      projectModelSelection: null,
+      settings: settingsWithProviderInstances(),
+    });
+
+    expect(state.selectedModel).toBe("gpt-6.2-sol");
+  });
+
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {
     const instanceId = ProviderInstanceId.make("opencode_work");
     const driver = ProviderDriverKind.make("opencode");
