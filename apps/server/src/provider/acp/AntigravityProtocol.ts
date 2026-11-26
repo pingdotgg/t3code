@@ -420,7 +420,8 @@ function withoutT3McpToolSummary(
     });
     if (
       identity === undefined ||
-      resolveT3McpToolId(`${identity.server}.${identity.tool}`) === null
+      (resolveT3McpToolId(`${identity.server}.${identity.tool}`) === null &&
+        identity.server !== "codemode")
     ) {
       return rawInput;
     }
