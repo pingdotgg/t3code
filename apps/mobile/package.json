@@ -106,6 +106,7 @@
     "expo-image-picker": "~58.0.10",
     "expo-keep-awake": "~58.0.4",
     "expo-linking": "~58.0.17",
+    "expo-local-authentication": "~58.0.3",
     "expo-network": "~58.0.5",
     "expo-notifications": "~58.1.9",
     "expo-observe": "~58.0.19",

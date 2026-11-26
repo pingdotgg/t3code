@@ -64,6 +64,28 @@ function makePreferencesState(
 }
 
 describe("mobile preferences state", () => {
+  it.effect("reports a failed load so the app lock can stay closed", () =>
+    Effect.gen(function* () {
+      const state = makePreferencesState({
+        load: Effect.fail(new MobilePreferences.MobilePreferencesLoadError({ cause: "disk" })),
+        savePatch: (patch) => Effect.succeed(patch),
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountLoadFailed = registry.mount(state.loadFailedAtom);
+
+      const preferences = yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      expect(preferences).toEqual({});
+      expect(registry.get(state.loadFailedAtom)).toBe(true);
+
+      unmountLoadFailed();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
   it.effect("preserves an optimistic patch when the initial load finishes later", () =>
     Effect.gen(function* () {
       const pendingLoad = deferred<MobilePreferences.Preferences>();

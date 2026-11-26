@@ -360,6 +360,10 @@ const config: ExpoConfig = {
       },
     ],
     "expo-secure-store",
+    [
+      "expo-local-authentication",
+      { faceIDPermission: "Allow T3 Code to use Face ID to unlock the app." },
+    ],
     "expo-sqlite",
     ...(isIosPersonalTeamBuild
       ? [sharingPlugin]
