@@ -50,6 +50,19 @@ export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | n
   return keepsProvisionalWorkspace(draft, pending) ? pending.settled : null;
 }
 
+export function waitForPendingWorkspaceDefault(draftId: DraftId): Promise<void> | null {
+  const pending = readPendingWorkspaceDefault(draftId);
+  if (pending === null) return null;
+  return (async () => {
+    // A project move can replace the request while send is waiting.
+    let current: Promise<void> | null = pending;
+    while (current !== null) {
+      await current;
+      current = readPendingWorkspaceDefault(draftId);
+    }
+  })();
+}
+
 export function cancelPendingWorkspaceDefault(draftId: DraftId): void {
   const pending = pendingWorkspaceDefaults.get(draftId);
   pendingWorkspaceDefaults.delete(draftId);

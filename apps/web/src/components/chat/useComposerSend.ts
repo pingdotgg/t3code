@@ -67,7 +67,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { readPendingWorkspaceDefault } from "../../lib/retargetDraftWorkspace";
+import { waitForPendingWorkspaceDefault } from "../../lib/retargetDraftWorkspace";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -1802,18 +1802,13 @@ export function useComposerSend(input: ComposerSendInput) {
   const sendWithEnvironmentRefreshLatest = useStableCallback(sendWithEnvironmentRefresh);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
-    let workspaceDefault =
-      draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
+    const workspaceDefault =
+      draftId && !sendInFlightRef.current ? waitForPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
     sendInFlightRef.current = true;
-    try {
-      while (workspaceDefault !== null) {
-        await workspaceDefault;
-        workspaceDefault = draftId ? readPendingWorkspaceDefault(draftId) : null;
-      }
-    } finally {
+    await workspaceDefault.finally(() => {
       sendInFlightRef.current = false;
-    }
+    });
     return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the

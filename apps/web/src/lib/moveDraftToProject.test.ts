@@ -4,7 +4,11 @@ import { EnvironmentId, ProjectId, type T3ProjectFile } from "@t3tools/contracts
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
-import { readPendingWorkspaceDefault, resolveDraftWorkspace } from "./retargetDraftWorkspace";
+import {
+  readPendingWorkspaceDefault,
+  resolveDraftWorkspace,
+  waitForPendingWorkspaceDefault,
+} from "./retargetDraftWorkspace";
 import { moveDraftToProject } from "./moveDraftToProject";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -90,6 +94,7 @@ describe("moveDraftToProject", () => {
       resolveDraftWorkspace(currentRef, current, undefined).applyProjectFile(draftId);
       const sourcePending = readPendingWorkspaceDefault(draftId);
       expect(sourcePending).not.toBeNull();
+      const sendWaiting = waitForPendingWorkspaceDefault(draftId);
 
       if (change === "a workspace choice") {
         store.setDraftThreadContext(draftId, { envMode: "local", workspaceExplicit: true });
@@ -111,12 +116,15 @@ describe("moveDraftToProject", () => {
       expect(store.getDraftSession(draftId)?.envMode).toBe("local");
       if (change === "back to the source") {
         expect(readPendingWorkspaceDefault(draftId)).toBe(currentPending);
+        await expect(Promise.race([sendWaiting, Promise.resolve("waiting")])).resolves.toBe(
+          "waiting",
+        );
         returnRead.resolve({ defaultThreadEnvMode: "worktree" });
-        await currentPending;
-        expect(store.getDraftSession(draftId)?.envMode).toBe("worktree");
-      } else {
-        await currentPending;
       }
+      await sendWaiting;
+      expect(store.getDraftSession(draftId)?.envMode).toBe(
+        change === "back to the source" ? "worktree" : "local",
+      );
     },
   );
 });
