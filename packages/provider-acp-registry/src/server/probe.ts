@@ -1,4 +1,8 @@
-import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  parseCliVersionResult,
+  resolveProviderProbeTimeoutMs,
+  spawnAndCollect,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -23,11 +27,13 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
   findModelConfigOption,
@@ -74,8 +80,15 @@ function advertisedReasoningEffort(
 ): AcpRegistryProbeModel["reasoningEffort"] {
   if (option?.type !== "select" || meta == null) return undefined;
   if (meta.supportsReasoningEffort === false) return null;
-  if (!Array.isArray(meta.reasoningEfforts)) return undefined;
-  const options = meta.reasoningEfforts.flatMap((level: unknown) =>
+  // CodeBuddy / WorkBuddy advertise per-model effort levels as `effortOptions`
+  // (`{ value, name }`), not the `reasoningEfforts` (`{ value, label }`) shape Grok uses.
+  const levels = Array.isArray(meta.reasoningEfforts)
+    ? meta.reasoningEfforts
+    : Array.isArray(meta.effortOptions)
+      ? meta.effortOptions
+      : undefined;
+  if (levels === undefined) return undefined;
+  const options = levels.flatMap((level: unknown) =>
     typeof level === "object" &&
     level !== null &&
     "value" in level &&
@@ -83,7 +96,10 @@ function advertisedReasoningEffort(
       ? [
           {
             value: level.value,
-            name: "label" in level && typeof level.label === "string" ? level.label : level.value,
+            name:
+              ("label" in level && typeof level.label === "string" && level.label) ||
+              ("name" in level && typeof level.name === "string" && level.name) ||
+              level.value,
           },
         ]
       : [],
@@ -339,6 +355,7 @@ export function acpRegistryProbeResult(
   icon: string | null = null,
   spawn?: AcpRegistryAuthSpawnContext,
   liveConfiguration?: AcpRegistryLiveConfiguration,
+  agentVersionOverride?: string,
 ): AcpRegistryProbeResult {
   const configuration =
     liveConfiguration ??
@@ -347,13 +364,16 @@ export function acpRegistryProbeResult(
       parseSessionModeState(started.sessionSetupResult),
       started.sessionSetupResult.models,
     );
+  // Some agents (CodeBuddy / WorkBuddy) omit `agentInfo` from `initialize`, so the
+  // caller may supply a version read from `<command> --version` instead.
+  const agentVersion = (
+    started.initializeResult.agentInfo?.version ?? agentVersionOverride
+  )?.trim();
   return AcpRegistryProbeResult.make({
     instanceId,
     ready: true,
     icon,
-    ...(started.initializeResult.agentInfo?.version?.trim()
-      ? { agentVersion: boundedText(started.initializeResult.agentInfo.version, MAX_ID_LENGTH) }
-      : {}),
+    ...(agentVersion ? { agentVersion: boundedText(agentVersion, MAX_ID_LENGTH) } : {}),
     authMethods: normalizeAcpRegistryAuthMethods(started.initializeResult.authMethods, spawn),
     sessionManagement: {
       canList: started.initializeResult.agentCapabilities?.sessionCapabilities?.list != null,
@@ -366,6 +386,35 @@ export function acpRegistryProbeResult(
     ...configuration,
   });
 }
+
+const AGENT_VERSION_FALLBACK_TIMEOUT = "5 seconds";
+const AGENT_VERSION_FALLBACK_MAX_BYTES = 4 * 1024;
+
+/**
+ * Reads an agent version with `<command> --version` when its ACP `initialize`
+ * response reports no `agentInfo` (CodeBuddy / WorkBuddy omit it).
+ */
+const resolveAcpRegistryAgentVersion = Effect.fn("AcpRegistryProbe.agentVersion")(function* (
+  spawn: AcpSessionRuntime.AcpSpawnInput,
+  environment: NodeJS.ProcessEnv,
+) {
+  if (spawn.command.trim().length === 0) return undefined;
+  const env = spawn.env ?? environment;
+  const resolved = yield* resolveSpawnCommand(spawn.command, ["--version"], { env });
+  const result = yield* spawnAndCollect(
+    spawn.command,
+    ChildProcess.make(resolved.command, resolved.args, {
+      env,
+      shell: resolved.shell,
+    }),
+    { maxStdoutBytes: AGENT_VERSION_FALLBACK_MAX_BYTES },
+  ).pipe(Effect.timeoutOption(AGENT_VERSION_FALLBACK_TIMEOUT), Effect.result);
+  if (Result.isFailure(result)) return undefined;
+  return Option.match(result.success, {
+    onNone: () => undefined,
+    onSome: (commandResult) => parseCliVersionResult(commandResult) ?? undefined,
+  });
+});
 
 export function acpRegistryProbeFailure(
   error: EffectAcpErrors.AcpError,
@@ -702,6 +751,11 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     );
     return yield* Effect.gen(function* () {
       const session = yield* openSession;
+      // Agents without `agentInfo` (CodeBuddy / WorkBuddy) get a version from --version.
+      const agentVersionOverride =
+        session.started.initializeResult.agentInfo?.version?.trim() !== undefined
+          ? undefined
+          : yield* resolveAcpRegistryAgentVersion(session.resolved.spawn, input.environment);
       const result: AcpRegistryConfigurationProbeResult = {
         probe: acpRegistryProbeResult(
           input.instanceId,
@@ -712,6 +766,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
             args: session.resolved.spawn.args,
           },
           session.liveConfiguration,
+          agentVersionOverride,
         ),
         slashCommands: session.commands.slashCommands,
         skills: session.commands.skills,

@@ -244,6 +244,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       /^(?:mistral-)?vibe(?:-acp)?(\.exe|\.cmd)?$/i.test(
         options.settings.commandPath.split(/[\\/]/).pop() ?? "",
       ));
+  // CodeBuddy / WorkBuddy launch the `codebuddy` CLI with `--acp` and report no
+  // `agentInfo` in `initialize`, so it is identified by its command name only.
+  const isCodeBuddy =
+    options.settings.source === "local" &&
+    /^codebuddy(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
   const runtimeOptions = isClaude
     ? {
         ...options,
@@ -274,6 +279,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
+    // CodeBuddy / WorkBuddy's session/new reports a built-in default model that may
+    // differ from the model it actually runs (CC Switch routing groups), so T3 always
+    // writes the selected model explicitly.
+    ...(isCodeBuddy ? { alwaysSetModel: true } : {}),
     ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
