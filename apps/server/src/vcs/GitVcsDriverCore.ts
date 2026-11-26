@@ -4476,7 +4476,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
-    const requestedRemoteName = options?.remoteName?.trim() || null;
+    // Callers pass exact Git remote names; trim() would strip Unicode whitespace Git allows.
+    const requestedRemoteName = options?.remoteName || null;
     if (requestedRemoteName) {
       const publishBranch = resolvePublishBranchName(branch, requestedRemoteName);
       yield* executeGitWithStableDiagnostics(

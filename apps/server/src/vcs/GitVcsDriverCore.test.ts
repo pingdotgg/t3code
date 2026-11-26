@@ -11607,6 +11607,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("pushes to a reused remote whose name ends in Unicode whitespace", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const trimmedRemote = yield* makeTmpDir("git-trimmed-remote-");
+        const publishRemote = yield* makeTmpDir("git-publish-remote-");
+        const remoteName = "team\u00a0";
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(trimmedRemote, ["init", "--bare"]);
+        yield* git(publishRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "team", trimmedRemote]);
+        yield* git(cwd, ["remote", "add", remoteName, publishRemote]);
+
+        const reused = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "origin",
+          url: publishRemote,
+        });
+        assert.equal(reused, remoteName);
+        const pushed = yield* driver.pushCurrentBranch(cwd, null, { remoteName: reused });
+
+        assert.deepInclude(pushed, { status: "pushed", upstreamBranch: `${remoteName}/main` });
+        assert.equal(
+          yield* git(publishRemote, ["--git-dir=.", "log", "-1", "--pretty=%s", "main"]),
+          "initial commit",
+        );
+        assert.equal(yield* git(trimmedRemote, ["--git-dir=.", "for-each-ref"]), "");
+      }),
+    );
+
     it.effect.each(["branch.topic.pushRemote", "remote.pushDefault"] as const)(
       "pushes a branch tracking its upstream head to the %s remote",
       (configKey) =>
