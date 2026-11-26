@@ -4,12 +4,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   groupKaluwaSubagentChildren,
+  isKaluwaChildFinished,
+  type KaluwaChildStatus,
   type KaluwaMachineFacts,
   resolveKaluwaChildAttention,
   resolveKaluwaChildStatus,
   resolveKaluwaConnectionKind,
   resolveKaluwaMachineChip,
+  resolveKaluwaShowFinished,
   sameKaluwaChildren,
+  visibleKaluwaChildren,
 } from "./kaluwaSidebarTree.logic";
 
 const LOCAL = EnvironmentId.make("env-local");
@@ -257,5 +261,46 @@ describe("machine chip", () => {
     expect(kind("BearerConnectionTarget", null)).toBe("direct");
     expect(kind("RelayConnectionTarget", null)).toBe("relay");
     expect(kind("SshConnectionTarget", "me@box")).toBe("ssh");
+  });
+});
+
+describe("finished sub-agents", () => {
+  const entry = (key: string, status: KaluwaChildStatus, unseenFailure = false) => ({
+    key,
+    status,
+    unseenFailure,
+  });
+  const children = [
+    entry("working", "working"),
+    entry("waiting", "waiting"),
+    entry("approval", "approval"),
+    entry("input", "input"),
+    entry("done", "done"),
+    entry("idle", "idle"),
+    entry("seen-failure", "failed"),
+    entry("unseen-failure", "failed", true),
+  ];
+
+  it("leaves the tree once done, keeping live, waiting and attention children", () => {
+    expect(visibleKaluwaChildren(children, false).map((child) => child.key)).toEqual([
+      "working",
+      "waiting",
+      "approval",
+      "input",
+      "unseen-failure",
+    ]);
+    expect(visibleKaluwaChildren(children, true)).toBe(children);
+  });
+
+  it("keeps a failure until the user has opened it", () => {
+    expect(isKaluwaChildFinished(entry("a", "failed", true))).toBe(false);
+    expect(isKaluwaChildFinished(entry("a", "failed"))).toBe(true);
+  });
+
+  it("lets a parent's own choice beat the global default", () => {
+    expect(resolveKaluwaShowFinished(undefined, "hide")).toBe(false);
+    expect(resolveKaluwaShowFinished(undefined, "show")).toBe(true);
+    expect(resolveKaluwaShowFinished(true, "hide")).toBe(true);
+    expect(resolveKaluwaShowFinished(false, "show")).toBe(false);
   });
 });

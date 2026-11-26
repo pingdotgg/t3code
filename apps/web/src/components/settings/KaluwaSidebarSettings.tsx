@@ -2,6 +2,7 @@
 // nest under their thread, and how a parent marks a child that needs the user.
 import type {
   KaluwaSidebarChildAttention,
+  KaluwaSidebarFinishedSubagents,
   KaluwaSidebarMachineIndicator,
   KaluwaSidebarSubagents,
 } from "@t3tools/contracts/settings";
@@ -22,6 +23,11 @@ const SUBAGENT_LABELS: Record<KaluwaSidebarSubagents, string> = {
   tree: msg("Nested tree"),
   chip: msg("Count chip"),
   off: msg("Off"),
+};
+
+const FINISHED_SUBAGENT_LABELS: Record<KaluwaSidebarFinishedSubagents, string> = {
+  hide: msg("Hide"),
+  show: msg("Show"),
 };
 
 const CHILD_ATTENTION_LABELS: Record<KaluwaSidebarChildAttention, string> = {
@@ -93,6 +99,21 @@ export function KaluwaSidebarSettings() {
             labels={SUBAGENT_LABELS}
             ariaLabel={gt("Sub-agents")}
             onChange={(value) => updateSettings({ kaluwaSidebarSubagents: value })}
+          />
+        }
+      />
+      <SettingsRow
+        devicePreference
+        title={gt("Finished sub-agents")}
+        description={gt(
+          "Hide sub-agents once their work is done, so the tree lists only what is still running or needs you. A failure stays until you open it. Right-click a thread to show its finished ones.",
+        )}
+        control={
+          <OptionSelect
+            value={settings.kaluwaSidebarFinishedSubagents}
+            labels={FINISHED_SUBAGENT_LABELS}
+            ariaLabel={gt("Finished sub-agents")}
+            onChange={(value) => updateSettings({ kaluwaSidebarFinishedSubagents: value })}
           />
         }
       />

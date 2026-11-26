@@ -64,31 +64,42 @@ const MAX_REMEMBERED_FOLDS = 200;
 interface KaluwaSubagentFoldState {
   /** Parents the user folded open or closed, against the mode's default. */
   readonly open: Readonly<Record<string, boolean>>;
+  /** Parents whose finished sub-agents the user chose to show or hide, against the setting. */
+  readonly showFinished: Readonly<Record<string, boolean>>;
   readonly setOpen: (parentKey: string, open: boolean) => void;
+  readonly setShowFinished: (parentKey: string, show: boolean) => void;
+}
+
+/** Sets one parent's choice, keeping only the most recent ones. */
+function remember(
+  record: Readonly<Record<string, boolean>>,
+  parentKey: string,
+  value: boolean,
+): Record<string, boolean> {
+  const { [parentKey]: _previous, ...rest } = record;
+  const entries = Object.entries(rest);
+  return Object.fromEntries([
+    ...entries.slice(Math.max(0, entries.length - MAX_REMEMBERED_FOLDS + 1)),
+    [parentKey, value],
+  ]);
 }
 
 export const useKaluwaSubagentFolds = create<KaluwaSubagentFoldState>()(
   persist(
     (set) => ({
       open: {},
+      showFinished: {},
       setOpen: (parentKey, open) =>
-        set((state) => {
-          const { [parentKey]: _previous, ...rest } = state.open;
-          const entries = Object.entries(rest);
-          return {
-            open: Object.fromEntries([
-              ...entries.slice(Math.max(0, entries.length - MAX_REMEMBERED_FOLDS + 1)),
-              [parentKey, open],
-            ]),
-          };
-        }),
+        set((state) => ({ open: remember(state.open, parentKey, open) })),
+      setShowFinished: (parentKey, show) =>
+        set((state) => ({ showFinished: remember(state.showFinished, parentKey, show) })),
     }),
     {
       name: "kaluwa:subagent-folds:v1",
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      partialize: ({ open }) => ({ open }),
+      partialize: ({ open, showFinished }) => ({ open, showFinished }),
     },
   ),
 );

@@ -1,7 +1,7 @@
 // Fork: Kaluwa's sub-agents in the folder tree: rows nested under their parent thread, the
 // "⑂ N" fold toggle on the parent, and the marker for a child that needs the user. Sizes and
 // connectors live in the "Kaluwa folder tree" block of index.css.
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -10,6 +10,8 @@ import { T, useGT } from "gt-react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
+import { contextMenuSourceOf } from "../../contextMenuSource";
+import { readLocalApi } from "../../localApi";
 import { useClientSettings } from "../../hooks/useSettings";
 import { shouldShowInstanceBadge } from "../../providerInstances";
 import {
@@ -25,6 +27,8 @@ import {
   type KaluwaChildStatus,
   type KaluwaSubagentChild,
   resolveKaluwaChildAttention,
+  resolveKaluwaShowFinished,
+  visibleKaluwaChildren,
 } from "./kaluwaSidebarTree.logic";
 import type { SidebarProviderEntry } from "./SidebarThreadRow";
 
@@ -54,6 +58,13 @@ export function useKaluwaChildAttention(
     attention: resolveKaluwaChildAttention(children, pendingSubagentRequest ?? null),
     ownStatus: true,
   };
+}
+
+/** The children a parent lists: finished ones only when the user or the parent asked for them. */
+function useVisibleChildren(parentKey: string, children: ReadonlyArray<KaluwaSubagentChild>) {
+  const globalDefault = useClientSettings((settings) => settings.kaluwaSidebarFinishedSubagents);
+  const override = useKaluwaSubagentFolds((state) => state.showFinished[parentKey]);
+  return visibleKaluwaChildren(children, resolveKaluwaShowFinished(override, globalDefault));
 }
 
 export function useKaluwaChildAttentionLabel(): boolean {
@@ -104,9 +115,11 @@ export function KaluwaSubagentToggle(props: {
     mode === "off" ? false : isKaluwaSubagentFoldOpen(state.open, props.parentKey, mode),
   );
   const setOpen = useKaluwaSubagentFolds((state) => state.setOpen);
-  if (mode === "off" || children.length === 0) return null;
+  const visible = useVisibleChildren(props.parentKey, children);
+  // Finished sub-agents leave the tree, so the toggle counts only the ones still listed.
+  if (mode === "off" || visible.length === 0) return null;
   const attention = resolveKaluwaChildAttention(children, props.pendingSubagentRequest ?? null);
-  const count = children.length;
+  const count = visible.length;
   const label = open
     ? gt("{count, plural, one {Hide {count} sub-agent} other {Hide {count} sub-agents}}", { count })
     : gt("{count, plural, one {Show {count} sub-agent} other {Show {count} sub-agents}}", {
@@ -212,6 +225,25 @@ function KaluwaSubagentRow(props: {
     event.preventDefault();
     props.onOpen(ref);
   };
+  const handleContextMenu = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    const api = readLocalApi();
+    const parent = parseScopedThreadKey(props.parentKey);
+    if (!api || parent === null) return;
+    void api.contextMenu
+      .show(
+        [
+          { id: "open", label: gt("Open sub-agent") },
+          { id: "parent", label: gt("Go to parent thread") },
+        ],
+        { x: event.clientX, y: event.clientY },
+        contextMenuSourceOf(event),
+      )
+      .then((action) => {
+        if (action === "open") props.onOpen(ref);
+        else if (action === "parent") props.onOpen(parent);
+      });
+  };
   return (
     <li
       className="kaluwa-sub list-none"
@@ -239,6 +271,7 @@ function KaluwaSubagentRow(props: {
           .join(", ")}
         onClick={() => props.onOpen(ref)}
         onKeyDown={handleKeyDown}
+        onContextMenu={handleContextMenu}
         className={cn(
           "kaluwa-sub-pill cursor-pointer outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           props.isActive
@@ -299,11 +332,14 @@ export function KaluwaSubagentRows(props: {
   const open = useKaluwaSubagentFolds((state) =>
     mode === "off" ? false : isKaluwaSubagentFoldOpen(state.open, props.parentKey, mode),
   );
+  const visible = useVisibleChildren(props.parentKey, children);
   if (mode === "off" || children.length === 0) return null;
-  const shown =
+  // The open sub-agent stays listed even when it is finished or folded away.
+  const shown = children.filter((child) =>
     open && !props.collapsed
-      ? children
-      : children.filter((child) => child.key === props.routeThreadKey);
+      ? visible.includes(child) || child.key === props.routeThreadKey
+      : child.key === props.routeThreadKey,
+  );
   if (shown.length === 0) return null;
   return (
     <>

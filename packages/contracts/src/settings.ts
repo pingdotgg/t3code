@@ -425,6 +425,8 @@ export const KaluwaSidebarSubagents = Schema.Literals(["tree", "chip", "off"]);
 export type KaluwaSidebarSubagents = typeof KaluwaSidebarSubagents.Type;
 export const KaluwaSidebarChildAttention = Schema.Literals(["marker", "label", "off"]);
 export type KaluwaSidebarChildAttention = typeof KaluwaSidebarChildAttention.Type;
+export const KaluwaSidebarFinishedSubagents = Schema.Literals(["hide", "show"]);
+export type KaluwaSidebarFinishedSubagents = typeof KaluwaSidebarFinishedSubagents.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
@@ -570,6 +572,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   kaluwaSidebarChildAttention: KaluwaSidebarChildAttention.pipe(
     Schema.withDecodingDefault(Effect.succeed("marker" as const)),
+  ),
+  kaluwaSidebarFinishedSubagents: KaluwaSidebarFinishedSubagents.pipe(
+    Schema.withDecodingDefault(Effect.succeed("hide" as const)),
   ),
   toolCallVisibility: ToolCallVisibility.pipe(
     Schema.withDecodingDefault(Effect.succeed("showAll" as const)),
@@ -2204,6 +2209,7 @@ export const ClientSettingsPatch = Schema.Struct({
   kaluwaSidebarMachineIndicator: Schema.optionalKey(KaluwaSidebarMachineIndicator),
   kaluwaSidebarSubagents: Schema.optionalKey(KaluwaSidebarSubagents),
   kaluwaSidebarChildAttention: Schema.optionalKey(KaluwaSidebarChildAttention),
+  kaluwaSidebarFinishedSubagents: Schema.optionalKey(KaluwaSidebarFinishedSubagents),
   toolCallVisibility: Schema.optionalKey(ToolCallVisibility),
   screenReaderAnnouncements: Schema.optionalKey(ScreenReaderAnnouncements),
   screenReaderWindowTitle: Schema.optionalKey(Schema.Boolean),

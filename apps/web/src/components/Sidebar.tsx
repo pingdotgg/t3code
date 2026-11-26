@@ -287,6 +287,11 @@ import {
 } from "./sidebar/SidebarProjectFolderHeader";
 import { KaluwaSubagentRows, useKaluwaRouteChildParent } from "./sidebar/KaluwaSubagentRows";
 import {
+  isKaluwaSubagentMenuId,
+  kaluwaShowThreadMenu,
+  runKaluwaSubagentMenuAction,
+} from "./sidebar/kaluwaSubagentMenu";
+import {
   SidebarDragBoundary,
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
@@ -2744,7 +2749,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
           ) ?? null;
         const clicked = await settlePromise(() =>
-          api.contextMenu.show(
+          kaluwaShowThreadMenu(
+            api,
+            threadKey,
             buildThreadActionMenuItems({
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
@@ -2787,6 +2794,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        // Fork: Kaluwa's sub-agent items (finished ones, folding, open a child).
+        if (isKaluwaSubagentMenuId(clicked.value)) {
+          runKaluwaSubagentMenuAction(clicked.value, threadKey, navigateToThread);
+          return;
+        }
         if (
           threadActionRequiresOperate(clicked.value) &&
           !checkThreadOperations([thread], isThreadTriageAction(clicked.value))

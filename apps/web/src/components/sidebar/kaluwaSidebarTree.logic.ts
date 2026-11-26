@@ -185,6 +185,32 @@ export function resolveKaluwaChildAttention(
   return null;
 }
 
+/**
+ * Whether a child's work is over and needs nothing from the user. A failure stays until the user
+ * opens it, the same rule that keeps it marking its parent.
+ */
+export function isKaluwaChildFinished(
+  child: Pick<KaluwaSubagentChild, "status" | "unseenFailure">,
+): boolean {
+  if (child.unseenFailure) return false;
+  return child.status === "done" || child.status === "idle" || child.status === "failed";
+}
+
+/** A parent's own choice wins over the global default. */
+export function resolveKaluwaShowFinished(
+  override: boolean | undefined,
+  globalDefault: "hide" | "show",
+): boolean {
+  return override ?? globalDefault === "show";
+}
+
+/** The children the tree lists: live and attention ones, plus finished ones when shown. */
+export function visibleKaluwaChildren<
+  Child extends Pick<KaluwaSubagentChild, "key" | "status" | "unseenFailure">,
+>(children: ReadonlyArray<Child>, showFinished: boolean): ReadonlyArray<Child> {
+  return showFinished ? children : children.filter((child) => !isKaluwaChildFinished(child));
+}
+
 export type KaluwaConnectionKind = "local" | "tailscale" | "lan" | "relay" | "ssh" | "direct";
 export type KaluwaMachineState = "online" | "connecting" | "offline";
 
