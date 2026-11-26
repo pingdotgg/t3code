@@ -92,6 +92,8 @@ function scanRawHtmlAnchors(rawType: "raw" | "html") {
       } else if (rawType === "html" && node.type === "text" && (rawTextTag || anchors.length > 0)) {
         anchorAt.set(node, rawTextTag || anchors.includes(null) ? null : anchors.at(-1)!);
       }
+      // Like the linker, stay out of Markdown link labels: the browser closes raw anchors there.
+      if (rawType === "html" && (node.type === "link" || node.type === "linkReference")) return;
       node.children?.forEach(visit);
     };
 

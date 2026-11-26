@@ -989,6 +989,10 @@ it("links complete absolute paths in prose and skips shortened ones", () => {
   expect(links("Use <textarea><a></textarea> and /Users/me/app.ts:42")).toEqual([
     "/Users/me/app.ts:42",
   ]);
+  expect(links('[<a href="x">label](https://example.com) /Users/me/app.ts:42')).toEqual([
+    "https://example.com",
+    "/Users/me/app.ts:42",
+  ]);
   expect(
     links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
   ).toEqual([]);
