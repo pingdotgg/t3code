@@ -630,7 +630,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
 
   const pendingStops = new Map<
     RunningSession,
-    Deferred.Deferred<void, Effect.Error<ReturnType<typeof stopSession>>>
+    Deferred.Deferred<Exit.Exit<void, Effect.Error<ReturnType<typeof stopSession>>> | undefined>
   >();
 
   const stopTracked = Effect.fn("EasDeviceHost.stopTracked")(function* (
@@ -640,14 +640,19 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
   ) {
     yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        const pending = pendingStops.get(session);
-        if (pending) {
-          if (!retry) yield* restore(Deferred.await(pending));
-          return;
+        while (true) {
+          const pending = pendingStops.get(session);
+          if (!pending) break;
+          if (retry) return;
+          const exit = yield* restore(Deferred.await(pending));
+          if (exit !== undefined) return yield* exit;
+          // The listing that owned this attempt was canceled. A surviving Stop can try again.
         }
         if (sessions.get(session.sessionId) !== session) return;
         // Publish the pending result without yielding between the lookup and registration.
-        const result = Deferred.makeUnsafe<void, Effect.Error<ReturnType<typeof stopSession>>>();
+        const result = Deferred.makeUnsafe<
+          Exit.Exit<void, Effect.Error<ReturnType<typeof stopSession>>> | undefined
+        >();
         pendingStops.set(session, result);
         const stop = stopSession(expo, session.sessionId, session.name);
         yield* restore(
@@ -672,7 +677,14 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
             Effect.sync(() => {
               session.stopFailed = Exit.isFailure(exit);
               pendingStops.delete(session);
-            }).pipe(Effect.andThen(Deferred.done(result, exit))),
+            }).pipe(
+              Effect.andThen(
+                Deferred.succeed(
+                  result,
+                  Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause) ? undefined : exit,
+                ),
+              ),
+            ),
           ),
         );
       }),

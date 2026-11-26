@@ -577,7 +577,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     };
   });
 
-  const shutdownRevisions = new WeakMap<DeviceHost.DeviceHost["Service"], number>();
+  const inventoryRevisions = new WeakMap<DeviceHost.DeviceHost["Service"], number>();
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (
     ready: DeviceReadiness,
@@ -585,7 +585,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   ): Effect.fn.Return<DeviceServiceState, DeviceError> {
     if (!host || hosts.get(ready.hostId) !== host)
       return (yield* SynchronizedRef.get(stateRef)).state;
-    const shutdownRevision = shutdownRevisions.get(host);
+    const inventoryRevision = inventoryRevisions.get(host);
     // A session opened while the listing ran is on a device the listing could
     // not have seen yet; only sessions from before it can be pruned by it.
     const sessionKey = (session: DeviceSession) =>
@@ -598,10 +598,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       Effect.gen(function* () {
         if (!(yield* readDeviceSettings).enabled || hosts.get(ready.hostId) !== host)
           return (yield* SynchronizedRef.get(stateRef)).state;
-        if (shutdownRevisions.get(host) !== shutdownRevision) return;
+        if (inventoryRevisions.get(host) !== inventoryRevision) return;
         if (detail && (incompletePlatforms.length > 0 || androidDiscoveryIncomplete))
           discoveryDetails.set(ready.hostId, detail);
         else discoveryDetails.delete(ready.hostId);
+        inventoryRevisions.set(host, (inventoryRevision ?? 0) + 1);
         return yield* publish((state) => ({
           ...state,
           hosts: hostSummaries,
@@ -636,7 +637,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         }));
       }),
     );
-    // A Stop committed while the host was listing. Fetch again outside the lifecycle lock.
+    // Another listing or Stop committed on this host. Fetch again outside the lifecycle lock.
     return refreshed ?? (yield* refresh(ready, host));
   });
 
@@ -952,7 +953,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         lifecycleLock.withPermit(
           Effect.gen(function* () {
             if (hosts.get(host.id) !== host) return;
-            shutdownRevisions.set(host, (shutdownRevisions.get(host) ?? 0) + 1);
+            inventoryRevisions.set(host, (inventoryRevisions.get(host) ?? 0) + 1);
             // If power-off fails, retirement must still be able to close these launchers.
             for (const name of released) boundLaunchers.delete(name);
             yield* publish((state) => ({
