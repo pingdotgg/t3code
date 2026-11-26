@@ -5,6 +5,9 @@ UPSTREAM="https://github.com/pingdotgg/t3code.git"
 READ_ONLY_GIT="Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status*),Bash(git apply --check *)"
 # The agent job holds no credential, so vp can run any check that CI runs.
 CHECKS="Bash(vp *),Bash(cd *),Bash(node --test *)"
+# No tool deletes files, and CI has no person to approve a command, so a merge that must follow an
+# upstream deletion needs rm.
+DELETE="Bash(rm *)"
 
 fail() { echo "::error::$1"; exit 1; }
 
@@ -13,7 +16,7 @@ run_agent() {
   CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p --bare --restricted --strict-mcp-config \
     --no-session-persistence --model claude-opus-5-5 --effort high --max-budget-usd 25 \
     --tools "Read,Edit,Write,Glob,Grep,Bash" \
-    --allowedTools "Read,Edit,Write,Glob,Grep,$READ_ONLY_GIT,$CHECKS"
+    --allowedTools "Read,Edit,Write,Glob,Grep,$READ_ONLY_GIT,$CHECKS,$DELETE"
 }
 
 # check_patch <commit>: the commit's hardened.patch must apply to the commit's own tree.
