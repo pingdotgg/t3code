@@ -7529,6 +7529,15 @@ process.stdout.write('{"type":"ready"}\\n');
 
         const threadA = ThreadId.make("thread-pi-a");
         const threadB = ThreadId.make("thread-pi-b");
+        const dirA = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadA}`;
+        const dirB = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadB}`;
+        // Plant a host-symlink trap inside Thread A's sandbox-writable profile before openSession
+        // to prove seeding uses O_NOFOLLOW + unlink and never overwrites external host files.
+        const victimFile = `${cwd}/host-victim.txt`;
+        yield* fileSystem.writeFileString(victimFile, "untouched-host-file");
+        yield* fileSystem.makeDirectory(dirA, { recursive: true });
+        yield* fileSystem.symlink(victimFile, `${dirA}/settings.json`);
+
         yield* adapter.openSession({
           threadId: threadA,
           providerSessionId: ProviderSessionId.make("provider-session-pi-a"),
@@ -7551,8 +7560,6 @@ process.stdout.write('{"type":"ready"}\\n');
         });
 
         assert.equal(wrapCalls.length, 2);
-        const dirA = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadA}`;
-        const dirB = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadB}`;
         assert.notEqual(dirA, dirB);
         assert.equal(wrapCalls[0]?.env?.PI_CODING_AGENT_DIR, dirA);
         assert.equal(wrapCalls[1]?.env?.PI_CODING_AGENT_DIR, dirB);
@@ -7561,6 +7568,7 @@ process.stdout.write('{"type":"ready"}\\n');
         assert.isFalse(wrapCalls[0]?.extraProviderProfileDirs?.includes(sharedProfileDir) ?? false);
         assert.isFalse(wrapCalls[0]?.extraProviderProfileDirs?.includes(dirB) ?? false);
         assert.equal(yield* fileSystem.readFileString(`${dirA}/settings.json`), '{"theme":"dark"}');
+        assert.equal(yield* fileSystem.readFileString(victimFile), "untouched-host-file");
         assert.isFalse(yield* fileSystem.exists(`${dirA}/sessions/secret-sibling.jsonl`));
         assert.equal(spawnedEnvs.length, 2);
         assert.equal(spawnedEnvs[0]?.LD_PRELOAD, undefined);

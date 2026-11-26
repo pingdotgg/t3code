@@ -1105,7 +1105,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           teamBwrapSandbox === true
             ? {
                 ...longPathEnv,
-                ...sandboxSafeGitConfigEnv(commandInput.cwd, longPathEnv, hostPlatform),
+                ...sandboxSafeGitConfigEnv(
+                  commandInput.cwd,
+                  longPathEnv,
+                  hostPlatform,
+                  commandInput.args,
+                ),
               }
             : longPathEnv;
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });

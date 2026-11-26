@@ -534,7 +534,12 @@ async function ensureEmptyRoFilePath(ownStateDir: string | undefined): Promise<s
     );
     await NodeFSP.mkdir(containerDir, { recursive: true, mode: 0o700 });
     const dirStat = await NodeFSP.lstat(containerDir);
-    if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+    if (
+      dirStat.isSymbolicLink() ||
+      !dirStat.isDirectory() ||
+      dirStat.uid !== uid ||
+      (dirStat.mode & 0o022) !== 0
+    ) {
       throw new Error(`Unsafe empty-ro container directory: ${containerDir}`);
     }
   }
@@ -795,6 +800,7 @@ const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function
   readonly canonicalCwd: string;
   readonly ownStateRoots: ReadonlyArray<string>;
   readonly foreignForbiddenRoots: ReadonlyArray<string>;
+  readonly homeRoots: ReadonlyArray<string>;
 }): Effect.fn.Return<BwrapGitMetadataResolution | undefined, BwrapSandboxPathError> {
   const dotGitPath = NodePath.posix.join(input.canonicalCwd, ".git");
   const dotGitStat = yield* Effect.promise(async () => {
@@ -833,7 +839,7 @@ const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function
     yield* inspectOptionalGitSubdir(hooksDir);
     const configFileExists = yield* inspectOptionalGitRegularFile(configFile);
     const worktreeConfigFileExists = yield* inspectOptionalGitRegularFile(worktreeConfigFile);
-    const hasWorktreesDir = yield* inspectOptionalGitSubdir(worktreesDir);
+    yield* inspectOptionalGitSubdir(worktreesDir);
     return {
       kind: "regular_repo",
       binds: {
@@ -843,7 +849,8 @@ const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function
         configFileExists,
         worktreeConfigFile,
         worktreeConfigFileExists,
-        ...(hasWorktreesDir ? { maskWorktreesDir: worktreesDir } : {}),
+        // Always mask `<gitDir>/worktrees` so sibling worktrees created later stay hidden too.
+        maskWorktreesDir: worktreesDir,
       },
     };
   }
@@ -891,6 +898,7 @@ const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function
     role: "git_common_dir",
     ownStateRoots: input.ownStateRoots,
     foreignForbiddenRoots: input.foreignForbiddenRoots,
+    homeRoots: input.homeRoots,
     expectedType: "directory",
   });
 
@@ -922,6 +930,7 @@ const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function
     role: "git_common_dir",
     ownStateRoots: input.ownStateRoots,
     foreignForbiddenRoots: input.foreignForbiddenRoots,
+    homeRoots: input.homeRoots,
     expectedType: "directory",
   });
 
@@ -1471,6 +1480,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     canonicalCwd,
     ownStateRoots,
     foreignForbiddenRoots,
+    homeRoots,
   });
   const gitWorktree = gitMetadata?.kind === "linked_worktree" ? gitMetadata.binds : undefined;
   const gitRepo = gitMetadata?.kind === "regular_repo" ? gitMetadata.binds : undefined;
@@ -1640,42 +1650,48 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       );
       if (
         shebangInterpreter !== undefined &&
-        !isCoveredBySystemRoBinds(shebangInterpreter) &&
         !isSameOrDescendant(shebangInterpreter, canonicalCwd)
       ) {
-        const validatedInterpreter = yield* canonicalizeAndValidateBindPath({
-          rawPath: shebangInterpreter,
-          role: "executable",
-          ownStateRoots,
-          foreignForbiddenRoots,
-          homeRoots,
-          expectedType: "file",
-        }).pipe(
-          Effect.catchIf(
-            (err) => err.reason === "missing_path",
-            () => Effect.undefined,
-          ),
-        );
-        if (validatedInterpreter !== undefined) {
-          if (!isCoveredBySystemRoBinds(validatedInterpreter)) {
-            extraRoBinds.push(validatedInterpreter);
-          }
-          const normalizedInterp = normalizePosixPath(shebangInterpreter);
-          if (
-            normalizedInterp !== validatedInterpreter &&
-            !isCoveredBySystemRoBinds(normalizedInterp)
-          ) {
-            const lexicalInterpError = assertLexicalPathNotForbidden({
-              candidate: normalizedInterp,
-              role: "executable",
-              ownStateRoots,
-              foreignForbiddenRoots,
-              homeRoots,
-            });
-            if (lexicalInterpError !== undefined) {
-              return yield* lexicalInterpError;
+        // Resolve symlinks even when lexically inside system dirs (e.g. /usr/local/bin/node -> /srv/node/bin/node).
+        const lexicalInterpInSystemRo = isCoveredBySystemRoBinds(shebangInterpreter);
+        const interpExists = lexicalInterpInSystemRo
+          ? yield* Effect.promise(() => pathExists(shebangInterpreter))
+          : true;
+        if (interpExists) {
+          const validatedInterpreter = yield* canonicalizeAndValidateBindPath({
+            rawPath: shebangInterpreter,
+            role: "executable",
+            ownStateRoots,
+            foreignForbiddenRoots,
+            homeRoots,
+            expectedType: "file",
+          }).pipe(
+            Effect.catchIf(
+              (err) => err.reason === "missing_path",
+              () => Effect.undefined,
+            ),
+          );
+          if (validatedInterpreter !== undefined) {
+            if (!isCoveredBySystemRoBinds(validatedInterpreter)) {
+              extraRoBinds.push(validatedInterpreter);
             }
-            extraRoBinds.push(normalizedInterp);
+            const normalizedInterp = normalizePosixPath(shebangInterpreter);
+            if (
+              normalizedInterp !== validatedInterpreter &&
+              !isCoveredBySystemRoBinds(normalizedInterp)
+            ) {
+              const lexicalInterpError = assertLexicalPathNotForbidden({
+                candidate: normalizedInterp,
+                role: "executable",
+                ownStateRoots,
+                foreignForbiddenRoots,
+                homeRoots,
+              });
+              if (lexicalInterpError !== undefined) {
+                return yield* lexicalInterpError;
+              }
+              extraRoBinds.push(normalizedInterp);
+            }
           }
         }
       }

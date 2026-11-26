@@ -1185,14 +1185,24 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           NodeChildProcess.execFileSync("git", ["worktree", "add", "-b", "alice", wtAlice], {
             cwd: mainRepo,
           });
-          // Plant hostile fsmonitor + direct/included clean filters in both shared config and config.worktree.
+          // Plant hostile fsmonitor + direct/included clean filters + 300KB comment-padded single-line
+          // [core] sshCommand + URL-scoped credential helper + remote.origin.uploadpack.
+          const includedCommentCfg = NodePath.join(root, "included-single-line.cfg");
+          NodeFS.writeFileSync(
+            includedCommentCfg,
+            `[filter "singleline"] clean = ${evilScript}\n[credential "https://example.test"] helper = !${evilScript}\n`,
+          );
+          NodeFS.appendFileSync(
+            NodePath.join(mainRepo, ".git", "config"),
+            `\n# ${"x".repeat(300_000)}\n[core] sshCommand = ${evilScript}\n[include] path = ${includedCommentCfg} # inline comment\n[remote "origin"]\n\tuploadpack = ${evilScript}\n`,
+          );
           NodeChildProcess.execFileSync("git", ["config", "core.fsmonitor", evilScript], {
             cwd: mainRepo,
           });
           NodeChildProcess.execFileSync("git", ["config", "filter.evil.clean", evilScript], {
             cwd: mainRepo,
           });
-          NodeChildProcess.execFileSync("git", ["config", "include.path", includedCfg], {
+          NodeChildProcess.execFileSync("git", ["config", "--add", "include.path", includedCfg], {
             cwd: mainRepo,
           });
           NodeChildProcess.execFileSync(
@@ -1200,6 +1210,20 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             ["config", "--worktree", "core.fsmonitor", evilScript],
             { cwd: wtAlice },
           );
+          // Verify sandboxSafeGitConfigEnv neutralizes padded, single-line, URL-scoped, and remote exec keys.
+          const computedGitEnv = VcsProcess.sandboxSafeGitConfigEnv(mainRepo, {}, "linux");
+          const computedPairs = new Map<string, string>();
+          const count = Number.parseInt(computedGitEnv.GIT_CONFIG_COUNT ?? "0", 10);
+          for (let i = 0; i < count; i += 1) {
+            const k = computedGitEnv[`GIT_CONFIG_KEY_${i}`];
+            const v = computedGitEnv[`GIT_CONFIG_VALUE_${i}`];
+            if (k !== undefined && v !== undefined) computedPairs.set(k.toLowerCase(), v);
+          }
+          expect(computedPairs.get("filter.singleline.clean")).toBe("");
+          expect(computedPairs.get("credential.https://example.test.helper")).toBe("");
+          expect(computedPairs.get("core.sshcommand")).toBe("false");
+          expect(computedPairs.get("remote.origin.uploadpack")).toBe("git-upload-pack");
+          expect(computedPairs.get("gpg.program")).toBe("false");
           // Modify tracked files with identical length and bumped mtime to force clean-filter evaluation.
           const futureEpochSec = 4_070_908_800;
           for (const dir of [mainRepo, wtAlice]) {

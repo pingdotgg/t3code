@@ -1,4 +1,8 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Uses O_NOFOLLOW/lstat when seeding files into sandbox-writable per-thread Pi profile dirs.
+import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Uses O_NOFOLLOW/lstat when seeding files into sandbox-writable per-thread Pi profile dirs.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeUtil from "node:util";
 import {
   AgentScope,
@@ -544,6 +548,93 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         (yield* sessionHeaderNamesCwd(input.initialNativeThreadId))
           ? input.initialNativeThreadId
           : undefined;
+      // Writes into a sandbox-writable profile directory without ever following symlinks on the host.
+      const writeSandboxProfileFileNoFollow = (destPath: string, bytes: Uint8Array) =>
+        Effect.tryPromise({
+          try: async () => {
+            try {
+              const existing = await NodeFSP.lstat(destPath);
+              if (existing.isSymbolicLink() || !existing.isFile()) {
+                await NodeFSP.unlink(destPath);
+              }
+            } catch {
+              // Destination does not exist yet.
+            }
+            const flags =
+              NodeFS.constants.O_WRONLY |
+              NodeFS.constants.O_CREAT |
+              NodeFS.constants.O_TRUNC |
+              (NodeFS.constants.O_NOFOLLOW ?? 0);
+            const handle = await NodeFSP.open(destPath, flags, 0o600);
+            try {
+              await handle.writeFile(bytes);
+              await handle.chmod(0o600);
+            } finally {
+              await handle.close();
+            }
+          },
+          catch: () => undefined,
+        }).pipe(Effect.ignore);
+
+      const prepareSandboxPiAgentDir = Effect.fnUntraced(function* (env: NodeJS.ProcessEnv) {
+        // Isolate Pi's mutable profile + sessions directory per thread so sibling threads
+        // sharing one provider instance cannot read or poison each other's sessions or config.
+        const sanitizeSegment = (value: string) =>
+          value.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^\.+$/, "default") || "default";
+        const rawSlug = `${sanitizeSegment(options.instanceId)}__${sanitizeSegment(input.threadId)}`;
+        const threadProfileSlug =
+          rawSlug.length <= 96
+            ? rawSlug
+            : (() => {
+                let hash = 0x811c9dc5;
+                for (let i = 0; i < rawSlug.length; i += 1) {
+                  hash ^= rawSlug.charCodeAt(i);
+                  hash = Math.imul(hash, 0x01000193);
+                }
+                return `${rawSlug.slice(0, 80)}_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+              })();
+        const threadAgentDir = path.join(host.paths.stateDir, "providers", "pi", threadProfileSlug);
+        yield* fileSystem.makeDirectory(threadAgentDir, { recursive: true });
+        const sharedAgentDir = env.PI_CODING_AGENT_DIR?.trim();
+        if (
+          sharedAgentDir !== undefined &&
+          sharedAgentDir.length > 0 &&
+          path.resolve(sharedAgentDir) !== path.resolve(threadAgentDir)
+        ) {
+          const realSharedDir = yield* fileSystem
+            .realPath(sharedAgentDir)
+            .pipe(Effect.orElseSucceed(() => undefined));
+          if (realSharedDir !== undefined) {
+            for (const fileName of [
+              "auth.json",
+              "models.json",
+              "settings.json",
+              "keybindings.json",
+            ] as const) {
+              const srcPath = path.join(sharedAgentDir, fileName);
+              const realSrc = yield* fileSystem
+                .realPath(srcPath)
+                .pipe(Effect.orElseSucceed(() => undefined));
+              if (realSrc === undefined || !realSrc.startsWith(`${realSharedDir}${path.sep}`)) {
+                continue;
+              }
+              const srcStat = yield* fileSystem
+                .stat(realSrc)
+                .pipe(Effect.orElseSucceed(() => undefined));
+              if (srcStat?.type !== "File") continue;
+              const bytes = yield* fileSystem
+                .readFile(realSrc)
+                .pipe(Effect.orElseSucceed(() => undefined));
+              if (bytes !== undefined) {
+                yield* writeSandboxProfileFileNoFollow(path.join(threadAgentDir, fileName), bytes);
+              }
+            }
+          }
+        }
+        return threadAgentDir;
+      });
+      let sandboxForkCounter = 0;
+
       const startConnection = Effect.fnUntraced(function* (sessionPath?: string) {
         const connectionScope = yield* Scope.fork(scope, "sequential");
         return yield* Effect.gen(function* () {
@@ -554,69 +645,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           };
           let sandboxPiAgentDir: string | undefined;
           if (processSandbox.enabled) {
-            // Isolate Pi's mutable profile + sessions directory per thread so sibling threads
-            // sharing one provider instance cannot read or poison each other's sessions or config.
-            const sanitizeSegment = (value: string) =>
-              value.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^\.+$/, "default") || "default";
-            const rawSlug = `${sanitizeSegment(options.instanceId)}__${sanitizeSegment(input.threadId)}`;
-            const threadProfileSlug =
-              rawSlug.length <= 96
-                ? rawSlug
-                : (() => {
-                    let hash = 0x811c9dc5;
-                    for (let i = 0; i < rawSlug.length; i += 1) {
-                      hash ^= rawSlug.charCodeAt(i);
-                      hash = Math.imul(hash, 0x01000193);
-                    }
-                    return `${rawSlug.slice(0, 80)}_${(hash >>> 0).toString(16).padStart(8, "0")}`;
-                  })();
-            const threadAgentDir = path.join(
-              host.paths.stateDir,
-              "providers",
-              "pi",
-              threadProfileSlug,
-            );
-            yield* fileSystem.makeDirectory(threadAgentDir, { recursive: true });
-            const sharedAgentDir = baseEnvironment.PI_CODING_AGENT_DIR?.trim();
-            if (
-              sharedAgentDir !== undefined &&
-              sharedAgentDir.length > 0 &&
-              path.resolve(sharedAgentDir) !== path.resolve(threadAgentDir)
-            ) {
-              const realSharedDir = yield* fileSystem
-                .realPath(sharedAgentDir)
-                .pipe(Effect.orElseSucceed(() => undefined));
-              if (realSharedDir !== undefined) {
-                for (const fileName of [
-                  "auth.json",
-                  "models.json",
-                  "settings.json",
-                  "keybindings.json",
-                ] as const) {
-                  const srcPath = path.join(sharedAgentDir, fileName);
-                  const realSrc = yield* fileSystem
-                    .realPath(srcPath)
-                    .pipe(Effect.orElseSucceed(() => undefined));
-                  if (realSrc === undefined || !realSrc.startsWith(`${realSharedDir}${path.sep}`)) {
-                    continue;
-                  }
-                  const srcStat = yield* fileSystem
-                    .stat(realSrc)
-                    .pipe(Effect.orElseSucceed(() => undefined));
-                  if (srcStat?.type !== "File") continue;
-                  const bytes = yield* fileSystem
-                    .readFile(realSrc)
-                    .pipe(Effect.orElseSucceed(() => undefined));
-                  if (bytes !== undefined) {
-                    yield* fileSystem
-                      .writeFile(path.join(threadAgentDir, fileName), bytes)
-                      .pipe(Effect.ignore);
-                  }
-                }
-              }
-            }
-            sandboxPiAgentDir = threadAgentDir;
-            baseEnvironment.PI_CODING_AGENT_DIR = threadAgentDir;
+            sandboxPiAgentDir = yield* prepareSandboxPiAgentDir(baseEnvironment);
+            baseEnvironment.PI_CODING_AGENT_DIR = sandboxPiAgentDir;
           }
           const launch = buildPiRpcLaunch({
             launchArgs: resolvedLaunchArgs.args,
@@ -3100,9 +3130,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         boundary: PiForkBoundary,
         providerThreadCreatedAt: DateTime.Utc,
       ) {
+        const forkBaseEnv: NodeJS.ProcessEnv = {
+          ...options.environment,
+          ...input.sessionEnvironmentOverride,
+        };
+        const sandboxForkAgentDir = processSandbox.enabled
+          ? yield* prepareSandboxPiAgentDir(forkBaseEnv)
+          : undefined;
+        if (sandboxForkAgentDir !== undefined) {
+          forkBaseEnv.PI_CODING_AGENT_DIR = sandboxForkAgentDir;
+        }
         const forkLaunch = buildPiRpcLaunch({
           launchArgs: resolvedLaunchArgs.args,
-          environment: options.environment,
+          environment: forkBaseEnv,
           mcpSession: undefined,
           extensionPath: undefined,
           shortLived: true,
@@ -3111,11 +3151,65 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
         return yield* Effect.scoped(
           Effect.gen(function* () {
+            let forkSourcePath = sourceFile;
+            if (sandboxForkAgentDir !== undefined) {
+              const resolvedAgentDir = path.resolve(sandboxForkAgentDir);
+              const resolvedSource = path.resolve(sourceFile);
+              const alreadyInsideAgentDir =
+                resolvedSource === resolvedAgentDir ||
+                resolvedSource.startsWith(`${resolvedAgentDir}${path.sep}`);
+              if (!alreadyInsideAgentDir) {
+                sandboxForkCounter += 1;
+                const stagedPath = path.join(
+                  sandboxForkAgentDir,
+                  `.fork-source-${sandboxForkCounter}.jsonl`,
+                );
+                const sourceBytes = yield* fileSystem
+                  .readFile(sourceFile)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      protocolError("Failed to read Pi fork source", cause),
+                    ),
+                  );
+                yield* writeSandboxProfileFileNoFollow(stagedPath, sourceBytes);
+                yield* Effect.addFinalizer(() =>
+                  Effect.promise(() => NodeFSP.unlink(stagedPath).catch(() => {})),
+                );
+                forkSourcePath = stagedPath;
+              }
+            }
+            const forkCommandArgs = [...forkLaunch.args, "--fork", forkSourcePath];
+            const sandboxedFork = processSandbox.enabled
+              ? yield* processSandbox
+                  .wrap({
+                    command: options.settings.binaryPath || "pi",
+                    args: forkCommandArgs,
+                    cwd,
+                    env: forkLaunch.env,
+                    ...(sandboxForkAgentDir !== undefined
+                      ? { extraProviderProfileDirs: [sandboxForkAgentDir] }
+                      : {}),
+                    name: "pi-fork",
+                    threadId: input.threadId,
+                  })
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      protocolError("Pi fork sandbox launch failed", cause),
+                    ),
+                  )
+              : {
+                  command: options.settings.binaryPath || "pi",
+                  args: forkCommandArgs,
+                  hostEnv: forkLaunch.env,
+                };
+            const effectiveForkEnv = processSandbox.enabled
+              ? (sandboxedFork.hostEnv ?? sanitizeHostEnvForSandboxLaunch(forkLaunch.env) ?? {})
+              : forkLaunch.env;
             const forkConnection = yield* makePiRpcConnection({
-              command: options.settings.binaryPath || "pi",
-              args: [...forkLaunch.args, "--fork", sourceFile],
+              command: sandboxedFork.command,
+              args: sandboxedFork.args,
               cwd,
-              env: forkLaunch.env,
+              env: effectiveForkEnv,
             });
             yield* Stream.fromQueue(forkConnection.events).pipe(
               Stream.runDrain,
@@ -3141,7 +3235,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             const state = yield* forkConnection.request({ type: "get_state" });
             const file = recordString(state, "sessionFile");
-            if (file === undefined || file === sourceFile) {
+            if (file === undefined || file === sourceFile || file === forkSourcePath) {
               return yield* protocolError("Pi fork did not create a distinct session file");
             }
             return file;

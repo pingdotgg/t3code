@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveLocalOrigin } from "../startupAccess.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth, type CodexChatGptCredentials } from "./CodexChatGptAuth.ts";
@@ -217,13 +218,14 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       invocation.command,
       ...(invocation.entrypoint === undefined ? [] : [invocation.entrypoint]),
     ];
+    const hostHome = HostProcess.HomeDirectory.defaultValue();
     const entrypointDir =
       invocation.entrypoint !== undefined && path.isAbsolute(invocation.entrypoint)
         ? path.dirname(invocation.entrypoint)
         : undefined;
-    const extraRoBinds =
-      entrypointDir !== undefined &&
-      !new Set([
+    const isUnsafeDir =
+      entrypointDir === undefined ||
+      new Set([
         "/",
         "/tmp",
         "/var",
@@ -238,9 +240,10 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
         "/mnt",
         "/media",
         "/data",
-      ]).has(entrypointDir)
-        ? [entrypointDir]
-        : [];
+      ]).has(entrypointDir) ||
+      (path.isAbsolute(hostHome) &&
+        (entrypointDir === hostHome || hostHome.startsWith(`${entrypointDir}/`)));
+    const extraRoBinds = isUnsafeDir ? [] : [entrypointDir];
     return {
       config: decodeSettings({
         enabled: options.enabled,

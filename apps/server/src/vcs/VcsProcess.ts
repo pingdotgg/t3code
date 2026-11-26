@@ -1,6 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Reads local repo .git/config and includes synchronously to neutralize untrusted git hooks/filters under bwrap.
+// @effect-diagnostics nodeBuiltinImport:off -- Uses git config --includes --list via execFileSync to inspect local repo configs without hand-rolling INI parsing.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as Context from "effect/Context";
@@ -174,157 +174,166 @@ const SANDBOX_SAFE_FIXED_GIT_CONFIG = [
   ["core.editor", "false"],
   ["core.alternateRefsCommand", ""],
   ["uploadpack.packObjectsHook", ""],
+  ["gpg.program", "false"],
+  ["gpg.openpgp.program", "false"],
+  ["gpg.ssh.program", "false"],
+  ["gpg.x509.program", "false"],
+  ["gpg.ssh.defaultKeyCommand", ""],
 ] as const;
 
-const MAX_SANDBOX_GIT_CONFIG_BYTES = 262_144;
-const MAX_SANDBOX_GIT_CONFIG_FILES = 16;
+function extractGitLocationArgs(args: ReadonlyArray<string> | undefined): {
+  readonly gitDirArg?: string | undefined;
+  readonly chdirArgs: ReadonlyArray<string>;
+} {
+  if (args === undefined || args.length === 0) {
+    return { chdirArgs: [] };
+  }
+  const chdirArgs: Array<string> = [];
+  let gitDirArg: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === "--") break;
+    if (arg === "-C" && i + 1 < args.length) {
+      chdirArgs.push("-C", args[i + 1]!);
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("-C") && arg.length > 2) {
+      chdirArgs.push(arg);
+      continue;
+    }
+    if (arg === "--git-dir" && i + 1 < args.length) {
+      gitDirArg = args[i + 1]!;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--git-dir=")) {
+      gitDirArg = arg.slice("--git-dir=".length);
+      continue;
+    }
+    // Stop scanning global git options once the subcommand token is reached.
+    if (!arg.startsWith("-")) break;
+  }
+  return { gitDirArg, chdirArgs };
+}
 
-function findEnclosingGitConfigFiles(cwd: string | undefined): ReadonlyArray<string> {
-  if (cwd === undefined || cwd.trim().length === 0) return [];
+function hasEnclosingGitMarker(cwd: string): boolean {
   let cursor = NodePath.resolve(cwd);
   for (let depth = 0; depth < 64; depth += 1) {
-    const dotGit = NodePath.join(cursor, ".git");
-    try {
-      const stat = NodeFS.lstatSync(dotGit);
-      if (stat.isDirectory()) {
-        return [NodePath.join(dotGit, "config"), NodePath.join(dotGit, "config.worktree")];
-      }
-      if (stat.isFile()) {
-        const raw = NodeFS.readFileSync(dotGit, "utf8").slice(0, 4096);
-        const match = /^gitdir:\s*(.+)$/m.exec(raw);
-        const target = match?.[1]?.trim();
-        if (target === undefined || target.length === 0) return [];
-        const worktreeGitDir = NodePath.isAbsolute(target)
-          ? target
-          : NodePath.resolve(cursor, target);
-        const files = [
-          NodePath.join(worktreeGitDir, "config"),
-          NodePath.join(worktreeGitDir, "config.worktree"),
-        ];
-        try {
-          const commonRaw = NodeFS.readFileSync(
-            NodePath.join(worktreeGitDir, "commondir"),
-            "utf8",
-          ).trim();
-          if (commonRaw.length > 0) {
-            const commonDir = NodePath.isAbsolute(commonRaw)
-              ? commonRaw
-              : NodePath.resolve(worktreeGitDir, commonRaw);
-            files.unshift(NodePath.join(commonDir, "config"));
-          }
-        } catch {
-          // Worktree without readable commondir still neutralizes worktree-local configs.
-        }
-        return files;
-      }
-    } catch {
-      // Keep walking upward until a `.git` entry is found.
-    }
+    if (NodeFS.existsSync(NodePath.join(cursor, ".git"))) return true;
     const parent = NodePath.dirname(cursor);
     if (parent === cursor) break;
     cursor = parent;
   }
-  return [];
+  return false;
 }
 
-function unescapeGitConfigSubsection(raw: string): string {
-  return raw.replace(/\\(.)/g, "$1");
-}
-
+/**
+ * Queries Git's own config parser (`git config --includes --name-only --null --list` with system
+ * and global configs disabled) so comment padding, line continuations, single-line `[sec] k=v`,
+ * `config.worktree`, and arbitrary `[include]`/`[includeIf]` chains cannot bypass neutralization.
+ */
 function discoverUntrustedRepoGitOverrides(
   cwd: string | undefined,
+  env: NodeJS.ProcessEnv,
+  args: ReadonlyArray<string> | undefined,
 ): ReadonlyArray<readonly [string, string]> {
-  const initialFiles = findEnclosingGitConfigFiles(cwd);
-  if (initialFiles.length === 0) return [];
+  const { gitDirArg, chdirArgs } = extractGitLocationArgs(args);
+  const envGitDir = env.GIT_DIR?.trim();
+  const effectiveGitDir =
+    gitDirArg !== undefined && gitDirArg.length > 0
+      ? gitDirArg
+      : envGitDir !== undefined && envGitDir.length > 0
+        ? envGitDir
+        : undefined;
+
+  if (effectiveGitDir === undefined && chdirArgs.length === 0) {
+    if (cwd === undefined || cwd.trim().length === 0 || !hasEnclosingGitMarker(cwd)) {
+      return [];
+    }
+  }
+
+  const probeArgs = [
+    ...chdirArgs,
+    ...(effectiveGitDir !== undefined ? [`--git-dir=${effectiveGitDir}`] : []),
+    "config",
+    "--includes",
+    "--name-only",
+    "--null",
+    "--list",
+  ];
+
+  const probeEnv: NodeJS.ProcessEnv = {
+    PATH: env.PATH ?? process.env.PATH,
+    HOME: env.HOME ?? process.env.HOME,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_COUNT: "0",
+    GIT_OPTIONAL_LOCKS: "0",
+  };
+
+  let stdout: string;
+  try {
+    stdout = NodeChildProcess.execFileSync("git", probeArgs, {
+      ...(cwd !== undefined && cwd.length > 0 ? { cwd } : {}),
+      env: probeEnv,
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 4 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return [];
+  }
 
   const filters = new Set<string>();
   const diffs = new Set<string>();
   const merges = new Set<string>();
+  const credentialKeys = new Set<string>();
+  const remoteUploadPacks = new Set<string>();
+  const remoteReceivePacks = new Set<string>();
+  const remoteProxies = new Set<string>();
+  const diffToolCmds = new Set<string>();
+  const mergeToolCmds = new Set<string>();
+  const gpgKeys = new Set<string>();
   let hasSshCommand = false;
-  let hasCredentialSection = false;
-  const visited = new Set<string>();
-  const queue: Array<string> = [...initialFiles];
 
-  while (queue.length > 0 && visited.size < MAX_SANDBOX_GIT_CONFIG_FILES) {
-    const filePath = queue.shift()!;
-    const resolvedPath = NodePath.resolve(filePath);
-    if (visited.has(resolvedPath)) continue;
-    visited.add(resolvedPath);
-
-    let content: string;
-    try {
-      const stat = NodeFS.statSync(resolvedPath);
-      if (!stat.isFile()) continue;
-      const bytesToRead = Math.min(stat.size, MAX_SANDBOX_GIT_CONFIG_BYTES);
-      const fd = NodeFS.openSync(resolvedPath, "r");
-      try {
-        const buf = Buffer.alloc(bytesToRead);
-        const bytesRead = NodeFS.readSync(fd, buf, 0, bytesToRead, 0);
-        content = buf.subarray(0, bytesRead).toString("utf8");
-      } finally {
-        NodeFS.closeSync(fd);
+  for (const rawKey of stdout.split("\0")) {
+    if (rawKey.length === 0) continue;
+    const firstDot = rawKey.indexOf(".");
+    const lastDot = rawKey.lastIndexOf(".");
+    if (firstDot <= 0 || lastDot <= firstDot) {
+      if (rawKey === "core.sshcommand") {
+        hasSshCommand = true;
+      } else if (rawKey === "credential.helper") {
+        credentialKeys.add("credential.helper");
+      } else if (rawKey === "gpg.program") {
+        gpgKeys.add("gpg.program");
       }
-    } catch {
       continue;
     }
 
-    let currentSection = "";
-    for (const rawLine of content.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
-
-      if (line.startsWith("[")) {
-        const quotedMatch = /^\[\s*([a-zA-Z0-9-]+)\s+"((?:\\.|[^"\\])+)"\s*\]/.exec(line);
-        if (quotedMatch !== null) {
-          const section = quotedMatch[1]!.toLowerCase();
-          const subsection = unescapeGitConfigSubsection(quotedMatch[2]!);
-          currentSection = section;
-          if (section === "filter") filters.add(subsection);
-          else if (section === "diff") diffs.add(subsection);
-          else if (section === "merge") merges.add(subsection);
-          else if (section === "credential") hasCredentialSection = true;
-          continue;
-        }
-        const dotMatch = /^\[\s*([a-zA-Z0-9-]+)\.([^\s\]]+)\s*\]/.exec(line);
-        if (dotMatch !== null) {
-          const section = dotMatch[1]!.toLowerCase();
-          const subsection = dotMatch[2]!;
-          currentSection = section;
-          if (section === "filter") filters.add(subsection);
-          else if (section === "diff") diffs.add(subsection);
-          else if (section === "merge") merges.add(subsection);
-          else if (section === "credential") hasCredentialSection = true;
-          continue;
-        }
-        const plainMatch = /^\[\s*([a-zA-Z0-9-]+)\s*\]/.exec(line);
-        if (plainMatch !== null) {
-          currentSection = plainMatch[1]!.toLowerCase();
-          if (currentSection === "credential") hasCredentialSection = true;
-          continue;
-        }
-      }
-
-      const kvMatch = /^([a-zA-Z0-9-]+)\s*=\s*(.+)$/.exec(line);
-      if (kvMatch === null) continue;
-      const key = kvMatch[1]!.toLowerCase();
-      const rawValue = kvMatch[2]!.trim().replace(/^"(.*)"$/, "$1");
-      if (currentSection === "core" && key === "sshcommand") {
-        hasSshCommand = true;
-      } else if (
-        (currentSection === "include" || currentSection === "includeif") &&
-        key === "path" &&
-        rawValue.length > 0
-      ) {
-        const expanded = rawValue.startsWith("~/")
-          ? NodePath.join(NodeOS.homedir(), rawValue.slice(2))
-          : rawValue;
-        const includeTarget = NodePath.isAbsolute(expanded)
-          ? expanded
-          : NodePath.resolve(NodePath.dirname(resolvedPath), expanded);
-        if (!visited.has(includeTarget)) {
-          queue.push(includeTarget);
-        }
-      }
+    const section = rawKey.slice(0, firstDot);
+    const subsection = rawKey.slice(firstDot + 1, lastDot);
+    const variable = rawKey.slice(lastDot + 1);
+    if (section === "filter") {
+      filters.add(subsection);
+    } else if (section === "diff" && (variable === "textconv" || variable === "command")) {
+      diffs.add(subsection);
+    } else if (section === "merge" && variable === "driver") {
+      merges.add(subsection);
+    } else if (section === "credential" && variable === "helper") {
+      credentialKeys.add(`credential.${subsection}.helper`);
+    } else if (section === "remote") {
+      if (variable === "uploadpack") remoteUploadPacks.add(subsection);
+      else if (variable === "receivepack") remoteReceivePacks.add(subsection);
+      else if (variable === "proxy") remoteProxies.add(subsection);
+    } else if (section === "difftool" && variable === "cmd") {
+      diffToolCmds.add(subsection);
+    } else if (section === "mergetool" && variable === "cmd") {
+      mergeToolCmds.add(subsection);
+    } else if (section === "gpg" && (variable === "program" || variable === "defaultkeycommand")) {
+      gpgKeys.add(`gpg.${subsection}.${variable}`);
     }
   }
 
@@ -343,28 +352,47 @@ function discoverUntrustedRepoGitOverrides(
   for (const name of merges) {
     overrides.push([`merge.${name}.driver`, ""]);
   }
+  for (const key of credentialKeys) {
+    overrides.push([key, ""]);
+  }
+  for (const name of remoteUploadPacks) {
+    overrides.push([`remote.${name}.uploadpack`, "git-upload-pack"]);
+  }
+  for (const name of remoteReceivePacks) {
+    overrides.push([`remote.${name}.receivepack`, "git-receive-pack"]);
+  }
+  for (const name of remoteProxies) {
+    overrides.push([`remote.${name}.proxy`, ""]);
+  }
+  for (const name of diffToolCmds) {
+    overrides.push([`difftool.${name}.cmd`, ""]);
+  }
+  for (const name of mergeToolCmds) {
+    overrides.push([`mergetool.${name}.cmd`, ""]);
+  }
+  for (const key of gpgKeys) {
+    overrides.push([key, "false"]);
+  }
   if (hasSshCommand) {
     overrides.push(["core.sshCommand", "false"]);
-  }
-  if (hasCredentialSection) {
-    overrides.push(["credential.helper", ""]);
   }
   return overrides;
 }
 
 /**
  * Neutralizes repo-local executable Git config vectors (hooks, fsmonitor, clean/smudge/process
- * filters, diff/merge drivers, ext::, sshCommand, credential helpers) when sandboxing is active.
+ * filters, diff/merge drivers, ext::, sshCommand, credential helpers, remote/gpg exec keys).
  */
 export const sandboxSafeGitConfigEnv = (
   cwd: string | undefined,
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
+  args?: ReadonlyArray<string>,
 ): NodeJS.ProcessEnv => {
   const added: NodeJS.ProcessEnv = {};
   for (const [key, value] of [
     ...SANDBOX_SAFE_FIXED_GIT_CONFIG,
-    ...discoverUntrustedRepoGitOverrides(cwd),
+    ...discoverUntrustedRepoGitOverrides(cwd, env, args),
   ]) {
     Object.assign(added, gitConfigEnv({ ...env, ...added }, key, value, platform));
   }
@@ -495,6 +523,7 @@ export const make = Effect.gen(function* () {
                   input.cwd,
                   { ...process.env, ...withServerGitConfig },
                   hostPlatform,
+                  input.args,
                 ),
               }
             : withServerGitConfig;
