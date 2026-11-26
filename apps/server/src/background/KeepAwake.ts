@@ -210,8 +210,8 @@ export const layer = Layer.effectDiscard(
 
     const holdOnce = Effect.gen(function* () {
       const child = yield* spawner.spawn(
-        // Keep the default own process group off Windows: kde-inhibit leaves its child running on
-        // SIGTERM, so releasing the hold must signal the whole group.
+        // Leave `detached` at its default (own process group off Windows): kde-inhibit leaves its
+        // child running on SIGTERM, so releasing the hold must signal the whole group.
         ChildProcess.make(command.command, command.args, {
           shell: false,
           stdin: command.stdin,
