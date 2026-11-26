@@ -15,13 +15,22 @@ const require = NodeModule.createRequire(import.meta.url);
 interface ListInternals {
   readonly checkAtBottom: (ctx: unknown) => void;
   readonly settleUserScroll: (ctx: unknown) => void;
+  readonly createSelectorFunctionsArr: (
+    ctx: { values: Map<string, unknown>; listeners: Map<string, Set<(v: unknown) => void>> },
+    signalNames: string[],
+  ) => { get: () => unknown[]; subscribe: (cb: () => void) => () => void };
+  readonly set$: (
+    ctx: { values: Map<string, unknown>; listeners: Map<string, Set<(v: unknown) => void>> },
+    signalName: string,
+    value: unknown,
+  ) => void;
 }
 
 // The end checks are internal to the patched bundle; expose them from the native build as seen on iOS.
 function loadPatchedListInternals(): ListInternals {
   const webBundlePath = require.resolve("@legendapp/list/react-native");
   const bundlePath = NodePath.join(NodePath.dirname(webBundlePath), "react-native.js");
-  const source = `${NodeFS.readFileSync(bundlePath, "utf8")}\nmodule.exports.internals = { checkAtBottom, settleUserScroll };`;
+  const source = `${NodeFS.readFileSync(bundlePath, "utf8")}\nmodule.exports.internals = { checkAtBottom, settleUserScroll, createSelectorFunctionsArr, set$ };`;
   const inert: object = new Proxy(function () {}, {
     get: (_target, key) => (key === Symbol.toPrimitive ? () => "" : inert),
     apply: () => inert,
@@ -43,7 +52,8 @@ function loadPatchedListInternals(): ListInternals {
   return internals;
 }
 
-const { checkAtBottom, settleUserScroll } = loadPatchedListInternals();
+const { checkAtBottom, settleUserScroll, createSelectorFunctionsArr, set$ } =
+  loadPatchedListInternals();
 
 // iPhone 17 Pro thread feed: header inset 116, composer inset 142.5, rows 693.29,
 // so the end rests at -38.21 and the start at -116.
@@ -103,5 +113,28 @@ describe("patched LegendList end detection in the thread feed", () => {
 
     expect(values.get("isFollowingEnd")).toBe(false);
     expect(values.get("isWithinMaintainScrollAtEndThreshold")).toBe(false);
+  });
+
+  it("keeps useSyncExternalStore snapshots referentially stable when a signal value is NaN", () => {
+    const ctx = {
+      values: new Map<string, unknown>([["totalSize", Number.NaN]]),
+      listeners: new Map<string, Set<(v: unknown) => void>>(),
+    };
+    const { get } = createSelectorFunctionsArr(ctx, ["totalSize"]);
+    const first = get();
+    const second = get();
+    expect(second).toBe(first);
+
+    let notifications = 0;
+    ctx.listeners.set(
+      "totalSize",
+      new Set([
+        () => {
+          notifications += 1;
+        },
+      ]),
+    );
+    set$(ctx, "totalSize", Number.NaN);
+    expect(notifications).toBe(0);
   });
 });

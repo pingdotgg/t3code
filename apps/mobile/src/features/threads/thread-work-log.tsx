@@ -674,7 +674,9 @@ function ThreadWorkGroupList(props: {
   const handleMetricsChange = () => {
     const metrics = listRef.current?.getState();
     if (!metrics) return;
-    setContentHeight(Math.max(1, metrics.contentLength));
+    if (Number.isFinite(metrics.contentLength)) {
+      setContentHeight(Math.max(1, metrics.contentLength));
+    }
     rememberPosition(metrics.scroll);
   };
   const handleReady = () => {
