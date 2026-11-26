@@ -1,33 +1,17 @@
 /// <reference lib="dom" />
-import * as NodeWS from "@effect/platform-node/NodeWS";
 import {
   AuthProvidersManageScope,
   AuthStandardClientScopes,
-  EnvironmentHttpApi,
-  ORCHESTRATION_PROTOCOL_VERSION,
   SecretProviderId,
   SecretProviderKind,
-  WsRpcGroup,
 } from "@t3tools/contracts";
 import { expect } from "e2e";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import {
-  Cookies,
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/http";
-import { RpcClient, RpcSerialization } from "effect/rpc";
-import { Socket } from "effect/socket";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { environmentId, makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
+import { environmentId, makeState, rpcClient, runPromise, signIn, test, WEB } from "./t3.ts";
 
 const PROVIDER = SecretProviderId.make("scenario");
 const UI_REFERENCE = "op://Scenario/GitHub/ui";
@@ -37,7 +21,6 @@ const OP_CALLS = `${T3_HOME}/op-calls.txt`;
 const NARROW_SCOPES = AuthStandardClientScopes.filter(
   (scope) => scope !== AuthProvidersManageScope,
 );
-const scopeFlags = NARROW_SCOPES.flatMap((scope) => ["--scope", scope]);
 
 const decodePairing = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ credential: Schema.String })),
@@ -59,58 +42,15 @@ const narrowBrowserCookies = Effect.fn("scenario.narrowBrowserCookies")(function
     "--json",
     "--label",
     "narrow",
-    ...scopeFlags,
+    ...NARROW_SCOPES.flatMap((scope) => ["--scope", scope]),
   ]);
   const { credential } = yield* decodePairing(issued.stdout);
-  const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl });
-  const response = yield* client.auth
-    .browserSession({ payload: { credential }, responseMode: "response-only" })
-    .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-  const now = yield* Clock.currentTimeMillis;
-  return Cookies.mergeIntoArray([], baseUrl, response.cookies, now).map(
-    ({ name, value, options = {} }) => ({
-      name,
-      value,
-      url: baseUrl,
-      ...(options.httpOnly !== undefined && { httpOnly: options.httpOnly }),
-      ...(options.secure !== undefined && { secure: options.secure }),
-      ...(options.sameSite && {
-        sameSite: ({ lax: "Lax", strict: "Strict", none: "None" } as const)[options.sameSite],
-      }),
-    }),
-  );
-}, Effect.provide(FetchHttpClient.layer));
+  return yield* signIn(baseUrl, credential);
+});
 
 /** `server.checkSecretSource` sent over a WebSocket signed in with the narrow scopes. */
 const narrowCheck = Effect.fn("scenario.narrowCheck")(function* (origin: string) {
-  const issued = yield* makeState(T3_HOME).cli([
-    "auth",
-    "session",
-    "issue",
-    "--token-only",
-    ...scopeFlags,
-  ]);
-  const { ticket } = yield* HttpClient.execute(
-    HttpClientRequest.post(`${origin}/api/auth/websocket-ticket`).pipe(
-      HttpClientRequest.bearerToken(issued.stdout.trim()),
-    ),
-  ).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(Schema.Struct({ ticket: Schema.String }))),
-    Effect.provide(FetchHttpClient.layer),
-  );
-  const protocol = yield* Layer.build(
-    RpcClient.layerProtocolSocket().pipe(
-      Layer.provide(
-        Socket.layerWebSocket(
-          `${origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
-        ),
-      ),
-      Layer.provide(RpcSerialization.layerJson),
-      Layer.provide(NodeWS.layerWebSocketConstructor),
-    ),
-  );
-  const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+  const client = yield* rpcClient(T3_HOME, origin, NARROW_SCOPES);
   return yield* client["server.checkSecretSource"]({
     source: { provider: PROVIDER, reference: RPC_REFERENCE },
   }).pipe(

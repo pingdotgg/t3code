@@ -200,6 +200,32 @@ describe("command permissions", () => {
       }),
   );
 
+  it.effect("requires settings and provider management grants to check a secret source", () =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const check = createCommandPermissions(runtime, WS_METHODS.serverCheckSecretSource);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthSettingsWriteScope],
+          permissions: [AuthSettingsWriteScope],
+        }),
+      );
+      expect(registry.get(check.permissionAtom(env))).toBe(false);
+      expect((yield* check.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+        "EnvironmentAuthorizationError",
+      );
+      const both = [AuthSettingsWriteScope, AuthProvidersManageScope];
+      registry.set(
+        sessions(env),
+        AsyncResult.success({ ...grant(false), scopes: both, permissions: both }),
+      );
+      expect(registry.get(check.permissionAtom(env))).toBe(true);
+      yield* check.authorize(registry, env);
+    }),
+  );
+
   it.effect("requires the destination settings grant to connect or bind an issue tracker", () =>
     Effect.scoped(
       Effect.gen(function* () {
