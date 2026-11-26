@@ -10,7 +10,11 @@ import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
-import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { assetEnvironment, useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
+import { assetUrlStateFromResult } from "@t3tools/client-runtime/state/assets";
+import type { MarkdownImageSourceResolver } from "../../native/SelectableMarkdownText.types";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
@@ -38,6 +42,31 @@ export function usePullRequestMediaUrl(url: string) {
     unavailable: resource !== null && asset._tag === "Failure",
     source,
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
+  };
+}
+
+/**
+ * Images the markdown renderer draws itself (in table cells, lists, links) skip `renderImage`,
+ * so private host media must be authorized here too or it loads without credentials.
+ */
+export function usePullRequestImageSource(
+  resolveUrl: (href: string) => string,
+): MarkdownImageSourceResolver {
+  const context = useContext(PullRequestMediaContext);
+  const connection = usePreparedConnection(context?.environmentId ?? null);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  return async (image) => {
+    const source = pullRequestMediaSource(resolveUrl(image.href), context);
+    const resource = "resource" in source ? source.resource : undefined;
+    if (context === null || resource === undefined) return null;
+    if (httpBaseUrl === null) throw new Error("Pull request image is unavailable");
+    const state = assetUrlStateFromResult(
+      await createUrl({ environmentId: context.environmentId, input: { resource } }),
+      httpBaseUrl,
+    );
+    if (state._tag !== "Success") throw new Error("Could not authorize pull request image");
+    return { uri: state.url };
   };
 }
 
