@@ -212,14 +212,23 @@ export function observePullRequestMetadata(
       });
 }
 
+const summariesWithChecks = new WeakMap<PullRequestSummary, PullRequestSummary>();
+
+/**
+ * One object per metadata and checks state: checks are reread often, and every sidebar row on the
+ * pull request re-renders for a new summary.
+ */
 export function observedPullRequestSummary(
   observations: PullRequestObservations,
 ): PullRequestSummary | null {
   const { metadata, checks } = observations;
   if (metadata === null) return null;
-  return checks === null
-    ? metadata.summary
-    : { ...metadata.summary, checksState: checks.checksState };
+  if (checks === null) return metadata.summary;
+  const cached = summariesWithChecks.get(metadata.summary);
+  if (cached?.checksState === checks.checksState) return cached;
+  const summary = { ...metadata.summary, checksState: checks.checksState };
+  summariesWithChecks.set(metadata.summary, summary);
+  return summary;
 }
 
 function recordObservation(
@@ -578,7 +587,8 @@ export function useSharedPullRequestSummary(
     environmentId === null || reference === null
       ? "none"
       : pullRequestSummaryKey(environmentId, reference);
-  const observations = useAtomValue(pullRequestObservationsAtom(key));
+  // Selected, so a reread that changes no field leaves its readers alone.
+  const observed = useAtomValue(pullRequestObservationsAtom(key), observedPullRequestSummary);
   const edits = useAtomValue(pullRequestPendingEditsFor(environmentId, reference));
   const saved = useAtomValue(
     savedPullRequestSummaryAtom(
@@ -587,11 +597,7 @@ export function useSharedPullRequestSummary(
         : savedPullRequestKey(environmentId, reference),
     ),
   );
-  return applyPullRequestSummaryEdits(
-    reference,
-    newestPullRequestSummary(saved, observedPullRequestSummary(observations)),
-    edits,
-  );
+  return applyPullRequestSummaryEdits(reference, newestPullRequestSummary(saved, observed), edits);
 }
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,
