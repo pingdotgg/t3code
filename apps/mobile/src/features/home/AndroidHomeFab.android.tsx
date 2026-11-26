@@ -86,7 +86,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
           style={
             floatingTabsEnabled
               ? {
-                  end: FLOATING_TABS.edge,
+                  end: Math.max(FLOATING_TABS.edge, endInset),
                   bottom: insets.bottom + FLOATING_TABS.bottom,
                 }
               : fabPosition
