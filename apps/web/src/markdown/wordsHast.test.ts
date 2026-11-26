@@ -2,6 +2,7 @@ import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { extractMarkdownLinkHrefs, isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 
 import {
@@ -94,6 +95,10 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
   [
     "-      wide\n-      [x](./x.ts) items\n\ntext\n\n-      loose\n\n-      items",
     '<ul dir="ltr">\n<li>wide</li>\n<li><a href="./x.ts">x</a> items</li>\n</ul>\n<p dir="ltr">text</p>\n<ul dir="ltr">\n<li>\n<p>loose</p>\n</li>\n<li>\n<p>items</p>\n</li>\n</ul>',
+  ],
+  [
+    '-       :codex-file-citation{path="src/a.ts"}\n-       :codex-followup[Run tests]{prompt="Run tests"}',
+    '<ul dir="ltr">\n<li><a href="src/a.ts">a.ts</a></li>\n<li><span>Run tests</span></li>\n</ul>',
   ],
   [
     "> [!TIP]**joined**",
@@ -195,6 +200,23 @@ describe("wordsHast", () => {
     expect(wordsHtml(markdown)).toBe(html);
   });
 
+  it("uses document reference definitions in recovered items and search text", () => {
+    const markdown = "-       Read [the guide][guide].\n\n[guide]: https://example.com/guide";
+    const normal = markdown.replace("-       ", "- ");
+    expect(wordsHtml(markdown)).toBe(wordsHtml(normal));
+    expect(wordsHtml(markdown)).toContain('<a href="https://example.com/guide">the guide</a>');
+    const segments = (text: string) =>
+      searchableMessageSegments({ role: "assistant", text, streaming: false });
+    expect(segments(markdown)).toEqual(segments(normal));
+    expect(segments(markdown)?.join("")).toBe("Read the guide.");
+  });
+
+  it("keeps a recovered item's own reference definition ahead of the document's", () => {
+    const markdown =
+      "-       Read [the guide][guide].\n\n        [guide]: https://example.com/local\n\n[guide]: https://example.com/document";
+    expect(wordsHtml(markdown)).toContain('<a href="https://example.com/local">the guide</a>');
+  });
+
   it("breaks soft lines as remark-breaks did", () => {
     const markdown = "one\ntwo **three\nfour**\n\n- item\n  next\n  - sub\n\n```\nkept\nlines\n```";
     expect(wordsHtml(markdown, { breaks: true })).toBe(
@@ -220,6 +242,15 @@ describe("wordsHast", () => {
       }),
     ).toBe(
       '<ul dir="ltr">\n<li>wide<br>\n<span data-leading-whitespace="">  </span>continued</li>\n</ul>',
+    );
+    // The tab after five spaces only reaches column 8, so `bar` sits two columns past `foo`.
+    expect(
+      wordsHtml("-     \tfoo\n          bar", {
+        breaks: true,
+        extensions: { userMessage: true, leadingWhitespace: true },
+      }),
+    ).toBe(
+      '<ul dir="ltr">\n<li>foo<br>\n<span data-leading-whitespace="">  </span>bar</li>\n</ul>',
     );
   });
 

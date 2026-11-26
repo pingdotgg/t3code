@@ -12,6 +12,7 @@ import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
+import { expandIndentedCodeTabs } from "@t3tools/shared/markdownListIndentation";
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
@@ -389,6 +390,8 @@ function sanitizeMath(node: Element): Element | null {
 interface Walk {
   /** Words' hast for more Markdown, rendered with the same options; `indent` as leadingWhitespace's. */
   readonly render: (markdown: string, indent: number) => Root;
+  /** Reference definitions for re-rendering `markdown`; its own come first, as the first one wins. */
+  readonly definitions: (markdown: string) => string;
   readonly source: string;
   readonly options: WordsHastOptions;
   readonly math: Map<string, Element>;
@@ -480,7 +483,7 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
   };
 }
 
-const INLINE_PREFIX = "t3-markdown-inline-prefix:";
+const INLINE_PREFIX = "t3-markdown-inline-prefix ";
 
 function stripPositions(node: ElementContent) {
   delete node.position;
@@ -503,18 +506,19 @@ function recoverIndentedCode(
   const start = code?.position?.start.offset;
   const itemStart = item.position?.start.offset;
   if (!isElement(code, "pre") || start === undefined || itemStart === undefined) return false;
-  const value = textOf(code);
+  let value = textOf(code);
   if (!/^[\t ]/.test(value)) return false;
   if (walk.source.slice(itemStart, start).includes("\n") || /[`~]/.test(walk.source[start]!)) {
     return false;
   }
+  value = expandIndentedCodeTabs(value, walk.source, itemStart);
   // The trimmed first line sets where the item's content starts.
   const indent = [.../^[\t ]*/.exec(value)![0]].reduce(
     (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
     0,
   );
   // The prefix keeps block syntax at the start, such as `#`, from opening a block.
-  const source = `${INLINE_PREFIX}${value.trim()}`;
+  const source = `${walk.definitions(value)}${INLINE_PREFIX}${value.trim()}`;
   const recovered = walk.render(source, indent);
   const paragraph = recovered.children.find((child) => child.type === "element");
   const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
@@ -1187,7 +1191,15 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   const insights = options.insights ? insightSource(text, renderOptions) : null;
   const source = insights?.source ?? text;
   const tree = insights?.tree ?? parse(source, renderOptions);
+  let documentDefinitions: string[] | undefined;
   const walk: Walk = {
+    definitions: (markdown) =>
+      [
+        ...markdownReferenceDefinitions(markdown),
+        ...(documentDefinitions ??= markdownReferenceDefinitions(source)),
+      ]
+        .map((definition) => `${definition}\n\n`)
+        .join(""),
     render: (markdown, indent) =>
       parse(markdown, {
         ...renderOptions,

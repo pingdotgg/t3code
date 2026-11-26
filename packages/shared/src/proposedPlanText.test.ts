@@ -7,6 +7,8 @@ it("takes the plan title from headings outside code", () => {
     ["~~~bash", "```", "~~~"],
     ["````bash", "```", "````"],
     ["```html", "<!--", "```"],
+    ["```md", "```\u00a0", "``` \t"],
+    ["```md\u2028", "example", "```"],
   ]) {
     const code = `${open}\n# Back up database\n${inner}\n# Still code\n${close}\n`;
     expect(proposedPlanTitle(`${code}\n## Real Plan Title\n`)).toBe("Real Plan Title");
