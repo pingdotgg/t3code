@@ -577,8 +577,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     };
   });
 
-  const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {
+  const shutdownRevisions = new WeakMap<DeviceHost.DeviceHost["Service"], number>();
+
+  const refresh = Effect.fn("DeviceService.refresh")(function* (
+    ready: DeviceReadiness,
+  ): Effect.fn.Return<DeviceServiceState, DeviceError> {
     const host = hosts.get(ready.hostId);
+    const shutdownRevision = host && shutdownRevisions.get(host);
     // A session opened while the listing ran is on a device the listing could
     // not have seen yet; only sessions from before it can be pruned by it.
     const sessionKey = (session: DeviceSession) =>
@@ -587,10 +592,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const { devices, detail, androidDiscoveryIncomplete, incompletePlatforms } =
       yield* fetchDevices(ready);
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
-    return yield* lifecycleLock.withPermit(
+    const refreshed = yield* lifecycleLock.withPermit(
       Effect.gen(function* () {
         if (!(yield* readDeviceSettings).enabled || !host || hosts.get(ready.hostId) !== host)
           return (yield* SynchronizedRef.get(stateRef)).state;
+        if (shutdownRevisions.get(host) !== shutdownRevision) return;
         if (detail && (incompletePlatforms.length > 0 || androidDiscoveryIncomplete))
           discoveryDetails.set(ready.hostId, detail);
         else discoveryDetails.delete(ready.hostId);
@@ -628,6 +634,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         }));
       }),
     );
+    // A Stop committed while the host was listing. Fetch again outside the lifecycle lock.
+    return refreshed ?? (yield* refresh(ready));
   });
 
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
@@ -942,6 +950,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         lifecycleLock.withPermit(
           Effect.gen(function* () {
             if (hosts.get(host.id) !== host) return;
+            shutdownRevisions.set(host, (shutdownRevisions.get(host) ?? 0) + 1);
             // If power-off fails, retirement must still be able to close these launchers.
             for (const name of released) boundLaunchers.delete(name);
             yield* publish((state) => ({
@@ -997,25 +1006,24 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         closing.map((session) => [deviceKey(session.hostId, session.deviceId), session]),
       );
 
-      if (!input.shutdown) {
-        const retire = lifecycleLock.withPermit(
-          Effect.gen(function* () {
-            const { state } = yield* SynchronizedRef.get(stateRef);
-            const ending = closing.filter((session) => state.sessions.includes(session));
-            yield* releaseAgentSessions(ending);
-            yield* publish((current) => ({
-              ...current,
-              sessions: current.sessions.filter((session) => !ending.includes(session)),
-            }));
-          }),
-        );
-        // A thread can close several devices. Take their locks in a consistent order.
-        return yield* [...targets.keys()]
-          .sort()
-          .reduceRight((effect, key) => deviceLocks.withLock(key, effect), retire);
-      }
-
       for (const [key, session] of targets) {
+        if (!input.shutdown) {
+          yield* deviceLocks.withLock(
+            key,
+            lifecycleLock.withPermit(
+              Effect.gen(function* () {
+                const { state } = yield* SynchronizedRef.get(stateRef);
+                if (!state.sessions.includes(session)) return;
+                yield* releaseAgentSessions([session]);
+                yield* publish((current) => ({
+                  ...current,
+                  sessions: current.sessions.filter((live) => live !== session),
+                }));
+              }),
+            ),
+          );
+          continue;
+        }
         const stopped = yield* deviceLocks.withLock(
           key,
           launcherShutdownLocks.withLock(

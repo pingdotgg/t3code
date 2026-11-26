@@ -52,6 +52,7 @@ const fakeExpo = (
     /** Expo answers the create with GraphQL errors: a refusal. */
     readonly rejectCreate?: boolean;
     readonly failStop?: () => boolean;
+    readonly stopGate?: () => Gate | undefined;
     readonly failList?: () => boolean;
     readonly active?: ReadonlyArray<{ id: string; status: string; name: string }>;
     readonly previewGate?: Gate;
@@ -142,8 +143,14 @@ const fakeExpo = (
             }),
           );
       }
-      if (operation === "T3StopEasSimulatorSession" && options.failStop?.()) {
-        return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
+      if (operation === "T3StopEasSimulatorSession") {
+        const gate = options.stopGate?.();
+        if (gate) {
+          yield* Deferred.succeed(gate.requested, undefined);
+          yield* Deferred.await(gate.release);
+        }
+        if (options.failStop?.())
+          return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
       }
       if (operation === "T3ActiveEasSimulatorSessions" && options.failList?.()) {
         return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
@@ -592,6 +599,37 @@ describe("Expo Simulators host", () => {
       const failure = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
       expect(failure.message).toContain("could not be read");
       expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(0);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("lists a pending stop without retrying it, then retries a completed failure", () =>
+    Effect.gen(function* () {
+      const gate = yield* makeGate;
+      let first = true;
+      let stopFails = true;
+      const expo = fakeExpo({
+        stopGate: () => {
+          if (!first) return;
+          first = false;
+          return gate;
+        },
+        failStop: () => stopFails,
+      });
+      const host = yield* makeHost(expo, config(), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      const id = yield* ready.devices.boot(catalogDevice!);
+      const stopping = yield* Effect.forkChild(ready.devices.shutdown({ id, platform: "ios" }));
+      yield* Deferred.await(gate.requested);
+      const listed = yield* ready.devices.list.pipe(
+        Effect.ensuring(Deferred.succeed(gate.release, undefined)),
+      );
+      expect(listed.devices.map((device) => device.id)).toContain(id);
+      expect(expo.stopped()).toEqual([id]);
+      expect(Exit.isFailure(yield* Fiber.await(stopping))).toBe(true);
+      stopFails = false;
+      expect((yield* ready.devices.list).devices.map((device) => device.id)).not.toContain(id);
+      expect(expo.stopped()).toEqual([id, id]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

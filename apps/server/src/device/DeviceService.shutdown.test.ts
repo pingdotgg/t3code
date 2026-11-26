@@ -21,16 +21,22 @@ const fixture = Effect.fn("shutdownFixture")(function* (rejectShutdown: boolean)
   const requested = yield* Deferred.make<void>();
   const respond = yield* Deferred.make<void>();
   const acknowledged = yield* Deferred.make<void>();
-  let booted = true;
+  const localOrigin = "http://local.device.test";
+  const booted = new Map<string, boolean>();
+  const staleList = {
+    holdNext: false,
+    captured: yield* Deferred.make<void>(),
+    respond: yield* Deferred.make<void>(),
+  };
   let binds = 0;
   const releases: string[] = [];
   const http = HttpClient.make((request) =>
     Effect.gen(function* () {
-      const path = new URL(request.url).pathname;
+      const { origin, pathname: path } = new URL(request.url);
       if (path.endsWith("/shutdown")) {
         yield* Deferred.succeed(requested, undefined);
         yield* Deferred.await(respond);
-        if (!rejectShutdown) booted = false;
+        if (!rejectShutdown) booted.set(origin, false);
         return HttpClientResponse.fromWeb(request, Response.json({ ok: !rejectShutdown }));
       }
       const simulator = {
@@ -39,8 +45,13 @@ const fixture = Effect.fn("shutdownFixture")(function* (rejectShutdown: boolean)
         platform: "ios",
         version: "26",
         physical: false,
-        booted,
+        booted: booted.get(origin) ?? true,
       };
+      if (path === "/api/devices" && origin === localOrigin && staleList.holdNext) {
+        staleList.holdNext = false;
+        yield* Deferred.succeed(staleList.captured, undefined);
+        yield* Deferred.await(staleList.respond);
+      }
       return HttpClientResponse.fromWeb(
         request,
         Response.json(
@@ -51,16 +62,17 @@ const fixture = Effect.fn("shutdownFixture")(function* (rejectShutdown: boolean)
   );
   const makeHost = (id: DeviceHostId): DeviceHost.DeviceHost["Service"] => {
     const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
+    const origin = id === LOCAL_DEVICE_HOST_ID ? localOrigin : "http://other.device.test";
     const devices = makeDeviceHubOperations({
       hostId: id,
-      origin: "http://device.test",
+      origin,
       http,
       run,
       platformAvailable: () => Effect.succeed(true),
     });
     const ready: DeviceHost.DeviceHostReady = {
       nodePath: process.execPath,
-      hub: { origin: "http://device.test" },
+      hub: { origin },
       devices: {
         ...devices,
         shutdown: (device) =>
@@ -117,6 +129,7 @@ const fixture = Effect.fn("shutdownFixture")(function* (rejectShutdown: boolean)
     requested,
     respond,
     acknowledged,
+    staleList,
   };
 });
 
@@ -174,5 +187,48 @@ it.effect("commits a successful stop during cancellation and rejects a late laun
     expect(stopped?.sessions).toEqual([]);
     expect(yield* Fiber.join(late)).toEqual(Option.none());
     expect(releases).toEqual([launcher]);
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
+);
+
+it.effect("does not publish an older listing after a confirmed stop", () =>
+  Effect.gen(function* () {
+    const { service, requested, respond, staleList } = yield* fixture(false);
+    const stopping = yield* Effect.forkChild(service.shutdown(target));
+    yield* Deferred.await(requested);
+
+    staleList.holdNext = true;
+    const listing = yield* Effect.forkChild(service.list);
+    yield* Deferred.await(staleList.captured);
+    yield* Deferred.succeed(respond, undefined);
+    yield* Fiber.join(stopping);
+
+    const updates = yield* service.subscribe;
+    yield* Deferred.succeed(staleList.respond, undefined);
+    const state = yield* Fiber.join(listing);
+    const localDeviceBooted = (snapshot: typeof state) =>
+      snapshot.devices.find((device) => device.hostId === target.hostId && device.id === deviceId)
+        ?.booted;
+    expect(localDeviceBooted(state)).toBe(false);
+    expect((yield* PubSub.takeUpTo(updates, 10)).map(localDeviceBooted)).not.toContain(true);
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
+);
+
+it.effect("can reopen one device while closing a thread whose other device is stopping", () =>
+  Effect.gen(function* () {
+    const { service, requested, respond } = yield* fixture(false);
+    const other = { ...target, hostId: otherHostId };
+    yield* service.open({ ...other, threadId });
+    const stopping = yield* Effect.forkChild(service.shutdown(other));
+    yield* Deferred.await(requested);
+    const closing = yield* Effect.forkChild(service.close({ threadId }), {
+      startImmediately: true,
+    });
+    const reopeningThread = ThreadId.make("reopening");
+    const reopened = yield* service
+      .open({ ...target, threadId: reopeningThread })
+      .pipe(Effect.ensuring(Deferred.succeed(respond, undefined)));
+    yield* Fiber.join(stopping);
+    yield* Fiber.join(closing);
+    expect((yield* service.state).sessions).toEqual([reopened]);
   }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
