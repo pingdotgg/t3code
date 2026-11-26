@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { parseElicitationForm } from "./elicitationForm.ts";
+import { parseElicitationForm, withOptionalChoices } from "./elicitationForm.ts";
 
 describe("parseElicitationForm", () => {
   for (const type of ["string", "array"] as const) {
@@ -183,5 +183,90 @@ describe("parseElicitationForm", () => {
       threshold: 0.5,
     });
     assert.isUndefined(form.content({ limit: "", ratio: "", retries: "", threshold: "0.5" }));
+  });
+
+  it("lets optional boolean and single-choice fields be skipped", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          extras: { type: "boolean" },
+          mode: { type: "string", enum: ["", "fast"] },
+          confirm: { type: "boolean" },
+          tier: { type: "string", enum: ["free", "pro"] },
+        },
+        required: ["confirm", "tier"],
+      },
+      "Configure run",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["extras", false],
+        ["mode", false],
+        ["confirm", undefined],
+        ["tier", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ confirm: "true", tier: "pro" }), {
+      confirm: true,
+      tier: "pro",
+    });
+    assert.deepStrictEqual(
+      form.content({ extras: "false", mode: "", confirm: "true", tier: "pro" }),
+      { extras: false, mode: "", confirm: true, tier: "pro" },
+    );
+    assert.isUndefined(form.content({ extras: "true", tier: "pro" }));
+  });
+});
+
+describe("withOptionalChoices", () => {
+  const choice = (id: string) => ({
+    id,
+    header: id,
+    question: id,
+    options: [{ label: "Fast", description: "Fast", value: "fast" }],
+  });
+  const form = withOptionalChoices(
+    {
+      questions: [
+        choice("mode"),
+        choice("tier"),
+        { ...choice("tags"), multiSelect: true },
+        { ...choice("notes"), options: [] },
+      ],
+      respond: (answers) => ({ action: "accept", content: { answered: Object.keys(answers) } }),
+    },
+    {
+      type: "object",
+      properties: {
+        mode: { type: "string" },
+        tier: { type: "string" },
+        tags: { type: "array" },
+        notes: { type: "string" },
+      },
+      required: ["tier"],
+    },
+  );
+
+  it("marks only the single choices the schema leaves optional", () => {
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["mode", false],
+        ["tier", undefined],
+        ["tags", undefined],
+        ["notes", undefined],
+      ],
+    );
+  });
+
+  it("answers without a skipped choice and cancels without a required one", () => {
+    assert.deepStrictEqual(form.respond({ tier: "fast" }), {
+      action: "accept",
+      content: { answered: ["tier"] },
+    });
+    assert.deepStrictEqual(form.respond({ mode: "fast" }), { action: "cancel" });
   });
 });
