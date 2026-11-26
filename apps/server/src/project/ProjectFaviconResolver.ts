@@ -1,3 +1,4 @@
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -83,7 +84,7 @@ const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|
 const HTML_ATTRIBUTE_RE =
   /([^\t\n\f\r "'<>/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r >]+)))?/g;
 const ICON_REL_RE = new RegExp(String.raw`\brel\s*:\s*${ICON_REL_VALUE}`, "i");
-const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
+const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?#]+)/i;
 
 export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
@@ -144,7 +145,7 @@ function* extractIconHrefs(source: string): Generator<string> {
     const href = attributes.get("href");
     // An unquoted `{...}` is a JSX expression, not a path.
     if (!href || (!href.quoted && href.value.startsWith("{"))) continue;
-    const path = href.value.split("?")[0];
+    const path = href.value.split(/[?#]/, 1)[0];
     if (path) yield path;
   }
   for (const run of source.split("}")) {
@@ -186,7 +187,9 @@ export const make = Effect.gen(function* () {
     // `data:`, `https:` and `//host` icons name no project file, and a long data URL fails `stat`.
     if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href.trim())) return [];
     // Browsers strip surrounding whitespace from URL attributes; file paths keep theirs.
-    const clean = href.trim().replace(/^\//, "");
+    const clean = safeDecodeURIComponent(href.trim().replace(/^\//, ""));
+    // A decoded NUL fails `stat` instead of missing.
+    if (clean.includes("\0")) return [];
     return [path.join("public", clean), clean];
   };
 
