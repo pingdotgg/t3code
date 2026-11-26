@@ -42,7 +42,7 @@ layer("AzureDevOpsMediaFetch", (it) => {
       mockedExecute.mockImplementationOnce((input) =>
         Effect.sync(() => {
           outFile = input.args[input.args.indexOf("--out-file") + 1] ?? "";
-          NodeFS.writeFileSync(`${input.cwd}/${outFile}`, png);
+          NodeFS.writeFileSync(outFile, png);
           return empty;
         }),
       );
@@ -79,34 +79,15 @@ layer("AzureDevOpsMediaFetch", (it) => {
         outFile,
         "--only-show-errors",
       ]);
-      // Relative to `cwd`, so a Windows `az` under WSL resolves it inside `cwd` (`\\wsl.localhost\...`).
-      expect(outFile).toMatch(/^t3-azure-media-[^/\\]+\/media$/u);
       // No checkout scopes the read, and its scratch directory is gone once the bytes are read.
-      const scratch = `${input.cwd}/${outFile.slice(0, outFile.lastIndexOf("/"))}`;
+      const scratch = outFile.slice(0, outFile.lastIndexOf("/"));
       expect(NodeFS.existsSync(scratch)).toBe(false);
       // `az` runs beside the scratch directory, never in it: what it leaves running would lock it.
       expect(input.cwd).not.toBe(scratch);
+      expect(scratch.startsWith(input.cwd)).toBe(true);
       expect(NodeFS.existsSync(input.cwd)).toBe(true);
     }),
   );
-
-  it("preserves root separators when splitting scratch paths across POSIX and Windows roots", () => {
-    expect(AzureDevOpsMediaFetch.azureDevOpsMediaScratchPaths("/tmp/t3-azure-media-123")).toEqual({
-      cwd: "/tmp",
-      file: "/tmp/t3-azure-media-123/media",
-      outFile: "t3-azure-media-123/media",
-    });
-    expect(AzureDevOpsMediaFetch.azureDevOpsMediaScratchPaths("/t3-azure-media-123")).toEqual({
-      cwd: "/",
-      file: "/t3-azure-media-123/media",
-      outFile: "t3-azure-media-123/media",
-    });
-    expect(AzureDevOpsMediaFetch.azureDevOpsMediaScratchPaths("C:\\t3-azure-media-123\\")).toEqual({
-      cwd: "C:\\",
-      file: "C:\\t3-azure-media-123/media",
-      outFile: "t3-azure-media-123/media",
-    });
-  });
 
   it.effect("answers null when az cannot read the attachment, and runs az only for one", () =>
     Effect.gen(function* () {

@@ -4,10 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import {
-  azureDevOpsPullRequestAttachment,
-  type AzureDevOpsPullRequestAttachment,
-} from "../shared/azureDevOpsMedia.ts";
+import { azureDevOpsPullRequestAttachment } from "../shared/azureDevOpsMedia.ts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 
@@ -19,28 +16,6 @@ const MEDIA_TIMEOUT_MS = 60_000;
 const MAX_CONCURRENT_READS = 2;
 
 /**
- * `az` runs in the scratch directory's parent: on Windows the telemetry process it leaves behind
- * locks its cwd against removal. `--out-file` is relative so a Windows `az` under WSL resolves it
- * against its inherited `\\wsl.localhost\...` cwd rather than a drive root.
- */
-export function azureDevOpsMediaScratchPaths(directory: string): {
-  readonly cwd: string;
-  readonly file: string;
-  readonly outFile: string;
-} {
-  const trimmed = directory.replace(/[\\/]+$/u, "");
-  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  const parent = trimmed.slice(0, separator);
-  const cwd =
-    parent === "" ? "/" : /^[a-z]:$/iu.test(parent) ? `${parent}${trimmed[separator]}` : parent;
-  return {
-    cwd,
-    file: `${trimmed}/media`,
-    outFile: `${trimmed.slice(separator + 1)}/media`,
-  };
-}
-
-/**
  * Reads an attachment through `az devops invoke`, so it carries whichever credential the extension
  * holds for the organization: an `az login` account or a PAT from `az devops login`.
  */
@@ -49,15 +24,18 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const reads = yield* Semaphore.make(MAX_CONCURRENT_READS);
 
-  const read = Effect.fnUntraced(function* (
-    url: string,
-    attachment: AzureDevOpsPullRequestAttachment,
-  ) {
+  const read = Effect.fnUntraced(function* (request: SourceControlMediaRequest) {
+    const target = URL.parse(request.url);
+    const attachment = target === null ? null : azureDevOpsPullRequestAttachment(target);
+    if (attachment === null) return null;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-azure-media-" });
     // invoke refuses to overwrite its output, so the file gets a name nothing holds yet.
-    const { cwd, file, outFile } = azureDevOpsMediaScratchPaths(directory);
+    const file = `${directory}/media`;
     yield* azure.execute({
-      cwd,
+      // The organization is named explicitly, so no checkout has to say where `az` runs. Not in
+      // `directory` itself: on Windows the telemetry process `az` leaves behind holds its working
+      // directory for a few seconds, and the scratch directory could not be removed.
+      cwd: directory.replace(/[\\/][^\\/]+$/u, ""),
       timeoutMs: MEDIA_TIMEOUT_MS,
       args: [
         "devops",
@@ -80,21 +58,18 @@ export const make = Effect.gen(function* () {
         "--accept-media-type",
         "application/octet-stream",
         "--out-file",
-        outFile,
+        file,
         "--only-show-errors",
       ],
     });
     const size = Number((yield* fileSystem.stat(file)).size);
     if (size > MEDIA_MAX_BYTES) return null;
     const bytes = yield* fileSystem.readFile(file);
-    const body =
-      bytes.buffer instanceof ArrayBuffer
-        ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-        : bytes.slice();
     // `az` keeps no response headers, so the server types the bytes by the attachment's name.
     return HttpClientResponse.fromWeb(
-      HttpClientRequest.get(url),
-      new Response(body, {
+      HttpClientRequest.get(request.url),
+      // `Response` takes only views over an `ArrayBuffer`; the file system may hand back a shared one.
+      new Response(bytes.slice(), {
         status: 200,
         headers: { "content-length": String(bytes.length) },
       }),
@@ -104,11 +79,8 @@ export const make = Effect.gen(function* () {
   return Effect.fn("AzureDevOpsMediaFetch.fetchMedia")(function* (
     request: SourceControlMediaRequest,
   ) {
-    const target = URL.parse(request.url);
-    const attachment = target === null ? null : azureDevOpsPullRequestAttachment(target);
-    if (attachment === null) return null;
     return yield* reads
-      .withPermits(1)(Effect.scoped(read(request.url, attachment)))
+      .withPermits(1)(Effect.scoped(read(request)))
       .pipe(
         Effect.catch((cause) =>
           Effect.logWarning("Azure DevOps media read failed.", { cause }).pipe(Effect.as(null)),
