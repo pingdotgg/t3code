@@ -363,10 +363,13 @@ function interpreterArgs(
         continue;
       }
       if (interpreter.inline(name)) {
-        const next = args[index + 1];
+        // Only POSIX shells skip a `--` after `-c`, and they never read a missing `-c` script from stdin.
+        const next =
+          args[index + (interpreter === SHELL && args[index + 1]?.value === "--" ? 2 : 1)];
         if (value !== undefined) scripts.push({ word: arg, inValue: true });
         else if (next) scripts.push(whole(next));
-        if (!interpreter.repeatable) return { scripts, scriptFromFile: false };
+        else if (interpreter === SHELL) scriptFromFile = true;
+        if (!interpreter.repeatable) return { scripts, scriptFromFile };
         if (value === undefined) index += 1;
         continue;
       }

@@ -4,10 +4,11 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 
-import { InlineButton } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import {
   Dialog,
   DialogHeader,
@@ -79,7 +80,7 @@ export function BackgroundWorkDetails(props: {
                   <div className="flex items-baseline justify-between gap-3">
                     <h3 className="font-medium">{title}</h3>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      {task.awaited
+                      {backgroundWorkHoldsCompletion([task])
                         ? gt("Waiting", { $context: "status of background work" })
                         : gt("Running", { $context: "status of background work" })}
                     </span>
@@ -99,14 +100,16 @@ export function BackgroundWorkDetails(props: {
                     </div>
                   ) : null}
                   {childThreadId ? (
-                    <InlineButton
+                    <Button
+                      size="sm"
+                      variant="outline"
                       onClick={() => {
                         setOpen(false);
                         props.onOpenThread(childThreadId);
                       }}
                     >
                       <T>Open subagent</T>
-                    </InlineButton>
+                    </Button>
                   ) : null}
                 </section>
               );

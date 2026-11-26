@@ -14,6 +14,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./cloud/serviceProtocol.ts";
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -121,6 +122,7 @@ it.effect("parks automatic pull until activation without delaying command readin
       Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
         publish: (event) => Effect.succeed({ ...event, sequence: 1 }),
       }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
       Layer.mock(ServerSettings.ServerSettingsService)({
         start: Effect.void,
         getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true }),
@@ -158,7 +160,7 @@ it.effect("parks automatic pull until activation without delaying command readin
             Effect.onInterrupt(() => Deferred.succeed(statusInterrupted, undefined)),
           ),
       }),
-      Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.void }),
+      Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.succeed(true) }),
       // No provider logins or Connect link, so startup records no owners.
       FileSystem.layerNoop({}),
       Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),

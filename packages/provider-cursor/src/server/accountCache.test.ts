@@ -23,7 +23,7 @@ const record = (timestampMs: number): UsageRecord => ({
 });
 
 describe("cursorAccountCache", () => {
-  it("refetches everything once the cache no longer reaches the retention start", () => {
+  it("reads only the history the cache is missing", () => {
     const cache = {
       accountKey: "a",
       sinceMs: 0,
@@ -35,10 +35,7 @@ describe("cursorAccountCache", () => {
     const narrow = { ...cache, sinceMs: DAY_MS };
     assert.isFalse(isCursorCacheFresh(narrow, 10 * DAY_MS, 0));
     const widenedRange = cursorFetchRange(narrow, 0, 10 * DAY_MS);
-    assert.deepStrictEqual(widenedRange, {
-      sinceMs: 0,
-      untilMs: 10 * DAY_MS,
-    });
+    assert.deepStrictEqual(widenedRange, { sinceMs: 0, untilMs: DAY_MS });
     const widened = mergeCursorFetch(narrow, "a", widenedRange, cache.records, 10 * DAY_MS, 0);
     assert.isTrue(isCursorCacheFresh(widened.cache, 10 * DAY_MS, 0));
     assert.deepStrictEqual(cursorFetchRange(widened.cache, 0, 11 * DAY_MS), {
