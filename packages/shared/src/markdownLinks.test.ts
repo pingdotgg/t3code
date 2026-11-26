@@ -63,6 +63,8 @@ describe("inlineCodeFilePathCandidate", () => {
     ["/bin/echo hello world.txt", null],
     ["~/bin/run tests.sh", null],
     ["/Users/me/notes with spaces.md", "/Users/me/notes with spaces.md"],
+    ["~/Videos/clips/<thread-slug>/shot.png", null],
+    ["clips/<name>.mp4", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -93,6 +95,22 @@ describe("parseMarkdownFileLink", () => {
   ])("reads back the composer's link to %s", (path) => {
     const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
     expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);
+  });
+
+  // regression: #41223 names the parser rejects bare; the composer adds `./` to them
+  it.each([
+    "C#/Program.cs",
+    "docs/R&D/notes.md",
+    "docs/Bob's notes.md",
+    "docs/a,b.ts",
+    "docs/100%.md",
+    "docs/why?.md",
+    "icon@2x.png",
+  ])("resolves the composer's link to %s", (path) => {
+    const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
+    expect(resolveMarkdownFileLinkTarget(destination ?? "", "/workspace/project")).toBe(
+      `/workspace/project/${path}`,
+    );
   });
 
   it.each([

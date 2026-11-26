@@ -79,8 +79,13 @@ import {
 } from "./webhookDedupe.ts";
 import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookFilter.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+import { withLocalTracing } from "@t3tools/shared/relayTracing";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
+
+/** The task a create carrying this idempotency key writes, and rewrites when the key is replayed. */
+export const scheduledTaskIdForCommand = (commandId: CommandId) =>
+  ScheduledTaskId.make(`scheduled-task:${commandId}`);
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 const PROMPT_TOO_LONG = "The filled-in prompt is too long.";
@@ -1480,9 +1485,9 @@ export const layer = Layer.effect(
           : null;
       const id =
         input.id ??
-        ScheduledTaskId.make(
-          input.commandId ? `scheduled-task:${input.commandId}` : `scheduled-task:${uuid}`,
-        );
+        (input.commandId
+          ? scheduledTaskIdForCommand(input.commandId)
+          : ScheduledTaskId.make(`scheduled-task:${uuid}`));
       // Look up by the *resolved* id so idempotent creates (commandId replays)
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
@@ -2549,6 +2554,9 @@ export const layer = Layer.effect(
           yield* runWebhookDelivery(task, deliveryId, rendered.prompt).pipe(
             permit.withPermits(1),
             Effect.ensuring(release),
+            // A relay-delivered webhook is traced to the relay; the run it starts is local work
+            // whose spans carry workspace paths.
+            withLocalTracing,
             Effect.forkIn(serviceScope),
           );
           // Dispatch owns the accepted delivery now; retries must keep its claim.
