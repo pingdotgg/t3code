@@ -2071,10 +2071,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     Effect.asVoid,
   );
 
-  // Replay idle does not prove history is over: a prompt waits for the pending
-  // session/load to answer, or for its load timeout, before it goes out. A load that
-  // replaces it meanwhile is waited out too. A stop during the wait has no prompt to
-  // cancel yet, so it resolves the wait instead.
+  // Replay idle does not prove history is over, so a prompt gives the pending session/load
+  // one more idle gap to answer; past that the agent may never answer (Grok), and the prompt
+  // goes out and ends the quarantine. A load that replaces it meanwhile is waited out too.
+  // A stop during the wait has no prompt to cancel yet, so it resolves the wait instead.
   const awaitLateSessionLoad = Effect.gen(function* () {
     const stop = yield* Deferred.make<void>();
     yield* Ref.set(waitingPromptStopRef, Option.some(stop));
@@ -2082,19 +2082,22 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     while (true) {
       const gate = yield* Ref.get(sessionLoadGateRef);
       const late = yield* Ref.get(lateSessionLoadRef);
-      let pending: Effect.Effect<unknown> | undefined;
+      let pending: Effect.Effect<"settled" | "expired"> | undefined;
       if (Option.isSome(gate) && gate.value.active) {
-        pending = sessionLoadSemaphore.withPermits(1)(Effect.void);
+        pending = sessionLoadSemaphore.withPermits(1)(Effect.succeed("settled" as const));
       } else if (Option.isSome(late)) {
         settledLoad = late.value.response;
-        pending = Fiber.await(late.value.response);
+        pending = Fiber.await(late.value.response).pipe(
+          Effect.timeoutOption(options.sessionLoadReplayIdleGap ?? defaultSessionLoadReplayIdleGap),
+          Effect.map((settled) => (Option.isSome(settled) ? "settled" : "expired")),
+        );
       }
       if (pending === undefined) return { stopped: false, settledLoad };
-      const stopped = yield* Effect.raceFirst(
-        pending.pipe(Effect.as(false)),
-        Deferred.await(stop).pipe(Effect.as(true)),
+      const outcome = yield* Effect.raceFirst(
+        pending,
+        Deferred.await(stop).pipe(Effect.as("stopped" as const)),
       );
-      if (stopped) return { stopped, settledLoad };
+      if (outcome !== "settled") return { stopped: outcome === "stopped", settledLoad };
     }
   }).pipe(Effect.ensuring(Ref.set(waitingPromptStopRef, Option.none())));
 

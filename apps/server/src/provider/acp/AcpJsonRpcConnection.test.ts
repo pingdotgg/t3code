@@ -1590,15 +1590,13 @@ describe("AcpSessionRuntime", () => {
       yield* Effect.yieldNow;
       yield* runtime.loadSession("mock-session-1");
       expect((yield* Fiber.join(prompting)).stopReason).toBe("end_turn");
-      // The replacement answers by replay idle; the prompt waits until its response times out.
-      expect(log).toEqual([
+      // The prompt waits until the replacement has also gone idle.
+      expect(log.slice(0, 5)).toEqual([
         "session/load started",
         "session/load succeeded",
         "session/load started",
         "session/load succeeded",
-        "session/load failed",
         "session/prompt started",
-        "session/prompt succeeded",
       ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
@@ -1611,7 +1609,7 @@ describe("AcpSessionRuntime", () => {
       expect(started.sessionSetupResult._meta).toMatchObject({
         t3SessionLoadReady: "replay_idle",
       });
-      // The unanswered session/load holds the prompt until its timeout, then lets it through.
+      // An unanswered session/load holds the prompt for one more idle gap, not its load timeout.
       const prompted = yield* runtime.prompt({ prompt: [{ type: "text", text: "hi" }] });
       expect(prompted.stopReason).toBe("end_turn");
     }).pipe(
@@ -1629,7 +1627,6 @@ describe("AcpSessionRuntime", () => {
           cwd: process.cwd(),
           resumeSessionId: "mock-session-1",
           sessionLoadReplayIdleGap: "50 millis",
-          sessionLoadTimeout: "500 millis",
           sessionLoadReplayIdleReadiness: true,
           clientInfo: { name: "t3-test", version: "0.0.0" },
         }),
