@@ -195,6 +195,17 @@ describe("attachment preview classification", () => {
     expect(() => decodeFilePreviewText(new Uint8Array([65, 0, 66]))).toThrow("binary");
     expect(() => decodeFilePreviewText(new Uint8Array([255]))).toThrow("UTF-8");
   });
+  it("decodes GBK / GB18030 text that is not UTF-8", () => {
+    // "// 中文注释\nint a = 1;\n" encoded as GBK.
+    const bytes = new Uint8Array([
+      0x2f, 0x2f, 0x20, 0xd6, 0xd0, 0xce, 0xc4, 0xd7, 0xa2, 0xca, 0xcd, 0x0a, 0x69, 0x6e, 0x74,
+      0x20, 0x61, 0x20, 0x3d, 0x20, 0x31, 0x3b, 0x0a,
+    ]);
+    expect(decodeFilePreviewText(bytes)).toEqual({
+      text: "// 中文注释\nint a = 1;\n",
+      truncated: false,
+    });
+  });
   it.each(["doc", "xls", "ppt", "7z", "rar"])(
     "retains the binary fallback for %s, which opencode does not render",
     (extension) => {
