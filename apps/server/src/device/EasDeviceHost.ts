@@ -15,9 +15,9 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FiberSet from "effect/FiberSet";
@@ -641,9 +641,13 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const pending = pendingStops.get(session);
-        if (pending) return yield* restore(Deferred.await(pending));
+        if (pending) {
+          if (!retry) yield* restore(Deferred.await(pending));
+          return;
+        }
         if (sessions.get(session.sessionId) !== session) return;
-        const result = yield* Deferred.make<void, Effect.Error<ReturnType<typeof stopSession>>>();
+        // Publish the pending result without yielding between the lookup and registration.
+        const result = Deferred.makeUnsafe<void, Effect.Error<ReturnType<typeof stopSession>>>();
         pendingStops.set(session, result);
         const stop = stopSession(expo, session.sessionId, session.name);
         yield* restore(
