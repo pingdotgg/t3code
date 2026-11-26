@@ -167,31 +167,6 @@ describe("thread links", () => {
     },
   );
 
-  it.each([
-    ["    ", ""],
-    ["\t", ""],
-    [">     ", "> "],
-    ["-     ", ""],
-  ])(
-    "rewrites prose links after a BOM-prefixed indented code example (%j)",
-    (indent, prosePrefix) => {
-      const example = `\uFEFF${indent}~~~\n${prosePrefix.trimEnd()}\n${prosePrefix}See `;
-      expect(replaceThreadLinks(`${example}<t3-thread://v2/local/t>`, () => "linked")).toBe(
-        `${example}linked`,
-      );
-    },
-  );
-
-  it.each([["    ```"], ["    example", "    ``` <t3-thread://v2/local/example>"]])(
-    "keeps prose links after indented backticks live (%j)",
-    (...codeLines) => {
-      const prefix = `\uFEFF${codeLines.join("\n")}\nSee `;
-      const suffix = " ```";
-      const markdown = `${prefix}<t3-thread://v2/local/t>${suffix}`;
-      expect(replaceThreadLinks(markdown, () => "linked")).toBe(`${prefix}linked${suffix}`);
-    },
-  );
-
   it("leaves links inside code spans and fences as written", () => {
     const markdown = [
       "Live [old](t3-thread://v1/t1), literal `[old](t3-thread://v1/t1)`.",

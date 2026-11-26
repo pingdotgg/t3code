@@ -1,9 +1,6 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { Nodes } from "mdast";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
 
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
@@ -18,14 +15,6 @@ const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 const LABEL = String.raw`[^[\]\n]*`;
 const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
 const QUOTE_PREFIX = new RegExp(String.raw`^([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "gm");
-const markdownParser = unified().use(remarkParse);
-
-function leadingCode(markdown: string) {
-  let node: Nodes | undefined = markdownParser.parse(markdown).children[0];
-  while (node && "children" in node) node = node.children[0];
-  return node?.type === "code" ? node : undefined;
-}
-
 // Move inter-marker spacing before the quote so fence depth matches and offsets stay intact. A label
 // may span \r or U+2028, which multiline `^` follows, so labels and output are read from the original.
 const threadLinkSource = (markdown: string) =>
@@ -303,18 +292,12 @@ export function replaceThreadLinks(
   replace: (link: ThreadLink, label: string | undefined) => string | undefined,
 ): string {
   if (!hasThreadLinks(markdown)) return markdown;
+  // A leading BOM is not content: Markdown blocks such as fences start after it.
+  if (markdown.startsWith("\uFEFF"))
+    return `\uFEFF${replaceThreadLinks(markdown.slice(1), replace)}`;
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  const firstLineCode = markdown.startsWith("\uFEFF")
-    ? leadingCode(markdown.split(/\r\n?|\n/, 1)[0]!)
-    : undefined;
-  // On a single line, a fence has no body. Mask its BOM, or skip the full indented block.
-  const source = threadLinkSource(firstLineCode?.value === "" ? ` ${markdown.slice(1)}` : markdown);
-  if (firstLineCode?.value) {
-    const codeEnd = leadingCode(markdown)?.position?.end.offset;
-    // Remark offsets exclude the BOM.
-    if (codeEnd !== undefined) pattern.lastIndex = codeEnd + 1;
-  }
+  const source = threadLinkSource(markdown);
   let result = "";
   let cursor = 0;
   let lines: ReturnType<typeof codeSpanLines> | undefined;
