@@ -1506,6 +1506,22 @@ it.each([true, false])(
   },
 );
 
+it("focuses the editor when dictation started elsewhere asks for focus before unlocking", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const ui = (disabled: boolean) => (
+    <Composer value="Draft" richTextEnabled skills={[]} disabled={disabled} editorRef={editorRef} />
+  );
+  await using screen = await render(ui(false));
+  const editor = editorIn(screen.container);
+  expect(document.activeElement).toBe(document.body);
+  await screen.rerender(ui(true));
+  await act(() => editorRef.current?.focusAt(3));
+  await screen.rerender(ui(false));
+  await vi.waitFor(() => expect(editor.view.hasFocus()).toBe(true));
+  await userEvent.keyboard("X");
+  await vi.waitFor(() => expect(editor.getText()).toBe("DraXft"));
+});
+
 it.each(["other field", "document body"])(
   "does not reclaim focus when it moves away during dictation and ends on the %s",
   async (focusTarget) => {

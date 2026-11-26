@@ -1927,6 +1927,8 @@ function ComposerPromptEditorTiptapInner(
 
   const focusAt = (nextCursor: number, exactExpandedCursor?: number) => {
     if (!editor) return;
+    // A read-only editor cannot take focus, so dictation finishing before it unlocks focuses it on unlock.
+    if (!editor.isEditable) resumeEditingFocusRef.current = true;
     // view.focus() writes selection immediately; bare DOM focus waits 20ms and can misplace fast dictation.
     editor.view.focus();
     if (snapshotRef.current.value !== latestValueRef.current) return;
