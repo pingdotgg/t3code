@@ -203,7 +203,8 @@ function cdOperands(script: string): Array<string> {
       const operand = rest.find((word) => !CD_OPTION.test(word));
       if (operand !== undefined) operands.push(operand);
     } else if (SHELL_NAME.test(name)) {
-      const inner = rest[rest.findIndex((word) => /^-[a-z]*c$/.test(word)) + 1];
+      const flag = rest.findIndex((word) => /^-[a-z]*c$/.test(word));
+      const inner = flag < 0 ? undefined : rest[flag + 1];
       if (inner !== undefined && /^(["']).*\1$/s.test(inner)) {
         operands.push(...cdOperands(inner.slice(1, -1)));
       }

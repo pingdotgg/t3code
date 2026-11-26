@@ -79,6 +79,14 @@ export function planThreadUndo(
   return [unsettle, ...placement, ...snooze];
 }
 
+/**
+ * True when a step cancelled a change that was still waiting to sync. The server never applied
+ * it, so the rest of the plan has nothing to restore and would fail against the offline host.
+ */
+export function cancelledOnDevice(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "cancelledOnDevice" in value;
+}
+
 export async function executeThreadUndo<Result>(
   plan: ThreadUndoPlan,
   execute: (step: ThreadUndoStep) => Promise<Result>,

@@ -173,6 +173,7 @@ function harness(input?: {
               remaining.splice(index, 1);
             }
           }),
+    disconnect: () => Effect.die("the reaper never force-disconnects"),
   });
   const allocationService = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
     getByTunnelName: () => Effect.die("unused"),

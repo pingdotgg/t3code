@@ -112,8 +112,8 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -170,7 +170,13 @@ function focusPreviewWebview(runtimeTabId: string) {
 
 function focusPreviewPage(runtimeTabId: string) {
   const active = document.activeElement;
-  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
+  if (
+    active &&
+    active !== document.body &&
+    !active.closest("[data-preview-panel-mode], [data-browser-surface-overlay]")
+  ) {
+    return;
+  }
   focusPreviewWebview(runtimeTabId);
 }
 
@@ -986,6 +992,33 @@ export function PreviewView({
     };
   }, [visible]);
 
+  const desktopSlotShown = Boolean(
+    runtimeTabId && snapshot && !isServerTab && !showEmptyState && previewBridge,
+  );
+  const pageOverlays = (
+    <>
+      {runtimeTabId &&
+      desktopOverlay &&
+      !showEmptyState &&
+      !isUnreachable &&
+      !activeRecordingTabIds.has(runtimeTabId) ? (
+        <AgentBrowserCursor
+          tabId={runtimeTabId}
+          zoomFactor={layoutZoomFactor}
+          controller={controller}
+        />
+      ) : null}
+      {find && canFindInPage && find.tabId === runtimeTabId ? (
+        <PreviewFindBar
+          key={find.tabId}
+          tabId={find.tabId}
+          focusRequestId={find.requestId}
+          onClose={closeFind}
+        />
+      ) : null}
+    </>
+  );
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
@@ -1035,12 +1068,12 @@ export function PreviewView({
         }
         leadingActions={
           activeProfileId !== browserDefaults.profileId ? (
-            <Tooltip>
-              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
-                <span className="truncate">{activeProfileName}</span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<Badge variant="outline" className="max-w-28 shrink-0" />}
+              label={activeProfileName}
+            >
+              <span className="truncate">{activeProfileName}</span>
+            </SharedTooltipTrigger>
           ) : null
         }
         trailingActions={
@@ -1131,7 +1164,9 @@ export function PreviewView({
               tabId={runtimeTabId}
               visible={visible && !isUnreachable}
               className="absolute inset-0 h-full w-full"
-            />
+            >
+              {pageOverlays}
+            </BrowserSurfaceSlot>
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="max-w-sm text-sm text-muted-foreground">
@@ -1153,25 +1188,7 @@ export function PreviewView({
         {snapshot && desktopOverlay ? (
           <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
         ) : null}
-        {runtimeTabId &&
-        desktopOverlay &&
-        !showEmptyState &&
-        !isUnreachable &&
-        !activeRecordingTabIds.has(runtimeTabId) ? (
-          <AgentBrowserCursor
-            tabId={runtimeTabId}
-            zoomFactor={layoutZoomFactor}
-            controller={controller}
-          />
-        ) : null}
-        {find && canFindInPage && find.tabId === runtimeTabId ? (
-          <PreviewFindBar
-            key={find.tabId}
-            tabId={find.tabId}
-            focusRequestId={find.requestId}
-            onClose={closeFind}
-          />
-        ) : null}
+        {desktopSlotShown ? null : pageOverlays}
         {navStatus._tag === "LoadFailed" && navStatus.download ? (
           <div className="absolute inset-0 z-10 bg-background">
             <ServerTabFileNotShown

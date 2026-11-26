@@ -168,6 +168,12 @@ describe("deriveLocalBranchNameFromRemoteRef", () => {
       "upstream/feature/demo",
     );
   });
+
+  it("strips the whole remote name when it is known", () => {
+    expect(deriveLocalBranchNameFromRemoteRef("team/origin/feature", "team/origin")).toBe(
+      "feature",
+    );
+  });
 });
 
 describe("dedupeRemoteBranchesWithLocalMatches", () => {

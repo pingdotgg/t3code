@@ -2771,6 +2771,47 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("sends an async answer's files as attachments on the answer message", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-async-question-files");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-async-question-files-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("runtime-async-question-files-project"),
+        title: "Async question with files",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const { requestId } = yield* seedPendingQuestion(threadId, null, { type: "message" });
+      const screenshot = {
+        type: "image" as const,
+        id: createAttachmentId(threadId)!,
+        name: "screen.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      };
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("runtime-async-question-files-answer"),
+        threadId,
+        requestId,
+        answers: { color: "", sizes: ["Small"], note: "" },
+        attachmentsByQuestionId: { color: [screenshot] },
+      });
+      const answered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(answered.messages.length, 1);
+      assert.equal(answered.messages[0]?.text, "Which color?\n\nWhich sizes?\nSmall");
+      assert.deepEqual(answered.messages[0]?.attachments, [screenshot]);
+    }),
+  );
+
   it.effect("reports an answer that never reaches its provider without reopening it", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -12854,7 +12895,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "user"] as const)(
+  it.effect.each(["notification", "scheduled-task", "user"] as const)(
     "a %s message on a snoozed thread keeps the snooze only when automatic",
     (kind) =>
       Effect.gen(function* () {
@@ -12890,8 +12931,8 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" ? "user" : "agent",
-          creationSource: kind === "user" ? "web" : "provider",
+          createdBy: kind === "notification" ? "agent" : "user",
+          creationSource: kind === "notification" ? "provider" : "web",
           ...(kind === "notification"
             ? {
                 notification: {
@@ -12901,11 +12942,15 @@ it.layer(layerTest)("snooze queued runs", (it) => {
                 },
               }
             : {}),
+          ...(kind === "scheduled-task"
+            ? { scheduledTaskId: ScheduledTaskId.make(`scheduled-task:${threadId}`) }
+            : {}),
         });
         const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
         if (kind === "user") {
           assert.isNull(thread.snoozedUntil);
         } else {
+          assert.isNotNull(thread.snoozedUntil);
           assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
         }
       }),

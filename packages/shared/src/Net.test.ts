@@ -110,6 +110,24 @@ it.layer(NetService.layer)("NetService", (it) => {
       ),
     );
 
+    for (const host of ["0.0.0.0", ""]) {
+      it.effect.skipIf(ownIpv4 === undefined)(
+        `findAvailablePort skips a port a LAN listener holds for wildcard host "${host}"`,
+        () =>
+          Effect.acquireUseRelease(
+            openServer(ownIpv4),
+            (server) =>
+              Effect.gen(function* () {
+                const net = yield* NetService.NetService;
+                const selected = yield* net.findAvailablePort(getPort(server), host);
+                assert.notEqual(selected, getPort(server));
+                assert.equal(yield* net.canListenOnHost(selected, "0.0.0.0"), true);
+              }),
+            closeServer,
+          ),
+      );
+    }
+
     it.effect.skipIf(ownIpv4 === undefined)(
       "findAvailablePort keeps a port that only loopback uses for a specific bind address",
       () =>
