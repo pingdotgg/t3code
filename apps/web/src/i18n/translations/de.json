@@ -1,4 +1,7 @@
 {
+  "6c6e16b9488f8b91": "Scrolle, um alles zu lesen.",
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} Zeichen in der Mitte wird nicht angezeigt.} other {… {hidden} Zeichen in der Mitte werden nicht angezeigt.}} Der Text endet mit:",
+  "011b1ef726fa9928": "Scrolle in beiden Teilen, um alles zu lesen.",
   "4bcfa3b976a421cf": "Nebenchat",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread auf {machine}",
@@ -3476,7 +3479,7 @@
   "12170596ff889d5b": "Erneut anhängen",
   "748efc40dc99b309": "Zum Senden entfernen",
   "fd3d4318e7b094fa": "Entwurf",
-  "9c421cab815b9905": "{count, plural, one {{count} weiteren Bildanhang anzeigen} other {{count} weitere Bildanhänge anzeigen}}",
+  "c7f5c98f1e79cc6c": "{count, plural, one {{count} weiteren Bildanhang anzeigen} other {{count} weitere Bildanhänge anzeigen}}",
   "ae136257600738d3": "Dateien anhängen",
   "3e04fb123bbf31b4": "Der Entwurfsanhang konnte nicht lokal gespeichert werden und geht beim Navigieren möglicherweise verloren.",
   "81709882b9996586": "Dateien anhängen",
