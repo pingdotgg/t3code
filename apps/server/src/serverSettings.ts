@@ -67,7 +67,7 @@ import {
   mapSettingsSecrets,
   mapSettingsSecretValues,
   withoutRemovedSecretProviderReferences,
-  withoutRedirectedSimlockTokens,
+  withoutRedirectedSecrets,
   SECRET_REDACTED,
   type SettingsSecret,
 } from "./settingsSecrets.ts";
@@ -1241,7 +1241,7 @@ const make = Effect.gen(function* () {
         }
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withoutRedirectedSimlockTokens(
+        const updated = withoutRedirectedSecrets(
           current,
           withEchoedSecretReferences(current, yield* update(current)),
         );

@@ -216,10 +216,16 @@ export const writesWithCapability = <P, A, E, R>(
   options?: {
     /** Also requires the broadest runtime mode allowed here, respecting managed policy ceilings. */
     readonly broadestAccess?: string;
+    /** The handler asks a person itself below Full access, so any mode may call it. */
+    readonly asksBelowFullAccess?: true;
   },
 ) => {
   const check = writingCaller.pipe(
-    Effect.tap((caller) => assertUnsupervisedAccess(caller, options?.broadestAccess)),
+    Effect.tap((caller) =>
+      options?.asksBelowFullAccess
+        ? Effect.void
+        : assertUnsupervisedAccess(caller, options?.broadestAccess),
+    ),
     Effect.tap((caller) =>
       options?.broadestAccess === undefined
         ? Effect.void

@@ -101,12 +101,43 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       const workspace = yield* makeWorkspace();
       const profileDirectory = path.join(workspace.userHome, "t3", "providers", "antigravity", "p");
       const plugins = path.join(profileDirectory, "config", "plugins");
-      for (const plugin of ["demo", "off"]) {
+      const skill = (name: string) => `---\nname: ${name}\ndescription: From ${name}.\n---\n`;
+      for (const plugin of ["demo", "off", "solo"]) {
         yield* writeSkill(
           path.join(plugins, plugin, "skills", `${plugin}-skill`),
-          `---\nname: ${plugin}-skill\ndescription: From ${plugin}.\n---\n`,
+          skill(`${plugin}-skill`),
         );
       }
+      // agy adds the manifest's skill paths to skills/: a collection, a skill folder at any
+      // depth, or a SKILL.md file. The .antigravity-plugin manifest wins over plugin.json.
+      yield* fileSystem.makeDirectory(path.join(plugins, "demo", ".antigravity-plugin"));
+      yield* fileSystem.writeFileString(
+        path.join(plugins, "demo", ".antigravity-plugin", "plugin.json"),
+        JSON.stringify({
+          name: "demo",
+          skills: ["./engineering", "skills/cat/listed", "./files/by-file/SKILL.md"],
+        }),
+      );
+      yield* fileSystem.writeFileString(
+        path.join(plugins, "demo", "plugin.json"),
+        JSON.stringify({ name: "demo", skills: ["./shadowed"] }),
+      );
+      for (const [folder, name] of [
+        ["engineering/collected", "demo-collected"],
+        ["skills/cat/listed", "demo-listed"],
+        ["skills/cat/unlisted", "demo-unlisted"],
+        ["files/by-file", "demo-by-file"],
+        ["shadowed/ignored", "demo-shadowed"],
+      ] as const) {
+        yield* writeSkill(path.join(plugins, "demo", folder), skill(name));
+      }
+      yield* fileSystem.writeFileString(path.join(plugins, "off", "plugin.json"), "{}");
+      // agy accepts a single path string and a manifest that starts with a byte order mark.
+      yield* fileSystem.writeFileString(
+        path.join(plugins, "solo", "plugin.json"),
+        `\uFEFF${JSON.stringify({ name: "solo", skills: "./only" })}`,
+      );
+      yield* writeSkill(path.join(plugins, "solo", "only", "solo-only"), skill("solo-only"));
       yield* fileSystem.writeFileString(
         path.join(profileDirectory, "config", "config.json"),
         JSON.stringify({ plugins: { off: { enabled: false } } }),
@@ -115,11 +146,54 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       const input = { ...workspace, profileDirectory };
 
       assert.deepEqual(
-        (yield* discoverAntigravitySkills(input)).map(({ name, displayName }) => ({
-          name,
-          displayName,
-        })),
-        [{ name: "demo-skill", displayName: "demo:demo-skill" }],
+        (yield* discoverAntigravitySkills(input)).map(({ displayName }) => displayName),
+        [
+          "demo:demo-by-file",
+          "demo:demo-collected",
+          "demo:demo-listed",
+          "demo:demo-skill",
+          "solo:solo-only",
+          "solo:solo-skill",
+        ],
+      );
+    }),
+  );
+
+  it.effect("skips plugins agy does not load", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* makeWorkspace();
+      const plugins = path.join(workspace.profileDirectory, "config", "plugins");
+      for (const plugin of ["bare", "broken", "spec"]) {
+        yield* writeSkill(
+          path.join(plugins, plugin, "skills", `${plugin}-skill`),
+          `---\nname: ${plugin}-skill\n---\n`,
+        );
+      }
+      // An unparseable .antigravity-plugin manifest is not replaced by a valid plugin.json.
+      yield* fileSystem.makeDirectory(path.join(plugins, "broken", ".antigravity-plugin"));
+      yield* fileSystem.writeFileString(
+        path.join(plugins, "broken", ".antigravity-plugin", "plugin.json"),
+        '{"name": "broken",',
+      );
+      yield* fileSystem.writeFileString(path.join(plugins, "broken", "plugin.json"), "{}");
+      yield* fileSystem.writeFileString(
+        path.join(plugins, "spec", "plugin.json"),
+        JSON.stringify({
+          $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+          name: "spec",
+          skills: ["./custom"],
+        }),
+      );
+      yield* writeSkill(
+        path.join(plugins, "spec", "custom", "spec-custom"),
+        "---\nname: spec-custom\n---\n",
+      );
+
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills(workspace)).map(({ displayName }) => displayName),
+        ["spec:spec-skill"],
       );
     }),
   );
@@ -152,21 +226,27 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect("loads a root skill without scanning its children", () =>
+  it.effect("keeps child skills visible under a project root SKILL.md", () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
-      const root = path.join(input.cwd, ".agents", "skills");
-      const skillPath = yield* writeSkill(root, "---\nname: root-skill\n---\n");
-      yield* writeSkill(path.join(root, "child"), "---\nname: child-skill\n---\n");
+      const agentsRoot = path.join(input.cwd, ".agents", "skills");
+      const legacyRoot = path.join(input.cwd, ".agent", "skills");
+      yield* writeSkill(agentsRoot, "---\nname: root-skill\n---\n");
+      yield* writeSkill(legacyRoot, "---\nname: legacy-root-skill\n---\n");
+      const child = yield* writeSkill(
+        path.join(agentsRoot, "child"),
+        "---\nname: child-skill\n---\n",
+      );
+      const legacyChild = yield* writeSkill(
+        path.join(legacyRoot, "child"),
+        "---\nname: legacy-child-skill\n---\n",
+      );
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), [
-        { name: "root-skill", path: skillPath, scope: "project", enabled: true },
+        { name: "child-skill", path: child, scope: "project", enabled: true },
+        { name: "legacy-child-skill", path: legacyChild, scope: "project", enabled: true },
       ]);
-
-      yield* fileSystem.writeFileString(skillPath, "---\nname: [invalid\n---\n");
-      assert.deepEqual(yield* discoverAntigravitySkills(input), []);
     }),
   );
 

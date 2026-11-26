@@ -31,6 +31,7 @@ import {
   workflowReferenceIssue,
   workflowReferenceLabel,
   workflowReferencePullRequest,
+  workflowReferenceThreadId,
   workflowRunState,
   workflowSaidStart,
   workflowStepReferences,
@@ -575,29 +576,36 @@ describe("readWorkflowQuestion", () => {
     });
   });
 
-  it("reads what each choice does, which need a reason, and the links that open on the web", () => {
-    expect(
-      readWorkflowQuestion(
-        question("r", {
-          title: "Build this?",
-          choices: ["Yes", "No"],
-          choiceDetails: [{ value: "No", description: "It is closed", requireReason: true }],
-          links: [
-            { label: "The request", url: "https://example.com/1" },
-            { label: "Script", url: "javascript:alert(1)" },
-            { label: " ", url: "https://example.com/2" },
-          ],
-        }),
-      ),
-    ).toEqual({
-      title: "Build this?",
-      choices: [
-        { value: "Yes", description: null, requireReason: false },
-        { value: "No", description: "It is closed", requireReason: true },
-      ],
-      body: null,
-      links: [{ label: "The request", url: "https://example.com/1" }],
-    });
+  it("reads what each choice does, which need a reason, and the links that open on the web even where URL.parse is missing", () => {
+    const parse = URL.parse;
+    Reflect.deleteProperty(URL, "parse");
+    try {
+      expect(
+        readWorkflowQuestion(
+          question("r", {
+            title: "Build this?",
+            choices: ["Yes", "No"],
+            choiceDetails: [{ value: "No", description: "It is closed", requireReason: true }],
+            links: [
+              { label: "The request", url: "https://example.com/1" },
+              { label: "Script", url: "javascript:alert(1)" },
+              { label: "Broken", url: "not a url" },
+              { label: " ", url: "https://example.com/2" },
+            ],
+          }),
+        ),
+      ).toEqual({
+        title: "Build this?",
+        choices: [
+          { value: "Yes", description: null, requireReason: false },
+          { value: "No", description: "It is closed", requireReason: true },
+        ],
+        body: null,
+        links: [{ label: "The request", url: "https://example.com/1" }],
+      });
+    } finally {
+      URL.parse = parse;
+    }
   });
 });
 
@@ -685,6 +693,27 @@ describe("workflow references", () => {
     expect(workflowReferenceIssue(machine)).toBeNull();
   });
 
+  it("opens a thread subject as its thread, and names a web address by its host even where URL.canParse is missing", () => {
+    expect(
+      workflowReferenceThreadId(
+        reference({ kind: "thread", key: "t1", address: { threadId: "t1" } }),
+      ),
+    ).toBe("t1");
+    expect(workflowReferenceThreadId(issue("412"))).toBeNull();
+    const canParse = URL.canParse;
+    Reflect.deleteProperty(URL, "canParse");
+    try {
+      expect(
+        workflowReferenceLabel(
+          reference({ kind: "url", key: "u", url: "https://status.example.com/incidents/9" }),
+        ),
+      ).toBe("status.example.com");
+      expect(workflowReferenceLabel(reference({ kind: "url", url: "not a url" }))).toBe("url");
+    } finally {
+      URL.canParse = canParse;
+    }
+  });
+
   it("gives a step the things it touched", () => {
     const all = [issue("412"), pullRequest, machine];
     expect(workflowStepReferences(all, "checks")).toEqual([pullRequest]);
@@ -714,6 +743,41 @@ describe("workflowOneLine", () => {
     expect(workflowOneLine("- See [the issue](https://x.test/2) first")).toBe(
       "See the issue first",
     );
+    expect(workflowOneLine("_italic_ __bold__ *italic* **bold** (_nested_) **yes**_now_.")).toBe(
+      "italic bold italic bold (nested) yesnow.",
+    );
+    expect(workflowOneLine("Fixed **`foo_bar`** and _see `x`_ now.")).toBe(
+      "Fixed foo_bar and see x now.",
+    );
+  });
+
+  it("keeps underscores inside identifiers, paths and code", () => {
+    expect(workflowOneLine("Set MY_API_KEY in src/__tests__/my_module.test.ts and a__b__c.")).toBe(
+      "Set MY_API_KEY in src/__tests__/my_module.test.ts and a__b__c.",
+    );
+    expect(workflowOneLine("Run `__init__`, ``*glob*`` and `[api](url)` now.")).toBe(
+      "Run __init__, *glob* and [api](url) now.",
+    );
+  });
+
+  it("skips fenced code blocks to read the prose sentence after them", () => {
+    expect(workflowOneLine('```json\n{"ok": true}\n```\nAll good. Next.')).toBe("All good.");
+    expect(workflowOneLine("~~~\nconst x = 1;\n~~~\nDone.")).toBe("Done.");
+    expect(workflowOneLine("````md\n```ts\nconst x = 1;\n```\n````\nDone.")).toBe("Done.");
+    expect(workflowOneLine("```ts\nconst a = 1;\nStill inside an unclosed fence.")).toBe("");
+    expect(workflowOneLine("```foo``` is an inline code span. Next.")).toBe(
+      "foo is an inline code span.",
+    );
+    expect(workflowOneLine("## Report\n\n    ```\n\nDeployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("````\ncode\n    ````\nmore\n````\nDeployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("   ```ts\r\ncode\r\n   ``` \t\r\n   Deployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("## Summary\n\n    - Nested bullet item.")).toBe("Nested bullet item.");
   });
 });
 

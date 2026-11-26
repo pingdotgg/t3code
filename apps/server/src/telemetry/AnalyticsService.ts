@@ -1,4 +1,4 @@
-// T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
+// T3 ingest retains events and deduplicates retries by UUID.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCiEnvironment, isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";
 import type { ClientOs } from "@t3tools/contracts";
@@ -68,10 +68,10 @@ function retryDelayMs(failures: number, random: number): number {
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
+  ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(
     Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
   ),
-  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
+  ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(
     Config.withDefault("https://ingest.t3.codes"),
   ),
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.option),
@@ -81,6 +81,31 @@ const TelemetryEnvConfig = Config.all({
   ),
   wslDistroName: Config.String("WSL_DISTRO_NAME").pipe(Config.option),
 });
+
+// Users name or import their own distros, so only well-known families are reported.
+const WSL_DISTRO_FAMILIES = [
+  ["ubuntu", "Ubuntu"],
+  ["debian", "Debian"],
+  ["kali", "Kali"],
+  ["opensuse", "openSUSE"],
+  ["suse", "SUSE"],
+  ["sles", "SUSE"],
+  ["oraclelinux", "OracleLinux"],
+  ["almalinux", "AlmaLinux"],
+  ["rockylinux", "RockyLinux"],
+  ["fedora", "Fedora"],
+  ["archlinux", "Arch"],
+  ["alpine", "Alpine"],
+  ["nixos", "NixOS"],
+  ["pengwin", "Pengwin"],
+  ["docker-desktop", "docker-desktop"],
+] as const;
+
+export const wslDistroFamily = (distroName: string): string | undefined => {
+  const name = distroName.trim().toLowerCase();
+  if (name === "") return undefined;
+  return WSL_DISTRO_FAMILIES.find(([prefix]) => name.startsWith(prefix))?.[1] ?? "other";
+};
 
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
@@ -171,6 +196,9 @@ export const make = Effect.gen(function* () {
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
+  const wslDistro = Option.getOrUndefined(
+    Option.flatMapNullishOr(telemetryConfig.wslDistroName, wslDistroFamily),
+  );
 
   const enqueueBufferedEvent = (
     uuid: string,
@@ -212,7 +240,7 @@ export const make = Effect.gen(function* () {
     if (!(yield* telemetryEnabled) || !distinctId) return;
 
     const payload = {
-      api_key: telemetryConfig.posthogKey,
+      api_key: telemetryConfig.ingestKey,
       batch: events.map((event) => ({
         uuid: event.uuid,
         event: event.event,
@@ -229,14 +257,14 @@ export const make = Effect.gen(function* () {
               ...(installId === null ? {} : { installId }),
               $process_person_profile: false,
               platform: hostPlatform,
-              wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
+              wsl: wslDistro,
               arch: hostArchitecture,
               t3CodeVersion: packageJson.version,
               telemetryChannel: ServerConfig.telemetryChannel,
               clientType,
               serverOs: serverOsFromNodePlatform(hostPlatform),
               serverArch: hostArchitecture,
-              serverWslDistro: Option.getOrUndefined(telemetryConfig.wslDistroName),
+              serverWslDistro: wslDistro,
               serverAppVersion: packageJson.version,
               serverMode: serverConfig.mode,
             },
@@ -244,7 +272,7 @@ export const make = Effect.gen(function* () {
       })),
     };
 
-    yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
+    yield* HttpClientRequest.post(`${telemetryConfig.ingestHost}/batch/`).pipe(
       HttpClientRequest.bodyJson(payload),
       Effect.flatMap(httpClient.execute),
       Effect.flatMap(HttpClientResponse.filterStatusOk),

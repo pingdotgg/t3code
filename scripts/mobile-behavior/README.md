@@ -1,8 +1,8 @@
 # Mobile behavior
 
-`vp run mobile:behavior` checks what the iOS app does, from its own state rather than pixels: scroll position, dropped frames, composer drafts and focus, status labels, and which thread opens. It leases an iPhone 18 Pro and an iPad Pro 13 from the Simlock pool and runs the cases on both in parallel. It is the companion to `vp run mobile:e2e`, which checks layout.
+`vp run mobile:behavior` checks what the iOS app does, from its own state rather than pixels: scroll position, dropped frames, composer drafts and focus, status labels, and which thread opens. It leases an iPhone 18 Pro and an iPad Pro 13 from the Simlock pool and runs the cases on both in parallel. It is the companion to `vp run mobile:e2e`, which checks layout. `vp run mobile:metrics` reuses its server, Metro, probe and leases ([`session.ts`](session.ts), [`pool.ts`](pool.ts)) to benchmark interactions.
 
-No model runs. Each device gets its own server whose only provider, `evalbot`, is an Fx instance backed by [`fake-fx.ts`](fake-fx.ts). A `[[eval:…]]` marker in a message picks its scripted reply: a paced stream, a held turn, a question, two subagents, or a failure. Each device also gets its own Metro with the dev-only probe ([`behavior-probe.ts`](../../apps/mobile/src/features/development/behavior-probe.ts)) compiled in. The probe reads app state through Metro's Hermes inspector, and agent-device drives the touches.
+No model runs. Each device gets its own server whose only provider, `evalbot`, is an Fx instance backed by [`fake-fx.ts`](fake-fx.ts). A `[[eval:…]]` marker in a message picks its scripted reply: a paced stream, a held turn, a question, two subagents, or a failure. Each device also gets its own Metro with the env-gated probe ([`behavior-probe.ts`](../../apps/mobile/src/features/development/behavior-probe.ts)) compiled in. The probe reads app state through Metro's Hermes inspector, and agent-device drives the touches.
 
 ## Run
 
