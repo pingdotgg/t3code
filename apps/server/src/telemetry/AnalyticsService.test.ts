@@ -40,6 +40,8 @@ interface RecordedBatchRequest {
         readonly serverAppVersion?: string;
         readonly serverMode?: string;
         readonly t3CodeVersion?: string;
+        readonly wsl?: string;
+        readonly serverWslDistro?: string;
       };
     }>;
   } | null;
@@ -56,6 +58,8 @@ interface RecordedBatchBody {
       readonly serverAppVersion?: string;
       readonly serverMode?: string;
       readonly t3CodeVersion?: string;
+      readonly wsl?: string;
+      readonly serverWslDistro?: string;
     };
   }>;
 }
@@ -371,6 +375,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
           T3CODE_TELEMETRY_KEY: "phc_test_key",
           T3CODE_TELEMETRY_HOST: "http://localhost",
           T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+          // A name its user chose; only the family may leave the machine.
+          WSL_DISTRO_NAME: "Acme-Client-Secret-Ubuntu",
         }),
       );
       const layerBatchServer = HttpServer.serve(
@@ -452,11 +458,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
               event.properties?.serverOs === "Linux" &&
               event.properties.serverArch === "arm64" &&
               event.properties.serverAppVersion === event.properties.t3CodeVersion &&
-              event.properties.serverMode === "web",
+              event.properties.serverMode === "web" &&
+              event.properties.wsl === "other" &&
+              event.properties.serverWslDistro === "other",
           ),
         ),
         true,
       );
+      assert.equal(JSON.stringify(batchRequests).includes("Acme-Client-Secret-Ubuntu"), false);
     }),
   );
 
@@ -501,56 +510,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       }).pipe(Effect.provide(layerRuntime));
 
       assert.deepEqual(capturedPaths, []);
-    }),
-  );
-
-  it.effect("does not send raw WSL_DISTRO_NAME values in analytics batches", () =>
-    Effect.gen(function* () {
-      const capturedBodies: Array<string> = [];
-      const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3-telemetry-wsl-",
-      });
-      const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
-      const layerConfig = ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: true,
-          T3CODE_TELEMETRY_KEY: "phc_test_key",
-          T3CODE_TELEMETRY_HOST: "http://localhost",
-          WSL_DISTRO_NAME: "Acme-Client-Secret-Ubuntu",
-        }),
-      );
-      const client = HttpClient.make((request) =>
-        Effect.sync(() => {
-          if (request.body._tag === "Uint8Array") {
-            capturedBodies.push(new TextDecoder().decode(request.body.body));
-          }
-          return HttpClientResponse.fromWeb(request, new Response(null, { status: 204 }));
-        }),
-      );
-      const layerRuntime = layerTelemetry.pipe(
-        Layer.provide(layerConfig),
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(HostProcess.Platform, "linux"),
-            Layer.succeed(HostProcess.Architecture, "x64"),
-            Layer.succeed(HttpClient.HttpClient, client),
-            ManagedPolicy.layerTest(),
-          ),
-        ),
-      );
-      yield* Effect.gen(function* () {
-        const analytics = yield* AnalyticsService.AnalyticsService;
-        yield* analytics.record("test.wsl", {});
-        yield* analytics.flush;
-      }).pipe(Effect.provide(layerRuntime));
-
-      assert.equal(capturedBodies.length, 1);
-      assert.equal(capturedBodies[0]!.includes("Acme-Client-Secret-Ubuntu"), false);
-      const parsed = JSON.parse(capturedBodies[0]!) as {
-        batch: Array<{ properties: { wsl?: unknown; serverWslDistro?: unknown } }>;
-      };
-      assert.equal(parsed.batch[0]?.properties.wsl, "other");
-      assert.equal(parsed.batch[0]?.properties.serverWslDistro, "other");
     }),
   );
 });
