@@ -785,12 +785,15 @@ const make = Effect.gen(function* () {
     const named = select?.scope?.trim().toLowerCase();
     const prefix = select?.key?.toLowerCase();
     const scopes = [...new Set(supported.map((candidate) => candidate.scope))];
+    const repositories = new Set(
+      supported.map((candidate) => `${candidate.tracker} ${candidate.host} ${candidate.scope}`),
+    );
     // A bare key in a project whose repositories are all tracked folders could name any of them.
     const own =
       named === undefined
         ? (supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`)) ??
           supported.find((candidate) => !candidate.tracked) ??
-          (scopes.length === 1 ? supported[0] : undefined))
+          (prefix === undefined || repositories.size === 1 ? supported[0] : undefined))
         : supported.find((candidate) => candidate.scope.toLowerCase() === named);
     if (own === undefined) {
       return yield* new IssueOperationError({

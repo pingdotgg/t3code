@@ -313,6 +313,8 @@ describe("IssueService", () => {
         expect(
           yield* service.projectScope("workspace" as ProjectId, { key: "7", scope: "acme/web" }),
         ).toMatchObject({ scope: "acme/web" });
+        // Listing names no key, so it stays reachable (the MCP list_issues tool checks this first).
+        yield* service.projectScope("workspace" as ProjectId);
       }),
   );
 
