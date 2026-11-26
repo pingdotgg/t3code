@@ -36,10 +36,7 @@ const pendingCheckouts = new Map<DraftId, Promise<boolean>>();
 export function trackPendingDraftCheckout(draftId: DraftId, checkoutReady: Promise<boolean>) {
   const isCurrent = () => pendingCheckouts.get(draftId) === settled;
   const settled: Promise<boolean> = checkoutReady
-    .then(
-      (ready) => ready && isCurrent(),
-      () => false,
-    )
+    .catch(() => false)
     .finally(() => {
       if (isCurrent()) pendingCheckouts.delete(draftId);
     });
