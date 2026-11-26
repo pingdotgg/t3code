@@ -124,6 +124,12 @@ describe("compactDynamicToolOutput", () => {
     expect(compactDynamicToolOutput({ threads: [] })).toEqual({ threads: [] });
   });
 
+  it("keeps that a call ended waiting for approval, without the text it carried", () => {
+    expect(
+      compactDynamicToolOutput({ status: "awaiting_approval", next: "Not done yet: ..." }),
+    ).toEqual({ status: "awaiting_approval" });
+  });
+
   it("omits incomplete or oversized creation evidence instead of returning a partial count", () => {
     for (const threads of [
       [{ threadId: "known" }, { title: "No confirmed ID" }],

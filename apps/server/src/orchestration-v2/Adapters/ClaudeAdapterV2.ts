@@ -128,7 +128,6 @@ import {
   type ProviderApprovalFullAccessOverride,
   ProviderMcpSignInError,
   type ProviderApprovalOption,
-  type ProviderApprovalPushHooks,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRuntimeModeLimitReason,
@@ -2903,8 +2902,11 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
 // The name this adapter registers T3's MCP server under, and so the one Claude gives for it.
 const CLAUDE_T3_MCP_SERVER = "t3-code";
 
-// request_secret can wait an hour; exceed Claude's default 60 s timeout.
-export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
+// A T3 tool that asks the person waits for as long as they take, and Claude Code's tool-call
+// clock keeps running while it waits: neither an open elicitation nor progress stops it, and at
+// the limit it ends the call. So the limit is the longest a timer holds, about 24.8 days, and
+// the server bounds the time each call works itself (`McpToolDeadline`).
+export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 2 ** 31 - 1;
 
 // allowedTools pre-approves calls; tools controls availability. Pre-approve T3 tools for headless modes,
 // limited to annotated read-only tools in read-only sandboxes.
@@ -6211,8 +6213,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-  // `onElicitation` shows T3 Code's own requests and passes on the person's answer to each.
-  yield* mcpSessions.showsApprovalRequests(adapterOptions.instanceId);
+  // `onElicitation` holds T3 Code's own requests open until each has ended in the thread.
+  yield* mcpSessions.holdsApprovalRequests(adapterOptions.instanceId);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const { attachmentsDir, fileSystem, path, random, idAllocator, queryRunner } = adapterOptions;
@@ -9796,7 +9798,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly requestKind: OrchestrationV2RuntimeRequest["kind"];
           readonly prompt?: string;
           readonly appName?: string;
-          readonly pushHooks?: ProviderApprovalPushHooks | undefined;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
           readonly presentation?: ReturnType<typeof claudeApprovalPresentation>;
 
@@ -9890,7 +9891,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestKind: input.requestKind as ProviderRequestKind,
                   ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
                   ...(input.appName === undefined ? {} : { appName: input.appName }),
-                  ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
                   ...(input.options === undefined ? {} : { options: input.options }),
                   ...input.presentation,
                 }
@@ -13599,19 +13599,41 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // request was dismissed and may be asked another way.
             return { action: "cancel" } satisfies ElicitationResult;
           }
-          // T3's own tools leave what they ask with the thread's MCP session while they wait.
-          // A request is T3's when it is one of those, whatever a server calls itself.
+          // T3 Code shows its own request in the thread and records the answer itself, so one
+          // arriving here is held until that request ends and answered as it ended, never from
+          // an earlier answer. The CLI passes on its id as the display description; one that
+          // passes on none is matched by its words.
           const ownRequest =
             request.serverName === CLAUDE_T3_MCP_SERVER
-              ? yield* mcpSessions.findApprovalRequest(context.input.threadId, request.message)
+              ? yield* mcpSessions.ownApprovalRequest(context.input.threadId, {
+                  id: request.description,
+                  message: request.message,
+                })
               : undefined;
+          if (ownRequest !== undefined) {
+            if (context.heldRootFrames.length > 0) {
+              yield* releaseHeldRootFrames(context);
+            }
+            const answer = yield* Effect.raceFirst(
+              mcpSessions.awaitApprovalAnswer(context.input.threadId, ownRequest.id),
+              // Closing the query aborts the signal.
+              Effect.callback<"cancelled">((resume) => {
+                const aborted = () => resume(Effect.succeed("cancelled"));
+                if (callbackOptions.signal.aborted) return aborted();
+                callbackOptions.signal.addEventListener("abort", aborted, { once: true });
+                return Effect.sync(() =>
+                  callbackOptions.signal.removeEventListener("abort", aborted),
+                );
+              }),
+            );
+            return answer === "accepted"
+              ? acceptance
+              : ({
+                  action: answer === "declined" ? "decline" : "cancel",
+                } satisfies ElicitationResult);
+          }
           const grantKey = `${request.serverName}\u0000${request.message}`;
-          // T3 Code asks only when a person has to answer, so its own request is never answered
-          // from an earlier answer and offers none to remember.
-          if (
-            ownRequest === undefined &&
-            (yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)
-          ) {
+          if ((yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)) {
             return acceptance;
           }
           // The CLI waits on this answer, so a turn held for its prompt echo
@@ -13629,16 +13651,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeRequestId,
             requestKind: "mcp-elicitation",
             prompt: request.message,
-            // T3 Code asking is the app itself, so there is no other app to name.
-            ...(ownRequest === undefined
-              ? { appName: request.displayName ?? request.title ?? request.serverName }
-              : { pushHooks: ownRequest.pushHooks }),
-            options:
-              ownRequest === undefined
-                ? CLAUDE_MCP_ELICITATION_OPTIONS
-                : CLAUDE_MCP_ELICITATION_OPTIONS.filter(
-                    (option) => option.decision !== "acceptForSession",
-                  ),
+            appName: request.displayName ?? request.title ?? request.serverName,
+            options: CLAUDE_MCP_ELICITATION_OPTIONS,
           });
           const decision = yield* Deferred.make<ClaudeApprovalResponse>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -13708,21 +13722,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
             });
           }
-          // The person's answer in the app is what T3 Code's own request goes by, so it is
-          // left with the request before the CLI carries a reply back.
-          if (ownRequest !== undefined) {
-            yield* mcpSessions.answerApprovalRequests(
-              context.input.threadId,
-              request.message,
-              resolved === "accept" || resolved === "acceptForSession",
-            );
-          }
           if (resolved === "acceptForSession") {
-            if (ownRequest === undefined) {
-              yield* Ref.update(mcpElicitationSessionGrants, (current) =>
-                new Set(current).add(grantKey),
-              );
-            }
+            yield* Ref.update(mcpElicitationSessionGrants, (current) =>
+              new Set(current).add(grantKey),
+            );
             return acceptance;
           }
           // Never null: the SDK reads null as answered out of band and leaves

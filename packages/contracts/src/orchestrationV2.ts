@@ -78,6 +78,7 @@ import {
   ProviderApprovalDecision,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalPushHooks,
+  ProviderApprovalToolAction,
   ProviderApprovalOption,
   ProviderInteractionMode,
   ProviderRequestKind,
@@ -1430,6 +1431,11 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
       type: Schema.Literal("live"),
       providerSessionId: ProviderSessionId,
       supportsFeedback: Schema.optional(Schema.Boolean),
+      /**
+       * T3 Code raised this request itself and one of its own tools reads the answer from this
+       * record, so the answer is kept here and nothing is sent to the provider session.
+       */
+      recordOnly: Schema.optional(Schema.Boolean),
     }),
     Schema.Struct({ type: Schema.Literal("message") }),
     Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
@@ -2019,6 +2025,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
     pushHooks: Schema.optional(ProviderApprovalPushHooks),
+    toolAction: Schema.optional(ProviderApprovalToolAction),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
@@ -2921,6 +2928,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
     pushHooks: Schema.optional(ProviderApprovalPushHooks),
+    toolAction: Schema.optional(ProviderApprovalToolAction),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
@@ -4060,6 +4068,23 @@ const OrchestrationV2InternalCommand = Schema.Union([
     preview: AgentFeedbackPreview,
     conversationTrace: Schema.optionalKey(AgentFeedbackTrace),
     feedbackStatus: AgentFeedbackRequestStatus,
+  }),
+  /**
+   * Shows an approval one of T3 Code's own tools asks for, in a thread whose provider client
+   * cannot be asked. Internal so no client can raise a request in the server's name; the person
+   * answers it with `runtime-request.respond` like any other approval.
+   */
+  Schema.Struct({
+    type: Schema.Literal("approval_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    /** The root of the run that asks. */
+    nodeId: NodeId,
+    requestId: RuntimeRequestId,
+    prompt: Schema.String,
+    toolAction: ProviderApprovalToolAction,
+    pushHooks: Schema.optional(ProviderApprovalPushHooks),
   }),
   /**
    * Records or updates a link an agent asked the user to make. Internal so no

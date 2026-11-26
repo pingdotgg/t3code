@@ -2797,6 +2797,99 @@ it("shows T3 Code's push hooks approval as its own question and another server's
   expect(onRespondToApproval).toHaveBeenLastCalledWith(otherRequest, "decline");
 });
 
+it("shows a tool's request to act outside the thread as one question with what it names", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const options = [
+    { decision: "cancel" as const, label: "Cancel" },
+    { decision: "decline" as const, label: "Decline" },
+    { decision: "accept" as const, label: "Approve" },
+  ];
+  const mergeRequest = RuntimeRequestId.make("merge-approval");
+  const createRequest = RuntimeRequestId.make("create-approval");
+  const approvals: PendingApproval[] = [
+    {
+      requestId: mergeRequest,
+      requestKind: "mcp-elicitation",
+      createdAt: fixture.time(6),
+      detail: "Merge pull request #5 in other-org/other-repo? (request 1a2b3c4d)",
+      toolAction: {
+        tool: "pull_request_merge",
+        action: "Merge",
+        target: "pull request #5",
+        repository: "other-org/other-repo",
+        host: "github.com",
+        otherRepository: true,
+      },
+      options,
+      responseCapability: "live",
+    },
+    {
+      requestId: createRequest,
+      requestKind: "mcp-elicitation",
+      createdAt: fixture.time(7),
+      detail:
+        "Push tools and open a pull request in org/repo, running this repository's hook file .husky/pre-push (contents 7b6cd23a)? (request 5e6f7a8b)",
+      toolAction: {
+        tool: "pull_request_create",
+        action: "Push tools and open",
+        target: "a pull request",
+        repository: "org/repo",
+      },
+      pushHooks: { branch: "tools", files: [".husky/pre-push"], commands: [] },
+      options,
+      responseCapability: "live",
+    },
+  ];
+  const onRespondToApproval = vi.fn(async () => {});
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={approvals}
+      canOperateThread
+      onRespondToApproval={onRespondToApproval}
+    />,
+  );
+  const rowsOf = (card: Element, detail: string) => {
+    const details = card.querySelector(`[data-approval-detail="${detail}"]`)!;
+    return [...details.querySelectorAll("dt")].map((term, index) => [
+      term.textContent,
+      details.querySelectorAll("dd")[index]!.textContent,
+    ]);
+  };
+
+  const cards = screen.getByRole("group", { name: "Approval to act outside this thread" });
+  const merge = cards.filter({ hasText: "Merge pull request #5?" });
+  await expect.element(merge).toBeVisible();
+  // The request's own name is for telling requests apart, not for the person.
+  expect(merge.element().textContent).not.toMatch(/request 1a2b3c4d/);
+  expect(rowsOf(merge.element(), "tool-action")).toEqual([
+    ["Location", "github.com/other-org/other-repo"],
+    ["Tool", "pull_request_merge"],
+  ]);
+  await expect
+    .element(merge.getByText("This is not the repository of this thread's project."))
+    .toBeVisible();
+  await merge.getByRole("button", { name: "Decline", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(mergeRequest, "decline");
+
+  // A push and the hooks it runs are one card with one answer.
+  const create = cards.filter({ hasText: "Push tools and open a pull request?" });
+  await expect.element(create).toBeVisible();
+  expect(rowsOf(create.element(), "tool-action")).toEqual([
+    ["Location", "org/repo"],
+    ["Tool", "pull_request_create"],
+  ]);
+  expect(rowsOf(create.element(), "push-hooks")).toEqual([
+    ["Branch", "tools"],
+    ["Hook file", ".husky/pre-push"],
+  ]);
+  expect(create.element().textContent).not.toContain("not the repository");
+  await create.getByRole("button", { name: "Approve", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(createRequest, "accept");
+});
+
 it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {
   setup();
   const fixture = makeStreamingTimelineFixture();

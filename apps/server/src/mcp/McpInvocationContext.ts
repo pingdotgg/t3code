@@ -79,6 +79,19 @@ export const LINK_EXPIRES_AT_HEADER = "t3-link-expires-at";
  */
 export const SENDER_THREAD_HEADER = "t3-sender-thread";
 
+/**
+ * `T3-Outside-Action: describe` or `approved <request>`, read only from a linked client: a call
+ * that acts outside a thread, made for a thread below Full access in the linking environment,
+ * where the person is asked. See `McpToolAccess.actsOutsideThread`.
+ */
+export const OUTSIDE_ACTION_HEADER = "t3-outside-action";
+
+/**
+ * `T3-Outside-Actions: describe` answers a linked client: this environment describes such a call
+ * when asked to and acts only on an approved one. One that does not say so is never sent either.
+ */
+export const DESCRIBES_OUTSIDE_ACTIONS_HEADER = "t3-outside-actions";
+
 export interface ClientModes {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -157,6 +170,8 @@ export interface McpInvocationScope {
   readonly linkedEnvironments?: boolean;
   /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */
   readonly agentFeedback?: AgentFeedbackMode;
+  /** What a linked client's `T3-Outside-Action` asks of a call that acts outside a thread. */
+  readonly outsideAction?: "describe" | { readonly approved: string } | undefined;
   /** The broadest runtime mode an administrator lets a thread run in here. Unset is full access. */
   readonly runtimeModeCeiling?: RuntimeMode | undefined;
   /** True while Labs → Workflows is on here; `/mcp` reads it per request. Unset is off. */

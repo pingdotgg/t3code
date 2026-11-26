@@ -115,6 +115,10 @@ const T3_MCP_SERVER_ALIASES = new Set([
   "t3_code_direct",
 ]);
 
+/** Whether an MCP server name a provider reports is one T3 Code's own server is registered under. */
+export const isT3McpServerName = (server: string): boolean =>
+  T3_MCP_SERVER_ALIASES.has(server.trim().toLowerCase());
+
 const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   link_pull_request: tool(
     ["Link", "Linking", "Linked", "a pull request"],
@@ -444,6 +448,36 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));
+
+/**
+ * The tools T3 Code itself asks the person about on every call below Full access, in a request
+ * that names what the call would do. A provider client that asks about tool calls on its own
+ * leaves these to that request, so the person is asked once.
+ */
+export const T3_MCP_TOOLS_ASKED_BY_T3: ReadonlyArray<string> = [
+  "pull_request_create",
+  "pull_request_update",
+  "pull_request_respond",
+  "pull_request_review",
+  "pull_request_merge",
+  "ci_rerun",
+  "create_issue",
+  "comment_on_issue",
+  "set_issue_state",
+];
+
+/**
+ * The `_meta` key under which T3 Code's MCP server names its own approval request in the
+ * elicitation it sends for one, and under which a provider adapter reads it back.
+ */
+export const T3_APPROVAL_REQUEST_META = "t3.codes/approval-request";
+
+/** The approval request an elicitation's `_meta` names, if it names one. */
+export const t3ApprovalRequestId = (meta: unknown): string | undefined => {
+  if (typeof meta !== "object" || meta === null) return undefined;
+  const id = (meta as Readonly<Record<string, unknown>>)[T3_APPROVAL_REQUEST_META];
+  return typeof id === "string" ? id : undefined;
+};
 
 function normalizeT3McpToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();

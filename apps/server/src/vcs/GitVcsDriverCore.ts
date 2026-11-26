@@ -4445,6 +4445,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const pushAddresses: GitVcsDriver.GitVcsDriver["Service"]["pushAddresses"] = Effect.fn(
+    "pushAddresses",
+  )(function* (cwd, remoteName) {
+    const listed = (yield* runGitStdout("GitVcsDriver.pushAddresses", cwd, [
+      "remote",
+      "get-url",
+      "--push",
+      "--all",
+      "--",
+      remoteName,
+    ]))
+      .split("\n")
+      .filter((url) => url !== "");
+    // Git prints one address a line and quotes nothing, so an address that holds a newline
+    // reads as two. The configured values are counted apart from each other by NUL.
+    const configured = (key: string) =>
+      runGitStdout(
+        "GitVcsDriver.pushAddresses.configured",
+        cwd,
+        ["config", "--null", "--get-all", `remote.${remoteName}.${key}`],
+        true,
+      ).pipe(Effect.map((stdout) => stdout.split("\0").filter((url) => url !== "").length));
+    const count = (yield* configured("pushurl")) || (yield* configured("url"));
+    if (count !== listed.length) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.pushAddresses",
+          cwd,
+          args: ["remote", "get-url", "--push", "--all", "--", remoteName],
+        }),
+        detail: `The remote ${remoteName} has a push address that cannot be read as one line.`,
+      });
+    }
+    return listed.map(GitVcsDriver.pushAddress);
+  });
+
   const resolvePushTarget: GitVcsDriver.GitVcsDriver["Service"]["resolvePushTarget"] = Effect.fn(
     "resolvePushTarget",
   )(function* (cwd, current) {
@@ -4476,13 +4512,53 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
+    // An approved push names its commit, so one made since is not sent with it, and is checked
+    // against where this push goes as the last step before Git is started.
+    const approved = options?.approved;
+    const source = approved?.head ?? "HEAD";
+    // An approved push writes the one branch to the one remote the person was asked about,
+    // whatever Git's configuration says about pushing submodules or tags along with it.
+    const onlyThere = approved === undefined ? [] : ["--recurse-submodules=no", "--no-follow-tags"];
+    const notAsApproved = new GitCommandError({
+      ...gitCommandContext({ operation: "GitVcsDriver.pushCurrentBranch", cwd, args: ["push"] }),
+      detail: "The branch or where it is pushed changed after the push was approved.",
+      cause: new GitVcsDriver.PushNotAsApprovedError(),
+    });
+    const asApproved = Effect.fnUntraced(function* (
+      to: { readonly remoteName: string; readonly branchName: string } | null,
+    ) {
+      if (approved === undefined) return;
+      if (
+        to === null ||
+        branch !== approved.branch ||
+        to.remoteName !== approved.remoteName ||
+        to.branchName !== approved.remoteBranch
+      ) {
+        return yield* notAsApproved;
+      }
+      // Read here, not taken from the caller's earlier look: the name alone does not say where.
+      const urls = yield* pushAddresses(cwd, to.remoteName);
+      if (urls.length !== approved.urls.length || urls.some((url, i) => url !== approved.urls[i]))
+        return yield* notAsApproved;
+    });
+    // Nothing is sent, and nothing counts as already there, unless the branch is at that commit.
+    if (approved !== undefined) {
+      const head = yield* runGitStdout("GitVcsDriver.pushCurrentBranch.head", cwd, [
+        "rev-parse",
+        "--verify",
+        "HEAD^{commit}",
+      ]);
+      if (head.trim() !== approved.head) return yield* notAsApproved;
+    }
+
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = resolvePublishBranchName(branch, requestedRemoteName);
+      yield* asApproved({ remoteName: requestedRemoteName, branchName: publishBranch });
       yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
-        ["push", "--", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        ["push", ...onlyThere, "--", requestedRemoteName, `${source}:refs/heads/${publishBranch}`],
         { timeoutMs: null, pushes: true },
       );
       return {
@@ -4495,6 +4571,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const hasNoLocalDelta = details.aheadCount === 0 && details.behindCount === 0;
     const destination = yield* resolvePushDestination(cwd, branch, details.hasUpstream);
+    // Before anything is taken as already there: that is said of this destination too.
+    yield* asApproved(destination);
     if (hasNoLocalDelta && details.hasUpstream) {
       if (!destination?.pushRemote) {
         // A local upstream and a separate push URL both leave the publish destination unchecked.
@@ -4599,7 +4677,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? "GitVcsDriver.pushCurrentBranch.pushOwnBranch"
           : "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
-        ["push", "--", remoteName, `HEAD:refs/heads/${publishBranch}`],
+        ["push", ...onlyThere, "--", remoteName, `${source}:refs/heads/${publishBranch}`],
         { timeoutMs: null, pushes: true },
       );
       return {
@@ -4614,7 +4692,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
-        ["push", "--", destination.remoteName, `HEAD:refs/heads/${destination.branchName}`],
+        [
+          "push",
+          ...onlyThere,
+          "--",
+          destination.remoteName,
+          `${source}:refs/heads/${destination.branchName}`,
+        ],
         { timeoutMs: null, pushes: true },
       );
       return {
@@ -7817,6 +7901,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }),
     pushHooks,
     resolvePushTarget,
+    pushAddresses,
     pushCurrentBranch: Effect.fnUntraced(function* (cwd, fallbackBranch, options) {
       return yield* withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options));
     }),

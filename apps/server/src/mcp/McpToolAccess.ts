@@ -1,8 +1,12 @@
 import {
   type EnvironmentId,
+  isRuntimeModeAbove,
   type OrchestrationV2LinkOrigin,
+  type OrchestrationV2ThreadShell,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  ProviderApprovalPushHooks,
+  type ProviderApprovalToolAction,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
@@ -12,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import type * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
@@ -22,6 +27,11 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import {
+  hashToolInput,
+  MAX_KEPT_APPROVAL_REQUESTS,
+} from "@t3tools/provider-core/server/McpProviderSessions";
+
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import {
   assertFullAccessNamingLink,
@@ -29,7 +39,10 @@ import {
   assertSameLink,
   callerLinkOrigin,
 } from "./linkOrigin.ts";
+import type { AwaitingApproval } from "./awaitingApproval.ts";
+import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpThreadApproval from "./McpThreadApproval.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
   assertBroadestAccess,
@@ -55,6 +68,7 @@ let declare: <P, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
   remote: RemoteCheck<P> | undefined,
   forwarded?: Forwarded<P, A, E, R>,
+  viaLink?: ViaLink<P>,
 ) => Declaration<(params: P) => Effect.Effect<A, E, R>>;
 
 /**
@@ -77,6 +91,22 @@ let forwardedOf: <Handler>(
   declaration: Declaration<Handler>,
 ) => Forwarded<never, unknown, unknown, unknown> | undefined;
 
+/** One call on its way to a linked environment. */
+interface LinkedCall<A, E, R> {
+  readonly environmentId: EnvironmentId;
+  /** The name the user gave the linked environment. */
+  readonly label: string;
+  /** Sends the call there, as it is or as one step of asking about it. */
+  readonly send: (outsideAction?: LinkedOutsideAction) => Effect.Effect<A, E, R>;
+}
+
+/** Replaces the plain sending of a call to a linked environment, for a tool that asks first. */
+type ViaLink<P> = <A, E, R>(
+  params: P,
+  link: LinkedCall<A, E, R>,
+) => Effect.Effect<A, E | OrchestratorMcpFailure, R | Effect.Services<typeof writingCaller>>;
+let viaLinkOf: <Handler>(declaration: Declaration<Handler>) => ViaLink<never> | undefined;
+
 type CheckedHandlerOf<D> = D extends Declaration<infer Handler> ? Handler : never;
 
 interface CheckedHandler extends Struct.Lambda {
@@ -94,25 +124,30 @@ export class Declaration<out Handler> {
   readonly #handle: Handler;
   readonly #remote: RemoteCheck<never> | undefined;
   readonly #forwarded: Forwarded<never, unknown, unknown, unknown> | undefined;
+  readonly #viaLink: ViaLink<never> | undefined;
   private constructor(
     token: typeof builtHere,
     handle: Handler,
     remote: RemoteCheck<never> | undefined,
     forwarded: Forwarded<never, unknown, unknown, unknown> | undefined,
+    viaLink: ViaLink<never> | undefined,
   ) {
     refuseOutsideConstruction(token);
     this.#handle = handle;
     this.#remote = remote;
     this.#forwarded = forwarded;
+    this.#viaLink = viaLink;
   }
   static {
-    declare = (handle, remote, forwarded) =>
+    declare = (handle, remote, forwarded, viaLink) =>
       new Declaration(
         builtHere,
         handle,
         remote,
         forwarded as Forwarded<never, unknown, unknown, unknown> | undefined,
+        viaLink as ViaLink<never> | undefined,
       );
+    viaLinkOf = (declaration) => declaration.#viaLink;
     checkedHandler = Struct.lambda<CheckedHandler>((declaration) => declaration.#handle);
     remoteCheckOf = (declaration) => declaration.#remote;
     forwardedOf = (declaration) => declaration.#forwarded;
@@ -167,6 +202,30 @@ export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A,
   );
 
 /**
+ * Acts for its own thread like `actsAsCaller`. Below Full access `plan` is given the thread and
+ * says in `asks` what the call would send out of it, as a page upload of a file from elsewhere
+ * does: the person approves that first. A call that sends nothing out runs unasked.
+ */
+export const actsAsCallerAsking = <P, A, E, R, E2, R2>(
+  tool: string,
+  plan: (
+    params: P,
+    /** The calling thread when the person is asked before `run`; a Full access call asks nobody. */
+    asked: OrchestrationV2ThreadShell | undefined,
+  ) => Effect.Effect<Planned<A, E, R, OutsideAction | undefined>, E2, R2>,
+) =>
+  declare(
+    (params: P) =>
+      Effect.gen(function* () {
+        yield* requireThreadCaller;
+        const caller = yield* writingCaller;
+        const thread = hasFullAccess(caller) ? undefined : caller.caller;
+        return yield* runApproved(caller, tool, params, () => plan(params, thread));
+      }),
+    undefined,
+  );
+
+/**
  * Changes something that belongs to no thread, such as a pending upload or a
  * scheduled task. Work a linked environment started may not: none of it
  * carries the link's origin, so none of it is that link's.
@@ -214,10 +273,358 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
   declare(
     (params: P) =>
       writingCaller.pipe(
-        Effect.tap((caller) => assertNotLinked(caller, "start work here that is not its link's")),
+        Effect.tap((caller) => assertNotLinked(caller, startsOutsideWork)),
         Effect.flatMap(() => handle(params)),
       ),
     () => writingCaller,
+  );
+
+/**
+ * What a tool is about to do outside its thread: a write to a forge with the user's login, or a
+ * file of theirs sent to a page. The person asked to approve it reads these words. The server
+ * writes the sentence; a name that comes from the call's arguments, a repository or a page is
+ * put in it with `quoted`, as data.
+ */
+export interface OutsideAction extends Omit<ProviderApprovalToolAction, "tool"> {
+  /** What else the approval covers, ending the question: the hooks a push would run. */
+  readonly also?: string | undefined;
+  readonly pushHooks?: ProviderApprovalPushHooks | undefined;
+  /**
+   * What the approval is for beyond what the words carry whole, such as full commit ids. Never
+   * shown. An answer counts only while this and every word above read the same, so whatever
+   * the action depends on belongs in one of the two.
+   */
+  readonly binds?: unknown;
+}
+
+// Drawn as nothing or as a space, or reordering what follows: controls, format characters,
+// unassigned and private-use code points, lone surrogates, every space but U+0020, and the
+// marks Unicode says to draw as nothing, such as the combining grapheme joiner.
+const UNSEEN =
+  /[\p{C}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\ufffc]/gu;
+
+/** `text` on one line with nothing in it a screen would hide, and no longer than `max`. */
+const visible = (text: string, max: number) => {
+  const seen = Array.from(
+    text.replace(UNSEEN, (character) => `\\u{${character.codePointAt(0)!.toString(16)}}`),
+  );
+  return seen.length > max ? `${seen.slice(0, max).join("")}…` : seen.join("");
+};
+
+/**
+ * A value the server did not write, as it goes into a question: in quotation marks, on one
+ * line, cut at `max` characters, with any character a screen would hide written out as its code
+ * point. It reads as a name inside the sentence and never as more of the sentence.
+ */
+export const quoted = (value: string, max = 120) =>
+  `"${visible(value.replace(/[\\"]/g, "\\$&"), max)}"`;
+
+/** Whether `quoted` shows all of `value`, for a name a person must see whole to approve. */
+export const quotedWhole = (value: string, max = 120) =>
+  quoted(value, max) === quoted(value, Number.POSITIVE_INFINITY);
+
+const SHOWN_SENTENCE = {
+  action: 600,
+  target: 600,
+  repository: 200,
+  host: 200,
+  origin: 200,
+} as const;
+
+/**
+ * Whether the question names in full what the call would do. Its sentence is the server's own
+ * words with names set into them, so one too long to show has left some of it out.
+ */
+const shownWhole = (asks: OutsideAction) =>
+  (Object.keys(SHOWN_SENTENCE) as ReadonlyArray<keyof typeof SHOWN_SENTENCE>).every((part) => {
+    const text = asks[part];
+    return text === undefined || visible(text, SHOWN_SENTENCE[part]) === visible(text, Infinity);
+  });
+
+/** The last check on every word a person is shown, whatever the handler put in it. */
+const shownAction = (asks: OutsideAction): OutsideAction => ({
+  ...asks,
+  action: visible(asks.action, SHOWN_SENTENCE.action),
+  target: visible(asks.target, SHOWN_SENTENCE.target),
+  ...(asks.repository === undefined
+    ? {}
+    : { repository: visible(asks.repository, SHOWN_SENTENCE.repository) }),
+  ...(asks.host === undefined ? {} : { host: visible(asks.host, SHOWN_SENTENCE.host) }),
+  ...(asks.origin === undefined ? {} : { origin: visible(asks.origin, SHOWN_SENTENCE.origin) }),
+  ...(asks.also === undefined ? {} : { also: visible(asks.also, 2000) }),
+  ...(asks.pushHooks === undefined
+    ? {}
+    : {
+        pushHooks: {
+          branch: visible(asks.pushHooks.branch, 200),
+          files: asks.pushHooks.files.map((file) => visible(file, 400)),
+          commands: asks.pushHooks.commands.map(({ name, command }) => ({
+            name: visible(name, 200),
+            command: visible(command, 400),
+          })),
+        },
+      }),
+});
+
+const outsideActionSentence = (asks: OutsideAction) =>
+  `${asks.action} ${asks.target}${
+    asks.repository !== undefined
+      ? ` in ${asks.repository}`
+      : asks.origin !== undefined
+        ? ` to ${asks.origin}`
+        : ""
+  }${asks.also ?? ""}`;
+
+const outsideActionRefused = (message: string) =>
+  new OrchestratorMcpFailure({ code: "capability_denied", message });
+
+/**
+ * Full access as the rest of the server reads it: the mode itself, outside plan mode, and not
+ * above an administrator's limit, under which a thread recorded in Full access does not run in it.
+ */
+const hasFullAccess = ({ limits, scope }: Caller) =>
+  limits.runtimeMode === "full-access" &&
+  limits.interactionMode === "default" &&
+  !isRuntimeModeAbove(limits.runtimeMode, scope.runtimeModeCeiling);
+
+/**
+ * What one approval is for. Of what the call resolved to, not of how it is shown: two values
+ * that read alike once cut or written out are still two requests.
+ */
+const requestOf = (tool: string, params: unknown, resolved: OutsideAction) =>
+  hashToolInput({ tool, params, asks: resolved });
+
+const noThreadToAskIn = (sentence: string) =>
+  outsideActionRefused(
+    `Not done: "${sentence}" needs the user's approval, and this MCP client has no thread where they could be asked. Tell the user; they can do it themselves.`,
+  );
+
+/**
+ * Asks the person behind the calling thread to approve `asks`, and ends unless they did. They
+ * are asked in the thread, by a request the server raises and whose answer it records itself;
+ * `request` names what the answer is for, and an answer counts for that alone.
+ */
+const askInThread = Effect.fnUntraced(function* (
+  caller: Caller,
+  tool: string,
+  request: string,
+  asks: OutsideAction,
+) {
+  const sentence = outsideActionSentence(asks);
+  const thread = caller.scope.thread;
+  const sessions = Option.getOrUndefined(
+    yield* Effect.serviceOption(McpClientInput.McpClientInput),
+  )?.sessions;
+  if (thread === undefined || sessions === undefined) return yield* noThreadToAskIn(sentence);
+  const { also: _also, binds: _binds, pushHooks, ...named } = asks;
+  const answer = yield* McpThreadApproval.ask(caller.threads, sessions, thread, {
+    state: `${tool} ${request}`,
+    // The start of the request's own name ends the question, so two requests never read alike.
+    message: `${sentence}? (request ${hashToolInput({ request }).slice(0, 8)})`,
+    toolAction: { tool, ...named },
+    pushHooks,
+  });
+  switch (answer) {
+    case "accepted":
+      return { sentence } as const;
+    case "waiting": {
+      const awaiting: AwaitingApproval = {
+        status: "awaiting_approval",
+        next: `Not done yet: T3 Code is asking the user to approve "${sentence}" in this thread, and they have not answered. The request stays open until they answer or this turn ends. Call again with the same arguments to wait for their answer.`,
+      };
+      return { awaiting } as const;
+    }
+    case "declined":
+      return yield* outsideActionRefused(
+        `Not done: the user declined "${sentence}". Do not get the same result another way unless the user asks for it.`,
+      );
+    case "cancelled":
+      return yield* outsideActionRefused(
+        `Cancelled, nothing was done: the request to approve "${sentence}" ended without the user's answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again or getting the same result another way.`,
+      );
+    case "full":
+      return yield* outsideActionRefused(
+        `Not done: "${sentence}" needs the user's approval, and this thread already has ${MAX_KEPT_APPROVAL_REQUESTS} approval requests waiting for their answer. Call again once they have answered those.`,
+      );
+    case "no-turn":
+      return yield* outsideActionRefused(
+        `Not done: "${sentence}" needs the user's approval, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.`,
+      );
+  }
+});
+
+/**
+ * How a call made for a linked environment's thread is asked about. That environment has the
+ * person; this one has the checkout and the forge login, so only it can say what the call
+ * would do. "describe" has it say so and do nothing; `approved` names the request the person
+ * then approved there.
+ */
+export type LinkedOutsideAction = "describe" | { readonly approved: string };
+
+/** What "describe" answers with: the request and the words the other environment shows. */
+const LinkedDescription = Schema.Struct({
+  request: Schema.String,
+  asks: Schema.Struct({
+    action: Schema.String,
+    target: Schema.String,
+    repository: Schema.optional(Schema.String),
+    host: Schema.optional(Schema.String),
+    origin: Schema.optional(Schema.String),
+    also: Schema.optional(Schema.String),
+    pushHooks: Schema.optional(ProviderApprovalPushHooks),
+  }),
+});
+const LinkedDescriptionJson = Schema.fromJsonString(LinkedDescription);
+const encodeLinkedDescription = Schema.encodeSync(LinkedDescriptionJson);
+const decodeLinkedDescription = Schema.decodeUnknownOption(LinkedDescriptionJson);
+
+/** Starts the refusal that carries a description back. Never shown: the asking side reads it. */
+const LINKED_DESCRIPTION = "t3-outside-action-description ";
+
+/**
+ * Below Full access, ends unless the person approved exactly this: the tool, its arguments and
+ * what they resolved to; then returns the request they approved. Anything that differs on a
+ * later call is another request, and asks again.
+ */
+const personApproves = Effect.fnUntraced(function* (
+  caller: Caller,
+  tool: string,
+  params: unknown,
+  resolved: OutsideAction,
+) {
+  // A linked environment calls for a thread of its own, and asks the person there.
+  const linked = caller.scope.client?.linked === true ? caller.scope.outsideAction : undefined;
+  // Asked to describe, it only describes, whatever the caller's access.
+  if (linked !== "describe" && hasFullAccess(caller)) return;
+  if (!shownWhole(resolved)) {
+    return yield* outsideActionRefused(
+      "Not done: what this call would do is too long to show the user in full, so they cannot be asked to approve it. Tell the user; they can do it themselves.",
+    );
+  }
+  const asks = shownAction(resolved);
+  const sentence = outsideActionSentence(asks);
+  const request = requestOf(tool, params, resolved);
+  if (caller.scope.thread !== undefined) {
+    const answer = yield* askInThread(caller, tool, request, asks);
+    if ("awaiting" in answer) return { awaiting: answer.awaiting } as const;
+    return { approved: { request, sentence } } as const;
+  }
+  if (linked === "describe") {
+    const { binds: _binds, ...shown } = asks;
+    return yield* outsideActionRefused(
+      `${LINKED_DESCRIPTION}${encodeLinkedDescription({ request, asks: shown })}`,
+    );
+  }
+  if (linked !== undefined) {
+    if (linked.approved === request) return { approved: { request, sentence } } as const;
+    return yield* outsideActionRefused(
+      `Not done: what "${sentence}" would do changed while the user was asked. Call again to ask.`,
+    );
+  }
+  return yield* noThreadToAskIn(sentence);
+});
+
+interface Planned<A, E, R, Asks> {
+  readonly asks: Asks;
+  readonly run: Effect.Effect<A, E, R>;
+}
+
+/**
+ * Runs what `plan` resolved once the person approved what it asks. They take as long as they
+ * like to answer, so what runs is read again after the answer, and only if it is still what
+ * they were asked about.
+ */
+const runApproved = Effect.fnUntraced(function* <A, E, R, E2, R2>(
+  caller: Caller,
+  tool: string,
+  params: unknown,
+  // Called for each reading, so one a handler builds eagerly is still read twice.
+  plan: () => Effect.Effect<Planned<A, E, R, OutsideAction | undefined>, E2, R2>,
+) {
+  const planned = yield* plan();
+  if (planned.asks === undefined) return yield* planned.run;
+  const answer = yield* personApproves(caller, tool, params, planned.asks);
+  if (answer === undefined) return yield* planned.run;
+  // Still theirs to answer: the call ends without failing, and the request stays in the thread.
+  if ("awaiting" in answer) return answer.awaiting;
+  const { approved } = answer;
+  const now = yield* plan();
+  if (now.asks === undefined || requestOf(tool, params, now.asks) !== approved.request) {
+    return yield* outsideActionRefused(
+      `Not done: what "${approved.sentence}" would do changed while the user was asked. Call again to ask.`,
+    );
+  }
+  return yield* now.run;
+});
+
+const startsOutsideWork = "start work here that is not its link's";
+
+const isMcpFailure = Schema.is(OrchestratorMcpFailure);
+
+const LINKED_DID_NOT_DESCRIBE =
+  "Stopped: the user approves this action first, and the linked environment answered without saying what it would do. Tell the user, and do not call again.";
+
+/**
+ * A call bound for a linked environment. Below Full access that environment first says what
+ * the call would do and does nothing; the person is asked about that here; and the call goes
+ * again naming the request they approved, which is carried out only if it still resolves to it.
+ */
+const askedViaLink = Effect.fnUntraced(function* <A, E, R>(
+  tool: string,
+  params: unknown,
+  link: LinkedCall<A, E, R>,
+) {
+  const caller = yield* writingCaller;
+  if (hasFullAccess(caller)) return yield* link.send();
+  const refusal = yield* Effect.flip(link.send("describe")).pipe(
+    // Only an environment that says it describes is sent this, so it never acts on it.
+    Effect.orElseSucceed(() => outsideActionRefused(LINKED_DID_NOT_DESCRIBE)),
+  );
+  const described =
+    isMcpFailure(refusal) && refusal.message.startsWith(LINKED_DESCRIPTION)
+      ? Option.getOrUndefined(
+          decodeLinkedDescription(refusal.message.slice(LINKED_DESCRIPTION.length)),
+        )
+      : undefined;
+  // Any other refusal is that environment's own, and is the answer.
+  if (described === undefined) return yield* Effect.fail(refusal as E | OrchestratorMcpFailure);
+  const there = shownAction(described.asks);
+  const answer = yield* askInThread(
+    caller,
+    tool,
+    hashToolInput({ params, environmentId: link.environmentId, request: described.request }),
+    { ...there, target: `${there.target} (in linked environment ${quoted(link.label)})` },
+  );
+  // A tool asked about this way says in its result type that it may still be waiting.
+  if ("awaiting" in answer) return answer.awaiting as A;
+  return yield* link.send({ approved: described.request });
+});
+
+/**
+ * Acts outside the thread with the user's own access, as a forge write does. Below Full access
+ * the person approves first. `plan` checks the arguments and resolves all the action depends
+ * on into `asks`; `run` acts on that and compares anything it must read again, doing nothing
+ * when it differs. A call that turns out to do nothing outside asks nothing.
+ */
+export const actsOutsideThread = <P, A, E, R, E2, R2>(
+  tool: string,
+  plan: (
+    params: P,
+    /** `asked`: the person is asked before `run`, so what a full-access call skips is read. */
+    caller: { readonly asked: boolean },
+  ) => Effect.Effect<Planned<A, E, R, OutsideAction | undefined>, E2, R2>,
+) =>
+  declare(
+    (params: P) =>
+      Effect.gen(function* () {
+        const caller = yield* writingCaller;
+        yield* assertNotLinked(caller, startsOutsideWork);
+        const asked = !hasFullAccess(caller);
+        return yield* runApproved(caller, tool, params, () => plan(params, { asked }));
+      }),
+    () => writingCaller,
+    undefined,
+    (params, link) => askedViaLink(tool, params, link),
   );
 
 export const writesThreads = <P, A, E, R>(
@@ -482,10 +889,18 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
         yield* (remote as RemoteCheck<typeof params>)(params);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;
-        const result = yield* forwarding.value.call(scope, tool, target, {
-          ...params,
-          environmentId,
-        });
+        const { call, label } = forwarding.value;
+        const send = (outsideAction?: LinkedOutsideAction) =>
+          call(scope, tool, target, { ...params, environmentId }, outsideAction);
+        const viaLink = viaLinkOf(declaration) as ViaLink<typeof params> | undefined;
+        const result =
+          viaLink === undefined
+            ? yield* send()
+            : yield* viaLink(params, {
+                environmentId: target,
+                label: yield* label(target),
+                send,
+              });
         return forwarded === undefined ? result : yield* forwarded(params, target, result);
       });
   }

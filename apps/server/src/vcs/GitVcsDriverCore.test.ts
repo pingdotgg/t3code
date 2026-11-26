@@ -11156,6 +11156,161 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       return { cwd: NodeFS.realpathSync(cwd), driver, ran, push, hooksRun };
     });
 
+    it.effect("a push approved as named sends that commit there, or nothing", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
+        const urls = yield* repo.driver.pushAddresses(repo.cwd, "origin");
+        const approved = {
+          branch: "topic",
+          head,
+          remoteName: "origin",
+          remoteBranch: "topic",
+          urls,
+        };
+        const push = (named: typeof approved) =>
+          repo.driver.pushCurrentBranch(repo.cwd, null, { approved: named });
+        const remoteRefs = git(repo.cwd, ["ls-remote", "origin"]);
+
+        // Somewhere else, another branch or another commit than was approved: nothing moves.
+        for (const other of [
+          { ...approved, remoteName: "fork" },
+          { ...approved, remoteBranch: "main" },
+          { ...approved, branch: "other" },
+          { ...approved, urls: ["https://example.com/org/elsewhere.git"] },
+          { ...approved, head: "0".repeat(40) },
+        ]) {
+          const refused = yield* push(other).pipe(Effect.flip);
+          assert.instanceOf(refused.cause, GitVcsDriver.PushNotAsApprovedError);
+          assert.equal(yield* remoteRefs, "");
+        }
+
+        assert.deepInclude(yield* push(approved), { status: "pushed" });
+        assert.equal(yield* remoteRefs, `${head}\trefs/heads/topic`);
+
+        // A commit made since: neither sent, nor passed off as already there.
+        NodeFS.writeFileSync(NodePath.join(repo.cwd, "later.txt"), "later\n");
+        yield* git(repo.cwd, ["add", "later.txt"]);
+        yield* git(repo.cwd, ["commit", "-m", "Later"]);
+        const moved = yield* push(approved).pipe(Effect.flip);
+        assert.instanceOf(moved.cause, GitVcsDriver.PushNotAsApprovedError);
+        // Even once the branch and its upstream agree on the newer commit.
+        yield* git(repo.cwd, ["push", "-u", "origin", "topic"]);
+        const agreed = yield* push(approved).pipe(Effect.flip);
+        assert.instanceOf(agreed.cause, GitVcsDriver.PushNotAsApprovedError);
+      }),
+    );
+
+    it.effect("a push approved for elsewhere is refused even when the branch is up to date", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
+        yield* git(repo.cwd, ["push", "-u", "origin", "topic"]);
+        const approved = {
+          branch: "topic",
+          head,
+          remoteName: "origin",
+          remoteBranch: "topic",
+          urls: yield* repo.driver.pushAddresses(repo.cwd, "origin"),
+        };
+        const push = (named: typeof approved) =>
+          repo.driver.pushCurrentBranch(repo.cwd, null, { approved: named });
+        for (const other of [
+          { ...approved, remoteName: "fork" },
+          { ...approved, remoteBranch: "main" },
+          { ...approved, urls: ["https://example.com/org/elsewhere.git"] },
+        ]) {
+          const refused = yield* push(other).pipe(Effect.flip);
+          assert.instanceOf(refused.cause, GitVcsDriver.PushNotAsApprovedError);
+        }
+        assert.deepInclude(yield* push(approved), { status: "skipped_up_to_date" });
+      }),
+    );
+
+    it.effect("a remote's push addresses are read one each, or not at all", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const elsewhere = yield* makeTmpDir("git-hooked-elsewhere-");
+        yield* git(repo.cwd, ["remote", "set-url", "--add", "--push", "origin", elsewhere]);
+        yield* git(repo.cwd, ["remote", "set-url", "--add", "--push", "origin", `${elsewhere}-2`]);
+        assert.deepEqual(yield* repo.driver.pushAddresses(repo.cwd, "origin"), [
+          elsewhere,
+          `${elsewhere}-2`,
+        ]);
+        // One address that reads as those two lines is not passed off as them.
+        yield* git(repo.cwd, [
+          "config",
+          "--replace-all",
+          "remote.origin.pushurl",
+          `${elsewhere}\n${elsewhere}-2`,
+        ]);
+        const refused = yield* repo.driver.pushAddresses(repo.cwd, "origin").pipe(Effect.flip);
+        assert.include(refused.detail, "cannot be read as one line");
+      }),
+    );
+
+    it.effect("a push approved as named does not push submodules along with it", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const as = ["-c", "user.email=test@example.com", "-c", "user.name=Test"];
+        const local = ["-c", "protocol.file.allow=always"];
+        // A submodule with a remote of its own, and a commit that remote does not have.
+        const subRemote = yield* makeTmpDir("git-submodule-remote-");
+        yield* git(subRemote, ["init", "--bare"]);
+        const seed = yield* makeTmpDir("git-submodule-seed-");
+        yield* git(seed, ["init"]);
+        NodeFS.writeFileSync(NodePath.join(seed, "a.txt"), "a\n");
+        yield* git(seed, ["add", "a.txt"]);
+        yield* git(seed, [...as, "commit", "-m", "First"]);
+        yield* git(seed, ["push", subRemote, "HEAD:refs/heads/main"]);
+        yield* git(repo.cwd, [...local, "submodule", "add", "-b", "main", subRemote, "sub"]);
+        const sub = NodePath.join(repo.cwd, "sub");
+        NodeFS.writeFileSync(NodePath.join(sub, "b.txt"), "b\n");
+        yield* git(sub, ["add", "b.txt"]);
+        yield* git(sub, [...as, "commit", "-m", "Unpublished"]);
+        yield* git(repo.cwd, ["add", "sub", ".gitmodules"]);
+        yield* git(repo.cwd, [...as, "commit", "-m", "Add submodule"]);
+        yield* git(repo.cwd, ["config", "push.recurseSubmodules", "on-demand"]);
+        const subRemoteHead = git(repo.cwd, ["ls-remote", subRemote, "refs/heads/main"]);
+        const before = yield* subRemoteHead;
+
+        const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
+        const pushed = yield* repo.driver.pushCurrentBranch(repo.cwd, null, {
+          approved: {
+            branch: "topic",
+            head,
+            remoteName: "origin",
+            remoteBranch: "topic",
+            urls: yield* repo.driver.pushAddresses(repo.cwd, "origin"),
+          },
+        });
+        assert.deepInclude(pushed, { status: "pushed" });
+        assert.equal(yield* subRemoteHead, before);
+      }),
+    );
+
+    it.effect("a push approved as named does not publish tags along with it", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const as = ["-c", "user.email=test@example.com", "-c", "user.name=Test"];
+        // An annotated tag on the commit, which Git would send along when told to follow tags.
+        yield* git(repo.cwd, [...as, "tag", "-a", "v1", "-m", "Release"]);
+        yield* git(repo.cwd, ["config", "push.followTags", "true"]);
+        const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
+        const pushed = yield* repo.driver.pushCurrentBranch(repo.cwd, null, {
+          approved: {
+            branch: "topic",
+            head,
+            remoteName: "origin",
+            remoteBranch: "topic",
+            urls: yield* repo.driver.pushAddresses(repo.cwd, "origin"),
+          },
+        });
+        assert.deepInclude(pushed, { status: "pushed" });
+        assert.equal(yield* git(repo.cwd, ["ls-remote", "origin"]), `${head}\trefs/heads/topic`);
+      }),
+    );
+
     it.effect("an approved push runs the approved hook files and no other", () =>
       Effect.gen(function* () {
         const repo = yield* repoToPush();

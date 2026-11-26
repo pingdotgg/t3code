@@ -26,6 +26,7 @@ import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
   summarizeT3ToolCalls,
+  t3ToolResultAwaitsApproval,
   t3ToolResultIndicatesFailure,
   type T3ToolSummaryCall,
 } from "@t3tools/client-runtime/t3ToolSummary";
@@ -307,7 +308,14 @@ export function resolveWorkEntryToolPresentation(
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
   return resolveT3McpToolPresentation(
     definition,
-    definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
+    !definition
+      ? status
+      : t3ToolResultIndicatesFailure(workEntryToolOutput(entry))
+        ? "failed"
+        : // The call is over while its request waits in the thread, so the row reads as under way.
+          t3ToolResultAwaitsApproval(workEntryToolOutput(entry))
+          ? "inProgress"
+          : status,
     entry.toolData,
     resolve,
   );

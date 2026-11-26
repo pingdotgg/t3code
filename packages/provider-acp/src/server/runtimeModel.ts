@@ -1292,11 +1292,15 @@ export function withTrackedPermissionToolCall(
   tracked: AcpToolCallState | undefined,
 ): EffectAcpSchema.RequestPermissionRequest {
   if (tracked === undefined) return params;
-  const { title, kind, rawInput } = params.toolCall;
+  const { title, kind, rawInput, _meta } = params.toolCall;
   return {
     ...params,
     toolCall: {
       ...params.toolCall,
+      // Where the agent names the call's MCP server, as Kiro does.
+      ...(_meta === undefined && isRecord(tracked.data.meta)
+        ? { _meta: tracked.data.meta as NonNullable<typeof _meta> }
+        : {}),
       ...(title === undefined && typeof tracked.data.title === "string"
         ? { title: tracked.data.title }
         : {}),

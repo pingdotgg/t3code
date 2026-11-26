@@ -5238,28 +5238,437 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const pushed = runGit(repoDir, ["ls-remote", "origin", "refs/heads/feature/hooked"]).pipe(
         Effect.map((result) => result.stdout.trim() !== ""),
       );
-      const { manager } = yield* makeManager({
+      const { manager, providerCalls } = yield* makeManager({
         providerScenario: { ...host, prListSequence: [[], [], [], []] },
       });
-      const create = (pushHooks?: { readonly approvedDigest: string | null } | "off") =>
+      /** A create by a caller that asks nobody. */
+      const create = () =>
         manager.createPullRequest({
           cwd: repoDir,
           projectId: ProjectId.make("project-1"),
           title: "Feature",
           body: "Body",
-          pushHooks,
           ...(host.privateRemote === undefined ? {} : { private: true }),
         });
       const isRefusedForHooks = Schema.is(GitManager.GitPushHooksUnapprovedError);
-      /** The create that was refused for its hooks, as the caller that asks would read it. */
-      const refused = (pushHooks: { readonly approvedDigest: string | null }) =>
-        create(pushHooks).pipe(
+      const opening = (input: { readonly private?: boolean; readonly baseBranch?: string } = {}) =>
+        manager.pullRequestOpening({
+          cwd: repoDir,
+          ...(host.privateRemote === undefined ? {} : { private: true }),
+          ...input,
+        });
+      /** A create held to what `approved` names, as a caller that asked a person makes it. */
+      const createApproved = (approved: GitManager.PullRequestOpening) =>
+        manager.createPullRequest({
+          cwd: repoDir,
+          projectId: ProjectId.make("project-1"),
+          title: "Feature",
+          body: "Body",
+          approved,
+          ...(host.privateRemote === undefined ? {} : { private: true }),
+        });
+      /** The approved create that was refused as its push would start, for its hooks. */
+      const refusedForHooks = (approved: GitManager.PullRequestOpening) =>
+        createApproved(approved).pipe(
           Effect.flip,
           Effect.filterOrElse(isRefusedForHooks, (error) =>
             Effect.die(new Error(`Expected a refusal for the hooks, got ${error.message}`)),
           ),
         );
-      return { repoDir, remoteDir, writeHook, hooksRun, pushed, create, refused };
+      const remoteHead = runGit(repoDir, ["ls-remote", "origin", "refs/heads/feature/hooked"]).pipe(
+        Effect.map((result) => result.stdout.split("\t")[0] ?? ""),
+      );
+      const commit = Effect.fn(function* (file: string) {
+        NodeFS.writeFileSync(NodePath.join(repoDir, file), `${file}\n`);
+        yield* runGit(repoDir, ["add", file]);
+        yield* runGit(repoDir, ["commit", "-m", `Add ${file}`]);
+        return (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      });
+      return {
+        repoDir,
+        remoteDir,
+        writeHook,
+        hooksRun,
+        pushed,
+        create,
+        refusedForHooks,
+        opening,
+        createApproved,
+        remoteHead,
+        commit,
+        providerCalls,
+      };
+    });
+
+    describe("held to what a person approved", () => {
+      const CHANGED =
+        "The branch, its commits, its base or where it is pushed changed after the user was asked. Nothing was pushed. Call again to ask.";
+
+      it.effect("names the commit, where it goes, the base and the hooks, and does that", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          repo.writeHook("pre-push");
+          const head = (yield* runGit(repo.repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+          const approved = yield* repo.opening();
+          expect(approved).toMatchObject({
+            branch: "feature/hooked",
+            head,
+            baseBranch: "main",
+            push: { remoteName: "origin", remoteBranch: "feature/hooked", urls: [repo.remoteDir] },
+          });
+          expect(approved.push?.hooks?.files).toHaveLength(1);
+          expect(repo.hooksRun()).toEqual([]);
+          expect(yield* repo.pushed).toBe(false);
+
+          yield* repo.createApproved(approved);
+          expect(repo.hooksRun()).toContain("pre-push");
+          expect(yield* repo.remoteHead).toBe(head);
+        }),
+      );
+
+      it.effect("a commit made after the approval is not pushed with it", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          const approved = yield* repo.opening();
+          yield* repo.commit("later.txt");
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+          expect(yield* repo.pushed).toBe(false);
+        }),
+      );
+
+      it.effect("an approval to open without a push never pushes", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          const before = yield* repo.remoteHead;
+          const approved = yield* repo.opening();
+          expect(approved.push).toBeNull();
+
+          // The commit makes a push necessary; nobody was asked about one.
+          yield* repo.commit("later.txt");
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+          expect(yield* repo.remoteHead).toBe(before);
+        }),
+      );
+
+      it.effect.each([
+        [
+          "another branch checked out",
+          (repoDir: string) => runGit(repoDir, ["checkout", "-b", "feature/other"]),
+        ],
+        [
+          "the remote pointed somewhere else",
+          (repoDir: string) =>
+            Effect.flatMap(createBareRemote(), (elsewhere) =>
+              runGit(repoDir, ["remote", "set-url", "origin", elsewhere]),
+            ),
+        ],
+        [
+          "a push remote set for the branch",
+          (repoDir: string) =>
+            Effect.gen(function* () {
+              yield* runGit(repoDir, ["remote", "add", "fork", yield* createBareRemote()]);
+              yield* runGit(repoDir, ["config", "branch.feature/hooked.pushRemote", "fork"]);
+            }),
+        ],
+        [
+          "the branch's base changed",
+          (repoDir: string) =>
+            runGit(repoDir, ["config", "branch.feature/hooked.gh-merge-base", "release"]).pipe(
+              Effect.andThen(runGit(repoDir, ["branch", "release", "main"])),
+            ),
+        ],
+      ] as const)("%s after the approval pushes nothing", ([, change]) =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          const approved = yield* repo.opening();
+          yield* change(repo.repoDir);
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+          expect(yield* repo.pushed).toBe(false);
+          const remotes = (yield* runGit(repo.repoDir, ["remote"])).stdout.split("\n");
+          for (const remote of remotes.filter((name) => name !== "")) {
+            const heads = yield* runGit(repo.repoDir, ["ls-remote", "--heads", remote]);
+            expect(heads.stdout).not.toContain("feature/");
+          }
+          // Nor to where the remote led when the person was asked.
+          const original = yield* runGit(repo.repoDir, ["ls-remote", "--heads", repo.remoteDir]);
+          expect(original.stdout).not.toContain("feature/");
+        }),
+      );
+
+      it.effect(
+        "an approved push opens the pull request from the branch it pushed, whatever the branch tracks by then",
+        () =>
+          Effect.gen(function* () {
+            const repo = yield* hookedRepo();
+            yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+            const head = yield* repo.commit("second.txt");
+            // Another branch of the remote already holds the commit.
+            yield* runGit(repo.repoDir, ["push", "origin", "feature/hooked:feature/elsewhere"]);
+            // While the push runs, the branch is made to track that other branch.
+            NodeFS.writeFileSync(
+              NodePath.join(repo.repoDir, ".husky", "pre-push"),
+              "#!/bin/sh\ngit config branch.feature/hooked.merge refs/heads/feature/elsewhere\n",
+              { mode: 0o755 },
+            );
+            const approved = yield* repo.opening();
+            expect(approved.push).toMatchObject({
+              remoteName: "origin",
+              remoteBranch: "feature/hooked",
+            });
+
+            yield* repo.createApproved(approved);
+            expect(yield* repo.remoteHead).toBe(head);
+            expect(
+              (yield* runGit(repo.repoDir, [
+                "config",
+                "branch.feature/hooked.merge",
+              ])).stdout.trim(),
+            ).toBe("refs/heads/feature/elsewhere");
+            expect(created(repo.providerCalls).map((call) => call.headSelector)).toEqual([
+              "feature/hooked",
+            ]);
+          }),
+      );
+
+      it.effect(
+        "another branch checked out while the approved push runs opens nothing, and says the push was made",
+        () =>
+          Effect.gen(function* () {
+            const repo = yield* hookedRepo();
+            const head = (yield* runGit(repo.repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+            NodeFS.writeFileSync(
+              NodePath.join(repo.repoDir, ".husky", "pre-push"),
+              "#!/bin/sh\ngit checkout --quiet -b feature/other\n",
+              { mode: 0o755 },
+            );
+            const refused = yield* repo.createApproved(yield* repo.opening()).pipe(Effect.flip);
+            expect(refused.message).toContain(
+              "The branch was pushed as the user approved, but another branch was checked out before the pull request was opened, so none was opened. Call again to ask.",
+            );
+            expect(refused.message).not.toContain("Nothing was pushed");
+            expect(yield* repo.remoteHead).toBe(head);
+            expect(created(repo.providerCalls)).toEqual([]);
+          }),
+      );
+
+      it.effect("an approval to open without a push is for the branch its remote has", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          yield* runGit(repo.repoDir, ["push", "origin", "feature/hooked:feature/elsewhere"]);
+          const approved = yield* repo.opening();
+          expect(approved).toMatchObject({ push: null, headRef: "origin/feature/hooked" });
+
+          // The same commit, tracked from another branch of the remote: another pull request.
+          yield* runGit(repo.repoDir, ["fetch", "origin"]);
+          yield* runGit(repo.repoDir, [
+            "branch",
+            "--set-upstream-to=origin/feature/elsewhere",
+            "feature/hooked",
+          ]);
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+        }),
+      );
+
+      it.effect(
+        "a branch that tracks a local branch is not offered an opening without a push",
+        () =>
+          Effect.gen(function* () {
+            const repo = yield* hookedRepo();
+            // Up to date with the local branch it tracks, which says nothing of what a remote has.
+            yield* runGit(repo.repoDir, ["branch", "release"]);
+            yield* runGit(repo.repoDir, ["branch", "--set-upstream-to=release", "feature/hooked"]);
+            const refused = yield* repo.opening().pipe(Effect.flip);
+            expect(refused.message).toContain(
+              "feature/hooked tracks a local branch, so Git does not say which published branch a pull request would be opened from. Nothing was done.",
+            );
+            expect(yield* repo.pushed).toBe(false);
+          }),
+      );
+
+      it.effect(
+        "an approval to open from a branch behind its remote is for what the remote has",
+        () =>
+          Effect.gen(function* () {
+            const repo = yield* hookedRepo();
+            yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+            const local = (yield* runGit(repo.repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+            // Someone else pushes to the branch, and the checkout fetches it without moving.
+            const pushOther = Effect.fn(function* (file: string) {
+              const other = yield* makeTempDir("t3code-git-manager-other-");
+              yield* runGit(other, ["clone", "--branch", "feature/hooked", repo.remoteDir, "."]);
+              yield* runGit(other, ["config", "user.email", "test@example.com"]);
+              yield* runGit(other, ["config", "user.name", "Test"]);
+              NodeFS.writeFileSync(NodePath.join(other, file), `${file}\n`);
+              yield* runGit(other, ["add", file]);
+              yield* runGit(other, ["commit", "-m", file]);
+              yield* runGit(other, ["push", "origin", "feature/hooked"]);
+              yield* runGit(repo.repoDir, ["fetch", "origin"]);
+              return (yield* runGit(other, ["rev-parse", "HEAD"])).stdout.trim();
+            });
+            const theirs = yield* pushOther("theirs.txt");
+            const approved = yield* repo.opening();
+            expect(approved).toMatchObject({ push: null, head: local, headRefCommit: theirs });
+
+            // The remote's branch moves again after the approval.
+            yield* pushOther("later.txt");
+            const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+            expect(refused.message).toContain(CHANGED);
+          }),
+      );
+
+      it.effect("a push address is named without anything a URL may carry beside it", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, [
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            "https://user:secret@example.com/org/repo.git?token=secret#secret",
+          ]);
+          const approved = yield* repo.opening();
+          expect(approved.push?.urls).toEqual(["https://example.com/org/repo.git"]);
+          expect(approved.key).not.toContain("secret");
+        }),
+      );
+
+      it.effect(
+        "a private push is refused when its remote leads elsewhere after the approval",
+        () =>
+          Effect.gen(function* () {
+            const companionDir = yield* createBareRemote();
+            const elsewhere = yield* createBareRemote();
+            // The host is asked for the companion a second time only by the second create below.
+            let asked = 0;
+            const repo = yield* hookedRepo({
+              privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
+              onPrivateRemote: () => void (asked += 1),
+            });
+            // A first private opening leaves the companion as the branch's push remote.
+            yield* repo.createApproved(yield* repo.opening());
+            const remoteName = (yield* runGit(repo.repoDir, [
+              "config",
+              "branch.feature/hooked.pushRemote",
+            ])).stdout.trim();
+            const before = (yield* runGit(repo.repoDir, ["ls-remote", "--heads", companionDir]))
+              .stdout;
+            yield* repo.commit("later.txt");
+            const approved = yield* repo.opening();
+            // Its address changes after the person was asked.
+            yield* runGit(repo.repoDir, ["remote", "set-url", "--push", remoteName, elsewhere]);
+            const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+            expect(refused.message).toContain("does not push only to");
+            expect((yield* runGit(repo.repoDir, ["ls-remote", "--heads", elsewhere])).stdout).toBe(
+              "",
+            );
+            expect(
+              (yield* runGit(repo.repoDir, ["ls-remote", "--heads", companionDir])).stdout,
+            ).toBe(before);
+            expect(asked).toBeGreaterThan(0);
+          }),
+      );
+
+      it.effect("a private push goes to a remote that pushes to the companion alone", () =>
+        Effect.gen(function* () {
+          const companionDir = yield* createBareRemote();
+          const elsewhere = yield* createBareRemote();
+          const repo = yield* hookedRepo({
+            privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
+          });
+          // A remote that fetches from the companion and pushes somewhere else.
+          yield* runGit(repo.repoDir, ["remote", "add", "mirror", companionDir]);
+          yield* runGit(repo.repoDir, ["remote", "set-url", "--push", "mirror", elsewhere]);
+          const approved = yield* repo.opening();
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(
+            "does not push only to pingdotgg/codething-mvp.private",
+          );
+          for (const remote of [companionDir, elsewhere]) {
+            const heads = yield* runGit(repo.repoDir, ["ls-remote", "--heads", remote]);
+            expect(heads.stdout).toBe("");
+          }
+        }),
+      );
+
+      it.effect("reading what it would do runs none of the repository's hooks", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          // The remote moves on, so the status read's refresh has refs to update.
+          const other = yield* makeTempDir("t3code-git-manager-other-");
+          yield* runGit(other, ["clone", "--branch", "feature/hooked", repo.remoteDir, "."]);
+          yield* runGit(other, ["config", "user.email", "test@example.com"]);
+          yield* runGit(other, ["config", "user.name", "Test"]);
+          NodeFS.writeFileSync(NodePath.join(other, "theirs.txt"), "theirs\n");
+          yield* runGit(other, ["add", "theirs.txt"]);
+          yield* runGit(other, ["commit", "-m", "Theirs"]);
+          yield* runGit(other, ["push", "origin", "feature/hooked"]);
+          repo.writeHook("reference-transaction");
+          repo.writeHook("pre-push");
+
+          yield* repo.opening();
+          expect(repo.hooksRun()).toEqual([]);
+        }),
+      );
+
+      it.effect("hooks that cannot be read do not stop an opening that pushes nothing", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          // Mode bits do not keep an administrator or a Windows user out.
+          if ((yield* HostProcess.Platform) === "win32" || process.getuid?.() === 0) return;
+          repo.writeHook("pre-push");
+          const hooksDir = NodePath.join(repo.repoDir, ".husky");
+          NodeFS.chmodSync(hooksDir, 0o000);
+          yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.chmodSync(hooksDir, 0o755)));
+          const approved = yield* repo.opening();
+          expect(approved.push).toBeNull();
+          yield* repo.createApproved(approved);
+
+          // With a push to make, they have to be readable to be asked about.
+          yield* repo.commit("later.txt");
+          const unreadable = yield* repo.opening().pipe(Effect.flip);
+          expect(unreadable.message).toContain("Could not read the repository's push hooks.");
+        }),
+      );
+
+      it.effect("a private opening is a push to the companion, made only once approved", () =>
+        Effect.gen(function* () {
+          const companionDir = yield* createBareRemote();
+          let asked = 0;
+          const repo = yield* hookedRepo({
+            privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
+            onPrivateRemote: () => void (asked += 1),
+          });
+          // The branch is on the public remote already; a private one is pushed all the same.
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          const approved = yield* repo.opening();
+          expect(approved.push).toMatchObject({ remoteName: null, urls: [] });
+          // The host makes the companion when asked for it, so reading asks for none.
+          expect(asked).toBe(0);
+
+          const head = yield* repo.commit("later.txt");
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+          expect(asked).toBe(0);
+
+          const again = yield* repo.opening();
+          expect(again.head).toBe(head);
+          yield* repo.createApproved(again);
+          const companionHeads = yield* runGit(repo.repoDir, [
+            "ls-remote",
+            "--heads",
+            companionDir,
+          ]);
+          expect(companionHeads.stdout).toContain(`${head}\trefs/heads/feature/hooked`);
+        }),
+      );
     });
 
     it.effect("runs them for a caller that needs no approval", () =>
@@ -5277,13 +5686,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const repo = yield* hookedRepo();
         repo.writeHook("pre-push");
         repo.writeHook("reference-transaction");
-        const unapproved = yield* repo.refused({ approvedDigest: null });
-        expect(unapproved).toMatchObject({
-          _tag: "GitPushHooksUnapprovedError",
-          branch: "feature/hooked",
-          commands: [],
-        });
-        expect(unapproved.files.map((file) => NodeFS.realpathSync(file))).toEqual([
+        const asked = yield* repo.opening();
+        expect(asked.push?.hooks?.commands).toEqual([]);
+        expect(asked.push?.hooks?.files.map((file) => NodeFS.realpathSync(file))).toEqual([
           NodePath.join(NodeFS.realpathSync(repo.repoDir), ".husky", "pre-push"),
           NodePath.join(NodeFS.realpathSync(repo.repoDir), ".husky", "reference-transaction"),
         ]);
@@ -5291,7 +5696,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(yield* repo.pushed).toBe(false);
 
         // Approved as they are: both run, and the branch is pushed.
-        yield* repo.create({ approvedDigest: unapproved.digest });
+        yield* repo.createApproved(asked);
         expect(repo.hooksRun()).toEqual(
           expect.arrayContaining(["pre-push", "reference-transaction"]),
         );
@@ -5304,7 +5709,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       () =>
         Effect.gen(function* () {
           const companionDir = yield* createBareRemote();
-          // The hook is edited after the early look, so the refusal comes as the push would start.
+          // The hook is edited after the checkout was compared with what was approved, so the
+          // refusal comes as the push would start.
           const late = { edit: () => {} };
           const repo = yield* hookedRepo({
             privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
@@ -5323,26 +5729,24 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             Effect.map((result) => result.stdout.trim()),
           );
           repo.writeHook("pre-push");
-          const first = yield* repo.refused({ approvedDigest: null });
-          expect(yield* pushRemote).toBeNull();
-
+          const first = yield* repo.opening();
           late.edit = () => repo.writeHook("pre-push", "edited");
-          const second = yield* repo.refused({ approvedDigest: first.digest });
-          expect(second.digest).not.toBe(first.digest);
+          const refused = yield* repo.refusedForHooks(first);
+          expect(refused).toMatchObject({ branch: "feature/hooked", commands: [] });
+          expect(refused.digest).not.toBe(first.push?.hooks?.digest);
           expect(yield* pushRemote).toBeNull();
 
           // One the person had set is put back.
           yield* runGit(repo.repoDir, ["config", "branch.feature/hooked.pushRemote", "origin"]);
           late.edit = () => repo.writeHook("pre-push", "edited again");
-          yield* repo.refused({ approvedDigest: second.digest });
+          yield* repo.refusedForHooks(yield* repo.opening());
           expect(yield* pushRemote).toBe("origin");
           expect(yield* companionHeads).toBe("");
           expect(repo.hooksRun()).toEqual([]);
 
           // A push that starts keeps the companion as where the branch goes.
           late.edit = () => {};
-          const third = yield* repo.refused({ approvedDigest: null });
-          yield* repo.create({ approvedDigest: third.digest });
+          yield* repo.createApproved(yield* repo.opening());
           expect(yield* pushRemote).toBe("pingdotgg");
           expect(yield* companionHeads).toContain("refs/heads/feature/hooked");
         }),
@@ -5352,23 +5756,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       Effect.gen(function* () {
         const repo = yield* hookedRepo();
         repo.writeHook("pre-push");
-        const first = yield* repo.refused({ approvedDigest: null });
+        const approved = yield* repo.opening();
         repo.writeHook("pre-push", "edited");
-        const second = yield* repo.refused({ approvedDigest: first.digest });
-        expect(second.digest).not.toBe(first.digest);
+        const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+        expect(refused.message).toContain("changed after the user was asked. Nothing was pushed.");
+        expect((yield* repo.opening()).push?.hooks?.digest).not.toBe(approved.push?.hooks?.digest);
         expect(repo.hooksRun()).toEqual([]);
         expect(yield* repo.pushed).toBe(false);
-      }),
-    );
-
-    it.effect("pushes with hooks off when asked to", () =>
-      Effect.gen(function* () {
-        const repo = yield* hookedRepo();
-        repo.writeHook("pre-push");
-        repo.writeHook("reference-transaction");
-        yield* repo.create("off");
-        expect(repo.hooksRun()).toEqual([]);
-        expect(yield* repo.pushed).toBe(true);
       }),
     );
 
@@ -5392,8 +5786,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       Effect.gen(function* () {
         const repo = yield* hookedRepo();
         const lateHookRan = addsHookDuringPush(repo);
-        // No hook to run, so no approval is needed.
-        yield* repo.create({ approvedDigest: null });
+        // Approved with no hook to run.
+        yield* repo.createApproved(yield* repo.opening());
         expect(yield* repo.pushed).toBe(true);
         expect(
           NodeFS.existsSync(NodePath.join(repo.repoDir, ".husky", "reference-transaction")),
@@ -5551,6 +5945,28 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(actions).toMatchObject([
         { repository: "pingdotgg/codething-mvp", number: 7, action: "draft" },
       ]);
+
+      // Under an approval to open one, a pull request already open is handed back as it is.
+      const untouched: Array<PullRequestActionInput> = [];
+      const asked = yield* makeManager({
+        providerScenario: { prListSequence: [[open], [open], [open], [open]] },
+        pullRequests: {
+          summary: () => Effect.succeed({ isDraft: false } as never),
+          runAction: (action) => Effect.sync(() => void untouched.push(action)),
+        },
+      });
+      const approved = yield* asked.manager.pullRequestOpening({ cwd: repoDir });
+      expect(approved).toMatchObject({ push: null, headRef: "origin/feature/unpushed" });
+      const handedBack = yield* asked.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
+        draft: true,
+        approved,
+      });
+      expect(handedBack).toMatchObject({ status: "opened_existing", number: 7 });
+      expect(untouched).toEqual([]);
 
       // A draft of a PR the host does not list yet fails, so a retry drafts it.
       const unlisted = yield* makeManager({

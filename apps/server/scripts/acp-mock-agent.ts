@@ -48,6 +48,11 @@ const emitBackgroundToolDuringAnswer =
 const emitMcpToolApprovalElicitation =
   process.env.T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION === "1";
 const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
+// The id of a T3 Code approval request, passed on in `_meta` as an agent forwards its MCP
+// server's elicitation.
+const elicitationT3ApprovalRequest = process.env.T3_ACP_ELICITATION_T3_APPROVAL_REQUEST;
+// The MCP server whose tool call the elicitation is tied to, as an agent that names one does.
+const elicitationToolCallServer = process.env.T3_ACP_ELICITATION_TOOL_CALL_SERVER;
 const elicitationSchema = process.env.T3_ACP_ELICITATION_SCHEMA;
 const decodeElicitationSchema = Schema.decodeUnknownSync(
   Schema.fromJsonString(AcpSchema.ElicitationSchema),
@@ -1877,8 +1882,24 @@ const program = Effect.gen(function* () {
       }
 
       if (emitElicitation || emitMcpToolApprovalElicitation) {
+        const elicitingToolCallId = "tool-call-eliciting";
+        if (elicitationToolCallServer !== undefined) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: elicitingToolCallId,
+              title: `${elicitationToolCallServer}.ask`,
+              kind: "other",
+              status: "in_progress",
+              rawInput: { server: elicitationToolCallServer, tool: "ask", arguments: {} },
+              _meta: { is_mcp_tool_call: true },
+            },
+          });
+        }
         const response = yield* agent.client.elicit({
           sessionId: requestedSessionId,
+          ...(elicitationToolCallServer === undefined ? {} : { toolCallId: elicitingToolCallId }),
           message: "Approve this request?",
           mode: "form",
           requestedSchema: elicitationSchema
@@ -1889,8 +1910,17 @@ const program = Effect.gen(function* () {
                   approved: { type: "boolean", title: "Approved" },
                 },
               },
-          ...(emitMcpToolApprovalElicitation
-            ? { _meta: { codex_approval_kind: "mcp_tool_call" } }
+          ...(emitMcpToolApprovalElicitation || elicitationT3ApprovalRequest !== undefined
+            ? {
+                _meta: {
+                  ...(emitMcpToolApprovalElicitation
+                    ? { codex_approval_kind: "mcp_tool_call" }
+                    : {}),
+                  ...(elicitationT3ApprovalRequest === undefined
+                    ? {}
+                    : { "t3.codes/approval-request": elicitationT3ApprovalRequest }),
+                },
+              }
             : {}),
         });
         if (elicitationResponseLogPath)

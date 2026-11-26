@@ -70,6 +70,11 @@ export function t3ToolResultIndicatesFailure(output: unknown): boolean {
   return readResult(output).failed;
 }
 
+/** The tool asked the person to approve the call and has no answer yet: nothing ran, nothing failed. */
+export function t3ToolResultAwaitsApproval(output: unknown): boolean {
+  return readResult(output).data?.status === "awaiting_approval";
+}
+
 function countEntities(ids: ReadonlyArray<string | undefined>): number {
   return (
     new Set(ids.filter((value) => value !== undefined)).size +
@@ -106,7 +111,12 @@ export function summarizeT3ToolCalls(
     return {
       input: readInput(call.input),
       output: result.data,
-      outcome: result.failed ? ("failed" as const) : call.outcome,
+      outcome: result.failed
+        ? ("failed" as const)
+        : // Asked and not answered yet: the call ended, and what it is for has not happened.
+          result.data?.status === "awaiting_approval"
+          ? ("unfinished" as const)
+          : call.outcome,
     };
   });
   const completed = results.filter((call) => call.outcome === "completed");

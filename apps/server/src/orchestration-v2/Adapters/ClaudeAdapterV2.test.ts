@@ -8522,109 +8522,99 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect("shows what T3 Code's own tool asks without naming a server", () =>
-      Effect.gen(function* () {
-        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
-        const sessions = yield* McpProviderSessions.McpProviderSessions;
-        const message = "Push tools and run this repository's hook file .husky/pre-push?";
-        const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
-        yield* sessions.recordApprovalRequest(harness.threadId, { message, pushHooks });
-        const cards = () =>
-          harness.events.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
-              ? [event.turnItem]
-              : [],
-          );
-        const own: ElicitationRequest = {
-          serverName: "t3-code",
-          message,
-          mode: "form",
-          requestedSchema: { type: "object", properties: {} },
-        };
+    it.effect(
+      "holds T3 Code's own request, shows no card of its own, and answers as the request ended",
+      () =>
+        Effect.gen(function* () {
+          const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
+          const message = "Merge pull request #5 in org/repo? (request 1a2b3c4d)";
+          const cards = () =>
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+                ? [event.turnItem]
+                : [],
+            );
+          const own = (id: string | undefined, text = message): ElicitationRequest => ({
+            serverName: "t3-code",
+            message: text,
+            mode: "form",
+            requestedSchema: { type: "object", properties: {} },
+            ...(id === undefined ? {} : { description: id }),
+          });
 
-        yield* elicit(own);
-        yield* awaitCard(1);
-        assert.deepInclude(cards().at(-1), { prompt: message, pushHooks });
-        assert.notProperty(cards().at(-1), "appName");
+          for (const [answer, reply] of [
+            ["accepted", { action: "accept", content: {} }],
+            ["declined", { action: "decline" }],
+            ["cancelled", { action: "cancel" }],
+          ] as const) {
+            const { id } = (yield* sessions.joinApprovalRequest(harness.threadId, {
+              message,
+              state: `state ${answer}`,
+            }))!;
+            const held = yield* elicit(own(id));
+            yield* Effect.yieldNow.pipe(Effect.repeat({ times: 20 }));
+            // The server shows the request in the thread; the adapter adds nothing to it.
+            assert.deepEqual(cards(), []);
+            assert.isUndefined(held.pollUnsafe());
+            yield* sessions.settleApprovalRequest(harness.threadId, id, answer);
+            assert.deepEqual(yield* Fiber.join(held), reply);
+            yield* sessions.forgetApprovalRequest(harness.threadId, id);
+          }
 
-        // Asked by a server T3 Code did not register: its name is shown, as for any server.
-        yield* elicit({ ...own, serverName: "deploys", displayName: "T3 Code" });
-        yield* awaitCard(2);
-        assert.deepInclude(cards().at(-1), { prompt: message, appName: "T3 Code" });
-        assert.notProperty(cards().at(-1), "pushHooks");
+          // A CLI that passes on no id is matched by the question's words.
+          const { id: worded } = (yield* sessions.joinApprovalRequest(harness.threadId, {
+            message,
+            state: "state worded",
+          }))!;
+          const byWords = yield* elicit(own(undefined));
+          yield* sessions.settleApprovalRequest(harness.threadId, worded, "accepted");
+          assert.deepEqual(yield* Fiber.join(byWords), { action: "accept", content: {} });
+          assert.deepEqual(cards(), []);
 
-        // Under T3 Code's name, but nothing T3 Code asked this thread.
-        yield* elicit({ ...own, message: "Push tools?" });
-        yield* awaitCard(3);
-        assert.deepInclude(cards().at(-1), { prompt: "Push tools?", appName: "t3-code" });
-        assert.notProperty(cards().at(-1), "pushHooks");
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+          // An id T3 Code did not give this thread is no request of its own, whatever it says.
+          yield* elicit(own("00000000-0000-4000-8000-000000000000"));
+          yield* awaitCard(1);
+          assert.deepInclude(cards().at(-1), { prompt: message, appName: "t3-code" });
+
+          // Nor is one from a server T3 Code did not register, under any name.
+          yield* elicit({ ...own(worded), serverName: "deploys", displayName: "T3 Code" });
+          yield* awaitCard(2);
+          assert.deepInclude(cards().at(-1), { prompt: message, appName: "T3 Code" });
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect("asks the person every time T3 Code's own tool asks", () =>
+    it.effect("never answers T3 Code's own request from an earlier answer for the session", () =>
       Effect.gen(function* () {
         const { harness, elicit, awaitCard } = yield* startElicitationTurn();
         const sessions = yield* McpProviderSessions.McpProviderSessions;
-        const message = "Push tools and run this repository's hook file .husky/pre-push?";
-        const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
+        const message = "Merge pull request #5 in org/repo? (request 1a2b3c4d)";
         const own: ElicitationRequest = {
           serverName: "t3-code",
           message,
           mode: "form",
           requestedSchema: { type: "object", properties: {} },
         };
-        const card = () =>
-          harness.events.findLast(
-            (event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
-          );
-
-        const firstAsked = yield* sessions.recordApprovalRequest(harness.threadId, {
-          message,
-          pushHooks,
-        });
-        const first = yield* elicit(own);
-        const firstRequest = yield* awaitCard(1);
-        // Shown, and not answered by anything but the person.
-        assert.notProperty(
-          yield* sessions.findApprovalRequest(harness.threadId, message),
-          "approved",
-        );
-        // Nothing to remember an answer by: each request is for what the hooks are then.
-        const firstCard = card();
-        assert.deepInclude(firstCard?.type === "turn_item.updated" ? firstCard.turnItem : {}, {
-          options: [
-            { decision: "cancel", label: "Cancel" },
-            { decision: "decline", label: "Decline" },
-            { decision: "accept", label: "Approve" },
-          ],
-        });
-        // A client that answers for the session anyway approves this one request.
+        // The same words, asked by T3 Code's server with no request of T3 Code's behind them,
+        // and allowed for the session.
+        const foreign = yield* elicit(own);
+        const card = yield* awaitCard(1);
         yield* harness.runtime.respondToRuntimeRequest({
-          requestId: firstRequest.id,
+          requestId: card.id,
           decision: "acceptForSession",
         });
-        assert.deepEqual(yield* Fiber.join(first), { action: "accept", content: {} });
-        // What the person answered in the app stays with the request T3 Code made.
-        assert.deepInclude(yield* sessions.takeApprovalRequest(harness.threadId, firstAsked), {
-          approved: true,
-        });
+        assert.deepEqual(yield* Fiber.join(foreign), { action: "accept", content: {} });
 
-        const secondAsked = yield* sessions.recordApprovalRequest(harness.threadId, {
+        // T3 Code's own request with those words still waits for its own answer.
+        const { id } = (yield* sessions.joinApprovalRequest(harness.threadId, {
           message,
-          pushHooks,
-        });
-        const second = yield* elicit(own);
-        const secondRequest = yield* awaitCard(2);
-        assert.isUndefined(second.pollUnsafe());
-        yield* harness.runtime.respondToRuntimeRequest({
-          requestId: secondRequest.id,
-          decision: "decline",
-        });
-        assert.deepEqual(yield* Fiber.join(second), { action: "decline" });
-        assert.deepInclude(yield* sessions.takeApprovalRequest(harness.threadId, secondAsked), {
-          approved: false,
-        });
+          state: "state",
+        }))!;
+        const held = yield* elicit({ ...own, description: id });
+        yield* Effect.yieldNow.pipe(Effect.repeat({ times: 20 }));
+        assert.isUndefined(held.pollUnsafe());
+        yield* sessions.settleApprovalRequest(harness.threadId, id, "declined");
+        assert.deepEqual(yield* Fiber.join(held), { action: "decline" });
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 

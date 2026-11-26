@@ -11,6 +11,9 @@ import {
   fullAccessOverrideExplanation,
   PUSH_HOOKS_APPROVAL_QUESTION,
   pushHooksApprovalRows,
+  TOOL_ACTION_OTHER_REPOSITORY,
+  toolActionApprovalQuestion,
+  toolActionApprovalRows,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { T, useGT, useMessages } from "gt-react-native";
 import { type ComponentRef, useRef, useState } from "react";
@@ -45,23 +48,30 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
   // T3 Code's own question reads as the app asking: a plain sentence, then what it names.
-  const { pushHooks } = props.approval;
+  // One request may name both: a push, and the hooks it runs.
+  const { pushHooks, toolAction } = props.approval;
+  const rows = [
+    ...(toolAction ? toolActionApprovalRows(toolAction, m) : []),
+    ...(pushHooks ? pushHooksApprovalRows(pushHooks, m) : []),
+  ];
   const detail =
-    !pushHooks && props.approval.detail ? approvalTextParts(props.approval.detail) : null;
+    rows.length === 0 && props.approval.detail ? approvalTextParts(props.approval.detail) : null;
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
         <T>Approval needed</T>
       </Text>
       <Text className="font-t3-bold text-lg text-foreground">
-        {pushHooks
-          ? m(PUSH_HOOKS_APPROVAL_QUESTION)
-          : (props.approval.appName ?? props.approval.requestKind)}
+        {toolAction
+          ? toolActionApprovalQuestion(toolAction)
+          : pushHooks
+            ? m(PUSH_HOOKS_APPROVAL_QUESTION)
+            : (props.approval.appName ?? props.approval.requestKind)}
       </Text>
-      {pushHooks ? (
+      {rows.length > 0 ? (
         <View className="gap-1.5">
-          {pushHooksApprovalRows(pushHooks, m).map((row, index) => (
-            // oxlint-disable-next-line react/no-array-index-key -- rows never reorder and two hooks may read alike
+          {rows.map((row, index) => (
+            // oxlint-disable-next-line react/no-array-index-key -- rows never reorder and two may read alike
             <View key={index} className="gap-0.5">
               <Text className="font-sans text-xs text-foreground-muted">{row.label}</Text>
               <Text selectable className="font-sans text-sm leading-normal text-foreground">
@@ -70,6 +80,11 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
               </Text>
             </View>
           ))}
+          {toolAction?.otherRepository ? (
+            <Text className="font-sans text-xs leading-normal text-warning-foreground">
+              {m(TOOL_ACTION_OTHER_REPOSITORY)}
+            </Text>
+          ) : null}
         </View>
       ) : detail ? (
         <>

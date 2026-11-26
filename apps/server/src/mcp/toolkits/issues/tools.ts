@@ -21,6 +21,7 @@ import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import { orAwaitingApproval } from "../../awaitingApproval.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const dependencies = [
@@ -294,7 +295,7 @@ const CreateIssueTool = Tool.make("create_issue", {
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
     assignees: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(25))),
   }),
-  success: CreateIssueResult,
+  success: orAwaitingApproval(CreateIssueResult),
   failure: IssueToolError,
   dependencies,
 })
@@ -310,7 +311,7 @@ const CommentOnIssueTool = Tool.make("comment_on_issue", {
     ...IssueTargetInput.fields,
     body: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
   }),
-  success: IssueWriteResult,
+  success: orAwaitingApproval(IssueWriteResult),
   failure: IssueToolError,
   dependencies,
 })
@@ -328,7 +329,7 @@ const SetIssueStateTool = Tool.make("set_issue_state", {
       description: "A state name from read_issue's states.",
     }),
   }),
-  success: IssueWriteResult,
+  success: orAwaitingApproval(IssueWriteResult),
   failure: IssueToolError,
   dependencies,
 })

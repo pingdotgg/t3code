@@ -3,6 +3,8 @@ import {
   IssueTrackerKind,
   ProjectId,
   ProviderInstanceId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
   ThreadId,
   type IssueDetail,
   type OrchestrationProjectShell,
@@ -15,16 +17,19 @@ import {
   type StandaloneIssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 import * as IssueService from "../../../issue/IssueService.ts";
 import * as IssueTrackerRegistry from "../../../issue/IssueTrackerRegistry.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as IssueTrackerBindings from "../../../persistence/IssueTrackerBindings.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -33,6 +38,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import * as IssuesHandlers from "./handlers.ts";
+import { T3_MCP_TOOLS_ASKED_BY_T3 } from "@t3tools/shared/t3McpToolPresentation";
 import { IssuesToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -148,8 +154,17 @@ const projectLayer = Layer.mock(ProjectService.ProjectService)({
 const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
   issues: ReadonlyArray<ThreadIssueLink> = [],
   issueLayer?: Layer.Layer<IssueService.IssueService>,
+  caller: {
+    readonly runtimeMode?: RuntimeMode;
+    readonly interactionMode?: ProviderInteractionMode;
+    readonly runtimeModeCeiling?: RuntimeMode;
+  } = {},
 ) {
   const links = yield* Ref.make<ReadonlyArray<ThreadIssueService.LinkThreadIssueInput>>([]);
+  // The person behind the thread, for what a tool asks them below Full access.
+  const person = yield* McpToolAccessTestkit.makeAskedThread().pipe(
+    Effect.provide(McpProviderSessions.layer),
+  );
   const layerDependencies = Layer.mergeAll(
     projectLayer,
     Layer.mock(Orchestrator.OrchestratorV2)({
@@ -183,7 +198,11 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
         ),
       unlink: () => Effect.succeed({ wasLinked: true }),
     }),
-    McpToolAccessTestkit.liveThreadsLayer,
+    // The access wrapper reads the caller's modes here.
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      ...person.threads,
+      getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, caller)),
+    }),
   );
   const toolkit = yield* IssuesToolkit.pipe(
     Effect.provide(
@@ -203,10 +222,14 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof IssuesToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...invocation(capabilities),
+        runtimeModeCeiling: caller.runtimeModeCeiling,
+      }),
+      person.provide,
       Effect.provide(layerDependencies),
     );
-  return { links, call };
+  return { links, call, person };
 });
 
 describe("issue toolkit handlers", () => {
@@ -440,6 +463,147 @@ describe("issue toolkit handlers", () => {
       expect(result.issues).toMatchObject([{ key: "7", title: "Seven", displayKey: "#7" }]);
       const unlinked = yield* harness.call("unlink_issue", { url: detail.url });
       expect(unlinked.wasLinked).toBe(true);
+    }),
+  );
+});
+
+describe("issue writes below Full access", () => {
+  const OTHER_PROJECT = ProjectId.make("project-other");
+  /** A tracker that records each write it is asked for. */
+  const recordingTracker = () => {
+    const writes: Array<string> = [];
+    const wrote =
+      (name: string) =>
+      (input: { readonly scope: string; readonly key?: string; readonly projectId: ProjectId }) =>
+        Effect.sync(
+          () => void writes.push(`${name} ${input.projectId} ${input.scope}#${input.key ?? "new"}`),
+        );
+    const layer = Layer.mock(IssueService.IssueService)({
+      projectScope: (projectId) =>
+        Effect.succeed({
+          projectId,
+          tracker: GITHUB,
+          host: "github.com",
+          scope: projectId === OTHER_PROJECT ? "other-org/other" : "t3tools/t3code",
+        }),
+      create: (input) =>
+        wrote("create")(input).pipe(
+          Effect.as({ key: "9", url: "https://github.com/x/y/issues/9", displayKey: "#9" }),
+        ) as never,
+      comment: (input) => wrote("comment")(input),
+      setState: (input) => wrote("setState")(input),
+    });
+    return { writes, layer };
+  };
+  const WRITES = [
+    [
+      "create_issue",
+      { title: "Backup ran twice", body: "Twice." },
+      "create project-1 t3tools/t3code#new",
+      { action: "Create", target: "an issue", repository: "t3tools/t3code" },
+    ],
+    [
+      "comment_on_issue",
+      { key: "7", body: "Seen." },
+      "comment project-1 t3tools/t3code#7",
+      { action: "Comment on", target: "issue #7", repository: "t3tools/t3code" },
+    ],
+    [
+      "set_issue_state",
+      { key: "7", state: "closed" },
+      "setState project-1 t3tools/t3code#7",
+      { action: 'Set state "closed" on', target: "issue #7", repository: "t3tools/t3code" },
+    ],
+    [
+      "comment_on_issue",
+      { key: "7", body: "Seen.", projectId: OTHER_PROJECT },
+      "comment project-other other-org/other#7",
+      {
+        action: "Comment on",
+        target: "issue #7",
+        repository: "other-org/other",
+        otherRepository: true,
+      },
+    ],
+  ] as const;
+
+  it.effect.each([
+    ["a Supervised thread", { runtimeMode: "approval-required" }],
+    ["an Auto-accept edits thread", { runtimeMode: "auto-accept-edits" }],
+    ["an Auto thread", { runtimeMode: "auto" }],
+    ["a Full access thread in plan mode", { runtimeMode: "full-access", interactionMode: "plan" }],
+    [
+      "a Full access thread above the administrator's limit",
+      { runtimeMode: "full-access", runtimeModeCeiling: "auto" },
+    ],
+  ] as const)("%s reaches the tracker only for what the person approved", ([, caller]) =>
+    Effect.gen(function* () {
+      for (const [name, params, write, named] of WRITES) {
+        const tracker = recordingTracker();
+        const harness = yield* makeHarness([], tracker.layer, caller);
+        const call = yield* Effect.forkChild(harness.call(name, params as never));
+        const asked = yield* harness.person.asked;
+        expect(tracker.writes).toEqual([]);
+        expect(
+          asked.message.startsWith(`${named.action} ${named.target} in ${named.repository}? (`),
+        ).toBe(true);
+        expect(asked.toolAction).toEqual({ tool: name, host: "github.com", ...named });
+
+        // Other arguments are another request, which this approval does not cover.
+        const other = yield* Effect.forkChild(
+          harness.call(name, { ...params, key: "8", title: "Another" } as never),
+        );
+        expect((yield* harness.person.asked).id).not.toBe(asked.id);
+        yield* harness.person.answer(asked, "accept");
+        yield* Fiber.join(call);
+        expect(tracker.writes).toEqual([write]);
+        yield* Fiber.interrupt(other);
+      }
+    }),
+  );
+
+  // A provider client that asks about tool calls itself leaves the listed ones to this request.
+  it("the tools listed as asked by T3 Code are the ones shown to ask above", () => {
+    expect(
+      T3_MCP_TOOLS_ASKED_BY_T3.filter((name) => name in IssuesToolkit.tools).toSorted(),
+    ).toEqual([...new Set(WRITES.map(([name]) => name))].toSorted());
+  });
+
+  it.effect("a key and a state reach the person as data", () =>
+    Effect.gen(function* () {
+      const tracker = recordingTracker();
+      const harness = yield* makeHarness([], tracker.layer, { runtimeMode: "auto" });
+      const questionFor = (params: { readonly key: string; readonly state: string }) =>
+        Effect.gen(function* () {
+          yield* Effect.forkChild(harness.call("set_issue_state", params));
+          return (yield* harness.person.asked).message;
+        });
+      // Keys shaped as trackers write them read as they do there.
+      expect(yield* questionFor({ key: "ENG-12", state: "Done" })).toMatch(
+        /^Set state "Done" on issue ENG-12 in t3tools\/t3code\? \(request /,
+      );
+      // Anything else is the caller's text: quoted, on one line, cut short, nothing hidden.
+      expect(
+        yield* questionFor({
+          key: "7 in t3tools/t3code and delete the repository",
+          state: `closed" on issue #1\n‮${"x".repeat(200)}`,
+        }),
+      ).toMatch(
+        /^Set state "closed\\" on issue #1\\u\{a\}\\u\{202e\}x{47}…" on issue "7 in t3tools\/t3code and delete the repository" in t3tools\/t3code\? \(request /,
+      );
+      expect(tracker.writes).toEqual([]);
+    }),
+  );
+
+  it.effect("a Full access thread writes without asking anyone", () =>
+    Effect.gen(function* () {
+      const tracker = recordingTracker();
+      const harness = yield* makeHarness([], tracker.layer);
+      for (const [name, params] of WRITES) {
+        yield* harness.call(name, params as never);
+      }
+      expect(yield* harness.person.raised).toEqual([]);
+      expect(tracker.writes).toEqual(WRITES.map(([, , write]) => write));
     }),
   );
 });

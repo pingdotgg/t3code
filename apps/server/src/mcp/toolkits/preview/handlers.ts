@@ -12,6 +12,8 @@ import {
   OrchestratorMcpFailure,
   type ToolActivityIcon,
   type ThreadId,
+  type OrchestrationV2ThreadShell,
+  type PreviewAutomationUploadInput,
   type PreviewAutomationOperation,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
@@ -34,6 +36,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { filesOutsideThread } from "./uploadPlacement.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
 /** Whether a preview the agent
@@ -189,6 +192,50 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
   return { ...recording, id: finalId, path: finalPath };
 });
 
+const invalidAct = (cause: Schema.SchemaError) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message });
+
+/** The page a tab shows, as the address bar would name where a file goes. */
+const pageOrigin = (url: string | null | undefined) => {
+  if (!url) return "a page T3 Code could not read";
+  const origin = URL.canParse(url) ? new URL(url).origin : "null";
+  // A page with no origin of its own, such as a `data:` one, is named by its address, as data.
+  return origin === "null" ? McpToolAccess.quoted(url, 200) : origin;
+};
+
+/**
+ * An upload as it is placed against the thread: `files` are the paths resolved, which are what
+ * is sent, and `asks` what leaves the thread, the files that are not its own and the page they
+ * go to. No `asks` when every file is in the thread's folders or one of its attachments.
+ */
+const uploadLeavingThread = Effect.fn("PreviewToolkit.uploadLeavingThread")(function* (
+  thread: OrchestrationV2ThreadShell,
+  upload: PreviewAutomationUploadInput,
+) {
+  const { outside, files } = yield* filesOutsideThread(thread, upload.paths);
+  if (outside.length === 0) return { files, asks: undefined };
+  const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
+  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const page = yield* broker
+    .invoke<PreviewAutomationStatus>({
+      scope,
+      operation: "status",
+      input: {},
+      timeoutMs: 500,
+      updateCurrentTab: false,
+      ...(upload.tabId === undefined ? {} : { tabId: upload.tabId }),
+    })
+    .pipe(Effect.orElseSucceed(() => null));
+  const asks: McpToolAccess.OutsideAction = {
+    action: "Upload",
+    target: outside.map((file) => McpToolAccess.quoted(file, 200)).join(", "),
+    origin: pageOrigin(page?.url),
+    // The tab too: the same page open in another one is another place to send a file.
+    binds: { files, tabId: page?.tabId ?? upload.tabId ?? null },
+  };
+  return { files, asks };
+});
+
 const handlers = {
   preview_dialog: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("dialog", input),
@@ -233,19 +280,23 @@ const handlers = {
       },
     );
   }),
-  preview_act: McpToolAccess.actsAsCaller(({ action, ...input }) =>
-    decodeActInput[action](input).pipe(
-      Effect.mapError(
-        (cause) => new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message }),
-      ),
-      Effect.flatMap((decoded) =>
-        invokeTargeted<object>(
+  preview_act: McpToolAccess.actsAsCallerAsking("preview_act", ({ action, ...input }, asked) =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeActInput[action](input).pipe(Effect.mapError(invalidAct));
+      // Below Full access an upload is placed first, and sends the files that were placed.
+      const placed =
+        action === "upload" && asked !== undefined
+          ? yield* uploadLeavingThread(asked, decoded as PreviewAutomationUploadInput)
+          : undefined;
+      return {
+        asks: placed?.asks,
+        run: invokeTargeted<object>(
           action,
-          decoded,
+          placed === undefined ? decoded : { ...decoded, paths: placed.files },
           "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
         ),
-      ),
-    ),
+      };
+    }),
   ),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(

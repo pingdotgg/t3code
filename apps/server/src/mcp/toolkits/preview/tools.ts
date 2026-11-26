@@ -23,12 +23,16 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
+import { AwaitingApproval } from "../../awaitingApproval.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as WorkspaceFolders from "../../../workspace/WorkspaceFolders.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -173,9 +177,19 @@ const PreviewActTool = browserTool(
     success: Schema.Union([
       Schema.Struct({ ...PreviewAutomationSelectResult.fields, ...presentationFields }),
       PreviewActionResult,
+      // An upload of a file that is not the thread's own, while the person is asked about it.
+      AwaitingApproval,
     ]),
     failure: PreviewToolFailure,
-    dependencies,
+    // An upload is placed against the thread's folders and attachments before it runs.
+    dependencies: [
+      ...dependencies,
+      FileSystem.FileSystem,
+      Path.Path,
+      ServerConfig.ServerConfig,
+      ProjectStore.ProjectStoreV2,
+      WorkspaceFolders.WorkspaceFolders,
+    ],
   }).annotate(Tool.Title, "Act in preview page"),
 );
 

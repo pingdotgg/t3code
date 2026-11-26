@@ -372,6 +372,40 @@ export interface PushHooks {
   readonly digest: string;
 }
 
+/** One push as a person approved it: the commit, and the branch of the remote it goes to. */
+export interface ApprovedPush {
+  readonly branch: string;
+  readonly head: string;
+  readonly remoteName: string;
+  readonly remoteBranch: string;
+  /** Every address the remote pushes to, each as `pushAddress` names it. */
+  readonly urls: ReadonlyArray<string>;
+}
+
+/**
+ * Where a push URL leads, as it is shown and compared: without the login, query or fragment a
+ * URL may carry, which can hold a credential and do not change where the push goes.
+ */
+export const pushAddress = (url: string) => {
+  if (!URL.canParse(url)) return url;
+  const parsed = new URL(url);
+  parsed.username = "";
+  parsed.password = "";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+};
+
+/** A push was about to send another branch, or send it somewhere else, than was approved. */
+export class PushNotAsApprovedError extends Schema.TaggedError<PushNotAsApprovedError>()(
+  "PushNotAsApprovedError",
+  {},
+) {
+  override get message(): string {
+    return "The push is not the one that was approved.";
+  }
+}
+
 /** A push was about to run hooks other than the ones approved; `hooks` is what would run now. */
 export class PushHooksUnapprovedError extends Schema.TaggedError<PushHooksUnapprovedError>()(
   "PushHooksUnapprovedError",
@@ -447,8 +481,20 @@ export class GitVcsDriver extends Context.Service<
     readonly pushCurrentBranch: (
       cwd: string,
       fallbackBranch: string | null,
-      options?: { readonly remoteName?: string | null },
+      options?: {
+        readonly remoteName?: string | null;
+        /**
+         * For a push a person approved as named: this commit goes to this branch of this remote,
+         * or nothing is pushed and the command fails with `PushNotAsApprovedError` as its cause.
+         */
+        readonly approved?: ApprovedPush | undefined;
+      },
     ) => Effect.Effect<GitPushResult, GitCommandError>;
+    /** Every address `remoteName` pushes to, each as `pushAddress` names it. */
+    readonly pushAddresses: (
+      cwd: string,
+      remoteName: string,
+    ) => Effect.Effect<ReadonlyArray<string>, GitCommandError>;
     /** The hooks a push from `cwd` would run now; null when it would run none. */
     readonly pushHooks: (cwd: string) => Effect.Effect<PushHooks | null, GitCommandError>;
     /** Where `pushCurrentBranch` would push the checked-out branch; null with no remote or when Git picks. */

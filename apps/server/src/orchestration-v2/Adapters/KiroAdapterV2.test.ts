@@ -808,6 +808,121 @@ describe("KiroAdapterV2", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  // T3 Code asks the person about its forge tools itself, in a request that names what the
+  // call would do. Kiro's own prompt for the same call is answered once, so they are asked once.
+  const PERMISSION_OPTIONS = [
+    { optionId: "accept", name: "Allow", kind: "allow_once" },
+    { optionId: "always-accept", name: "Always allow", kind: "allow_always" },
+    { optionId: "reject", name: "Deny", kind: "reject_once" },
+  ];
+  /** Kiro's `tool_call` for an MCP tool, then its permission request naming the call by id. */
+  const mcpPermissionFrames = (server: string, tool: string): ReadonlyArray<Frame> => [
+    update({
+      sessionUpdate: "tool_call",
+      toolCallId: "call-mcp",
+      title: `@${server}/${tool}`,
+      kind: "other",
+      status: "pending",
+      rawInput: { tool_id: `${server}::${tool}`, arguments: { number: 5 } },
+      _meta: { kiro: { serverName: server, toolOrigin: "default" } },
+    }),
+    {
+      type: "emit_inbound",
+      label: "session/request_permission",
+      frame: {
+        kind: "request",
+        method: "session/request_permission",
+        params: {
+          sessionId: SESSION_ID,
+          toolCall: { toolCallId: "call-mcp", title: `@${server}/${tool}` },
+          options: PERMISSION_OPTIONS,
+        },
+      },
+    },
+  ];
+  const permissionResult = (optionId: string): Frame => ({
+    type: "expect_outbound",
+    label: "session/request_permission.result",
+    frame: {
+      kind: "response",
+      method: "session/request_permission",
+      result: { outcome: { outcome: "selected", optionId } },
+    },
+  });
+
+  it.effect("leaves a tool T3 Code asks about to T3 Code's own request", () =>
+    runKiroScript({
+      scenario: "t3-asked-tool-permission",
+      frames: [
+        ...openSessionFrames({
+          initialize: KIRO_V3_INITIALIZE,
+          configOptions: [modeOption, autopilotOption("on")],
+        }),
+        turnPrompt,
+        ...mcpPermissionFrames("t3-code", "pull_request_merge"),
+        // Answered with Kiro's one-time choice, with no request shown for it.
+        permissionResult("accept"),
+        answer("session/prompt", { stopReason: "end_turn" }),
+        ...closeSession,
+      ],
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          const requests: Array<string> = [];
+          const turn = yield* collectTurn(
+            events.pipe(
+              Stream.tap((event) =>
+                Effect.sync(() => {
+                  if (event.type === "runtime_request.updated") {
+                    requests.push(event.runtimeRequest.status);
+                  }
+                }),
+              ),
+            ),
+          ).pipe(Effect.forkChild);
+          yield* startTurn;
+          assert.equal(terminalStatus(yield* Fiber.join(turn)), "completed");
+          assert.deepEqual(requests, []);
+        }),
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.each([
+    ["another server's tool of the same name", "github", "pull_request_merge"],
+    ["a T3 Code tool it does not ask about", "t3-code", "html_render"],
+  ] as const)("still asks the person about %s", ([, server, tool]) =>
+    runKiroScript({
+      scenario: `mcp-permission-${server}-${tool}`,
+      frames: [
+        ...openSessionFrames({
+          initialize: KIRO_V3_INITIALIZE,
+          configOptions: [modeOption, autopilotOption("on")],
+        }),
+        turnPrompt,
+        ...mcpPermissionFrames(server, tool),
+        permissionResult("reject"),
+        answer("session/prompt", { stopReason: "end_turn" }),
+        ...closeSession,
+      ],
+      drive: ({ events, startTurn, respond }) =>
+        Effect.gen(function* () {
+          const pending = yield* Deferred.make<RuntimeRequestId>();
+          const turn = yield* collectTurn(
+            events.pipe(
+              Stream.tap((event) =>
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "pending"
+                  ? Deferred.succeed(pending, event.runtimeRequest.id)
+                  : Effect.void,
+              ),
+            ),
+          ).pipe(Effect.forkChild);
+          yield* startTurn;
+          yield* respond(yield* Deferred.await(pending), "decline");
+          assert.equal(terminalStatus(yield* Fiber.join(turn)), "completed");
+        }),
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("sends a model Kiro does not list, and fails with Kiro's own message", () =>
     runKiroScript({
       scenario: "unlisted-model",
@@ -1465,6 +1580,52 @@ describe("Kiro permission policy", () => {
     assert.deepEqual(
       kiroApprovalOptions(alwaysOnly).map((option) => option.decision),
       ["acceptForSession", "decline", "cancel"],
+    );
+  });
+
+  it("answers its own prompt only for a tool Kiro itself names as one T3 Code asks about", () => {
+    const supervised = policy({ runtimeMode: "approval-required" });
+    const once = [{ optionId: "accept", name: "Allow", kind: "allow_once" as const }];
+    const request = (
+      toolCall: Partial<EffectAcpSchema.RequestPermissionRequest["toolCall"]>,
+      options: EffectAcpSchema.RequestPermissionRequest["options"] = once,
+    ): EffectAcpSchema.RequestPermissionRequest => ({
+      sessionId: "session-1",
+      toolCall: { toolCallId: "call-1", ...toolCall },
+      options,
+    });
+    const named = (server: string, toolId: string) => ({
+      rawInput: { tool_id: toolId, arguments: {} },
+      _meta: { kiro: { serverName: server } },
+    });
+    const merge = named("t3-code", "t3-code::pull_request_merge");
+    assert.equal(kiroPermissionDisposition(supervised, request(merge)), "allow");
+    assert.equal(
+      kiroPermissionDisposition(policy({ runtimeMode: "auto" }), request(merge)),
+      "allow",
+    );
+
+    for (const other of [
+      // The server and the tool id have to agree, and both be T3 Code's.
+      named("github", "github::pull_request_merge"),
+      named("github", "t3-code::pull_request_merge"),
+      named("t3-code", "github::pull_request_merge"),
+      named("t3-code", "t3-code::pull_request_read"),
+      named("T3-Code", "T3-Code::pull_request_merge"),
+      // A title is the model's wording.
+      { title: "@t3-code/pull_request_merge" },
+      { title: "@t3-code/pull_request_merge", rawInput: merge.rawInput },
+      { title: "@t3-code/pull_request_merge", _meta: merge._meta },
+    ]) {
+      assert.equal(kiroPermissionDisposition(supervised, request(other)), "ask");
+    }
+    // Only Kiro's one-time choice: with none offered, the person is asked.
+    assert.equal(
+      kiroPermissionDisposition(
+        supervised,
+        request(merge, [{ optionId: "always", name: "Always", kind: "allow_always" }]),
+      ),
+      "ask",
     );
   });
 });

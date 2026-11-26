@@ -54,6 +54,7 @@ import {
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpClientInput from "./McpClientInput.ts";
+import * as McpToolDeadline from "./McpToolDeadline.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
@@ -279,6 +280,19 @@ const withSenderThread = (
     : { ...invocation, client: { ...invocation.client, senderThread: decoded.value } };
 };
 
+/** Reads what a linked environment asks of a call it makes for a thread below Full access. */
+const withOutsideAction = (
+  invocation: McpInvocationContext.McpInvocationScope,
+  request: HttpServerRequest.HttpServerRequest,
+): McpInvocationContext.McpInvocationScope => {
+  const header = request.headers[McpInvocationContext.OUTSIDE_ACTION_HEADER]?.trim();
+  if (header === undefined || invocation.client?.linked !== true) return invocation;
+  if (header === "describe") return { ...invocation, outsideAction: "describe" };
+  const approved = /^approved ([0-9a-f]{64})$/.exec(header)?.[1];
+  // A header that says neither is read as asking to be told, which acts on nothing.
+  return { ...invocation, outsideAction: approved === undefined ? "describe" : { approved } };
+};
+
 // The Linked environments beta is off here: links wait until it is on again.
 const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
   {
@@ -374,7 +388,10 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
-    const asked = withModeLimit(withSenderThread(invocation, request), request);
+    const asked = withModeLimit(
+      withOutsideAction(withSenderThread(invocation, request), request),
+      request,
+    );
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
     const { linkedEnvironments, agentFeedback, workflows } = yield* settingsFlags;
@@ -414,6 +431,15 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
               McpInvocationContext.LINK_EXPIRES_AT_HEADER,
               DateTime.formatIso(linkExpiresAt),
             ),
+      ),
+      Effect.map((response) =>
+        admitted.client?.linked === true
+          ? HttpServerResponse.setHeader(
+              response,
+              McpInvocationContext.DESCRIBES_OUTSIDE_ACTIONS_HEADER,
+              "describe",
+            )
+          : response,
       ),
     );
   }) satisfies McpAuthMiddleware;
@@ -1347,6 +1373,43 @@ const withClientInput = Effect.fn("McpHttpServer.withClientInput")(function* <A,
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, askingServer));
 });
 
+/**
+ * Bounds what each call does on the server. A provider's own tool-call limit cannot: it either
+ * keeps counting while a person is asked, or is set high enough not to.
+ */
+const withActiveTimeLimit = Effect.fn("McpHttpServer.withActiveTimeLimit")(function* <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const limitingServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool", { attributes: routineSpan })(function (options) {
+      const { name } = options.tool;
+      return server.addTool({
+        ...options,
+        handle: (payload) =>
+          McpToolDeadline.within(McpToolDeadline.ACTIVE_TIME_LIMIT, options.handle(payload)).pipe(
+            Effect.map(
+              Option.getOrElse(
+                () =>
+                  new McpSchema.CallToolResult({
+                    isError: true,
+                    content: [
+                      {
+                        type: "text",
+                        text: McpToolDeadline.timedOut(name, McpToolDeadline.ACTIVE_TIME_LIMIT),
+                      },
+                    ],
+                  }),
+              ),
+            ),
+          ),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, limitingServer));
+});
+
 /** `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one. */
 const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
   Tools extends Record<string, Tool.Any>,
@@ -1402,7 +1465,12 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
       withToolResultCapture(
         withToolSpans(
           withClientInput(
-            withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+            withActiveTimeLimit(
+              withAdvertisedSchemas(
+                toolkit,
+                McpServer.registerToolkit(decodeAsAdvertised(toolkit)),
+              ),
+            ),
           ),
         ),
       ),
@@ -1421,9 +1489,9 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(withToolResultCapture(withToolSpans(register)))).pipe(
-    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
-  );
+  Layer.effectDiscard(
+    withToolAnalytics(withToolResultCapture(withToolSpans(withActiveTimeLimit(register)))),
+  ).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
