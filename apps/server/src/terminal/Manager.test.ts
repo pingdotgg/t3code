@@ -5,10 +5,13 @@ import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   DEFAULT_TERMINAL_ID,
+  TERMINAL_BRACKETED_PASTE_START,
+  TERMINAL_BRACKETED_PASTE_END,
+  type TerminalWriteInput,
   ProjectId,
   ThreadId,
   TerminalCwdNotFoundError,
-  type TerminalAttachStreamEvent,
+  TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalOpenInput,
   ProviderDriverKind,
@@ -877,6 +880,124 @@ it.layer(
     }),
   );
 
+  it.effect.each(["complete", "abort", "timeout", "close"] as const)(
+    "releases pending terminal input after paste %s",
+    (interruption) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+        const process = ptyAdapter.processes[0]!;
+        process.onKill = () => process.emitExit({ exitCode: 0, signal: 0 });
+        const endPrefix = TERMINAL_BRACKETED_PASTE_END.slice(0, -1);
+        const endSuffix = TERMINAL_BRACKETED_PASTE_END.slice(-1);
+        const begin = TERMINAL_BRACKETED_PASTE_START + "partial";
+        const writePaste = (data: string, bracketedPaste: TerminalWriteInput["bracketedPaste"]) =>
+          manager.write({ ...target, data, ...(bracketedPaste && { bracketedPaste }) }, "paste");
+        yield* writePaste(begin, "start");
+        const pending = yield* manager
+          .write({ ...target, data: "next" }, "typing")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(process.writes).toEqual([begin]);
+
+        if (interruption === "complete") {
+          const badEnd = yield* writePaste("incomplete end", "end").pipe(Effect.flip);
+          expect(badEnd._tag).toBe("TerminalWriteError");
+          expect(process.writes).toEqual([begin]);
+          yield* writePaste(endPrefix, "continue");
+          yield* writePaste(endSuffix, "end");
+        } else if (interruption === "abort") {
+          yield* writePaste(TERMINAL_BRACKETED_PASTE_END, "abort");
+        } else if (interruption === "timeout") {
+          yield* TestClock.adjust("15 seconds");
+        } else {
+          yield* manager.close(target);
+          yield* manager.open(openInput());
+          const reopened = ptyAdapter.processes[1]!;
+          reopened.onKill = () => reopened.emitExit({ exitCode: 0, signal: 0 });
+          expect(reopened.writes).toEqual([]);
+        }
+        if (interruption === "close") {
+          const error = yield* Fiber.join(pending).pipe(Effect.flip);
+          expect(error._tag).toBe("TerminalNotRunningError");
+          expect(process.writes).toEqual([begin]);
+          expect(ptyAdapter.processes[1]!.writes).toEqual([]);
+        } else {
+          yield* Fiber.join(pending);
+          expect(process.writes).toEqual(
+            interruption === "complete"
+              ? [begin, endPrefix, endSuffix, "next"]
+              : [begin, TERMINAL_BRACKETED_PASTE_END, "next"],
+          );
+        }
+        const lateEnd = yield* writePaste(TERMINAL_BRACKETED_PASTE_END, "end").pipe(Effect.exit);
+        expect(Exit.isFailure(lateEnd)).toBe(true);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(["end", "abort", "timeout"] as const)(
+    "releases input after a plain split write ends by %s without adding a bracket",
+    (finish) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+        const process = ptyAdapter.processes[0]!;
+        process.onKill = () => process.emitExit({ exitCode: 0, signal: 0 });
+        yield* manager.write({ ...target, data: "first", plainWrite: "start" }, "paste");
+        const pending = yield* manager
+          .write({ ...target, data: "typing" }, "other")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(process.writes).toEqual(["first"]);
+        if (finish === "timeout") {
+          yield* TestClock.adjust("15 seconds");
+        } else {
+          yield* manager.write(
+            { ...target, data: finish === "end" ? "last" : "", plainWrite: finish },
+            "paste",
+          );
+        }
+        yield* Fiber.join(pending);
+        expect(process.writes).toEqual(
+          finish === "end" ? ["first", "last", "typing"] : ["first", "typing"],
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not reserve the terminal when writing a paste start fails", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+      const process = ptyAdapter.processes[0]!;
+      process.onKill = () => process.emitExit({ exitCode: 0, signal: 0 });
+      process.writeFailure = new Error("write failed");
+      const error = yield* manager
+        .write(
+          {
+            ...target,
+            data: TERMINAL_BRACKETED_PASTE_START + "paste",
+            bracketedPaste: "start",
+          },
+          "paste",
+        )
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("TerminalWriteError");
+
+      process.writeFailure = undefined;
+      yield* manager.write(
+        {
+          ...target,
+          data: TERMINAL_BRACKETED_PASTE_END,
+          bracketedPaste: "abort",
+        },
+        "paste",
+      );
+      yield* manager.write({ ...target, data: "next" }, "typing");
+      expect(process.writes).toEqual(["next"]);
+    }),
+  );
+
   it.effect("resumed attaches after close never respawn until the terminal is reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1010,6 +1131,40 @@ it.layer(
       expect(attached.find((event) => event.type === "snapshot")).toMatchObject({
         snapshot: { status: "exited", exitCode: 7 },
       });
+    }),
+  );
+
+  it.effect("rejects conditional paste chunks when the process has gone", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const original = yield* manager.open(input);
+      if (original.pid === null) throw new Error("Expected a running terminal");
+      expect(original.supportsConditionalWrites).toBe(true);
+      const pasteChunk = {
+        threadId: input.threadId,
+        terminalId: original.terminalId,
+        data: "\x1b[200~paste",
+        expectedPid: original.pid,
+      };
+      yield* manager.write(pasteChunk);
+      yield* manager.close({ threadId: input.threadId, terminalId: original.terminalId });
+      expect(yield* manager.write(pasteChunk).pipe(Effect.flip)).toMatchObject({
+        _tag: "TerminalProcessChangedError",
+      });
+      yield* manager.open(input);
+      expect(yield* manager.write(pasteChunk).pipe(Effect.flip)).toMatchObject({
+        _tag: "TerminalProcessChangedError",
+      });
+      yield* manager.write({
+        threadId: input.threadId,
+        terminalId: original.terminalId,
+        data: "after",
+      });
+      expect(ptyAdapter.processes.map(({ writes }) => writes)).toEqual([
+        [pasteChunk.data],
+        ["after"],
+      ]);
     }),
   );
 
@@ -1181,27 +1336,79 @@ it.layer(
       }),
   );
 
-  it.effect("labels a running command by its whole process name, spaces included", () =>
+  it.effect.each([
+    {
+      label: "spaces included",
+      processName: "Google Chrome",
+      expectedLabel: "Google Chrome",
+    },
+    {
+      label: "surrogate-safe truncation",
+      processName: "a".repeat(127) + "😀tail",
+      expectedLabel: "a".repeat(127),
+    },
+  ] as const)(
+    "labels a running command by its process name ($label)",
+    ({ processName, expectedLabel }) =>
+      Effect.gen(function* () {
+        const { manager } = yield* createManager(5, {
+          subprocessPollIntervalMs: 1_000,
+          processKillGraceMs: 0,
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 200, ppid: 9000, name: processName },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+        const label = yield* Deferred.make<string>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "activity"
+            ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        yield* manager.open(openInput());
+        yield* TestClock.adjust("1 second");
+
+        expect(yield* Deferred.await(label)).toBe(expectedLabel);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("backs off polling a steady command and still sees it exit within five seconds", () =>
     Effect.gen(function* () {
-      const { manager } = yield* createManager(5, {
+      const shell = { pid: 9000, ppid: 1, name: "zsh" };
+      let table = [shell, { pid: 200, ppid: 9000, name: "node" }];
+      let queries = 0;
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
         subprocessPollIntervalMs: 1_000,
         processKillGraceMs: 0,
-        processTable: Effect.succeed([
-          { pid: 9000, ppid: 1, name: "zsh" },
-          { pid: 200, ppid: 9000, name: "Google Chrome" },
-        ]),
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
-      const label = yield* Deferred.make<string>();
-      const unsubscribe = yield* manager.subscribe((event) =>
-        event.type === "activity"
-          ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
-          : Effect.void,
+        processTable: Effect.sync(() => {
+          queries += 1;
+          return table;
+        }),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const activity = Effect.map(getEvents, (events) =>
+        events.flatMap((event) =>
+          event.type === "activity" ? [event.hasRunningSubprocess ? event.label : null] : [],
+        ),
       );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       yield* manager.open(openInput());
-      yield* TestClock.adjust("1 second");
 
-      expect(yield* Deferred.await(label)).toBe("Google Chrome");
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* activity).toEqual(["node"]);
+      expect(queries).toBeGreaterThanOrEqual(115);
+      expect(queries).toBeLessThanOrEqual(125);
+
+      table = [...table, { pid: 201, ppid: 200, name: "esbuild" }];
+      ptyAdapter.processes[0]!.emitData("rebuilt\r\n");
+      queries = 0;
+      yield* TestClock.adjust("1 second");
+      expect(queries).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
+      table = [shell];
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* activity).toEqual(["node", null]);
+      yield* manager.close({ threadId: "thread-1" });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1882,6 +2089,43 @@ it.layer(
       yield* Queue.take(outputs);
       yield* manager.close({ threadId: "thread-1" });
       expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe("A\u001b\\B");
+    }),
+  );
+
+  it.effect.each([
+    { name: "NUL padding", body: "31" + "\u0000".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "DEL padding", body: "31" + "\u007f".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "non-ASCII padding", body: "31" + "é".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "over-budget parameters", body: "1".repeat(5_000) + "\r", replay: "\r" },
+    {
+      name: "parameters filling the budget",
+      body: "1".repeat(4_094) + "\r",
+      replay: "1".repeat(4_094),
+    },
+    { name: "repeated carriage returns", body: "31" + "\r".repeat(4_094), replay: "31\r" },
+    {
+      name: "over-budget line feeds",
+      body: "31" + "\n".repeat(4_094),
+      replay: "31" + "\n".repeat(4_092),
+    },
+  ])("replays an unfinished CSI with $name on attach", ({ body, replay }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+      yield* live;
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("prompt\u001b[" + body);
+      yield* live;
+
+      const joining = yield* Stream.toPull(manager.attachOutputStream(input, "joining"));
+      const [event] = yield* joining;
+      if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+      process.emitData("mX");
+      const [output] = yield* joining;
+      if (output?.type !== "output") throw new Error("Expected live terminal output");
+
+      expect(event.snapshot.history + output.data).toBe("prompt\u001b[" + replay + "mX");
     }),
   );
 
@@ -3022,8 +3266,10 @@ it.layer(
         ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
         ["linux", "/bin/bash", undefined],
         ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", ["--login", "-i"]],
+        ["win32", "C:/Program Files/Git/bin/bash.exe", ["--login", "-i"]],
         ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
         ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["linux", "/opt/team\\zsh", undefined],
         ["win32", "pwsh.exe", POWERSHELL_ARGS],
       ] as const) {
         const { manager, ptyAdapter } = yield* createManager(5, {
@@ -3089,6 +3335,36 @@ it.layer(
         { type: "snapshot", snapshot: { status: "running", pid: ptyAdapter.processes[0]?.pid } },
       ]);
       expect(ptyAdapter.processes).toHaveLength(1);
+    }),
+  );
+
+  it.effect("attaches to a working shell after the original open is interrupted", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new GatedPtyAdapter();
+      const { manager } = yield* createManager(5, { ptyAdapter });
+      const input = openInput();
+      const gate = {
+        spawning: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      ptyAdapter.gate = gate;
+      const opening = yield* manager.open(input).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(gate.spawning);
+      const cancelled = yield* Fiber.interrupt(opening).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(gate.release, undefined);
+      yield* Fiber.join(cancelled);
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const stop = yield* manager.attachStream(input, (event) =>
+        Effect.sync(() => {
+          events.push(event);
+        }),
+      );
+      stop();
+      const first = events[0];
+      expect(first?.type === "snapshot" ? first.snapshot.status : first?.type).toBe("running");
     }),
   );
 
@@ -3262,6 +3538,115 @@ it.layer(
       yield* manager.attachStream({ ...openInput(), restartIfNotRunning: true }, () => Effect.void);
       yield* expectRetained();
     }),
+  );
+
+  it.effect(
+    "keeps a title update hidden when the history limit cuts through the previous title",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        const input = openInput();
+        const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+        yield* live;
+        const process = ptyAdapter.processes[0]!;
+        // UTF-8 exceeds the wire history budget while the string fits the parser's held text limit.
+        process.emitData("\u001b]0;");
+        yield* live;
+        const titleChunk = "界".repeat(8_192);
+        for (let index = 0; index < 24; index += 1) {
+          process.emitData(titleChunk);
+          yield* live;
+        }
+        // The second OSC's escape ends the first title without a separate terminator.
+        process.emitData("\u001b]0;Build ");
+        yield* live;
+
+        const joining = yield* Stream.toPull(
+          manager.attachOutputStream(
+            { ...input, maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES },
+            "joining",
+          ),
+        );
+        const [event] = yield* joining;
+        if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        process.emitData("progress\u0007ready\r\n");
+        const [output] = yield* joining;
+        if (output?.type !== "output") throw new Error("Expected live terminal output");
+
+        const state = terminalSequenceStateAfter(0, event.snapshot.history);
+        const firstVisible = terminalSequenceEnd(state, output.data);
+        expect(output.data.slice(firstVisible)).toBe("ready\r\n");
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "title with no history budget",
+      pending: "\u001b]0;Build ",
+      tail: "progress\u0007",
+      budget: 0,
+      history: "",
+      viewer: "attach",
+      supportsSnapshotSequenceState: true,
+    },
+    {
+      name: "title beyond the pending prefix limit",
+      pending: "\u001b]0;" + "x".repeat(4_096),
+      tail: "progress\u0007",
+      budget: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+      history: "before\r\n",
+      viewer: "attach",
+      supportsSnapshotSequenceState: true,
+    },
+    ...(["attach", "observe", "resync"] as const).map((viewer) => ({
+      name: `long title for a legacy ${viewer} viewer`,
+      pending: "\u001b]0;" + "x".repeat(4_096),
+      tail: "progress\u0007",
+      budget: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+      history: "before\r\n\u001b]",
+      viewer,
+      supportsSnapshotSequenceState: false,
+    })),
+  ] as const)(
+    "keeps a snapshot's $name out of visible output",
+    ({ pending, tail, budget, history, viewer, supportsSnapshotSequenceState }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        const input = openInput();
+        const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+        yield* live;
+        const process = ptyAdapter.processes[0]!;
+        process.emitData("before\r\n" + pending);
+        yield* live;
+
+        const viewerInput = { ...input, supportsSnapshotSequenceState };
+        const joining = yield* Stream.toPull(
+          viewer === "attach"
+            ? manager.attachOutputStream({ ...viewerInput, maxHistoryBytes: budget }, "joining")
+            : terminalOutputStream((listener, cleanup) =>
+                viewer === "observe"
+                  ? manager.observeStream(viewerInput, listener, cleanup)
+                  : manager.resyncStream(viewerInput, listener, cleanup),
+              ),
+        );
+        const [event] = yield* joining;
+        if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        // The parser state must survive the wire schema's bounds check.
+        const wireEvent = Schema.fromJsonString(TerminalAttachStreamEvent);
+        const decoded = yield* Schema.decodeEffect(wireEvent)(
+          yield* Schema.encodeEffect(wireEvent)(event),
+        );
+        if (decoded.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        expect(decoded.snapshot.history).toBe(history);
+        const omitted = decoded.snapshot.historySequenceState;
+        expect(omitted !== undefined).toBe(supportsSnapshotSequenceState);
+        const state = omitted ?? terminalSequenceStateAfter(0, decoded.snapshot.history);
+
+        process.emitData(tail + "ready");
+        const [output] = yield* joining;
+        if (output?.type !== "output") throw new Error("Expected terminal output");
+        expect(output.data.slice(terminalSequenceEnd(state, output.data))).toBe("ready");
+      }),
   );
 
   it.effect("does not replay in-flight output already included in an observer snapshot", () =>
