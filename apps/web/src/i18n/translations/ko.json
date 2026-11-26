@@ -10013,6 +10013,7 @@
   "7f11b5e6dfa0bc56": "사용자 지정",
   "aea25315995268e1": "상속됨",
   "c8d6af8aaa94a464": "기본값",
+  "652e3aad21933d17": "{summary} · {count, plural, other {프로젝트 재정의 {count}개}}",
   "0a39976ec0fb3e49": "{overrideSummary}. 이 값의 출처 표시",
   "99af2d06aa2b6d12": "재설정",
   "7e9fca5fb426044a": "모두 재설정",

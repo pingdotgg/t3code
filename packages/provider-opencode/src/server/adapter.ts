@@ -3710,6 +3710,22 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
+              // OpenCode 1.x runs a session, and publishes its events, in the directory it lives
+              // in, so a session left behind by a worktree handoff must follow this client.
+              if (nativeSession.directory !== cwd) {
+                const paths = yield* sdkCall("path.get", {}, () => client.path.get());
+                const directory = unwrapData("path.get", paths).directory;
+                if (nativeSession.directory !== directory) {
+                  const body = { sessionID: sessionId, destination: { directory } };
+                  // SDK 1.15 has no binding for this route (later ones: experimental.controlPlane.moveSession).
+                  yield* sdkCall("session.move", body, () =>
+                    client["client"].post({
+                      url: "/experimental/control-plane/move-session",
+                      body,
+                    }),
+                  );
+                }
+              }
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,
