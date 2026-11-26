@@ -12,10 +12,7 @@ import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
-import {
-  GITHUB_ALERT_MARKER,
-  githubAlertMarkerEndsLine,
-} from "@t3tools/shared/markdownGithubAlerts";
+import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
   rehypeNormalizeLocalEditorLinks,
@@ -720,8 +717,7 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
       // An alert marker followed by more inline content on its line is text, as remarkGithubAlerts reads it.
       const match = insight
         ? ([insight[0], "insight"] as const)
-        : alert &&
-            (githubAlertMarkerEndsLine(alert[0]) || (paragraph as Element).children.length === 1)
+        : alert && (alert[0].endsWith("\n") || (paragraph as Element).children.length === 1)
           ? alert
           : null;
       if (match && first?.type === "text" && isElement(paragraph, "p")) {
