@@ -2300,6 +2300,49 @@ describe("ThreadSettlementServiceV2 worker", () => {
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
+  it.effect("a merge settles a thread sharing the worktree of the thread that links the PR", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const link = persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z"));
+      const owner = makeThread("pr-owner", {
+        branch: "feature",
+        worktreePath: "/worktrees/feature",
+        pullRequests: [
+          { ...link, snapshot: { ...link.snapshot!, state: "merged", mergedAt: NOW } },
+        ],
+      });
+      const sibling = makeThread("worktree-sibling", {
+        branch: "feature",
+        worktreePath: "/worktrees/feature",
+        createdAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+      });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([owner, sibling]),
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sidebarAutoSettleOnMerge: true,
+          sidebarAutoSettleAfterDays: null,
+        },
+        existingWorktreePaths: ["/worktrees/feature", "/worktrees/feature/.git"],
+        branchPullRequest: () => Effect.succeed(makeBranchPullRequest("merged")),
+      });
+
+      yield* Effect.gen(function* () {
+        const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+        yield* fixture.publishMerge;
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+
+        expect(
+          [
+            ...new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
+          ].toSorted(),
+        ).toEqual([owner.id, sibling.id].toSorted());
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
   it.effect("an archived thread's pull request does not settle a local thread on its branch", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
