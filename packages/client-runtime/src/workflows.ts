@@ -952,16 +952,33 @@ export function workflowStepTime(ms: number): string {
 }
 
 /**
- * The first sentence of a reply, as one line of plain text: a heading, list mark, inline code,
- * emphasis or link reads as its words. Code keeps its text, and an underscore inside a word, as in
- * snake_case, is not emphasis.
+ * The first prose sentence of a reply, as one line of plain text: headings, tables, and fenced
+ * code blocks are skipped, and list marks, inline code, emphasis, or links read as their words.
+ * Code keeps its text, and an underscore inside a word, as in snake_case, is not emphasis.
  */
 export function workflowOneLine(text: string): string {
+  let fence: string | null = null;
   const line =
     text
       .split("\n")
       .map((candidate) => candidate.trim())
-      .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
+      .find((candidate) => {
+        const marker = /^(`{3,}|~{3,})/.exec(candidate)?.[1];
+        if (fence !== null) {
+          if (candidate === marker && marker.startsWith(fence)) {
+            fence = null;
+          }
+          return false;
+        }
+        if (
+          marker !== undefined &&
+          !(marker[0] === "`" && candidate.slice(marker.length).includes("`"))
+        ) {
+          fence = marker;
+          return false;
+        }
+        return candidate !== "" && !/^(#|\|)/.test(candidate);
+      })
       ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
   const code: string[] = [];
   const plain = line

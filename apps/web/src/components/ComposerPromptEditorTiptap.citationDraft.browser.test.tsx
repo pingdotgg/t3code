@@ -4,7 +4,7 @@ import {
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
 import { createRef, useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -161,6 +161,22 @@ it.each(["blocked", "refusedLater"] as const)(
       .toHaveAttribute("data-prompt", `See ${serializeAssistantCitation(citation)}x `);
   },
 );
+
+it("keeps the citation when typing after its link opens the cited text", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+
+  await act(async () => editorRef.current?.focusAtEnd());
+  const link = page.getByRole("link", { name: "View cited assistant text: hello" });
+  await link.click();
+  await userEvent.keyboard("x");
+
+  await expect.element(link).toHaveFocus();
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
+  await vi.waitFor(() =>
+    expect(screen.router?.state.location.pathname).toBe("/environment/thread"),
+  );
+});
 
 it("cancels a new citation while dictation makes the composer read-only", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
