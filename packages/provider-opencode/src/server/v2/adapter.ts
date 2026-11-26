@@ -1247,7 +1247,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;
       const nodeKind = kind === "text" ? "assistant_message" : "reasoning";
-      const timelinePlacement = historicalAt === undefined ? undefined : "before_run";
+      const timelinePlacement = historicalAt === undefined ? undefined : ("before_run" as const);
       yield* emitNode(
         state,
         turn,
