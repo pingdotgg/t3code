@@ -3015,6 +3015,18 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
     const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/submodules");
     yield* fileSystem.writeFileString(files[1]!, "captured\n");
     yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+    // The root ref alone would not carry the submodules' own refs.
+    const copyRef = CheckpointRef.make("refs/t3/checkpoints/submodules-copy");
+    assert.isFalse(
+      yield* driver.checkpoints.copyCheckpointRef({
+        cwd: root,
+        fromCheckpointRef: checkpointRef,
+        toCheckpointRef: copyRef,
+      }),
+    );
+    assert.isFalse(
+      yield* driver.checkpoints.hasCheckpointRef({ cwd: root, checkpointRef: copyRef }),
+    );
 
     for (const file of files) {
       yield* fileSystem.writeFileString(file, "changed\n");
@@ -3039,6 +3051,35 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
       const ref = yield* git(cwd, ["for-each-ref", "refs/t3"]);
       assert.strictEqual(ref.stdout, "");
     }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("copies a checkpoint under another name without making a commit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-copy-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const ref = (ordinal: number) => CheckpointRef.make(`${checkpointRef}/${ordinal}`);
+    const commitOf = (ordinal: number) =>
+      git(["rev-parse", ref(ordinal)]).pipe(Effect.map((result) => result.stdout));
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: ref(2) });
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: ref(5) });
+    const existing = yield* commitOf(5);
+    const copy = (from: number, to: number) =>
+      driver.checkpoints.copyCheckpointRef({
+        cwd,
+        fromCheckpointRef: ref(from),
+        toCheckpointRef: ref(to),
+      });
+
+    assert.isTrue(yield* copy(2, 4));
+    assert.strictEqual(yield* commitOf(4), yield* commitOf(2));
+    // An existing checkpoint is kept, and a missing source copies nothing.
+    assert.isTrue(yield* copy(2, 5));
+    assert.strictEqual(yield* commitOf(5), existing);
+    assert.isFalse(yield* copy(1, 6));
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: ref(6) }));
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
