@@ -391,11 +391,13 @@ export const migrateLegacyAntigravitySession = Effect.fn("migrateLegacyAntigravi
     const sessionsDir = path.join(root, ANTIGRAVITY_SESSIONS_DIR);
     const directory = path.join(sessionsDir, slotId);
     const legacyArtifacts: Array<ReadonlyArray<string>> = [];
+    let createdDirectory = false;
 
     yield* Effect.gen(function* () {
       yield* profileIO("Could not copy legacy Antigravity session files.", async () => {
         await ensurePrivateDirectory(sessionsDir, platform);
         await NodeFSP.mkdir(directory, { mode: 0o700 });
+        createdDirectory = true;
         for (const folder of ["conversations", "brain", "annotations"]) {
           await ensurePrivateDirectory(path.join(directory, folder), platform);
         }
@@ -465,9 +467,11 @@ export const migrateLegacyAntigravitySession = Effect.fn("migrateLegacyAntigravi
       yield* writeAntigravitySessionSlot(root, sessionId, slotId);
     }).pipe(
       Effect.onError(() =>
-        profileIO("Could not remove incomplete Antigravity migration directory.", () =>
-          NodeFSP.rm(directory, { recursive: true, force: true }),
-        ).pipe(Effect.ignore),
+        createdDirectory
+          ? profileIO("Could not remove incomplete Antigravity migration directory.", () =>
+              NodeFSP.rm(directory, { recursive: true, force: true }),
+            ).pipe(Effect.ignore)
+          : Effect.void,
       ),
     );
 

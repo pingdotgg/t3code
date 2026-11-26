@@ -118,15 +118,20 @@ const makeFakeAgyScript = (input: {
     "    buf = buf.slice(nl + 1);",
     "    if (!line) continue;",
     "    const req = JSON.parse(line);",
-    "    fs.appendFileSync(logPath, JSON.stringify({ method: req.method, params: req.params, appDataDir }) + '\\n');",
+    "    if (req.method === 'session/new') {",
+    "      activeId = crypto.randomUUID();",
+    "      fs.appendFileSync(logPath, JSON.stringify({ method: req.method, params: req.params, sessionId: activeId, appDataDir }) + '\\n');",
+    "      send({ jsonrpc: '2.0', id: req.id, result: { sessionId: activeId, configOptions: [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'gemini-test-low', options: [{ value: 'gemini-test-low', name: 'Low' }] }] } });",
+    "    } else {",
+    "      fs.appendFileSync(logPath, JSON.stringify({ method: req.method, params: req.params, appDataDir }) + '\\n');",
+    "    }",
     "    if (req.method === 'initialize') {",
     "      const sessionCapabilities = resumeCap ? { resume: {}, fork: {} } : { fork: {} };",
     "      send({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: 1, agentCapabilities: { loadSession, auth: { logout: {} }, sessionCapabilities }, authMethods: [{ id: 'oauth-personal', name: 'Google' }], agentInfo: { name: 'antigravity-acp', version } } });",
     "    } else if (req.method === 'authenticate' || req.method === 'logout') {",
     "      send({ jsonrpc: '2.0', id: req.id, result: {} });",
     "    } else if (req.method === 'session/new') {",
-    "      activeId = crypto.randomUUID();",
-    "      send({ jsonrpc: '2.0', id: req.id, result: { sessionId: activeId, configOptions: [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'gemini-test-low', options: [{ value: 'gemini-test-low', name: 'Low' }] }] } });",
+    "      // Handled above so the log records the returned sessionId.",
     "    } else if (req.method === 'session/resume') {",
     "      activeId = req.params.sessionId;",
     "      send({ jsonrpc: '2.0', id: req.id, result: { configOptions: [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'gemini-test-low', options: [{ value: 'gemini-test-low', name: 'Low' }] }] } });",
@@ -263,10 +268,13 @@ it.layer(layerUsage)("Antigravity session isolation", (it) => {
 
         const slotToken = path.join(slot.directory, "antigravity-oauth-token");
         const slotMcp = path.join(slot.directory, "mcp_oauth_tokens.json");
+        const canonicalMcp = path.join(acpDirectory, "mcp_oauth_tokens.json");
         expect(yield* fs.readFileString(slotToken)).toBe("win-token-v1");
         expect(yield* fs.readFileString(slotMcp)).toBe("{}\n");
         yield* fs.writeFileString(slotToken, "win-token-v2");
         expect(yield* fs.readFileString(canonicalToken)).toBe("win-token-v2");
+        yield* fs.writeFileString(slotMcp, '{"srv":"tok"}\n');
+        expect(yield* fs.readFileString(canonicalMcp)).toBe('{"srv":"tok"}\n');
 
         // Re-preparing an already linked slot preserves the link and refreshed contents.
         yield* prepareAntigravitySessionAppDataDir({
@@ -277,38 +285,46 @@ it.layer(layerUsage)("Antigravity session isolation", (it) => {
         });
         expect(yield* fs.readFileString(slotToken)).toBe("win-token-v2");
 
-        // A cross-volume canonical token cannot be hard-linked; the slot must still share it.
+        // A cross-volume canonical token cannot be hard-linked; the slot must still share it
+        // (or fail explicitly when the Windows host lacks file-symlink privileges).
         const crossSlotId = "55555555-5555-4555-8555-555555555555";
         const fsPromises = NodeFS.promises;
         const realLink = fsPromises.link;
         fsPromises.link = () =>
           Promise.reject(Object.assign(new Error("cross-device link"), { code: "EXDEV" }));
         NodeModule.syncBuiltinESMExports();
-        const prepareCrossVolume = prepareAntigravitySessionAppDataDir({
-          profile,
-          auth: personalAuth,
-          kind: "session",
-          slotId: crossSlotId,
-        });
-        const crossSlot = yield* prepareCrossVolume.pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              fsPromises.link = realLink;
-              NodeModule.syncBuiltinESMExports();
-            }),
+        const crossResult = yield* Effect.result(
+          prepareAntigravitySessionAppDataDir({
+            profile,
+            auth: personalAuth,
+            kind: "session",
+            slotId: crossSlotId,
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                fsPromises.link = realLink;
+                NodeModule.syncBuiltinESMExports();
+              }),
+            ),
           ),
         );
-        const crossToken = path.join(crossSlot.directory, "antigravity-oauth-token");
-        yield* fs.writeFileString(crossToken, "win-token-v3");
-        expect(yield* fs.readFileString(canonicalToken)).toBe("win-token-v3");
-        yield* prepareAntigravitySessionAppDataDir({
-          profile,
-          auth: personalAuth,
-          kind: "session",
-          slotId: crossSlotId,
-        });
-        expect(yield* fs.readFileString(crossToken)).toBe("win-token-v3");
-        expect(yield* fs.readFileString(canonicalToken)).toBe("win-token-v3");
+        if (crossResult._tag === "Failure") {
+          expect(windowsHost).toBe(true);
+          expect(crossResult.failure._tag).toBe("AcpTransportError");
+        } else {
+          const crossSlot = crossResult.success;
+          const crossToken = path.join(crossSlot.directory, "antigravity-oauth-token");
+          yield* fs.writeFileString(crossToken, "win-token-v3");
+          expect(yield* fs.readFileString(canonicalToken)).toBe("win-token-v3");
+          yield* prepareAntigravitySessionAppDataDir({
+            profile,
+            auth: personalAuth,
+            kind: "session",
+            slotId: crossSlotId,
+          });
+          expect(yield* fs.readFileString(crossToken)).toBe("win-token-v3");
+          expect(yield* fs.readFileString(canonicalToken)).toBe("win-token-v3");
+        }
       }),
   );
 
@@ -708,6 +724,20 @@ it.layer(layerUsage)("Antigravity session isolation", (it) => {
         expect(slotA).toBeDefined();
         expect(slotB).toBeDefined();
         expect(slotA).not.toBe(slotB);
+        const newSessionCalls = (yield* fs.readFileString(logPath))
+          .trim()
+          .split("\n")
+          .map(
+            (line) =>
+              JSON.parse(line) as { method: string; sessionId?: string; appDataDir: string },
+          )
+          .filter((call) => call.method === "session/new");
+        expect(newSessionCalls.find((call) => call.sessionId === sessionA)?.appDataDir).toBe(
+          `sessions/${slotA}`,
+        );
+        expect(newSessionCalls.find((call) => call.sessionId === sessionB)?.appDataDir).toBe(
+          `sessions/${slotB}`,
+        );
 
         // Resuming sessionA reuses slotA and supports warm session/load for readThreadSnapshot.
         const snapshotText = yield* Effect.scoped(

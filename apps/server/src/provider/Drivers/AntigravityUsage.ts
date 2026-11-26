@@ -171,6 +171,9 @@ const make = Effect.gen(function* () {
         : resolvedRoot;
       conversationDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
     }
+    for (const dir of sessionRoots.keys()) {
+      conversationDirs.delete(dir);
+    }
     const sources: Array<
       string | { readonly root: string; readonly directories: ReadonlyArray<string> }
     > = [
