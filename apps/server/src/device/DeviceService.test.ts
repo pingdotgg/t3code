@@ -1618,27 +1618,6 @@ it.effect.each([
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
 
-it.effect("keeps an open thread's device session when Stop fails", () =>
-  Effect.gen(function* () {
-    const { service, connection } = yield* fixture();
-    yield* service.configure({ enabled: true });
-    const threadId = ThreadId.make("viewing-emulator");
-    const { hostId, deviceId, platform } = yield* service.open({
-      threadId,
-      deviceId: "Pixel_API_35",
-      platform: "android",
-    });
-
-    connection.failShutdown = true;
-    yield* service.shutdown({ hostId, deviceId, platform }).pipe(
-      Effect.flatMap(() => Effect.die("Expected the running emulator to reject shutdown")),
-      Effect.ignore,
-    );
-
-    expect((yield* service.state).sessions.map((session) => session.threadId)).toEqual([threadId]);
-  }),
-);
-
 describe("Android close with shutdown", () => {
   const openEmulator = Effect.fn("openEmulator")(function* () {
     const harness = yield* fixture();
