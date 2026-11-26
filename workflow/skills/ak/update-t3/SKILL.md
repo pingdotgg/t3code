@@ -28,10 +28,10 @@ The script picks the right updater for each machine. Mise-managed tools go throu
 
 ## 3. Update T3 Code, distilo first
 
-`scripts/self-update.sh` does the git work, the build and the restart. It fast-forwards to origin/main, merges upstream/main, and pushes the merge. Main is published, so it merges and never rebases. It then runs `vp i`, builds, and restarts `t3code`. Run it through `systemd-run` so the restart can't kill it.
+`scripts/self-update.sh` does the git work, the build and the restart. It fast-forwards to origin/main, merges upstream/main, and pushes the merge. Main is published, so it merges and never rebases. It then runs `vp i`, builds, and restarts `t3code`. Run it through `systemd-run` so the restart can't kill it. Delete the old log first, or the wait can match the previous run's last line.
 
 ```sh
-run='systemd-run --user --unit t3code-source-update --collect --quiet --working-directory=$HOME/Projects/T3/t3code --setenv=T3CODE_SOURCE_UPDATE_SERVICE=t3code -p StandardOutput=truncate:$HOME/.cache/t3code/source-update.log $HOME/Projects/T3/t3code/scripts/self-update.sh'
+run='rm -f $HOME/.cache/t3code/source-update.log; systemd-run --user --unit t3code-source-update --collect --quiet --working-directory=$HOME/Projects/T3/t3code --setenv=T3CODE_SOURCE_UPDATE_SERVICE=t3code -p StandardOutput=truncate:$HOME/.cache/t3code/source-update.log $HOME/Projects/T3/t3code/scripts/self-update.sh'
 ssh distilo "$run"
 timeout 590 bash -c 'until ssh distilo "grep -E \"\[source-update\] (succeeded|failed)\" ~/.cache/t3code/source-update.log"; do sleep 10; done'
 ```
