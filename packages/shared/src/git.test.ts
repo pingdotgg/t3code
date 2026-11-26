@@ -85,6 +85,28 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
   });
+
+  it("keys a one-segment URL remote by what names the repository", () => {
+    expect(normalizeGitRemoteUrl("https://deploy:s3cr3ttok@git.example.com/Repo.git")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://0123abcd@git.example.com/repo.git?key=0123abcd#x")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("ftp://deploy:s3cr3ttok@git.example.com/team/repo.git")).toBe(
+      "ftp://git.example.com/team/repo",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git:s3cr3ttok@git.example.com:2222/repo.git")).toBe(
+      "ssh://git@git.example.com:2222/repo",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@git.example.com/repo.git")).toBe(
+      "ssh://git@git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://git.example.com/repo.git")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("/srv/git/Repo.git")).toBe("/srv/git/repo");
+  });
 });
 
 describe("isBareGitConfig", () => {
@@ -361,6 +383,16 @@ describe("sanitizeFeatureBranchName", () => {
   it("keeps accented letters as their plain letters", () => {
     expect(sanitizeFeatureBranchName("fix/Añadir validación del café")).toBe(
       "fix/anadir-validacion-del-cafe",
+    );
+  });
+
+  it("keeps words with letters that have no Unicode decomposition whole", () => {
+    expect(sanitizeFeatureBranchName("Größe der Straße korrigieren")).toBe(
+      "feature/grosse-der-strasse-korrigieren",
+    );
+    expect(sanitizeFeatureBranchName("fix/Đặt tên")).toBe("fix/dat-ten");
+    expect(sanitizeFeatureBranchName("Napraw błąd w żółtym przycisku")).toBe(
+      "feature/napraw-blad-w-zoltym-przycisku",
     );
   });
 });

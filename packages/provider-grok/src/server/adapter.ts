@@ -9,19 +9,23 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   defaultInstanceIdForDriver,
+  NonNegativeInt,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
   type RuntimeMode,
+  type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import { GrokSettings } from "../settings.ts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -117,9 +121,45 @@ const GrokProviderCapabilitiesV2 = {
     ...AcpProviderCapabilitiesV2.checkpointing,
     providerCanReadConversationSnapshot: true,
   },
-  // Cancelling a Grok prompt kills its running foreground tool.
-  turns: { ...AcpProviderCapabilitiesV2.turns, supportsSteeringByInterruptRestart: false },
+  turns: {
+    ...AcpProviderCapabilitiesV2.turns,
+    // `_x.ai/interject` lets the running tool finish; the model reads the message at its next step.
+    supportsActiveSteering: true,
+    activeSteeringInterruptsTools: false,
+    // Cancelling a Grok prompt kills its running foreground tool.
+    supportsSteeringByInterruptRestart: false,
+  },
 } satisfies OrchestrationV2ProviderCapabilities;
+
+const XAI_INTERJECT_METHOD = "_x.ai/interject";
+const isXAiInterjectQueued = Schema.is(
+  Schema.Struct({ result: Schema.Struct({ status: Schema.Literal("queued") }) }),
+);
+
+/** A queued interjection joins the running prompt, so its acceptance is the delivery. */
+const grokSteering: NonNullable<AcpAdapterV2Flavor["steering"]> = {
+  send: (runtime, sessionId, text, images) =>
+    runtime
+      .request(XAI_INTERJECT_METHOD, {
+        sessionId,
+        text,
+        ...(images.length === 0 ? {} : { content: images }),
+      })
+      .pipe(
+        Effect.flatMap((result) =>
+          isXAiInterjectQueued(result)
+            ? Effect.undefined
+            : Effect.fail(
+                new EffectAcpErrors.AcpRequestError({
+                  code: -32603,
+                  errorMessage: "Grok did not queue the interjection.",
+                  method: XAI_INTERJECT_METHOD,
+                  data: result,
+                }),
+              ),
+        ),
+      ),
+};
 
 export interface GrokAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
@@ -228,6 +268,16 @@ export function grokLaunchRuntimeMode(
 
 /** The capability id the composer stores Grok's reasoning effort under. */
 const GROK_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+const decodeGrokContextMetadata = Schema.decodeUnknownOption(
+  Schema.Struct({ totalTokens: NonNegativeInt }),
+);
+
+function extractGrokContextUsage(
+  notification: EffectAcpSchema.SessionNotification,
+): ThreadTokenUsageSnapshot | undefined {
+  const metadata = Option.getOrUndefined(decodeGrokContextMetadata(notification._meta));
+  return metadata === undefined ? undefined : { usedTokens: metadata.totalTokens };
+}
 
 // Protocol 1 sends the effort as `session/set_model` metadata on every call: that response
 // carries no config options, so there is no live effort to compare against. Newer protocols
@@ -330,6 +380,8 @@ export function makeGrokAcpAdapterFlavor(
     // Grok accepts image blocks despite advertising promptCapabilities.image:false.
     supportsImagePrompts: true,
     supportsCompaction: true,
+    steering: grokSteering,
+    extractContextUsage: extractGrokContextUsage,
     // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
     // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
     rewriteUserText: (text, turnInput) => {

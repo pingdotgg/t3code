@@ -21,7 +21,11 @@ const MAX_PROCESS_NAME_BYTES: usize = 1_024;
 const MAX_PROCESS_COMMAND_BYTES: usize = 16 * 1_024;
 const MAX_PROCESS_STATUS_BYTES: usize = 256;
 const HISTORY_CHUNK_SNAPSHOTS: usize = 32;
-const TWO_STAGE_PROCESS_REFRESH: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+const TWO_STAGE_PROCESS_REFRESH: bool = cfg!(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+));
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -351,6 +355,12 @@ impl HistoryRecorder {
     }
 }
 
+struct Discovery {
+    external_processes: Vec<ExternalProcess>,
+    tracked: HashSet<u32>,
+    scanned_process_count: usize,
+}
+
 struct Collector {
     system: System,
     sequence: u64,
@@ -366,13 +376,132 @@ impl Collector {
         }
     }
 
-    fn prime_cpu_usage(&mut self) {
+    fn prime_cpu_usage(&mut self, config: &CollectorConfig) {
+        self.discover(config);
+    }
+
+    fn discover(&mut self, config: &CollectorConfig) -> Discovery {
+        let (rows, scanned_process_count) = self.discovery_rows(config);
+        let start_time_ms_by_pid = rows
+            .iter()
+            .map(|(pid, _, start_time_ms)| (*pid, *start_time_ms))
+            .collect::<HashMap<_, _>>();
+        let external_processes = config
+            .external_processes
+            .iter()
+            .filter_map(|(pid, expected_start_time_ms)| {
+                let actual_start_time_ms = *start_time_ms_by_pid.get(pid)?;
+                matches_external_identity(actual_start_time_ms, *expected_start_time_ms).then_some(
+                    ExternalProcess {
+                        pid: *pid,
+                        start_time_ms: Some(actual_start_time_ms),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut roots = external_processes
+            .iter()
+            .map(|process| process.pid)
+            .collect::<HashSet<_>>();
+        roots.insert(config.root_pid);
+        let tracked = select_tracked_pids(&rows, &roots);
+        #[cfg(target_os = "windows")]
+        self.refresh_tracked_cpu(&tracked);
+        self.cpu_baseline_refreshed_at = Some(Instant::now());
+        Discovery {
+            external_processes,
+            tracked,
+            scanned_process_count,
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn discovery_rows(&mut self, _config: &CollectorConfig) -> (Vec<(u32, u32, u64)>, usize) {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
             process_discovery_refresh_kind(),
         );
-        self.cpu_baseline_refreshed_at = Some(Instant::now());
+        let rows = self
+            .system
+            .processes()
+            .iter()
+            .map(|(pid, process)| {
+                let pid = pid.as_u32();
+                let ppid = process.parent().map(Pid::as_u32).unwrap_or(0);
+                (pid, ppid, process.start_time().saturating_mul(1_000))
+            })
+            .collect::<Vec<_>>();
+        let scanned_process_count = rows.len();
+        (rows, scanned_process_count)
+    }
+
+    // sysinfo opens every process it lists with PROCESS_VM_READ, which anti-cheat
+    // software flags. List with Toolhelp instead and open only possible T3 descendants.
+    #[cfg(target_os = "windows")]
+    fn discovery_rows(&mut self, config: &CollectorConfig) -> (Vec<(u32, u32, u64)>, usize) {
+        let listed = windows_processes::list();
+        let parent_rows = listed
+            .iter()
+            .map(|process| (process.pid, process.ppid, 0))
+            .collect::<Vec<_>>();
+        let mut candidate_roots = config
+            .external_processes
+            .keys()
+            .copied()
+            .collect::<HashSet<_>>();
+        candidate_roots.insert(config.root_pid);
+        // With equal start times every descendant is a candidate.
+        let candidates = select_tracked_pids(&parent_rows, &candidate_roots);
+        let rows = parent_rows
+            .into_iter()
+            .filter(|(pid, _, _)| candidates.contains(pid))
+            .map(|(pid, ppid, _)| {
+                let start_time = windows_processes::start_time(pid).unwrap_or(0);
+                (pid, ppid, start_time.saturating_mul(1_000))
+            })
+            .collect::<Vec<_>>();
+        (rows, listed.len())
+    }
+
+    // CPU usage needs a baseline per process, so the long-lived System holds the
+    // tracked tree only. A live process that left the tree is dropped by starting over.
+    #[cfg(target_os = "windows")]
+    fn refresh_tracked_cpu(&mut self, tracked: &HashSet<u32>) {
+        let mut keep = tracked
+            .iter()
+            .copied()
+            .map(Pid::from_u32)
+            .collect::<HashSet<_>>();
+        keep.insert(Pid::from_u32(std::process::id()));
+        let held = self
+            .system
+            .processes()
+            .keys()
+            .copied()
+            .chain(keep.iter().copied())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        self.system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&held),
+            true,
+            process_discovery_refresh_kind(),
+        );
+        if self
+            .system
+            .processes()
+            .keys()
+            .any(|pid| !keep.contains(pid))
+        {
+            self.system = System::new();
+            let keep = keep.into_iter().collect::<Vec<_>>();
+            self.system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&keep),
+                true,
+                process_discovery_refresh_kind(),
+            );
+        }
     }
 
     // Terminal polling asks for this every second while a shell is open. On
@@ -403,7 +532,23 @@ impl Collector {
         processes
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    fn process_table(&self) -> Vec<ProcessTableEntry> {
+        let mut processes = windows_processes::list()
+            .into_iter()
+            // Kernel idle PID 0 would fail the server's positive-PID event schema.
+            .filter(|process| process.pid != 0)
+            .map(|process| ProcessTableEntry {
+                pid: process.pid,
+                ppid: process.ppid,
+                name: truncate_utf8(process.name, MAX_PROCESS_NAME_BYTES),
+            })
+            .collect::<Vec<_>>();
+        processes.sort_by_key(|process| process.pid);
+        processes
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     fn process_table(&self) -> Vec<ProcessTableEntry> {
         // A separate System preserves snapshot CPU baselines.
         let mut process_table_system = System::new();
@@ -442,44 +587,11 @@ impl Collector {
             thread::sleep(delay);
         }
         let collection_started = Instant::now();
-        self.system.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            process_discovery_refresh_kind(),
-        );
-        self.cpu_baseline_refreshed_at = Some(Instant::now());
-
-        let rows = self
-            .system
-            .processes()
-            .iter()
-            .map(|(pid, process)| {
-                let pid = pid.as_u32();
-                let ppid = process.parent().map(Pid::as_u32).unwrap_or(0);
-                (pid, ppid, process.start_time().saturating_mul(1_000))
-            })
-            .collect::<Vec<_>>();
-        let external_processes = config
-            .external_processes
-            .iter()
-            .filter_map(|(pid, expected_start_time_ms)| {
-                let (_, _, actual_start_time_ms) = rows
-                    .iter()
-                    .find(|(candidate_pid, _, _)| candidate_pid == pid)?;
-                matches_external_identity(*actual_start_time_ms, *expected_start_time_ms).then_some(
-                    ExternalProcess {
-                        pid: *pid,
-                        start_time_ms: Some(*actual_start_time_ms),
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut roots = external_processes
-            .iter()
-            .map(|process| process.pid)
-            .collect::<HashSet<_>>();
-        roots.insert(config.root_pid);
-        let tracked = select_tracked_pids(&rows, &roots);
+        let Discovery {
+            external_processes,
+            tracked,
+            scanned_process_count,
+        } = self.discover(config);
         let tracked_process_count = tracked.len();
         let process_details = if TWO_STAGE_PROCESS_REFRESH && !tracked.is_empty() {
             let monitor_pid = Pid::from_u32(std::process::id());
@@ -573,7 +685,7 @@ impl Collector {
             sequence: self.sequence,
             sampled_at_unix_ms: unix_time_ms(),
             collection_duration_micros: collection_started.elapsed().as_micros() as u64,
-            scanned_process_count: self.system.processes().len(),
+            scanned_process_count,
             retained_process_count: processes.len(),
             inaccessible_process_count: inaccessible_process_count(
                 tracked_process_count,
@@ -583,6 +695,66 @@ impl Collector {
             external_processes,
             processes,
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows_processes {
+    use windows::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    pub struct ListedProcess {
+        pub pid: u32,
+        pub ppid: u32,
+        pub name: String,
+    }
+
+    pub fn list() -> Vec<ListedProcess> {
+        let mut processes = Vec::new();
+        let Ok(snapshot) = (unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }) else {
+            return processes;
+        };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut next = unsafe { Process32FirstW(snapshot, &mut entry) };
+        while next.is_ok() {
+            let name_len = entry
+                .szExeFile
+                .iter()
+                .position(|&unit| unit == 0)
+                .unwrap_or(entry.szExeFile.len());
+            processes.push(ListedProcess {
+                pid: entry.th32ProcessID,
+                ppid: entry.th32ParentProcessID,
+                name: String::from_utf16_lossy(&entry.szExeFile[..name_len]),
+            });
+            next = unsafe { Process32NextW(snapshot, &mut entry) };
+        }
+        let _ = unsafe { CloseHandle(snapshot) };
+        processes
+    }
+
+    /// Seconds since the Unix epoch, computed as sysinfo's `Process::start_time` is.
+    pub fn start_time(pid: u32) -> Option<u64> {
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        let times =
+            unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
+        let _ = unsafe { CloseHandle(handle) };
+        times.ok()?;
+        let ticks = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+        (ticks / 10_000_000).checked_sub(11_644_473_600)
     }
 }
 
@@ -914,7 +1086,9 @@ fn main() -> io::Result<()> {
                                 .map(|process| (process.pid, process.start_time_ms))
                                 .collect(),
                         });
-                        collector.prime_cpu_usage();
+                        if let Some(current) = config.as_ref() {
+                            collector.prime_cpu_usage(current);
+                        }
                         next_sample_at = sample_interval.map(|_| Instant::now());
                     }
                     Command::SetExternalProcesses { processes, .. } => {
@@ -1048,10 +1222,19 @@ mod tests {
 
     #[test]
     fn validates_external_process_start_identity() {
-        assert!(matches_external_identity(10_000, None));
-        assert!(matches_external_identity(10_000, Some(10_999)));
-        assert!(!matches_external_identity(10_000, Some(11_000)));
-        assert!(!matches_external_identity(10_000, Some(9_999)));
+        for (actual, expected, matches) in [
+            (10_000, None, true),
+            (10_000, Some(10_000), true),
+            (10_000, Some(10_999), true),
+            (10_000, Some(11_000), false),
+            (10_000, Some(9_999), false),
+            (0, Some(999), true),
+            (0, Some(1_000), false),
+            (u64::MAX, None, true),
+            (u64::MAX, Some(u64::MAX), false),
+        ] {
+            assert_eq!(matches_external_identity(actual, expected), matches);
+        }
     }
 
     #[test]
@@ -1077,7 +1260,37 @@ mod tests {
         assert!(process.cpu_percent.is_finite());
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_holds_no_process_outside_the_tracked_tree() {
+        let mut collector = Collector::new();
+        let config = CollectorConfig {
+            root_pid: u32::MAX,
+            sample_interval: None,
+            external_processes: HashMap::new(),
+        };
+        let snapshot = collector.sample(&config, None);
+        let own_pid = std::process::id();
+
+        assert!(snapshot.scanned_process_count > 1);
+        assert_eq!(
+            collector
+                .system
+                .processes()
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![Pid::from_u32(own_pid)]
+        );
+        assert!(
+            collector
+                .process_table()
+                .iter()
+                .any(|process| process.pid == own_pid && process.ppid != 0)
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[test]
     fn keeps_command_lines_and_memory_out_of_the_discovery_table() {
         let mut collector = Collector::new();
@@ -1094,7 +1307,13 @@ mod tests {
         assert_eq!(unselected.memory(), 0);
         assert_eq!(unselected.virtual_memory(), 0);
 
-        config.external_processes.insert(pid.as_u32(), None);
+        config.external_processes = [
+            (pid.as_u32(), Some(0)),
+            (u32::MAX, None),
+            (pid.as_u32(), None),
+        ]
+        .into_iter()
+        .collect();
         let snapshot = collector.sample(&config, None);
         let selected = snapshot
             .processes
@@ -1104,6 +1323,27 @@ mod tests {
         assert!(!selected.command.is_empty());
         assert!(selected.resident_bytes > 0);
         assert!(selected.start_time_ms > 0);
+        assert_eq!(
+            snapshot
+                .external_processes
+                .iter()
+                .map(|process| (process.pid, process.start_time_ms))
+                .collect::<Vec<_>>(),
+            vec![(pid.as_u32(), Some(selected.start_time_ms))],
+        );
+
+        config.root_pid = pid.as_u32();
+        config.external_processes.insert(pid.as_u32(), Some(0));
+        let snapshot = collector.sample(&config, None);
+        assert!(snapshot.external_processes.is_empty());
+        assert_eq!(
+            snapshot
+                .processes
+                .iter()
+                .filter(|process| process.pid == pid.as_u32())
+                .count(),
+            1,
+        );
 
         let retained = collector
             .system

@@ -8,6 +8,8 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
+  type PeerLinkError,
+  RuntimeMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -15,9 +17,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
+import { runtimeModeRank } from "../mcp/delegatedTaskModes.ts";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
@@ -82,9 +86,31 @@ export const linkedEnvironmentsOff = new OrchestratorMcpFailure({
     "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
 });
 
+const isRuntimeMode = Schema.is(RuntimeMode);
+
+const linkStorageFailure = (error: PeerLinkError) =>
+  new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
+
 /** The linked environment a call names, or nothing when it names this one. */
 export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefined) =>
   environmentId === scope.environmentId ? undefined : environmentId;
+
+// Older peers reject beforePosition during parameter validation.
+const BEFORE_POSITION_REFUSAL =
+  /^Invalid parameters for tool 't3_thread_read': Unknown arguments? (?:"[^"]+", )*"beforePosition"(?:, "[^"]+")*\. Accepted arguments: /;
+export const refusesBeforePosition = (failure: {
+  readonly code: string;
+  readonly message: string;
+}) => failure.code === "invalid_request" && BEFORE_POSITION_REFUSAL.test(failure.message);
+
+/** A newest-page read, retried as the peer always served it when the peer refuses the cursor. */
+export const readNewestOrRetry = Effect.fn("PeerForwarding.readNewestOrRetry")(function* <A>(
+  read: (args: unknown) => Effect.Effect<A, OrchestratorMcpFailure>,
+  newest: unknown,
+  params: unknown,
+) {
+  return yield* read(newest).pipe(Effect.catchIf(refusesBeforePosition, () => read(params)));
+});
 
 const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
@@ -116,6 +142,28 @@ const make = Effect.gen(function* () {
       Effect.orDie,
     );
 
+  /**
+   * The linked environment refuses a mode above the link's access too, but as
+   * "broader than parent mode", which misleads when the parent here is broader.
+   * A read-only link refuses the launch there with its own capability error,
+   * and an expired one is left to say it expired.
+   */
+  const assertWithinLinkAccess = Effect.fn("PeerForwarding.assertWithinLinkAccess")(function* (
+    environmentId: EnvironmentId,
+    requested: unknown,
+  ) {
+    if (!isRuntimeMode(requested)) return;
+    const link = yield* links.get(environmentId).pipe(Effect.mapError(linkStorageFailure));
+    if (Option.isNone(link)) return;
+    if (DateTime.isLessThanOrEqualTo(link.value.expiresAt, yield* DateTime.now)) return;
+    const { label, access } = link.value;
+    if (access === "read-only" || runtimeModeRank(requested) <= runtimeModeRank(access)) return;
+    return yield* new OrchestratorMcpFailure({
+      code: "runtime_mode_escalation_denied",
+      message: `Linked environment "${label}" was linked with ${access} access, so work there cannot run in ${requested}. Omit runtimeMode to run it at a mode up to ${access}, or link it again with broader access.`,
+    });
+  });
+
   /** Tool and contract schemas are plain data: they encode and decode without services. */
   const forward = Effect.fn("PeerForwarding.forward")(function* <A>(
     scope: Scope,
@@ -130,6 +178,7 @@ const make = Effect.gen(function* () {
       params,
     ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
     const { environmentId: _target, ...args } = encoded;
+    yield* assertWithinLinkAccess(environmentId, args.runtimeMode);
     // A pending upload lives here, so it cannot go with the call.
     if (Array.isArray(args.attachments) && args.attachments.length > 0) {
       return yield* new OrchestratorMcpFailure({
@@ -205,7 +254,21 @@ const make = Effect.gen(function* () {
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
 
+  // Older peers page some cursorless reads forward; ask for the newest page, as a read here gets.
+  const newestPage = (toolName: string, params: unknown) => {
+    if (toolName !== "t3_thread_read") return undefined;
+    const input = params as OrchestratorMcpThreadReadInput;
+    return input.afterPosition === undefined && input.beforePosition === undefined
+      ? { ...input, beforePosition: Number.MAX_SAFE_INTEGER }
+      : undefined;
+  };
+
   const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
+    const forwardTool = (
+      args: unknown,
+    ): Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure> =>
+      forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, args);
+    const newest = newestPage(tool.name, params);
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
       OrchestratorMcpFailure
@@ -215,7 +278,9 @@ const make = Effect.gen(function* () {
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
-      : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
+      : newest === undefined
+        ? forwardTool(params)
+        : readNewestOrRetry(forwardTool, newest, params);
     return Effect.andThen(requireEnabled, forwarded);
   };
 
@@ -230,12 +295,7 @@ const make = Effect.gen(function* () {
     function* (scope) {
       yield* forwardingCaller(scope);
       yield* requireEnabled;
-      const listed = yield* links.list.pipe(
-        Effect.mapError(
-          (error) =>
-            new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
-        ),
-      );
+      const listed = yield* links.list.pipe(Effect.mapError(linkStorageFailure));
       return {
         environmentId: scope.environmentId,
         links: listed.map((link) => ({

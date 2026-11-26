@@ -27,6 +27,7 @@ import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
 import { makeDpopKey } from "./dpop.testkit.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerHttp from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -75,6 +76,7 @@ const makeLayerRoutes = (
         ),
       ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provide(ServerHttp.layerApiBodyLimit),
     ),
   ).pipe(
     Layer.provideMerge(layerEnvironmentAuth),
@@ -209,8 +211,29 @@ it.effect("derives discovery metadata from the origin the client reached", () =>
         authorization_endpoint: `${ORIGIN}/oauth/mcp/authorize`,
         token_endpoint: `${ORIGIN}/oauth/mcp/token`,
         registration_endpoint: `${ORIGIN}/oauth/mcp/register`,
+        revocation_endpoint: `${ORIGIN}/oauth/mcp/revoke`,
         code_challenge_methods_supported: ["S256"],
       });
+    }),
+  ),
+);
+
+it.effect("answers 413 to a body over the API limit", () =>
+  withRoutes((handler) =>
+    Effect.gen(function* () {
+      const body = "x".repeat(ServerHttp.API_MAX_BODY_BYTES + 1);
+      for (const [path, contentType] of [
+        ["/api/auth/browser-session", "application/json"],
+        ["/oauth/token", "application/x-www-form-urlencoded"],
+        ["/oauth/mcp/register", "application/json"],
+      ]) {
+        const init = { method: "POST", headers: { "content-type": contentType! } };
+        expect((yield* handler(at(path!, { ...init, body }))).status, path).toBe(413);
+        // A chunked body declares no length, so the reader itself has to stop.
+        const chunked = new Blob([body]).stream();
+        const streamed = at(path!, { ...init, body: chunked, duplex: "half" } as RequestInit);
+        expect((yield* handler(streamed)).status, `${path} chunked`).toBe(413);
+      }
     }),
   ),
 );
@@ -228,6 +251,46 @@ it.effect("registers loopback and https clients and never redirects for an unver
         const response = yield* register(handler, refused);
         expect(response.status).toBe(400);
         expect(yield* json<unknown>(response)).toMatchObject({ error: "invalid_redirect_uri" });
+      }
+      // JSON escaping can inflate the signed client_id past what an authorize URL can carry.
+      const oversized = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            redirect_uris: Array.from(
+              { length: 10 },
+              (_, index) => `https://bot.example/${index}/${'"'.repeat(480)}`,
+            ),
+          }),
+        }),
+      );
+      expect(oversized.status).toBe(400);
+      const fiveLongCallbacks = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            client_name: "A".repeat(100),
+            redirect_uris: Array.from(
+              { length: 5 },
+              (_, index) => `https://a.co/${index}/${"界".repeat(497)}`,
+            ),
+          }),
+        }),
+      );
+      expect(fiveLongCallbacks.status).toBe(201);
+
+      for (const malformed of [
+        { client_name: 42, redirect_uris: [REDIRECT] },
+        { redirect_uris: REDIRECT },
+      ]) {
+        const response = yield* handler(postJson("/oauth/mcp/register", malformed));
+        expect(response.status).toBe(400);
+        expect(response.headers.get("content-type")).toMatch(/^application\/json/);
+        expect(yield* json<{ error: string }>(response)).toMatchObject({
+          error: expect.stringMatching(/^invalid_(client_metadata|redirect_uri)$/),
+        });
       }
 
       const registered = yield* register(handler);
@@ -251,6 +314,17 @@ it.effect("registers loopback and https clients and never redirects for an unver
       );
       expect(unregistered.status).toBe(400);
       expect(unregistered.headers.get("location")).toBeNull();
+
+      for (const resource of [`${ORIGIN}/mcp#section`, `${ORIGIN}/mcp#`]) {
+        const wrongTarget = yield* handler(
+          at(
+            `/oauth/mcp/authorize?${new URLSearchParams({ ...authorizeParams(clientId), resource })}`,
+          ),
+        );
+        expect(wrongTarget.status).toBe(302);
+        const location = new URL(wrongTarget.headers.get("location")!, ORIGIN);
+        expect(location.searchParams.get("error"), resource).toBe("invalid_target");
+      }
 
       const query = new URLSearchParams(authorizeParams(clientId)).toString();
       const handoff = yield* handler(at(`/oauth/mcp/authorize?${query}`));
@@ -345,6 +419,22 @@ it.live("signs in with a pairing code and issues a token only /mcp accepts", () 
         }),
       );
       expect(ticket.status).toBe(401);
+
+      // Revocation ends only an MCP client's own session; any other token is answered alike and kept.
+      const owner = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        (yield* auth.issuePairingCredential()).credential,
+        undefined,
+        { deviceType: "desktop" },
+      );
+      const bearer = (token: string) =>
+        HttpServerRequest.fromWeb(at("/api", { headers: { authorization: `Bearer ${token}` } }));
+      for (const other of ["not-a-token", owner.access_token]) {
+        expect((yield* handler(at("/oauth/mcp/revoke", form({ token: other })))).status).toBe(200);
+      }
+      yield* auth.authenticateHttpRequest(bearer(owner.access_token));
+      const revoked = yield* handler(at("/oauth/mcp/revoke", form({ token: token.access_token })));
+      expect(revoked.status).toBe(200);
+      yield* auth.authenticateMcpClient(bearer(token.access_token)).pipe(Effect.flip);
     }),
   ),
 );
@@ -407,6 +497,81 @@ it.live("signs in a hosted agent with an https callback that asked for a client 
         ),
       );
       expect(signedIn).toMatchObject({ label: "Hosted bot", access: "approval-required" });
+    }),
+  ),
+);
+
+it.live("signs in Gemini, which registers six user-bound redirect URIs for one client", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const redirectUris = Array.from(
+        { length: 6 },
+        (_, index) =>
+          `https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-test${index}`,
+      );
+      const registered = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            client_name: "Google",
+            redirect_uris: redirectUris,
+            token_endpoint_auth_method: "client_secret_basic",
+          }),
+        }),
+      );
+      const client = (yield* json<unknown>(registered)) as { client_id: string };
+      expect(client).toMatchObject({ redirect_uris: redirectUris });
+      expect(registered.status).toBe(201);
+
+      const callbackUrl = redirectUris[5]!;
+      const params = authorizeParams(client.client_id, callbackUrl);
+      const pairing = yield* auth.issuePairingCredential();
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code: pairing.credential,
+      });
+      const callback = new URL(approved.redirectTo!);
+      expect(`${callback.origin}${callback.pathname}`).toBe(callbackUrl);
+    }),
+  ),
+);
+
+it.live("issues no session for a sign-in approved before all other sessions were revoked", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const clientId = yield* registeredClientId(handler);
+      const params = authorizeParams(clientId);
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code: (yield* auth.issuePairingCredential()).credential,
+      });
+      const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+      const owner = yield* auth.issueSession();
+      yield* auth.revokeOtherClientSessions(owner.sessionId);
+
+      const response = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: params.redirect_uri,
+            client_id: clientId,
+            code_verifier: verifier,
+          }),
+        ),
+      );
+      expect(response.status).toBe(400);
+      expect(yield* json<unknown>(response)).toEqual({
+        error: "invalid_grant",
+        error_description: "The authorization code is invalid or expired.",
+      });
+      expect((yield* auth.listSessions()).map((session) => session.sessionId)).toEqual([
+        owner.sessionId,
+      ]);
     }),
   ),
 );
