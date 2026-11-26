@@ -94,12 +94,13 @@ export function withLinkedComposerPullRequestsFirst<
 }): ReadonlyArray<Entry | Linked> {
   const { keyOf } = input;
   const matchesByKey = new Map(input.matches.map((entry) => [keyOf(entry), entry]));
-  const words = input.query.toLowerCase().split(/\s+/u).filter(Boolean);
+  const words = input.query.normalize("NFC").toLowerCase().split(/\s+/u).filter(Boolean);
   const linked = input.linked.flatMap((entry): Array<Entry | Linked> => {
     const match = matchesByKey.get(keyOf(entry));
     if (match !== undefined) return [match];
-    const text =
-      `#${entry.number} ${entry.title} ${entry.repository} ${entry.headBranch}`.toLowerCase();
+    const text = `#${entry.number} ${entry.title} ${entry.repository} ${entry.headBranch}`
+      .normalize("NFC")
+      .toLowerCase();
     return words.every((word) => text.includes(word)) ? [entry] : [];
   });
   const linkedKeys = new Set(linked.map(keyOf));

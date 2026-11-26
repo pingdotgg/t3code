@@ -1,4 +1,4 @@
-import { AuthFilesystemReadScope, EnvironmentId } from "@t3tools/contracts";
+import { AuthFilesystemReadScope, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { RegistryContext } from "@effect/atom-react";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -9,7 +9,9 @@ import { expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({
   sessionAtom: {},
   searchEntriesAtom: {},
+  pullRequestListAtom: {},
   searchEntries: vi.fn((): unknown => mocks.searchEntriesAtom),
+  pullRequestList: vi.fn((): unknown => mocks.pullRequestListAtom),
   listRefs: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -23,7 +25,9 @@ vi.mock("./presentation", () => ({
     presentation: { connection: { phase: "connected", error: null } },
   }),
 }));
-vi.mock("./pull-requests", () => ({ composerPullRequests: {} }));
+vi.mock("./pull-requests", () => ({
+  composerPullRequests: { list: mocks.pullRequestList },
+}));
 vi.mock("./projects", () => ({
   projectEnvironment: { searchEntries: mocks.searchEntries },
 }));
@@ -38,7 +42,26 @@ vi.mock("./query", () => ({
         ? { authenticated: true, scopes: [AuthFilesystemReadScope] }
         : atom === mocks.searchEntriesAtom
           ? { entries: [{ path: "src/only-in-original.ts", kind: "file" }] }
-          : null,
+          : atom === mocks.pullRequestListAtom
+            ? {
+                entries: [
+                  {
+                    projectId: ProjectId.make("project-1"),
+                    host: "github.com",
+                    repository: "owner/repo",
+                    number: 7,
+                    url: "https://github.com/owner/repo/pull/7",
+                    title: "Fix caf\u00e9",
+                    headBranch: "fix/cafe",
+                    baseBranch: "main",
+                    state: "open",
+                    isDraft: false,
+                    updatedAt: "2026-07-02T00:00:00Z",
+                  },
+                ],
+                errors: [],
+              }
+            : null,
     error: null,
     isPending: false,
     refresh: () => {},
@@ -47,6 +70,7 @@ vi.mock("./query", () => ({
 
 import {
   useComposerPathSearch,
+  useComposerPullRequestSearch,
   usePaginatedBranches,
   type ComposerPathSearchTarget,
 } from "./queries";
@@ -236,4 +260,29 @@ it("keeps compiled branch results stable and resets pagination for a new target 
   render(null);
   expect(current!.data).toBeNull();
   expect(current!.refs).toEqual([]);
+});
+
+it("matches composer pull requests across NFC and NFD Unicode forms", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.useFakeTimers();
+  const root = createRoot(document.createElement("div"));
+  using _cleanup = {
+    [Symbol.dispose]() {
+      act(() => root.unmount());
+      vi.useRealTimers();
+    },
+  };
+  let latest: ReturnType<typeof useComposerPullRequestSearch> | null = null;
+  function Probe({ query }: { readonly query: string }) {
+    latest = useComposerPullRequestSearch({
+      environmentId: target.environmentId,
+      projectId: ProjectId.make("project-1"),
+      repository: "owner/repo",
+      query,
+    });
+    return null;
+  }
+  act(() => root.render(<Probe query={"cafe\u0301"} />));
+  act(() => vi.advanceTimersByTime(180));
+  expect(latest!.entries.map((entry) => entry.number)).toEqual([7]);
 });

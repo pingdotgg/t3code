@@ -182,4 +182,24 @@ describe("linked pull requests", () => {
       entry(9, "2026-01-05"),
     ]);
   });
+
+  it("matches linked pull requests across NFC and NFD Unicode forms", () => {
+    const linked = composerPullRequestsFromLinks(
+      [
+        link("owner/repo", 7, {
+          snapshot: { ...link("owner/repo", 7).snapshot!, title: "Fix caf\u00e9" },
+        }),
+      ],
+      "p1",
+    );
+    expect(
+      withLinkedComposerPullRequestsFirst({
+        keyOf,
+        matches: [],
+        linked,
+        query: "cafe\u0301",
+        limit: 10,
+      }).map((match) => match.number),
+    ).toEqual([7]);
+  });
 });
