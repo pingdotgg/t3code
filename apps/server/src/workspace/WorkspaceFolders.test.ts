@@ -269,6 +269,9 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         for (const folder of ["home/api/.git", "home/Desktop/notes/.git", "other/web/.git"]) {
           yield* fileSystem.makeDirectory(path.join(tmp, folder), { recursive: true });
         }
+        // `work` hangs in the probe of a child's `.git` before any listing, like a hung mount.
+        const blocked = (name: string) =>
+          path.join(root(name), "Desktop", ...(name === "work" ? [".git"] : []));
         const listings = new Map<string, { gate: string; started: Deferred.Deferred<void> }>();
         for (const name of ["home", "work", "spare", "extra"]) {
           const gate = path.join(tmp, `${name}.gate`);
@@ -285,22 +288,25 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
               }
             }),
           );
-          listings.set(path.join(root(name), "Desktop"), {
+          listings.set(blocked(name), {
             gate,
             started: yield* Deferred.make<void>(),
           });
         }
+        const hang = <A, E>(target: string, call: Effect.Effect<A, E>) => {
+          const listing = listings.get(target);
+          return listing === undefined
+            ? call
+            : Deferred.succeed(listing.started, undefined).pipe(
+                Effect.andThen(fileSystem.readFileString(listing.gate)),
+                Effect.andThen(call),
+              );
+        };
         const hanging = FileSystem.FileSystem.of({
           ...fileSystem,
-          readDirectory: (target, options) => {
-            const listing = listings.get(target);
-            return listing === undefined
-              ? fileSystem.readDirectory(target, options)
-              : Deferred.succeed(listing.started, undefined).pipe(
-                  Effect.andThen(fileSystem.readFileString(listing.gate)),
-                  Effect.as([]),
-                );
-          },
+          readDirectory: (target, options) =>
+            hang(target, fileSystem.readDirectory(target, options)),
+          stat: (target) => hang(target, fileSystem.stat(target)),
         });
         const discover = (workspaceRoot: string) =>
           WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
@@ -309,7 +315,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           );
         const discoverPastDeadline = Effect.fnUntraced(function* (name: string) {
           const scan = yield* Effect.forkChild(discover(root(name)));
-          yield* Deferred.await(listings.get(path.join(root(name), "Desktop"))!.started);
+          yield* Deferred.await(listings.get(blocked(name))!.started);
           yield* TestClock.adjust("2 seconds");
           return yield* Fiber.join(scan);
         });
@@ -325,8 +331,8 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         // Each pass would otherwise pin another thread, and four leave the server unanswered.
         for (let pass = 0; pass < 4; pass++) assert.deepEqual(yield* discover(home), found);
         assert.deepEqual(yield* discover(root("other")), [path.join(root("other"), "web")]);
-        // Two stuck listings are the most there can be, however many projects hold one. Other
-        // roots then list nothing either, and keep what they found.
+        // Two stuck calls are the most there can be, however many projects hold one. Other roots
+        // then make none either, and keep what they found.
         assert.deepEqual(yield* discoverPastDeadline("work"), []);
         assert.deepEqual(yield* discover(root("spare")), []);
         assert.deepEqual(yield* discover(root("extra")), []);

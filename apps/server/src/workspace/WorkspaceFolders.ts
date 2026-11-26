@@ -16,7 +16,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -25,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
@@ -115,79 +115,107 @@ export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
     return normalized === "" ? [] : [normalized];
   });
 
-// A listing behind a macOS privacy prompt or a hung mount can pin one of libuv's 4 shared threads
-// for good. So listings run one at a time per root and two overall, holding their slots until
-// `open()` returns; a root whose read passes the deadline, or every root once both have, lists
-// nothing more until it returns. The deadline starts with the read, so queueing never counts.
-const LISTING_DEADLINE = "2 seconds";
-const MAX_LISTINGS = 2;
-const listingSlots = Semaphore.makeUnsafe(MAX_LISTINGS);
-let overdueListings = 0;
-/** Completes when every slot holds an overdue read; replaced once one returns. */
+// A filesystem call behind a macOS privacy prompt or a hung mount can pin one of libuv's 4 shared
+// threads for good. So a scan's calls run one at a time per root and two overall, holding their
+// slots until they return; a root whose call passes the deadline, or every root once both have,
+// makes no call until it returns. The deadline starts with the call, so queueing never counts.
+const CALL_DEADLINE = "2 seconds";
+const MAX_CALLS = 2;
+const callSlots = Semaphore.makeUnsafe(MAX_CALLS);
+let overdueCalls = 0;
+/** Completes when every slot holds an overdue call; replaced once one returns. */
 let saturated = Deferred.makeUnsafe<void>();
-const rootListings = new Map<
+const rootCalls = new Map<
   string,
   {
     readonly slot: Semaphore.Semaphore;
     users: number;
     overdue: boolean;
-    /** Completes when the running read passes the deadline; replaced once it returns. */
+    /** Completes when the running call passes the deadline; replaced once it returns. */
     stuck: Deferred.Deferred<void>;
   }
 >();
 
-const listFolder = Effect.fnUntraced(function* (root: string, folder: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const entry = rootListings.get(root) ?? {
+const guarded = Effect.fnUntraced(function* <A>(
+  root: string,
+  method: string,
+  target: string,
+  call: Effect.Effect<A, PlatformError.PlatformError>,
+) {
+  const timedOut = PlatformError.systemError({
+    _tag: "TimedOut",
+    module: "WorkspaceFolders",
+    method,
+    pathOrDescriptor: target,
+  });
+  const entry = rootCalls.get(root) ?? {
     slot: Semaphore.makeUnsafe(1),
     users: 0,
     overdue: false,
     stuck: Deferred.makeUnsafe<void>(),
   };
-  if (entry.overdue || overdueListings >= MAX_LISTINGS) {
-    return yield* new Cause.TimeoutError(`Listings for ${root} are overdue.`);
-  }
-  rootListings.set(root, entry);
+  if (entry.overdue || overdueCalls >= MAX_CALLS) return yield* timedOut;
+  rootCalls.set(root, entry);
   entry.users += 1;
   const stuck = entry.stuck;
   const full = saturated;
-  const read = Effect.gen(function* () {
-    const reading = yield* Effect.forkChild(fileSystem.readDirectory(folder));
-    const early = yield* Fiber.await(reading).pipe(Effect.timeoutOption(LISTING_DEADLINE));
+  const run = Effect.gen(function* () {
+    const running = yield* Effect.forkChild(call);
+    const early = yield* Fiber.await(running).pipe(Effect.timeoutOption(CALL_DEADLINE));
     if (Option.isSome(early)) return yield* early.value;
     entry.overdue = true;
     Deferred.doneUnsafe(entry.stuck, Effect.void);
-    overdueListings += 1;
-    if (overdueListings === MAX_LISTINGS) Deferred.doneUnsafe(saturated, Effect.void);
-    const late = yield* Fiber.await(reading);
-    if (overdueListings === MAX_LISTINGS) saturated = Deferred.makeUnsafe();
-    overdueListings -= 1;
+    overdueCalls += 1;
+    if (overdueCalls === MAX_CALLS) Deferred.doneUnsafe(saturated, Effect.void);
+    const late = yield* Fiber.await(running);
+    if (overdueCalls === MAX_CALLS) saturated = Deferred.makeUnsafe();
+    overdueCalls -= 1;
     entry.overdue = false;
     entry.stuck = Deferred.makeUnsafe();
     return yield* late;
   }).pipe(Effect.uninterruptible);
-  const listing = yield* entry.slot.withPermit(listingSlots.withPermit(read)).pipe(
+  const fiber = yield* entry.slot.withPermit(callSlots.withPermit(run)).pipe(
     Effect.ensuring(
       Effect.sync(() => {
         entry.users -= 1;
-        if (entry.users === 0) rootListings.delete(root);
+        if (entry.users === 0) rootCalls.delete(root);
       }),
     ),
     Effect.forkDetach,
   );
-  const names = yield* Effect.raceFirst(
-    Effect.asSome(Fiber.join(listing)),
+  const result = yield* Effect.raceFirst(
+    Effect.asSome(Fiber.join(fiber)),
     Effect.as(Effect.raceFirst(Deferred.await(stuck), Deferred.await(full)), Option.none()),
-  ).pipe(Effect.ensuring(Effect.sync(() => listing.interruptUnsafe())));
-  if (Option.isSome(names)) return names.value;
-  return yield* new Cause.TimeoutError(`Listing ${folder} took too long.`);
+  ).pipe(Effect.ensuring(Effect.sync(() => fiber.interruptUnsafe())));
+  if (Option.isSome(result)) return result.value;
+  return yield* timedOut;
 });
 
+// Every call a scan makes under `root` goes through its guard: the probes on a child that is a
+// hung mount block as surely as its listing.
+const guardedFileSystem = (fileSystem: FileSystem.FileSystem, root: string) => {
+  const guard =
+    <Args extends ReadonlyArray<unknown>, A>(
+      method: string,
+      call: (target: string, ...args: Args) => Effect.Effect<A, PlatformError.PlatformError>,
+    ) =>
+    (target: string, ...args: Args) =>
+      guarded(root, method, target, call(target, ...args));
+  return FileSystem.FileSystem.of({
+    ...fileSystem,
+    exists: guard("exists", fileSystem.exists),
+    stat: guard("stat", fileSystem.stat),
+    realPath: guard("realPath", fileSystem.realPath),
+    readDirectory: guard("readDirectory", fileSystem.readDirectory),
+    readFileString: guard("readFileString", fileSystem.readFileString),
+  });
+};
+
 // A stuck listing may never return (a privacy prompt nobody can see on a service host), so while a
-// root lists nothing, its last discovery stands in rather than dropping its repositories everywhere.
+// root makes no calls, its last discovery stands in rather than dropping its repositories everywhere.
 const lastDiscovered = new Map<string, ReadonlyArray<ProjectTrackedFolder>>();
-const listingsRefused = (root: string) =>
-  rootListings.get(root)?.overdue === true || overdueListings >= MAX_LISTINGS;
+const callsRefused = (root: string) =>
+  rootCalls.get(root)?.overdue === true || overdueCalls >= MAX_CALLS;
 
 // Built once per operation: the probes share the caller's file system and path services.
 const folderProbes = Effect.gen(function* () {
@@ -217,8 +245,8 @@ const folderProbes = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  const childFolders = (root: string, folder: string) =>
-    listFolder(root, folder).pipe(
+  const childFolders = (folder: string) =>
+    fileSystem.readDirectory(folder).pipe(
       Effect.orElseSucceed((): ReadonlyArray<string> => []),
       Effect.map((names) =>
         names
@@ -267,15 +295,33 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { exists, realPath, classify, ownsHistory, childFolders } = yield* folderProbes;
   const root = path.resolve(
     expandHomePath(input.workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
   );
-  const names = (yield* listFolder(root, root).pipe(
-    Effect.mapError(
-      () => new WorkspaceFoldersError({ operation: "scan", detail: `Could not read ${root}.` }),
-    ),
-  )).toSorted();
+  return yield* scanRoot(root, limit).pipe(
+    Effect.provideService(FileSystem.FileSystem, guardedFileSystem(fileSystem, root)),
+  );
+});
+
+// Untraced: the body of `scan` and `discover`, run on the root's guarded file system.
+const scanRoot = Effect.fnUntraced(function* (
+  root: string,
+  limit: number,
+): Effect.fn.Return<
+  WorkspaceScanFoldersResult,
+  WorkspaceFoldersError,
+  FileSystem.FileSystem | Path.Path
+> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { exists, realPath, classify, ownsHistory, childFolders } = yield* folderProbes;
+  const names = (yield* fileSystem
+    .readDirectory(root)
+    .pipe(
+      Effect.mapError(
+        () => new WorkspaceFoldersError({ operation: "scan", detail: `Could not read ${root}.` }),
+      ),
+    )).toSorted();
   const codeWorkspaceFile = names.find((name) => name.endsWith(CODE_WORKSPACE_EXTENSION)) ?? null;
   const listed =
     codeWorkspaceFile === null ? null : yield* readCodeWorkspaceFolders(root, codeWorkspaceFile);
@@ -289,7 +335,7 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
       return Effect.gen(function* () {
         if (yield* ownsHistory(folderPath)) return [{ path: folderPath, name: boundedName(name) }];
         if (yield* exists(path.join(folderPath, ".git"))) return [];
-        const nested = yield* Effect.filter(yield* childFolders(root, folderPath), ownsHistory, {
+        const nested = yield* Effect.filter(yield* childFolders(folderPath), ownsHistory, {
           concurrency: DETECTION_CONCURRENCY,
         });
         return nested.map((nestedPath) => ({
@@ -356,10 +402,20 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
 export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* (
   workspaceRoot: string,
 ): Effect.fn.Return<ReadonlyArray<ProjectTrackedFolder>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  const root = path.resolve(expandHomePath(workspaceRoot.trim(), yield* HostProcess.HomeDirectory));
+  return yield* discoverIn(root).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      guardedFileSystem(yield* FileSystem.FileSystem, root),
+    ),
+  );
+});
+
+const discoverIn = Effect.fnUntraced(function* (root: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { realPath, ownsHistory } = yield* folderProbes;
-  const root = path.resolve(expandHomePath(workspaceRoot.trim(), yield* HostProcess.HomeDirectory));
   const ignored = (
     parseT3ProjectFile(
       yield* fileSystem
@@ -373,11 +429,11 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
     ignored.some((entry) => folderPath === entry || isWithinRoot(path, folderPath, entry));
   // A scan that met a stuck listing missed what lies behind it.
   const previous = () =>
-    listingsRefused(root)
+    callsRefused(root)
       ? lastDiscovered.get(root)?.filter((folder) => !isIgnored(folder.path))
       : undefined;
   // Uncapped: the folders outside the project are dropped below, and must not use up the room.
-  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
+  const scan = yield* scanRoot(root, Number.POSITIVE_INFINITY).pipe(Effect.option);
   if (Option.isNone(scan)) return previous() ?? [];
   const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
