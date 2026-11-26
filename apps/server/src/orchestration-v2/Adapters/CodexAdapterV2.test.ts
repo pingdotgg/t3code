@@ -13122,6 +13122,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         // Settles without waiting out the continuation grace.
         yield* harness.firstTerminal;
         assert.deepEqual(providerGoals(harness.events), ["active", "paused"]);
+        assert.isTrue(
+          harness.events.findLast((event) => event.type === "provider_thread.updated")
+            ?.providerThread.goal?.resumeOnWake,
+        );
         assert.deepEqual(
           harness.terminalEvents().map((event) => event.status),
           ["completed"],
@@ -13140,6 +13144,92 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "/goal"));
         yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "Child finished"));
         yield* harness.until(() => providerGoals(harness.events).at(-1) === "active");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect.each([
+      { name: "worker wake", resumeOnWake: true, currentStatus: "paused", activates: true },
+      { name: "operator pause", resumeOnWake: false, currentStatus: "paused", activates: false },
+      { name: "provider blocked", resumeOnWake: true, currentStatus: "blocked", activates: false },
+    ])("handles a persisted goal after adapter restart: $name", (scenario) =>
+      Effect.gen(function* () {
+        const text = "Child finished";
+        const wakeTurn = "worker-wake-turn";
+        const requestId = scenario.resumeOnWake ? 4 : 3;
+        const transcript = makeCodexReplayTranscript({
+          scenario: `durable-goal-${scenario.name.replaceAll(" ", "-")}`,
+          entries: [
+            ...sessionStart,
+            ...(scenario.resumeOnWake
+              ? request(
+                  3,
+                  "thread/goal/get",
+                  { threadId: nativeThreadId },
+                  { goal: codexGoal(scenario.currentStatus, 10) },
+                )
+              : []),
+            ...withReplayRequestId(
+              codexReplayPreamble({ nativeThreadId, nativeTurnId: wakeTurn, prompt: text }).slice(
+                5,
+              ),
+              requestId,
+            ),
+            ...(scenario.activates
+              ? [
+                  ...request(
+                    requestId + 1,
+                    "thread/goal/set",
+                    { threadId: nativeThreadId, status: "active" },
+                    { goal: codexGoal("active", 10) },
+                  ),
+                  notification("goal complete", "thread/goal/updated", {
+                    threadId: nativeThreadId,
+                    turnId: wakeTurn,
+                    goal: codexGoal("complete", 11),
+                  }),
+                ]
+              : []),
+            notification("wake done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: wakeTurn, status: "completed" }),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const providerThread = {
+          ...harness.providerThread,
+          goal: {
+            objective,
+            status: "paused" as const,
+            tokensUsed: 10,
+            tokenBudget: null,
+            timeUsedSeconds: 3,
+            ...(scenario.resumeOnWake ? { resumeOnWake: true as const } : {}),
+          },
+        };
+        yield* harness.runtime.startTurn(
+          yield* goalTurnInput({ ...harness, providerThread }, text),
+        );
+        yield* harness.firstTerminal;
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+        if (scenario.activates) {
+          assert.equal(providerGoals(harness.events).at(-1), "complete");
+        } else {
+          assert.notInclude(providerGoals(harness.events), "active");
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(
