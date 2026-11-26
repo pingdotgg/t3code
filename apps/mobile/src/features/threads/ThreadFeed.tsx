@@ -939,7 +939,7 @@ function MessageAttachmentFile(props: {
             accessibilityLabel={gt("Download {name}", { name: attachment.name })}
             accessibilityState={{ disabled, busy: opening }}
             disabled={disabled}
-            className="mr-1 min-h-11 w-11 items-center justify-center rounded-lg active:bg-subtle disabled:opacity-40"
+            className="me-1 min-h-11 w-11 items-center justify-center rounded-lg active:bg-subtle disabled:opacity-40"
             onPress={() => shareFile(sourceIdentifier)}
           >
             <SymbolView name="arrow.down" size={16} tintColorClassName="accent-foreground-muted" />
@@ -1835,7 +1835,7 @@ function ThreadAutomationMessageRow(props: {
         ) : null}
       </View>
       {props.expanded ? (
-        <View className="mt-1 flex-row items-center justify-end gap-2 pr-0.5">
+        <View className="mt-1 flex-row items-center justify-end gap-2 pe-0.5">
           {props.scheduledTaskId ? (
             <Pressable
               accessibilityRole="link"
@@ -2440,7 +2440,7 @@ function renderFeedEntry(
           {...(enterAnimated ? { entering: FadeInDown.duration(220) } : {})}
         >
           {presentation.attribution === "t3code" ? (
-            <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
+            <Text className="mb-1 pe-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
               {m(msg("Sent by T3 Code"))}
             </Text>
           ) : null}
@@ -2627,7 +2627,7 @@ function renderFeedEntry(
             </View>
           ) : null}
           {bubbleBodyVisible ? (
-            <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+            <View className="mt-1 flex-row items-center justify-end gap-1 pe-0.5">
               {foldRowId !== null && senderRef ? (
                 <OpenSenderThreadButton
                   environmentId={senderRef.environmentId}

@@ -980,7 +980,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               {label}
             </Text>
             {props.copied ? (
-              <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+              <Text className="pe-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
                 <T>Copied</T>
               </Text>
             ) : null}
@@ -1226,13 +1226,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
 
         <View className="shrink-0 flex-row items-center gap-px">
           {props.copied ? (
-            <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+            <Text className="pe-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
               <T>Copied</T>
             </Text>
           ) : mcpSignInTarget !== null ? (
             <Text
               className={cn(
-                "pr-1 font-t3-medium text-sm",
+                "pe-1 font-t3-medium text-sm",
                 mcpSignedIn ? "text-adaptive-emerald-600-400" : "text-primary",
               )}
             >

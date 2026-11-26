@@ -34,7 +34,7 @@ export function SettingsProviderRow(props: {
       <View className="flex-row items-center gap-2 overflow-hidden">
         <View className="size-5 items-center justify-center">
           {props.icon}
-          <View className="absolute -top-1 -left-1">
+          <View className="absolute -top-1 -start-1">
             <ConnectionStatusDot
               state={props.ready ? "connected" : "available"}
               pulse={false}

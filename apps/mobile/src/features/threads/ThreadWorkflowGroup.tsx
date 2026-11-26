@@ -94,7 +94,7 @@ export function ThreadWorkflowGroup(props: {
           <SubagentStopButton
             environmentId={props.environmentId}
             subagent={props.subagent}
-            className="mr-2"
+            className="me-2"
           />
         </View>
         {rail.length > 0 ? (
