@@ -21,8 +21,9 @@ removed. Forward WebSocket upgrades on the same path. Open
 CLI-generated links still use the server's advertised address. If clients send
 DPoP proofs to the public URL, set
 `T3CODE_DPOP_PUBLIC_BASE_URL=https://code.example.com/t3/team/` on the server
-and have the proxy forward the public host and HTTPS scheme. The configured
-path is used for proofs sent to that origin.
+and configure the proxy to preserve the public `Host` header and send
+`X-Forwarded-Proto: https`. T3 uses these headers to match the request origin to
+the configured public origin before applying the path prefix.
 
 If you publish multiple instances on one origin, scope each server's session
 cookies to its proxy path. Browser storage is shared by an origin, so use
