@@ -163,16 +163,16 @@ export function indentCodeBlock(
   if (nextLines.join("\n") === originalLines.join("\n")) return true;
 
   if (dispatch) {
-    const transaction = state.tr.insertText(
-      nextLines.join("\n"),
-      block.from + lineStart,
-      block.from + lineEnd,
-    );
-    const firstDelta = (nextLines[0]?.length ?? 0) - (originalLines[0]?.length ?? 0);
-    const totalDelta = nextLines.join("\n").length - originalLines.join("\n").length;
-    const nextFrom = Math.max(block.from + lineStart, from + firstDelta);
-    const nextTo = Math.max(nextFrom, to + totalDelta);
-    transaction.setSelection(TextSelection.create(transaction.doc, nextFrom, nextTo));
+    const transaction = state.tr;
+    let position = block.from + lineStart;
+    originalLines.forEach((line, index) => {
+      const delta = nextLines[index]!.length - line.length;
+      const start = transaction.mapping.map(position);
+      if (delta > 0) transaction.insertText(CODE_BLOCK_INDENT, start);
+      if (delta < 0) transaction.delete(start, start - delta);
+      position += line.length + 1;
+    });
+    transaction.setSelection(state.selection.map(transaction.doc, transaction.mapping));
     dispatch(transaction.scrollIntoView());
   }
   return true;
