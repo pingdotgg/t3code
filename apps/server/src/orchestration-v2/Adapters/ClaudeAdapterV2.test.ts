@@ -15309,6 +15309,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect(
+    "a task that finishes during the turn's last model request keeps the session for its wake turn",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-mid-turn-notification"),
+            text: "Run the sleep in the background, then write the long reply.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        // The command finishes while the final reply streams; no tool step follows, so Claude
+        // Code holds the notice and starts its own turn for it right after `result`.
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000002601",
+            text: "one\ntwo\nthree",
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        assert.isTrue(
+          yield* harness.hasPendingBackgroundWork,
+          "the notice reached Claude after its last request, so a wake turn is still owed",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("a task notification waking Claude just before the wakeup keeps its hold", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
