@@ -423,6 +423,12 @@ export function useComposerSend(input: ComposerSendInput) {
   const createTeamThreadNote = useAtomCommand(teamEnvironment.createThreadNote, {
     reportFailure: false,
   });
+  const reserveAcceptedTeamNotes = useAtomCommand(teamEnvironment.reserveAcceptedNotes, {
+    reportFailure: false,
+  });
+  const releaseAcceptedTeamNotes = useAtomCommand(teamEnvironment.releaseAcceptedNotes, {
+    reportFailure: false,
+  });
   const consumeAcceptedTeamNotes = useAtomCommand(teamEnvironment.consumeAcceptedNotes, {
     reportFailure: false,
   });
@@ -1698,24 +1704,38 @@ export function useComposerSend(input: ComposerSendInput) {
         : null;
       let effectiveOutgoingText = outgoingMessageText;
       let teamAcceptedNoteRefs: ReadonlyArray<TeamAcceptedNoteRef> | undefined;
+      let localNoteReservation: {
+        readonly teamEnvironmentId: EnvironmentId;
+        readonly reservationToken: string;
+        readonly refs: ReadonlyArray<TeamAcceptedNoteRef>;
+      } | null = null;
+      const shouldFinalizeLocalTeamNotes = Boolean(
+        teamNotesSendCtx?.teamEnvironmentId &&
+        teamNotesSendCtx.isViewingOnLocalExecutionEnvironment &&
+        !isLocalDraftThread,
+      );
       if (hasAcceptedTeamNotes && teamNotesSendCtx?.teamEnvironmentId) {
         const refs: ReadonlyArray<TeamAcceptedNoteRef> = acceptedTeamNotes.map((note) => ({
           noteId: note.id,
           contentHash: effectiveTeamThreadNoteHash(note),
         }));
         if (teamNotesSendCtx.isViewingOnLocalExecutionEnvironment) {
-          const consumed = await consumeAcceptedTeamNotes({
+          const reserved = await reserveAcceptedTeamNotes({
             environmentId: teamNotesSendCtx.teamEnvironmentId,
             input: {
               threadId: threadIdForSend,
-              targetTurnId: `msg:${messageIdForSend}`,
               acceptedNotes: refs,
             },
           });
-          if (consumed._tag === "Failure") {
-            failure = consumed;
+          if (reserved._tag === "Failure") {
+            failure = reserved;
           } else {
-            const prefix = consumed.value.formattedPromptPrefix;
+            localNoteReservation = {
+              teamEnvironmentId: teamNotesSendCtx.teamEnvironmentId,
+              reservationToken: reserved.value.reservationToken,
+              refs,
+            };
+            const prefix = reserved.value.formattedPromptPrefix;
             effectiveOutgoingText =
               effectiveOutgoingText.trim().length > 0
                 ? `${prefix}\n\n${effectiveOutgoingText}`
@@ -1779,8 +1799,38 @@ export function useComposerSend(input: ComposerSendInput) {
         const startResult = await startPromise;
         if (startResult._tag === "Failure") {
           failure = startResult;
+          if (localNoteReservation !== null) {
+            void releaseAcceptedTeamNotes({
+              environmentId: localNoteReservation.teamEnvironmentId,
+              input: {
+                threadId: threadIdForSend,
+                reservationToken: localNoteReservation.reservationToken,
+              },
+            });
+          }
         } else {
           turnStartSucceeded = true;
+          if (localNoteReservation !== null) {
+            await consumeAcceptedTeamNotes({
+              environmentId: localNoteReservation.teamEnvironmentId,
+              input: {
+                threadId: threadIdForSend,
+                targetTurnId: `msg:${messageIdForSend}`,
+                acceptedNotes: localNoteReservation.refs,
+                reservationToken: localNoteReservation.reservationToken,
+              },
+            });
+          } else if (shouldFinalizeLocalTeamNotes && teamNotesSendCtx?.teamEnvironmentId) {
+            // Re-anchor any pending notes that arrived concurrently with a normal local prompt send.
+            void consumeAcceptedTeamNotes({
+              environmentId: teamNotesSendCtx.teamEnvironmentId,
+              input: {
+                threadId: threadIdForSend,
+                targetTurnId: `msg:${messageIdForSend}`,
+                acceptedNotes: [],
+              },
+            });
+          }
           if (isLocalDraftThread) {
             clearTeamDraftAccessOptions(routeThreadKey);
           }

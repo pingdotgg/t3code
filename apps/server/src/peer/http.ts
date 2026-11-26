@@ -29,48 +29,94 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const issuer = yield* PeerClientPairing.PeerClientPairingIssuer;
-    return handlers.handle(
-      "clientPairing",
-      Effect.fn("environment.peerLink.clientPairing")(function* (args) {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        yield* noStore;
-        // A browser never holds a link's token; refuse one before reading credentials, as `/mcp` does.
-        if (request.headers.origin !== undefined) {
-          return yield* new EnvironmentHttpForbiddenError({
-            message: "This route does not accept browser requests.",
-          });
-        }
-        const caller = yield* auth.authenticateMcpClient(request).pipe(
-          Effect.mapError((error) =>
-            EnvironmentAuth.isServerAuthCredentialError(error)
-              ? new EnvironmentHttpUnauthorizedError({
-                  message: "Only a linked environment's session is accepted here.",
-                })
-              : new EnvironmentHttpInternalServerError({
-                  message: "The session could not be checked.",
-                }),
-          ),
-        );
-        return yield* issuer.issue(caller, args.payload).pipe(
-          Effect.catchTags({
-            PeerClientPairingRefused: (error) =>
-              Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
-          }),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
-            Effect.logError("Could not mint a client pairing for a linked environment.", {
-              cause,
-            }).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  new EnvironmentHttpInternalServerError({
-                    message: "The pairing could not be created.",
+    return handlers
+      .handle(
+        "clientPairing",
+        Effect.fn("environment.peerLink.clientPairing")(function* (args) {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          yield* noStore;
+          // A browser never holds a link's token; refuse one before reading credentials, as `/mcp` does.
+          if (request.headers.origin !== undefined) {
+            return yield* new EnvironmentHttpForbiddenError({
+              message: "This route does not accept browser requests.",
+            });
+          }
+          const caller = yield* auth.authenticateMcpClient(request).pipe(
+            Effect.mapError((error) =>
+              EnvironmentAuth.isServerAuthCredentialError(error)
+                ? new EnvironmentHttpUnauthorizedError({
+                    message: "Only a linked environment's session is accepted here.",
+                  })
+                : new EnvironmentHttpInternalServerError({
+                    message: "The session could not be checked.",
                   }),
+            ),
+          );
+          return yield* issuer.issue(caller, args.payload).pipe(
+            Effect.catchTags({
+              PeerClientPairingRefused: (error) =>
+                Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+            }),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
+              Effect.logError("Could not mint a client pairing for a linked environment.", {
+                cause,
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new EnvironmentHttpInternalServerError({
+                      message: "The pairing could not be created.",
+                    }),
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-      }),
-    );
+          );
+        }),
+      )
+      .handle(
+        "revokeSubject",
+        Effect.fn("environment.peerLink.revokeSubject")(function* (args) {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          yield* noStore;
+          if (request.headers.origin !== undefined) {
+            return yield* new EnvironmentHttpForbiddenError({
+              message: "This route does not accept browser requests.",
+            });
+          }
+          const caller = yield* auth.authenticateMcpClient(request).pipe(
+            Effect.mapError((error) =>
+              EnvironmentAuth.isServerAuthCredentialError(error)
+                ? new EnvironmentHttpUnauthorizedError({
+                    message: "Only a linked environment's session is accepted here.",
+                  })
+                : new EnvironmentHttpInternalServerError({
+                    message: "The session could not be checked.",
+                  }),
+            ),
+          );
+          return yield* issuer.revokeSubject(caller, args.payload).pipe(
+            Effect.catchTags({
+              PeerClientPairingRefused: (error) =>
+                Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+            }),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
+              Effect.logError(
+                "Could not revoke team-minted client sessions on linked environment.",
+                {
+                  cause,
+                },
+              ).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new EnvironmentHttpInternalServerError({
+                      message: "Could not revoke remote client sessions.",
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      );
   }),
 );

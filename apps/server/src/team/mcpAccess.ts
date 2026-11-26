@@ -103,6 +103,9 @@ export const assertCanAccessCallerThread = Effect.fn("TeamMcpAccess.assertCanAcc
       yield* teamService
         .assertActorCanPostInThread(actor, callerThreadId)
         .pipe(Effect.mapError(toMcpForbidden));
+      yield* teamService
+        .assertActorCanExecuteOnThreadEnvironment(actor, callerThreadId)
+        .pipe(Effect.mapError(toMcpForbidden));
     }
   },
 );

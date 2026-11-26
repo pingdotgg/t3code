@@ -2859,6 +2859,12 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread && !teamThreadContext.envAccess.canExecute && !effectiveTeamNoteMode
       ? formatTeamThreadEnvBlockReason(teamThreadContext.envAccess, teamThreadOwnerPseudo, messages)
       : null;
+  const reserveAcceptedTeamNotesForCard = useAtomCommand(teamEnvironment.reserveAcceptedNotes, {
+    reportFailure: false,
+  });
+  const releaseAcceptedTeamNotesForCard = useAtomCommand(teamEnvironment.releaseAcceptedNotes, {
+    reportFailure: false,
+  });
   const consumeAcceptedTeamNotesForCard = useAtomCommand(teamEnvironment.consumeAcceptedNotes, {
     reportFailure: false,
   });
@@ -2876,26 +2882,27 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.getSendContext().selectedModelSelection ?? activeThread.modelSelection;
     let promptText = "";
     let teamAcceptedNotesArg: ReadonlyArray<typeof acceptedRef> | undefined;
+    let reservationToken: string | null = null;
     if (teamThreadContext.isViewingOnLocalExecutionEnvironment) {
-      const consumed = await consumeAcceptedTeamNotesForCard({
+      const reserved = await reserveAcceptedTeamNotesForCard({
         environmentId: teamThreadContext.teamEnvironmentId,
         input: {
           threadId: activeThread.id,
-          targetTurnId: `msg:${messageIdForNote}`,
           acceptedNotes: [acceptedRef],
         },
       });
-      if (consumed._tag === "Failure") {
-        if (!isAtomCommandInterrupted(consumed)) {
+      if (reserved._tag === "Failure") {
+        if (!isAtomCommandInterrupted(reserved)) {
           setThreadError(
             activeThread.id,
-            thrownErrorMessage(squashAtomCommandFailure(consumed), m) ??
+            thrownErrorMessage(squashAtomCommandFailure(reserved), m) ??
               gt("Could not send accepted note."),
           );
         }
         return;
       }
-      promptText = consumed.value.formattedPromptPrefix;
+      reservationToken = reserved.value.reservationToken;
+      promptText = reserved.value.formattedPromptPrefix;
     } else {
       teamAcceptedNotesArg = [acceptedRef];
     }
@@ -2917,12 +2924,35 @@ export default function ChatView(props: ChatViewProps) {
         createdAt: new Date().toISOString(),
       },
     });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setThreadError(
-        activeThread.id,
-        thrownErrorMessage(squashAtomCommandFailure(result), m) ??
-          gt("Could not send accepted note."),
-      );
+    if (result._tag === "Failure") {
+      if (reservationToken !== null) {
+        void releaseAcceptedTeamNotesForCard({
+          environmentId: teamThreadContext.teamEnvironmentId,
+          input: {
+            threadId: activeThread.id,
+            reservationToken,
+          },
+        });
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        setThreadError(
+          activeThread.id,
+          thrownErrorMessage(squashAtomCommandFailure(result), m) ??
+            gt("Could not send accepted note."),
+        );
+      }
+      return;
+    }
+    if (reservationToken !== null) {
+      await consumeAcceptedTeamNotesForCard({
+        environmentId: teamThreadContext.teamEnvironmentId,
+        input: {
+          threadId: activeThread.id,
+          targetTurnId: `msg:${messageIdForNote}`,
+          acceptedNotes: [acceptedRef],
+          reservationToken,
+        },
+      });
     }
   };
   const onDispatchAcceptedTeamNoteStable = useStableCallback(onDispatchAcceptedTeamNote);

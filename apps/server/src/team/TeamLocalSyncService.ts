@@ -9,6 +9,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
   type TeamSyncLocalThreadInput,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +17,20 @@ import * as Effect from "effect/Effect";
 
 import type * as EventSink from "../orchestration-v2/EventSink.ts";
 import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+
+/**
+ * Deterministically namespaces mirrored run/message/turn-item IDs under the owning `threadId` so
+ * a malicious or colliding local client payload can never overwrite another thread's projection
+ * rows (ProjectionStore upserts globally on `run_id` / `message_id`).
+ */
+export const localSyncMirroredRunId = (threadId: ThreadId, rawRunId: string): RunId =>
+  RunId.make(`local-sync:${threadId}:run:${rawRunId}`);
+
+export const localSyncMirroredMessageId = (threadId: ThreadId, rawMessageId: string): MessageId =>
+  MessageId.make(`local-sync:${threadId}:msg:${rawMessageId}`);
+
+const localSyncMirroredTurnItemId = (threadId: ThreadId, rawMessageId: string): TurnItemId =>
+  TurnItemId.make(`local-sync:${threadId}:item:${rawMessageId}`);
 
 /**
  * Mirrors a member's local-environment team thread into the Team Server's orchestration
@@ -38,6 +53,18 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
   const now = yield* DateTime.now;
   const createdAt = DateTime.makeUnsafe(sync.createdAt);
   const updatedAt = DateTime.makeUnsafe(sync.updatedAt);
+  const archivedAt =
+    sync.archivedAt !== undefined
+      ? sync.archivedAt !== null
+        ? DateTime.makeUnsafe(sync.archivedAt)
+        : null
+      : (existing?.thread.archivedAt ?? null);
+  const deletedAt =
+    sync.deletedAt !== undefined
+      ? sync.deletedAt !== null
+        ? DateTime.makeUnsafe(sync.deletedAt)
+        : null
+      : (existing?.thread.deletedAt ?? null);
 
   const nextEventId = () => random.uuidV4().pipe(Effect.map((id) => EventId.make(id)));
   const events: Array<OrchestrationV2DomainEvent> = [];
@@ -63,13 +90,20 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
     forkedFrom: existing?.thread.forkedFrom ?? null,
     createdAt: existing?.thread.createdAt ?? createdAt,
     updatedAt,
-    archivedAt: existing?.thread.archivedAt ?? null,
+    archivedAt,
     settledOverride: existing?.thread.settledOverride ?? null,
     settledAt: existing?.thread.settledAt ?? null,
     lastVisitedAt: existing?.thread.lastVisitedAt ?? null,
-    deletedAt: existing?.thread.deletedAt ?? null,
+    deletedAt,
     titleRenamed: true,
   };
+
+  const prevArchivedMs =
+    existing?.thread.archivedAt != null ? DateTime.toEpochMillis(existing.thread.archivedAt) : null;
+  const nextArchivedMs = archivedAt != null ? DateTime.toEpochMillis(archivedAt) : null;
+  const prevDeletedMs =
+    existing?.thread.deletedAt != null ? DateTime.toEpochMillis(existing.thread.deletedAt) : null;
+  const nextDeletedMs = deletedAt != null ? DateTime.toEpochMillis(deletedAt) : null;
 
   if (existing === null) {
     events.push({
@@ -77,6 +111,22 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
       threadId: sync.threadId,
       occurredAt: now,
       type: "thread.created",
+      payload: threadPayload,
+    });
+  } else if (prevDeletedMs === null && nextDeletedMs !== null) {
+    events.push({
+      id: yield* nextEventId(),
+      threadId: sync.threadId,
+      occurredAt: now,
+      type: "thread.deleted",
+      payload: threadPayload,
+    });
+  } else if (prevArchivedMs !== nextArchivedMs) {
+    events.push({
+      id: yield* nextEventId(),
+      threadId: sync.threadId,
+      occurredAt: now,
+      type: nextArchivedMs !== null ? "thread.archived" : "thread.unarchived",
       payload: threadPayload,
     });
   } else if (
@@ -97,8 +147,8 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
     (existing?.runs ?? []).map((run) => [run.id as string, run] as const),
   );
   for (const syncedRun of sync.runs) {
-    const runId = RunId.make(syncedRun.id);
-    const prevRun = existingRunsById.get(syncedRun.id);
+    const runId = localSyncMirroredRunId(sync.threadId, syncedRun.id);
+    const prevRun = existingRunsById.get(runId);
     const runCreatedAt = DateTime.makeUnsafe(syncedRun.createdAt);
     const runCompletedAt =
       syncedRun.completedAt !== null ? DateTime.makeUnsafe(syncedRun.completedAt) : null;
@@ -109,7 +159,7 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
       providerInstanceId: sync.modelSelection.instanceId,
       modelSelection: sync.modelSelection,
       providerThreadId: null,
-      userMessageId: MessageId.make(syncedRun.userMessageId),
+      userMessageId: localSyncMirroredMessageId(sync.threadId, syncedRun.userMessageId),
       rootNodeId: null,
       activeAttemptId: null,
       status: syncedRun.status,
@@ -150,11 +200,14 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
   );
   for (let index = 0; index < sync.messages.length; index += 1) {
     const syncedMessage = sync.messages[index]!;
-    const messageId = MessageId.make(syncedMessage.id);
-    const prevMessage = existingMessagesById.get(syncedMessage.id);
+    const messageId = localSyncMirroredMessageId(sync.threadId, syncedMessage.id);
+    const prevMessage = existingMessagesById.get(messageId);
     const msgCreatedAt = DateTime.makeUnsafe(syncedMessage.createdAt);
     const msgUpdatedAt = DateTime.makeUnsafe(syncedMessage.updatedAt ?? syncedMessage.createdAt);
-    const resolvedRunId = syncedMessage.runId !== null ? RunId.make(syncedMessage.runId) : null;
+    const resolvedRunId =
+      syncedMessage.runId !== null
+        ? localSyncMirroredRunId(sync.threadId, syncedMessage.runId)
+        : null;
     const messageChanged =
       !prevMessage ||
       prevMessage.text !== syncedMessage.text ||
@@ -184,7 +237,7 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
       });
     }
     if (syncedMessage.role === "user" || syncedMessage.role === "assistant") {
-      const turnItemId = TurnItemId.make(`local-sync:${syncedMessage.id}`);
+      const turnItemId = localSyncMirroredTurnItemId(sync.threadId, syncedMessage.id);
       const prevItem = existingTurnItemsById.get(turnItemId);
       const prevText =
         prevItem && (prevItem.type === "user_message" || prevItem.type === "assistant_message")

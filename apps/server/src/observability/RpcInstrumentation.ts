@@ -303,6 +303,8 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamDeleteThreadNote]: "team",
   [TEAM_WS_METHODS.teamResolveThreadNote]: "team",
   [TEAM_WS_METHODS.teamEditThreadNote]: "team",
+  [TEAM_WS_METHODS.teamReserveAcceptedNotes]: "team",
+  [TEAM_WS_METHODS.teamReleaseAcceptedNotes]: "team",
   [TEAM_WS_METHODS.teamConsumeAcceptedNotes]: "team",
   [TEAM_WS_METHODS.teamListThreadNotes]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;

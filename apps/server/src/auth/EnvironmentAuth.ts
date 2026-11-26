@@ -625,6 +625,12 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
+    readonly revokeGrantsBySubjectPrefix: (
+      subjectPrefix: string,
+    ) => Effect.Effect<
+      { readonly revokedSessions: number; readonly revokedPairingLinks: number },
+      ServerAuthInternalError
+    >;
     readonly authenticateHttpRequest: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -1759,6 +1765,31 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
 
+  const revokeGrantsBySubjectPrefix: EnvironmentAuth["Service"]["revokeGrantsBySubjectPrefix"] =
+    Effect.fn("EnvironmentAuth.revokeGrantsBySubjectPrefix")(function* (subjectPrefix) {
+      const [activeSessions, activeLinks] = yield* Effect.all([
+        listSessions(),
+        bootstrapCredentials
+          .listActive()
+          .pipe(Effect.mapError((cause) => new ServerAuthPairingLinksListError({ cause }))),
+      ]);
+      let revokedSessions = 0;
+      for (const session of activeSessions) {
+        if (!session.subject.startsWith(subjectPrefix)) continue;
+        if (yield* revokeClient(session.sessionId)) {
+          revokedSessions += 1;
+        }
+      }
+      let revokedPairingLinks = 0;
+      for (const link of activeLinks) {
+        if (!link.subject.startsWith(subjectPrefix)) continue;
+        if (yield* revokePairingLink(link.id)) {
+          revokedPairingLinks += 1;
+        }
+      }
+      return { revokedSessions, revokedPairingLinks };
+    });
+
   yield* revokePairedClientsThePolicyDisallows(managedPolicy, {
     sessions,
     pairingLinks: bootstrapCredentials,
@@ -1790,6 +1821,7 @@ export const make = Effect.gen(function* () {
     revokeClient,
     revokeClientSession,
     revokeOtherClientSessions,
+    revokeGrantsBySubjectPrefix,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,
     issueWebSocketTicket,

@@ -53,7 +53,7 @@ function formatEnvRuleSummary(
     parts.push(names.join(", "));
   }
   if (parts.length === 0) {
-    return gt("Owners only");
+    return gt("No members (restricted)");
   }
   return parts.join(" · ");
 }

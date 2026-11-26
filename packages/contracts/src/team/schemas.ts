@@ -948,6 +948,8 @@ export const TeamSyncLocalThreadInput = Schema.Struct({
   messages: Schema.Array(TeamSyncedMessageSnapshot),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  archivedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+  deletedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
 });
 export type TeamSyncLocalThreadInput = typeof TeamSyncLocalThreadInput.Type;
 
@@ -988,10 +990,35 @@ export const TeamEditThreadNoteInput = Schema.Struct({
 });
 export type TeamEditThreadNoteInput = typeof TeamEditThreadNoteInput.Type;
 
+export const TeamReserveAcceptedNotesInput = Schema.Struct({
+  threadId: ThreadId,
+  acceptedNotes: Schema.Array(TeamAcceptedNoteRef),
+});
+export type TeamReserveAcceptedNotesInput = typeof TeamReserveAcceptedNotesInput.Type;
+
+export const TeamReserveAcceptedNotesResult = Schema.Struct({
+  reservationToken: TrimmedNonEmptyString,
+  noteIds: Schema.Array(TeamThreadNoteId),
+  formattedPromptPrefix: Schema.String,
+});
+export type TeamReserveAcceptedNotesResult = typeof TeamReserveAcceptedNotesResult.Type;
+
+export const TeamReleaseAcceptedNotesInput = Schema.Struct({
+  threadId: ThreadId,
+  reservationToken: TrimmedNonEmptyString,
+});
+export type TeamReleaseAcceptedNotesInput = typeof TeamReleaseAcceptedNotesInput.Type;
+
+export const TeamReleaseAcceptedNotesResult = Schema.Struct({
+  releasedCount: Schema.Number,
+});
+export type TeamReleaseAcceptedNotesResult = typeof TeamReleaseAcceptedNotesResult.Type;
+
 export const TeamConsumeAcceptedNotesInput = Schema.Struct({
   threadId: ThreadId,
   targetTurnId: TrimmedNonEmptyString,
   acceptedNotes: Schema.Array(TeamAcceptedNoteRef),
+  reservationToken: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type TeamConsumeAcceptedNotesInput = typeof TeamConsumeAcceptedNotesInput.Type;
 

@@ -2172,12 +2172,23 @@ export const layerWsRpc = (
             Effect.andThen(
               teamService.assertAndNormalizeDispatchCommand(currentSessionId, command),
             ),
-            Effect.flatMap((effectiveCommand) =>
+            Effect.flatMap((normalizedCommand) =>
               Effect.gen(function* () {
+                const { command: effectiveCommand, reservationToken } =
+                  yield* teamService.prepareNotesForDispatchCommand({
+                    sessionId: currentSessionId,
+                    command: normalizedCommand,
+                  });
                 const preparedThreadId = yield* prepareTeamDispatchAttribution(
                   teamService,
                   currentSessionId,
                   effectiveCommand,
+                ).pipe(
+                  Effect.onError(() =>
+                    reservationToken !== null
+                      ? teamService.releaseNoteReservationByToken(reservationToken)
+                      : Effect.void,
+                  ),
                 );
                 yield* teamService.prepareTurnAttributionForCommand(
                   currentSessionId,
@@ -2204,18 +2215,26 @@ export const layerWsRpc = (
                   )
                   .pipe(
                     Effect.onError(() =>
-                      preparedThreadId !== null
-                        ? teamService.rollbackPreparedThreadAttribution(preparedThreadId)
-                        : Effect.void,
+                      Effect.all([
+                        preparedThreadId !== null
+                          ? teamService.rollbackPreparedThreadAttribution(preparedThreadId)
+                          : Effect.void,
+                        reservationToken !== null
+                          ? teamService.releaseNoteReservationByToken(reservationToken)
+                          : Effect.void,
+                      ]).pipe(Effect.asVoid),
                     ),
                     Effect.tap((result) =>
                       result.replayed
-                        ? Effect.void
+                        ? reservationToken !== null
+                          ? teamService.releaseNoteReservationByToken(reservationToken)
+                          : Effect.void
                         : recordTeamDispatchEvents(
                             teamService,
                             currentSessionId,
                             result.storedEvents,
                             effectiveCommand,
+                            reservationToken,
                           ).pipe(
                             Effect.andThen(
                               effectiveCommand.type === "run.interrupt" ||
@@ -2251,8 +2270,8 @@ export const layerWsRpc = (
                   if (cause._tag === "EnvironmentAuthorizationError") return cause;
                   const detail = userFacingDispatchErrorMessage(cause);
                   return new OrchestrationV2DispatchCommandError({
-                    commandId: effectiveCommand.commandId,
-                    commandType: effectiveCommand.type,
+                    commandId: normalizedCommand.commandId,
+                    commandType: normalizedCommand.type,
                     message: detail ?? "Failed to dispatch orchestration V2 command",
                     ...(detail === undefined ? {} : { detail }),
                     cause,
@@ -3290,9 +3309,16 @@ export const layerWsRpc = (
             Effect.andThen(peerThreadRelay.item(input)),
           ),
         [WS_METHODS.peerLinksPairClient]: (input) =>
-          teamService
-            .assertCanAccessEnvironment(currentSessionId, input.environmentId)
-            .pipe(Effect.andThen(peerClientPairing.request(input, currentSession))),
+          teamService.assertCanAccessEnvironment(currentSessionId, input.environmentId).pipe(
+            Effect.andThen(teamService.getRemotePairingSubject(currentSessionId)),
+            Effect.flatMap((subjectOption) =>
+              peerClientPairing.request(input, {
+                sessionId: currentSession.sessionId,
+                scopes: currentSession.scopes,
+                ...(Option.isSome(subjectOption) ? { teamMemberSubject: subjectOption.value } : {}),
+              }),
+            ),
+          ),
         [WS_METHODS.peerLinksPairLink]: (input) =>
           teamService
             .assertActorIsAdmin(
@@ -3304,6 +3330,23 @@ export const layerWsRpc = (
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+            ),
+            Effect.andThen(
+              input.answer.type === "link"
+                ? teamService.assertActorIsAdmin(
+                    { kind: "session", sessionId: currentSessionId },
+                    "Only owner and admin members can link new remote environments.",
+                    "team:environment:write",
+                  )
+                : input.answer.type === "use-existing"
+                  ? teamService.assertCanAccessEnvironment(
+                      currentSessionId,
+                      input.answer.environmentId,
+                    )
+                  : Effect.void,
+            ),
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
         [WS_METHODS.serverGetSettings]: (_input) =>
@@ -3836,7 +3879,16 @@ export const layerWsRpc = (
           Stream.unwrap(
             (input.threadId === undefined
               ? Effect.void
-              : teamService.assertCanPostInThread(currentSessionId, input.threadId)
+              : teamService
+                  .assertCanPostInThread(currentSessionId, input.threadId)
+                  .pipe(
+                    Effect.andThen(
+                      teamService.assertCanExecuteOnThreadEnvironment(
+                        currentSessionId,
+                        input.threadId,
+                      ),
+                    ),
+                  )
             ).pipe(
               Effect.as(
                 Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
@@ -3981,6 +4033,12 @@ export const layerWsRpc = (
               teamService.assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId)),
             ),
             Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(
+                currentSessionId,
+                ThreadId.make(input.threadId),
+              ),
+            ),
+            Effect.andThen(
               prepareTerminalLaunch(input).pipe(
                 Effect.flatMap((launch) =>
                   terminalManager
@@ -4005,6 +4063,12 @@ export const layerWsRpc = (
                     ThreadId.make(input.threadId),
                   ),
                 ),
+                Effect.andThen(
+                  teamService.assertCanExecuteOnThreadEnvironment(
+                    currentSessionId,
+                    ThreadId.make(input.threadId),
+                  ),
+                ),
                 Effect.andThen(prepareTerminalLaunch(input)),
                 Effect.map((launch) =>
                   terminalManager
@@ -4019,19 +4083,51 @@ export const layerWsRpc = (
         [WS_METHODS.terminalWrite]: (input, metadata) =>
           teamService
             .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(Effect.andThen(terminalManager.write(input, terminalViewerId(metadata)))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  ThreadId.make(input.threadId),
+                ),
+              ),
+              Effect.andThen(terminalManager.write(input, terminalViewerId(metadata))),
+            ),
         [WS_METHODS.terminalResize]: (input, metadata) =>
           teamService
             .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(Effect.andThen(terminalManager.resize(input, terminalViewerId(metadata)))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  ThreadId.make(input.threadId),
+                ),
+              ),
+              Effect.andThen(terminalManager.resize(input, terminalViewerId(metadata))),
+            ),
         [WS_METHODS.terminalClear]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(Effect.andThen(terminalManager.clear(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  ThreadId.make(input.threadId),
+                ),
+              ),
+              Effect.andThen(terminalManager.clear(input)),
+            ),
         [WS_METHODS.terminalClose]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
-            .pipe(Effect.andThen(terminalManager.close(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  ThreadId.make(input.threadId),
+                ),
+              ),
+              Effect.andThen(terminalManager.close(input)),
+            ),
         [WS_METHODS.terminalObserve]: (input) =>
           guardThreadScopedStreamForSession(
             teamService,
@@ -4058,19 +4154,39 @@ export const layerWsRpc = (
         [WS_METHODS.previewOpen]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.open(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.open(input)),
+            ),
         [WS_METHODS.previewResize]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.resize(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.resize(input)),
+            ),
         [WS_METHODS.previewAdjust]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.adjust(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.adjust(input)),
+            ),
         [WS_METHODS.previewClose]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.close(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.close(input)),
+            ),
         [WS_METHODS.previewList]: (input) =>
           teamService
             .assertCanReadThread(currentSessionId, input.threadId)
@@ -4080,7 +4196,12 @@ export const layerWsRpc = (
         [WS_METHODS.previewReportStatus]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(previewManager.reportStatus(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(previewManager.reportStatus(input)),
+            ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           filterPreviewEventsStreamForSession(teamService, currentSessionId, previewManager.events),
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
@@ -4108,6 +4229,9 @@ export const layerWsRpc = (
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
               Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(
                 threadWorkspaceRoot(input.threadId).pipe(
                   Effect.flatMap((workspaceRoot) => deviceService.open(input, { workspaceRoot })),
                 ),
@@ -4116,7 +4240,12 @@ export const layerWsRpc = (
         [WS_METHODS.deviceClose]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(deviceService.close(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(deviceService.close(input)),
+            ),
         [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
@@ -4397,6 +4526,7 @@ export const layerWsRpc = (
           ),
         ...makeTeamWsRpcHandlers(teamService, currentSessionId, {
           peerLinks,
+          peerClientPairing,
           projectService,
           ...(Option.isSome(eventSinkOption) ? { eventSink: eventSinkOption.value } : {}),
           ...(Option.isSome(projectionStoreOption)

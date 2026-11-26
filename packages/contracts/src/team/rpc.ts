@@ -33,6 +33,10 @@ import {
   TeamMember,
   TeamOperationError,
   TeamProjectAssignment,
+  TeamReleaseAcceptedNotesInput,
+  TeamReleaseAcceptedNotesResult,
+  TeamReserveAcceptedNotesInput,
+  TeamReserveAcceptedNotesResult,
   TeamResolveThreadNoteInput,
   TeamRevokeInviteInput,
   TeamRevokeInviteResult,
@@ -84,6 +88,8 @@ export const TEAM_WS_METHODS = {
   teamDeleteThreadNote: "team.deleteThreadNote",
   teamResolveThreadNote: "team.resolveThreadNote",
   teamEditThreadNote: "team.editThreadNote",
+  teamReserveAcceptedNotes: "team.reserveAcceptedNotes",
+  teamReleaseAcceptedNotes: "team.releaseAcceptedNotes",
   teamConsumeAcceptedNotes: "team.consumeAcceptedNotes",
   teamListThreadNotes: "team.listThreadNotes",
 } as const;
@@ -112,6 +118,8 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamDeleteThreadNote]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamResolveThreadNote]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamEditThreadNote]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamReserveAcceptedNotes]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamReleaseAcceptedNotes]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamConsumeAcceptedNotes]: AuthOrchestrationOperateScope,
 } as const;
 
@@ -289,6 +297,18 @@ const WsTeamEditThreadNoteRpc = Rpc.make(TEAM_WS_METHODS.teamEditThreadNote, {
   error: TeamRpcError,
 });
 
+const WsTeamReserveAcceptedNotesRpc = Rpc.make(TEAM_WS_METHODS.teamReserveAcceptedNotes, {
+  payload: TeamReserveAcceptedNotesInput,
+  success: TeamReserveAcceptedNotesResult,
+  error: TeamRpcError,
+});
+
+const WsTeamReleaseAcceptedNotesRpc = Rpc.make(TEAM_WS_METHODS.teamReleaseAcceptedNotes, {
+  payload: TeamReleaseAcceptedNotesInput,
+  success: TeamReleaseAcceptedNotesResult,
+  error: TeamRpcError,
+});
+
 const WsTeamConsumeAcceptedNotesRpc = Rpc.make(TEAM_WS_METHODS.teamConsumeAcceptedNotes, {
   payload: TeamConsumeAcceptedNotesInput,
   success: TeamConsumeAcceptedNotesResult,
@@ -329,6 +349,8 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamDeleteThreadNoteRpc,
   WsTeamResolveThreadNoteRpc,
   WsTeamEditThreadNoteRpc,
+  WsTeamReserveAcceptedNotesRpc,
+  WsTeamReleaseAcceptedNotesRpc,
   WsTeamConsumeAcceptedNotesRpc,
   WsTeamListThreadNotesRpc,
 );

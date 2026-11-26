@@ -33,6 +33,8 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { environmentThreadStateAtom, threadEnvironment } from "~/state/threads";
 import {
   closeTeamForkDialog,
+  setPendingLocalThreadViewId,
+  setTeamDraftViewId,
   useTeamEnvironmentState,
   useTeamForkDialogRequest,
 } from "~/state/team";
@@ -96,6 +98,8 @@ export function TeamForkThreadDialogHost() {
   const repoKey = extractProjectRepoIdentityKey(request.repositoryIdentity);
   const accessibleTeamEnvs = listAccessibleTeamEnvironments(teamState);
   const envById = new Map(environments.map((env) => [env.environmentId, env] as const));
+  const sourceAttribution = teamState.attributionByThreadId.get(request.sourceThreadId) ?? null;
+  const inheritedTeamViewId = sourceAttribution?.viewId ?? null;
 
   const findProjectForEnv = (envId: EnvironmentId): ProjectId | null => {
     if (envId === request.teamEnvironmentId) return request.projectId;
@@ -105,10 +109,12 @@ export function TeamForkThreadDialogHost() {
           p.environmentId === envId &&
           extractProjectRepoIdentityKey(p.repositoryIdentity) === repoKey,
       );
-      if (matched) return matched.id;
+      return matched?.id ?? null;
     }
-    const fallback = projects.find((p) => p.environmentId === envId);
-    return fallback?.id ?? null;
+    const exactIdMatch = projects.find(
+      (p) => p.environmentId === envId && p.id === request.projectId,
+    );
+    return exactIdMatch?.id ?? null;
   };
 
   const options: ForkTargetOption[] = [];
@@ -169,6 +175,10 @@ export function TeamForkThreadDialogHost() {
       sourceProjection?.thread.modelSelection ??
       createModelSelection(ProviderInstanceId.make("codex"), DEFAULT_MODEL);
     const forkTitle = gt("{title} (fork)", { title: request.sourceThreadTitle });
+    if (option.isLocal && inheritedTeamViewId !== null) {
+      // Preserve source View visibility when TeamLocalThreadSyncCoordinator mirrors the local fork.
+      setPendingLocalThreadViewId(targetThreadId, inheritedTeamViewId);
+    }
     const result = await startThreadTurn({
       environmentId: option.environmentId,
       input: {
@@ -193,6 +203,9 @@ export function TeamForkThreadDialogHost() {
             branch: sourceProjection?.thread.branch ?? null,
             worktreePath: null,
             createdAt: new Date().toISOString(),
+            ...(!option.isLocal && inheritedTeamViewId !== null
+              ? { teamViewId: inheritedTeamViewId }
+              : {}),
           },
         },
         createdAt: new Date().toISOString(),
@@ -221,6 +234,9 @@ export function TeamForkThreadDialogHost() {
       );
       if (draftResult) {
         useComposerDraftStore.getState().setPrompt(draftResult.draftId, handoffPrompt);
+        if (inheritedTeamViewId !== null) {
+          setTeamDraftViewId(draftResult.draftId, inheritedTeamViewId);
+        }
         closeTeamForkDialog();
         toastManager.add({
           type: "info",

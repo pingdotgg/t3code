@@ -2316,7 +2316,8 @@ describe("TeamService", () => {
         expect(reanchoredRecord?.status).toBe("pending");
         expect(reanchoredRecord?.anchorTurnId).toBe("msg:turn-2");
 
-        // 5. Remote thread empty prompt ("") dispatch with explicit teamAcceptedNotes succeeds and injects attributed text.
+        // 5. Remote thread empty prompt ("") dispatch with explicit teamAcceptedNotes succeeds,
+        //    reserves atomically (blocking concurrent double-injection), and releases on failure.
         const remoteThreadId = ThreadId.make("thread-alice-remote-m5");
         yield* team.recordThreadCreated({
           sessionId: aliceSession.sessionId,
@@ -2337,33 +2338,119 @@ describe("TeamService", () => {
             expectedContentHash: bobRemoteNote.originalContentHash,
           },
         });
-        const normalized = yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, {
-          type: "message.dispatch",
+        const dispatchCmd = {
+          type: "message.dispatch" as const,
           commandId: CommandId.make("cmd-empty-with-note"),
           threadId: remoteThreadId,
           messageId: MessageId.make("msg-empty-with-note"),
-          createdBy: "user",
-          creationSource: "web",
+          createdBy: "user" as const,
+          creationSource: "web" as const,
           text: "",
           attachments: [],
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: { type: "start_immediately" as const },
           teamAcceptedNotes: [
             {
               noteId: acceptedRemoteNote.id,
               contentHash: effectiveTeamThreadNoteHash(acceptedRemoteNote),
             },
           ],
+        };
+        const normalized = yield* team.assertAndNormalizeDispatchCommand(
+          aliceSession.sessionId,
+          dispatchCmd,
+        );
+        const prepared = yield* team.prepareNotesForDispatchCommand({
+          sessionId: aliceSession.sessionId,
+          command: normalized,
         });
-        expect(normalized.type).toBe("message.dispatch");
-        if (normalized.type === "message.dispatch") {
-          expect(normalized.text).toContain("[Note from bob (approved by alice)]:");
-          expect(normalized.text).toContain("Run the smoke tests");
+        expect(prepared.reservationToken).not.toBeNull();
+        expect(prepared.command.type).toBe("message.dispatch");
+        if (prepared.command.type === "message.dispatch") {
+          expect(prepared.command.text).toContain("[Note from bob (approved by alice)]:");
+          expect(prepared.command.text).toContain("Run the smoke tests");
         }
+        // Concurrent second dispatch carrying the same note is rejected while reserved.
+        const doubleDispatchExit = yield* Effect.exit(
+          team.prepareNotesForDispatchCommand({
+            sessionId: aliceSession.sessionId,
+            command: normalized,
+          }),
+        );
+        expect(doubleDispatchExit._tag).toBe("Failure");
+        // Releasing the reservation (e.g. on failed dispatch) restores retryability.
+        yield* team.releaseNoteReservationByToken(prepared.reservationToken!);
+        const retried = yield* team.prepareNotesForDispatchCommand({
+          sessionId: aliceSession.sessionId,
+          command: normalized,
+        });
+        expect(retried.reservationToken).not.toBeNull();
+        yield* team.releaseNoteReservationByToken(retried.reservationToken!);
+
+        // 6. Local-synced threads block execution-capable metadata continuations and queue.resume too.
+        const continuationHijackExit = yield* Effect.exit(
+          team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, {
+            type: "thread.metadata.update",
+            commandId: CommandId.make("cmd-continuation-hijack"),
+            threadId: bobLocalThreadId,
+            continuation: {
+              messageId: MessageId.make("msg-continuation-hijack"),
+              text: "Sneaky continuation execution",
+            },
+          }),
+        );
+        expect(continuationHijackExit._tag).toBe("Failure");
+
+        // 7. syncLocalThread rejects spoofing registered team environment IDs or unassigned projects.
+        const spoofedEnvExit = yield* Effect.exit(
+          team.syncLocalThread({
+            sessionId: bob.sessionId,
+            payload: {
+              threadId: ThreadId.make("thread-spoof-env"),
+              projectId,
+              title: "Spoofed env",
+              branch: null,
+              executionEnvironmentId: restrictedEnvId,
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.3-codex",
+                options: [],
+              },
+              runs: [],
+              messages: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          }),
+        );
+        expect(spoofedEnvExit._tag).toBe("Failure");
+
+        const unassignedProjExit = yield* Effect.exit(
+          team.syncLocalThread({
+            sessionId: bob.sessionId,
+            payload: {
+              threadId: ThreadId.make("thread-unassigned-proj"),
+              projectId: ProjectId.make("proj-not-assigned"),
+              title: "Unassigned project",
+              branch: null,
+              executionEnvironmentId: EnvironmentId.make("env-bob-laptop"),
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.3-codex",
+                options: [],
+              },
+              runs: [],
+              messages: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          }),
+        );
+        expect(unassignedProjExit._tag).toBe("Failure");
       }).pipe(Effect.provide(makeTestLayer())),
   );
 
   it.effect(
-    "fails closed on TeamRepository errors across read, batch filter, post, and prepare",
+    "fails closed on TeamRepository errors across read, batch filter, post, execute, and prepare",
     () => {
       const repoError = new TeamRepository.TeamRepositoryError({
         operation: "injected",
@@ -2397,6 +2484,12 @@ describe("TeamService", () => {
         expect(yield* team.canReadAttachment(sid, `${tid}-att-1`)).toBe(false);
         expect(yield* team.canPostInThread(sid, tid)).toBe(false);
         expect((yield* team.filterReadableThreadIds(sid, [tid])).size).toBe(0);
+        expect((yield* Effect.exit(team.assertCanExecuteOnThreadEnvironment(sid, tid)))._tag).toBe(
+          "Failure",
+        );
+        expect((yield* Effect.exit(team.assertCanLaunchThread({ sessionId: sid })))._tag).toBe(
+          "Failure",
+        );
         expect(
           (yield* Effect.exit(team.prepareThreadAttribution({ sessionId: sid, threadId: tid })))
             ._tag,

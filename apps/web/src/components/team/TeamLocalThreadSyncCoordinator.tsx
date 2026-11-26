@@ -18,7 +18,12 @@ import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
-import { teamEnvironment, useTeamStatesByEnvironment } from "~/state/team";
+import {
+  clearPendingLocalThreadViewId,
+  readPendingLocalThreadViewId,
+  teamEnvironment,
+  useTeamStatesByEnvironment,
+} from "~/state/team";
 import { environmentThreadStateAtom } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
@@ -96,10 +101,57 @@ function buildLocalSyncPayload(input: {
     interactionMode: shell.interactionMode,
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,
+    ...(shell.archivedAt !== null ? { archivedAt: shell.archivedAt } : { archivedAt: null }),
+    ...(shell.deletedAt !== null ? { deletedAt: shell.deletedAt } : { deletedAt: null }),
     runs,
     messages,
   };
 }
+
+function isRunActive(status: string | null | undefined): boolean {
+  return (
+    status === "queued" ||
+    status === "preparing" ||
+    status === "starting" ||
+    status === "running" ||
+    status === "waiting"
+  );
+}
+
+function buildShellFingerprint(input: {
+  readonly shell: ReturnType<typeof useThreadShells>[number];
+  readonly teamProjectId: TeamSyncLocalThreadInput["projectId"];
+  readonly defaultViewId: TeamSyncLocalThreadInput["viewId"];
+}): string {
+  const { shell, teamProjectId, defaultViewId } = input;
+  return [
+    teamProjectId,
+    defaultViewId ?? "",
+    shell.title,
+    shell.branch ?? "",
+    shell.updatedAt,
+    shell.archivedAt ?? "",
+    shell.deletedAt ?? "",
+    shell.latestRun?.runId ?? "",
+    shell.latestRun?.status ?? "",
+    shell.latestRun?.completedAt ?? "",
+  ].join("\0");
+}
+
+interface SyncEntry {
+  readonly syncKey: string;
+  readonly shell: ReturnType<typeof useThreadShells>[number];
+  readonly localEnvironmentId: EnvironmentId;
+  readonly localEnvironmentLabel: string;
+  readonly teamEnvironmentId: EnvironmentId;
+  readonly teamProjectId: TeamSyncLocalThreadInput["projectId"];
+  readonly defaultViewId: TeamSyncLocalThreadInput["viewId"];
+  readonly shellFingerprint: string;
+  readonly isActive: boolean;
+}
+
+const RETRY_BASE_MS = 2_000;
+const RETRY_MAX_MS = 30_000;
 
 /**
  * Coordinates two Milestone 5 background flows at app root:
@@ -115,25 +167,34 @@ export function TeamLocalThreadSyncCoordinator() {
   const teamStates = useTeamStatesByEnvironment();
   const syncLocalThread = useAtomCommand(teamEnvironment.syncLocalThread, { reportFailure: false });
 
-  const syncedFingerprintByKeyRef = useRef(new Map<string, string>());
+  const syncedPayloadFingerprintByKeyRef = useRef(new Map<string, string>());
+  const syncedShellFingerprintByKeyRef = useRef(new Map<string, string>());
   const syncInFlightRef = useRef(new Set<string>());
-  const pendingRetryByKeyRef = useRef(
-    new Map<
-      string,
-      {
-        readonly shell: ReturnType<typeof useThreadShells>[number];
-        readonly teamEnvironmentId: EnvironmentId;
-        readonly teamProjectId: TeamSyncLocalThreadInput["projectId"];
-        readonly defaultViewId: TeamSyncLocalThreadInput["viewId"];
-      }
-    >(),
-  );
+  const pendingRetryByKeyRef = useRef(new Map<string, SyncEntry>());
+  const latestEntryByKeyRef = useRef(new Map<string, SyncEntry>());
+  const retryAttemptsByKeyRef = useRef(new Map<string, number>());
+  const retryTimerByKeyRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const subscriptionsByKeyRef = useRef(new Map<string, () => void>());
 
   const seenNoteIdsRef = useRef(new Set<TeamThreadNoteId>());
   const initializedTeamEnvsRef = useRef(new Set<EnvironmentId>());
 
+  // Clean up all detail subscriptions and retry timers only on unmount so unrelated state changes
+  // never trigger a full unsubscribe/resubscribe storm.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes persistent background sync subscriptions and timers on unmount
+  useEffect(() => {
+    const subscriptions = subscriptionsByKeyRef.current;
+    const retryTimers = retryTimerByKeyRef.current;
+    return () => {
+      for (const unsubscribe of subscriptions.values()) unsubscribe();
+      subscriptions.clear();
+      for (const timer of retryTimers.values()) clearTimeout(timer);
+      retryTimers.clear();
+    };
+  }, []);
+
   // 1. Local-to-Team thread mirroring for local threads whose project correlates to a Team Server.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes local team-project thread snapshots to the remote Team Server when local shells or projections change
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes dirty or active local team-project thread snapshots to the remote Team Server without subscribing to idle historical threads
   useEffect(() => {
     if (!primaryEnvironmentId) return;
     const localEnv = environments.find((env) => env.environmentId === primaryEnvironmentId);
@@ -143,42 +204,107 @@ export function TeamLocalThreadSyncCoordinator() {
         .filter((project) => project.environmentId === primaryEnvironmentId)
         .map((project) => [project.id, project] as const),
     );
-    const localTeamThreads: Array<{
-      readonly shell: ReturnType<typeof useThreadShells>[number];
-      readonly teamEnvironmentId: EnvironmentId;
-      readonly teamProjectId: TeamSyncLocalThreadInput["projectId"];
-      readonly defaultViewId: TeamSyncLocalThreadInput["viewId"];
-    }> = [];
+    const currentEntriesByKey = new Map<string, SyncEntry>();
 
     for (const shell of threadShells) {
       if (shell.environmentId !== primaryEnvironmentId) continue;
-      if (shell.deletedAt !== null || shell.archivedAt !== null) continue;
       const localProject = localProjectsById.get(shell.projectId);
       if (!localProject) continue;
       const assignment = resolveProjectTeamAssignment({ project: localProject, teamStates });
       if (!assignment || assignment.teamEnvironmentId === primaryEnvironmentId) continue;
-      localTeamThreads.push({
+      const syncKey = `${assignment.teamEnvironmentId}\0${shell.id}`;
+      const existingAttribution = assignment.teamState.attributionByThreadId.get(shell.id);
+      const isClosed = shell.deletedAt !== null || shell.archivedAt !== null;
+      // Never start syncing threads that were already archived/deleted before ever being synced,
+      // but DO propagate delete/archive transitions for threads already mirrored to the Team Server.
+      if (
+        isClosed &&
+        existingAttribution === undefined &&
+        !syncedShellFingerprintByKeyRef.current.has(syncKey)
+      ) {
+        continue;
+      }
+      const pendingViewId = readPendingLocalThreadViewId(shell.id);
+      const defaultViewId =
+        pendingViewId ??
+        existingAttribution?.viewId ??
+        assignment.assignment.defaultViewId ??
+        undefined;
+      const shellFingerprint = buildShellFingerprint({
         shell,
-        teamEnvironmentId: assignment.teamEnvironmentId,
         teamProjectId: assignment.assignment.projectId,
-        defaultViewId: assignment.assignment.defaultViewId ?? undefined,
+        defaultViewId,
       });
-    }
-
-    const triggerSync = (entry: (typeof localTeamThreads)[number]) => {
-      const payload = buildLocalSyncPayload({
+      const entry: SyncEntry = {
+        syncKey,
+        shell,
         localEnvironmentId: primaryEnvironmentId,
         localEnvironmentLabel: localLabel,
+        teamEnvironmentId: assignment.teamEnvironmentId,
+        teamProjectId: assignment.assignment.projectId,
+        defaultViewId,
+        shellFingerprint,
+        isActive: isRunActive(shell.latestRun?.status),
+      };
+      currentEntriesByKey.set(syncKey, entry);
+      latestEntryByKeyRef.current.set(syncKey, entry);
+    }
+
+    // Drop subscriptions for threads that are no longer tracked.
+    for (const [syncKey, unsubscribe] of subscriptionsByKeyRef.current) {
+      if (!currentEntriesByKey.has(syncKey)) {
+        unsubscribe();
+        subscriptionsByKeyRef.current.delete(syncKey);
+        latestEntryByKeyRef.current.delete(syncKey);
+        const timer = retryTimerByKeyRef.current.get(syncKey);
+        if (timer !== undefined) {
+          clearTimeout(timer);
+          retryTimerByKeyRef.current.delete(syncKey);
+        }
+      }
+    }
+
+    const releaseSubscriptionIfSettled = (syncKey: string) => {
+      const latest = latestEntryByKeyRef.current.get(syncKey);
+      if (!latest || latest.isActive) return;
+      if (syncedShellFingerprintByKeyRef.current.get(syncKey) !== latest.shellFingerprint) return;
+      const detailResult = appAtomRegistry.get(
+        environmentThreadStateAtom(latest.localEnvironmentId, latest.shell.id),
+      );
+      const detailState = AsyncResult.value(detailResult);
+      const hasLoadedDetail = Option.isSome(detailState) && Option.isSome(detailState.value.data);
+      if (!hasLoadedDetail && latest.shell.deletedAt === null) return;
+      const unsubscribe = subscriptionsByKeyRef.current.get(syncKey);
+      if (unsubscribe) {
+        unsubscribe();
+        subscriptionsByKeyRef.current.delete(syncKey);
+      }
+    };
+
+    const triggerSync = (syncKey: string) => {
+      const entry = latestEntryByKeyRef.current.get(syncKey);
+      if (!entry) return;
+      const payload = buildLocalSyncPayload({
+        localEnvironmentId: entry.localEnvironmentId,
+        localEnvironmentLabel: entry.localEnvironmentLabel,
         teamProjectId: entry.teamProjectId,
         defaultViewId: entry.defaultViewId,
         shell: entry.shell,
       });
-      const syncKey = `${entry.teamEnvironmentId}\0${entry.shell.id}`;
       const fingerprint = JSON.stringify(payload);
-      if (syncedFingerprintByKeyRef.current.get(syncKey) === fingerprint) return;
+      if (syncedPayloadFingerprintByKeyRef.current.get(syncKey) === fingerprint) {
+        syncedShellFingerprintByKeyRef.current.set(syncKey, entry.shellFingerprint);
+        releaseSubscriptionIfSettled(syncKey);
+        return;
+      }
       if (syncInFlightRef.current.has(syncKey)) {
         pendingRetryByKeyRef.current.set(syncKey, entry);
         return;
+      }
+      const existingTimer = retryTimerByKeyRef.current.get(syncKey);
+      if (existingTimer !== undefined) {
+        clearTimeout(existingTimer);
+        retryTimerByKeyRef.current.delete(syncKey);
       }
       syncInFlightRef.current.add(syncKey);
       pendingRetryByKeyRef.current.delete(syncKey);
@@ -188,7 +314,20 @@ export function TeamLocalThreadSyncCoordinator() {
       })
         .then((result) => {
           if (result._tag === "Success") {
-            syncedFingerprintByKeyRef.current.set(syncKey, fingerprint);
+            syncedPayloadFingerprintByKeyRef.current.set(syncKey, fingerprint);
+            syncedShellFingerprintByKeyRef.current.set(syncKey, entry.shellFingerprint);
+            retryAttemptsByKeyRef.current.delete(syncKey);
+            clearPendingLocalThreadViewId(entry.shell.id);
+            releaseSubscriptionIfSettled(syncKey);
+          } else {
+            const attempt = (retryAttemptsByKeyRef.current.get(syncKey) ?? 0) + 1;
+            retryAttemptsByKeyRef.current.set(syncKey, attempt);
+            const delayMs = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
+            const timer = setTimeout(() => {
+              retryTimerByKeyRef.current.delete(syncKey);
+              triggerSync(syncKey);
+            }, delayMs);
+            retryTimerByKeyRef.current.set(syncKey, timer);
           }
         })
         .finally(() => {
@@ -196,25 +335,27 @@ export function TeamLocalThreadSyncCoordinator() {
           const pending = pendingRetryByKeyRef.current.get(syncKey);
           if (pending) {
             pendingRetryByKeyRef.current.delete(syncKey);
-            triggerSync(pending);
+            triggerSync(pending.syncKey);
           }
         });
     };
 
-    const unsubscribes: Array<() => void> = [];
-    for (const entry of localTeamThreads) {
-      const atom = environmentThreadStateAtom(primaryEnvironmentId, entry.shell.id);
-      unsubscribes.push(
-        appAtomRegistry.subscribe(atom, () => {
-          triggerSync(entry);
-        }),
-      );
-      triggerSync(entry);
+    for (const [syncKey, entry] of currentEntriesByKey) {
+      const isDirty =
+        syncedShellFingerprintByKeyRef.current.get(syncKey) !== entry.shellFingerprint;
+      if (!isDirty && !entry.isActive) {
+        releaseSubscriptionIfSettled(syncKey);
+        continue;
+      }
+      if (!subscriptionsByKeyRef.current.has(syncKey)) {
+        const atom = environmentThreadStateAtom(entry.localEnvironmentId, entry.shell.id);
+        const unsubscribe = appAtomRegistry.subscribe(atom, () => {
+          triggerSync(syncKey);
+        });
+        subscriptionsByKeyRef.current.set(syncKey, unsubscribe);
+      }
+      triggerSync(syncKey);
     }
-
-    return () => {
-      for (const unsubscribe of unsubscribes) unsubscribe();
-    };
   }, [environments, primaryEnvironmentId, projects, syncLocalThread, teamStates, threadShells]);
 
   // 2. Owner notifications when a colleague leaves a new pending note on a thread owned by currentMember.
@@ -233,7 +374,8 @@ export function TeamLocalThreadSyncCoordinator() {
           if (isInitialLoad) continue;
           if (note.status !== "pending") continue;
           if (note.authorMemberId === currentMemberId) continue;
-          if (attribution && attribution.creatorMemberId !== currentMemberId) continue;
+          // Fail closed if thread attribution has not loaded yet so non-owners never receive spurious alerts.
+          if (!attribution || attribution.creatorMemberId !== currentMemberId) continue;
 
           const targetEnvId: EnvironmentId =
             attribution?.isLocalSynced && attribution.executionEnvironmentId

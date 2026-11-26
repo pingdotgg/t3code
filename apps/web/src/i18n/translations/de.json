@@ -948,7 +948,6 @@
   "14172f88d51d8511": "Fehlgeschlagen",
   "141d12d6b7f3c002": "Mit diesem Thread verknüpfen",
   "141ddaa6208b57d1": "{name} bereits hinzugefügt",
-  "142f770c9e67e179": "Owners only",
   "1457921cc3b85785": "Gruppe negieren",
   "145e1f7503ba3b2c": [
     "Diese Umgebung hat keinen Lauf mit diesem Link.",
@@ -5080,6 +5079,7 @@
     },
     " öffnen"
   ],
+  "62a23e1805c62315": "Save & Queue",
   "62a3728a64068dc5": "In jeder ausgewählten Umgebung verbunden oder lokal bereits verfügbar.",
   "62a869aa16578f3a": "Create a team",
   "62ad8c327190bfac": "Name der Umgebungsvariable {number}",
@@ -12318,6 +12318,7 @@
   "ed169d23683fb6ac": "Thread wird geladen…",
   "ed2fc31d28c441da": "Agentensitzung konnte nicht getrennt werden",
   "ed3b9ada396031c5": "Normal",
+  "ed3e4d1d74be9abc": "No members (restricted)",
   "ed3f9d351d00c0da": "Ansichten",
   "ed42d531a626ffe4": "Wird separat auf dem Host gespeichert.",
   "ed447281261f2d0e": "Nur Lesezugriff",

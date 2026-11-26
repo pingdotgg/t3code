@@ -560,12 +560,17 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
         );
 
         // Bob syncs a local-environment thread; even owner Alice's MCP caller is blocked from executing on it!
+        const mcpProjectId = ProjectId.make("proj-mcp-m5");
+        yield* team.assignProject({
+          sessionId: aliceSession.sessionId,
+          payload: { projectId: mcpProjectId },
+        });
         const bobLocalThreadId = ThreadId.make("thread-bob-local-mcp");
         yield* team.syncLocalThread({
           sessionId: bobSession.sessionId,
           payload: {
             threadId: bobLocalThreadId,
-            projectId: ProjectId.make("proj-mcp-m5"),
+            projectId: mcpProjectId,
             executionEnvironmentId: EnvironmentId.make("env-bob-laptop-mcp"),
             executionEnvironmentLabel: "Bob Laptop",
             title: "Bob Local MCP Test",

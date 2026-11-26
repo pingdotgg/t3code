@@ -426,6 +426,20 @@ export function clearTeamDraftAccessOptions(draftKey: string): void {
   appAtomRegistry.set(teamDraftAccessOptionsMapAtom, next);
 }
 
+const pendingLocalThreadViewIds = new Map<ThreadId, TeamViewId>();
+
+export function setPendingLocalThreadViewId(threadId: ThreadId, viewId: TeamViewId): void {
+  pendingLocalThreadViewIds.set(threadId, viewId);
+}
+
+export function readPendingLocalThreadViewId(threadId: ThreadId): TeamViewId | null {
+  return pendingLocalThreadViewIds.get(threadId) ?? null;
+}
+
+export function clearPendingLocalThreadViewId(threadId: ThreadId): void {
+  pendingLocalThreadViewIds.delete(threadId);
+}
+
 export const previewTeamInvite = createRuntimeCommand(connectionAtomRuntime, {
   label: "web:team:preview-invite",
   execute: (input: TeamInvitePreviewInput) => previewTeamInviteEffect(input),

@@ -13205,7 +13205,6 @@
   "0a5996d489544105": "Could not assign project to team",
   "0dd6d1e1ec7262b0": "Running on {owner}'s local environment",
   "0f2bd244986ee521": "Continue work from the forked thread above.",
-  "142f770c9e67e179": "Owners only",
   "1581389af2827d6c": "Previous conversation context:",
   "196f38deef273210": "Accept & Queue",
   "1a87302ca8cdb37e": "Your note was added to the thread timeline.",
@@ -13297,5 +13296,7 @@
   "f1ec58a5da8cdb73": "Notes are shown in the timeline and only sent to the agent if the owner accepts them.",
   "f209605026192575": "Note from {author}:",
   "f357956febe92c02": "Review the exact text from {author} that will be included in the prompt on your environment:",
-  "f510356291976f4f": "Undo"
+  "f510356291976f4f": "Undo",
+  "62a23e1805c62315": "Save & Queue",
+  "ed3e4d1d74be9abc": "No members (restricted)"
 }

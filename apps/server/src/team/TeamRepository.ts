@@ -815,6 +815,11 @@ export class TeamRepository extends Context.Service<
       readonly fromTurnId: string;
       readonly toTurnId: string;
     }) => Effect.Effect<ReadonlyArray<TeamThreadNote>, TeamRepositoryError>;
+    readonly reanchorPendingNotesForNewTurn: (input: {
+      readonly teamId: TeamId;
+      readonly threadId: ThreadId;
+      readonly targetTurnId: string;
+    }) => Effect.Effect<ReadonlyArray<TeamThreadNote>, TeamRepositoryError>;
   }
 >()("t3/team/TeamRepository") {}
 
@@ -2832,6 +2837,62 @@ const make = Effect.gen(function* () {
         ),
       );
     }),
+
+    reanchorPendingNotesForNewTurn: Effect.fn("TeamRepository.reanchorPendingNotesForNewTurn")(
+      function* (input) {
+        return yield* runSql(
+          "reanchorPendingNotesForNewTurn",
+          sql.withTransaction(
+            Effect.gen(function* () {
+              const pendingRows = yield* sql<{ readonly id: string }>`
+                SELECT id
+                FROM team_thread_notes
+                WHERE team_id = ${input.teamId}
+                  AND thread_id = ${input.threadId}
+                  AND status = 'pending'
+                  AND (anchor_turn_id IS NULL OR anchor_turn_id != ${input.targetTurnId})
+                ORDER BY anchor_seq ASC, created_at ASC
+              `;
+              if (pendingRows.length === 0) return [] as ReadonlyArray<TeamThreadNote>;
+              const seqRows = yield* sql<{ readonly max_seq: number | null }>`
+                SELECT MAX(anchor_seq) AS max_seq
+                FROM team_thread_notes
+                WHERE thread_id = ${input.threadId}
+              `;
+              let nextSeq = (seqRows[0]?.max_seq ?? 0) + 1;
+              const reanchoredIds: Array<string> = [];
+              for (const pending of pendingRows) {
+                yield* sql`
+                  UPDATE team_thread_notes
+                  SET anchor_turn_id = ${input.targetTurnId},
+                      anchor_seq = ${nextSeq}
+                  WHERE id = ${pending.id}
+                    AND team_id = ${input.teamId}
+                    AND status = 'pending'
+                `;
+                reanchoredIds.push(pending.id);
+                nextSeq += 1;
+              }
+              const rows = yield* sql<ThreadNoteRow>`
+                SELECT n.id, n.thread_id, n.team_id,
+                       n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                       n.original_body, n.original_content_hash,
+                       n.edited_body, n.edited_content_hash,
+                       n.status, n.anchor_turn_id, n.anchor_seq,
+                       n.included_in_turn_id, n.resolved_by_member_id,
+                       r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+                FROM team_thread_notes n
+                INNER JOIN team_members a ON a.id = n.author_member_id
+                LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+                WHERE n.id IN ${sql.in(reanchoredIds)}
+                ORDER BY n.anchor_seq ASC, n.created_at ASC
+              `;
+              return rows.map(mapThreadNoteRow);
+            }),
+          ),
+        );
+      },
+    ),
   });
 });
 

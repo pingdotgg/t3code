@@ -298,3 +298,85 @@ it.effect("a linked environment from before client pairing is never asked", () =
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it.effect(
+  "revokes team-member-bound remote client sessions and pending pairings over a full-access peer link",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveBox();
+        const a = yield* makeLaptop;
+        yield* linkTo(a.links, b, "full-access");
+        const memberClient = yield* a.client([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+        ]);
+        const otherClient = yield* a.client([AuthOrchestrationReadScope]);
+        const memberSubject = "team-member:team-1:member-eve";
+
+        const memberIssued = yield* a.pairing.request(
+          { environmentId: box.environmentId },
+          {
+            sessionId: memberClient.sessionId,
+            scopes: memberClient.scopes,
+            teamMemberSubject: memberSubject,
+          },
+        );
+        if (memberIssued.type !== "credential") return yield* Effect.die(memberIssued);
+        const memberPending = yield* a.pairing.request(
+          { environmentId: box.environmentId },
+          {
+            sessionId: memberClient.sessionId,
+            scopes: memberClient.scopes,
+            teamMemberSubject: memberSubject,
+          },
+        );
+        if (memberPending.type !== "credential") return yield* Effect.die(memberPending);
+        const otherIssued = yield* a.pairing.request(
+          { environmentId: box.environmentId },
+          {
+            sessionId: otherClient.sessionId,
+            scopes: otherClient.scopes,
+            teamMemberSubject: "team-member:team-1:member-clara",
+          },
+        );
+        if (otherIssued.type !== "credential") return yield* Effect.die(otherIssued);
+
+        // Redeem memberIssued and otherIssued so both have active sessions on box.
+        const memberSession = yield* b.auth.exchangeBootstrapCredentialForAccessToken(
+          memberIssued.credential,
+          undefined,
+          metadata,
+        );
+        const otherSession = yield* b.auth.exchangeBootstrapCredentialForAccessToken(
+          otherIssued.credential,
+          undefined,
+          metadata,
+        );
+        expect(memberSession.access_token).toBeTruthy();
+        expect(otherSession.access_token).toBeTruthy();
+
+        const beforeSessions = yield* b.auth.listSessions();
+        expect(beforeSessions.some((s) => s.subject === memberSubject)).toBe(true);
+        expect(beforeSessions.some((s) => s.subject === "team-member:team-1:member-clara")).toBe(
+          true,
+        );
+
+        // Revoking member-eve kills both her active session AND her unredeemed pending pairing on box.
+        const revoked = yield* a.pairing.revokeSubject(box.environmentId, memberSubject);
+        expect(revoked.revokedSessions).toBeGreaterThanOrEqual(1);
+        expect(revoked.revokedPairingLinks).toBeGreaterThanOrEqual(1);
+
+        const afterSessions = yield* b.auth.listSessions();
+        expect(afterSessions.some((s) => s.subject === memberSubject)).toBe(false);
+        expect(afterSessions.some((s) => s.subject === "team-member:team-1:member-clara")).toBe(
+          true,
+        );
+
+        const pendingRedeem = yield* b.auth
+          .exchangeBootstrapCredentialForAccessToken(memberPending.credential, undefined, metadata)
+          .pipe(Effect.flip);
+        expect(pendingRedeem._tag).toBe("ServerAuthInvalidCredentialError");
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);

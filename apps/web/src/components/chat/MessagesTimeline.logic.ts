@@ -2960,6 +2960,26 @@ function rowAnchorTurnIds(row: MessagesTimelineRow): ReadonlyArray<string> {
   return [];
 }
 
+function resolveNoteAnchorIndex(
+  anchorTurnId: string | null,
+  lastIndexByAnchor: ReadonlyMap<string, number>,
+): number | undefined {
+  if (anchorTurnId === null) return undefined;
+  const direct = lastIndexByAnchor.get(anchorTurnId);
+  if (direct !== undefined) return direct;
+  // Local-synced projections namespace run/message IDs as `local-sync:<threadId>:run:<rawId>` on
+  // the Team Server while the owner's local server keeps `<rawId>`.
+  const runMarkerIndex = anchorTurnId.indexOf(":run:");
+  if (anchorTurnId.startsWith("local-sync:") && runMarkerIndex !== -1) {
+    return lastIndexByAnchor.get(anchorTurnId.slice(runMarkerIndex + ":run:".length));
+  }
+  const msgMarkerIndex = anchorTurnId.indexOf(":msg:");
+  if (anchorTurnId.startsWith("local-sync:") && msgMarkerIndex !== -1) {
+    return lastIndexByAnchor.get(`msg:${anchorTurnId.slice(msgMarkerIndex + ":msg:".length)}`);
+  }
+  return undefined;
+}
+
 /**
  * Interleaves Team Thread Notes into the timeline right after their `anchorTurnId`
  * (or at the end when unanchored or anchored to a turn not yet rendered), preserving
@@ -2986,8 +3006,7 @@ export function interleaveTeamThreadNoteRows(
   const afterRowIndex = new Map<number, TeamThreadNote[]>();
   const trailingNotes: TeamThreadNote[] = [];
   for (const note of sortedNotes) {
-    const anchorIndex =
-      note.anchorTurnId !== null ? lastIndexByAnchor.get(note.anchorTurnId) : undefined;
+    const anchorIndex = resolveNoteAnchorIndex(note.anchorTurnId, lastIndexByAnchor);
     if (anchorIndex === undefined) {
       trailingNotes.push(note);
     } else {

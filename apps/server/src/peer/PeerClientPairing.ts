@@ -2,6 +2,7 @@ import {
   type AuthEnvironmentScope,
   type AuthSessionId,
   AuthStandardClientScopes,
+  type EnvironmentId,
   EnvironmentHttpApi,
   type PeerLinkClientPairingCredential,
   type PeerLinkClientPairingInput,
@@ -9,6 +10,8 @@ import {
   type PeerLinkClientPairingResult,
   PeerLinkError,
   type PeerLinkLinkPairingInput,
+  type PeerLinkRevokeSubjectRequest,
+  type PeerLinkRevokeSubjectResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -29,6 +32,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 /** Long enough for the client to reach the linked environment and redeem it, and no longer. */
 const CLIENT_PAIRING_TTL = Duration.minutes(3);
 const CLIENT_LABEL_MAX_LENGTH = 80;
+export const TEAM_MEMBER_REMOTE_SUBJECT_PREFIX = "team-member:";
 
 const ClientPairingApi = HttpApi.make(EnvironmentHttpApi.identifier)
   .add(EnvironmentHttpApi.groups.peerLink)
@@ -57,6 +61,13 @@ export class PeerClientPairingIssuer extends Context.Service<
       PeerLinkClientPairingCredential,
       PeerClientPairingRefused | EnvironmentAuth.ServerAuthInternalError
     >;
+    readonly revokeSubject: (
+      caller: EnvironmentAuth.McpClientSession,
+      request: PeerLinkRevokeSubjectRequest,
+    ) => Effect.Effect<
+      PeerLinkRevokeSubjectResult,
+      PeerClientPairingRefused | EnvironmentAuth.ServerAuthInternalError
+    >;
   }
 >()("t3/peer/PeerClientPairing/PeerClientPairingIssuer") {}
 
@@ -72,6 +83,7 @@ export class PeerClientPairing extends Context.Service<
       client: {
         readonly sessionId: AuthSessionId;
         readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+        readonly teamMemberSubject?: string;
       },
     ) => Effect.Effect<PeerLinkClientPairingResult, PeerLinkError>;
     /**
@@ -82,6 +94,14 @@ export class PeerClientPairing extends Context.Service<
       input: PeerLinkLinkPairingInput,
       client: { readonly sessionId: AuthSessionId },
     ) => Effect.Effect<PeerLinkClientPairingResult, PeerLinkError>;
+    /**
+     * Revokes any direct client sessions and pending pairing links on a linked environment whose
+     * subject starts with `subjectPrefix` (must begin with `team-member:`).
+     */
+    readonly revokeSubject: (
+      environmentId: EnvironmentId,
+      subjectPrefix: string,
+    ) => Effect.Effect<PeerLinkRevokeSubjectResult>;
   }
 >()("t3/peer/PeerClientPairing") {}
 
@@ -144,18 +164,52 @@ const makeIssuer = Effect.gen(function* () {
         message: "The client holds no access a pairing could carry.",
       });
     }
+    if (
+      request.subject !== undefined &&
+      !request.subject.startsWith(TEAM_MEMBER_REMOTE_SUBJECT_PREFIX)
+    ) {
+      return yield* new PeerClientPairingRefused({
+        reason: "policy",
+        message: "Only team-member subjects may be attached to peer-link client pairings.",
+      });
+    }
     const clientLabel = Array.from(request.clientLabel).slice(0, CLIENT_LABEL_MAX_LENGTH).join("");
     const issued = yield* auth
       .createPairingLink({
         scopes,
         ttl: CLIENT_PAIRING_TTL,
         label: `${clientLabel} · via ${via}`,
+        ...(request.subject !== undefined ? { subject: request.subject } : {}),
       })
       .pipe(Effect.catchTags({ ManagedPolicyRefusedError: refusedByPolicy }));
     return { credential: issued.credential, expiresAt: issued.expiresAt };
   });
 
-  return PeerClientPairingIssuer.of({ issue });
+  const revokeSubject: PeerClientPairingIssuer["Service"]["revokeSubject"] = Effect.fn(
+    "PeerClientPairingIssuer.revokeSubject",
+  )(function* (caller, request) {
+    if (!(yield* enabled)) {
+      return yield* new PeerClientPairingRefused({
+        reason: "disabled",
+        message: PeerLinks.LINKED_ENVIRONMENTS_OFF,
+      });
+    }
+    if (!caller.peerLink || caller.access !== "full-access") {
+      return yield* new PeerClientPairingRefused({
+        reason: "not_a_full_access_link",
+        message: "Only a full-access link may revoke team-minted client sessions here.",
+      });
+    }
+    if (!request.subjectPrefix.startsWith(TEAM_MEMBER_REMOTE_SUBJECT_PREFIX)) {
+      return yield* new PeerClientPairingRefused({
+        reason: "policy",
+        message: "Only team-member subjects may be revoked over a peer link.",
+      });
+    }
+    return yield* auth.revokeGrantsBySubjectPrefix(request.subjectPrefix);
+  });
+
+  return PeerClientPairingIssuer.of({ issue, revokeSubject });
 });
 
 export const layerIssuer = Layer.effect(PeerClientPairingIssuer, makeIssuer);
@@ -253,7 +307,11 @@ const make = Effect.gen(function* () {
   });
 
   const request: PeerClientPairing["Service"]["request"] = (input, client) =>
-    ask(input, client.sessionId, (clientLabel) => ({ scopes: client.scopes, clientLabel }));
+    ask(input, client.sessionId, (clientLabel) => ({
+      scopes: client.scopes,
+      clientLabel,
+      ...(client.teamMemberSubject !== undefined ? { subject: client.teamMemberSubject } : {}),
+    }));
 
   const requestForLink: PeerClientPairing["Service"]["requestForLink"] = (input, client) =>
     ask(input, client.sessionId, (clientLabel) => ({
@@ -262,7 +320,38 @@ const make = Effect.gen(function* () {
       link: { access: input.access },
     }));
 
-  return PeerClientPairing.of({ request, requestForLink });
+  const revokeSubject: PeerClientPairing["Service"]["revokeSubject"] = Effect.fn(
+    "PeerClientPairing.revokeSubject",
+  )(function* (environmentId, subjectPrefix) {
+    const empty: PeerLinkRevokeSubjectResult = { revokedSessions: 0, revokedPairingLinks: 0 };
+    if (!subjectPrefix.startsWith(TEAM_MEMBER_REMOTE_SUBJECT_PREFIX)) return empty;
+    if (!(yield* links.enabled)) return empty;
+    const stored = yield* links.get(environmentId).pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(stored) || stored.value.access !== "full-access") return empty;
+    const resolved = yield* links.resolve(environmentId).pipe(Effect.option);
+    if (Option.isNone(resolved)) return empty;
+    const peer = resolved.value;
+    const api = yield* HttpApiClient.make(ClientPairingApi, { baseUrl: peer.url }).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    return yield* api.peerLink
+      .revokeSubject({
+        headers: { authorization: `Bearer ${peer.token}` },
+        payload: { subjectPrefix },
+      })
+      .pipe(
+        Effect.timeout(PeerLinks.probeTimeout(peer.url)),
+        Effect.tapError((cause) =>
+          Effect.logWarning("PeerClientPairing.revokeSubject failed", {
+            environmentId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => empty),
+      );
+  });
+
+  return PeerClientPairing.of({ request, requestForLink, revokeSubject });
 });
 
 export const layer = Layer.effect(PeerClientPairing, make);

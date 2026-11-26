@@ -601,6 +601,14 @@ export function createTeamEnvironmentAtoms<R, E>(
       label: "environment-data:team:edit-thread-note",
       tag: TEAM_WS_METHODS.teamEditThreadNote,
     }),
+    reserveAcceptedNotes: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:reserve-accepted-notes",
+      tag: TEAM_WS_METHODS.teamReserveAcceptedNotes,
+    }),
+    releaseAcceptedNotes: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:release-accepted-notes",
+      tag: TEAM_WS_METHODS.teamReleaseAcceptedNotes,
+    }),
     consumeAcceptedNotes: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:consume-accepted-notes",
       tag: TEAM_WS_METHODS.teamConsumeAcceptedNotes,

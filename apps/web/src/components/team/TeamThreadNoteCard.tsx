@@ -133,6 +133,7 @@ export function TeamThreadNoteCard({
       input: {
         noteId: note.id,
         editedBody: nextBody,
+        expectedOriginalContentHash: note.originalContentHash,
         status: "accepted",
       },
     });
@@ -426,7 +427,7 @@ export function TeamThreadNoteCard({
                   onClick={handleEditSubmit}
                 >
                   {busy ? <Spinner size="xs" /> : <CheckIcon />}
-                  <T>Save & Accept</T>
+                  {isThreadRunning ? <T>Save & Queue</T> : <T>Save & Accept</T>}
                 </Button>
                 <Button
                   type="button"

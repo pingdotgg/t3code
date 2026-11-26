@@ -617,6 +617,59 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
     /local|environment|authorization|forbidden/i,
   );
 
+  // Also verify metadata continuation and terminalOpen are blocked on Bob's local-synced thread!
+  const continuationHijack = await callBearerRpc(
+    topology.teamServer.origin,
+    claraBearerToken,
+    (client) =>
+      client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("cmd-continuation-hijack-bob-local"),
+        threadId: bobThreadId,
+        continuation: {
+          messageId: MessageId.make("msg-continuation-hijack-bob-local"),
+          text: "Sneaky continuation hijack",
+        },
+      }),
+  );
+  expect(continuationHijack.ok).toBe(false);
+
+  const terminalHijack = await callBearerRpc(
+    topology.teamServer.origin,
+    claraBearerToken,
+    (client) =>
+      client["terminal.open"]({
+        threadId: bobThreadId,
+        terminalId: "term-hijack-bob-local",
+        cwd: teamProjectDir,
+        cols: 80,
+        rows: 24,
+      }),
+  );
+  expect(terminalHijack.ok).toBe(false);
+
+  // Verify author-only delete while pending (and failure once accepted/not-author).
+  const tempNoteRes = await callBearerRpc(topology.teamServer.origin, eveBearerToken, (client) =>
+    client["team.createThreadNote"]({
+      threadId: bobThreadId,
+      body: "Temporary pending note to delete",
+    }),
+  );
+  if (!tempNoteRes.ok) {
+    throw new Error(`tempNoteRes failed: ${tempNoteRes.error}`);
+  }
+  const wrongAuthorDelete = await callBearerRpc(
+    topology.teamServer.origin,
+    claraBearerToken,
+    (client) => client["team.deleteThreadNote"]({ noteId: tempNoteRes.result.id }),
+  );
+  expect(wrongAuthorDelete.ok).toBe(false);
+  const authorDelete = await callBearerRpc(topology.teamServer.origin, eveBearerToken, (client) =>
+    client["team.deleteThreadNote"]({ noteId: tempNoteRes.result.id }),
+  );
+  expect(authorDelete.ok).toBe(true);
+  expect(authorDelete.ok ? authorDelete.result.deleted : false).toBe(true);
+
   // Alice enters in-place Note Mode (no modal!) and sends an owner-authored note.
   await alice.page.getByTestId("team-leave-note-button").click();
   await alice.page
@@ -937,6 +990,59 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
   expect(note1After?.includedInTurnId).toBe("turn-toctou-e2e-2");
   expect(note2After?.status).toBe("pending");
   expect(note2After?.anchorTurnId).toBe("turn-toctou-e2e-2");
+
+  // Also verify real local-environment normal prompt send (0 accepted notes) re-anchors a concurrently
+  // arriving pending note on Bob's local thread!
+  const localRaceNoteRes = await callBearerRpc(
+    topology.teamServer.origin,
+    eveBearerToken,
+    (client) =>
+      client["team.createThreadNote"]({
+        threadId: bobThreadId,
+        body: "Local normal-send concurrent note",
+      }),
+  );
+  if (!localRaceNoteRes.ok) {
+    throw new Error(`localRaceNoteRes failed: ${localRaceNoteRes.error}`);
+  }
+  const initialLocalRaceAnchor = localRaceNoteRes.result.anchorTurnId;
+  // Bob dispatches a normal local turn (0 accepted notes) directly on his local server while the
+  // note stays pending, and the Team Server re-anchors the pending note to the new mirrored run!
+  const bobNormalLocalMsgId = MessageId.make("msg-bob-local-normal-toctou");
+  await runPromise(
+    Effect.gen(function* () {
+      const client = yield* rpcClient(bob.home, bob.localServerOrigin);
+      yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+        type: "message.dispatch",
+        commandId: CommandId.make("cmd-bob-local-normal-toctou"),
+        threadId: bobThreadId,
+        messageId: bobNormalLocalMsgId,
+        createdBy: "user",
+        creationSource: "web",
+        text: "Bob normal local prompt without accepted notes",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+    }).pipe(Effect.scoped),
+  );
+  await expect
+    .poll(
+      async () => {
+        const listed = await callBearerRpc(topology.teamServer.origin, claraBearerToken, (client) =>
+          client["team.listThreadNotes"]({ threadId: bobThreadId }),
+        );
+        if (!listed.ok) return false;
+        const found = listed.result.notes.find((n) => n.id === localRaceNoteRes.result.id);
+        return Boolean(
+          found &&
+          found.status === "pending" &&
+          found.anchorTurnId !== null &&
+          found.anchorTurnId !== initialLocalRaceAnchor,
+        );
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
 
   // 13. Real MCP environment-ACL check on Team Server:
   //     Switch Team Server default model to MCP Probe, let regular Dave start a Team Server thread,

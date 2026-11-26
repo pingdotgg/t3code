@@ -22,12 +22,14 @@ import * as Stream from "effect/Stream";
 import type * as EventSink from "../orchestration-v2/EventSink.ts";
 import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ThreadLaunchResult } from "../orchestration-v2/ThreadLaunchService.ts";
+import type * as PeerClientPairing from "../peer/PeerClientPairing.ts";
 import type * as PeerLinks from "../peer/PeerLinks.ts";
 import type * as ProjectService from "../project/ProjectService.ts";
 import * as TeamService from "./TeamService.ts";
 
 export interface TeamWsHandlerDeps {
   readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+  readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
   readonly projectService?: ProjectService.ProjectService["Service"];
   readonly eventSink?: EventSink.EventSinkV2["Service"];
   readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
@@ -49,10 +51,24 @@ export function makeTeamWsRpcHandlers(
     ) => teamService.updateMyPseudo({ sessionId, payload }),
     [TEAM_WS_METHODS.teamUpdateMemberRole]: (
       payload: Parameters<typeof teamService.updateMemberRole>[0]["payload"],
-    ) => teamService.updateMemberRole({ sessionId, payload }),
+    ) =>
+      teamService.updateMemberRole({
+        sessionId,
+        payload,
+        ...(deps?.peerClientPairing !== undefined
+          ? { peerClientPairing: deps.peerClientPairing }
+          : {}),
+      }),
     [TEAM_WS_METHODS.teamUpdateMemberStatus]: (
       payload: Parameters<typeof teamService.updateMemberStatus>[0]["payload"],
-    ) => teamService.updateMemberStatus({ sessionId, payload }),
+    ) =>
+      teamService.updateMemberStatus({
+        sessionId,
+        payload,
+        ...(deps?.peerClientPairing !== undefined
+          ? { peerClientPairing: deps.peerClientPairing }
+          : {}),
+      }),
     [TEAM_WS_METHODS.teamCreateInvite]: (
       payload: Parameters<typeof teamService.createInvite>[0]["payload"],
     ) => teamService.createInvite({ sessionId, payload }),
@@ -109,7 +125,14 @@ export function makeTeamWsRpcHandlers(
       }),
     [TEAM_WS_METHODS.teamUpdateEnvironment]: (
       payload: Parameters<typeof teamService.updateEnvironment>[0]["payload"],
-    ) => teamService.updateEnvironment({ sessionId, payload }),
+    ) =>
+      teamService.updateEnvironment({
+        sessionId,
+        payload,
+        ...(deps?.peerClientPairing !== undefined
+          ? { peerClientPairing: deps.peerClientPairing }
+          : {}),
+      }),
     [TEAM_WS_METHODS.teamDetachEnvironment]: (
       payload: Parameters<typeof teamService.detachEnvironment>[0]["payload"],
     ) =>
@@ -117,6 +140,9 @@ export function makeTeamWsRpcHandlers(
         sessionId,
         payload,
         ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
+        ...(deps?.peerClientPairing !== undefined
+          ? { peerClientPairing: deps.peerClientPairing }
+          : {}),
       }),
     [TEAM_WS_METHODS.teamSyncLocalThread]: (
       payload: Parameters<typeof teamService.syncLocalThread>[0]["payload"],
@@ -139,6 +165,12 @@ export function makeTeamWsRpcHandlers(
     [TEAM_WS_METHODS.teamEditThreadNote]: (
       payload: Parameters<typeof teamService.editThreadNote>[0]["payload"],
     ) => teamService.editThreadNote({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamReserveAcceptedNotes]: (
+      payload: Parameters<typeof teamService.reserveAcceptedNotes>[0]["payload"],
+    ) => teamService.reserveAcceptedNotes({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamReleaseAcceptedNotes]: (
+      payload: Parameters<typeof teamService.releaseAcceptedNotes>[0]["payload"],
+    ) => teamService.releaseAcceptedNotes({ sessionId, payload }),
     [TEAM_WS_METHODS.teamConsumeAcceptedNotes]: (
       payload: Parameters<typeof teamService.consumeAcceptedNotes>[0]["payload"],
     ) => teamService.consumeAcceptedNotes({ sessionId, payload }),
@@ -160,6 +192,7 @@ export const recordTeamDispatchEvents = (
   sessionId: AuthSessionId,
   storedEvents: ReadonlyArray<{ readonly event: OrchestrationV2DomainEvent }>,
   command?: OrchestrationV2Command,
+  noteReservationToken?: string | null,
 ) =>
   Effect.forEach(
     storedEvents,
@@ -202,6 +235,7 @@ export const recordTeamDispatchEvents = (
               threadId: command.threadId,
               targetTurnId,
               acceptedNotes: command.teamAcceptedNotes ?? [],
+              reservationToken: noteReservationToken ?? null,
             });
           })()
         : Effect.void,
@@ -371,6 +405,7 @@ export const prepareTeamDispatchAttribution = (
       .prepareThreadAttribution({
         sessionId,
         threadId: command.threadId,
+        projectId: command.projectId,
       })
       .pipe(Effect.map((prepared) => (prepared ? command.threadId : null)));
   }
