@@ -1269,13 +1269,9 @@ function CheckoutGitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       ...(owner?.threadId ? { threadId: owner.threadId } : {}),
       ...(owner?.projectId ? { projectId: owner.projectId } : {}),
-      ...(submittedSelection
-        ? {
-            onProgress: (event) => {
-              if (event.kind === "action_failed") createdBranch = event.createdBranch;
-            },
-          }
-        : {}),
+      onProgress: (event) => {
+        if (event.kind === "action_failed") createdBranch = event.createdBranch;
+      },
     });
 
     if (submittedSelection) {
