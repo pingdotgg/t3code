@@ -1138,25 +1138,27 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
-    const session = yield* withPairingRedemptionHooks(
-      grant.pairingLinkId,
-      Effect.gen(function* () {
-        const preparedPairing = yield* runBeforePairingIssue(
-          grant.pairingLinkId,
-          grant.scopes,
-        ).pipe(
-          Effect.catchTags({
-            ServerAuthScopeNotGrantedError: () =>
-              Effect.fail(
-                new ServerAuthInvalidCredentialError({
-                  diagnostic: "Pairing link scopes are no longer permitted for the member.",
-                }),
-              ),
-          }),
-        );
-        const issued = yield* issueUnlessOthersRevokedSince(
-          revocationsAtStart,
-          sessions
+    // Lock order invariant: connectTrustLock (via issueUnlessOthersRevokedSince) is ALWAYS outer,
+    // pairing redemption hooks (membershipMutationGate) ALWAYS inner, matching DPoP exchanges.
+    const session = yield* issueUnlessOthersRevokedSince(
+      revocationsAtStart,
+      withPairingRedemptionHooks(
+        grant.pairingLinkId,
+        Effect.gen(function* () {
+          const preparedPairing = yield* runBeforePairingIssue(
+            grant.pairingLinkId,
+            grant.scopes,
+          ).pipe(
+            Effect.catchTags({
+              ServerAuthScopeNotGrantedError: () =>
+                Effect.fail(
+                  new ServerAuthInvalidCredentialError({
+                    diagnostic: "Pairing link scopes are no longer permitted for the member.",
+                  }),
+                ),
+            }),
+          );
+          const issued = yield* sessions
             .issue({
               method: "browser-session-cookie",
               subject: grant.subject,
@@ -1171,16 +1173,16 @@ export const make = Effect.gen(function* () {
             })
             .pipe(
               Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
-            ),
-        );
-        yield* runAfterPairingIssue(
-          grant.pairingLinkId,
-          issued.sessionId,
-          grant.scopes,
-          preparedPairing.bindings,
-        );
-        return issued;
-      }),
+            );
+          yield* runAfterPairingIssue(
+            grant.pairingLinkId,
+            issued.sessionId,
+            grant.scopes,
+            preparedPairing.bindings,
+          );
+          return issued;
+        }),
+      ),
     );
     return {
       response: {
@@ -1316,7 +1318,7 @@ export const make = Effect.gen(function* () {
               if (grantedScopes.length === 0) {
                 return yield* new ServerAuthScopeNotGrantedError({});
               }
-              return yield* withPairingRedemptionHooks(
+              const issueWithHooks = withPairingRedemptionHooks(
                 grant.pairingLinkId,
                 Effect.gen(function* () {
                   const preparedPairing = yield* runBeforePairingIssue(
@@ -1329,7 +1331,7 @@ export const make = Effect.gen(function* () {
                     input?.proofKeyThumbprint !== undefined &&
                     grant.method === "one-time-token" &&
                     grant.subject === PAIRING_LINK_SUBJECT;
-                  const issue = sessions
+                  const issuedSession = yield* sessions
                     .issue({
                       method: input?.proofKeyThumbprint
                         ? "dpop-access-token"
@@ -1354,10 +1356,6 @@ export const make = Effect.gen(function* () {
                         (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
                       ),
                     );
-                  // A proof-key exchange holds the lock from before it spends its credential.
-                  const issuedSession = yield* input?.proofKeyThumbprint
-                    ? issue
-                    : issueUnlessOthersRevokedSince(revocationsAtStart, issue);
                   yield* runAfterPairingIssue(
                     grant.pairingLinkId,
                     issuedSession.sessionId,
@@ -1367,6 +1365,11 @@ export const make = Effect.gen(function* () {
                   return issuedSession;
                 }),
               );
+              // A proof-key exchange already holds connectTrustLock on the outside; bearer exchanges
+              // acquire connectTrustLock here BEFORE entering pairing hooks so lock order is identical.
+              return yield* input?.proofKeyThumbprint
+                ? issueWithHooks
+                : issueUnlessOthersRevokedSince(revocationsAtStart, issueWithHooks);
             }),
           ),
           Effect.flatMap(toAccessTokenResult),

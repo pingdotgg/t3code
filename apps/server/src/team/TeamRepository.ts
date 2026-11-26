@@ -42,7 +42,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
 import { runTeamMigrations } from "./migrations.ts";
 import {
-  getMemberUpstreamMobileVisibility,
   getTeamPairingMeta,
   getTeamSessionScopeCeiling,
   listTeamPairingLinkIdsForMember,
@@ -889,9 +888,6 @@ export class TeamRepository extends Context.Service<
     readonly getSessionScopeCeiling: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<Option.Option<ReadonlyArray<AuthEnvironmentScope>>, TeamRepositoryError>;
-    readonly getMemberMobileVisibility: (
-      memberId: TeamMemberId,
-    ) => Effect.Effect<TeamUpstreamClientThreadVisibility, TeamRepositoryError>;
     readonly setMemberMobileVisibility: (input: {
       readonly memberId: TeamMemberId;
       readonly teamId: TeamId;
@@ -3180,15 +3176,6 @@ const make = Effect.gen(function* () {
     getSessionScopeCeiling: Effect.fn("TeamRepository.getSessionScopeCeiling")(
       function* (sessionId) {
         return yield* runSql("getSessionScopeCeiling", getTeamSessionScopeCeiling(sql, sessionId));
-      },
-    ),
-
-    getMemberMobileVisibility: Effect.fn("TeamRepository.getMemberMobileVisibility")(
-      function* (memberId) {
-        return yield* runSql(
-          "getMemberMobileVisibility",
-          getMemberUpstreamMobileVisibility(sql, memberId),
-        );
       },
     ),
 

@@ -116,14 +116,12 @@ export function TeamMobileCompatSection({
   const [savingVisibility, setSavingVisibility] = useState(false);
   const [labelInput, setLabelInput] = useState("");
   const [creatingPairing, setCreatingPairing] = useState(false);
-  const [latestPairing, setLatestPairing] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly result: TeamCreateMobilePairingLinkResult;
-  } | null>(null);
-  const [pendingLinksState, setPendingLinksState] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly links: ReadonlyArray<TeamMobilePairingLinkSummary>;
-  } | null>(null);
+  const [latestPairingByEnv, setLatestPairingByEnv] = useState<
+    Readonly<Record<string, TeamCreateMobilePairingLinkResult | undefined>>
+  >({});
+  const [pendingLinksByEnv, setPendingLinksByEnv] = useState<
+    Readonly<Record<string, ReadonlyArray<TeamMobilePairingLinkSummary> | undefined>>
+  >({});
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
   const currentMemberId = currentMember?.id ?? null;
@@ -134,11 +132,15 @@ export function TeamMobileCompatSection({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronizes the caller's pending member-bound mobile pairing links from the Team Server when the selected team environment or member changes.
   useEffect(() => {
     if (currentMemberId === null) return;
+    const targetEnvironmentId = environmentId;
     let cancelled = false;
-    void loadPendingLinks(environmentId).then((result) => {
+    void loadPendingLinks(targetEnvironmentId).then((result) => {
       if (cancelled) return;
       if (result._tag === "Success") {
-        setPendingLinksState({ environmentId, links: result.value.pairingLinks });
+        setPendingLinksByEnv((prev) => ({
+          ...prev,
+          [targetEnvironmentId]: result.value.pairingLinks,
+        }));
       }
     });
     return () => {
@@ -162,14 +164,13 @@ export function TeamMobileCompatSection({
     });
   };
 
-  const refreshPendingLinks = async () => {
-    const targetEnvironmentId = environmentId;
+  const refreshPendingLinks = async (targetEnvironmentId: EnvironmentId = environmentId) => {
     const listed = await runListPairings({ environmentId: targetEnvironmentId, input: {} });
     if (listed._tag === "Success") {
-      setPendingLinksState({
-        environmentId: targetEnvironmentId,
-        links: listed.value.pairingLinks,
-      });
+      setPendingLinksByEnv((prev) => ({
+        ...prev,
+        [targetEnvironmentId]: listed.value.pairingLinks,
+      }));
     }
   };
 
@@ -203,17 +204,21 @@ export function TeamMobileCompatSection({
   const handleCreateMobilePairing = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (creatingPairing || !canCreatePairing) return;
+    const targetEnvironmentId = environmentId;
     setCreatingPairing(true);
     const trimmedLabel = labelInput.trim();
     const result = await runCreatePairing({
-      environmentId,
+      environmentId: targetEnvironmentId,
       input: trimmedLabel.length > 0 ? { label: trimmedLabel } : {},
     });
     setCreatingPairing(false);
     if (result._tag === "Success") {
       setLabelInput("");
-      setLatestPairing({ environmentId, result: result.value });
-      await refreshPendingLinks();
+      setLatestPairingByEnv((prev) => ({
+        ...prev,
+        [targetEnvironmentId]: result.value,
+      }));
+      await refreshPendingLinks(targetEnvironmentId);
       toastManager.add({
         type: "success",
         title: gt("Mobile pairing code created"),
@@ -231,14 +236,15 @@ export function TeamMobileCompatSection({
 
   const handleRevokePairing = async (id: string) => {
     if (!canRevokePairing) return;
+    const targetEnvironmentId = environmentId;
     setRevokingId(id);
-    const result = await runRevokePairing({ environmentId, input: { id } });
+    const result = await runRevokePairing({ environmentId: targetEnvironmentId, input: { id } });
     setRevokingId(null);
     if (result._tag === "Success") {
-      if (latestPairing?.result.id === id) {
-        setLatestPairing(null);
-      }
-      await refreshPendingLinks();
+      setLatestPairingByEnv((prev) =>
+        prev[targetEnvironmentId]?.id === id ? { ...prev, [targetEnvironmentId]: undefined } : prev,
+      );
+      await refreshPendingLinks(targetEnvironmentId);
       toastManager.add({
         type: "success",
         title: gt("Mobile pairing code revoked"),
@@ -250,17 +256,11 @@ export function TeamMobileCompatSection({
     }
   };
 
-  const activeLatestPairing =
-    latestPairing !== null && latestPairing.environmentId === environmentId
-      ? latestPairing.result
-      : null;
+  const activeLatestPairing = latestPairingByEnv[environmentId] ?? null;
   const activeLatestPairingUrl = activeLatestPairing
     ? resolveMobilePairingUrl(serverBaseUrl, activeLatestPairing.credential)
     : null;
-  const pendingLinks =
-    pendingLinksState !== null && pendingLinksState.environmentId === environmentId
-      ? pendingLinksState.links
-      : [];
+  const pendingLinks = pendingLinksByEnv[environmentId] ?? [];
   const activePendingLinks = pendingLinks.filter((link) => {
     const expiresMs = Date.parse(link.expiresAt);
     return Number.isNaN(expiresMs) || expiresMs > nowMs;

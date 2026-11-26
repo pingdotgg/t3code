@@ -34,6 +34,7 @@ import {
   canModifyTeamMember,
   canToggleTeamThreadLock,
   effectiveTeamThreadNoteHash,
+  effectiveUpstreamClientThreadVisibility,
   EnvironmentAuthorizationError,
   EnvironmentId,
   formatAcceptedTeamNoteForPrompt,
@@ -143,6 +144,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -1640,9 +1642,18 @@ const make = Effect.gen(function* () {
       yield* Effect.forEach(
         sessionIds,
         Effect.fnUntraced(function* (memberSessionId) {
-          const ceilingOption = yield* repository
-            .getSessionScopeCeiling(memberSessionId)
-            .pipe(Effect.orElseSucceed(() => Option.none<ReadonlyArray<AuthEnvironmentScope>>()));
+          const ceilingExit = yield* Effect.exit(
+            repository.getSessionScopeCeiling(memberSessionId),
+          );
+          if (Exit.isFailure(ceilingExit)) {
+            yield* Effect.logWarning(
+              "TeamService.reconcileMemberSessionScopes ceiling lookup failed; revoking session to fail closed",
+              { memberId, memberSessionId, cause: ceilingExit.cause },
+            );
+            yield* sessionStore.revoke(memberSessionId).pipe(Effect.ignore);
+            return;
+          }
+          const ceilingOption = ceilingExit.value;
           const targetScopes = Option.isSome(ceilingOption)
             ? nextRoleScopes.filter((scope) => ceilingOption.value.includes(scope))
             : nextRoleScopes;
@@ -7389,9 +7400,7 @@ const make = Effect.gen(function* () {
         return new Set<ThreadId>();
       }
       const member = memberOption.value;
-      const visibility = yield* repository
-        .getMemberMobileVisibility(member.id)
-        .pipe(Effect.orElseSucceed(() => "owned_and_followed" as const));
+      const visibility = effectiveUpstreamClientThreadVisibility(member);
       if (visibility === "all_accessible") {
         return readableIds;
       }
@@ -7465,9 +7474,7 @@ const make = Effect.gen(function* () {
       return false;
     }
     const member = memberOption.value;
-    const visibility = yield* repository
-      .getMemberMobileVisibility(member.id)
-      .pipe(Effect.orElseSucceed(() => "owned_and_followed" as const));
+    const visibility = effectiveUpstreamClientThreadVisibility(member);
     if (visibility === "all_accessible") return true;
     const attributionOption = yield* repository
       .getThreadAttribution(threadId)

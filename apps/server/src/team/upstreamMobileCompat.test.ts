@@ -926,4 +926,109 @@ describe("upstreamMobileCompat integration", () => {
         expect(Exit.isFailure(unboundBindExit)).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
   );
+
+  it.effect(
+    "maintains strict connectTrustLock -> membershipMutationGate lock order without deadlocking across concurrent DPoP, bearer, and browser redemptions, and fails closed if ceiling lookup errors",
+    () =>
+      Effect.gen(function* () {
+        const teamService = yield* TeamService.TeamService;
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const sql = yield* SqlClient.SqlClient;
+
+        const ownerSession = yield* sessions.issue({
+          method: "browser-session-cookie",
+          subject: "owner",
+          scopes: AuthStandardClientScopes,
+          client: desktopClientMeta,
+        });
+        yield* teamService.initializeTeam({
+          sessionId: ownerSession.sessionId,
+          payload: { name: "Acme", ownerPseudo: "alice" },
+        });
+        const bobInvite = yield* teamService.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "admin", prefilledPseudo: "bob" },
+        });
+        const bobRedeemed = yield* teamService.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: desktopClientMeta,
+        });
+        const bobDesktop = yield* sessions.verify(bobRedeemed.accessToken);
+
+        // 1. Concurrent DPoP, Bearer, and Browser pairing redemptions with forced yields inside a
+        //    secondary pairing hook would AB-BA deadlock if lock orders diverged. All must complete cleanly.
+        const unregisterYieldHook = yield* serverAuth.registerPairingRedemptionHook({
+          beforeIssueSession: () => Effect.yieldNow.pipe(Effect.as(null)),
+          afterIssueSession: () => Effect.yieldNow,
+        });
+        try {
+          const dpopLink = yield* teamService.createMobilePairingLink({
+            sessionId: bobDesktop.sessionId,
+            callerScopes: bobDesktop.scopes,
+            payload: { label: "Bob DPoP" },
+            serverAuth,
+          });
+          const bearerLink = yield* teamService.createMobilePairingLink({
+            sessionId: bobDesktop.sessionId,
+            callerScopes: bobDesktop.scopes,
+            payload: { label: "Bob Bearer" },
+            serverAuth,
+          });
+          const browserLink = yield* teamService.createMobilePairingLink({
+            sessionId: bobDesktop.sessionId,
+            callerScopes: bobDesktop.scopes,
+            payload: { label: "Bob Browser" },
+            serverAuth,
+          });
+          const [dpopRes, bearerRes, browserRes] = yield* Effect.all(
+            [
+              serverAuth.exchangeBootstrapCredentialForAccessToken(
+                dpopLink.credential,
+                undefined,
+                clientMeta,
+                { proofKeyThumbprint: "dpop-jkt-order-test" },
+              ),
+              serverAuth.exchangeBootstrapCredentialForAccessToken(
+                bearerLink.credential,
+                undefined,
+                clientMeta,
+              ),
+              serverAuth.createBrowserSession(browserLink.credential, clientMeta),
+            ],
+            { concurrency: "unbounded" },
+          );
+          expect(dpopRes.access_token.length).toBeGreaterThan(0);
+          expect(bearerRes.access_token.length).toBeGreaterThan(0);
+          expect(browserRes.sessionToken.length).toBeGreaterThan(0);
+        } finally {
+          unregisterYieldHook();
+        }
+
+        // 2. If getSessionScopeCeiling fails during role reconciliation, fail closed (revoke session)
+        //    instead of treating the DB failure as "no ceiling" and widening a narrowed session.
+        const narrowLink = yield* teamService.createMobilePairingLink({
+          sessionId: bobDesktop.sessionId,
+          callerScopes: bobDesktop.scopes,
+          payload: { label: "Bob Narrow", scopes: [AuthOrchestrationReadScope] },
+          serverAuth,
+        });
+        const narrowToken = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          narrowLink.credential,
+          undefined,
+          clientMeta,
+        );
+        // Drop the ceiling table to simulate a repository lookup failure during role reconciliation.
+        yield* sql`DROP TABLE team_session_scope_ceilings`;
+        yield* teamService.updateMemberRole({
+          sessionId: ownerSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, role: "regular" },
+        });
+        const verifyAfterFailedCeilingRead = yield* Effect.exit(
+          sessions.verify(narrowToken.access_token),
+        );
+        expect(Exit.isFailure(verifyAfterFailedCeilingRead)).toBe(true);
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
 });

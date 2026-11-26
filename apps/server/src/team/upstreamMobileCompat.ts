@@ -1,5 +1,4 @@
 import {
-  DEFAULT_UPSTREAM_CLIENT_THREAD_VISIBILITY,
   TEAM_CLIENT_CAPABILITY_HEADER,
   TEAM_CLIENT_CAPABILITY_QUERY_PARAM,
   TEAM_CLIENT_CAPABILITY_VALUE,
@@ -454,10 +453,6 @@ interface PairingMetaRow {
   readonly revoked_at: string | null;
 }
 
-interface MemberPreferenceRow {
-  readonly upstream_client_thread_visibility: TeamUpstreamClientThreadVisibility;
-}
-
 interface SessionScopeCeilingRow {
   readonly max_scopes_json: string;
 }
@@ -557,22 +552,6 @@ export const getTeamSessionScopeCeiling = (sql: SqlClient.SqlClient, sessionId: 
         return Option.none<ReadonlyArray<AuthEnvironmentScope>>();
       }
     }),
-  );
-
-export const getMemberUpstreamMobileVisibility = (
-  sql: SqlClient.SqlClient,
-  memberId: TeamMemberId,
-) =>
-  sql<MemberPreferenceRow>`
-    SELECT upstream_client_thread_visibility
-    FROM team_member_preferences
-    WHERE member_id = ${memberId}
-    LIMIT 1
-  `.pipe(
-    Effect.map(
-      (rows) =>
-        rows[0]?.upstream_client_thread_visibility ?? DEFAULT_UPSTREAM_CLIENT_THREAD_VISIBILITY,
-    ),
   );
 
 export const setMemberUpstreamMobileVisibility = (

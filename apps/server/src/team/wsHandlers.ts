@@ -702,7 +702,12 @@ export const guardThreadScopedStreamForSession = <A, E, R>(
       const revocationStream: Stream.Stream<never, EnvironmentAuthorizationError> =
         accessChanges.pipe(
           Stream.mapEffect((change) => {
-            if (change.type === "threadView" && change.threadId !== threadId) {
+            if (
+              change.type === "memberVisibility" ||
+              change.type === "memberFollow" ||
+              change.type === "memberPseudo" ||
+              (change.type === "threadView" && change.threadId !== threadId)
+            ) {
               return Effect.void;
             }
             return teamService.assertCanReadThread(sessionId, threadId);
