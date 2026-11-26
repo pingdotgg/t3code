@@ -84,6 +84,15 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
       Effect.gen(function* () {
         attempt += 1;
         const responseOption = yield* effect.pipe(
+          Effect.tap((response) =>
+            response.text.pipe(
+              Effect.orElseSucceed(() => ""),
+              Effect.flatMap((body) => input.accept?.(body) ?? Effect.succeed(true)),
+              Effect.flatMap((accepted) =>
+                accepted ? Effect.void : Effect.fail({ kind: "response-not-accepted", attempt }),
+              ),
+            ),
+          ),
           Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
           Effect.mapError((cause) => fail(cause)),
         );
@@ -101,18 +110,6 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
             attempt,
             cause: describeReadinessCause(cause),
           }),
-        ),
-      ),
-    ),
-    HttpClient.tap((response) =>
-      response.text.pipe(
-        Effect.orElseSucceed(() => ""),
-        Effect.flatMap((body) => input.accept?.(body) ?? Effect.succeed(true)),
-        Effect.flatMap((accepted) =>
-          accepted ? Effect.void : Effect.fail(fail({ kind: "response-not-accepted", attempt })),
-        ),
-        Effect.tapError((cause) =>
-          Ref.set(lastProbeFailure, { attempt, cause: describeReadinessCause(cause) }),
         ),
       ),
     ),
