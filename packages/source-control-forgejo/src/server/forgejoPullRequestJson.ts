@@ -275,7 +275,7 @@ export const FORGEJO_REACTIONS: Record<PullRequestReactionContent, string> = {
 };
 export function forgejoReactions(
   reactions: ReadonlyArray<typeof ForgejoReaction.Type>,
-  viewer: string,
+  viewer: string | null,
 ): ReadonlyArray<PullRequestReaction> {
   return Object.entries(FORGEJO_REACTIONS).flatMap(([content, emoji]) => {
     const matching = reactions.filter((reaction) => reaction.content === emoji);

@@ -129,7 +129,9 @@ export const make = Effect.gen(function* () {
                     ? "rate-limited"
                     : error.reason === "not-found"
                       ? "not-found"
-                      : "failed",
+                      : error.reason === "forbidden"
+                        ? "forbidden"
+                        : "failed",
           }),
       ),
     );
@@ -208,10 +210,19 @@ export const make = Effect.gen(function* () {
     readonly repository?: string;
     readonly host?: string;
   }) => read({ ...input, path: "user" }, ForgejoUser).pipe(Effect.map((user) => user.login));
+  // Tokens scoped to repositories and issues cannot read `GET /user`; the viewer only refines
+  // permissions and reactions, so those reads go on without it.
+  const getViewerIfReadable = (input: ProviderRepositoryRef) =>
+    getViewer(input).pipe(
+      Effect.catchIf(
+        (error) => error.reason === "forbidden",
+        () => Effect.succeed(null),
+      ),
+    );
   const permissions = (
     repo: typeof ForgejoRepository.Type,
     pr: typeof ForgejoPullRequest.Type,
-    viewer: string,
+    viewer: string | null,
   ): PullRequestViewerPermissions => {
     const canWrite = repo.permissions?.push ?? false;
     const canEdit = canWrite || pr.user?.login === viewer;
@@ -239,7 +250,7 @@ export const make = Effect.gen(function* () {
     input: ProviderRepositoryRef & { readonly number: number },
   ) {
     const [repo, pr, viewer] = yield* Effect.all(
-      [getRepo(input), getPull(input), getViewer(input)],
+      [getRepo(input), getPull(input), getViewerIfReadable(input)],
       { concurrency: 3 },
     );
     return permissions(repo, pr, viewer);
@@ -361,7 +372,7 @@ export const make = Effect.gen(function* () {
     ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
       const [pr, repo, viewer] = yield* Effect.all(
-        [getPull(input), getRepo(input), getViewer(input)],
+        [getPull(input), getRepo(input), getViewerIfReadable(input)],
         { concurrency: 3 },
       );
       const checks = yield* readChecks(input, pr);
@@ -411,7 +422,7 @@ export const make = Effect.gen(function* () {
               ForgejoCommit,
             ),
             page({ ...input, path: `${issuePath(input)}/reactions` }, ForgejoReaction),
-            getViewer(input),
+            getViewerIfReadable(input),
           ],
           { concurrency: 5 },
         );

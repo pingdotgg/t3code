@@ -139,6 +139,7 @@ const fastForwardOnlySettings = {
 const fastForwardOnlyProvider = (
   writes: Array<{ path: string; body: unknown }>,
   mergeSettings: object = fastForwardOnlySettings,
+  viewerDenied = false,
 ) =>
   ForgejoPullRequestProvider.make.pipe(
     Effect.provide(
@@ -153,7 +154,17 @@ const fastForwardOnlyProvider = (
           }
           switch (path) {
             case "user":
-              return reply({ login: "maria" });
+              return viewerDenied
+                ? Effect.fail(
+                    new ForgejoCli.ForgejoCliError({
+                      command: "tea",
+                      cwd: input.cwd,
+                      reason: "forbidden",
+                      httpStatus: 403,
+                      detail: "Forgejo denied access.",
+                    }),
+                  )
+                : reply({ login: "maria" });
             case "repos/maria/project":
               return reply({
                 full_name: "maria/project",
@@ -208,6 +219,15 @@ it.effect("does not offer fast-forward when Forgejo omits the setting", () =>
       (method) => detail.mergeCapabilities[method],
     );
     assert.deepStrictEqual(allowed, ["merge", "squash", "rebase"]);
+  }),
+);
+
+// A token scoped to repositories and issues reads pull requests but not `GET /user`.
+it.effect("reads pull request detail with a token that cannot read its own user", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([], fastForwardOnlySettings, true);
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    assert.strictEqual(detail.headSha, "head-sha");
   }),
 );
 
