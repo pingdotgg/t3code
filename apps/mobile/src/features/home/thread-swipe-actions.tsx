@@ -43,7 +43,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { useInterfaceDirection } from "../../i18n/direction";
+import { SWIPEABLE_DIRECTION, useInterfaceDirection } from "../../i18n/direction";
 import type { MessageResolver } from "../../i18n/messages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
@@ -257,6 +257,8 @@ interface ThreadSwipeableProps {
 }
 
 const COLLAPSED_ROW_STYLE = { height: 0, overflow: "hidden" } as const;
+// The action strip positions and animates its buttons with physical offsets.
+const PHYSICAL_ACTION_STRIP = { direction: "ltr" } as const;
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const m = useMessages();
@@ -509,7 +511,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         ref={() => {
           activeTranslationRef.current = translation;
         }}
-        style={actionStyle}
+        style={[actionStyle, PHYSICAL_ACTION_STRIP]}
       >
         <ThreadSwipeActions
           backgroundColor={backgroundColor}
@@ -537,10 +539,8 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     () => ({ backgroundColor, direction: interfaceDirection }),
     [backgroundColor, interfaceDirection],
   );
-  // RNGH places right actions by I18nManager.isRTL, which a `direction` style leaves false,
-  // so the swipeable itself stays LTR and only the row content follows the interface.
   const swipeableContainerStyle = useMemo(
-    () => [{ backgroundColor, direction: "ltr" as const }, containerStyle],
+    () => [{ backgroundColor, direction: SWIPEABLE_DIRECTION }, containerStyle],
     [backgroundColor, containerStyle],
   );
 

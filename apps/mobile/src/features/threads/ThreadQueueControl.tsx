@@ -22,7 +22,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
-import { useInterfaceDirection } from "../../i18n/direction";
+import { SWIPEABLE_DIRECTION, useInterfaceDirection } from "../../i18n/direction";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -447,8 +447,11 @@ function QueueRowSwipeable(props: {
       overshootRight={false}
       // Require a clearly sideways swipe to avoid competing with sheet scroll.
       failOffsetY={[-12, 12]}
-      // RNGH places right actions by I18nManager.isRTL, which a `direction` style leaves false.
-      containerStyle={{ backgroundColor: props.background, flex: 1, direction: "ltr" }}
+      containerStyle={{
+        backgroundColor: props.background,
+        flex: 1,
+        direction: SWIPEABLE_DIRECTION,
+      }}
       childrenContainerStyle={{ backgroundColor: props.background, direction }}
       onSwipeableOpen={(direction) => {
         if (direction !== "right") return;
