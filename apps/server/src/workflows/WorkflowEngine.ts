@@ -17,6 +17,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as References from "effect/References";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
@@ -72,6 +73,7 @@ import {
   Workflows,
 } from "./Workflows.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
+import { routineSpan, withoutRoutineSpans } from "@t3tools/shared/observability";
 
 const SWEEP_EVERY = Duration.seconds(15);
 const LOOK_EVERY = Duration.minutes(1);
@@ -147,10 +149,14 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const digest = yield* Digest.Digest;
   const context = yield* Effect.context<WorkflowEngine.WorkflowEngine>();
   // The engine keeps 64-bit ids, which this SQLite client only reads when asked for BigInts.
+  // Callers keep their own span annotations, so a user's start or cancel is not marked routine.
   const withEngine = <A, E>(effect: Effect.Effect<A, E, WorkflowEngine.WorkflowEngine>) =>
-    effect.pipe(
-      Effect.provideContext(context),
-      Effect.provideService(SqlClient.SafeIntegers, true),
+    Effect.flatMap(References.TracerSpanAnnotations, (annotations) =>
+      effect.pipe(
+        Effect.provideService(References.TracerSpanAnnotations, annotations),
+        Effect.provideContext(context),
+        Effect.provideService(SqlClient.SafeIntegers, true),
+      ),
     );
   const byTag = new Map(registered.map(([, engine]) => [engine._tag, engine] as const));
   const definitionByTag = new Map(
@@ -737,11 +743,13 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     const decode = Schema.decodeEffect(payloadCodec);
     yield* decode(row.input_json === null ? null : WorkflowStore.jsonValue(row.input_json)).pipe(
       Effect.flatMap((input) =>
-        onEnd(input as never, {
-          id: row.run_id,
-          outcome: "cancelled",
-          reason: row.detail ?? undefined,
-        }),
+        withoutRoutineSpans(
+          onEnd(input as never, {
+            id: row.run_id,
+            outcome: "cancelled",
+            reason: row.detail ?? undefined,
+          }),
+        ),
       ),
       Effect.provideContext(forStep(store, keyValues, link, forge, row.run_id, END_STEP)),
       // The sweep that runs it reads the engine's BigInts; the cleanup's own code must not.
@@ -1381,5 +1389,7 @@ export const layer = (
           ),
     ),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),
+    // Engine fibers fork from this build, so polls, activities and their store calls are all marked.
+    Layer.provide(Layer.succeed(References.TracerSpanAnnotations, routineSpan)),
   );
 };
