@@ -286,6 +286,11 @@ it.effect.each(["xai", "openrouter"] as const)(
       const openRouterModels = [
         { id: "google/gemini-test-tts", name: "Speech", supported_voices: ["reader"] },
         {
+          id: "qwen/qwen-audio-3.0-tts-flash",
+          name: "Qwen Audio 3.0 TTS Flash",
+          supported_voices: ["Cherry"],
+        },
+        {
           id: "heygen/heygen-voice-1-turbo",
           name: "HeyGen Voice 1 Turbo",
           supported_voices: ["nadine"],
@@ -389,7 +394,7 @@ it.effect.each(["xai", "openrouter"] as const)(
         const catalog = yield* service.synthesisModels(provider);
         expect(catalog).toMatchObject({
           apiKeyProvider: provider,
-          defaultModel: provider === "xai" ? "grok-tts" : "heygen/heygen-voice-1-turbo",
+          defaultModel: provider === "xai" ? "grok-tts" : "qwen/qwen-audio-3.0-tts-flash",
           speedAppliedByProvider: provider !== "openrouter",
           supportsModelSelection: true,
           supportsVoiceSelection: true,
@@ -399,6 +404,11 @@ it.effect.each(["xai", "openrouter"] as const)(
             ? [{ id: "grok-tts", name: "Grok TTS", voices: ["reader"] }]
             : [
                 { id: "google/gemini-test-tts", name: "Speech", voices: ["reader"] },
+                {
+                  id: "qwen/qwen-audio-3.0-tts-flash",
+                  name: "Qwen Audio 3.0 TTS Flash",
+                  voices: ["Cherry"],
+                },
                 {
                   id: "heygen/heygen-voice-1-turbo",
                   name: "HeyGen Voice 1 Turbo",
@@ -413,14 +423,11 @@ it.effect.each(["xai", "openrouter"] as const)(
           );
         }
         if (provider === "openrouter") {
-          upstream.mockResolvedValueOnce(
-            new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),
-          );
           yield* synthesize(provider, { ...request, model: catalog.defaultModel, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body))).toMatchObject({
-            model: "heygen/heygen-voice-1-turbo",
-            voice: "nadine",
-            response_format: "pcm",
+            model: "qwen/qwen-audio-3.0-tts-flash",
+            voice: "Cherry",
+            response_format: "mp3",
           });
           yield* synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
