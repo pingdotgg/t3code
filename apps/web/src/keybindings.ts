@@ -251,28 +251,30 @@ export function formatShortcutKeyLabel(key: string): string {
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
+export function formatShortcutKeyParts(
+  shortcut: KeybindingShortcut,
+  platform = navigator.platform,
+): readonly string[] {
+  const useMetaForMod = isMacPlatform(platform);
+  const showCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
+  const showAlt = shortcut.altKey;
+  const showShift = shortcut.shiftKey;
+  const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
+  const parts: string[] = [];
+  if (showCtrl) parts.push(useMetaForMod ? "\u2303" : "Ctrl");
+  if (showAlt) parts.push(useMetaForMod ? "\u2325" : "Alt");
+  if (showShift) parts.push(useMetaForMod ? "\u21e7" : "Shift");
+  if (showMeta) parts.push(useMetaForMod ? "\u2318" : "Meta");
+  parts.push(formatShortcutKeyLabel(shortcut.key));
+  return parts;
+}
+
 export function formatShortcutLabel(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): string {
-  const keyLabel = formatShortcutKeyLabel(shortcut.key);
-  const useMetaForMod = isMacPlatform(platform);
-  const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
-  const showCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
-  const showAlt = shortcut.altKey;
-  const showShift = shortcut.shiftKey;
-
-  if (useMetaForMod) {
-    return `${showCtrl ? "\u2303" : ""}${showAlt ? "\u2325" : ""}${showShift ? "\u21e7" : ""}${showMeta ? "\u2318" : ""}${keyLabel}`;
-  }
-
-  const parts: string[] = [];
-  if (showCtrl) parts.push("Ctrl");
-  if (showAlt) parts.push("Alt");
-  if (showShift) parts.push("Shift");
-  if (showMeta) parts.push("Meta");
-  parts.push(keyLabel);
-  return parts.join("+");
+  const parts = formatShortcutKeyParts(shortcut, platform);
+  return isMacPlatform(platform) ? parts.join("") : parts.join("+");
 }
 
 export function shortcutLabelForCommand(
