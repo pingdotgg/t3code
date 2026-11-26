@@ -432,10 +432,13 @@ interface PendingRequest {
 
 const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resource: "*", effect });
 
-/** OpenCode hides tools for names over 64 chars and rejects names over 100; hash long thread IDs. */
+/**
+ * OpenCode exposes MCP tools as `<server>_<tool>`. Meta's Responses API rejects
+ * tool names over 64 characters, so the server name must leave room for the
+ * longest T3 tool name (33 characters). Always use a 24-character hashed name
+ * to keep the combined name at 58 characters or less.
+ */
 export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId: string) {
-  const name = `t3-code-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
-  if (name.length <= 64) return name;
   const crypto = yield* Digest.Digest;
   const digest = yield* crypto
     .digest(Digest.sha256, new TextEncoder().encode(threadId))
