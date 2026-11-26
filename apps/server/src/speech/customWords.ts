@@ -159,7 +159,7 @@ export function makeSpeechTextCorrector(
       const last = tokens[index + best.count - 1]!;
       output.push(
         text.slice(cursor, first.start),
-        preserveCase(text.slice(first.start, last.end), best.word),
+        preserveCase(text.slice(first.start, last.end - best.suffix.length), best.word),
         best.suffix,
       );
       cursor = last.end;
