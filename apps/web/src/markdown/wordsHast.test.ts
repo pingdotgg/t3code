@@ -2,7 +2,10 @@ import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
-import { renderCodexDirectivesForCopy } from "./markdownText";
+import {
+  renderCodexDirectivesForCopy,
+  renderCodexInlineDirectivesAsMarkdown,
+} from "./markdownText";
 import {
   codexDirectiveSources,
   markdownReferenceDefinitions,
@@ -391,15 +394,16 @@ describe("wordsHast", () => {
       "try inner then end",
     ],
     [
-      '😀 :codex-followup[try :codex-followup[inner]{prompt="i"} then]{prompt="o"} and :codex-followup[again]{prompt="a"} end',
-      "😀 try inner then and again end",
+      '😀 :codex-followup[[see :codex-file-citation[a]{path="a.ts"}][ref]]{prompt="o"} and :codex-followup[again]{prompt="a"} end\n\n[ref]: https://x.dev',
+      '😀 [see :codex-file-citation[a]{path="a.ts"}][ref] and again end\n\n[ref]: https://x.dev',
     ],
     [
-      ':codex-followup[read :codex-file-citation[a]{path="a.ts"} then]{prompt="o"} end',
-      "read [a.ts](<a.ts>) then end",
+      ':codex-followup[    read :codex-file-citation[a]{path="a.ts"} then]{prompt="o"} end',
+      "    read [a.ts](<a.ts>) then end",
     ],
   ])("copies nested directives without losing surrounding text: %s", (markdown, expected) => {
     expect(renderCodexDirectivesForCopy(markdown)).toBe(expected);
+    expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(expected);
   });
 
   it.each([

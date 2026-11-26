@@ -19,19 +19,28 @@ function replaceDirectives(
   replacement: (directive: CodexDirectiveSource) => string | undefined,
 ): string {
   if (!CODEX_DIRECTIVE.test(markdown)) return markdown;
-  let rendered = "";
-  let cursor = 0;
+  let rendered = markdown;
+  const changes: Array<{ start: number; delta: number }> = [];
   const directives = codexDirectiveSources(markdown).sort(
-    (left, right) => left.start - right.start,
+    (left, right) => right.start - left.start,
   );
   for (const directive of directives) {
-    if (directive.start < cursor) continue;
-    const value = replacement(directive);
-    rendered += markdown.slice(cursor, directive.start);
-    rendered += value ?? markdown.slice(directive.start, directive.end);
-    cursor = directive.end;
+    // Consume child edits so this directive's original end and label still locate the rendered text.
+    let delta = 0;
+    while (changes.length && changes.at(-1)!.start < directive.end) {
+      delta += changes.pop()!.delta;
+    }
+    const labelStart = markdown.indexOf("[", directive.start) + 1;
+    const label = rendered.slice(labelStart, labelStart + directive.label.length + delta);
+    const value =
+      replacement({ ...directive, label }) ?? markdown.slice(directive.start, directive.end);
+    rendered = rendered.slice(0, directive.start) + value + rendered.slice(directive.end + delta);
+    changes.push({
+      start: directive.start,
+      delta: value.length - (directive.end - directive.start),
+    });
   }
-  return rendered + markdown.slice(cursor);
+  return rendered;
 }
 
 /** A file citation as the Markdown link it shows as, and a follow-up as its label. */
@@ -42,9 +51,7 @@ function inlineDirectiveMarkdown(directive: CodexDirectiveSource): string | unde
   }
   if (directive.name === "codex-followup") {
     return directive.attributes.prompt?.trim() && directive.label.trim()
-      ? replaceDirectives(directive.label, (nested) =>
-          inlineDirectiveMarkdown({ ...nested, inLink: directive.inLink || nested.inLink }),
-        )
+      ? directive.label
       : undefined;
   }
   return undefined;
