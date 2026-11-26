@@ -360,7 +360,9 @@ export function DevicePanel(props: {
                           <h3 className="font-medium">
                             {group.platform === "ios"
                               ? gt("iOS Simulators")
-                              : gt("Android Emulators")}
+                              : group.devices.some((device) => device.physical)
+                                ? gt("Android Devices")
+                                : gt("Android Emulators")}
                           </h3>
                         </div>
                         <DiscoveryList>
