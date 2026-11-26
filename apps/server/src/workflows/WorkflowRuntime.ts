@@ -37,6 +37,7 @@ import type * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowAgentThreads from "./WorkflowAgentThreads.ts";
 import * as WorkflowForge from "./WorkflowForge.ts";
 import * as Workflows from "./Workflows.ts";
+import { routineSpan } from "@t3tools/shared/observability";
 
 /** A folder of definition files, or one file, in place of the folder in the T3 home. */
 const definitionsOverride = Config.String("T3CODE_WORKFLOWS").pipe(Config.option);
@@ -644,7 +645,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     questions: Effect.flatMap(current, (live) => live.questions),
     unfinished: Effect.flatMap(current, (live) => live.unfinished),
     hooks: Effect.flatMap(current, (live) => live.hooks),
-    deliver: Effect.fn("Workflows.deliver")(function* (...input) {
+    deliver: Effect.fn("Workflows.deliver", { attributes: routineSpan })(function* (...input) {
       return yield* (yield* current).deliver(...input);
     }),
     stored: Effect.fn("Workflows.stored")(function* (...input) {
@@ -911,7 +912,7 @@ export const gate = Effect.fn("WorkflowRuntime.gate")(function* <E, R>(
     questions: Effect.flatMap(current, (service) => service.questions),
     unfinished: Effect.flatMap(current, (service) => service.unfinished),
     hooks: Effect.flatMap(current, (service) => service.hooks),
-    deliver: Effect.fn("Workflows.deliver")(function* (...input) {
+    deliver: Effect.fn("Workflows.deliver", { attributes: routineSpan })(function* (...input) {
       return yield* (yield* current).deliver(...input);
     }),
     stored: Effect.fn("Workflows.stored")(function* (...input) {

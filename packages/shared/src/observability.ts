@@ -181,7 +181,7 @@ export interface TraceSink {
 }
 
 export interface LocalFileTracerOptions extends TraceSinkOptions {
-  readonly sampleFastSqliteSpans?: boolean;
+  readonly sampleRoutineSpans?: boolean;
   readonly delegate?: Tracer.Tracer;
   readonly sink?: TraceSink;
 }
@@ -582,7 +582,11 @@ function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unk
   return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
 }
 
-const SLOW_SQLITE_SPAN_NANOS = 10_000_000n;
+const ROUTINE_ATTRIBUTE = "t3.trace.routine";
+/** Marks high-volume bookkeeping spans the local trace file may sample. SQLite spans count without it. */
+export const routineSpan = { [ROUTINE_ATTRIBUTE]: true } as const;
+
+const SLOW_ROUTINE_SPAN_NANOS = 10_000_000n;
 
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
@@ -599,17 +603,17 @@ class LocalFileSpan implements Tracer.Span {
   attributes: Map<string, unknown>;
   events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]>;
   private readonly delegate: Tracer.Span;
-  private readonly sampleFastSqliteSpans: boolean;
+  private readonly sampleRoutineSpans: boolean;
   private readonly push: (record: EffectTraceRecord) => void;
 
   constructor(
     options: Parameters<Tracer.Tracer["span"]>[0],
     delegate: Tracer.Span,
     push: (record: EffectTraceRecord) => void,
-    sampleFastSqliteSpans: boolean,
+    sampleRoutineSpans: boolean,
   ) {
     this.delegate = delegate;
-    this.sampleFastSqliteSpans = sampleFastSqliteSpans;
+    this.sampleRoutineSpans = sampleRoutineSpans;
     this.push = push;
     this.name = delegate.name;
     this.spanId = delegate.spanId;
@@ -638,19 +642,22 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (this.sampled && !(this.sampleFastSqliteSpans && this.isRoutineSqlite(endTime, traceExit))) {
+    if (this.sampled && !(this.sampleRoutineSpans && this.isDroppableRoutine(endTime, traceExit))) {
       this.push(spanToTraceRecord(this));
     }
   }
 
-  // Keeps every SQLite span for ~1/256 of trace IDs so routine SQL stays visible in context.
-  private isRoutineSqlite(endTime: bigint, exit: Exit.Exit<unknown, unknown>): boolean {
+  // Background fibers share the boot trace, so keep routine siblings of ~1/256 parents instead of traces.
+  private isDroppableRoutine(endTime: bigint, exit: Exit.Exit<unknown, unknown>): boolean {
     return (
-      this.attributes.get("db.system.name") === "sqlite" &&
+      (this.attributes.get("db.system.name") === "sqlite" ||
+        this.attributes.get(ROUTINE_ATTRIBUTE) === true) &&
       ExitRuntime.isSuccess(exit) &&
       this.events.length === 0 &&
-      endTime - this.status.startTime < SLOW_SQLITE_SPAN_NANOS &&
-      !this.traceId.endsWith("00")
+      endTime - this.status.startTime < SLOW_ROUTINE_SPAN_NANOS &&
+      !Option.match(this.parent, { onNone: () => this.spanId, onSome: (p) => p.spanId }).endsWith(
+        "00",
+      )
     );
   }
 
@@ -704,7 +711,7 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
         spanOptions,
         delegate.span(spanOptions),
         sink.push,
-        options.sampleFastSqliteSpans === true,
+        options.sampleRoutineSpans === true,
       );
     },
     ...(delegate.context ? { context: delegate.context } : {}),

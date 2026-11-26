@@ -140,7 +140,7 @@ describe("truncateTraceAttributes", () => {
 });
 
 describe("observability", () => {
-  it.effect("samples only fast successful SQLite spans in the local file", () =>
+  it.effect("samples only fast successful routine spans in the local file", () =>
     Effect.gen(function* () {
       const names: Array<string> = [];
       const delegates: Array<Tracer.Span> = [];
@@ -149,7 +149,7 @@ describe("observability", () => {
         maxBytes: 1024,
         maxFiles: 1,
         batchWindowMs: 1000,
-        sampleFastSqliteSpans: true,
+        sampleRoutineSpans: true,
         sink: {
           filePath: "unused",
           push: (r) => names.push(r.name),
@@ -165,15 +165,16 @@ describe("observability", () => {
           },
         }),
       });
-      for (const name of ["fast", "sample", "slow", "failed", "logged", "other"]) {
+      for (const name of ["fast", "routine", "sample", "slow", "failed", "logged", "other"]) {
         const parent = Tracer.externalSpan({
-          traceId: "1".repeat(30) + (name === "sample" ? "00" : "01"),
-          spanId: "1".repeat(16),
+          traceId: "1".repeat(32),
+          spanId: "1".repeat(14) + (name === "sample" ? "00" : "01"),
         });
         const span = yield* Effect.makeSpan(name, { parent }).pipe(
           Effect.provideService(Tracer.Tracer, tracer),
         );
-        if (name !== "other") span.attribute("db.system.name", "sqlite");
+        if (name === "routine") span.attribute("t3.trace.routine", true);
+        else if (name !== "other") span.attribute("db.system.name", "sqlite");
         if (name === "logged") span.event("diagnostic", span.status.startTime);
         span.end(
           span.status.startTime + (name === "slow" ? 10_000_000n : 9_999_999n),
@@ -183,7 +184,7 @@ describe("observability", () => {
       assert.deepEqual(names, ["sample", "slow", "failed", "logged", "other"]);
       assert.deepEqual(
         delegates.map((span) => span.status._tag),
-        Array(6).fill("Ended"),
+        Array(7).fill("Ended"),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
