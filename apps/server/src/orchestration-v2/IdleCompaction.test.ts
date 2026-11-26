@@ -445,4 +445,91 @@ describe("IdleCompactionService", () => {
       expect(dispatched).toEqual(["server:idle-compact:idle-thread:run-2"]);
     }),
   );
+
+  it.effect("compacts when a queued message is removed or steered after the run completes", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const base = records({ cacheExpiresInMs: 10 * MINUTE_MS });
+      const completedRun = base.runs[0]!;
+      const queuedRun = {
+        ...completedRun,
+        id: RunId.make("run-2"),
+        ordinal: 2,
+        userMessageId: MessageId.make("message-2"),
+        status: "queued" as const,
+        startedAt: null,
+        completedAt: null,
+      };
+      const cancelledRun = { ...queuedRun, status: "cancelled" as const, completedAt: at() };
+      let runs: OrchestrationV2ThreadProjection["runs"] = [completedRun, queuedRun];
+      const updated = (run: (typeof runs)[number]) => ({
+        id: EventId.make(`${run.status}-${run.id}`),
+        type: "run.updated" as const,
+        threadId,
+        runId: run.id,
+        occurredAt: at(),
+        payload: run,
+      });
+      const dispatched: Array<string> = [];
+      const readWhileQueued = yield* Deferred.make<void>();
+      const streamDone = yield* Deferred.make<void>();
+      const dependencies = Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          // The run completes while the follow-up is still queued; the queue entry is cancelled
+          // only after the completed run's check has read the thread.
+          streamDomainEvents: Stream.make(updated(completedRun)).pipe(
+            Stream.concat(
+              Stream.fromEffect(
+                Deferred.await(readWhileQueued).pipe(
+                  Effect.map(() => {
+                    runs = [completedRun, cancelledRun];
+                    return updated(cancelledRun);
+                  }),
+                ),
+              ),
+            ),
+            Stream.ensuring(Deferred.succeed(streamDone, undefined)),
+          ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command.commandId);
+              return { sequence: 1, storedEvents: [] };
+            }),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThread: () => Effect.succeed(base.thread),
+          getThreadRecords: () =>
+            Deferred.succeed(readWhileQueued, undefined).pipe(
+              Effect.map(() => ({
+                ...base,
+                runs,
+                attempts: [],
+                nodes: [],
+                subagents: [],
+                providerSessions: [],
+                plans: [],
+                checkpointScopes: [],
+                checkpoints: [],
+                contextHandoffs: [],
+                visibleTurnItems: [],
+                updatedAt: at(),
+              })),
+            ),
+        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            idleCompaction: "beforeCacheExpires",
+          }),
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* IdleCompactionService.make;
+        yield* service.start();
+        yield* Deferred.await(streamDone);
+        yield* TestClock.adjust(9 * MINUTE_MS);
+      }).pipe(Effect.provide(dependencies));
+      expect(dispatched).toEqual(["server:idle-compact:idle-thread:run-1"]);
+    }),
+  );
 });
