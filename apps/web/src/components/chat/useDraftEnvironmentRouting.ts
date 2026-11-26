@@ -250,6 +250,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   ]);
   // A change in flight belongs to the draft and project it started on.
   const environmentChangeRef = useRef<{
+    readonly controller: AbortController;
     readonly environmentId: EnvironmentId;
     readonly scope: string;
   } | null>(null);
@@ -263,6 +264,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   useLayoutEffect(
     () => () => {
       if (environmentChangeRef.current?.scope === environmentChangeScope) {
+        environmentChangeRef.current.controller.abort();
         environmentChangeRef.current = null;
       }
     },
@@ -287,6 +289,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       });
       return;
     }
+    environmentChangeRef.current?.controller.abort();
     environmentChangeRef.current = null;
     setBusyEnvironmentChange(null);
     loadBalancing.refresh(
@@ -318,7 +321,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       (env) => env.environmentId === nextEnvironmentId,
     );
     if (!target) return;
-    const request = { environmentId: target.environmentId, scope: environmentChangeScope };
+    environmentChangeRef.current?.controller.abort();
+    const request = {
+      controller: new AbortController(),
+      environmentId: target.environmentId,
+      scope: environmentChangeScope,
+    };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
     const readSwitchingDraft = () => {
@@ -358,7 +366,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const workspaceRead =
         workspaceRoot === undefined
           ? Promise.resolve({})
-          : retargetDraftWorkspace(draft, projectRef, controller.signal);
+          : retargetDraftWorkspace(
+              draft,
+              projectRef,
+              AbortSignal.any([request.controller.signal, controller.signal]),
+            );
       const defaultWorkspace = await workspaceRead.finally(unsubscribe);
       const currentDraft = readSwitchingDraft();
       if (!currentDraft) return;
