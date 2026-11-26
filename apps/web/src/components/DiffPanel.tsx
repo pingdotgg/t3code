@@ -192,7 +192,7 @@ function DiffFileCollapseToggle({
       label={collapsed ? gt("Expand diff") : gt("Collapse diff")}
     >
       {collapsed ? (
-        <ChevronRightIcon className="size-4 text-muted-foreground/80" />
+        <ChevronRightIcon className="size-4 text-muted-foreground/80 rtl:rotate-180" />
       ) : (
         <ChevronDownIcon className="size-4 text-muted-foreground/80" />
       )}

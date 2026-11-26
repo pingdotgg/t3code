@@ -50,7 +50,7 @@ export function FoldedSettingsSection({
                     aria-hidden
                     className={cn(
                       "size-4 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                      open && "rotate-90",
+                      open ? "rotate-90" : "rtl:rotate-180",
                     )}
                   />
                 </CollapsibleTrigger>

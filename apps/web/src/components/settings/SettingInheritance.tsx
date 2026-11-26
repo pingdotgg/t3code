@@ -387,7 +387,7 @@ export function SettingInheritance({
                           </span>
                           <ChevronRightIcon
                             aria-hidden
-                            className="size-3 shrink-0 text-muted-foreground [[data-panel-open]_&]:rotate-90"
+                            className="size-3 shrink-0 text-muted-foreground rtl:rotate-180 [[data-panel-open]_&]:rotate-90"
                           />
                         </span>
                         <span className="flex min-w-0 flex-col gap-0.5 text-xs text-muted-foreground">

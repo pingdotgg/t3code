@@ -358,8 +358,8 @@ export default function ProjectScriptsControl({
             />
             <span
               className={cn(
-                "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                isPanel && cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+                "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5",
+                isPanel && cn("not-sr-only ms-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
               )}
             >
               {primaryScript.name}
@@ -461,7 +461,7 @@ export default function ProjectScriptsControl({
               render={<Button size="xs" variant="outline" aria-label={gt("Project actions")} />}
             >
               <WrenchIcon className="size-3.5" />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5">
                 <T context="project actions menu">Actions</T>
               </span>
               <ChevronDownIcon className="size-3.5" />
@@ -488,8 +488,8 @@ export default function ProjectScriptsControl({
           <PlusIcon className="size-3.5" />
           <span
             className={cn(
-              "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-              isPanel && cn("not-sr-only ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS),
+              "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5",
+              isPanel && cn("not-sr-only ms-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS),
             )}
           >
             {isPanel ? gt("Add project script") : gt("Add action")}
