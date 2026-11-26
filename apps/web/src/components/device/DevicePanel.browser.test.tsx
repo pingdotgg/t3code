@@ -204,7 +204,10 @@ describe("DevicePanel thread switches", () => {
 });
 
 describe("DevicePanel device headings", () => {
-  it("shows Android Devices above a phone listed alongside an emulator", async () => {
+  it.each([
+    { inventory: "without an emulator", withEmulator: false },
+    { inventory: "alongside an emulator", withEmulator: true },
+  ])("shows Android Devices above a phone $inventory", async ({ withEmulator }) => {
     setup();
     const emulator = { ...phone, platform: "android", version: "Android 15" } as const;
     const usbPhone = {
@@ -214,7 +217,7 @@ describe("DevicePanel device headings", () => {
       booted: true,
       physical: true,
     } as const;
-    currentState = { ...deviceState, devices: [emulator, usbPhone] };
+    currentState = { ...deviceState, devices: withEmulator ? [emulator, usbPhone] : [usbPhone] };
     await using screen = await render(devicePanel(threadA), { container });
 
     const section = screen.getByText(usbPhone.name, { exact: true }).element().closest("section");
