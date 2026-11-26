@@ -1210,8 +1210,6 @@ export async function extractDocumentText(path: string, extension: string): Prom
               const roomAfterHeading = Math.max(0, remaining - NOTEBOOK_OUTPUT_HEADING.length);
               const fittingOutput = output
                 .slice(0, roomAfterHeading)
-                .replaceAll("\0", "")
-                .trimEnd()
                 .replace(TRAILING_HIGH_SURROGATE, "");
               if (!NOTEBOOK_OUTPUT_TEXT.test(fittingOutput)) throw new Truncation("Output budget");
               result += takeRaw(NOTEBOOK_OUTPUT_HEADING) + pending;
