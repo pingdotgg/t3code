@@ -108,3 +108,27 @@ it.effect("holds due work and the clock until startup recovery activates the ser
     assert.isAtLeast(yield* Ref.get(runs), 1);
   }),
 );
+
+it.effect("starts each tick's work in its own trace, not the registering span's", () =>
+  Effect.gen(function* () {
+    const scheduler = yield* Scheduler.Scheduler;
+    const traceIds = yield* Queue.unbounded<string>();
+    const serverSpan = yield* Effect.makeSpan("server.runServerCommand");
+    yield* scheduler
+      .register(
+        "traced",
+        Effect.currentSpan.pipe(
+          Effect.flatMap((span) => Queue.offer(traceIds, span.traceId)),
+          Effect.withSpan("tick"),
+          Effect.orDie,
+        ),
+      )
+      .pipe(Effect.withParentSpan(serverSpan));
+    const first = yield* Queue.take(traceIds);
+    yield* TestClock.adjust("5 seconds");
+    const second = yield* Queue.take(traceIds);
+    assert.notEqual(first, serverSpan.traceId);
+    assert.notEqual(second, serverSpan.traceId);
+    assert.notEqual(first, second);
+  }).pipe(Effect.provide(Scheduler.layer)),
+);

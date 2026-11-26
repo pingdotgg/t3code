@@ -1,7 +1,11 @@
 import { workspaceRelativeFilePath } from "./path.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
-import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
+import {
+  extractInlineCodeSpans,
+  extractMarkdownLinkHrefs,
+  resolveMarkdownFileLinkTarget,
+} from "./markdownLinks.ts";
 
 import {
   inlineCodeFilePathCandidate,
@@ -197,6 +201,19 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project/a.ts", undefined, null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
+  });
+});
+
+describe("extractInlineCodeSpans", () => {
+  it.each([
+    ["``./a/shared.ts`` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["``a ` b`` and `./b/shared.ts`", ["a ` b", "./b/shared.ts"]],
+    ["``unclosed and `./b/shared.ts`", ["./b/shared.ts"]],
+    ["\\``./a/shared.ts` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["`a\\` and `./b/shared.ts`", ["a\\", "./b/shared.ts"]],
+    ["`unclosed\n`./b/shared.ts`", ["./b/shared.ts"]],
+  ])("matches complete backtick delimiter runs in %s", (markdown, spans) => {
+    expect(extractInlineCodeSpans(markdown)).toEqual(spans);
   });
 });
 
