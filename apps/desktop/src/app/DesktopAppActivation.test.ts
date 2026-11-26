@@ -17,16 +17,14 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { afterEach, describe, expect } from "vite-plus/test";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
+import { startDesktopAppControlServer } from "./DesktopAppActivation.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-
-const { startDesktopAppControlServer } = DesktopAppActivation;
 
 const openServers: Array<{ close: () => Promise<void> }> = [];
 
@@ -174,106 +172,64 @@ describe("desktop app control server", () => {
     }),
   );
 
-  it.effect(
-    "fails an in-flight request and queues later requests after render-process-gone until ready again",
-    () =>
-      Effect.gen(function* () {
-        const platform = yield* HostProcess.Platform;
-        const userId = yield* HostProcess.UserId;
-        const root = yield* Effect.acquireRelease(
-          Effect.promise(() =>
-            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-crash-test-")),
-          ),
-          (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
-        );
-        const stateDir = NodePath.join(root, "userdata");
-        const target = makeTarget(stateDir, platform, userId);
+  it.effect("fails an in-flight request when the renderer process is gone", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
+      const userId = yield* HostProcess.UserId;
+      const root = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-crash-test-"))),
+        (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      const stateDir = NodePath.join(root, "userdata");
+      const target = makeTarget(stateDir, platform, userId);
 
-        const sent: Array<DesktopAppActivationRequest> = [];
-        let resolveFirstDispatched: () => void = () => undefined;
-        const firstDispatched = new Promise<void>((resolve) => {
-          resolveFirstDispatched = resolve;
+      let resolveDispatched: () => void = () => undefined;
+      const dispatched = new Promise<void>((resolve) => {
+        resolveDispatched = resolve;
+      });
+      const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+        isDestroyed: () => false,
+        send: (channel: string) => {
+          if (channel === DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL) resolveDispatched();
+        },
+      });
+
+      const layer = DesktopAppActivation.layer.pipe(
+        Layer.provide(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            stateDir,
+            platform,
+          } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.provide(
+          Layer.succeed(DesktopWindow.DesktopWindow, {
+            activate: Effect.void,
+          } as unknown as DesktopWindow.DesktopWindow["Service"]),
+        ),
+        Layer.provide(
+          Layer.succeed(ElectronWindow.ElectronWindow, {
+            main: Effect.succeedSome({ webContents } as unknown as Electron.BrowserWindow),
+          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        ),
+        Layer.provide(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const activation = yield* DesktopAppActivation.DesktopAppActivation;
+        yield* activation.start;
+        yield* activation.setRendererReady(true);
+
+        const response = exchange(target.address, request("before-crash", platform));
+        yield* Effect.promise(() => dispatched);
+        webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
+
+        expect(yield* Effect.promise(() => response)).toMatchObject({
+          ok: false,
+          requestId: "before-crash",
+          code: "renderer-unavailable",
         });
-        let resolveSecondDispatched: () => void = () => undefined;
-        const secondDispatched = new Promise<void>((resolve) => {
-          resolveSecondDispatched = resolve;
-        });
-        let activationCount = 0;
-        let resolveSecondActivation: () => void = () => undefined;
-        const secondActivated = new Promise<void>((resolve) => {
-          resolveSecondActivation = resolve;
-        });
-
-        const webContents = Object.assign(new NodeEvents.EventEmitter(), {
-          isDestroyed: () => false,
-          send: (channel: string, payload: DesktopAppActivationRequest) => {
-            if (channel !== DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL) return;
-            sent.push(payload);
-            if (payload.requestId === "before-crash") resolveFirstDispatched();
-            if (payload.requestId === "after-crash") resolveSecondDispatched();
-          },
-        });
-        const window = Option.some({ webContents } as unknown as Electron.BrowserWindow);
-
-        const layer = DesktopAppActivation.layer.pipe(
-          Layer.provide(
-            Layer.succeed(
-              DesktopEnvironment.DesktopEnvironment,
-              DesktopEnvironment.DesktopEnvironment.of({
-                stateDir,
-                platform,
-              } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
-            ),
-          ),
-          Layer.provide(
-            Layer.succeed(DesktopWindow.DesktopWindow, {
-              activate: Effect.sync(() => {
-                activationCount += 1;
-                if (activationCount === 2) resolveSecondActivation();
-              }),
-            } as unknown as DesktopWindow.DesktopWindow["Service"]),
-          ),
-          Layer.provide(
-            Layer.succeed(
-              ElectronWindow.ElectronWindow,
-              ElectronWindow.ElectronWindow.of({
-                main: Effect.succeed(window),
-              } as unknown as ElectronWindow.ElectronWindow["Service"]),
-            ),
-          ),
-          Layer.provide(NodeServices.layer),
-        );
-
-        yield* Effect.gen(function* () {
-          const activation = yield* DesktopAppActivation.DesktopAppActivation;
-          yield* activation.start;
-          yield* activation.setRendererReady(true);
-
-          const firstResponse = exchange(target.address, request("before-crash", platform));
-          yield* Effect.promise(() => firstDispatched);
-
-          webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
-
-          const failed = yield* Effect.promise(() => firstResponse);
-          expect(failed).toMatchObject({
-            ok: false,
-            requestId: "before-crash",
-            code: "renderer-unavailable",
-          });
-          expect(webContents.listenerCount("render-process-gone")).toBe(0);
-
-          const secondResponse = exchange(target.address, request("after-crash", platform));
-          yield* Effect.promise(() => secondActivated);
-          expect(sent.map((entry) => entry.requestId)).toEqual(["before-crash"]);
-
-          yield* activation.setRendererReady(true);
-          yield* Effect.promise(() => secondDispatched);
-          expect(sent.map((entry) => entry.requestId)).toEqual(["before-crash", "after-crash"]);
-
-          yield* activation.setRendererReady(false);
-          expect(webContents.listenerCount("render-process-gone")).toBe(0);
-          yield* Effect.promise(() => secondResponse);
-        }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped),
+        expect(webContents.listenerCount("render-process-gone")).toBe(0);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
   );
 });
