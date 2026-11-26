@@ -1806,10 +1806,12 @@ export function useComposerSend(input: ComposerSendInput) {
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
     sendInFlightRef.current = true;
-    await workspaceDefault.finally(() => {
+    const ready = await workspaceDefault.finally(() => {
       sendInFlightRef.current = false;
     });
-    return sendWithEnvironmentRefreshLatest(...args);
+    if (ready && currentRouteThreadKeyRef.current === routeThreadKey) {
+      return sendWithEnvironmentRefreshLatest(...args);
+    }
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
   // only time a detached send runs, so the draft keeps the environment it was dictated for.

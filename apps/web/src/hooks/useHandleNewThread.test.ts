@@ -207,6 +207,7 @@ vi.mock("../components/Sidebar.logic", () => ({
 vi.mock("../composerDraftStore", () => {
   const useComposerDraftStore = Object.assign(() => null, {
     getState: () => testState.draftStore,
+    subscribe: () => () => {},
   });
   return {
     composerDraftHasUserContent: () => false,

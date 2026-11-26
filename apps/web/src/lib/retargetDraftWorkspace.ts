@@ -26,15 +26,24 @@ interface PendingWorkspaceDefault {
 
 const pendingWorkspaceDefaults = new Map<DraftId, PendingWorkspaceDefault>();
 
+function isDraftInProject(
+  draft: DraftSessionState | null,
+  projectRef: ScopedProjectRef,
+): draft is DraftSessionState {
+  return (
+    draft !== null &&
+    draft.promotedTo == null &&
+    draft.environmentId === projectRef.environmentId &&
+    draft.projectId === projectRef.projectId
+  );
+}
+
 function keepsProvisionalWorkspace(
   draft: DraftSessionState | null,
   pending: PendingWorkspaceDefault,
 ): draft is DraftSessionState {
   return (
-    draft !== null &&
-    draft.promotedTo == null &&
-    draft.environmentId === pending.projectRef.environmentId &&
-    draft.projectId === pending.projectRef.projectId &&
+    isDraftInProject(draft, pending.projectRef) &&
     draft.envMode === pending.envMode &&
     draft.worktreePath === null &&
     !draft.workspaceExplicit &&
@@ -42,18 +51,25 @@ function keepsProvisionalWorkspace(
   );
 }
 
-export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | null {
+/** A waiting send can proceed only if this draft stayed in the same project. */
+export function readPendingWorkspaceDefault(draftId: DraftId): Promise<boolean> | null {
   const pending = pendingWorkspaceDefaults.get(draftId);
   if (!pending) return null;
   const draft = useComposerDraftStore.getState().getDraftSession(draftId);
   if (!keepsProvisionalWorkspace(draft, pending)) return null;
-  // A send may already be waiting when the draft moves again.
-  return pending.settled.then(async () => {
-    await readPendingWorkspaceDefault(draftId);
+  const moved = Promise.withResolvers<void>();
+  let targetChanged = false;
+  const unsubscribe = useComposerDraftStore.subscribe((store) => {
+    if (isDraftInProject(store.getDraftSession(draftId), pending.projectRef)) return;
+    targetChanged = true;
+    moved.resolve();
   });
+  return Promise.race([pending.settled, moved.promise])
+    .finally(unsubscribe)
+    .then(() => !targetChanged);
 }
 
-function clearPendingWorkspaceDefault(draftId: DraftId): void {
+export function clearPendingWorkspaceDefault(draftId: DraftId): void {
   pendingWorkspaceDefaults.delete(draftId);
 }
 

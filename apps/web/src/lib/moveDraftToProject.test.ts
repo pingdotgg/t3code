@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { moveDraftToProject } from "./moveDraftToProject";
-import { readPendingWorkspaceDefault } from "./retargetDraftWorkspace";
+import {
+  clearPendingWorkspaceDefault,
+  readPendingWorkspaceDefault,
+} from "./retargetDraftWorkspace";
 import { readT3ProjectFile } from "./t3ProjectFileDefaults";
 
 vi.mock("./t3ProjectFileDefaults", () => ({
@@ -108,12 +111,31 @@ describe("moveDraftToProject", () => {
     const latestPending = readPendingWorkspaceDefault(draftId);
     expect(firstPending).not.toBeNull();
     expect(latestPending).not.toBeNull();
+    expect(await firstPending).toBe(false);
 
     latest.resolve(null);
-    await latestPending;
+    expect(await latestPending).toBe(true);
     first.resolve({ defaultThreadEnvMode: "worktree" });
-    await firstPending;
+    await first.promise;
 
     expect(store.getDraftSession(draftId)?.envMode).toBe("local");
+  });
+
+  it("keeps a branch picked on an already manual machine while the file loads", async () => {
+    const store = useComposerDraftStore.getState();
+    store.setDraftThreadContext(draftId, { environmentSelection: "manual" });
+    store.setPrompt(draftId, "Plan the next project");
+    const read = Promise.withResolvers<T3ProjectFile | null>();
+    vi.mocked(readT3ProjectFile).mockReturnValueOnce(read.promise);
+
+    moveDraftToProject(draftId, added);
+    const pending = readPendingWorkspaceDefault(draftId);
+    expect(pending).not.toBeNull();
+    clearPendingWorkspaceDefault(draftId);
+    store.setDraftThreadContext(draftId, { branch: "feature" });
+    read.resolve({ defaultThreadEnvMode: "worktree" });
+
+    expect(await pending).toBe(true);
+    expect(store.getDraftSession(draftId)).toMatchObject({ branch: "feature", envMode: "local" });
   });
 });

@@ -33,6 +33,7 @@ import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
+import { clearPendingWorkspaceDefault } from "../lib/retargetDraftWorkspace";
 import { usePaginatedBranches } from "../state/queries";
 import { useProjectClone } from "../state/projectClones";
 import { readThreadShell, useProject, useQuietThreadShell } from "../state/entities";
@@ -246,6 +247,10 @@ export function BranchToolbarBranchSelector({
       currentWorktreePath: activeWorktreePath,
       effectiveEnvMode,
     });
+    if (!automatic) {
+      const selectedDraft = draftId ?? useComposerDraftStore.getState().getDraftIdByRef(threadRef);
+      if (selectedDraft) clearPendingWorkspaceDefault(selectedDraft);
+    }
     setDraftThreadContext(draftId ?? threadRef, {
       branch,
       worktreePath,
