@@ -289,6 +289,33 @@ describe("bounded binary previews", () => {
     }
   });
 
+  it("shows 0 bytes for empty archive entries and folders", async () => {
+    const zip = new JSZip();
+    zip.file("empty.txt", "");
+    zip.folder("empty-dir");
+    zip.file("pkg/__init__.py", "");
+    zip.file("readme.txt", "hello");
+    const bytes = await zip.generateAsync({ type: "arraybuffer" });
+    const src = URL.createObjectURL(new Blob([bytes]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="sizes.zip" kind="archive" />);
+      const rows = () =>
+        [...screen.container.querySelectorAll("tbody tr")].map((row) =>
+          [...row.querySelectorAll("td")].slice(0, 2).map((cell) => cell.textContent?.trim()),
+        );
+      await vi.waitFor(() => {
+        expect(rows()).toEqual([
+          ["empty-dir", "0 bytes"],
+          ["pkg", "0 bytes"],
+          ["empty.txt", "0 bytes"],
+          ["readme.txt", "1 KB"],
+        ]);
+      }, 10_000);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
   it("uses a PAX size override for the following TAR payload and bounds it", async () => {
     const archive = (size: string) => {
       const header = (name: string, size: number, type: string) => {
@@ -514,14 +541,16 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs tags and rejects oversized metadata before decoding", async () => {
+  it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs and type-13 ExifIFD pointers and rejects invalid metadata before decoding", async () => {
     let bytes = new ArrayBuffer(0);
+    let exifEntry = 0;
     for (const { pixels, expected } of [
       { pixels: [0, 255], expected: [255, 255, 255, 255, 0, 0, 0, 255] },
       { pixels: [0, 255, 255, 0], expected: [255, 255, 255, 255, 0, 0, 0, 0] },
     ]) {
       const samples = pixels.length / 2;
-      const start = samples === 2 ? 158 : 146;
+      const start = samples === 2 ? 170 : 158;
+      const exif = start + pixels.length;
       const tags = [
         [256, 2],
         [257, 1],
@@ -535,8 +564,10 @@ describe("bounded binary previews", () => {
         [284, 1],
         [330, 0, 13],
         ...(samples === 2 ? [[338, 2]] : []),
+        [34665, exif, 13],
       ];
-      bytes = new ArrayBuffer(start + pixels.length);
+      exifEntry = 10 + (tags.length - 1) * 12;
+      bytes = new ArrayBuffer(exif + 8);
       const view = new DataView(bytes);
       view.setUint16(0, 0x4949);
       view.setUint16(2, 42, true);
@@ -563,14 +594,30 @@ describe("bounded binary previews", () => {
         URL.revokeObjectURL(src);
       }
     }
-    new DataView(bytes).setUint32(14, 1_000_000, true);
-    const invalid = URL.createObjectURL(new Blob([bytes]));
-    try {
-      await expect(
-        decodeImagePreview(invalid, false, new AbortController().signal),
-      ).rejects.toThrow("metadata");
-    } finally {
-      URL.revokeObjectURL(invalid);
+    for (const [mutate, message] of [
+      [
+        (view: DataView) => view.setUint16(exifEntry + 2, 3, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(exifEntry + 4, 2, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(14, 1_000_000, true),
+        "This TIFF has too much or truncated metadata.",
+      ],
+    ] as const) {
+      const copy = bytes.slice(0);
+      mutate(new DataView(copy));
+      const invalid = URL.createObjectURL(new Blob([copy]));
+      try {
+        await expect(
+          decodeImagePreview(invalid, false, new AbortController().signal),
+        ).rejects.toThrow(message);
+      } finally {
+        URL.revokeObjectURL(invalid);
+      }
     }
   });
 });
@@ -1101,6 +1148,25 @@ describe("large text preview recovery", () => {
     );
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   });
+
+  it.each([
+    [1024, false],
+    [1025, true],
+  ] as const)(
+    "shows the column truncation banner only when a CSV exceeds 1,024 columns (%i columns)",
+    async (columnCount, truncated) => {
+      const row = Array.from({ length: columnCount }, (_, i) => i).join(",");
+      await using screen = await render(
+        <LargeTextViewer name="wide.csv" text={`${row}\n${row}\n`} delimiter="," />,
+      );
+      const hasBanner = () =>
+        screen.container.textContent?.includes("Showing the first 1,024 columns") ?? false;
+      expect(hasBanner()).toBe(truncated);
+      const status = () => screen.container.querySelector('[role="status"]')?.textContent ?? "";
+      await vi.waitFor(() => expect(status()).toContain("1 row · 1,024 columns"), 10_000);
+      expect(hasBanner()).toBe(truncated);
+    },
+  );
 
   it("reloads a partial page when the indexed row count grows", async () => {
     const load = vi.fn();
@@ -1643,7 +1709,7 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
     expect(image?.alt).toBe("Mermaid diagram");
     expect(image?.naturalWidth).toBeGreaterThan(0);
   });
-  await page.getByRole("button", { name: "Back, close image preview" }).click();
+  await page.getByRole("button", { name: "Close image preview" }).click();
   await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   await screen.getByRole("button", { name: "Show Mermaid source" }).click();
   await vi.waitFor(() => expect(screen.container.querySelector("pre")?.textContent).toBe(text));
@@ -2293,3 +2359,22 @@ it.each([
     `Unsupported PDF ${directory} asset.`,
   );
 });
+
+it.each([
+  ["firmware", "Save it to open in an app that supports this format."],
+  [".cache", "Save it to open in an app that supports this format."],
+  ["a.dir/firmware", "Save it to open in an app that supports this format."],
+  ["blob.foo", "Save it to open in an app that supports foo files."],
+] as const)(
+  "describes unsupported binary attachment %s without misreading its name as an extension",
+  async (name, expected) => {
+    const file = new Blob([new Uint8Array([0, 1, 2, 3])], { type: "application/octet-stream" });
+    await using screen = await render(
+      <AttachmentFilePreview name={name} mimeType={file.type} sizeBytes={file.size} file={file} />,
+    );
+    await expect
+      .element(screen.getByText("No preview for this file", { exact: true }))
+      .toBeVisible();
+    await expect.element(screen.getByText(expected, { exact: true })).toBeVisible();
+  },
+);

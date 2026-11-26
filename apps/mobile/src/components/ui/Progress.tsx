@@ -17,7 +17,7 @@ export function Progress(props: ProgressProps) {
       accessibilityRole="progressbar"
       accessibilityLabel={props.label}
       accessibilityValue={
-        value === undefined ? undefined : { min: 0, max: 100, now: Math.round(value * 100) }
+        value === undefined ? undefined : { min: 0, max: 100, now: Math.floor(value * 100) }
       }
       accessibilityState={{ busy: value === undefined }}
     >
