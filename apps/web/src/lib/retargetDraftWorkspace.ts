@@ -10,7 +10,7 @@ import { flushSync } from "react-dom";
 
 import { type DraftId, type DraftSessionState, useComposerDraftStore } from "../composerDraftStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { readThreadShells } from "../state/entities";
+import { readProject, readThreadShells } from "../state/entities";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -82,42 +82,51 @@ export function holdPendingWorkspaceDefault(draftId: DraftId) {
   };
 }
 
+function newThreadWorkspace(
+  projectRef: ScopedProjectRef,
+  project: EnvironmentProject | null | undefined,
+  serverConfig: Pick<ServerConfig, "settings" | "newProjectsRoot"> | null | undefined,
+  projectFile: T3ProjectFile | null,
+) {
+  const settings = serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
+  const projectSettings = resolveProjectSettings(
+    settings,
+    projectRef.projectId,
+    project,
+    projectFile,
+  );
+  const envMode = resolveNewThreadEnvMode({
+    projectSettings,
+    workspaceRoot: project?.workspaceRoot ?? null,
+    newProjectsRoot: serverConfig?.newProjectsRoot,
+    projectHasThreads:
+      readThreadShells().some(
+        (thread) =>
+          thread.environmentId === projectRef.environmentId &&
+          thread.projectId === projectRef.projectId,
+      ) ||
+      readUnloadedThreadCount(
+        [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
+        [],
+      ) > 0,
+  });
+  return {
+    envMode,
+    startFromOrigin: resolveNewDraftStartFromOrigin({
+      envMode,
+      newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
+    }),
+  };
+}
+
 export function resolveDraftWorkspace(
   projectRef: ScopedProjectRef,
   project: EnvironmentProject | null | undefined,
   serverConfig: ServerConfig | undefined,
 ) {
   const settings = serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
-  const resolveWorkspace = (projectFile: T3ProjectFile | null) => {
-    const projectSettings = resolveProjectSettings(
-      settings,
-      project?.id ?? null,
-      project,
-      projectFile,
-    );
-    const envMode = resolveNewThreadEnvMode({
-      projectSettings,
-      workspaceRoot: project?.workspaceRoot ?? null,
-      newProjectsRoot: serverConfig?.newProjectsRoot,
-      projectHasThreads:
-        readThreadShells().some(
-          (thread) =>
-            thread.environmentId === projectRef.environmentId &&
-            thread.projectId === projectRef.projectId,
-        ) ||
-        readUnloadedThreadCount(
-          [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
-          [],
-        ) > 0,
-    });
-    return {
-      envMode,
-      startFromOrigin: resolveNewDraftStartFromOrigin({
-        envMode,
-        newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
-      }),
-    };
-  };
+  const resolveWorkspace = (projectFile: T3ProjectFile | null) =>
+    newThreadWorkspace(projectRef, project, serverConfig, projectFile);
 
   // Disconnected environment queries wait for a connection.
   const workspaceRoot =
@@ -194,8 +203,11 @@ export function resolveDraftWorkspace(
   };
 }
 
-/** The destination default applies unless the draft already has a chosen workspace. */
-export function retargetDraftWorkspace(
+/**
+ * The workspace for a draft moving to another project: the destination default, applied now and
+ * corrected once an unread t3.json loads, unless the draft already has a chosen workspace.
+ */
+export function moveDraftWorkspace(
   draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
   projectRef: ScopedProjectRef,
   project: EnvironmentProject | null,
@@ -207,4 +219,44 @@ export function retargetDraftWorkspace(
         project,
         appAtomRegistry.get(environmentServerConfigsAtom).get(projectRef.environmentId),
       );
+}
+
+function readWorkspaceContext(projectRef: ScopedProjectRef) {
+  return {
+    project: readProject(projectRef),
+    serverConfig: appAtomRegistry.get(environmentServerConfigsAtom).get(projectRef.environmentId),
+  };
+}
+
+/**
+ * The workspace for a draft switching machine by hand: the destination default after its
+ * t3.json is read, unless the user chose one, which carries over.
+ */
+export async function retargetDraftWorkspace(
+  draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
+  projectRef: ScopedProjectRef,
+  signal: AbortSignal,
+): Promise<{ envMode?: DraftSessionState["envMode"]; startFromOrigin?: boolean }> {
+  if (draft.workspaceExplicit || draft.worktreePath !== null) return {};
+  let { project, serverConfig } = readWorkspaceContext(projectRef);
+  let projectFile: T3ProjectFile | null = null;
+  const workspaceRoot = project?.workspaceRoot;
+  if (
+    workspaceRoot &&
+    resolveProjectSettings(
+      serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+      projectRef.projectId,
+      project,
+    ).settings.defaultThreadEnvMode === null
+  ) {
+    const cached = peekT3ProjectFile(projectRef.environmentId, workspaceRoot);
+    if (cached === undefined) {
+      // A paired project can appear before its connection summary reports connected.
+      projectFile = await readT3ProjectFile(projectRef.environmentId, workspaceRoot, signal);
+      ({ project, serverConfig } = readWorkspaceContext(projectRef));
+    } else {
+      projectFile = cached;
+    }
+  }
+  return newThreadWorkspace(projectRef, project, serverConfig, projectFile);
 }

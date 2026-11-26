@@ -11,7 +11,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { getClientSettings } from "../hooks/useSettings";
-import { retargetDraftWorkspace } from "./retargetDraftWorkspace";
+import { moveDraftWorkspace } from "./retargetDraftWorkspace";
 import { seedDraftModelSelection } from "./seedDraftModelSelection";
 
 /**
@@ -32,7 +32,7 @@ export function moveDraftToProject(draftId: DraftId, project: EnvironmentProject
   const projectRef = scopeProjectRef(project.environmentId, project.id);
   const projectChanged =
     session.environmentId !== project.environmentId || session.projectId !== project.id;
-  const workspace = projectChanged ? retargetDraftWorkspace(session, projectRef, project) : null;
+  const workspace = projectChanged ? moveDraftWorkspace(session, projectRef, project) : null;
   store.setLogicalProjectDraftThreadId(
     deriveLogicalProjectKeyFromSettings(
       project,
