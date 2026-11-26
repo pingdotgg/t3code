@@ -577,7 +577,11 @@ it("keeps uppercase HTTP(S) link and image URLs by lowercasing the scheme before
     { href: "http://Example.com/B" },
     {},
     { src: "https://Example.com/Shot.png", alt: "shot", dataStandalone: true },
-    { src: "http://Example.com/Light.png", dataDarkSrc: "https://Example.com/Dark.png" },
+    {
+      src: "http://Example.com/Light.png",
+      dataDarkSrc: "https://Example.com/Dark.png",
+      dataStandalone: true,
+    },
   ]);
 });
 
@@ -1025,12 +1029,63 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
   ]);
   expect(images(tree).map((image) => image.properties)).toEqual([
     { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp" },
-    { src: "docs/dark.webp" },
-    { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
-    { src: "https://example.com/light.png", dataDarkSrc: "https://example.com/a\u00a0b.png" },
+    { src: "docs/dark.webp", dataStandalone: true },
+    {
+      dataLocalSrc: String.raw`C:\shots\light.png`,
+      dataDarkSrc: "file:///C:/shots/dark.png",
+      dataStandalone: true,
+    },
+    {
+      src: "https://example.com/light.png",
+      dataDarkSrc: "https://example.com/a\u00a0b.png",
+      dataStandalone: true,
+    },
     {
       src: "https://example.com/dark.png",
       dataLightSrc: "https://example.com/\u00a0light\u00a0v2.png",
+      dataStandalone: true,
+    },
+  ]);
+});
+
+it("marks standalone <picture> images without marking inline <picture> images", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: Record<string, unknown>; children?: Node[] };
+  const images = (node: Node): Node[] =>
+    node.tagName === "img" ? [node] : (node.children ?? []).flatMap(images);
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        '<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Logo"></picture></p>',
+        "",
+        '<div align="center"><a href="https://example.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Linked"></picture></a></div>',
+        "",
+        'Inline <picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Badge"></picture> icon',
+      ].join("\n"),
+    ),
+  ) as Node;
+
+  expect(images(tree).map((image) => image.properties)).toEqual([
+    {
+      src: "https://example.com/light.png",
+      alt: "Logo",
+      dataDarkSrc: "https://example.com/dark.png",
+      dataStandalone: true,
+    },
+    {
+      src: "https://example.com/light.png",
+      alt: "Linked",
+      dataDarkSrc: "https://example.com/dark.png",
+      dataStandalone: true,
+    },
+    {
+      src: "https://example.com/light.png",
+      alt: "Badge",
+      dataDarkSrc: "https://example.com/dark.png",
     },
   ]);
 });

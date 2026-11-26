@@ -41,7 +41,10 @@ function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode
   const only = children[0];
   if (only?.type !== "element") return undefined;
   if (only.tagName === "img") return only;
-  return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em"
+  return only.tagName === "a" ||
+    only.tagName === "strong" ||
+    only.tagName === "em" ||
+    only.tagName === "picture"
     ? soleImageDescendant(only)
     : undefined;
 }
