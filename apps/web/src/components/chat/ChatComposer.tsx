@@ -2851,6 +2851,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const canInsertComposerText =
     !activePendingIsResponding &&
+    !isChoiceOnlyPendingQuestion &&
     (pendingUserInputs.length === 0 || Boolean(activePendingProgress?.activeQuestion)) &&
     !projectSelectionRequired &&
     !speechInput.freezesEditor;

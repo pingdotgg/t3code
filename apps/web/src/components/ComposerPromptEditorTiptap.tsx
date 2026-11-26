@@ -1957,7 +1957,7 @@ function ComposerPromptEditorTiptapInner(
         );
       },
       pasteAtCodeBlockEnd: (clipboardData) => {
-        if (!editor) return false;
+        if (!editor?.isEditable) return false;
         const { view } = editor;
         const end = Selection.atEnd(view.state.doc);
         if (!end.$from.parent.type.spec.code) return false;

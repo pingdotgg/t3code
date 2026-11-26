@@ -68,6 +68,7 @@ function Composer({
   importContextFragment,
   literalText = false,
   disabled = false,
+  editorRef = createRef<ComposerPromptEditorHandle>(),
   placeholder = "",
   placeholderSuffix,
 }: {
@@ -79,13 +80,14 @@ function Composer({
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
   disabled?: boolean;
+  editorRef?: ComposerPromptEditorProps["editorRef"];
   placeholder?: string;
   placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
     <ComposerPromptEditor
-      editorRef={createRef<ComposerPromptEditorHandle>()}
+      editorRef={editorRef}
       value={prompt.value}
       cursor={prompt.cursor}
       richTextEnabled={richTextEnabled}
@@ -618,6 +620,21 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(dropped);
   expect(editor.state.doc.textContent).toBe(shown);
   expect(editor.view.hasFocus()).toBe(true);
+});
+
+it("does not paste at the end of a disabled code block", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const value = "```text\nExisting answer\n```";
+  await using screen = await render(
+    <Composer value={value} richTextEnabled skills={[]} disabled editorRef={editorRef} />,
+  );
+  const editor = editorIn(screen.container);
+  const clipboard = new DataTransfer();
+  clipboard.setData("text/plain", " should not appear");
+  await act(async () => {
+    expect(editorRef.current?.pasteAtCodeBlockEnd(clipboard)).toBe(false);
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
 
 it("keeps the destination of a link dropped from a web page", async () => {
