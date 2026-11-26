@@ -650,9 +650,9 @@ function* notebook(source: string): Generator<string, void> {
           const plain = outputText(
             "text/plain" in output.data ? output.data["text/plain"] : undefined,
           );
-          yield plain.trim() || !("text/markdown" in output.data)
-            ? plain
-            : outputText(output.data["text/markdown"]);
+          yield "text/markdown" in output.data && !plain.replaceAll("\0", "").trim()
+            ? outputText(output.data["text/markdown"])
+            : plain;
         } else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {
