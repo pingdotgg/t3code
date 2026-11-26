@@ -231,14 +231,28 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
-  it("keeps bare external schemes out of file chips even with matching labels", () => {
+  it("keeps external links out of file chips even with matching labels", () => {
     for (const link of [
       "[docs](https://example.com/docs)",
       "[reports:final.md](reports:final.md)",
+      "[guide.md](https://example.com/docs/guide.md)",
+      "[guide.md](//example.com/docs/guide.md)",
     ]) {
       expect(collectComposerInlineTokens(`${link} `)).toEqual([]);
+      expect(composerFileLinksToPlainText(`${link} `)).toBe(`${link} `);
     }
   });
+
+  it.each(["docs/guide.md", "\\\\server\\docs\\guide.md"])(
+    "keeps the serialized workspace path %s as a file chip",
+    (path) => {
+      const link = serializeComposerFileLink(path);
+      expect(collectComposerInlineTokens(`${link} `)).toMatchObject([
+        { type: "mention", value: path, source: link },
+      ]);
+      expect(composerFileLinksToPlainText(`${link} `)).toBe("guide.md ");
+    },
+  );
 
   // regression: #41223 a `./` the author wrote keeps its meaning, even where the parser rejects the rest
   it.each([
