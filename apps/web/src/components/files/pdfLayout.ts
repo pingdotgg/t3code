@@ -66,6 +66,18 @@ export function pdfRestoredScrollTop(
   );
 }
 
+/** Where the place at `from.top` lands after the page width changes from `from.width`. */
+export function pdfResizedScrollTop(
+  ratios: readonly number[],
+  from: { top: number; width: number },
+  width: number,
+) {
+  const offsets = pdfPageOffsets(ratios, from.width);
+  const page = currentPdfPage(offsets, ratios.length, from.top);
+  const offset = from.top - (offsets[page]! - PDF_PAGE_GAP);
+  return pdfRestoredScrollTop(ratios, width, { page, offset }, from.width);
+}
+
 export function pdfPageText(
   items: readonly ({ str: string; hasEOL: boolean } | { type: string })[],
 ) {

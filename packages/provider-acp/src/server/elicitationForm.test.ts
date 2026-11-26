@@ -80,6 +80,26 @@ describe("parseElicitationForm", () => {
       q1__other: "Only on Fridays",
     });
 
+    // A single-underscore `<id>_other` companion folds the same way.
+    const singleUnderscore = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q0: ask("Use Postgres for the new service?", "Database"),
+          q0_other: { type: "string", title: "Other" },
+        },
+      },
+      "Answer 1 question",
+    );
+    assert(singleUnderscore !== undefined);
+    assert.deepStrictEqual(
+      singleUnderscore.questions.map((question) => question.id),
+      ["q0"],
+    );
+    assert.deepStrictEqual(singleUnderscore.content({ q0: "Only on Fridays" }), {
+      q0_other: "Only on Fridays",
+    });
+
     // A multi-select answer can carry options and free text together, so both fields stay.
     const multi = parseElicitationForm(
       {
@@ -103,5 +123,65 @@ describe("parseElicitationForm", () => {
       q0: ["Postgres"],
       q0__other: "SQLite",
     });
+  });
+
+  it("requires a multi-select only for a required minimum and accepts none otherwise", () => {
+    const items = { type: "string", enum: ["web", "mobile"] };
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          targets: { type: "array", minItems: 1, items },
+          extras: { type: "array", items },
+          platforms: { type: "array", minItems: 1, items },
+        },
+        required: ["targets"],
+      },
+      "Choose",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["targets", true],
+        ["extras", undefined],
+        ["platforms", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ targets: ["web"], extras: [], platforms: [] }), {
+      targets: ["web"],
+      extras: [],
+    });
+  });
+
+  it("marks optional number and integer fields as not required and omits blank answers", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          limit: { type: "integer" },
+          ratio: { type: "number" },
+          retries: { type: "integer" },
+          threshold: { type: "number" },
+        },
+        required: ["retries", "threshold"],
+      },
+      "Configure limits",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["limit", false],
+        ["ratio", false],
+        ["retries", undefined],
+        ["threshold", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ limit: "", ratio: "", retries: "3", threshold: "0.5" }), {
+      retries: 3,
+      threshold: 0.5,
+    });
+    assert.isUndefined(form.content({ limit: "", ratio: "", retries: "", threshold: "0.5" }));
   });
 });

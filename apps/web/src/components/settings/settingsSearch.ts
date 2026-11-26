@@ -381,6 +381,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("wide full width column layout messages composer monitor")],
   },
   {
+    id: "html-preview-width",
+    title: msg("HTML preview width"),
+    to: "/settings/appearance",
+    searchTerms: [msg("wide full width inline page render chart dashboard artifact centered")],
+  },
+  {
     id: "thread-details-items",
     title: msg("Thread details"),
     to: "/settings/appearance",
@@ -565,6 +571,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     searchTerms: [msg("beta workflow durable runs automation steps schedule webhook folder")],
+  },
+  {
+    id: "workflow-skipped-runs",
+    title: msg("Skipped runs kept"),
+    to: "/settings/labs",
+    // Shown only while workflows are on, so search lands on the switch that turns them on.
+    targetId: "workflows-beta",
+    scope: "environment",
+    searchTerms: [msg("workflow history retention delete old skipped runs webhook")],
   },
   {
     id: "prompt-suggestions-beta",
