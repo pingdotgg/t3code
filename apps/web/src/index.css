@@ -2960,3 +2960,15 @@ li:has(+ .kaluwa-folder-thread) > .kaluwa-folder-head-trunk {
     color: var(--foreground) !important;
   }
 }
+
+/* Fork: Kaluwa's Extensions page. One grid template shared by every matrix row, sized by the
+   number of subscription columns the page sets. */
+.kaluwa-ext-matrix {
+  min-width: calc(17rem + var(--kaluwa-ext-cols, 1) * 5.5rem);
+}
+.kaluwa-ext-matrix-row {
+  display: grid;
+  grid-template-columns:
+    2.25rem minmax(11rem, 1fr) repeat(var(--kaluwa-ext-cols, 1), minmax(5.5rem, 7rem))
+    3.5rem;
+}

@@ -14,6 +14,7 @@ import {
   CalendarClockIcon,
   ChartNoAxesColumnIcon,
   HouseIcon,
+  PuzzleIcon,
   SearchIcon,
   SettingsIcon,
   WorkflowIcon,
@@ -24,7 +25,12 @@ import { openCommandPalette } from "../../commandPaletteBus";
 import { isElectron } from "../../env";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { cn } from "../../lib/utils";
-import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
+import {
+  useIssuesSupported,
+  usePrimaryEnvironmentId,
+  usePullRequestsSupported,
+} from "../../state/environments";
+import { extensionsNeedAttentionAtom } from "../../state/extensions";
 import { environmentPresentations } from "../../state/presentation";
 import { IssueGlyph } from "../issue/issuePresentation";
 import { readIssueListPreferences } from "../issue/issueListPreferences";
@@ -255,6 +261,25 @@ function UsageRingStack({ onOpenUsage }: { readonly onOpenUsage: () => void }) {
   );
 }
 
+/** Shows the last list the Extensions page loaded; the rail never starts a check itself. */
+function ExtensionsRailButton({ active }: { readonly active: boolean }) {
+  const gt = useGT();
+  const navigate = useNavigate();
+  const needsAttention = useAtomValue(extensionsNeedAttentionAtom(usePrimaryEnvironmentId()));
+  return (
+    <RailButton
+      label={needsAttention ? gt("Extensions (some need attention)") : gt("Extensions")}
+      active={active}
+      onClick={() => void navigate({ to: "/extensions" })}
+    >
+      <PuzzleIcon />
+      {needsAttention ? (
+        <span aria-hidden className="absolute end-1.5 top-1.5 size-1.5 rounded-full bg-warning" />
+      ) : null}
+    </RailButton>
+  );
+}
+
 export const KaluwaNavRail = memo(function KaluwaNavRail() {
   const gt = useGT();
   const navigate = useNavigate();
@@ -336,6 +361,7 @@ export const KaluwaNavRail = memo(function KaluwaNavRail() {
       >
         <CalendarClockIcon />
       </RailButton>
+      <ExtensionsRailButton active={pathname === "/extensions"} />
       <RailButton label={gt("Usage")} active={pathname === "/usage"} onClick={openUsage}>
         <ChartNoAxesColumnIcon />
       </RailButton>

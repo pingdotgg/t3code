@@ -6,6 +6,8 @@ import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../../threadRo
 
 /** Settings and Usage open as modals over the last main-app view. */
 export function isAppModalPage(pathname: string) {
+  // Fork: Kaluwa's Extensions page opens the same way.
+  if (pathname === "/extensions") return true;
   return pathname === "/settings" || pathname.startsWith("/settings/") || pathname === "/usage";
 }
 

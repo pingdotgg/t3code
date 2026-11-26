@@ -82,6 +82,7 @@ import {
   PinIcon,
   PinOffIcon,
   PlugIcon,
+  PuzzleIcon,
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
@@ -1806,6 +1807,18 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  // Fork: Kaluwa's Extensions page
+  actionItems.push({
+    kind: "action",
+    value: "action:extensions",
+    searchTerms: ["extensions", "mcp", "servers", "plugins", "skills", "connectors", "tools"],
+    title: gt("Open extensions"),
+    icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/extensions" });
     },
   });
 
