@@ -20,6 +20,12 @@ it("skips empty plan headings without reading into the next line", () => {
   expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
 });
 
+it.each(["## ###", "## # #", "## ###\t###"])("skips the marker-only plan heading %j", (heading) => {
+  const markdown = heading + "\n\n## Release checklist\n\n## Summary\n\nUpdate the notes.";
+  expect(proposedPlanTitle(markdown)).toBe("Release checklist");
+  expect(stripDisplayedPlanMarkdown(markdown)).toBe("Update the notes.");
+});
+
 it("strips the displayed plan title and summary after leading blank lines", () => {
   const markdown = "\r\n# My Plan\r\n\r\n## Summary\r\n\r\nBody text";
   expect(proposedPlanTitle(markdown)).toBe("My Plan");
