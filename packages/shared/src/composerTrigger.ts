@@ -31,14 +31,14 @@ function encodeMarkdownLinkDestination(path: string): string {
     .replaceAll("\\", "%5C");
 }
 
-const URI_OR_ROOTED_PATH_PATTERN = /^(?:[a-z][a-z\d+.-]*:|[\\/])/i;
+const DRIVE_OR_ROOTED_PATH_PATTERN = /^(?:[a-z]:[\\/]|[\\/])/i;
 
 // A relative destination the parser rejects (`C%23/Program.cs`) gets `./`, as codexFileCitations does.
 function needsDotSlashPrefix(path: string): boolean {
   return (
     path.length > 0 &&
     !parseMarkdownFileLink(encodeMarkdownLinkDestination(path)) &&
-    !URI_OR_ROOTED_PATH_PATTERN.test(path)
+    !DRIVE_OR_ROOTED_PATH_PATTERN.test(path)
   );
 }
 
