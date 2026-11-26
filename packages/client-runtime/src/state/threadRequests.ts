@@ -7,6 +7,7 @@ import type {
   OrchestrationV2UserInputQuestion,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
+  ProviderApprovalPushHooks,
   ProviderApprovalDecision,
   ProviderRequestKind,
   RuntimeRequestId,
@@ -59,9 +60,38 @@ export interface ThreadPendingApproval {
   readonly reason?: string;
   readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
   readonly appName?: string;
+  /** Set when T3 Code itself asks to run a repository's push hooks; `detail` is the same in one sentence. */
+  readonly pushHooks?: ProviderApprovalPushHooks;
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
   readonly supportsFeedback?: boolean;
+}
+
+export const PUSH_HOOKS_APPROVAL_LABEL = msg("Push hooks approval");
+export const PUSH_HOOKS_APPROVAL_QUESTION = msg("Run this repository's push hooks?");
+
+export interface ApprovalDetailRow {
+  readonly label: string;
+  /** Plain text ahead of the code: a configured hook's name. */
+  readonly name?: string;
+  /** A branch, file path or command. */
+  readonly code: string;
+}
+
+/** What a push hooks approval names: the branch, then each hook the push would run. */
+export function pushHooksApprovalRows(
+  pushHooks: ProviderApprovalPushHooks,
+  resolve: MFunctionType = mFallback,
+): ReadonlyArray<ApprovalDetailRow> {
+  return [
+    { label: resolve(msg("Branch", { $context: "field label" })), code: pushHooks.branch },
+    ...pushHooks.files.map((file) => ({ label: resolve(msg("Hook file")), code: file })),
+    ...pushHooks.commands.map(({ name, command }) => ({
+      label: resolve(msg("Configured hook", { $context: "a hook Git's configuration defines" })),
+      name,
+      code: command,
+    })),
+  ];
 }
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = msg("Why am I being asked this?");
@@ -289,6 +319,7 @@ export function derivePendingThreadRequests(
         ? { fullAccessOverride: item.fullAccessOverride }
         : {}),
       ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
+      ...(item?.type === "approval_request" && item.pushHooks ? { pushHooks: item.pushHooks } : {}),
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
         : {}),

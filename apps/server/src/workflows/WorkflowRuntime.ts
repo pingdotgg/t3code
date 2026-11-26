@@ -613,11 +613,17 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     cancel: Effect.fn("Workflows.cancel")(function* (...input) {
       return yield* (yield* current).cancel(...input);
     }),
+    withdraw: Effect.fn("Workflows.withdraw")(function* (...input) {
+      return yield* (yield* current).withdraw(...input);
+    }),
     get: Effect.fn("Workflows.get")(function* (...input) {
       return yield* (yield* current).get(...input);
     }),
     list: Effect.fn("Workflows.list")(function* (...input) {
       return yield* (yield* current).list(...input);
+    }),
+    about: Effect.fn("Workflows.about")(function* (...input) {
+      return yield* (yield* current).about(...input);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (...input) {
       // A reload replaces the engine, and a wait on the old one would never hear of the run again.
@@ -875,11 +881,17 @@ export const gate = Effect.fn("WorkflowRuntime.gate")(function* <E, R>(
     cancel: Effect.fn("Workflows.cancel")(function* (...input) {
       return yield* (yield* current).cancel(...input);
     }),
+    withdraw: Effect.fn("Workflows.withdraw")(function* (...input) {
+      return yield* (yield* current).withdraw(...input);
+    }),
     get: Effect.fn("Workflows.get")(function* (...input) {
       return yield* (yield* current).get(...input);
     }),
     list: Effect.fn("Workflows.list")(function* (...input) {
       return yield* (yield* current).list(...input);
+    }),
+    about: Effect.fn("Workflows.about")(function* (...input) {
+      return yield* (yield* current).about(...input);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (...input) {
       // Off, nothing changes a run; a wait goes on once workflows are on again.
