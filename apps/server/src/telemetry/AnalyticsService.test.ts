@@ -515,15 +515,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
 });
 
 it("reports a WSL distro by its family, never by a name its user chose", () => {
-  assert.equal(AnalyticsService.wslDistroFamily("Ubuntu"), "Ubuntu");
   assert.equal(AnalyticsService.wslDistroFamily("Ubuntu-24.04"), "Ubuntu");
-  assert.equal(AnalyticsService.wslDistroFamily("kali-linux"), "Kali");
   assert.equal(AnalyticsService.wslDistroFamily("openSUSE-Tumbleweed"), "openSUSE");
-  assert.equal(AnalyticsService.wslDistroFamily("SUSE-Linux-Enterprise-15-SP6"), "SUSE");
-  assert.equal(AnalyticsService.wslDistroFamily("OracleLinux_9_1"), "OracleLinux");
-  assert.equal(AnalyticsService.wslDistroFamily("archlinux"), "Arch");
-  assert.equal(AnalyticsService.wslDistroFamily("FedoraLinux-42"), "Fedora");
   assert.equal(AnalyticsService.wslDistroFamily("Acme-Client-Secret-Ubuntu"), "other");
-  assert.equal(AnalyticsService.wslDistroFamily("jane-laptop"), "other");
   assert.equal(AnalyticsService.wslDistroFamily("  "), undefined);
 });

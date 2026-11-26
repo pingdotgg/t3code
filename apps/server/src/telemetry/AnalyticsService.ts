@@ -101,7 +101,6 @@ const WSL_DISTRO_FAMILIES = [
   ["docker-desktop", "docker-desktop"],
 ] as const;
 
-/** The distro family of a WSL distro name, or `other` for a name it does not recognize. */
 export const wslDistroFamily = (distroName: string): string | undefined => {
   const name = distroName.trim().toLowerCase();
   if (name === "") return undefined;
