@@ -46,6 +46,7 @@ const laptop = descriptorOf("environment-laptop", "Laptop");
 const box = descriptorOf("environment-box", "Box", {
   linkClientPairing: true,
   linkPairingForLink: true,
+  linkSubjectScopedClientPairing: true,
 });
 const NoTools = Toolkit.make();
 
@@ -407,6 +408,51 @@ it.effect(
           "team-member:team-1:member-eve:",
         );
         expect(result).toEqual({ ok: true, revokedSessions: 0, revokedPairingLinks: 0 });
+        expect(yield* Ref.get(b.bearers)).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "refuses team-member pairing on an older peer lacking linkSubjectScopedClientPairing without calling the remote",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveBox(
+          descriptorOf("environment-box", "Box", {
+            linkClientPairing: true,
+            linkPairingForLink: true,
+          }),
+        );
+        const a = yield* makeLaptop;
+        yield* linkTo(a.links, b, "full-access");
+        const memberClient = yield* a.client([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+        ]);
+
+        expect(
+          yield* a.pairing.request(
+            { environmentId: box.environmentId },
+            {
+              sessionId: memberClient.sessionId,
+              scopes: memberClient.scopes,
+              teamMemberSubject: "team-member:team-1:member-eve:",
+            },
+          ),
+        ).toEqual({
+          type: "unsupported",
+          reason: "version",
+          environmentId: box.environmentId,
+          label: "Box",
+          urls: [b.url],
+        });
+        expect(yield* Ref.get(b.bearers)).toEqual([]);
+
+        // Revoking against an older peer that cannot mint team pairings succeeds as a no-op.
+        expect(
+          yield* a.pairing.revokeSubject(box.environmentId, "team-member:team-1:member-eve:"),
+        ).toEqual({ ok: true, revokedSessions: 0, revokedPairingLinks: 0 });
         expect(yield* Ref.get(b.bearers)).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),

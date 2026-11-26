@@ -3190,6 +3190,10 @@ export const layerWsRpc = (
           Effect.fnUntraced(
             function* (input) {
               yield* teamService.assertCanPostInThread(currentSessionId, input.threadId);
+              yield* teamService.assertCanExecuteOnThreadEnvironment(
+                currentSessionId,
+                input.threadId,
+              );
               const projection = yield* threadManagement.getThreadRecords(input.threadId, [
                 "providerThreads",
               ]);
@@ -3402,16 +3406,11 @@ export const layerWsRpc = (
             )
             .pipe(
               Effect.andThen(
-                teamService.revokeRemoteEnvironmentBeforeUnlink({
+                teamService.unlinkRemoteEnvironment({
                   environmentId,
                   peerClientPairing,
                   peerLinks,
                 }),
-              ),
-              Effect.flatMap(({ unlinkedAllowed }) =>
-                unlinkedAllowed
-                  ? peerLinks.unlink(environmentId)
-                  : Effect.succeed({ removed: false, endedThere: false }),
               ),
             ),
         [WS_METHODS.peerLinksSubscribeThread]: (input) =>
@@ -3435,25 +3434,13 @@ export const layerWsRpc = (
             Effect.andThen(peerThreadRelay.item(input)),
           ),
         [WS_METHODS.peerLinksPairClient]: (input) =>
-          teamService.assertCanAccessEnvironment(currentSessionId, input.environmentId).pipe(
-            Effect.andThen(
-              teamService
-                .drainPendingRemoteRevocations({
-                  environmentId: input.environmentId,
-                  peerClientPairing,
-                  peerLinks,
-                })
-                .pipe(Effect.ignore),
-            ),
-            Effect.andThen(teamService.getRemotePairingSubject(currentSessionId)),
-            Effect.flatMap((subjectOption) =>
-              peerClientPairing.request(input, {
-                sessionId: currentSession.sessionId,
-                scopes: currentSession.scopes,
-                ...(Option.isSome(subjectOption) ? { teamMemberSubject: subjectOption.value } : {}),
-              }),
-            ),
-          ),
+          teamService.pairRemoteEnvironmentForSession({
+            sessionId: currentSession.sessionId,
+            scopes: currentSession.scopes,
+            pairingInput: input,
+            peerClientPairing,
+            peerLinks,
+          }),
         [WS_METHODS.peerLinksPairLink]: (input) =>
           teamService
             .assertActorIsAdmin(
@@ -3950,8 +3937,14 @@ export const layerWsRpc = (
               ),
               Effect.andThen(taskFolders.layoutCommands(input.projectId)),
             ),
-        [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
-        [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(issueAttachmentUploadUrl(input))),
+        [WS_METHODS.attachmentsDelete]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deletePendingAttachment(input.attachmentId))),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
         [WS_METHODS.agentSessionsImport]: (input) =>
           teamService

@@ -279,7 +279,9 @@ const make = Effect.gen(function* () {
     if (
       peer.capabilities.linkClientPairing !== true ||
       // One from before this would read the request as a client's and pair the client instead.
-      (request.link !== undefined && peer.capabilities.linkPairingForLink !== true)
+      (request.link !== undefined && peer.capabilities.linkPairingForLink !== true) ||
+      // Older peers ignore `subject` and lack `/revoke-subject`, leaving unrevocable team sessions.
+      (request.subject !== undefined && peer.capabilities.linkSubjectScopedClientPairing !== true)
     ) {
       return unsupported("version", peer.link.label);
     }
@@ -347,6 +349,10 @@ const make = Effect.gen(function* () {
       return { ok: false as const, reason: "unreachable" };
     }
     const peer = resolved.value;
+    if (peer.capabilities.linkSubjectScopedClientPairing !== true) {
+      // Peers without subject-scoped pairing are refused in `request`, so no team-member grants exist.
+      return { ok: true as const, revokedSessions: 0, revokedPairingLinks: 0 };
+    }
     const api = yield* HttpApiClient.make(ClientPairingApi, { baseUrl: peer.url }).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );

@@ -2798,6 +2798,92 @@ describe("TeamService", () => {
         expect(reattached.environmentId).toBe(envB);
         expect(revokedCalls.length).toBe(1);
         expect(unlinkedEnvs).toEqual([]);
+
+        // 8. Concurrent ACL revocation during an in-flight pairRemoteEnvironmentForSession waits
+        // for the remote request to settle, denies returning the credential to the revoked member,
+        // and runs revokeSubject strictly AFTER the remote pairing request finishes.
+        const bobInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob-pair" },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob-pair",
+          client: { deviceType: "desktop" },
+        });
+        const bobVerified = yield* sessions.verify(bobRedeemed.accessToken);
+
+        const pairingStarted = yield* Deferred.make<void>();
+        const releasePairing = yield* Deferred.make<void>();
+        const eventOrder: Array<string> = [];
+        const racingPairing = {
+          request: (_input: { readonly environmentId: EnvironmentId }) =>
+            Effect.gen(function* () {
+              eventOrder.push("pair:start");
+              yield* Deferred.succeed(pairingStarted, undefined);
+              yield* Deferred.await(releasePairing);
+              eventOrder.push("pair:remote-minted");
+              return {
+                type: "credential" as const,
+                environmentId: envB,
+                label: "Remote B",
+                urls: ["http://remote-b.test"],
+                credential: "should-never-reach-revoked-caller",
+                expiresAt: "2026-12-01T00:00:00.000Z",
+              };
+            }),
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.sync(() => {
+              eventOrder.push(`revoke:${environmentId}:${prefix}`);
+              revokedCalls.push({ environmentId, prefix });
+              return { ok: true as const, revokedSessions: 0, revokedPairingLinks: 1 };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+
+        revokedCalls.length = 0;
+        const pairFiber = yield* Effect.forkChild(
+          Effect.exit(
+            team.pairRemoteEnvironmentForSession({
+              sessionId: bobVerified.sessionId,
+              scopes: bobVerified.scopes,
+              pairingInput: { environmentId: envB },
+              peerClientPairing: racingPairing,
+              peerLinks: mockPeerLinks,
+            }),
+          ),
+        );
+        yield* Deferred.await(pairingStarted);
+
+        // Alice revokes regular access on envB while Bob's remote pairing request is in flight.
+        const revokeAclFiber = yield* Effect.forkChild(
+          team.updateEnvironment({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              environmentId: envB,
+              accessRule: { roles: ["owner", "admin"], memberIds: [] },
+            },
+            peerClientPairing: racingPairing,
+          }),
+        );
+        yield* Effect.yieldNow;
+        // Revocation barrier must hold revokeSubject until the in-flight pairing finishes on remote.
+        expect(revokedCalls).toEqual([]);
+
+        yield* Deferred.succeed(releasePairing, undefined);
+        const pairExit = yield* Fiber.join(pairFiber);
+        yield* Fiber.join(revokeAclFiber);
+
+        expect(pairExit._tag).toBe("Failure");
+        expect(revokedCalls.length).toBe(1);
+        expect(revokedCalls[0]?.environmentId).toBe(envB);
+        expect(revokedCalls[0]?.prefix).toContain(`:${bobRedeemed.member.id}:`);
+        expect(eventOrder[0]).toBe("pair:start");
+        expect(eventOrder[1]).toBe("pair:remote-minted");
+        expect(eventOrder[2]?.startsWith(`revoke:${envB}:`)).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });
