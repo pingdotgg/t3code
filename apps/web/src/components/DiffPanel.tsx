@@ -955,7 +955,12 @@ export default function DiffPanel({
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
-    if (!routeThreadRef || nextPath === (gitRepository?.repositoryPath ?? null)) return;
+    if (!routeThreadRef || nextPath === chosenGitRepositoryPath) return;
+    // The repository shown is already the choice, unless it only stands in for one out of reach:
+    // picking it then replaces that choice, so the panel does not move back when it returns.
+    if (!chosenRepositoryUnreachable && nextPath === (gitRepository?.repositoryPath ?? null)) {
+      return;
+    }
     chooseThreadGitRepository(routeThreadRef, nextPath);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
@@ -1210,7 +1215,14 @@ export default function DiffPanel({
                 onValueChange={selectGitRepository}
               >
                 {threadFolderIsRepo ? (
-                  <DropdownMenuRadioItem value={THREAD_FOLDER} closeOnClick>
+                  <DropdownMenuRadioItem
+                    value={THREAD_FOLDER}
+                    closeOnClick
+                    // Shown as checked in place of a choice out of reach, so it reports no change.
+                    {...(chosenRepositoryUnreachable
+                      ? { onClick: () => selectGitRepository(THREAD_FOLDER) }
+                      : {})}
+                  >
                     <span className="min-w-0 truncate">{threadFolderName}</span>
                   </DropdownMenuRadioItem>
                 ) : null}
@@ -1219,6 +1231,9 @@ export default function DiffPanel({
                     key={repository.repositoryPath}
                     value={repository.repositoryPath}
                     closeOnClick
+                    {...(chosenRepositoryUnreachable
+                      ? { onClick: () => selectGitRepository(repository.repositoryPath) }
+                      : {})}
                   >
                     <span className="min-w-0 truncate">
                       {threadGitRepositoryLabel(repository, activeProject?.workspaceRoot ?? null)}
