@@ -211,15 +211,9 @@ export function upsertProviderWorkspaceSnapshot(
   };
 }
 
-const claudeGatewayEndpoint = (provider: ServerProvider): string | undefined =>
-  provider.driver === ProviderDriverKind.make("claudeAgent") &&
-  provider.auth.type === "customEndpoint"
-    ? provider.auth.endpoint
-    : undefined;
-
 const shouldRetainMissingProviderModels = (
+  previousProvider: ServerProvider,
   provider: ServerProvider,
-  previousProvider: ServerProvider | undefined,
 ): boolean => {
   if (provider.driver === ProviderDriverKind.make("pi")) {
     // Pi auth becomes known only after inventory discovery: empty means unauthenticated; failed/interactive discovery preserves unknown auth and cached models.
@@ -246,14 +240,15 @@ const shouldRetainMissingProviderModels = (
   }
 
   if (provider.driver === ProviderDriverKind.make("claudeAgent")) {
-    // Claude Code keeps one gateway model cache per Claude home, for one base URL at a time, so a
-    // ready probe can omit this instance's gateway models after another instance or a terminal
-    // `claude` on a different gateway rewrote that cache. A ready probe from the instance's own
-    // unchanged gateway is authoritative, so slugs the gateway stopped listing drop out.
-    const endpoint = claudeGatewayEndpoint(provider);
-    const sameGateway =
-      endpoint !== undefined && claudeGatewayEndpoint(previousProvider ?? provider) === endpoint;
-    return !(sameGateway && provider.installed && provider.status === "ready");
+    // Claude Code caches gateway models for one base URL per Claude home, so only a ready probe from
+    // the custom endpoint the previous snapshot used is authoritative. If that gateway is down while
+    // another base URL owns the cache, its models drop until it answers again.
+    const endpoint = provider.auth.type === "customEndpoint" ? provider.auth.endpoint : undefined;
+    const sameEndpoint =
+      endpoint !== undefined &&
+      previousProvider.auth.type === "customEndpoint" &&
+      previousProvider.auth.endpoint === endpoint;
+    return !(sameEndpoint && provider.installed && provider.status === "ready");
   }
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
@@ -285,19 +280,19 @@ const shouldRetainMissingProviderModels = (
 };
 
 const shouldRetainMissingOpenCodeMetadata = (
+  previousProvider: ServerProvider,
   provider: ServerProvider,
-  previousProvider: ServerProvider | undefined,
 ): boolean =>
   provider.driver === ProviderDriverKind.make("opencode") &&
-  shouldRetainMissingProviderModels(provider, previousProvider);
+  shouldRetainMissingProviderModels(previousProvider, provider);
 
 const mergeProviderModels = (
-  previousProvider: ServerProvider | undefined,
+  previousProvider: ServerProvider,
   provider: ServerProvider,
-  previousModels: ReadonlyArray<ServerProvider["models"][number]>,
-  nextModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
-  const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider, previousProvider);
+  const previousModels = previousProvider.models;
+  const nextModels = provider.models;
+  const shouldRetainMissingModels = shouldRetainMissingProviderModels(previousProvider, provider);
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
   const unavailableSubProviders = new Set(
     provider.subProviders?.flatMap((subProvider) =>
@@ -397,12 +392,7 @@ export const mergeProviderSnapshot = (
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
-  const models = mergeProviderModels(
-    previousProvider,
-    nextProvider,
-    previousProvider.models,
-    nextProvider.models,
-  );
+  const models = mergeProviderModels(previousProvider, nextProvider);
   // Folder catalogs were compared with the old machine catalog, so every folder rescans.
   const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
     ? previousProvider.workspaceSnapshots
@@ -441,7 +431,7 @@ export const mergeProviderSnapshot = (
     previousProvider.workspaceRescannedAt !== undefined
       ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }
       : {}),
-    ...(shouldRetainMissingOpenCodeMetadata(nextProvider, previousProvider)
+    ...(shouldRetainMissingOpenCodeMetadata(previousProvider, nextProvider)
       ? {
           slashCommands:
             nextProvider.slashCommands.length === 0
