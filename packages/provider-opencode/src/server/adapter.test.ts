@@ -4420,13 +4420,25 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
-  it.effect("interrupts an initial prompt while its SDK request is pending", () =>
+  it.effect.each(["preparing", "submitted"])("stops a pending prompt (%s)", (stage) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const promptStarted = promiseGate<void>();
       const abortCalled = promiseGate<void>();
       let abortCalls = 0;
+      let promptCalls = 0;
       const client = {
+        command: {
+          list: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+            promptStarted.resolve();
+            await new Promise<void>((resolve) => {
+              const signal = options?.signal;
+              if (signal?.aborted) resolve();
+              else signal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+            return { data: [] };
+          },
+        },
         event: {
           subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
             options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
@@ -4441,6 +4453,7 @@ describe("OpenCodeAdapterV2", () => {
             data: { id: "native-opencode-initial-stop", time: { created: 1, updated: 1 } },
           }),
           promptAsync: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+            promptCalls += 1;
             promptStarted.resolve();
             await new Promise<void>((_resolve, reject) => {
               const signal = options?.signal;
@@ -4455,7 +4468,10 @@ describe("OpenCodeAdapterV2", () => {
           status: async () => ({
             data: { "native-opencode-initial-stop": { type: "idle" as const } },
           }),
-          messages: async () => ({ data: [] }),
+          message: async () => ({
+            response: { status: 404 },
+            error: { name: "NotFoundError" },
+          }),
           children: async () => ({ data: [] }),
           abort: async () => {
             abortCalls += 1;
@@ -4543,7 +4559,7 @@ describe("OpenCodeAdapterV2", () => {
             createdBy: "user",
             creationSource: "web",
             messageId: MessageId.make("message-opencode-initial-stop"),
-            text: "hello",
+            text: stage === "preparing" ? "/hello" : "hello",
             attachments: [],
           },
           modelSelection,
@@ -4573,8 +4589,14 @@ describe("OpenCodeAdapterV2", () => {
       const events = Array.from(yield* Fiber.join(terminalEvents));
       const terminals = events.filter((event) => event.type === "turn.terminal");
       assert.equal(abortCalls, 1);
+      assert.equal(promptCalls, stage === "preparing" ? 0 : 1);
       assert.lengthOf(terminals, 1);
       assert.equal(terminals[0]?.status, "interrupted");
+      assert.equal(terminals[0]?.promptDropped, stage === "preparing" ? true : undefined);
+      const finalTurn = events
+        .filter((event) => event.type === "provider_turn.updated")
+        .findLast((event) => event.providerTurn.status === "interrupted");
+      assert.equal(finalTurn?.providerTurn.promptDropped, stage === "preparing" ? true : undefined);
       assert.isNull(terminals[0]?.failure ?? null);
       assert.isFalse(
         events.some(
