@@ -115,16 +115,24 @@ export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
   });
 
 /**
- * opendir() of a hung network mount or a macOS privacy-protected folder can wait forever and
- * pins a libuv pool thread that interruption cannot free; four of them wedge every fs and dns
- * call in the server. So folders are listed by a `find` child we can kill instead.
+ * opendir() or a path lookup inside a hung network mount or a macOS privacy-protected folder can
+ * wait forever and pins a libuv pool thread that interruption cannot free; four of them wedge
+ * every fs and dns call in the server. So the scan looks into folders from a child we can kill.
  */
-const LIST_DIRECTORY_DEADLINE = "2 seconds";
+const OUT_OF_POOL_DEADLINE = "2 seconds";
 // A blocked folder is skipped until its child exits, which a hung mount may never let it do,
-// then for a while longer before it is listed again in case it was fixed.
-const BLOCKED_DIRECTORY_RETRY_MS = 5 * 60 * 1000;
-const MAX_BLOCKED_DIRECTORIES = 1024;
-const blockedDirectories = new Map<string, number>();
+// then for a while longer before it is looked into again in case it was fixed.
+const BLOCKED_FOLDER_RETRY_MS = 5 * 60 * 1000;
+const MAX_BLOCKED_FOLDERS = 1024;
+const blockedFolders = new Map<string, number>();
+
+// The `.git` folders of `$1` and of its children, so one child decides what `$1` holds. Exits 3
+// when `$1/.git` is a file: a linked worktree or a submodule, which follows another repository.
+const REPOSITORIES_IN_SCRIPT = [
+  'find -L "$1" -mindepth 1 -maxdepth 2 \\( -name node_modules -o -name ".*" ! -name .git \\) -prune',
+  "-o -name .git -type d -print0 -prune",
+  '; [ -d "$1/.git" ] || [ ! -e "$1/.git" ] || exit 3',
+].join(" ");
 
 class DirectoryListError extends Schema.TaggedError<DirectoryListError>()("DirectoryListError", {
   path: Schema.String,
@@ -137,6 +145,48 @@ const folderProbes = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const isWindows = yield* HostProcess.isWindows;
 
+  /** Runs a probe of `folder` in a child; none when it failed to run or `folder` is blocked. */
+  const runOutOfPool = Effect.fnUntraced(function* (
+    folder: string,
+    command: string,
+    args: ReadonlyArray<string>,
+  ) {
+    if ((blockedFolders.get(folder) ?? 0) > (yield* Clock.currentTimeMillis)) {
+      return Option.none<ProcessRunner.ProcessRunOutput>();
+    }
+    blockedFolders.delete(folder);
+    // Detached: a killed child stuck in the kernel never exits, and the deadline must not wait
+    // for it. The run enforces its own deadline, so it still ends if this caller goes away.
+    const run = yield* processRunner
+      .run({
+        command,
+        args,
+        timeout: OUT_OF_POOL_DEADLINE,
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.forkDetach);
+    const result = yield* Fiber.join(run).pipe(
+      Effect.timeoutOption(OUT_OF_POOL_DEADLINE),
+      Effect.orElseSucceed(() => Option.none<ProcessRunner.ProcessRunOutput>()),
+    );
+    if (Option.isSome(result) && !result.value.timedOut) return result;
+    if (blockedFolders.size >= MAX_BLOCKED_FOLDERS) {
+      blockedFolders.delete(blockedFolders.keys().next().value!);
+    }
+    blockedFolders.set(folder, Number.POSITIVE_INFINITY);
+    yield* Effect.forkDetach(
+      Effect.gen(function* () {
+        yield* Fiber.await(run);
+        const exited = yield* Clock.currentTimeMillis;
+        if (blockedFolders.has(folder))
+          blockedFolders.set(folder, exited + BLOCKED_FOLDER_RETRY_MS);
+      }),
+    );
+    return Option.none<ProcessRunner.ProcessRunOutput>();
+  });
+
+  const nulSeparated = (stdout: string) => stdout.split("\0").filter((entry) => entry !== "");
+
   /** The names in `folder`, like `readDirectory`, without holding a libuv pool thread. */
   const listDirectory = Effect.fnUntraced(function* (
     folder: string,
@@ -146,48 +196,21 @@ const folderProbes = Effect.gen(function* () {
     if (isWindows) {
       return yield* fileSystem.readDirectory(folder).pipe(Effect.mapError(() => failed));
     }
-    if ((blockedDirectories.get(folder) ?? 0) > (yield* Clock.currentTimeMillis)) {
-      return yield* failed;
-    }
-    blockedDirectories.delete(folder);
-    // Detached: a killed child stuck in the kernel never exits, and the deadline must not wait
-    // for it. The run enforces its own deadline, so it still ends if this caller goes away.
-    const run = yield* processRunner
-      .run({
-        command: "find",
-        args: ["-H", folder, "-mindepth", "1", "-maxdepth", "1", "-print0"],
-        timeout: LIST_DIRECTORY_DEADLINE,
-        timeoutBehavior: "timedOutResult",
-      })
-      .pipe(Effect.forkDetach);
-    const result = yield* Fiber.join(run).pipe(
-      Effect.timeoutOption(LIST_DIRECTORY_DEADLINE),
-      Effect.mapError(() => failed),
-    );
-    if (Option.isNone(result) || result.value.timedOut) {
-      if (blockedDirectories.size >= MAX_BLOCKED_DIRECTORIES) {
-        blockedDirectories.delete(blockedDirectories.keys().next().value!);
-      }
-      blockedDirectories.set(folder, Number.POSITIVE_INFINITY);
-      yield* Effect.forkDetach(
-        Effect.gen(function* () {
-          yield* Fiber.await(run);
-          const exited = yield* Clock.currentTimeMillis;
-          if (blockedDirectories.has(folder)) {
-            blockedDirectories.set(folder, exited + BLOCKED_DIRECTORY_RETRY_MS);
-          }
-        }),
-      );
-      return yield* failed;
-    }
-    const names = result.value.stdout
-      .split("\0")
-      .flatMap((entry) => (entry ? [path.basename(entry)] : []));
+    const result = yield* runOutOfPool(folder, "find", [
+      "-H",
+      folder,
+      "-mindepth",
+      "1",
+      "-maxdepth",
+      "1",
+      "-print0",
+    ]);
+    if (Option.isNone(result)) return yield* failed;
+    const names = nulSeparated(result.value.stdout).map((entry) => path.basename(entry));
     // `find` exits non-zero for an entry it could not stat, too; only an empty failure is one.
     if (result.value.code !== 0 && names.length === 0) return yield* failed;
     return names;
   });
-
   const exists = (target: string) =>
     fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
 
@@ -212,7 +235,7 @@ const folderProbes = Effect.gen(function* () {
     );
 
   const childFolders = (folder: string) =>
-    listDirectory(folder).pipe(
+    fileSystem.readDirectory(folder).pipe(
       Effect.orElseSucceed((): ReadonlyArray<string> => []),
       Effect.map((names) =>
         names
@@ -222,7 +245,32 @@ const folderProbes = Effect.gen(function* () {
       ),
     );
 
-  return { exists, realPath, classify, ownsHistory, listDirectory, childFolders };
+  /**
+   * The repositories `folder` is or holds: itself when it has its own history, none when it
+   * follows another repository, else its children with their own history. A plain folder is
+   * looked into once: wrappers keep repositories under folders such as `src` or `packages`.
+   */
+  const repositoriesIn = Effect.fnUntraced(function* (folder: string) {
+    // No privacy prompts here, and no `sh` or `find`.
+    if (isWindows) {
+      if (yield* ownsHistory(folder)) return [folder];
+      if (yield* exists(path.join(folder, ".git"))) return [];
+      return yield* Effect.filter(yield* childFolders(folder), ownsHistory, {
+        concurrency: DETECTION_CONCURRENCY,
+      });
+    }
+    const result = yield* runOutOfPool(folder, "sh", ["-c", REPOSITORIES_IN_SCRIPT, "sh", folder]);
+    if (Option.isNone(result)) return [];
+    const gitFolders = nulSeparated(result.value.stdout);
+    if (gitFolders.includes(path.join(folder, ".git"))) return [folder];
+    if (result.value.code === 3) return [];
+    return gitFolders
+      .map((gitFolder) => path.dirname(gitFolder))
+      .filter((nested) => path.dirname(nested) === folder)
+      .toSorted();
+  });
+
+  return { exists, realPath, classify, ownsHistory, listDirectory, repositoriesIn };
 });
 
 const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFolders")(function* (
@@ -261,8 +309,7 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { exists, realPath, classify, ownsHistory, listDirectory, childFolders } =
-    yield* folderProbes;
+  const { exists, realPath, classify, listDirectory, repositoriesIn } = yield* folderProbes;
   const root = path.resolve(
     expandHomePath(input.workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
   );
@@ -275,24 +322,15 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   const listed =
     codeWorkspaceFile === null ? null : yield* readCodeWorkspaceFolders(root, codeWorkspaceFile);
   // A worktree of another repository is that repository's, so only folders with their own
-  // history are offered. A plain child is looked into once: wrappers keep repositories under
-  // folders such as `src` or `packages`.
+  // history are offered.
   const children = yield* Effect.forEach(
     names.filter((name) => !name.startsWith(".") && name !== "node_modules"),
-    (name) => {
-      const folderPath = path.join(root, name);
-      return Effect.gen(function* () {
-        if (yield* ownsHistory(folderPath)) return [{ path: folderPath, name: boundedName(name) }];
-        if (yield* exists(path.join(folderPath, ".git"))) return [];
-        const nested = yield* Effect.filter(yield* childFolders(folderPath), ownsHistory, {
-          concurrency: DETECTION_CONCURRENCY,
-        });
-        return nested.map((nestedPath) => ({
-          path: nestedPath,
-          name: boundedName(path.basename(nestedPath)),
-        }));
-      });
-    },
+    (name) =>
+      repositoriesIn(path.join(root, name)).pipe(
+        Effect.map((found) =>
+          found.map((folder) => ({ path: folder, name: boundedName(path.basename(folder)) })),
+        ),
+      ),
     { concurrency: DETECTION_CONCURRENCY },
   );
   const submodules = new Set(

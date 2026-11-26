@@ -490,8 +490,8 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
   );
 });
 
-// A listing that never returns stands in for a hung network mount or a macOS-protected folder.
-it.live("gives up on a folder it cannot list and does not list it again while it hangs", () =>
+// A probe that never returns stands in for a hung network mount or a macOS-protected folder.
+it.live("gives up on a folder it cannot look into and does not try again while it hangs", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -500,16 +500,25 @@ it.live("gives up on a folder it cannot list and does not list it again while it
     for (const folder of ["api/.git", "stuck"]) {
       yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
     }
-    const listed: Array<string> = [];
+    const probed: Array<string> = [];
+    // Answers the root listing and each folder's `.git` probe from disk, except `stuck`'s.
     const hanging = ProcessRunner.ProcessRunner.of({
       run: (input) => {
-        const folder = input.args[1] ?? "";
-        listed.push(folder);
+        const listing = input.command === "find";
+        const folder = (listing ? input.args[1] : input.args.at(-1)) ?? "";
+        probed.push(folder);
         if (folder === stuck) return Effect.never;
-        return fileSystem.readDirectory(folder).pipe(
+        const entries = listing
+          ? Effect.map(fileSystem.readDirectory(folder), (names) =>
+              names.map((name) => path.join(folder, name)),
+            )
+          : Effect.map(fileSystem.exists(path.join(folder, ".git")), (owns) =>
+              owns ? [path.join(folder, ".git")] : [],
+            );
+        return entries.pipe(
           Effect.orDie,
-          Effect.map((names) => ({
-            stdout: names.map((name) => `${path.join(folder, name)}\0`).join(""),
+          Effect.map((paths) => ({
+            stdout: paths.map((entry) => `${entry}\0`).join(""),
             stderr: "",
             code: ChildProcessSpawner.ExitCode(0),
             timedOut: false,
@@ -530,7 +539,7 @@ it.live("gives up on a folder it cannot list and does not list it again while it
     assert.deepEqual(yield* discover, [path.join(workspaceRoot, "api")]);
     assert.deepEqual(yield* discover, [path.join(workspaceRoot, "api")]);
     assert.deepEqual(
-      listed.filter((folder) => folder === stuck),
+      probed.filter((folder) => folder === stuck),
       [stuck],
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
