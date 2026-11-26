@@ -15,7 +15,7 @@ import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-reque
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
-  rehypeNormalizeLocalEditorLinks,
+  rehypeNormalizeLocalFileLinks,
   rehypePreserveImageSourceMeta,
   sanitizeChatHast,
 } from "@t3tools/shared/markdownHast";
@@ -922,7 +922,7 @@ function restoreMath(node: Root | Element, math: Map<string, Element>) {
 const addHeadingIds = rehypeHeadingIds();
 const addTextDirection = rehypeTextDirection();
 const preserveImageSourceMeta = rehypePreserveImageSourceMeta();
-const normalizeLocalEditorLinks = rehypeNormalizeLocalEditorLinks();
+const normalizeLocalFileLinks = rehypeNormalizeLocalFileLinks();
 const groupChipPunctuation = rehypeChipPunctuation();
 
 const INSIGHT_OPENING = /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u;
@@ -957,7 +957,7 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
   const nonce = Math.random().toString(36).slice(2);
   const marker = new RegExp(String.raw`^\[!T3-INSIGHT-${nonce}-(\d+)\](?:\r?\n)?`);
   const anywhere = new RegExp(String.raw`\[!T3-INSIGHT-${nonce}-(\d+)\]`, "g");
-  const lines = text.split(/(?<=\n)/u);
+  const lines = text.split(/(?<=\n)|(?<=\r)(?!\n)/u);
   const skipped = new Set<number>();
   for (;;) {
     // Each line's offset in the message and in the source, and how much longer it got.
@@ -1023,7 +1023,14 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
       tree,
       marker,
       toOriginal: (offset) => {
-        const line = offsets.findLast((entry) => entry.source <= offset) ?? offsets[0]!;
+        let low = 0;
+        let high = offsets.length - 1;
+        while (low < high) {
+          const mid = (low + high + 1) >>> 1;
+          if (offsets[mid]!.source <= offset) low = mid;
+          else high = mid - 1;
+        }
+        const line = offsets[low]!;
         return (
           line.original + Math.min(Math.max(offset - line.source - line.delta, 0), line.length)
         );
@@ -1194,7 +1201,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   };
   transform(tree, walk, false, false);
   preserveImageSourceMeta(tree as never);
-  normalizeLocalEditorLinks(tree as never);
+  normalizeLocalFileLinks(tree as never);
   const hast = sanitizeChatHast(tree);
   if (walk.math.size > 0) restoreMath(hast, walk.math);
   if (insights) restorePositions(hast, insights.toOriginal);

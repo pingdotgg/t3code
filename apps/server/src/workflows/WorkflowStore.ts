@@ -417,6 +417,8 @@ export class WorkflowStore extends Context.Service<
       readonly tag?: string | undefined;
       /** Runs about this: the subject's kind and key, or text that is its web address or key. */
       readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
+      /** Only skipped runs no other run invoked (true), or only the rest (false). */
+      readonly skippedTopLevel?: boolean | undefined;
     }) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
@@ -1420,6 +1422,11 @@ export const make = Effect.gen(function* () {
         ...(prefix === null
           ? []
           : [sql`idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix}\u{10FFFF}`}`]),
+        ...(filter.skippedTopLevel === undefined
+          ? []
+          : filter.skippedTopLevel
+            ? [sql`status = 'skipped' AND parent_run_id IS NULL`]
+            : [sql`NOT (status = 'skipped' AND parent_run_id IS NULL)`]),
         ...(filter.tag === undefined
           ? []
           : [

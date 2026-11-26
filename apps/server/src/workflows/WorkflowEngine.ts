@@ -1318,15 +1318,16 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
-      const rows =
-        filter?.tag === undefined && filter?.subject === undefined
-          ? yield* store.runs(filter?.status)
-          : yield* store.runsWhere({
-              status: filter.status,
-              tag: filter.tag,
-              subject: filter.subject,
-            });
-      return rows.map(toRun);
+      if (filter?.tag === undefined && filter?.subject === undefined)
+        return (yield* store.runs(filter?.status)).map(toRun);
+      const where = { status: filter.status, tag: filter.tag, subject: filter.subject };
+      if (filter.status !== undefined) return (yield* store.runsWhere(where)).map(toRun);
+      // Skipped runs are counted apart, as in the unfiltered list, so they cannot push out the rest.
+      const rows = [
+        ...(yield* store.runsWhere({ ...where, skippedTopLevel: false })),
+        ...(yield* store.runsWhere({ ...where, skippedTopLevel: true })),
+      ];
+      return rows.toSorted((a, b) => b.started_at.localeCompare(a.started_at)).map(toRun);
     }),
     about: Effect.fn("Workflows.about")(function* (item) {
       // Keyed as the subject was kept, so an item named without its address is found too.
