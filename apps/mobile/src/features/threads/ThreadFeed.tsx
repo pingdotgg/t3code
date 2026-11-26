@@ -2664,8 +2664,7 @@ function renderFeedEntry(
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={m(msg("Edit from here"))}
-                  hitSlop={8}
-                  className="size-7 items-center justify-center"
+                  className="size-[44px] shrink-0 items-center justify-center"
                   onPress={() => props.onRewindMessage?.(message)}
                 >
                   <SymbolView name="arrow.uturn.backward" size={14} tintColor={iconSubtleColor} />
@@ -2743,12 +2742,7 @@ function renderFeedEntry(
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={m(msg("Reply to this response"))}
-                hitSlop={8}
-                className="items-center justify-center"
-                style={{
-                  width: props.replyActionSize.button,
-                  height: props.replyActionSize.button,
-                }}
+                className="size-[44px] shrink-0 items-center justify-center"
                 onPress={() => {
                   const opening = captureMobileAssistantMessageOpening(renderedText);
                   const itemId = message.projectedItem?.sourceItemId;
