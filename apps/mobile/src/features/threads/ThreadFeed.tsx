@@ -166,6 +166,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import Svg, { Path } from "react-native-svg";
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
@@ -2667,7 +2668,20 @@ function renderFeedEntry(
                   className="size-[44px] shrink-0 items-center justify-center"
                   onPress={() => props.onRewindMessage?.(message)}
                 >
-                  <SymbolView name="arrow.uturn.backward" size={14} tintColor={iconSubtleColor} />
+                  <Svg
+                    width={14}
+                    height={14}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke={iconSubtleColor}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    accessible={false}
+                  >
+                    <Path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+                    <Path d="m15 5 4 4" />
+                  </Svg>
                 </Pressable>
               ) : null}
               {presentation.text.trim().length > 0 ? (
@@ -2759,11 +2773,20 @@ function renderFeedEntry(
                   });
                 }}
               >
-                <SymbolView
-                  name="arrow.uturn.backward"
-                  size={props.replyActionSize.icon}
-                  tintColor={iconSubtleColor}
-                />
+                <Svg
+                  width={props.replyActionSize.icon}
+                  height={props.replyActionSize.icon}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke={iconSubtleColor}
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  accessible={false}
+                >
+                  <Path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+                  <Path d="m9 17-5-5 5-5" />
+                </Svg>
               </Pressable>
             ) : null}
             {message.projectedItem ? (
