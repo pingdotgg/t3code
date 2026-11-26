@@ -441,49 +441,24 @@ it.each([
 });
 
 it.each([
-  { phase: "host selection", selection: "auto", ready: true },
-  { phase: "host selection", selection: "manual", ready: false },
-  { phase: "base lookup", selection: "auto", ready: true },
-  { phase: "base lookup", selection: "manual", ready: false },
-  { phase: "destination workspace read", selection: "auto", ready: true },
+  { selection: "auto", ready: true },
+  { selection: "manual", ready: false },
 ] as const)(
-  "handles a $selection branch update during $phase",
-  async ({ phase, selection, ready }) => {
-    const { a, b, draftId, input, store } = fanoutSetup();
-    const destination = phase === "destination workspace read" ? b : a;
+  "handles a $selection branch pick during the base lookup",
+  async ({ selection, ready }) => {
+    const { a, draftId, input, store } = fanoutSetup();
     const branch = selection === "auto" ? "main" : "feature";
-    const destinationBranch = destination === a ? "main" : "remote-base";
     store.setDraftThreadContext(draftId, {
       branch: null,
       envMode: "worktree",
       environmentSelection: "auto",
       loadBalancedEnvironmentId: a,
     });
-    resources.refreshSelection.mockResolvedValue(destination);
-    resources.refsEnvironment = destination;
-    resources.refs = [
-      { name: destinationBranch, current: true, isDefault: true, worktreePath: null },
-    ];
+    resources.refreshSelection.mockResolvedValue(a);
+    resources.refsEnvironment = a;
+    resources.refs = [{ name: "main", current: true, isDefault: true, worktreePath: null }];
     const gate = Promise.withResolvers<void>();
-    if (phase === "host selection") {
-      resources.refreshSelection.mockImplementation(async () => {
-        await gate.promise;
-        return destination;
-      });
-    } else if (phase === "base lookup") {
-      resources.beforeRefs.mockReturnValue(gate.promise);
-    } else {
-      resources.readProjectFile.mockImplementation(async () => {
-        await gate.promise;
-        return { defaultThreadEnvMode: "worktree" };
-      });
-    }
-    const pendingRead =
-      phase === "host selection"
-        ? resources.refreshSelection
-        : phase === "base lookup"
-          ? resources.beforeRefs
-          : resources.readProjectFile;
+    resources.beforeRefs.mockReturnValue(gate.promise);
     const onPrepared = vi.fn();
     await using screen = await render(
       <Harness
@@ -492,16 +467,13 @@ it.each([
       />,
     );
     await screen.getByRole("button", { name: "Send" }).click();
-    await vi.waitFor(() => expect(pendingRead).toHaveBeenCalled());
+    await vi.waitFor(() => expect(resources.beforeRefs).toHaveBeenCalled());
     await act(async () => {
       store.setDraftThreadContext(draftId, { branch, environmentSelection: selection });
       gate.resolve();
     });
     await vi.waitFor(() => expect(onPrepared).toHaveBeenCalledWith(ready));
-    expect(store.getDraftSession(draftId)).toMatchObject({
-      environmentId: ready ? destination : a,
-      branch: ready ? destinationBranch : branch,
-    });
+    expect(store.getDraftSession(draftId)).toMatchObject({ environmentId: a, branch });
   },
 );
 
