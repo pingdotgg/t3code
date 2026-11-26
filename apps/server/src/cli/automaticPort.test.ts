@@ -35,6 +35,7 @@ interface Scenario {
   readonly wslpathMissing?: boolean;
   readonly reservedPorts?: ReadonlyArray<number>;
   readonly host?: string;
+  readonly preferredOccupiedOnLan?: boolean;
 }
 
 const select = (scenario: Scenario) => {
@@ -42,10 +43,16 @@ const select = (scenario: Scenario) => {
   const reserved = [...(scenario.reservedPorts ?? [50_001])];
   const net: NetService.NetServiceShape = {
     canListenOnHost: () => Effect.succeed(true),
+    probeListenOnHost: () => Effect.succeed(true),
     hasListenerOnHost: () => Effect.succeed(false),
     isPortAvailableOnLoopback: () => Effect.succeed(true),
     reserveLoopbackPort: () => Effect.sync(() => reserved.shift() ?? 60_000),
-    findAvailablePort: Effect.succeed,
+    findAvailablePort: (preferred, host) =>
+      Effect.sync(() =>
+        preferred === 0 || (host === "0.0.0.0" && scenario.preferredOccupiedOnLan)
+          ? (reserved.shift() ?? 60_000)
+          : preferred,
+      ),
   };
   const run: ProcessRunner.ProcessRunner["Service"]["run"] = (input) => {
     commands.push(input.command);
@@ -117,6 +124,19 @@ describe("automatic port selection", () => {
         windowsPorts: [3773],
         windowsPortsV6: [50_001],
         reservedPorts: [50_001, 50_002],
+      });
+      expect(result.port).toBe(50_002);
+    }),
+  );
+
+  it.effect("uses the wildcard bind when Windows listener discovery succeeds", () =>
+    Effect.gen(function* () {
+      const result = yield* select({
+        kernelRelease: WSL_KERNEL,
+        windowsPortsV6: [50_001],
+        reservedPorts: [50_001, 50_002],
+        host: "0.0.0.0",
+        preferredOccupiedOnLan: true,
       });
       expect(result.port).toBe(50_002);
     }),
