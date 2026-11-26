@@ -1323,6 +1323,7 @@
   "42a2622893a6bced": "Kunde inte läsa gränser.",
   "4897e228d3185c96": "Inga gränser rapporterades.",
   "e27d2cb964df5dd5": "{source}: inga konton rapporterades.",
+  "161135f0aea4d1ca": "{source}: inga Codex-, Claude- eller Grok-konton. Hoppade över {providers}.",
   "1b503134018285f4": "{days} d {hours} h",
   "164c674cf062933a": "{label} · {count} kvar · går ut om {expires}",
   "9c82c39589c23938": "{label} · {count} kvar",

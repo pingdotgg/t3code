@@ -1324,6 +1324,7 @@
   "42a2622893a6bced": "Impossible de lire les limites.",
   "4897e228d3185c96": "Aucune limite signalée.",
   "e27d2cb964df5dd5": "{source} : aucun compte signalé.",
+  "161135f0aea4d1ca": "{source} : aucun compte Codex, Claude ou Grok. Ignorés : {providers}.",
   "1b503134018285f4": "{days} j {hours} h",
   "164c674cf062933a": "{label} · {count} restants · expire dans {expires}",
   "9c82c39589c23938": "{label} · {count} restants",
@@ -7545,8 +7546,8 @@
     },
     "."
   ],
-  "432e85a50e2e7964": [
-    "Affichez le quota de chaque compte regroupé par le hub, à côté des fournisseurs sur",
+  "28988b067c83383c": [
+    "Affichez le quota de chaque compte Codex, Claude et Grok regroupé par le hub, à côté des fournisseurs sur",
     " ",
     {
       "i": 1,

@@ -1323,6 +1323,7 @@
   "42a2622893a6bced": "한도를 읽을 수 없습니다.",
   "4897e228d3185c96": "보고된 한도가 없습니다.",
   "e27d2cb964df5dd5": "{source}: 보고된 계정이 없습니다.",
+  "161135f0aea4d1ca": "{source}: Codex, Claude, Grok 계정이 없습니다. 건너뜀: {providers}.",
   "1b503134018285f4": "{days}일 {hours}시간",
   "164c674cf062933a": "{label} · {count}개 남음 · {expires} 후 만료",
   "9c82c39589c23938": "{label} · {count}개 남음",
