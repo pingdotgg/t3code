@@ -515,6 +515,40 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
   });
 
+  it("bounds the restarted AVCC feed by the first-frame window when Duo panels are cleared", async () => {
+    const { client, events, fetch, sockets, videoBodies, decodedFrame } = recoveryFixture(
+      "ios",
+      false,
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    videoBodies[0]!.enqueue(
+      new Uint8Array([...envelope(1, [1, 0x64, 0, 0x1f]), ...envelope(2, [2])]),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onmessage?.({
+      data: new Uint8Array([
+        0x82,
+        ...new TextEncoder().encode(
+          '{"width":400,"height":800,"orientation":"portrait","supportsHingeAngle":true}',
+        ),
+      ]).buffer,
+    });
+    decodedFrame();
+    expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+    const panel = { present: vi.fn(() => true) };
+    client.setDuoPanels({ cover: panel, inner: panel } as unknown as Parameters<
+      typeof client.setDuoPanels
+    >[0]);
+    await vi.advanceTimersByTimeAsync(0);
+    // The restarted feed's response headers never arrive.
+    fetch.mockImplementation(() => new Promise<Response>(() => {}));
+    client.setDuoPanels(null);
+    expect(events.onStatus).toHaveBeenLastCalledWith("connecting", undefined);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(events.onStatus).toHaveBeenLastCalledWith("error", expect.any(String));
+  });
+
   it("does not repaint a delayed JPEG seed over newer decoded video", async () => {
     const { client, videoBodies, drawImage, decodedFrame } = recoveryFixture("ios", false);
     let resolveBitmap!: (bitmap: ImageBitmap) => void;
@@ -951,6 +985,8 @@ describe("WebRTC device streams", () => {
       }
       expect(events.onMjpegFallback).not.toHaveBeenCalled();
       expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.anything());
+      // Duo's frames are the viewer's frames, so the status does not stay connecting.
+      expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
       client.stop();
     },
   );

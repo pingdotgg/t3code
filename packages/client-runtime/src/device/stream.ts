@@ -1175,6 +1175,7 @@ export function createDeviceStreamClient(
         {
           onStatus: (status, detail) => {
             if (status === "error") events.onDuoUnavailable?.(detail);
+            else if (status === "streaming") frameReceived();
           },
           onScreen: () => {},
           onInputConnected: () => {},
@@ -1473,6 +1474,7 @@ export function createDeviceStreamClient(
       for (const panel of panelClients) panel.stop();
       panelClients = [];
       if (!panels) {
+        connecting();
         if (useWebCodecs) void readIosVideo();
         else void startIosWithoutWebCodecs();
         return;
