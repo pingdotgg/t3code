@@ -30,6 +30,16 @@ export const IssueTrackerKind = TrimmedNonEmptyString.check(
 ).pipe(Schema.brand("IssueTrackerKind"));
 export type IssueTrackerKind = typeof IssueTrackerKind.Type;
 
+/**
+ * One saved account of a standalone tracker. A tracker's first account has none: it predates
+ * accounts, and keeps its credential and bindings unchanged.
+ */
+export const IssueTrackerAccountId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
+).pipe(Schema.brand("IssueTrackerAccountId"));
+export type IssueTrackerAccountId = typeof IssueTrackerAccountId.Type;
+
 export const IssueActor = PullRequestActor;
 export type IssueActor = typeof IssueActor.Type;
 
@@ -246,6 +256,13 @@ export const IssueDetail = Schema.Struct({
 });
 export type IssueDetail = typeof IssueDetail.Type;
 
+export const IssueDetailInput = Schema.Struct({
+  ...IssueRef.fields,
+  /** An explicit refresh reads the tracker instead of a recently shared read. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type IssueDetailInput = typeof IssueDetailInput.Type;
+
 /** Older comments, one page past a cursor the detail or a previous page handed over. */
 export const IssueCommentsPageInput = Schema.Struct({
   ...IssueRef.fields,
@@ -322,7 +339,7 @@ export const IssueListResult = Schema.Struct({
   /** The signed-in account per host that involvement compared against. Empty for `all`. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   trackers: Schema.Array(IssueTrackerSummary),
-  /** By update, newest first, across every scope this answer covers. */
+  /** Newest first by the requested `sort` (`updated` when absent), across every scope this answer covers. */
   entries: Schema.Array(IssueListEntry),
   errors: Schema.Array(IssueListProjectError),
   /** Where each scope carries on, sent straight back as `cursors`. Absent once a scope is done. */
@@ -493,10 +510,11 @@ export class IssueOperationError extends Schema.TaggedError<IssueOperationError>
     retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(IssueOperationError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(IssueOperationError)(this, { status: 503 });
   }
 
   override get message(): string {
@@ -590,6 +608,8 @@ export const MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES = 250;
  */
 export const IssueTrackerProjectBinding = Schema.Struct({
   tracker: IssueTrackerKind,
+  /** The account the scope is read with; absent for the tracker's first account. */
+  accountId: Schema.optional(IssueTrackerAccountId),
   scope: TrimmedNonEmptyString,
   additionalScopes: Schema.optionalKey(
     Schema.Array(TrimmedNonEmptyString).check(
@@ -617,6 +637,8 @@ export type IssueTrackerScope = typeof IssueTrackerScope.Type;
  */
 export const IssueTrackerConnection = Schema.Struct({
   ...StandaloneIssueTrackerDescriptor.fields,
+  /** Which of the tracker's accounts this is; absent for its first. */
+  accountId: Schema.optional(IssueTrackerAccountId),
   /** A credential is stored. It may still be rejected, which `account` being null reports. */
   connected: Schema.Boolean,
   /** Who the credential signs in as, or null when there is none or it was refused. */
@@ -630,15 +652,29 @@ export const IssueTrackerConnection = Schema.Struct({
 export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
 
 export const IssueTrackerConnectionList = Schema.Struct({
+  /** Each standalone tracker's first account. */
   trackers: Schema.Array(IssueTrackerConnection),
-  /** Which standalone tracker scopes each bound project reads; a project absent here reads none. */
+  /** The accounts added beside a tracker's first, oldest first. Absent from older servers. */
+  accounts: Schema.optional(Schema.Array(IssueTrackerConnection)),
+  /**
+   * Which standalone tracker scopes each project bound with a tracker's first account reads. A
+   * project bound with an added account is in `accountBindings` instead, so older clients never
+   * read another account's team as the first account's.
+   */
   bindings: Schema.Record(ProjectId, IssueTrackerProjectBinding),
+  /** Projects bound with an added account. Absent from older servers. */
+  accountBindings: Schema.optional(Schema.Record(ProjectId, IssueTrackerProjectBinding)),
 });
 export type IssueTrackerConnectionList = typeof IssueTrackerConnectionList.Type;
 
-/** A credential for one standalone tracker; `null` disconnects it and unbinds its projects. */
+/**
+ * A credential for one standalone tracker account; `null` disconnects it and unbinds its
+ * projects. `addAccount` saves the credential as a new account beside the existing ones.
+ */
 export const IssueTrackerConnectInput = Schema.Struct({
   tracker: IssueTrackerKind,
+  accountId: Schema.optional(IssueTrackerAccountId),
+  addAccount: Schema.optional(Schema.Boolean),
   token: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
 });
 export type IssueTrackerConnectInput = typeof IssueTrackerConnectInput.Type;
@@ -647,6 +683,8 @@ export const IssueTrackerBindProjectInput = Schema.Struct({
   projectId: ProjectId,
   /** Null unbinds. */
   binding: Schema.NullOr(IssueTrackerProjectBinding),
+  /** On an unbind, the account the binding was made with; absent for a tracker's first. */
+  accountId: Schema.optionalKey(IssueTrackerAccountId),
 });
 export type IssueTrackerBindProjectInput = typeof IssueTrackerBindProjectInput.Type;
 
@@ -662,10 +700,11 @@ export class IssueTrackerConnectionError extends Schema.TaggedError<IssueTracker
     detail: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 503 });
   }
 
   override get message(): string {

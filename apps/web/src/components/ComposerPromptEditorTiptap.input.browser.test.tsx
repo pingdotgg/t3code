@@ -419,6 +419,22 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  { code: "echo @prod next", from: 11, to: 16, expected: "echo @prod( next)" },
+  { code: "echo next @prod", from: 1, to: 11, expected: "(echo next )@prod" },
+])(
+  "wraps selected code next to a literal mention in $code",
+  async ({ code, from, to, expected }) => {
+    await using screen = await mountEditor(`\`\`\`\n${code}\n\`\`\``);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.setTextSelection({ from, to });
+      typeText(editor, from, to, "(");
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`\`\`\`\n${expected}\n\`\`\``);
+  },
+);
+
 it("lets composition replace selected text without surrounding it", async () => {
   await using screen = await mountEditor("word");
   const { editor } = screen;
@@ -428,6 +444,16 @@ it("lets composition replace selected text without surrounding it", async () => 
     typeText(editor, 1, 5, '"');
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
+});
+
+it("keeps replacement behavior at a prose mention boundary", async () => {
+  await using screen = await mountEditor("echo @prod next");
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection({ from: 7, to: 12 });
+    typeText(editor, 7, 12, "(");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("echo @prod(");
 });
 
 // CDP drives Chrome's own IME path, which skips deleting a range bounded by an uneditable chip.
@@ -555,6 +581,7 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
 it.each([
   "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
   "see `**x**` now",
+  "signal = (7 * 2**3 * 5)**4",
 ])("sends pasted %s as pasted", async (pasted) => {
   await using screen = await mountEditor("");
   const { editor } = screen;
@@ -564,6 +591,146 @@ it.each([
     editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
+});
+
+// regression: #31079 paste rules restyled dropped text, and dropped Markdown skipped the composer's parser
+it.each([
+  // Shown bold like the same paste; the sent text stays verbatim.
+  ["signal = (7 * 2**3 * 5)**4", "signal = (7 * 23 * 5)4"],
+  ["a **bold** and *soft* word", "a bold and soft word"],
+])("drops %s like a paste", async (dropped, shown) => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", dropped);
+    const { left, top } = editor.view.coordsAtPos(1);
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: left,
+        clientY: top + 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(dropped);
+  expect(editor.state.doc.textContent).toBe(shown);
+  expect(editor.view.hasFocus()).toBe(true);
+});
+
+it("parses markdown dropped below the first line of an empty composer", async () => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  const box = editor.view.dom.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "a **bold** word");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: box.left + 4,
+        clientY: box.bottom - 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("a **bold** word");
+  expect(editor.state.doc.textContent).toBe("a bold word");
+});
+
+it("drops plain text on a new line below the last line", async () => {
+  await using screen = await mountEditor("before");
+  const { editor } = screen;
+  const box = editor.view.dom.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "Docs https://example.com/document\n\nsecond");
+    dataTransfer.setData("text/html", '<a href="https://example.com/document">Docs</a>');
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: box.left + 4,
+        clientY: box.bottom - 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    "before\nDocs https://example.com/document\n\nsecond",
+  );
+  await act(async () => {
+    editor.commands.undo();
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("before");
+});
+
+it("drops text on a list marker inside the list", async () => {
+  await using screen = await mountEditor("- one\n- two");
+  const { editor } = screen;
+  const item = editor.view.dom.querySelectorAll("li")[1]!.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "added");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: item.left - 8,
+        clientY: item.top + item.height / 2,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toMatch(/^- one\n.*added[\s\S]*- two$/);
+});
+
+it("drops text on a rule's edge without replacing the rule", async () => {
+  await using screen = await mountEditor("before\n\n---\n\nafter");
+  const { editor } = screen;
+  let rulePos = -1;
+  editor.state.doc.forEach((node, offset) => {
+    if (node.type.name === "horizontalRule") rulePos = offset;
+  });
+  const rule = (editor.view.nodeDOM(rulePos) as HTMLElement).getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "dropped");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: rule.left + rule.width / 2,
+        clientY: rule.top,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  const value = serializeEditorDoc(editor.state.doc).value;
+  expect(value).toContain("---");
+  expect(value).toContain("dropped");
+});
+
+it.each([
+  ["**DEV**", "**DEV**!"],
+  ["*DEV*", "*DEV*!"],
+  ["~~DEV~~", "~~DEV~~!"],
+  ["`DEV`", "`DEV`!"],
+  ["***DEV***", "***DEV***!"],
+])("types after the closing markers of pasted %s", async (pasted, typed) => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    editor.view.focus();
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", pasted);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  await userEvent.keyboard("!");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(typed);
 });
 
 it.each([
@@ -681,6 +848,54 @@ it("reopens a long draft scrolled to its caret without taking focus", async () =
   const caret = editor.view.coordsAtPos(editor.state.selection.head);
   expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
 });
+
+it.each(["none", "caret", "selection"] as const)(
+  "keeps the reading position when a draft rewraps (focus: %s)",
+  async (focus) => {
+    const focused = focus !== "none";
+    const value = "A long wrapped paragraph should keep the sentence being read in view. ".repeat(
+      100,
+    );
+    const style = document.head.appendChild(document.createElement("style"));
+    style.textContent = ".composer-tiptap { width: 700px; max-height: 160px; overflow-y: auto; }";
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await using screen = await mountEditor(value);
+    const { editor } = screen;
+    const scroller = editor.view.dom;
+    await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(500));
+    if (focused) await focusAt(editor, 2000);
+    scroller.scrollTop = 300;
+    scroller.dispatchEvent(new Event("scroll"));
+    const box = scroller.getBoundingClientRect();
+    const position = editor.view.posAtCoords({
+      left: box.left + box.width / 2,
+      top: box.top + 25,
+    })!;
+    const before = editor.view.coordsAtPos(position.pos).top - box.top;
+    if (focused) await focusAt(editor, position.pos);
+    if (focus === "selection") {
+      editor.commands.setTextSelection({ from: position.pos, to: position.pos + 20 });
+    }
+    document.dispatchEvent(new Event("selectionchange"));
+    const selection = editor.state.selection.toJSON();
+    for (const width of [420, 700]) {
+      // The panel toggle shortcut reaches the focused editor before the width changes.
+      if (focused) {
+        scroller.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "b", ctrlKey: true, altKey: true, bubbles: true }),
+        );
+      }
+      scroller.style.width = `${width}px`;
+      await vi.waitFor(() => {
+        const after =
+          editor.view.coordsAtPos(position.pos).top - scroller.getBoundingClientRect().top;
+        expect(Math.abs(after - before)).toBeLessThan(25);
+      });
+      expect(editor.state.selection.toJSON()).toEqual(selection);
+      expect(editor.view.hasFocus()).toBe(focused);
+    }
+  },
+);
 
 it("does not outline the line under a click made with the node-select modifier held", async () => {
   await using screen = await mountEditor("ship it");
@@ -1092,7 +1307,10 @@ describe("composer context undo lifetime", () => {
       const retained = composer.retained();
       expect(retained.files.get(fileContextReference(file).contextId)?.file).toBe(file.file);
 
+      const editorBeforeSwitch = composer.editor();
       await composer.show("b");
+      // Thread switches swap the draft into the same editor rather than rebuilding it.
+      expect(composer.editor()).toBe(editorBeforeSwitch);
       expect(retained.files.size).toBe(0);
       await composer.undo();
       expect(serializeEditorDoc(composer.editor().state.doc).value).toBe(destinationValue);
