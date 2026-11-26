@@ -101,6 +101,8 @@ function DashboardProjectIcon({
   const src = dashboardIconUrl(icon, useRenderedAppearance());
   return (
     <ProjectFaviconImage
+      // A new pick resets a failed load; a theme switch keeps the shown logo until the other loads.
+      key={`${icon.file}:${icon.darkFile ?? ""}`}
       src={src}
       className={className}
       fallbackIcon={FolderCodeIcon}
