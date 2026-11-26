@@ -219,6 +219,10 @@ it.live(
             assert.isTrue(yield* fileSystem.exists(path.join(apiWorktree, "README.md")));
           }
         }),
-      { organization: "Greendale", limits: { maxRuntimeMode: "approval-required" } },
+      {
+        schemaVersion: 1,
+        organization: "Greendale",
+        limits: { maxRuntimeMode: "approval-required" },
+      },
     ),
 );

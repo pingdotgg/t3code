@@ -363,20 +363,24 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
           Effect.gen(function* () {
             const opened = yield* openMediaFile(file.realPath).pipe(Effect.option);
             if (Option.isNone(opened) || opened.value === null) return Option.none<Uint8Array>();
-            const limit = Math.min(Number(opened.value.info.size), MAX_IMAGE_BYTES + 1);
-            return yield* Effect.tryPromise(async () => {
-              const buffer = Buffer.alloc(limit);
-              let filled = 0;
-              while (filled < buffer.length) {
-                const { bytesRead } = await opened.value.handle.read(
-                  buffer,
-                  filled,
-                  buffer.length - filled,
-                );
-                if (bytesRead === 0) break;
-                filled += bytesRead;
-              }
-              return buffer.subarray(0, filled);
+            const media = opened.value;
+            const limit = Math.min(Number(media.info.size), MAX_IMAGE_BYTES + 1);
+            return yield* Effect.tryPromise({
+              try: async () => {
+                const buffer = Buffer.alloc(limit);
+                let filled = 0;
+                while (filled < buffer.length) {
+                  const { bytesRead } = await media.handle.read(
+                    buffer,
+                    filled,
+                    buffer.length - filled,
+                  );
+                  if (bytesRead === 0) break;
+                  filled += bytesRead;
+                }
+                return buffer.subarray(0, filled);
+              },
+              catch: (cause) => new HtmlRenderFileError({ path: file.path, cause }),
             }).pipe(Effect.option);
           }),
         );

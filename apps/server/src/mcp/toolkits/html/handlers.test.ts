@@ -5,7 +5,6 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
@@ -99,7 +98,7 @@ it.effect.each([
                 PreviewBrowser.PreviewBrowser,
                 PreviewBrowser.PreviewBrowser.of({
                   executable: Effect.die("unused"),
-                  installed: Effect.succeed(Option.none()),
+                  installed: Effect.succeedNone,
                 }),
               ),
             ),

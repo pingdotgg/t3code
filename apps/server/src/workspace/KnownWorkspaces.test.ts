@@ -39,7 +39,7 @@ const makeLayer = (options?: {
             ),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
-          listWorktreePaths: (cwd) => Effect.succeed(options?.gitWorktrees?.get(cwd) ?? []),
+          listWorktreePaths: (cwd) => Effect.succeed([...(options?.gitWorktrees?.get(cwd) ?? [])]),
         }),
       ),
     ),

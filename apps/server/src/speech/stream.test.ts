@@ -214,13 +214,13 @@ it.effect("releases the stream when a started client goes silent", () =>
   }),
 );
 
-const withAuthenticatedServer = (
+const withAuthenticatedServer = <E>(
   startStream: SpeechService["Service"]["startStream"],
   run: (input: {
     readonly baseWsUrl: string;
     readonly auth: EnvironmentAuth.EnvironmentAuth["Service"];
     readonly sessions: SessionStore.SessionStore["Service"];
-  }) => Effect.Effect<void, unknown, Scope.Scope>,
+  }) => Effect.Effect<void, E, Scope.Scope>,
 ) =>
   Effect.gen(function* () {
     yield* Layer.build(

@@ -316,12 +316,13 @@ export const layerThreadWorktreeRestore = Layer.effect(
           : withWorkspaceLease(path.resolve(thread.worktreePath), restore(thread, options));
         if (result !== undefined) recreated.set(thread.id, result);
       }),
-      takeRecreated: (threadId: ThreadId) =>
-        Effect.sync(() => {
-          const result = recreated.get(threadId);
-          recreated.delete(threadId);
-          return result;
-        }),
+      takeRecreated: Effect.fn("ThreadWorktreeRestore.takeRecreated")(function* (
+        threadId: ThreadId,
+      ) {
+        const result = recreated.get(threadId);
+        recreated.delete(threadId);
+        return result;
+      }),
     };
   }),
 );

@@ -220,7 +220,7 @@ it.effect("does not start anything while linked environments is off", () =>
       ),
       there.layer,
     ).pipe(Effect.flip);
-    assert.match(error.reason, /Linked environments is off/);
+    assert.match(error.message, /Linked environments is off/);
     assert.deepStrictEqual(there.calls, []);
   }),
 );
@@ -377,7 +377,7 @@ it.effect("a turn someone stopped there is stopped, and a refused link fails at 
       ),
       revoked.layer,
     ).pipe(Effect.flip);
-    assert.match(error.reason, /link revoked/);
+    assert.match(error.message, /link revoked/);
     assert.equal(revoked.calls.length, 1);
   }),
 );
