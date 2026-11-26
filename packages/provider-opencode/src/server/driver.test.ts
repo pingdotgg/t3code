@@ -41,6 +41,7 @@ import { OpenCodeDriver, isLocalOpenCodeServerUrl, openCodeUpdateFor } from "./d
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import {
   OPENCODE_2_RESPONSES,
+  OPENCODE_2_SKILL_EVENTS,
   OPENCODE_2_WORKSPACE_RESPONSES,
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
@@ -713,10 +714,13 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     let skillsRead = yield* Deferred.make<void>();
     let skillAdded = false;
     const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
-    const send = (type: string, directory: string) =>
+    const send = (event: string, directory: string) =>
       Effect.sync(() => {
-        const event = { id: `evt_${type}`, created: 1, type, location: { directory }, data: {} };
-        const frame = new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+        const data = event.replace(
+          '"directory":"/work"',
+          `"directory":${JSON.stringify(directory)}`,
+        );
+        const frame = new TextEncoder().encode(`data: ${data}\n\n`);
         for (const stream of streams) {
           try {
             stream.enqueue(frame);
@@ -781,8 +785,8 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           skillsRead = yield* Deferred.make<void>();
           const read = yield* instance.snapshotForCwd!(cwd).pipe(Effect.forkChild);
           yield* Deferred.await(skillsRead);
-          yield* send("command.updated", cwd);
-          yield* send("skill.updated", cwd);
+          yield* send(OPENCODE_2_SKILL_EVENTS.scanCommands, cwd);
+          yield* send(OPENCODE_2_SKILL_EVENTS.scanSkills, cwd);
           yield* TestClock.adjust("10 seconds");
           return (yield* Fiber.join(read)).skills.map((skill) => skill.name);
         }),
@@ -802,7 +806,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
             Effect.forkChild,
           );
           skillAdded = true;
-          yield* send("skill.updated", cwd);
+          yield* send(OPENCODE_2_SKILL_EVENTS.skillAdded, cwd);
           yield* TestClock.adjust("5 seconds");
           return Option.flatten(yield* Fiber.join(rescan));
         }),
