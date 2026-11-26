@@ -19,6 +19,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
@@ -116,7 +117,10 @@ function makeTestAdapter(input: {
     Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
   >;
   readonly failure?: ReturnType<typeof makeProviderFailure>;
+  readonly rejectedNativeThreads?: Ref.Ref<ReadonlySet<string>>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
+  readonly promptDroppedRunOrdinals?: ReadonlySet<number>;
+  readonly nativeTurnKept?: (nativeTurnId: string) => boolean;
   readonly brokenRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly cancelledRunOrdinals?: ReadonlySet<number>;
@@ -198,6 +202,12 @@ function makeTestAdapter(input: {
           ...(input.canReuseContextUsage === undefined
             ? {}
             : { canReuseContextUsage: input.canReuseContextUsage }),
+          ...(input.nativeTurnKept === undefined
+            ? {}
+            : {
+                nativeTurnKept: ({ nativeTurnId }) =>
+                  Effect.succeed(input.nativeTurnKept!(nativeTurnId)),
+              }),
           ...(input.backgroundWork === undefined
             ? {}
             : {
@@ -366,13 +376,27 @@ function makeTestAdapter(input: {
                 yield* Deferred.await(input.releaseFirstTurn);
               }
               const eventTime = yield* DateTime.now;
-              const terminalStatus = input.failedRunOrdinals?.has(turnInput.runOrdinal)
-                ? "failed"
-                : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
-                  ? "interrupted"
-                  : input.cancelledRunOrdinals?.has(turnInput.runOrdinal)
-                    ? "cancelled"
-                    : "completed";
+              const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId ?? "";
+              if (
+                input.rejectedNativeThreads &&
+                input.failedRunOrdinals?.has(turnInput.runOrdinal)
+              ) {
+                yield* Ref.update(
+                  input.rejectedNativeThreads,
+                  (ids) => new Set([...ids, nativeThreadId]),
+                );
+              }
+              const rejectedHistory =
+                input.rejectedNativeThreads !== undefined &&
+                (yield* Ref.get(input.rejectedNativeThreads)).has(nativeThreadId);
+              const terminalStatus =
+                input.failedRunOrdinals?.has(turnInput.runOrdinal) || rejectedHistory
+                  ? "failed"
+                  : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
+                    ? "interrupted"
+                    : input.cancelledRunOrdinals?.has(turnInput.runOrdinal)
+                      ? "cancelled"
+                      : "completed";
               const response =
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
@@ -395,6 +419,9 @@ function makeTestAdapter(input: {
                     status: terminalStatus,
                     startedAt: eventTime,
                     completedAt: eventTime,
+                    ...(input.promptDroppedRunOrdinals?.has(turnInput.runOrdinal)
+                      ? { promptDropped: true as const }
+                      : {}),
                   },
                 },
                 {
@@ -421,7 +448,7 @@ function makeTestAdapter(input: {
                     messageId: MessageId.make(
                       `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
                     ),
-                    text: response,
+                    text: rejectedHistory ? "" : response,
                     streaming: false,
                   },
                 },
@@ -447,6 +474,9 @@ function makeTestAdapter(input: {
                   threadDisposition: input.brokenRunOrdinals?.has(turnInput.runOrdinal)
                     ? "broken"
                     : "reusable",
+                  ...(input.promptDroppedRunOrdinals?.has(turnInput.runOrdinal)
+                    ? { promptDropped: true as const }
+                    : {}),
                 },
               ];
               const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
@@ -1638,6 +1668,220 @@ describe("orchestration v2 provider switching", () => {
     importedNativeSessionScenario("resume-fails"),
   );
 
+  it.live.each([
+    "live",
+    "legacy",
+    "raw-error",
+    "other-error",
+    "repaired-native",
+    "background",
+  ] as const)("recovers invalid encrypted Codex history on the next prompt: %s", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("codex-rejected-history");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const generation = yield* Ref.make(0);
+        const rejectedNativeThreads = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const pendingBackgroundWork = yield* Ref.make(false);
+        const code =
+          scenario === "raw-error"
+            ? "other"
+            : scenario === "other-error"
+              ? "serverOverloaded"
+              : "invalid_encrypted_content";
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            capturedTurns,
+            injectedHistory,
+            nativeThreadGeneration: generation,
+            rejectedNativeThreads,
+            pendingBackgroundWork,
+            subagentOnlyBackgroundWork: true,
+            failedRunOrdinals: new Set([2]),
+            failure: makeProviderFailure({
+              code,
+              message:
+                scenario === "raw-error"
+                  ? JSON.stringify({
+                      error: {
+                        code: "invalid_encrypted_content",
+                        message: "Encrypted content could not be verified",
+                      },
+                    })
+                  : "Encrypted content could not be verified",
+              class: "provider_error",
+            }),
+            responseByRunOrdinal: { 1: "BASELINE_OK", 3: "RECOVERY_OK", 4: "FOLLOWUP_OK" },
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const dispatch = Effect.fn("rejectedHistory.dispatch")(function* (
+            ordinal: number,
+            text: string,
+          ) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`rejected:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`rejected:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(threadId);
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("rejected:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Rejected Codex history",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal(
+            (yield* dispatch(1, "Reply BASELINE_OK; remember the constraint")).runs.at(-1)?.status,
+            "completed",
+          );
+          const failed = yield* dispatch(2, "Continue using encrypted history");
+          assert.equal(failed.runs.at(-1)?.status, "failed");
+          assert.isTrue(
+            failed.turnItems.some((item) => item.type === "error" && item.failure.code === code),
+          );
+          if (scenario === "legacy") {
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("rejected:detach"),
+              threadId,
+              providerSessionId: failed.providerThreads[0]!.providerSessionId!,
+            });
+            yield* worker.drain();
+          }
+          if (scenario === "legacy") {
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: failed.attempts.map(
+                ({ nativeThreadId: _nativeThreadId, ...attempt }, index) => ({
+                  id: EventId.make(`rejected:legacy:${index}`),
+                  type: "run-attempt.updated" as const,
+                  threadId,
+                  occurredAt: failed.thread.createdAt,
+                  payload: attempt,
+                }),
+              ),
+            });
+          }
+          if (scenario === "repaired-native") {
+            const providerThread = failed.providerThreads[0]!;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("rejected:repaired-native"),
+                  type: "provider-thread.updated",
+                  threadId,
+                  occurredAt: failed.thread.createdAt,
+                  payload: {
+                    ...providerThread,
+                    nativeThreadRef: {
+                      ...providerThread.nativeThreadRef!,
+                      nativeId: "already-repaired",
+                    },
+                  },
+                },
+              ],
+            });
+          }
+          if (scenario === "background") yield* Ref.set(pendingBackgroundWork, true);
+          const recovered = yield* dispatch(3, "huh");
+          if (scenario === "repaired-native") {
+            assert.equal(recovered.runs.at(-1)?.status, "completed");
+            assert.equal(yield* Ref.get(generation), 1);
+            assert.lengthOf(recovered.contextHandoffs, 0);
+            return;
+          }
+          if (scenario === "other-error" || scenario === "background") {
+            assert.equal(recovered.runs.at(-1)?.status, "failed");
+            assert.equal(yield* Ref.get(generation), 1);
+            assert.lengthOf(yield* Ref.get(capturedTurns), scenario === "background" ? 2 : 3);
+            if (scenario === "background") {
+              yield* Ref.set(pendingBackgroundWork, false);
+              assert.equal(
+                (yield* dispatch(4, "Continue after the worker finished")).runs.at(-1)?.status,
+                "completed",
+              );
+              assert.equal(yield* Ref.get(generation), 2);
+            }
+            return;
+          }
+          assert.equal(recovered.runs.at(-1)?.status, "completed");
+          assert.equal(yield* Ref.get(generation), 2);
+          const turns = yield* Ref.get(capturedTurns);
+          assert.lengthOf(turns, 3);
+          assert.equal(turns[2]!.text, "huh");
+          assert.notEqual(turns[2]!.nativeThreadId, turns[1]!.nativeThreadId);
+          assert.equal(turns[2]!.providerThreadId, turns[1]!.providerThreadId);
+          const history = yield* encodeJson(yield* Ref.get(injectedHistory));
+          assert.include(history, "remember the constraint");
+          assert.include(history, "BASELINE_OK");
+          assert.notInclude(history, '"encrypted_content"');
+          assert.notInclude(history, "huh");
+          assert.isTrue(
+            recovered.turnItems.some(
+              (item) => item.type === "assistant_message" && item.text === "RECOVERY_OK",
+            ),
+          );
+          const next = yield* dispatch(4, "ok");
+          assert.equal(next.runs.at(-1)?.status, "completed");
+          assert.equal(yield* Ref.get(generation), 2);
+          assert.equal(
+            (yield* Ref.get(capturedTurns))[3]!.nativeThreadId,
+            turns[2]!.nativeThreadId,
+          );
+          assert.equal(yield* encodeJson(yield* Ref.get(injectedHistory)), history);
+          assert.equal(next.contextHandoffs.length, recovered.contextHandoffs.length);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "codex-rejected-history",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["native", "legacy"] as const)(
     "starts a replacement native thread as new after the resume fallback with %s attempts",
     (attempts) =>
@@ -2558,6 +2802,17 @@ describe("orchestration v2 provider switching", () => {
         detail: "Claude provider query ended before the turn could start.",
       }),
     ],
+    // ACP rejects a model it cannot select before sending the prompt.
+    [
+      "an ACP start that rejected the model",
+      new ProviderAdapter.ProviderAdapterTurnStartError({
+        driver: GROK_DRIVER,
+        threadId,
+        providerThreadId: ProviderThreadId.make("provider-thread:acp-refused-start"),
+        runId: RunId.make("run:acp-refused-start"),
+        refusedBeforePrompt: true,
+      }),
+    ],
     // Injected history is text only, so a refusal after injection must not settle the image.
     [
       "background work after native history injection",
@@ -2961,7 +3216,7 @@ describe("orchestration v2 provider switching", () => {
 
         // The handoff itself is not a failure: the run completes once the session closes.
         const runSettled = yield* awaitEvent(
-          (event) => event.type === "run.updated" && event.payload.status === "waiting",
+          (event) => event.type === "run.updated" && event.payload.status === "completed",
         );
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
@@ -2994,6 +3249,124 @@ describe("orchestration v2 provider switching", () => {
         Effect.provide(ProviderReplayHarness.layerWithRegistry({ name: key }, layerRegistry)),
       );
     }),
+  );
+
+  it.live.each([
+    { name: "a slash command", text: "/implement do X", verbatim: true },
+    { name: "a message opening with a path", text: "/usr/lib/foo is broken", verbatim: false },
+  ] as const)(
+    "a switched ACP provider gets $name with the handoff where the command allows it",
+    ({ text: firstMessage, verbatim }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace(`slash-command-handoff-${verbatim}`);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const originalPrompt = "Keep the release marker violet and preserve the existing API.";
+          const codexResponse = "I checked the API and found the release configuration.";
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: { 1: codexResponse },
+              capturedTurns,
+            }),
+            makeTestAdapter({
+              instanceId: GROK_MODEL_SELECTION.instanceId,
+              driver: GROK_DRIVER,
+              capabilities: AcpProviderCapabilitiesV2,
+              modelSelection: GROK_MODEL_SELECTION,
+              responseByRunOrdinal: { 2: "Implemented.", 3: "Continued." },
+              capturedTurns,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const waitForRun = (ordinal: number) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.threadId === threadId &&
+                    event.payload.ordinal === ordinal &&
+                    event.payload.status === "completed",
+                ),
+                Stream.runHead,
+                Effect.andThen(worker.drain()),
+              );
+            const dispatch = (key: string, text: string, modelSelection: ModelSelection) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:slash-handoff:${key}`),
+                threadId,
+                messageId: MessageId.make(`message:slash-handoff:${key}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("command:slash-handoff:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Slash command provider handoff",
+              modelSelection: CODEX_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* dispatch("source", originalPrompt, CODEX_MODEL_SELECTION);
+            yield* waitForRun(1);
+            yield* dispatch("slash", firstMessage, GROK_MODEL_SELECTION);
+            yield* waitForRun(2);
+            const slashTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
+            assert.equal(slashTurn.driver, GROK_DRIVER);
+            if (!verbatim) {
+              assert.include(slashTurn.text, originalPrompt);
+              assert.include(slashTurn.text, `User message:\n${firstMessage}`);
+              return;
+            }
+            assert.equal(
+              slashTurn.text,
+              firstMessage,
+              "ACP only expands a native slash command when the prompt starts with it",
+            );
+
+            yield* dispatch("next", "Continue", GROK_MODEL_SELECTION);
+            yield* waitForRun(3);
+            const next = (yield* Ref.get(capturedTurns)).at(-1)!;
+            assert.include(next.text, originalPrompt);
+            assert.include(next.text, codexResponse);
+            assert.include(next.text, "User message:\nContinue");
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "slash-command-handoff",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
   );
 
   it.live("checks the queued provider's capability while the current provider stays running", () =>
@@ -4195,7 +4568,10 @@ describe("orchestration v2 provider switching", () => {
         }
 
         yield* worker.drain();
-        const afterFirst = yield* waitForIdle(handoffThreadId);
+        yield* waitForIdle(handoffThreadId);
+        // The run completes before its checkpoint capture; let the capture finish first.
+        yield* worker.drain();
+        const afterFirst = yield* orchestrator.getThreadProjection(handoffThreadId);
         const firstSession = afterFirst.providerSessions.find(
           (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
         );
@@ -6170,5 +6546,386 @@ describe("orchestration v2 provider switching", () => {
           ),
         );
       }),
+  );
+
+  it.effect.each([
+    "same-provider-retry",
+    "cancelled-dropped",
+    "cancelled-by-restart",
+    "switch-away-and-return",
+    "persisted-failure",
+  ] as const)("handles an inline context handoff after a failed returning turn (%s)", (variant) =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace(`dropped-handoff-${variant}`);
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      // A restart cancels the turn with no adapter left to report the drop.
+      const cutByRestart = variant === "cancelled-by-restart";
+      const dropped = variant !== "persisted-failure" && !cutByRestart;
+      const cancelled = variant === "cancelled-dropped" || cutByRestart;
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: {
+            1: "Morning Codex summary.",
+            3: "",
+            4: "Recovered Codex answer.",
+            5: "Recovered Codex after round-trip.",
+          },
+          capturedTurns,
+          ...(cancelled
+            ? { cancelledRunOrdinals: new Set([3]) }
+            : { failedRunOrdinals: new Set([3]) }),
+          ...(dropped ? { promptDroppedRunOrdinals: new Set([3]) } : {}),
+          ...(cutByRestart
+            ? { nativeTurnKept: (nativeTurnId: string) => !nativeTurnId.endsWith(":3") }
+            : {}),
+        }),
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {
+            2: "Afternoon Claude shipped b63 live draft.",
+            4: "Extra Claude turn after dropped handoff.",
+          },
+          capturedTurns,
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make(`thread:dropped-handoff:${variant}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`command:dropped-handoff:${variant}:create`),
+          threadId: testThreadId,
+          projectId,
+          title: `Dropped handoff ${variant}`,
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string, modelSelection: ModelSelection) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:dropped-handoff:${variant}:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:dropped-handoff:${variant}:${step}`),
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        // Run 1: establish native session on Codex.
+        yield* send("Morning task", CODEX_MODEL_SELECTION);
+        // Run 2: switch to Claude and do real work.
+        yield* send("Build live draft b63", CLAUDE_MODEL_SELECTION);
+        // Run 3: switch back to Codex (delta handoff covering run 2); fails.
+        const afterRun3 = yield* send("Resume after failure", CODEX_MODEL_SELECTION);
+        const run3 = afterRun3.runs.find((run) => run.ordinal === 3)!;
+        assert.equal(run3.status, cancelled ? "cancelled" : "failed");
+        const run3Handoff = afterRun3.contextHandoffs.find(
+          (handoff) => handoff.targetRunId === run3.id,
+        );
+        assert.isDefined(run3Handoff);
+        assert.deepEqual(run3Handoff?.coveredRunOrdinals, { from: 2, to: 2 });
+
+        if (dropped) {
+          assert.isUndefined(
+            run3Handoff?.delivery,
+            "dropping the failed prompt must clear inline handoff delivery",
+          );
+          const run3Turn = afterRun3.providerTurns.find(
+            (turn) => turn.runAttemptId === run3.activeAttemptId,
+          );
+          assert.equal(run3Turn?.promptDropped, true);
+        } else {
+          assert.equal(run3Handoff?.delivery?.status, "inline");
+        }
+
+        if (variant === "same-provider-retry" || variant === "cancelled-dropped" || cutByRestart) {
+          // Run 4: stay on Codex; must re-deliver run 2's handoff.
+          const afterRun4 = yield* send("Resume", CODEX_MODEL_SELECTION);
+          const turns = yield* Ref.get(capturedTurns);
+          const run4Turn = turns.at(-1)!;
+          assert.include(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
+          assert.include(run4Turn.text, "Resume after failure");
+          assert.include(run4Turn.text, "User message:\nResume");
+          const updatedHandoff = afterRun4.contextHandoffs.find(
+            (handoff) => handoff.id === run3Handoff!.id,
+          );
+          assert.equal(updatedHandoff?.delivery?.status, "inline");
+          const run3Turn = afterRun4.providerTurns.find(
+            (turn) => turn.runAttemptId === run3.activeAttemptId,
+          );
+          assert.equal(run3Turn?.promptDropped, true);
+        } else if (variant === "switch-away-and-return") {
+          // Run 4: bounce back to Claude, then Run 5: return to Codex.
+          yield* send("Continue on Claude", CLAUDE_MODEL_SELECTION);
+          const afterRun5 = yield* send("Back to Codex", CODEX_MODEL_SELECTION);
+          const run5 = afterRun5.runs.find((run) => run.ordinal === 5)!;
+          const run5Handoff = afterRun5.contextHandoffs.find(
+            (handoff) => handoff.targetRunId === run5.id,
+          );
+          assert.isDefined(run5Handoff);
+          assert.deepEqual(run5Handoff?.coveredRunOrdinals, { from: 2, to: 4 });
+          const run5Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.include(run5Turn.text, "Afternoon Claude shipped b63 live draft.");
+          assert.include(run5Turn.text, "Extra Claude turn after dropped handoff.");
+        } else {
+          // Control: run 3 persisted its prompt before failing, so run 4 must not re-send run 2.
+          yield* send("Resume", CODEX_MODEL_SELECTION);
+          const run4Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.notInclude(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
+        }
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: `dropped-handoff-${variant}`,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("resends a stopped request the provider dropped once its session closed", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("stopped-request-dropped");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: { 1: "hello", 2: "", 3: "Answer." },
+          capturedTurns,
+          interruptedRunOrdinals: new Set([2]),
+          // Stopped before its first checkpoint: the provider never kept run 2.
+          nativeTurnKept: (nativeTurnId) => !nativeTurnId.endsWith(":2"),
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make("thread:stopped-request-dropped");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:stopped-request-dropped:create"),
+          threadId: testThreadId,
+          projectId,
+          title: "Stopped request dropped",
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:stopped-request-dropped:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:stopped-request-dropped:${step}`),
+              text,
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        yield* send("Say hello");
+        const afterStop = yield* send("List every prime number below 300");
+        const stopped = afterStop.runs.find((run) => run.ordinal === 2)!;
+        assert.equal(stopped.status, "interrupted");
+
+        const afterNext = yield* send("Did I ask you anything about math?");
+        const nextTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
+        assert.include(nextTurn.text, "List every prime number below 300");
+        const stoppedTurn = afterNext.providerTurns.find(
+          (turn) => turn.runAttemptId === stopped.activeAttemptId,
+        );
+        assert.equal(stoppedTurn?.promptDropped, true);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "stopped-request-dropped",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("restores a handoff that a turn cut by a restart carried from an earlier run", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("carried-handoff-cut-by-restart");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const refuseStarts = yield* Ref.make(0);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: { 1: "Morning Codex summary.", 4: "", 5: "Recovered." },
+          capturedTurns,
+          refuseStarts,
+          // A restart cancels run 4 before the provider keeps its request.
+          cancelledRunOrdinals: new Set([4]),
+          nativeTurnKept: (nativeTurnId) => !nativeTurnId.endsWith(":4"),
+        }),
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: { 2: "Afternoon Claude shipped b63 live draft." },
+          capturedTurns,
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make("thread:carried-handoff-cut-by-restart");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:carried-handoff-cut:create"),
+          threadId: testThreadId,
+          projectId,
+          title: "Carried handoff cut by restart",
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string, modelSelection: ModelSelection) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:carried-handoff-cut:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:carried-handoff-cut:${step}`),
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        yield* send("Morning task", CODEX_MODEL_SELECTION);
+        yield* send("Build live draft b63", CLAUDE_MODEL_SELECTION);
+        // Codex refuses run 3 before its prompt, so run 4 carries the handoff made for run 3.
+        yield* Ref.set(refuseStarts, 1);
+        const afterRun3 = yield* send("Resume after failure", CODEX_MODEL_SELECTION);
+        const run3 = afterRun3.runs.find((run) => run.ordinal === 3)!;
+        assert.equal(run3.status, "failed");
+        const afterRun4 = yield* send("Carry the draft forward", CODEX_MODEL_SELECTION);
+        const run4 = afterRun4.runs.find((run) => run.ordinal === 4)!;
+        assert.equal(run4.status, "cancelled");
+        const carried = afterRun4.contextHandoffs.find(
+          (handoff) => handoff.targetRunId === run3.id,
+        );
+        assert.equal(carried?.delivery?.status, "inline");
+        assert.include(
+          (yield* Ref.get(capturedTurns)).at(-1)!.text,
+          "Afternoon Claude shipped b63 live draft.",
+        );
+
+        const afterRun5 = yield* send("Resume", CODEX_MODEL_SELECTION);
+        const run5Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+        assert.include(run5Turn.text, "Afternoon Claude shipped b63 live draft.");
+        assert.include(run5Turn.text, "Carry the draft forward");
+        const run4Turn = afterRun5.providerTurns.find(
+          (turn) => turn.runAttemptId === run4.activeAttemptId,
+        );
+        assert.equal(run4Turn?.promptDropped, true);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "carried-handoff-cut-by-restart",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
   );
 });

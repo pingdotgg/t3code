@@ -32,6 +32,19 @@ function parseCloneUrl(url: string): {
   return null;
 }
 
+/**
+ * Drops what an HTTP(S) remote can carry as a login: userinfo and the query. SSH URLs keep
+ * their user, which is part of the address.
+ */
+export function withoutRemoteUrlCredentials(url: string): string {
+  if (!/^https?:\/\//i.test(url)) return url;
+  return url.replace(/^(https?:\/\/)[^/?#]*@/i, "$1").replace(/\?[^#]*/, "");
+}
+
+export function isScpLikeCloneUrl(url: string): boolean {
+  return SCP_LIKE_URL.test(url);
+}
+
 export function cloneUrlProtocol(url: string): CloneProtocol | null {
   return parseCloneUrl(url)?.protocol ?? null;
 }
@@ -67,7 +80,7 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
     if (protocol === "ssh") return `git@${host}:${decodeURIComponent(parsed.path)}`;
     const path = parsed.scp
       ? parsed.path.split("/").map(encodeURIComponent).join("/")
-      : parsed.path;
+      : parsed.path.replaceAll("#", "%23").replaceAll("?", "%3F");
     return `https://${host}/${path}`;
   } catch {
     return null;
@@ -86,7 +99,7 @@ export function cloneUrlRepositoryPath(url: string): string | null {
   if (isWindowsDrivePath(url.trim())) return null;
   const parsed = parseCloneUrl(url);
   if (!parsed) return null;
-  let repositoryPath = parsed.path.split(/[?#]/)[0]!;
+  let repositoryPath = parsed.path.split(parsed.scp ? "?" : /[?#]/, 1)[0]!;
   try {
     if (!parsed.scp) repositoryPath = decodeURIComponent(repositoryPath);
   } catch {

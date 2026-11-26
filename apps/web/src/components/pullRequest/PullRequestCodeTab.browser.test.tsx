@@ -15,7 +15,7 @@ import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { setAppearanceMode } from "../../hooks/useTheme";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const diffAtoms = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string, addition = "after()") =>
     [
@@ -59,6 +59,9 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+    onlyTestFilesDiffAtom: Atom.make(
+      AsyncResult.success({ ...firstPage, patch: filePatch("a.test.ts") }),
+    ),
     testFileDiffAtom: Atom.make(() =>
       AsyncResult.success({
         patch:
@@ -73,11 +76,13 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     pagedDiffAtom,
   };
 });
+const { diffAtom, onlyTestFilesDiffAtom, testFileDiffAtom, pagedDiffAtom } = diffAtoms;
 
 const mocks = vi.hoisted(() => ({
   paged: false,
   shortPages: false,
   withTestFile: false,
+  onlyTestFiles: false,
   refreshed: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
@@ -128,12 +133,15 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
         if (mocks.paged) return pagedDiffAtom(mocks.shortPages)(input.cursor ?? "first");
+        if (mocks.onlyTestFiles) return onlyTestFilesDiffAtom;
         return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
     },
   };
 });
 
+import { WorkerPoolManager } from "@pierre/diffs/worker";
+import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
 import { render, stubGlobal } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
@@ -195,6 +203,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.paged = paged;
   mocks.shortPages = false;
   mocks.withTestFile = false;
+  mocks.onlyTestFiles = false;
   mocks.refreshed = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
@@ -235,6 +244,19 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+it("can show test files again from the narrow Code tab empty state", async () => {
+  setup({ paged: false });
+  mocks.onlyTestFiles = true;
+  const container = document.createElement("div");
+  container.className = "h-[700px] w-[429px]";
+  await using screen = await render(tab(0), { container });
+  await screen.getByRole("button", { name: "Hide test files", exact: true }).click();
+
+  await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Show test files", exact: true }).click();
+  await expect.element(screen.getByText("a.test.ts", { exact: true }).first()).toBeVisible();
 });
 
 it("restores saved Viewed folds, follows cleared marks, and allows explicit expansion", async () => {
@@ -394,6 +416,53 @@ it("keeps a linked test file expanded when a refresh changes the rest of the dif
   await expect.element(testLine).toBeVisible();
 });
 
+// regression: #42199 an agent's push re-keyed every file and dropped the comment being typed
+it("keeps an unfinished inline comment when a background refresh changes another file", async () => {
+  setup({ paged: false });
+  mocks.withTestFile = true;
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const reviewable = {
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, inlineComment: true },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+  };
+  const reviewTab = (backgroundRefreshToken: number) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={reviewable}
+      detail={reviewable}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      backgroundRefreshToken={backgroundRefreshToken}
+    />
+  );
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(reviewTab(0), { container });
+  const header = screen.getByText("early-0.ts", { exact: true }).first();
+  await expect.element(header).toBeVisible();
+  const root = header.element().getRootNode() as ShadowRoot;
+  await userEvent.click(root.querySelector<HTMLElement>('[data-column-number="1"]')!);
+  const input = () => screen.getByRole("textbox", { name: "Comment on lines early-0.ts:1" });
+  await input().fill("Unsent review note");
+
+  mocks.refreshed = true;
+  await screen.rerender(reviewTab(1));
+
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  await expect.element(input()).toHaveValue("Unsent review note");
+});
+
 // Two short pages of a source and a test file each; the next page loads only through the file tree.
 async function renderShortPages(stack: AsyncDisposableStack) {
   setup({ paged: true });
@@ -415,7 +484,7 @@ async function renderShortPages(stack: AsyncDisposableStack) {
     ),
   );
   const container = document.createElement("div");
-  container.className = "flex h-[1000px] w-[900px]";
+  container.className = "h-[1000px] w-[900px]";
   const screen = stack.use(await render(tab(0), { container }));
   const loadNextPage = async () => {
     await screen.getByRole("button", { name: "Show file tree", exact: true }).click();
@@ -677,4 +746,66 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
   setAppearanceMode("light");
 
   await expect.element(reply()).toHaveValue("Unsent");
+});
+
+it("hands panel focus from the loading diff to the diff once the diff workers start", async () => {
+  setup({ paged: false });
+  let start = () => {};
+  const started = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  using isInitialized = vi
+    .spyOn(WorkerPoolManager.prototype, "isInitialized")
+    .mockReturnValue(false);
+  using initialize = vi.spyOn(WorkerPoolManager.prototype, "initialize").mockReturnValue(started);
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  // A conversation off the diff puts a panel where the loading body was, which could reuse its node.
+  const withOrphan: PullRequestDetailView = {
+    ...detail,
+    reviewThreads: [
+      {
+        id: "thread",
+        path: "gone.ts",
+        line: 1,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          {
+            id: "comment",
+            author: { login: "reviewer", name: null, avatarUrl: null },
+            body: "Rename this.",
+            createdAt: "2026-09-01T00:00:00Z",
+            url: null,
+          },
+        ],
+      },
+    ],
+  };
+  await using screen = await render(
+    <div {...workspaceAreaProps("panel", 4, "Workspace panel")} className="flex flex-1">
+      <PullRequestCodeTab
+        scrollerRef={() => {}}
+        environmentId={EnvironmentId.make("environment")}
+        reference={detail}
+        detail={withOrphan}
+        selectedCommitOid={null}
+        onSelectedCommitChange={() => {}}
+        onRefresh={() => {}}
+      />
+    </div>,
+    { container },
+  );
+  const focus = createWorkspaceFocusController(document);
+  using _focus = { [Symbol.dispose]: focus.dispose };
+  await expect.element(screen.getByText("Loading pull request diff...")).toBeVisible();
+  expect(focus.focus("panel")).toBe(true);
+
+  isInitialized.mockRestore();
+  initialize.mockRestore();
+  start();
+  await vi.waitFor(() =>
+    expect(document.activeElement).toBe(container.querySelector(".diff-render-surface")),
+  );
 });

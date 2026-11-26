@@ -163,6 +163,10 @@ interface FakePi {
   readonly emit: (record: PiRpcRecord, chunkBytes?: number) => Effect.Effect<void>;
   readonly takeRequest: (type: string) => Effect.Effect<PiRpcRecord>;
   readonly queueEntries: (data: unknown) => void;
+  readonly setSessionEntries: (
+    entries: ReadonlyArray<ReturnType<typeof sessionMessage>>,
+    forkFile: string,
+  ) => void;
   readonly queueMessages: (data: unknown) => void;
   readonly vetoNextSwitch: () => void;
   readonly failNextFork: () => void;
@@ -225,10 +229,14 @@ const recordedIdleState = (sessionFile: string) => ({
 const PI_COMPACTING_PROMPT_ERROR =
   "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.";
 
-const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
+const makeFakePiWithResponses = Effect.fnUntraced(function* (
+  override?: (request: PiRpcRecord, response: PiRpcRecord) => Effect.Effect<PiRpcRecord>,
+) {
   const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const requests = yield* Queue.unbounded<PiRpcRecord>();
   const entriesQueue: Array<unknown> = [];
+  let sessionEntries: ReadonlyArray<ReturnType<typeof sessionMessage>> | undefined;
+  let forkFile: string | undefined;
   const messagesQueue: Array<unknown> = [];
   const stateQueue: Array<Record<string, unknown>> = [];
   const statsQueue: Array<unknown> = [];
@@ -351,7 +359,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         return { ...base, data: { cancelled } };
       }
       case "get_entries":
-        return { ...base, data: entriesQueue.shift() ?? { entries: [], leafId: null } };
+        return {
+          ...base,
+          data: entriesQueue.shift() ?? {
+            entries: sessionEntries ?? [],
+            leafId: sessionEntries?.at(-1)?.id ?? null,
+          },
+        };
       case "get_messages":
         return { ...base, data: messagesQueue.shift() ?? { messages: [] } };
       case "get_session_stats":
@@ -360,6 +374,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         if (failFork) {
           failFork = false;
           return { ...base, success: false, error: "Invalid entry ID for forking" };
+        }
+        if (sessionEntries !== undefined && forkFile !== undefined) {
+          const index = sessionEntries.findIndex((entry) => entry.id === record["entryId"]);
+          if (index === -1)
+            return { ...base, success: false, error: "Invalid entry ID for forking" };
+          sessionEntries = sessionEntries.slice(0, index);
+          sessionFile = forkFile;
         }
         serviceTier = null;
         return { ...base, data: { text: "Hello pi", cancelled: false } };
@@ -406,7 +427,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
           continue;
         }
         const response = respondTo(record);
-        if (response !== null) yield* emit(response);
+        if (response !== null)
+          yield* emit(override === undefined ? response : yield* override(record, response));
       }
     });
 
@@ -468,6 +490,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     emit,
     takeRequest,
     queueEntries: (data) => entriesQueue.push(data),
+    setSessionEntries: (entries, file) => {
+      sessionEntries = entries;
+      forkFile = file;
+    },
     queueMessages: (data) => messagesQueue.push(data),
     deferNextState: (started) => {
       deferState = true;
@@ -523,6 +549,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     lastSpawn: () => lastSpawn,
   } satisfies FakePi;
 });
+
+const makeFakePi: Effect.Effect<FakePi> = makeFakePiWithResponses();
 
 const makeAdapter = Effect.fnUntraced(function* (
   fake: FakePi,
@@ -2078,6 +2106,42 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("ends the session as stopped when Pi exits while no turn is running", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const adapter = yield* makeAdapter(fake, "");
+      const runtime = yield* adapter.openSession({
+        threadId: THREAD_ID,
+        providerSessionId: SESSION_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const statuses: Array<{ status: string; lastError: string | null | undefined }> = [];
+      const drained = yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type === "provider_session.updated")
+              statuses.push({
+                status: event.providerSession.status,
+                lastError: event.providerSession.lastError,
+              });
+          }),
+        ),
+        Effect.exit,
+        Effect.forkScoped,
+      );
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.closeStdout;
+      const exit = yield* Fiber.join(drained);
+      assert.isTrue(Exit.isSuccess(exit));
+      assert.deepEqual(statuses.at(-1), { status: "stopped", lastError: null });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("counts a running Pi for port discovery until its session closes", () =>
     Effect.gen(function* () {
       const host = yield* ProviderHost.ProviderHost;
@@ -2541,6 +2605,31 @@ describe("PiAdapterV2", () => {
         yield* startTurn(runtime, providerThread, "default").pipe(Effect.flip);
         assert.isFalse(fake.allRequests().some((request) => request.type === "prompt"));
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reports resuming while Pi switches to the thread's session", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
+      yield* runtime.resumeThread({ providerThread });
+      yield* fake.takeRequest("switch_session");
+      const phases: Array<string | null> = [];
+      for (let index = 0; index < 2; index += 1) {
+        const event = yield* takeEvent(
+          (candidate) => candidate.type === "provider_session.updated",
+        );
+        if (event.type === "provider_session.updated") {
+          phases.push(event.providerSession.startupPhase ?? null);
+        }
+      }
+      assert.deepEqual(phases, ["resume", null]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("retires an interrupted switch before accepting further requests", () =>
@@ -3412,7 +3501,7 @@ describe("PiAdapterV2", () => {
         const cases = [
           {
             toolName: "read",
-            args: { path: "/workspace/screens/shot.png" },
+            args: { path: "@/workspace/screens/shot.png" },
             result: { content, structuredContent: { ...image, note } },
             expected: { content },
           },
@@ -3864,11 +3953,89 @@ describe("PiAdapterV2", () => {
         statuses: ["running", "running"],
         pending: [true],
       });
+      // The run dies with the Pi process, so an idle release must wait for it.
+      const otherThread = { ...providerThread, id: ProviderThreadId.make("other-provider-thread") };
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(
+        yield* runtime.hasPendingBackgroundWorkForThread!(providerThread, {
+          includeSubagents: true,
+        }),
+      );
+      assert.isFalse(
+        yield* runtime.hasPendingBackgroundWorkForThread!(otherThread, { includeSubagents: true }),
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      // pi-subagents can mark the run settled one snapshot before the member that ran last.
+      yield* emitSnapshot("failed", "running", "failed");
       yield* emitSnapshot("failed", "complete", "failed");
       assert.deepEqual(yield* collect("marker-2"), {
         statuses: ["completed", "failed"],
         pending: [false],
       });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(
+        yield* runtime.hasPendingBackgroundWorkForThread!(providerThread, {
+          includeSubagents: true,
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reports that a Pi workflow continues after its coordinator fails", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        method: "setWidget",
+        widgetKey: "subagent-async",
+        widgetLines: [
+          `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+            kind: "pi-subagents.async-status-snapshot",
+            version: 1,
+            runs: [
+              {
+                id: "wf-1",
+                kind: "workflow",
+                state: "running",
+                children: [{ id: "alpha", kind: "step", agent: "scout", state: "running" }],
+              },
+            ],
+          })}`,
+        ],
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_wf",
+        toolName: "subagent",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Async workflow started: wf-1" }],
+          details: { mode: "workflow", runId: "wf-1", asyncId: "wf-1", results: [] },
+        },
+      });
+      const running = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(running.type === "subagent.updated" && running.subagent.status === "running");
+
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage: "Rate limited" },
+      });
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(
+        terminal.type === "turn.terminal" &&
+          terminal.status === "failed" &&
+          terminal.childTurnsContinue === true,
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -4157,6 +4324,62 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("reports cached input as a share of input in live and completed token usage", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.queueState({
+        sessionFile: FAKE_SESSION_FILE,
+        model: { provider: "anthropic", id: "large", contextWindow: 1_000_000 },
+      });
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      // Pi's message usage counts uncached input, cache reads and cache writes separately.
+      const usage = { input: 6, cacheRead: 40_101, cacheWrite: 10_561, output: 123 };
+      // Session stats total every message in the session, not this turn.
+      fake.queueStats({
+        tokens: {
+          input: 1_206,
+          cacheRead: 90_202,
+          cacheWrite: 60_622,
+          output: 250,
+          total: 152_280,
+        },
+        contextUsage: { tokens: 50_791, contextWindow: 1_000_000 },
+      });
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        usage: { ...usage, totalTokens: 50_791 },
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "ok" },
+      });
+      const live = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined,
+      );
+      assert.deepInclude(
+        live.type === "provider_turn.updated" ? live.providerTurn.tokenUsage : undefined,
+        { inputTokens: 50_668, cachedInputTokens: 40_101 },
+      );
+      yield* fake.emit({ type: "agent_settled" });
+      const completed = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepInclude(
+        completed.type === "provider_turn.updated" ? completed.providerTurn.tokenUsage : undefined,
+        { inputTokens: 50_668, cachedInputTokens: 40_101 },
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each(["turn window", "full tree"] as const)(
     "finishes a turn whose %s has a parentId cycle",
     (cycleIn) =>
@@ -4339,6 +4562,192 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    "captured handoff",
+    "command-only handoff",
+    "legacy uncaptured boundary",
+    "adopted prompt",
+    "retry after creating a recovery fork",
+    "label before the discarded prompt",
+    "conflicting prior fork",
+    "captured boundary on a sibling branch",
+    "dangling checkpoint parent",
+    "different branch attached after recovery",
+  ] as const)("restores a legacy checkpoint after a %s", (scenario) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const original = `${dir}/z-original.jsonl`;
+      const switched = `${dir}/current.jsonl`;
+      const priorFork = `${dir}/fork.jsonl`;
+      const retained = TURN_ONE_ENTRIES;
+      const labelled = scenario === "label before the discarded prompt";
+      const retry = labelled || scenario === "retry after creating a recovery fork";
+      const conflicting = scenario === "conflicting prior fork";
+      const sibling = scenario === "captured boundary on a sibling branch";
+      const changedBranch = scenario === "different branch attached after recovery";
+      const handoff = sessionMessage(
+        "u3",
+        sibling || scenario === "dangling checkpoint parent" ? "a1b" : null,
+        "user",
+        180,
+      );
+      type Entry = { readonly id: string; readonly parentId: string | null; readonly type: string };
+      const sessions = new Map<string, ReadonlyArray<Entry>>();
+      const write = (file: string, entries: ReadonlyArray<Entry>) =>
+        fs
+          .writeFileString(
+            file,
+            [{ type: "session", version: 3 }, ...entries]
+              .map((entry) => encodeJsonLine(entry))
+              .join("\n") + "\n",
+          )
+          .pipe(Effect.tap(() => Effect.sync(() => sessions.set(file, entries))));
+      const extra = sessionMessage("other", "a1b", "assistant", 45);
+      const discarded = sessionMessage("discarded", labelled ? "label" : "a1b", "user", 160);
+      const label = { type: "label", id: "label", parentId: "a1b", targetId: "a1", label: "keep" };
+      yield* write(
+        original,
+        changedBranch
+          ? [...retained, extra, discarded]
+          : retry
+            ? [...retained, ...(labelled ? [label] : []), discarded]
+            : retained,
+      );
+      yield* write(
+        switched,
+        sibling
+          ? [...retained, handoff, sessionMessage("sibling", null, "assistant", 28)]
+          : scenario === "dangling checkpoint parent"
+            ? [...retained.slice(1), handoff]
+            : [handoff],
+      );
+      if (conflicting) yield* write(priorFork, [...retained, extra]);
+
+      let liveFile = switched;
+      const fake = yield* makeFakePiWithResponses((request, response) =>
+        Effect.gen(function* () {
+          const entries = sessions.get(liveFile) ?? [];
+          switch (request.type) {
+            case "get_state":
+              return { ...response, data: recordedIdleState(liveFile) };
+            case "get_entries":
+              return {
+                ...response,
+                data: {
+                  entries,
+                  leafId:
+                    changedBranch && liveFile === original ? "other" : (entries.at(-1)?.id ?? null),
+                },
+              };
+            case "switch_session": {
+              const file = request.sessionPath;
+              if (typeof file !== "string" || !sessions.has(file))
+                throw new Error("Pi switch requested an unknown fixture session");
+              liveFile = file;
+              return response;
+            }
+            case "fork": {
+              let parentId = entries.find(({ id }) => id === request.entryId)?.parentId;
+              assert.isDefined(parentId);
+              const path: Array<Entry> = [];
+              while (parentId !== null) {
+                const entry = entries.find(({ id }) => id === parentId);
+                assert.isDefined(entry);
+                path.unshift(entry);
+                parentId = entry.parentId;
+              }
+              // Like Pi, drop labels from the path and re-add them with new ids at the leaf.
+              const branch: Array<Entry> = [];
+              for (const entry of path.filter(({ type }) => type !== "label"))
+                branch.push({ ...entry, parentId: branch.at(-1)?.id ?? null });
+              for (const entry of path.filter(({ type }) => type === "label"))
+                branch.push({
+                  ...entry,
+                  id: `${entry.id}-copy`,
+                  parentId: branch.at(-1)?.id ?? null,
+                });
+              yield* write(priorFork, branch).pipe(Effect.orDie);
+              liveFile = priorFork;
+              return response;
+            }
+            default:
+              return response;
+          }
+        }),
+      );
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const [first, next] = uncapturedTurns(providerThread.id);
+      assert.isDefined(first);
+      assert.isDefined(next);
+      const target = { ...first, startedAt: at(scenario === "adopted prompt" ? 20 : 0) };
+      const boundary: OrchestrationV2ProviderTurn = {
+        ...next,
+        nativeTurnRef:
+          scenario === "command-only handoff"
+            ? null
+            : scenario === "legacy uncaptured boundary"
+              ? next.nativeTurnRef
+              : { driver: PI_PROVIDER, strength: "strong", nativeId: "u3" },
+        ...(scenario === "legacy uncaptured boundary"
+          ? {}
+          : {
+              nativeThreadRef: { driver: PI_PROVIDER, strength: "strong", nativeId: switched },
+            }),
+      };
+      const rewind = runtime.rollbackThread({
+        providerThread: { ...providerThread, createdAt: at(0) },
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("legacy-checkpoint"),
+          appRunOrdinal: target.ordinal,
+          providerTurn: target,
+        },
+        providerThreadTurns: [target, boundary],
+      });
+      const requests = () =>
+        fake.allRequests().flatMap((request) => {
+          if (request.type === "switch_session")
+            return [{ type: request.type, value: request.sessionPath }];
+          if (request.type === "fork") return [{ type: request.type, value: request.entryId }];
+          return [];
+        });
+      if (conflicting || changedBranch) {
+        assert.equal((yield* rewind.pipe(Effect.result))._tag, "Failure");
+        assert.deepEqual(
+          requests(),
+          changedBranch ? [{ type: "switch_session", value: original }] : [],
+        );
+        return;
+      }
+      const expected = retry || sibling ? priorFork : original;
+      const assertRestored = ({ providerThread: restored }: Effect.Success<typeof rewind>) => {
+        assert.equal(restored.nativeThreadRef?.nativeId, expected);
+        assert.equal(restored.nativeConversationHeadRef?.nativeId, labelled ? "label-copy" : "a1b");
+        assert.equal(liveFile, expected);
+        assert.deepEqual(
+          sessions.get(liveFile)?.filter(({ type }) => type !== "label"),
+          retained,
+        );
+      };
+      const expectedRequests = [
+        ...(sibling ? [] : [{ type: "switch_session", value: original }]),
+        ...(retry || sibling ? [{ type: "fork", value: sibling ? "u3" : "discarded" }] : []),
+      ];
+      assertRestored(yield* rewind);
+      assert.deepEqual(requests(), expectedRequests);
+      if (retry) {
+        assertRestored(yield* rewind);
+        assert.deepEqual(requests(), expectedRequests);
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("rolls back past a turn whose start entry was never captured", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -4436,6 +4845,126 @@ describe("PiAdapterV2", () => {
       fake.queueEntries(entries);
       yield* rollBackToStart(100);
       assert.deepEqual(forkedEntries(), ["u2", "u2"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      checkpoint: "strong",
+      ordinal: 2,
+      handoff: "command",
+      returnedPrompt: false,
+      discarded: true,
+    },
+    { checkpoint: "strong", ordinal: 2, handoff: "prompt", returnedPrompt: true, discarded: true },
+    {
+      checkpoint: "command",
+      ordinal: 2,
+      handoff: "prompt",
+      returnedPrompt: false,
+      discarded: false,
+    },
+    { checkpoint: "weak", ordinal: 2, handoff: "prompt", returnedPrompt: false, discarded: false },
+    {
+      checkpoint: "command",
+      ordinal: 1,
+      handoff: "prompt",
+      returnedPrompt: false,
+      discarded: false,
+    },
+    { checkpoint: "weak", ordinal: 1, handoff: "prompt", returnedPrompt: true, discarded: true },
+  ] as const)("restores the Pi checkpoint after a session round trip %j", (scenario) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const ref = (nativeId: string, strength: "strong" | "weak" = "strong") => ({
+        driver: PI_PROVIDER,
+        nativeId,
+        strength,
+      });
+      const sessionFile = providerThread.nativeThreadRef!.nativeId!;
+      const forkFile = "/fake/rewound.jsonl";
+      const turn = (
+        ordinal: number,
+        nativeTurnRef: OrchestrationV2ProviderTurn["nativeTurnRef"],
+        file = sessionFile,
+      ): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef,
+        nativeThreadRef: ref(file),
+        ordinal,
+        status: "completed",
+        startedAt: at(ordinal * 50 - 50),
+        completedAt: at(ordinal * 50),
+      });
+      const target = turn(
+        scenario.ordinal,
+        scenario.checkpoint === "strong"
+          ? ref("u2")
+          : scenario.checkpoint === "weak"
+            ? ref("uncaptured", "weak")
+            : null,
+      );
+      const retained =
+        scenario.ordinal === 1 || scenario.checkpoint === "command"
+          ? TURN_ONE_ENTRIES
+          : [
+              ...TURN_ONE_ENTRIES,
+              sessionMessage("u2", "a1b", "user", 60),
+              sessionMessage("a2", "u2", "assistant", 80),
+            ];
+      const retainedHead = retained.at(-1)!.id;
+      const entries = [
+        ...retained,
+        ...(scenario.discarded
+          ? [
+              sessionMessage("discarded", retainedHead, "user", 110),
+              sessionMessage("discarded-answer", "discarded", "assistant", 120),
+            ]
+          : []),
+        ...(scenario.returnedPrompt ? [sessionMessage("u5", "discarded-answer", "user", 210)] : []),
+      ];
+      fake.setSessionEntries(entries, forkFile);
+      const restored = yield* runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-1"),
+          appRunOrdinal: target.ordinal,
+          providerTurn: target,
+        },
+        providerThreadTurns: [
+          ...(target.ordinal === 2 ? [turn(1, ref("u1"))] : []),
+          target,
+          turn(
+            target.ordinal + 1,
+            scenario.handoff === "prompt" ? ref("away") : null,
+            "/fake/other.jsonl",
+          ),
+          turn(target.ordinal + 2, null, "/fake/clone.jsonl"),
+          turn(target.ordinal + 3, null),
+          ...(scenario.returnedPrompt ? [turn(target.ordinal + 4, ref("u5"))] : []),
+        ],
+      });
+      const requests = fake.allRequests();
+      assert.isFalse(requests.some((request) => request.type === "switch_session"));
+      assert.deepEqual(
+        requests.filter((request) => request.type === "fork").map((request) => request.entryId),
+        scenario.discarded ? ["discarded"] : [],
+      );
+      assert.equal(
+        restored.providerThread.nativeThreadRef?.nativeId,
+        scenario.discarded ? forkFile : sessionFile,
+      );
+      assert.equal(restored.providerThread.nativeConversationHeadRef?.nativeId, retainedHead);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -5298,7 +5827,7 @@ describe("PiAdapterV2", () => {
       });
       // The extension reads a bare number sent as the select's value as that option.
       yield* answerWithCustomText("ui-ask", "2");
-      yield* answerWithCustomText("ui-ask-parallel", "5");
+      yield* answerWithCustomText("ui-ask-parallel", "3. Type something.");
       // Parallel dialogs can arrive before the follow-up input, including a multi-select of the
       // same question, which the extension asks as an input with a non-empty placeholder.
       const multiSelectTitle = `How many replicas?\n\n${lines.join("\n")}\n\nEnter the numbers of all that apply.`;
@@ -5329,7 +5858,7 @@ describe("PiAdapterV2", () => {
       assert.equal((yield* takeWaitingRequest()).title, "Anything else?");
       for (const [id, value] of [
         ["ui-custom", "2"],
-        ["ui-custom-parallel", "5"],
+        ["ui-custom-parallel", "3. Type something."],
       ]) {
         yield* fake.emit({
           type: "extension_ui_request",
@@ -5338,6 +5867,14 @@ describe("PiAdapterV2", () => {
           title: followUpTitle,
           placeholder: "",
         });
+        const nextTitle = `Next question after ${id}?`;
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: `next-${id}`,
+          method: "input",
+          title: nextTitle,
+        });
+        assert.equal((yield* takeWaitingRequest()).questions[0]?.id, `next-${id}`);
         const inputResponse = yield* fake.takeRequest("extension_ui_response");
         assert.deepEqual({ id: inputResponse["id"], value: inputResponse["value"] }, { id, value });
       }
@@ -6300,6 +6837,45 @@ describe("PiAdapterV2", () => {
         status: "completed",
         text: "",
       });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("does not show an empty text block that outlives the stream flush", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const text = (event: Record<string, unknown>) =>
+        fake.emit({ type: "message_update", assistantMessageEvent: event });
+      // Gemini sends an empty text part on tool-use steps; it stays open past one flush.
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* text({ type: "text_start", contentIndex: 0 });
+      yield* text({ type: "text_delta", contentIndex: 0, delta: "" });
+      yield* fake.emit({ type: "tool_execution_start", toolCallId: "read-call", toolName: "read" });
+      yield* takeEvent((event) => event.type === "turn_item.updated");
+      yield* TestClock.adjust(Duration.millis(120));
+      yield* text({ type: "text_end", contentIndex: 0, content: "" });
+      yield* fake.emit({ type: "message_end", message: { role: "assistant" } });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* text({ type: "text_end", contentIndex: 0, content: "Answer" });
+      yield* fake.emit({ type: "message_end", message: { role: "assistant" } });
+      yield* fake.emit({ type: "agent_settled" });
+      const texts: Array<string> = [];
+      while (true) {
+        const event = yield* takeEvent(
+          (event) => event.type === "message.updated" || event.type === "turn.terminal",
+        );
+        if (event.type !== "message.updated") break;
+        texts.push(event.message.text);
+      }
+      assert.deepEqual(texts, ["Answer"]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

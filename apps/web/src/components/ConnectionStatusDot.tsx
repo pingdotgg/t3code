@@ -1,7 +1,7 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 
 import { cn } from "~/lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 export function connectionPhaseDotClassName(phase: EnvironmentConnectionPhase): string {
   switch (phase) {
@@ -64,12 +64,5 @@ export function ConnectionStatusDot({
     </button>
   );
 
-  return (
-    <Tooltip>
-      <TooltipTrigger render={dot} />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {tooltipText}
-      </TooltipPopup>
-    </Tooltip>
-  );
+  return <SharedTooltipTrigger render={dot} label={tooltipText} className="whitespace-pre-wrap" />;
 }

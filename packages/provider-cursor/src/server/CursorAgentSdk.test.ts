@@ -60,7 +60,7 @@ const cursorSdkMock = vi.hoisted(() => {
       };
     },
   );
-  const create = vi.fn(async () => ({
+  const create = vi.fn(async (_options?: unknown) => ({
     agentId: "agent-cursor-agent-sdk-test",
     send,
     close: agentClose,
@@ -87,6 +87,8 @@ const cursorSdkMock = vi.hoisted(() => {
     );
   });
 
+  const sqliteOpen = vi.fn<() => Promise<unknown>>(async () => undefined);
+
   return {
     agentClose,
     cancelRun,
@@ -99,6 +101,7 @@ const cursorSdkMock = vi.hoisted(() => {
     runSteer,
     runWait,
     send,
+    sqliteOpen,
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
     },
@@ -121,7 +124,7 @@ vi.mock("./sdk.ts", () => ({
     },
     createAgentPlatform: vi.fn(),
   }),
-  loadCursorSqlite: () => ({ SqliteLocalAgentStore: { open: vi.fn() } }),
+  loadCursorSqlite: () => ({ SqliteLocalAgentStore: { open: cursorSdkMock.sqliteOpen } }),
 }));
 
 const layerTest = CursorAgentSdk.layer.pipe(
@@ -352,52 +355,37 @@ describe("CursorAgentSdkRunner", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("forwards the agent's own shell stream output as shell-output-delta", () =>
+  it.effect("reports the SDK's startup phases only to the send that is starting", () =>
     Effect.gen(function* () {
-      const publish = (conversationId: string, data: string) =>
-        (Reflect.get(globalThis, Symbol.for("@cursor/sdk.shellStreamOutput")) as Function)({
-          conversationId,
-          toolCallId: "tool-shell",
-          event: { case: "stdout", value: { data } },
-        });
-      cursorSdkMock.runWait.mockImplementationOnce(async () => {
-        publish("agent-cursor-agent-sdk-test", "tick 1\n");
-        publish("agent-someone-else", "not ours\n");
-        return {
-          id: "run-cursor-agent-sdk-test",
-          requestId: "request-cursor-agent-sdk-test",
-          status: "finished",
-          result: "ok",
-          model: { id: "default" },
-          durationMs: 1,
-        };
+      const publish = (phase: string) =>
+        (Reflect.get(globalThis, Symbol.for("@cursor/sdk.startupPhase")) as Function)(phase);
+      const startSend = cursorSdkMock.send.getMockImplementation()!;
+      cursorSdkMock.send.mockImplementationOnce(async (message, options) => {
+        await Promise.resolve();
+        publish("plugins");
+        return startSend(message, options);
       });
-      const updates: Array<unknown> = [];
+      const phases: Array<string> = [];
+      const reported = yield* Deferred.make<void>();
       const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
         operation: "create",
         options: {},
-        threadId: ThreadId.make("thread-cursor-agent-sdk-shell"),
-        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-shell"),
+        threadId: ThreadId.make("thread-cursor-agent-sdk-phase"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-phase"),
       });
       const run = yield* session.send({
-        message: "run it",
-        onDelta: (update) => Effect.sync(() => updates.push(update)),
+        message: "start",
+        onStartupPhase: (phase) =>
+          Effect.sync(() => phases.push(phase)).pipe(
+            Effect.andThen(Deferred.succeed(reported, undefined)),
+          ),
       });
+      yield* Deferred.await(reported);
+      publish("mcp");
       yield* run.wait;
-      publish("agent-cursor-agent-sdk-test", "after the run\n");
 
-      assert.deepStrictEqual(
-        updates.filter(
-          (update) => (update as { readonly type: string }).type === "shell-output-delta",
-        ),
-        [
-          {
-            type: "shell-output-delta",
-            event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "tool-shell" },
-          },
-        ],
-      );
+      assert.deepStrictEqual(phases, ["plugins"]);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -508,5 +496,77 @@ describe("CursorAgentSdkRunner", () => {
       const plain = yield* session.send({ message: "plain" });
       assert.equal(yield* plain.steer!("later"), "revert_to_followup");
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "ref-counts one disposable SqliteLocalAgentStore with run-event persistence disabled per workspace",
+    () =>
+      Effect.gen(function* () {
+        const dispose = vi.fn(async () => {});
+        const fakeStore = {
+          persistRunEvents: true,
+          agents: { get: vi.fn() },
+          runs: { list: vi.fn() },
+          checkpoints: { save: vi.fn() },
+          runEvents: { append: vi.fn(), list: vi.fn(), delete: vi.fn() },
+          retainAgent: vi.fn(),
+          dispose,
+        };
+        cursorSdkMock.sqliteOpen.mockClear();
+        cursorSdkMock.sqliteOpen.mockResolvedValueOnce(fakeStore);
+        cursorSdkMock.create.mockClear();
+
+        const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+        const session = yield* runner.open({
+          operation: "create",
+          options: { local: { cwd: "/workspace/cursor-store-test" } },
+          threadId: ThreadId.make("thread-cursor-agent-sdk-store"),
+          providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-store"),
+        });
+        const peer = yield* runner.open({
+          operation: "create",
+          options: { local: { cwd: "/workspace/cursor-store-test" } },
+          threadId: ThreadId.make("thread-cursor-agent-sdk-store-peer"),
+          providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-store-peer"),
+        });
+
+        assert.deepStrictEqual(cursorSdkMock.sqliteOpen.mock.calls, [
+          [{ workspaceRef: "/workspace/cursor-store-test" }],
+        ]);
+        const passedOptions = cursorSdkMock.create.mock.calls[0]?.[0] as
+          | { readonly local?: { readonly store?: { readonly persistRunEvents?: boolean } } }
+          | undefined;
+        const peerOptions = cursorSdkMock.create.mock.calls[1]?.[0] as typeof passedOptions;
+        const passedStore = passedOptions?.local?.store;
+        assert.strictEqual(passedStore, fakeStore);
+        assert.strictEqual(peerOptions?.local?.store, passedStore);
+        assert.strictEqual(passedStore?.persistRunEvents, false);
+        assert.equal(dispose.mock.calls.length, 0);
+
+        // Closing one session keeps the shared workspace store alive; repeated close does not double-release.
+        yield* session.close;
+        yield* session.close;
+        assert.equal(dispose.mock.calls.length, 0);
+
+        yield* peer.close;
+        assert.equal(dispose.mock.calls.length, 1);
+
+        // Failed open disposes the newly opened store instead of leaking SQLite FDs.
+        const failingDispose = vi.fn(async () => {});
+        cursorSdkMock.sqliteOpen.mockResolvedValueOnce({ ...fakeStore, dispose: failingDispose });
+        cursorSdkMock.create.mockRejectedValueOnce(new Error("boom"));
+        const failed = yield* runner
+          .open({
+            operation: "create",
+            options: { local: { cwd: "/workspace/cursor-store-fail" } },
+            threadId: ThreadId.make("thread-cursor-agent-sdk-store-fail"),
+            providerSessionId: ProviderSessionId.make(
+              "provider-session-cursor-agent-sdk-store-fail",
+            ),
+          })
+          .pipe(Effect.exit);
+        assert(Exit.isFailure(failed));
+        assert.equal(failingDispose.mock.calls.length, 1);
+      }).pipe(Effect.provide(layerTest)),
   );
 });

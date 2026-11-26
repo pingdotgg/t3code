@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   serializeCodeBlockToMarkdown,
   serializeRenderedMarkdownFragment,
+  serializeTableElementToCsv,
+  serializeTableElementToHtml,
   serializeTableElementToMarkdown,
 } from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
@@ -10,19 +12,27 @@ import {
   collectAssistantCitations,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
-import { markdownMathRanges, parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import type { Element as HastElement, ElementContent, Root } from "hast";
 
-import { unified } from "unified";
-import remarkParse from "remark-parse";
-import {
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-} from "@t3tools/shared/markdownPipeline";
+import { markdownTree } from "./markdown/wordsHast";
 
-const userMarkdown = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
+// Copied Markdown read back as the chat reads it, to check it says what was copied.
+const elementsOf = (node: Root | HastElement) =>
+  (node.children as ElementContent[]).filter(
+    (child): child is HastElement => child.type === "element",
+  );
+const textOf = (node: ElementContent): string =>
+  node.type === "text"
+    ? node.value
+    : node.type === "element"
+      ? node.children.map(textOf).join("")
+      : "";
+const readBack = (markdown: string, options?: Parameters<typeof markdownTree>[1]) =>
+  elementsOf(markdownTree(markdown, options))[0]!;
+// A user message's reading: a single `~` stays text.
+const readUserBack = (markdown: string) => readBack(markdown, { singleTilde: false });
+const inline = (node: ElementContent) =>
+  node.type === "element" ? [node.tagName, textOf(node)] : [node.type, textOf(node)];
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -222,10 +232,10 @@ describe("serializeRenderedMarkdownFragment", () => {
         new FakeText(" here."),
       ),
     );
-    const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
-    expect(paragraph.children.find((child) => child.type === "inlineCode")?.value).toBe(value);
+    const paragraph = readBack(serializeRenderedMarkdownFragment(asNode(container)));
+    const code = elementsOf(paragraph).find((child) => child.tagName === "code");
+    expect(paragraph.tagName).toBe("p");
+    expect(code && textOf(code)).toBe(value);
   });
 
   it.each([
@@ -237,28 +247,24 @@ describe("serializeRenderedMarkdownFragment", () => {
     String.raw`before\ after\	end`,
   ])("copies prose that parses back unchanged: %s", (value) => {
     const container = new FakeElement("DIV").append(new FakeText(value));
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    expect(paragraph).toMatchObject({ type: "paragraph", children: [{ type: "text", value }] });
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(paragraph.tagName).toBe("p");
+    expect(paragraph.children.map(inline)).toEqual([["text", value]]);
   });
 
   it.each([
-    ["*", "EM", "word", "emphasis"],
-    ["\\", "CODE", "value", "inlineCode"],
-  ])("keeps a text edge %j beside %s", (edge, tag, value, type) => {
+    ["*", "EM", "word"],
+    ["\\", "CODE", "value"],
+  ])("keeps a text edge %j beside %s", (edge, tag, value) => {
     const container = new FakeElement("DIV").append(
       new FakeText(edge),
       new FakeElement(tag).append(new FakeText(value)),
     );
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    expect(paragraph).toMatchObject({
-      type: "paragraph",
-      children: [
-        { type: "text", value: edge },
-        type === "inlineCode" ? { type, value } : { type, children: [{ type: "text", value }] },
-      ],
-    });
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(paragraph.children.map(inline)).toEqual([
+      ["text", edge],
+      [tag.toLowerCase(), value],
+    ]);
   });
 
   it("copies email links with their address and drops in-app destinations", () => {
@@ -287,10 +293,10 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(copied).toBe(
       "Write to support@example.com, [Support](mailto:support@example.com?subject=Help), [Support](mailto:support@example.com?subject=Help\\)) or the thread.",
     );
-    const paragraph = parseMarkdownWithMath(copied).children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
     expect(
-      paragraph.children.filter((child) => child.type === "link").map((link) => link.url),
+      elementsOf(readBack(copied))
+        .filter((child) => child.tagName === "a")
+        .map((link) => link.properties.href),
     ).toEqual([
       "mailto:support@example.com",
       "mailto:support@example.com?subject=Help",
@@ -311,12 +317,14 @@ describe("serializeRenderedMarkdownFragment", () => {
   ])("keeps the link label and destination: %s", (label, href) => {
     const anchor = new FakeElement("A", [], { href }).append(new FakeText(label));
     const container = new FakeElement("DIV").append(anchor);
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
-    expect(paragraph.children).toMatchObject([
-      { type: "link", url: href, children: [{ type: "text", value: label }] },
-    ]);
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(
+      paragraph.children.map((child) =>
+        child.type === "element"
+          ? [child.tagName, decodeURI(String(child.properties.href)), textOf(child)]
+          : [child.type, textOf(child)],
+      ),
+    ).toEqual([["a", href, label]]);
   });
 
   it("copies alert and insight callouts as their Markdown instead of the rendered label", () => {
@@ -483,31 +491,25 @@ describe("copying rendered Markdown tables", () => {
     );
     const markdown = serializeTableElementToMarkdown(table as unknown as Element);
 
-    const tree = parseMarkdownWithMath(markdown);
-    const parsed = tree.children[0];
-    if (parsed?.type !== "table") throw new Error("Expected a table");
-    expect(parsed.children.map((row) => row.children.length)).toEqual([2, 2, 2, 2, 2]);
-    expect(markdownMathRanges(markdown, tree).map((formula) => formula.tex)).toEqual([
-      "|x|",
-      "\\|x\\|",
-      "|y|",
-      "|z|",
-    ]);
-    expect(parsed.children[1]?.children[1]?.children).toMatchObject([
-      { type: "text", value: "*a* | ~~b~~" },
-    ]);
-    expect(parsed.children[4]?.children[1]?.children).toMatchObject([
-      { type: "text", value: "> c | d" },
-    ]);
-    const [, , codeRow, linkRow] = parsed.children;
-    expect(codeRow?.children[1]?.children[0]).toMatchObject({
-      type: "inlineCode",
-      value: "\\(c|d\\)",
-    });
-    expect(linkRow?.children[0]?.children[0]).toMatchObject({
-      type: "link",
-      url: "https://example.com/?q=a|b",
-    });
+    const parsed = readBack(markdown, { math: true });
+    expect(parsed.tagName).toBe("table");
+    const rows = elementsOf(parsed).flatMap((section) => elementsOf(section));
+    const cells = rows.map((row) => elementsOf(row));
+    expect(cells.map((row) => row.length)).toEqual([2, 2, 2, 2, 2]);
+    const formulas: string[] = [];
+    const visit = (node: HastElement) => {
+      if (node.tagName === "svg") formulas.push(String(node.properties.ariaLabel));
+      else elementsOf(node).forEach(visit);
+    };
+    visit(parsed);
+    expect(formulas).toEqual(["|x|", "\\|x\\|", "|y|", "|z|"]);
+    expect(textOf(cells[1]![1]!)).toBe("*a* | ~~b~~");
+    expect(textOf(cells[4]![1]!).trim()).toBe("> c | d");
+    expect(inline(cells[2]![1]!.children[0]!)).toEqual(["code", "\\(c|d\\)"]);
+    const link = cells[3]![0]!.children[0]!;
+    expect(link.type === "element" && decodeURI(String(link.properties.href))).toBe(
+      "https://example.com/?q=a|b",
+    );
   });
 
   it("copies code and diagrams in cells without markers or unescaped pipes", () => {
@@ -525,5 +527,257 @@ describe("copying rendered Markdown tables", () => {
         ) as Element,
       ),
     ).toBe("| Command | Diagram |\n| --- | --- |\n| a  b | ```mermaid A -->\\|hi\\| B ``` |");
+  });
+});
+
+describe("copying a table as HTML", () => {
+  const cell = (
+    tag: "TH" | "TD",
+    text: string,
+    attributes: Record<string, string> = {},
+    style?: { textAlign: string },
+  ) => {
+    const element = new FakeElement(tag, [], attributes).append(new FakeText(text));
+    return style ? Object.assign(element, { style }) : element;
+  };
+  const row = (...cells: FakeElement[]) => new FakeElement("TR").append(...cells);
+  const html = (table: FakeElement) => serializeTableElementToHtml(table as unknown as Element);
+
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Structure only: every style attribute is reduced to its text alignment. */
+  const structure = (table: FakeElement) =>
+    html(table).replace(/ style="([^"]*)"/g, (_, style: string) => {
+      const align = /text-align:(\w+)/.exec(style)?.[1];
+      return align ? ` align="${align}"` : "";
+    });
+
+  it("escapes text and keeps column alignment from the style or the align attribute", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(cell("TH", "Name"), cell("TH", "Amount", {}, { textAlign: "right" })),
+      ),
+      new FakeElement("TBODY").append(
+        row(cell("TD", 'A & B <"Ltd">'), cell("TD", "1,200", {}, { textAlign: "right" })),
+        // An absent inline style reads as "": the align attribute still applies.
+        row(cell("TD", "  Bob\n  Smith "), cell("TD", "3", { align: "center" }, { textAlign: "" })),
+        row(cell("TD", "text", { align: "justify" }), cell("TD", "4", {}, { textAlign: "end" })),
+      ),
+    );
+
+    expect(structure(table)).toBe(
+      [
+        '<table dir="ltr">',
+        "  <thead>",
+        '    <tr><th align="left">Name</th><th align="right">Amount</th></tr>',
+        "  </thead>",
+        "  <tbody>",
+        '    <tr><td>A &amp; B &lt;&quot;Ltd&quot;&gt;</td><td align="right">1,200</td></tr>',
+        '    <tr><td>Bob Smith</td><td align="center">3</td></tr>',
+        '    <tr><td align="justify">text</td><td align="right">4</td></tr>',
+        "  </tbody>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps every header row, body header cells, footers, and merged cells", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(cell("TH", "Region", { rowspan: "2" }), cell("TH", "Sales", { colspan: "2" })),
+        row(cell("TH", "Q1"), cell("TH", "Q2", { colspan: "1" })),
+      ),
+      new FakeElement("TBODY").append(
+        row(
+          cell("TH", "EU"),
+          cell("TD", "1", { rowspan: "0" }),
+          cell("TD", "2", { rowspan: "-1" }),
+        ),
+        row(),
+      ),
+      new FakeElement("TFOOT").append(
+        row(cell("TD", "Total"), cell("TD", "3", { colspan: "2garbage" })),
+      ),
+    );
+
+    expect(structure(table)).toBe(
+      [
+        '<table dir="ltr">',
+        "  <thead>",
+        '    <tr><th align="left" rowspan="2">Region</th><th align="left" colspan="2">Sales</th></tr>',
+        '    <tr><th align="left">Q1</th><th align="left">Q2</th></tr>',
+        "  </thead>",
+        "  <tbody>",
+        // rowspan="0" runs to the end of its section; a negative span is invalid.
+        '    <tr><th align="left">EU</th><td rowspan="0">1</td><td>2</td></tr>',
+        "    <tr></tr>",
+        "  </tbody>",
+        "  <tfoot>",
+        // HTML reads a span's leading digits, as the DOM does.
+        '    <tr><td>Total</td><td colspan="2">3</td></tr>',
+        "  </tfoot>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps line breaks, block edges, nested cells, and formulas as TeX", () => {
+    const nested = new FakeElement("TABLE").append(
+      new FakeElement("TBODY").append(row(cell("TD", "a"), cell("TD", "b"))),
+    );
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("TBODY").append(
+        row(
+          new FakeElement("TD").append(
+            new FakeText("first"),
+            new FakeElement("BR"),
+            new FakeElement("STRONG").append(new FakeText("second")),
+          ),
+          new FakeElement("TD").append(
+            new FakeElement("P").append(new FakeText("one")),
+            new FakeElement("P").append(new FakeText("two")),
+          ),
+        ),
+        row(
+          new FakeElement("TD").append(nested),
+          new FakeElement("TD").append(new FakeText("area "), renderedFormula("\\pi r^2")),
+        ),
+      ),
+    );
+
+    expect(structure(table)).toBe(
+      [
+        '<table dir="ltr">',
+        "  <tbody>",
+        "    <tr><td>first<br>second</td><td>one<br>two</td></tr>",
+        "    <tr><td>a b</td><td>area \\(\\pi r^2\\)</td></tr>",
+        "  </tbody>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps every explicit break, preformatted spacing, and nonbreaking spaces", () => {
+    const br = () => new FakeElement("BR");
+    const content = (...children: Array<FakeElement | FakeText>) =>
+      structure(
+        new FakeElement("TABLE").append(
+          new FakeElement("TBODY").append(row(new FakeElement("TD").append(...children))),
+        ),
+      ).split("\n")[2];
+    const td = (html: string) => `    <tr><td>${html}</td></tr>`;
+
+    expect(content(new FakeText("a"), br(), br(), new FakeText("b"))).toBe(td("a<br><br>b"));
+    expect(content(br(), new FakeText(" lead "), br())).toBe(td("<br>lead<br>"));
+    // A break that ends a paragraph already ends the line.
+    expect(
+      content(
+        new FakeElement("P").append(new FakeText("a "), br()),
+        new FakeElement("P").append(new FakeText("b")),
+      ),
+    ).toBe(td("a<br>b"));
+    expect(
+      content(
+        new FakeText("run:"),
+        new FakeElement("DIV", ["select-none"]).append(new FakeText("madeup")),
+        new FakeElement("PRE").append(
+          new FakeElement("CODE").append(new FakeText("if x:\n\ty  =  1\n\nend\n")),
+        ),
+      ),
+    ).toBe(
+      td("run:<br>if&nbsp;x:<br>&nbsp;&nbsp;&nbsp;&nbsp;y&nbsp;&nbsp;=&nbsp;&nbsp;1<br><br>end"),
+    );
+    expect(content(new FakeText("1\u00a0000   EUR"))).toBe(td("1&nbsp;000 EUR"));
+    expect(
+      content(
+        new FakeElement("BUTTON", [], {
+          "data-markdown-copy": "[source](https://example.com)",
+        }).append(new FakeText("source")),
+      ),
+    ).toBe(td("source"));
+  });
+
+  it("keeps a right-to-left table's direction and puts headers on its start side", () => {
+    const table = new FakeElement("TABLE", [], { dir: "rtl" }).append(
+      new FakeElement("THEAD").append(
+        row(cell("TH", "Name"), cell("TH", "End", {}, { textAlign: "end" })),
+      ),
+    );
+
+    expect(structure(table)).toBe(
+      [
+        '<table dir="rtl">',
+        "  <thead>",
+        '    <tr><th align="right">Name</th><th align="left">End</th></tr>',
+        "  </thead>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("wraps rows outside any section in a body", () => {
+    const table = new FakeElement("TABLE").append(row(cell("TD", "only"), cell("TD", "cells")));
+
+    expect(structure(table)).toBe(
+      '<table dir="ltr">\n  <tbody>\n    <tr><td>only</td><td>cells</td></tr>\n  </tbody>\n</table>',
+    );
+  });
+
+  it("returns an empty string for a table without cells", () => {
+    expect(html(new FakeElement("TABLE").append(new FakeElement("TBODY").append(row())))).toBe("");
+  });
+});
+
+describe("copying a table as CSV", () => {
+  const row = (...cells: FakeElement[]) => new FakeElement("TR").append(...cells);
+  const td = (...children: Array<FakeElement | FakeText>) =>
+    new FakeElement("TD").append(...children);
+
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("separates line breaks and block edges, and leaves out hidden elements", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("Col A")),
+          new FakeElement("TH").append(new FakeText("Col B")),
+        ),
+      ),
+      new FakeElement("TBODY").append(
+        row(
+          td(new FakeText("line 1"), new FakeElement("BR"), new FakeText("line 2")),
+          td(
+            new FakeElement("P").append(new FakeText("para 1")),
+            new FakeElement("P").append(new FakeText("para 2")),
+          ),
+        ),
+        row(
+          td(
+            new FakeElement("SPAN", ["sr-only"]).append(new FakeText("hidden")),
+            new FakeText("visible"),
+          ),
+          td(
+            new FakeElement("SPAN", [], { "aria-hidden": "true" }).append(new FakeText("icon")),
+            new FakeText("a, b"),
+          ),
+        ),
+      ),
+    );
+
+    expect(serializeTableElementToCsv(table as unknown as Element)).toBe(
+      'Col A,Col B\nline 1 line 2,para 1 para 2\nvisible,"a, b"',
+    );
   });
 });

@@ -500,6 +500,7 @@ export function mergePullRequestDiffStats(
   stats: ReadonlyArray<{
     readonly environmentId: string;
     readonly projectId: string;
+    readonly repository: string;
     readonly number: number;
     readonly additions: number;
     readonly deletions: number;
@@ -519,8 +520,9 @@ export function mergePullRequestDiffStats(
 export const pullRequestDiffStatKey = (row: {
   readonly environmentId: string;
   readonly projectId: string;
+  readonly repository: string;
   readonly number: number;
-}) => `${row.environmentId} ${row.projectId} ${row.number}`;
+}) => `${row.environmentId} ${row.projectId} ${row.repository.toLowerCase()} ${row.number}`;
 
 export interface MergedPullRequestList {
   readonly viewers: PullRequestViewers;
@@ -587,6 +589,15 @@ export function mergePullRequestLists(
     nextCursors,
     truncatedEnvironments: [...truncatedEnvironments],
   };
+}
+
+/** Project errors do not count: the priority reads cover the same projects and are skipped here. */
+export function pullRequestListAnsweredEmpty(view: {
+  readonly data: MergedPullRequestList | null;
+  readonly isPending: boolean;
+  readonly error: unknown;
+}): boolean {
+  return view.data?.entries.length === 0 && !view.isPending && view.error === null;
 }
 
 export const pullRequestEnvironmentSetKey = (environmentIds: ReadonlyArray<string>): string =>

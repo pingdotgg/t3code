@@ -26,6 +26,10 @@ import { claudeCompactAfterResumeWakeInput } from "./claude_compact_after_resume
 import { assertClaudeCompactAfterResumeWakeOutput } from "./claude_compact_after_resume_wake/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
+import { claudeAutoModeInput } from "./claude_auto_mode/input.ts";
+import { assertClaudeAutoModeOutput } from "./claude_auto_mode/output.ts";
+import { claudeAutoModeUnavailableInput } from "./claude_auto_mode_unavailable/input.ts";
+import { assertClaudeAutoModeUnavailableOutput } from "./claude_auto_mode_unavailable/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
 import { claudeNestedBackgroundSubagentWakeInput } from "./claude_nested_background_subagent_wake/input.ts";
@@ -36,6 +40,7 @@ import { claudeMcpToolPresentationInput } from "./claude_mcp_tool_presentation/i
 import { assertClaudeMcpToolPresentationOutput } from "./claude_mcp_tool_presentation/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
+import { assertClaudeUsageLimitOutput } from "./usage_limit/claude_output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
 import { kiroCompactionInput } from "./kiro_compaction/input.ts";
 import { kiroForkFromTurnInput } from "./kiro_fork_from_turn/input.ts";
@@ -441,6 +446,33 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "claude_auto_mode",
+    buildInput: claudeAutoModeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL("./claude_auto_mode/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeAutoModeOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_auto_mode_unavailable",
+    buildInput: claudeAutoModeUnavailableInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_auto_mode_unavailable/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeAutoModeUnavailableOutput,
+      },
+    ],
+  },
+  {
     name: "claude_local_bash_task",
     buildInput: claudeLocalBashTaskInput,
     providers: [
@@ -510,6 +542,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./claude_idle_resume/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeIdleResumeOutput,
+      },
+    ],
+  },
+  {
+    name: "usage_limit",
+    buildInput: simpleInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL("./usage_limit/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeUsageLimitOutput,
       },
     ],
   },

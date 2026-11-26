@@ -349,7 +349,7 @@ it.effect(
             ...settings,
             thread: {
               ...expected,
-              latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
+              latestResumingMessageAt: candidate.latestResumingMessageAt,
             },
           }),
         );
@@ -365,7 +365,7 @@ it.effect(
     }).pipe(Effect.provide(layerSql)),
 );
 
-it.effect("sql: the user-authored message time ignores agent notifications", () =>
+it.effect("sql: the resuming message time counts MCP sends and ignores agent notifications", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* createThread("agent-woken");
@@ -373,7 +373,7 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
     const message = (
       id: string,
       createdBy: "user" | "agent",
-      creationSource: "web" | "provider",
+      creationSource: "web" | "mcp" | "provider",
       at: DateTime.Utc,
     ) =>
       store.apply({
@@ -397,16 +397,15 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
         },
       });
     const written = DateTime.subtract(now, { hours: 2 });
+    const sent = DateTime.subtract(now, { hours: 1 });
     yield* message("written", "user", "web", written);
+    yield* message("sent", "agent", "mcp", sent);
     yield* message("notification", "agent", "provider", now);
 
     const [candidate] = yield* store.getSettlementCandidates(threadId);
     assert.isDefined(candidate);
     assert.equal(DateTime.formatIso(candidate.latestUserMessageAt!), DateTime.formatIso(now));
-    assert.equal(
-      DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
-      DateTime.formatIso(written),
-    );
+    assert.equal(DateTime.formatIso(candidate.latestResumingMessageAt!), DateTime.formatIso(sent));
     const shellThread = (yield* store.getShellSnapshot()).threads.find(
       (thread) => thread.id === threadId,
     );
@@ -433,7 +432,7 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
     const store = yield* ProjectionStore.ProjectionStoreV2;
     yield* createThread("no-links");
     yield* createThread("empty-links", { pullRequests: [] });
-    yield* createThread("archived-link", {
+    const archived = yield* createThread("archived-link", {
       archivedAt: old,
       pullRequests: [pullRequestLink(1)],
     });
@@ -458,6 +457,12 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
     assert.deepEqual(
       (yield* store.getThreadsWithPullRequests(open)).map((thread) => thread.id),
       [open],
+    );
+    assert.deepEqual(
+      (yield* store.getThreadsWithPullRequests(undefined, { includeArchived: true })).map(
+        (thread) => thread.id,
+      ),
+      [settled, archived, open],
     );
   }).pipe(Effect.provide(layerSql)),
 );
@@ -518,5 +523,105 @@ it.effect("sql: a subagent thread becomes a candidate once its parent is done", 
       },
     });
     assert.deepEqual(new Set(yield* ids()), new Set([child, orphan]));
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: a finished subagent waits for its active parent to hold the result", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("result-parent");
+    const child = yield* createThread("result-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const ids = () =>
+      store.getSettlementCandidates().pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    assert.deepEqual(yield* ids(), [parent]);
+
+    const taskId = NodeId.make("node:result-task");
+    for (const state of ["pending", "delivered"] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:result-task:${state}`),
+        type: "subagent.updated",
+        threadId: parent,
+        nodeId: taskId,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: taskId,
+          threadId: parent,
+          runId: null,
+          parentNodeId: NodeId.make("node:result-parent"),
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId: child,
+          nativeTaskRef: null,
+          prompt: "Reply PONG",
+          title: null,
+          model: null,
+          completionDelivery: { state, observedByRunId: null },
+          status: "completed",
+          result: "PONG",
+          startedAt: old,
+          completedAt: old,
+          updatedAt: now,
+        },
+      });
+      if (state === "pending") {
+        yield* createRun(child, "completed");
+        assert.deepEqual(yield* ids(), [parent]);
+      }
+    }
+    assert.deepEqual(new Set(yield* ids()), new Set([parent, child]));
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: a provider-native subagent with no run settles once its task ends", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("native-parent");
+    const child = yield* createThread("native-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const ids = () =>
+      store.getSettlementCandidates().pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    const taskId = NodeId.make("node:native-task");
+    for (const status of ["running", "completed"] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:native-task:${status}`),
+        type: "subagent.updated",
+        threadId: parent,
+        nodeId: taskId,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: taskId,
+          threadId: parent,
+          runId: null,
+          parentNodeId: NodeId.make("node:native-parent"),
+          origin: "provider_native",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId: child,
+          nativeTaskRef: null,
+          prompt: "Explore",
+          title: null,
+          model: null,
+          status,
+          result: status === "completed" ? "Done" : null,
+          startedAt: old,
+          completedAt: status === "completed" ? old : null,
+          updatedAt: now,
+        },
+      });
+      if (status === "running") assert.deepEqual(yield* ids(), [parent]);
+    }
+    assert.deepEqual(new Set(yield* ids()), new Set([parent, child]));
   }).pipe(Effect.provide(layerSql)),
 );
