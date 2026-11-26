@@ -671,19 +671,8 @@ function* notebook(source: string): Generator<string, void> {
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
     if ("outputs" in cell && Array.isArray(cell.outputs)) {
-      let pending: string | undefined = "";
-      for (const part of cellOutputParts(cell.outputs)) {
-        if (pending !== undefined) {
-          if (!hasOutputText(part)) {
-            pending += part;
-            continue;
-          }
-          yield "\nOutput:\n";
-          yield pending;
-          pending = undefined;
-        }
-        yield part;
-      }
+      const output = [...cellOutputParts(cell.outputs)].join("");
+      if (hasOutputText(output)) yield `\nOutput:\n${output}`;
     }
     yield "\n\n";
   }
