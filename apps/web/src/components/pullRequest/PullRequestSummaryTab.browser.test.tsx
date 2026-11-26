@@ -471,3 +471,15 @@ it("opens a thread's remaining replies through the link-target setting, not a po
     },
   );
 });
+
+it("renders without a host in browsers that lack URL.canParse", async () => {
+  setup();
+  const canParse = URL.canParse;
+  Reflect.deleteProperty(URL, "canParse");
+  try {
+    await using screen = await render();
+    expect(screen.visibleText()).toContain("Original description");
+  } finally {
+    URL.canParse = canParse;
+  }
+});

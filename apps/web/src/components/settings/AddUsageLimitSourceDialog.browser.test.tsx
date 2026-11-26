@@ -45,4 +45,23 @@ describe("AddUsageLimitSourceDialog", () => {
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+  it("opens in browsers that lack URL.parse", async () => {
+    const parse = URL.parse;
+    Reflect.deleteProperty(URL, "parse");
+    try {
+      await using _screen = await render(
+        <AddUsageLimitSourceDialog
+          open
+          onOpenChange={() => {}}
+          environmentId={EnvironmentId.make("local")}
+          environmentLabel="This Mac"
+          kind="http"
+          sources={{}}
+        />,
+      );
+      await expect.element(page.getByLabelText("Endpoint URL")).toBeVisible();
+    } finally {
+      URL.parse = parse;
+    }
+  });
 });
