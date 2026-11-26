@@ -213,31 +213,15 @@ describe("watchAntigravityPromptOutcome", () => {
       );
       const streamError = "iterateResponseStream: invalid stream chunk:";
       const keepAlive = `generating and executing: ${streamError} : keep-alive`;
-      const keepAliveMessage =
-        "Antigravity's response stream ended on an invalid stream chunk (: keep-alive).";
-      for (const [payload, message] of [
-        [errorPayload(keepAlive), keepAliveMessage],
-        [
-          Buffer.concat([
-            Buffer.from([0x12, 0x67]),
-            Buffer.from(`agent executor error: ${keepAlive}\u001a\u0005extra`),
-          ]),
-          keepAliveMessage,
-        ],
-        [
-          errorPayload(`${streamError} `),
-          "Antigravity's response stream ended on an invalid stream chunk.",
-        ],
-        [
-          errorPayload(`${streamError} ${"🌊".repeat(160)}`),
-          `Antigravity's response stream ended on an invalid stream chunk (${"🌊".repeat(119)}…).`,
-        ],
+      for (const payload of [
+        errorPayload(keepAlive),
+        errorPayload(`${streamError} private customer record 12345`),
       ] as const) {
         assert.deepEqual(
           yield* turn([[ERROR_MESSAGE, payload]]),
           reusable({
             class: "provider_error",
-            message,
+            message: "Antigravity's response stream ended on an invalid stream chunk.",
             code: "INVALID_STREAM_CHUNK",
             retryable: true,
           }),
