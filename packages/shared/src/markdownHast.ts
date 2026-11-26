@@ -54,6 +54,18 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
     const image = soleImageDescendant(node);
     if (image) image.properties = { ...image.properties, dataStandalone: true };
   }
+  // A raw-HTML `<picture>` block sits directly under the root, beside the other blocks.
+  if (node.type === "root") {
+    const children = node.children ?? [];
+    children.forEach((child, index) => {
+      if (child.tagName !== "picture") return;
+      const besideText = [children[index - 1], children[index + 1]].some(
+        (sibling) => sibling?.type === "text" && sibling.value?.trim(),
+      );
+      const image = besideText ? undefined : soleImageDescendant(child);
+      if (image) image.properties = { ...image.properties, dataStandalone: true };
+    });
+  }
   node.children?.forEach((child) => {
     if (child.type === "element") markStandaloneImages(child);
   });

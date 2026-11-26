@@ -1028,7 +1028,7 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
     "img",
   ]);
   expect(images(tree).map((image) => image.properties)).toEqual([
-    { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp" },
+    { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp", dataStandalone: true },
     { src: "docs/dark.webp", dataStandalone: true },
     {
       dataLocalSrc: String.raw`C:\shots\light.png`,
@@ -1048,7 +1048,7 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
   ]);
 });
 
-it("marks a linked <picture> image standalone but not an inline one", () => {
+it("marks block and linked <picture> images standalone but not inline ones", () => {
   const processor = unified()
     .use(remarkParse)
     .use(CHAT_MARKDOWN_REMARK_PLUGINS)
@@ -1060,6 +1060,16 @@ it("marks a linked <picture> image standalone but not an inline one", () => {
   const tree = processor.runSync(
     processor.parse(
       [
+        "# Heading",
+        "",
+        "<picture>",
+        '<img src="missing.png" alt="Block">',
+        "</picture>",
+        "",
+        "<picture>",
+        '<img src="trailing.png" alt="Trailing">',
+        "</picture> text",
+        "",
         '<div align="center"><a href="https://example.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Linked"></picture></a></div>',
         "",
         'Inline <picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Badge"></picture> icon',
@@ -1068,6 +1078,8 @@ it("marks a linked <picture> image standalone but not an inline one", () => {
   ) as Node;
 
   expect(images(tree).map((image) => image.properties)).toEqual([
+    { src: "missing.png", alt: "Block", dataStandalone: true },
+    { src: "trailing.png", alt: "Trailing" },
     {
       src: "https://example.com/light.png",
       alt: "Linked",
