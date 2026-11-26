@@ -9,6 +9,7 @@ import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { isMacPlatform } from "~/lib/utils";
 import { act, render } from "../../test/render";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
@@ -161,6 +162,25 @@ it.each(["blocked", "refusedLater"] as const)(
       .toHaveAttribute("data-prompt", `See ${serializeAssistantCitation(citation)}x `);
   },
 );
+
+it("undoes the last comment change after saving the comment unchanged", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  const comment = page.getByLabelText("Comment on selected text");
+  const undo = isMacPlatform(navigator.platform) ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}";
+
+  await page.getByRole("button", { name: "Add comment to citation" }).click();
+  await expect.element(comment).toHaveFocus();
+  await userEvent.keyboard("check{Enter}");
+  await expect.element(comment).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Edit citation comment" }).click();
+  await expect.element(comment).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(comment).not.toBeInTheDocument();
+  await userEvent.keyboard(undo);
+
+  await expect.element(screen.getByRole("status")).toHaveAttribute("data-prompt", promptBefore);
+});
 
 it("cancels a new citation while dictation makes the composer read-only", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
