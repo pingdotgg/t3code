@@ -945,8 +945,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAccessibilityLabel = threadListV2RowAccessibilityLabel(
     {
       title:
-        folderRow === "two-line" && thread.branch
-          ? [thread.title, thread.branch].join(", ")
+        folderRow === "two-line"
+          ? [thread.title, props.environmentLabel, thread.branch].filter(Boolean).join(", ")
           : thread.title,
       variant,
       woke: showsWoke,
@@ -1429,6 +1429,45 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : primaryAction.swipeSnoozeHint;
 
   const titleTextInset = folderRow ? 18 : props.project ? projectIconSize + 8 : 0;
+  const pullRequestBadge = pr ? (
+    <Pressable
+      // Padding cancelled by negative margin grows the touch target into
+      // the row padding without moving the badge.
+      className="-m-2.5 flex-row items-center gap-1 p-2.5"
+      accessibilityRole="button"
+      accessibilityLabel={prBadgeLabel ?? undefined}
+      onPress={handleOpenPullRequests}
+      // Handle long-press so opening the iOS row menu cannot also open the PR on release.
+      onLongPress={() => undefined}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      <SymbolView
+        name={
+          pr.kind === "stack"
+            ? PullRequestGlyph.stack
+            : pr.state === null
+              ? PullRequestGlyph.pullRequest
+              : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
+        }
+        size={12}
+        tintColorClassName={
+          pr.state === null || pr.isDraft
+            ? rowAppearance.mutedIconTintClassName
+            : pr.state === "open"
+              ? "accent-adaptive-emerald-600-400"
+              : pr.state === "closed"
+                ? "accent-adaptive-rose-600-400"
+                : "accent-adaptive-violet-600-400"
+        }
+      />
+      <Text
+        accessibilityLabel={pr.accessibilityLabel}
+        className={cn("font-mono text-xs", pr.textClassName)}
+      >
+        {pr.label}
+      </Text>
+    </Pressable>
+  ) : null;
   const cardContent = (
     <>
       <View
@@ -1471,6 +1510,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {thread.title}
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
+          {folderRow === "single-line" ? pullRequestBadge : null}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
             <SymbolView
@@ -1573,21 +1613,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const cardMetadata = (
     <>
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {folderRow === "two-line" ? (
-          <Text
-            className={cn(
-              "min-w-0 flex-1 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : rowAppearance.tertiaryForegroundClassName,
-            )}
-            numberOfLines={1}
-            ellipsizeMode="middle"
-            style={{ fontFamily: MONO_FONT }}
-          >
-            {thread.branch}
-          </Text>
-        ) : (rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
+        {folderRow !== "two-line" &&
+        (rawStatus === "failed" || rawStatus === "limited") &&
+        thread.runtime?.lastError ? (
           <Text
             className={cn(
               "flex-1 text-xs",
@@ -1601,9 +1629,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.runtime.lastError}
           </Text>
-        ) : props.environmentLabel ? (
+        ) : (
           <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            {props.environmentMachine ? (
+            {props.environmentLabel && props.environmentMachine ? (
               <EnvironmentMachineSymbol
                 kind={props.environmentMachine}
                 size={machineIconSize}
@@ -1614,60 +1642,37 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 }
               />
             ) : null}
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {props.environmentLabel}
-            </Text>
+            {props.environmentLabel ? (
+              <Text
+                className={cn(
+                  "shrink text-xs",
+                  folderRow === "two-line" && thread.branch && "max-w-[50%]",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {props.environmentLabel}
+              </Text>
+            ) : null}
+            {folderRow === "two-line" && thread.branch ? (
+              <Text
+                className={cn(
+                  "min-w-0 flex-1 font-mono text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+                ellipsizeMode="middle"
+              >
+                {thread.branch}
+              </Text>
+            ) : null}
           </View>
-        ) : (
-          <View className="flex-1" />
         )}
-        {pr ? (
-          <Pressable
-            // Padding cancelled by negative margin grows the touch target into
-            // the row padding without moving the badge.
-            className="-m-2.5 flex-row items-center gap-1 p-2.5"
-            accessibilityRole="button"
-            accessibilityLabel={prBadgeLabel ?? undefined}
-            onPress={handleOpenPullRequests}
-            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
-            onLongPress={() => undefined}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-          >
-            <SymbolView
-              name={
-                pr.kind === "stack"
-                  ? PullRequestGlyph.stack
-                  : pr.state === null
-                    ? PullRequestGlyph.pullRequest
-                    : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
-              }
-              size={12}
-              tintColorClassName={
-                pr.state === null || pr.isDraft
-                  ? rowAppearance.mutedIconTintClassName
-                  : pr.state === "open"
-                    ? "accent-adaptive-emerald-600-400"
-                    : pr.state === "closed"
-                      ? "accent-adaptive-rose-600-400"
-                      : "accent-adaptive-violet-600-400"
-              }
-            />
-            <Text
-              accessibilityLabel={pr.accessibilityLabel}
-              className={cn("font-mono text-xs", pr.textClassName)}
-            >
-              {pr.label}
-            </Text>
-          </Pressable>
-        ) : null}
+        {pullRequestBadge}
         {providerInstance ? (
           <View className="flex-row items-center">
             {providerDrivers.slice(0, -1).map(
