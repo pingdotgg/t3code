@@ -6,10 +6,21 @@ import * as FileSystem from "effect/FileSystem";
 import { run } from "./shell.ts";
 import { runPromise, test, WEB } from "./t3.ts";
 
-test(
-  "A partial commit retry still excludes files restored from a stash",
-  WEB,
-  async ({ t3, app, browser, screen }) => {
+for (const { title, newBranch, committedFiles, remainingStatus } of [
+  {
+    title: "A partial commit retry still excludes files restored from a stash",
+    newBranch: null,
+    committedFiles: "include.txt",
+    remainingStatus: "?? later.txt",
+  },
+  {
+    title: "A different branch starts with a fresh selection after a failed commit",
+    newBranch: "other-branch",
+    committedFiles: "include.txt\nlater.txt",
+    remainingStatus: "",
+  },
+]) {
+  test(title, WEB, async ({ t3, app, browser, screen }) => {
     const project = await t3.project("demo");
     const thread = await t3.thread({ project, title: "Partial commit", messages: ["Start"] });
 
@@ -32,6 +43,7 @@ test(
     const commitItem = screen.getByRole("menuitem", "Commit", { exact: true });
     const openCommit = async () => {
       await gitMenu.tap();
+      await expect(commitItem).toBeEnabled();
       await commitItem.tap();
       await screen.getByRole("button", "Open later.txt in editor").waitFor();
     };
@@ -59,11 +71,18 @@ test(
     await gitMenu.tap();
     await expect(commitItem).toBeDisabled();
     await browser.keyboard.press("Escape");
-    await runPromise(run("git", ["stash", "pop"], { cwd: project }));
+    await runPromise(
+      Effect.gen(function* () {
+        if (newBranch) {
+          yield* run("git", ["switch", "-c", newBranch], { cwd: project });
+        }
+        yield* run("git", ["stash", "pop"], { cwd: project });
+      }),
+    );
 
     await openCommit();
     await app.screenshot("restored-files-in-commit-retry");
-    await expect(laterFile).toHaveText(/Excluded/);
+    await expect(laterFile).toHaveText(newBranch ? /later\.txt\s*\+/ : /Excluded/);
     await screen.getByRole("button", "Commit", { exact: true }).tap();
     await screen.getByText(/^Committed [0-9a-f]+$/).waitFor();
 
@@ -74,12 +93,12 @@ test(
           ["ls-tree", "--name-only", "HEAD", "--", "include.txt", "later.txt"],
           { cwd: project },
         );
-        NodeAssert.equal(committed.stdout.trim(), "include.txt");
+        NodeAssert.equal(committed.stdout.trim(), committedFiles);
         const status = yield* run("git", ["status", "--porcelain", "--", "later.txt"], {
           cwd: project,
         });
-        NodeAssert.equal(status.stdout.trim(), "?? later.txt");
+        NodeAssert.equal(status.stdout.trim(), remainingStatus);
       }),
     );
-  },
-);
+  });
+}
