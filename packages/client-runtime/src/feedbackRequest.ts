@@ -1,6 +1,10 @@
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
-import type { AgentFeedbackPreview, OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type {
+  AgentFeedbackPreview,
+  OrchestrationV2TurnItem,
+  ServerConfig,
+} from "@t3tools/contracts";
 
 export type FeedbackRequestItem = Extract<
   OrchestrationV2TurnItem,
@@ -129,6 +133,20 @@ export function feedbackConversationHint(trace: Trace, resolve: MFunctionType = 
       "Adds the text of your messages and the agent's replies in the last {textTurns, plural, one {turn} other {{textTurns} turns}}.",
       { textTurns: textSpan(trace) },
     ),
+  );
+}
+
+/** True only when the server explicitly reports that telemetry is disabled. */
+export function isServerTelemetryDisabled(
+  config: Pick<ServerConfig, "observability"> | null | undefined,
+): boolean {
+  return config?.observability.telemetryEnabled === false;
+}
+
+/** Notice shown on a pending feedback card when telemetry is off on the machine. */
+export function feedbackTelemetryDisabledNotice(resolve: MFunctionType = mFallback): string {
+  return resolve(
+    msg("Telemetry is off on this machine, so this report cannot be sent to the T3 team."),
   );
 }
 

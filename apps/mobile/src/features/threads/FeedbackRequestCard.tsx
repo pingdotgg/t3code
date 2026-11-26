@@ -7,8 +7,10 @@ import {
   feedbackRequestDisplay,
   feedbackRequestFailureMessage,
   type FeedbackRequestItem,
+  feedbackTelemetryDisabledNotice,
   feedbackTraceLines,
   feedbackTraceSummary,
+  isServerTelemetryDisabled,
 } from "@t3tools/client-runtime/feedback-request";
 import {
   isAtomCommandInterrupted,
@@ -27,6 +29,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
+import { useServerConfigs } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -83,6 +86,8 @@ function PendingFeedbackRequest(props: {
   const canAnswer = useAtomValue(
     serverEnvironment.answerFeedbackRequest.permissionAtom(props.environmentId),
   );
+  const serverConfig = useServerConfigs().get(props.environmentId);
+  const telemetryDisabled = isServerTelemetryDisabled(serverConfig);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [includeConversation, setIncludeConversation] = useState(false);
@@ -118,10 +123,18 @@ function PendingFeedbackRequest(props: {
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="gap-1">
         <Text className="font-t3-bold text-base text-foreground">
-          <T>Send this report to the T3 team?</T>
+          {telemetryDisabled ? (
+            <T>Feedback report cannot be sent</T>
+          ) : (
+            <T>Send this report to the T3 team?</T>
+          )}
         </Text>
         <Text className="font-sans text-xs text-foreground-muted">
-          <T>This is everything that leaves your machine. Nothing is sent unless you tap Send.</T>
+          {telemetryDisabled ? (
+            feedbackTelemetryDisabledNotice(m)
+          ) : (
+            <T>This is everything that leaves your machine. Nothing is sent unless you tap Send.</T>
+          )}
         </Text>
       </View>
       {props.item.conversationTrace !== undefined ? (
@@ -136,7 +149,7 @@ function PendingFeedbackRequest(props: {
           </View>
           <ThemedSwitch
             accessibilityLabel={gt("Include the conversation")}
-            disabled={submitting || !canAnswer}
+            disabled={submitting || !canAnswer || telemetryDisabled}
             onValueChange={setIncludeConversation}
             value={includeConversation}
           />
@@ -156,7 +169,7 @@ function PendingFeedbackRequest(props: {
         label={gt("Send")}
         tone="primary"
         fullWidth
-        disabled={submitting || !canAnswer}
+        disabled={submitting || !canAnswer || telemetryDisabled}
         onPress={() => void send("send")}
       />
       <Button

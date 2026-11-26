@@ -64,6 +64,7 @@ const AGENT_FEEDBACK_REQUEST_FAILURE_MESSAGES = {
   not_found: "This feedback report no longer exists.",
   already_answered: "This feedback report was already answered.",
   feedback_off: "Agent feedback is off, so this report was not sent.",
+  telemetry_off: "Telemetry is off on this machine, so this report was not sent.",
   record_failed: "Could not record your answer.",
 } as const;
 

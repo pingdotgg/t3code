@@ -326,6 +326,7 @@ const make = Effect.gen(function* () {
             return yield* settle("sent", yield* decodeTrace(stored.trace));
           }
           if (input.answer === "decline") return yield* settle("declined");
+          if (!(yield* analytics.isEnabled)) return yield* fail("telemetry_off");
 
           const trace =
             input.includeConversation === true && item.conversationTrace !== undefined

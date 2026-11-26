@@ -85,6 +85,9 @@ const TelemetryEnvConfig = Config.all({
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
+    /** Whether telemetry events are currently accepted on this machine. */
+    readonly isEnabled: Effect.Effect<boolean>;
+
     /** Whether the event was queued to send; false when telemetry is off. */
     readonly record: (
       event: string,
@@ -385,7 +388,11 @@ export const make = Effect.gen(function* () {
     flush.pipe(Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT), Effect.ignore),
   );
 
-  return AnalyticsService.of({ record, flush, recordOwners });
+  const isEnabled: AnalyticsService["Service"]["isEnabled"] = telemetryEnabled.pipe(
+    Effect.map((enabled) => enabled && Boolean(distinctId)),
+  );
+
+  return AnalyticsService.of({ isEnabled, record, flush, recordOwners });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);

@@ -16,6 +16,7 @@ import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { isServerTelemetryDisabled } from "@t3tools/client-runtime/feedback-request";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
@@ -306,6 +307,20 @@ function AgentFeedbackSection() {
         const policy = environment.serverConfig?.managedPolicy;
         const managed = isManagedSettingPath(policy, "agentFeedback");
         const mode = environment.serverConfig?.settings.agentFeedback.mode;
+        const telemetryDisabled = isServerTelemetryDisabled(environment.serverConfig);
+        const footer =
+          managed && telemetryDisabled && mode !== "off"
+            ? gt(
+                "Managed by {organization}. Telemetry is off on this machine, so reports stay local and cannot be sent to the T3 team.",
+                { organization: policy?.organization },
+              )
+            : managed
+              ? gt("Managed by {organization}.", { organization: policy?.organization })
+              : telemetryDisabled && mode !== "off"
+                ? gt(
+                    "Telemetry is off on this machine, so reports stay local and cannot be sent to the T3 team.",
+                  )
+                : undefined;
         return (
           <SettingsSection
             key={environment.environmentId}
@@ -314,9 +329,7 @@ function AgentFeedbackSection() {
                 ? gt("Beta: Agent feedback")
                 : gt("Beta: Agent feedback · {label}", { label: environment.label })
             }
-            {...(managed
-              ? { footer: gt("Managed by {organization}.", { organization: policy?.organization }) }
-              : {})}
+            {...(footer !== undefined ? { footer } : {})}
           >
             {AGENT_FEEDBACK_CHOICES.map((choice, index) => (
               <SettingsChoiceRow

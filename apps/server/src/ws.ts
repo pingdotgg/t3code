@@ -261,6 +261,7 @@ import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/Rpc
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
@@ -356,6 +357,7 @@ export const withLateConfigDiscovery = <E, R>(
   launcher: EditorDiscovery,
   remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
   directEndpoints: Pick<DirectEndpoints.DirectEndpoints["Service"], "resolve">,
+  telemetryEnabledChanges: Stream.Stream<boolean> = Stream.empty,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -388,9 +390,19 @@ export const withLateConfigDiscovery = <E, R>(
     Stream.map((endpoints) => ({ type: "directEndpointsResolved" as const, endpoints })),
   );
 
+  const lateTelemetryEnabled = telemetryEnabledChanges.pipe(
+    Stream.map((telemetryEnabled) => ({
+      type: "telemetryEnabledChanged" as const,
+      telemetryEnabled,
+    })),
+  );
+
   return Stream.merge(
     liveUpdates,
-    Stream.merge(lateEditorConfig, Stream.merge(lateRemoteOpenTargets, lateDirectEndpoints)),
+    Stream.merge(
+      lateEditorConfig,
+      Stream.merge(lateRemoteOpenTargets, Stream.merge(lateDirectEndpoints, lateTelemetryEnabled)),
+    ),
   ).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
@@ -415,6 +427,16 @@ export const withLateConfigDiscovery = <E, R>(
               return [current, []];
             }
             const next = { ...current, directEndpoints: event.endpoints };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "telemetryEnabledChanged": {
+            if (current.observability.telemetryEnabled === event.telemetryEnabled) {
+              return [current, []];
+            }
+            const next = {
+              ...current,
+              observability: { ...current.observability, telemetryEnabled: event.telemetryEnabled },
+            };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -1487,6 +1509,9 @@ export const layerWsRpc = (
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const mcpSignIn = yield* McpSignIn.McpSignIn;
       const analytics = yield* AnalyticsService.AnalyticsService;
+      const desktopTelemetryReceiver = yield* Effect.serviceOption(
+        DesktopTelemetryReceiver.DesktopTelemetryReceiver,
+      );
       const originProps = clientAnalyticsProps;
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
         const usage = commandFeatureUsage(command);
@@ -1901,6 +1926,7 @@ export const layerWsRpc = (
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
+        const telemetryEnabled = yield* analytics.isEnabled;
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),
           fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
@@ -1953,6 +1979,7 @@ export const layerWsRpc = (
               hostEnvironment,
               serverSettings.managedPolicy,
             ),
+            telemetryEnabled,
           },
           settings,
           ...(serverSettings.managedPolicy === undefined
@@ -3689,6 +3716,13 @@ export const layerWsRpc = (
                 remoteResult?._tag === "Success"
                   ? { ...config, remoteOpenTargets: remoteResult.value }
                   : config;
+              const telemetryEnabledChanges = Option.match(desktopTelemetryReceiver, {
+                onNone: () => Stream.empty,
+                onSome: (receiver) =>
+                  receiver.shellEnvironmentChanges.pipe(
+                    Stream.mapEffect(() => analytics.isEnabled),
+                  ),
+              });
               const updates = withLateConfigDiscovery(
                 initialConfig,
                 liveUpdates,
@@ -3697,6 +3731,7 @@ export const layerWsRpc = (
                   resolveTargets: () => Fiber.join(remoteTargets),
                 },
                 { resolve: () => Fiber.join(directResult) },
+                telemetryEnabledChanges,
               );
               return Stream.concat(
                 rpcInitialItems([

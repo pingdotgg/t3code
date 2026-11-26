@@ -177,6 +177,8 @@ export class DesktopTelemetryReceiver extends Context.Service<
     >;
     /** Emits when a desktop shell environment changes this process's PATH; replays the last one. */
     readonly pathChanges: Stream.Stream<void>;
+    /** Emits after a desktop shell environment snapshot is applied; replays the last one. */
+    readonly shellEnvironmentChanges: Stream.Stream<void>;
     readonly health: Effect.Effect<DesktopTelemetryReceiverHealth>;
     readonly subscribeHealth: Effect.Effect<
       {
@@ -403,19 +405,29 @@ export const makeDesktopShellEnvironmentUpdates = Effect.fn(
   "DesktopTelemetryReceiver.makeDesktopShellEnvironmentUpdates",
 )(function* (environment: NodeJS.ProcessEnv, platform: NodeJS.Platform) {
   const applyShellEnvironment = makeApplyDesktopShellEnvironmentSnapshot(environment, platform);
-  // Replayed, because the provider watcher may subscribe after the snapshot arrived.
+  // Replayed, because subscribers may attach after the snapshot arrived.
   const pathChanges = yield* Effect.acquireRelease(
+    PubSub.sliding<void>({ capacity: 1, replay: 1 }),
+    PubSub.shutdown,
+  );
+  const shellEnvironmentChanges = yield* Effect.acquireRelease(
     PubSub.sliding<void>({ capacity: 1, replay: 1 }),
     PubSub.shutdown,
   );
   const readPath = () => environment.PATH ?? environment.Path;
   // Untraced: applyShellEnvironment already carries this operation's span.
   const apply = Effect.fnUntraced(function* (message: DesktopShellEnvironmentSnapshot) {
+    if (message.platform !== platform) return;
     const before = readPath();
     yield* applyShellEnvironment(message);
+    yield* PubSub.publish(shellEnvironmentChanges, undefined);
     if (readPath() !== before) yield* PubSub.publish(pathChanges, undefined);
   });
-  return { apply, pathChanges: Stream.fromPubSub(pathChanges) };
+  return {
+    apply,
+    pathChanges: Stream.fromPubSub(pathChanges),
+    shellEnvironmentChanges: Stream.fromPubSub(shellEnvironmentChanges),
+  };
 });
 
 /** @public */
@@ -728,6 +740,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
     pathChanges: shellEnvironment.pathChanges,
+    shellEnvironmentChanges: shellEnvironment.shellEnvironmentChanges,
     subscribe: snapshotMutex.withPermits(1)(
       Effect.gen(function* () {
         const initial = yield* Ref.get(latest);
@@ -795,6 +808,7 @@ export const layerTest = (
       latest,
       changes,
       pathChanges: overrides.pathChanges ?? Stream.empty,
+      shellEnvironmentChanges: overrides.shellEnvironmentChanges ?? Stream.empty,
       subscribe:
         overrides.subscribe ??
         latest.pipe(
