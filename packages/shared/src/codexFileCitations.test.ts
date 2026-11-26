@@ -47,6 +47,7 @@ describe("resolveCodexFileCitationLink", () => {
 
   it.each([
     ["/tmp/draft.md ", "/tmp/draft.md%20", undefined],
+    ["/repo/draft.md ", "/repo/draft.md%20", undefined],
     [" draft.md  ", "./%20draft.md%20%20", undefined],
     ["/tmp/draft%20.md  ", "/tmp/draft%2520.md%20%20#L7", "7"],
     ["\u00a0draft.md\n", "./%C2%A0draft.md%0A", undefined],

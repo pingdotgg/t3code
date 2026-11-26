@@ -404,7 +404,7 @@ function looksLikePosixFilesystemPath(path: string): boolean {
   if (POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
   if (POSITION_SUFFIX_PATTERN.test(path)) return true;
   const basename = path.slice(path.lastIndexOf("/") + 1);
-  return EXTENSIONLESS_FILE_NAMES.has(basename) || FILE_EXTENSION_PATTERN.test(basename);
+  return EXTENSIONLESS_FILE_NAMES.has(basename) || FILE_EXTENSION_PATTERN.test(basename.trimEnd());
 }
 
 function looksLikeFilePath(path: string, authoredPath: string): boolean {
