@@ -187,6 +187,9 @@ describe("thread links", () => {
       ["```" + hidden + "``` then", after],
       ["Use ```example", hidden, "end``` then", after],
       ["Stray ` tick", "", after, "and `code`"],
+      ["Stray ` tick", `# ${after}`, "and `code`"],
+      ["Stray ` tick", `- ${after}`, "and `code`"],
+      ["Use `example", "```" + hidden + "`", after],
     ]) {
       expect(threadLinkRefs(markdown.join("\n"), local)).toEqual([ref("env-1", "t1")]);
     }
