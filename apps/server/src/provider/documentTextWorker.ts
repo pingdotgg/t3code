@@ -618,7 +618,7 @@ async function archive(path: string): Promise<Map<string, string>> {
 const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
 
 function* notebook(source: string): Generator<TextPart, void> {
-  const book: unknown = JSON.parse(source);
+  const book: unknown = JSON.parse(source.replace(/^\uFEFF/u, ""));
   if (!book || typeof book !== "object" || !("cells" in book) || !Array.isArray(book.cells))
     throw new Error("Invalid notebook");
   function* lines(value: unknown): Generator<string, void> {
