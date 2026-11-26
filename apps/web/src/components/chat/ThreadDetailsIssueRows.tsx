@@ -4,6 +4,7 @@ import { useGT } from "gt-react";
 import { MessageSquareIcon } from "lucide-react";
 import { useState, type MouseEvent } from "react";
 
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useServerConfigs } from "~/state/entities";
@@ -38,6 +39,7 @@ function LinkedIssueRow({
 }) {
   const gt = useGT();
   const configs = useServerConfigs();
+  const openInApp = useClientSettings((settings) => settings.issueLinksOpenInApp);
   const detail = useLinkedIssueDetail(threadRef.environmentId, link, mountScope);
   const trackerPresentation = issueTrackerPresentation(link.tracker);
   const state = detail === null ? null : issueStatePresentation(detail.state);
@@ -50,7 +52,7 @@ function LinkedIssueRow({
     "aria-label": gt("Issue {key}: {title}", { key: link.displayKey, title }),
     onClick: (event: MouseEvent<HTMLElement>) => {
       event.stopPropagation();
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (!openInApp || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       if (configs.get(threadRef.environmentId)?.environment.capabilities.issues !== true) return;
       event.preventDefault();
       useRightPanelStore.getState().openIssue(threadRef, link);

@@ -8,14 +8,13 @@ import { useNavigate } from "@tanstack/react-router";
 import type { MouseEvent } from "react";
 
 import { readIssueListPreferences } from "../components/issue/issueListPreferences";
+import { useClientSettings } from "../hooks/useSettings";
 import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import { useProjects, useServerConfigs } from "../state/entities";
 
 /**
- * Opens an issue link beside the thread, and says whether it did. Anything else — a host no
- * project here is on, a link that merely looks like one — is left alone for the caller to handle
- * as the ordinary link it is. Mirrors `useOpenChangeRequestLink`: a reader following a link the
- * agent wrote is reading the thread, and should still be reading it afterwards.
+ * Opens an issue link beside the thread, and says whether it did. Unrecognized hosts,
+ * modifier clicks, and links when "Open issues in T3 Code" is off are left for the caller.
  */
 export function useOpenIssueLink(
   threadRef?: ScopedThreadRef,
@@ -32,8 +31,9 @@ export function useOpenIssueLink(
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const navigate = useNavigate();
+  const openInApp = useClientSettings((settings) => settings.issueLinksOpenInApp);
   return (event, targetUrl, targetEnvironmentId, trackers) => {
-    if (event.metaKey || event.ctrlKey) return false;
+    if (!openInApp || event.metaKey || event.ctrlKey) return false;
     const resolvedPanelRef = panelRef ?? threadRef;
     // A list page's panel ref is a placeholder, not an environment; the link names its own.
     const environmentId = threadRef?.environmentId ?? targetEnvironmentId;

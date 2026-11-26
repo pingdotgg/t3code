@@ -128,6 +128,7 @@ export type BrowserDefaultSettings = Pick<
   | "browserCustomSearchUrl"
   | "browserAutoShowFloatingPreview"
   | "pullRequestLinksOpenInApp"
+  | "issueLinksOpenInApp"
 >;
 
 function isSamePreviewViewport(
@@ -177,6 +178,9 @@ export function getChangedBrowserSettingLabels(
       : []),
     ...(settings.pullRequestLinksOpenInApp !== DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp
       ? [resolve(msg("Open pull requests in T3 Code"))]
+      : []),
+    ...(settings.issueLinksOpenInApp !== DEFAULT_UNIFIED_SETTINGS.issueLinksOpenInApp
+      ? [resolve(msg("Open issues in T3 Code"))]
       : []),
   ];
 }

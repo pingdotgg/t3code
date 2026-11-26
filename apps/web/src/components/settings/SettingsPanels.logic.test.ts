@@ -94,6 +94,15 @@ describe("getChangedBrowserSettingLabels", () => {
       }),
     ).toEqual(["Search engine"]);
   });
+
+  it("reports Open issues in T3 Code when disabled", () => {
+    expect(
+      getChangedBrowserSettingLabels({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        issueLinksOpenInApp: false,
+      }),
+    ).toEqual(["Open issues in T3 Code"]);
+  });
 });
 
 describe("auto-settle days field", () => {
