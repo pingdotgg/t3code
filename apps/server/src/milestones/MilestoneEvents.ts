@@ -59,7 +59,7 @@ const DESCRIPTIONS: Record<MilestoneEventValue["type"], string> = {
   "workflow.run_started": "A workflow run started.",
   "workflow.needs_input": "A workflow run asks a person a question.",
   "workflow.input_resolved":
-    "A workflow run's question was answered, timed out, or ended with its run.",
+    "A workflow run's question was answered, timed out, withdrawn, or ended with its run.",
   "workflow.run_paused": "A workflow run paused: a step failed, or someone paused it.",
   "workflow.run_resumed": "A paused workflow run went on again.",
   "workflow.run_ended": "A workflow run ended: completed, stopped, skipped or cancelled.",

@@ -5,10 +5,19 @@ import { CommandAvailability, WindowsShellEnvironment } from "@t3tools/shared/sh
 import * as Effect from "effect/Effect";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Observe the existing synchronous shell probe without launching the user's login shell.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The fake login shell is a script the real probe spawns.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The fake login shell is a script the real probe spawns.
+import * as NodePath from "node:path";
 import { assert, it, vi } from "vite-plus/test";
 
-import { fixPath, hydratePosixHome, refreshWindowsPath } from "./os-jank.ts";
+import {
+  fixPath,
+  hydratePosixHome,
+  refreshPathFromLoginShell,
+  refreshWindowsPath,
+} from "./os-jank.ts";
 
 vi.mock("node:child_process", { spy: true });
 
@@ -195,6 +204,47 @@ effectIt.effect(
         }),
       (probe) => Effect.sync(() => probe.mockRestore()),
     ),
+);
+
+// Like a profile running `eval "$(fnm env)"`: each login shell gets a new multishell folder.
+const fnmLoginShell = (dir: string) => {
+  const shell = NodePath.join(dir, "bash");
+  NodeFS.writeFileSync(
+    shell,
+    [
+      "#!/bin/sh",
+      `n=$(cat "${dir}/count" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "${dir}/count"`,
+      `multishell="/run/user/1000/fnm_multishells/$((1000 + n))_17956/bin"`,
+      // `fnm env` prepends to the server's PATH the shell inherited (handed over in `path`).
+      `path="$multishell:/home/me/.local/share/fnm:$(cat "${dir}/path")"`,
+      'printf "__T3CODE_ENV_PATH_START__\\n%s\\n__T3CODE_ENV_PATH_END__\\n" "$path"',
+      'printf "__T3CODE_ENV_FNM_MULTISHELL_PATH_START__\\n%s\\n__T3CODE_ENV_FNM_MULTISHELL_PATH_END__\\n" "${multishell%/bin}"',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return shell;
+};
+
+effectIt.effect("re-reading an fnm login shell does not pile up its multishell folders", () =>
+  Effect.gen(function* () {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-fnm-"));
+    const env: NodeJS.ProcessEnv = { SHELL: fnmLoginShell(dir), PATH: "/usr/bin" };
+
+    for (let read = 0; read < 3; read++) {
+      NodeFS.writeFileSync(NodePath.join(dir, "path"), env.PATH ?? "");
+      yield* refreshPathFromLoginShell().pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Environment, env),
+        Effect.provide(NodeServices.layer),
+      );
+    }
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+
+    const multishells = (env.PATH ?? "")
+      .split(":")
+      .filter((entry) => entry.includes("fnm_multishells"));
+    assert.isAtMost(multishells.length, 1, env.PATH);
+  }),
 );
 
 effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
