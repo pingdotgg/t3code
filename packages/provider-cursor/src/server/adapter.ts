@@ -366,18 +366,6 @@ class CursorModelUnavailableError extends Schema.TaggedError<CursorModelUnavaila
   }
 }
 
-class CursorMcpServersBlockedError extends Schema.TaggedError<CursorMcpServersBlockedError>()(
-  "CursorMcpServersBlockedError",
-  {
-    servers: Schema.Array(Schema.String),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Your Cursor team's MCP policy blocks ${this.servers.join(", ")}, and Cursor refuses to start a turn that includes a blocked server. Ask a Cursor team admin to allow ${this.servers.length === 1 ? "it" : "them"}.`;
-  }
-}
-
 function cursorBlockedMcpServersNotice(servers: ReadonlyArray<string>): string {
   const others = servers.filter((server) => server !== T3_MCP_SERVER);
   return [
@@ -3191,15 +3179,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       ),
                     ),
                   ),
-                  Effect.mapError((retryError) => {
-                    const stillBlocked = CursorAgentSdk.blockedInlineMcpServers(retryError);
-                    return stillBlocked.length === 0
-                      ? retryError
-                      : new CursorMcpServersBlockedError({
-                          servers: stillBlocked,
-                          cause: retryError,
-                        });
-                  }),
                 );
               }),
               Effect.ensuring(

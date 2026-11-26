@@ -953,193 +953,6 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("runs without MCP servers a Cursor team policy blocks and says so once", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-blocked-" });
-      const attempts: Array<{
-        readonly mcpServers: Record<string, unknown> | undefined;
-        readonly text: string;
-      }> = [];
-      let outage = true;
-      const instanceId = ProviderInstanceId.make("cursor");
-      const threadId = ThreadId.make("cursor-blocked-thread");
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("cursor-blocked-environment"),
-        threadId,
-        providerSessionId: "cursor-blocked-session",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer synthetic-cursor-token",
-        browserToolsAvailable: true,
-        capabilities: new Set(["device"]),
-      });
-      const modelSelection = { instanceId, model: "composer-2.5" };
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: workspace,
-      });
-      // The SDK wraps its InlineMcpServersBlockedError in an UnknownAgentError.
-      const policyRejection = () => {
-        const blocked = Object.assign(
-          new Error(
-            "Inline mcpServers were rejected by team MCP policy and were not started: t3-code (teamPolicy): Blocked by team policy",
-          ),
-          {
-            name: "InlineMcpServersBlockedError",
-            servers: [{ name: "t3-code", reason: "teamPolicy", message: "Blocked by team policy" }],
-          },
-        );
-        return new CursorAgentSdk.CursorAgentSdkRunnerError({
-          method: "run.start",
-          cause: Object.assign(new Error(blocked.message, { cause: blocked }), {
-            name: "UnknownAgentError",
-          }),
-        });
-      };
-      const adapter = yield* makeCursorAdapterV2({
-        instanceId,
-        environment: { HOME: workspace },
-      }).pipe(
-        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
-          assertComplete: Effect.void,
-          open: (openInput) =>
-            Effect.succeed({
-              agentId: openInput.agentId ?? "native-cursor-blocked",
-              listMessages: Effect.succeed([]),
-              close: Effect.void,
-              send: (input) => {
-                const mcpServers = input.options?.mcpServers;
-                attempts.push({
-                  mcpServers,
-                  text: typeof input.message === "string" ? input.message : input.message.text,
-                });
-                // Like the SDK, the policy covers the agent's own servers as well as the turn's.
-                if ([openInput.options.mcpServers, mcpServers].some((set) => set?.["t3-code"])) {
-                  return Effect.fail(policyRejection());
-                }
-                if (outage) {
-                  outage = false;
-                  return Effect.fail(
-                    new CursorAgentSdk.CursorAgentSdkRunnerError({
-                      method: "run.start",
-                      cause: new Error("network unreachable"),
-                    }),
-                  );
-                }
-                const runId = `native-cursor-blocked-run-${attempts.length}`;
-                return Effect.succeed({
-                  agentId: "native-cursor-blocked",
-                  runId,
-                  wait: Effect.succeed({
-                    id: runId,
-                    requestId: `native-request-${attempts.length}`,
-                    status: "finished" as const,
-                    model: { id: "composer-2.5" },
-                    durationMs: 1,
-                  }),
-                  cancel: Effect.void,
-                });
-              },
-            }),
-        }),
-        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
-      );
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("cursor-blocked-session"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      const send = Effect.fnUntraced(function* (runOrdinal: number) {
-        yield* runtime.startTurn({
-          threadId,
-          providerThread,
-          modelSelection,
-          runtimePolicy,
-          runId: RunId.make(`cursor-blocked-run-${runOrdinal}`),
-          runOrdinal,
-          providerTurnOrdinal: runOrdinal,
-          attemptId: RunAttemptId.make(`cursor-blocked-attempt-${runOrdinal}`),
-          rootNodeId: NodeId.make(`cursor-blocked-root-${runOrdinal}`),
-          appThread: {
-            id: threadId,
-            projectId: ProjectId.make("cursor-blocked-project"),
-            createdBy: "user",
-            creationSource: "web",
-            title: "Cursor blocked MCP",
-            providerInstanceId: instanceId,
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            activeProviderThreadId: providerThread.id,
-            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            lastVisitedAt: null,
-            deletedAt: null,
-          },
-          message: {
-            messageId: MessageId.make(`cursor-blocked-message-${runOrdinal}`),
-            createdBy: "user",
-            creationSource: "web",
-            text: "Open the app.",
-            attachments: [],
-          },
-        });
-        const events = yield* runtime.events.pipe(
-          Stream.takeUntil((event) => event.type === "turn.terminal"),
-          Stream.runCollect,
-        );
-        return events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
-            ? [event.turnItem]
-            : [],
-        );
-      });
-
-      // A retry that fails for another reason leaves the block to be found, and told, next turn.
-      yield* Effect.flip(send(1));
-      assert.lengthOf(attempts, 2);
-
-      const firstNotices = yield* send(2);
-      assert.lengthOf(attempts, 4);
-      assert.property(attempts[2]!.mcpServers, "t3-code");
-      assert.include(attempts[2]!.text, "## T3 Code devices");
-      assert.isUndefined(attempts[3]!.mcpServers);
-      assert.notInclude(attempts[3]!.text, "## T3 Code orchestration");
-      assert.notInclude(attempts[3]!.text, "## T3 Code devices");
-      assert.lengthOf(firstNotices, 1);
-      assert.equal(firstNotices[0]!.level, "warning");
-
-      // Later turns skip the blocked server up front, without another notice.
-      const secondNotices = yield* send(3);
-      assert.lengthOf(attempts, 5);
-      assert.isUndefined(attempts[4]!.mcpServers);
-      assert.notInclude(attempts[4]!.text, "## T3 Code orchestration");
-      assert.lengthOf(secondNotices, 0);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
-      ),
-    ),
-  );
-
   it.effect("sends T3 instructions to each Cursor conversation that lacks them", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1150,6 +963,9 @@ describe("CursorAdapterV2", () => {
       let nextRunStatus: "finished" | "error" = "finished";
       let nextSummaryCompleted: { readonly failed?: boolean } | undefined;
       let createdAgents = 0;
+      const sentServers: Array<Record<string, unknown> | undefined> = [];
+      let teamBlocksT3 = false;
+      let outage = false;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -1192,16 +1008,43 @@ describe("CursorAdapterV2", () => {
                     )
                   : Effect.sync(() => void rewoundAfter.push(runId)),
               send: (input) =>
-                Effect.sync(() => {
+                Effect.suspend(() => {
                   sentMessages.push(
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
+                  sentServers.push(input.options?.mcpServers);
+                  // Like the SDK, team policy covers the agent's own servers as well as the turn's,
+                  // and wraps its InlineMcpServersBlockedError in an UnknownAgentError.
+                  const servers = [openInput.options.mcpServers, input.options?.mcpServers];
+                  if (teamBlocksT3 && servers.some((set) => set?.["t3-code"])) {
+                    const blocked = Object.assign(new Error("Blocked by team policy"), {
+                      name: "InlineMcpServersBlockedError",
+                      servers: [{ name: "t3-code", reason: "teamPolicy" }],
+                    });
+                    return Effect.fail(
+                      new CursorAgentSdk.CursorAgentSdkRunnerError({
+                        method: "run.start",
+                        cause: Object.assign(new Error(blocked.message, { cause: blocked }), {
+                          name: "UnknownAgentError",
+                        }),
+                      }),
+                    );
+                  }
+                  if (outage) {
+                    outage = false;
+                    return Effect.fail(
+                      new CursorAgentSdk.CursorAgentSdkRunnerError({
+                        method: "run.start",
+                        cause: new Error("network unreachable"),
+                      }),
+                    );
+                  }
                   const runId = `native-cursor-run-${sentMessages.length}`;
                   const status = nextRunStatus;
                   const summaryCompleted = nextSummaryCompleted;
                   nextRunStatus = "finished";
                   nextSummaryCompleted = undefined;
-                  return {
+                  return Effect.succeed({
                     agentId,
                     runId,
                     wait: Effect.gen(function* () {
@@ -1221,7 +1064,7 @@ describe("CursorAdapterV2", () => {
                       };
                     }),
                     cancel: Effect.void,
-                  };
+                  });
                 }),
             });
           },
@@ -1266,6 +1109,7 @@ describe("CursorAdapterV2", () => {
       // Starts at run 5: a conversation from before device instructions existed, now resumed.
       let runOrdinal = 4;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
+      let notices = 0;
       const send = Effect.fnUntraced(function* (
         compact = false,
         nativeThreadHasTurns?: boolean,
@@ -1308,6 +1152,9 @@ describe("CursorAdapterV2", () => {
         const providerTurn = events.findLast((event) => event.type === "provider_turn.updated");
         if (providerTurn?.type === "provider_turn.updated")
           lastProviderTurn = providerTurn.providerTurn;
+        notices = events.filter(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        ).length;
         const sent = sentMessages.at(-1)!;
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
@@ -1446,6 +1293,23 @@ describe("CursorAdapterV2", () => {
         told(true, true, true),
         "the fresh agent after a rollback has been told nothing",
       );
+
+      // A team MCP policy blocks T3's server. A retry that fails for another reason leaves the
+      // block to be found, and told, on the next turn.
+      teamBlocksT3 = true;
+      outage = true;
+      yield* Effect.flip(send(false, false));
+      assert.deepEqual(
+        yield* send(false, false),
+        told(false, false, true),
+        "a turn without T3's server leaves out its instructions",
+      );
+      assert.isUndefined(sentServers.at(-1));
+      assert.property(sentServers.at(-2), "t3-code");
+      assert.equal(notices, 1);
+      assert.deepEqual(yield* send(), told(false, false, false));
+      assert.isUndefined(sentServers.at(-1));
+      assert.equal(notices, 0, "later turns skip the blocked server without another notice");
     }).pipe(
       Effect.scoped,
       Effect.provide(
