@@ -1215,6 +1215,63 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(SecureRandom.SecureRandom, random),
     );
+    const backgroundProbeKey =
+      effectiveConfig.source === "local" ? `local:${instanceId}` : effectiveConfig.agentId;
+    // Agents advertise project commands and skills only for the session's cwd, so each project is probed.
+    const snapshotForCwd = Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (cwd: string) {
+      const machineSnapshot = yield* snapshot.getSnapshot;
+      if (!effectiveConfig.enabled || machineSnapshot.auth.status === "unauthenticated") {
+        return machineSnapshot;
+      }
+      // Probing resolves the agent, which may download it; only an agent already present is probed.
+      const inspection = yield* catalog
+        .inspect(effectiveConfig, processEnvironment)
+        .pipe(Effect.option);
+      if (Option.isNone(inspection) || inspection.value.status !== "ready") return machineSnapshot;
+      const probe = probeAcpRegistryConfiguration({
+        instanceId,
+        settings: effectiveConfig,
+        cwd,
+        environment: providerProbeEnvironment(processEnvironment),
+        commandsOnly: true,
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(SecureRandom.SecureRandom, random),
+      );
+      const probed = yield* (
+        Option.isSome(runtimeCoordinator)
+          ? runtimeCoordinator.value.runBackgroundProbe(
+              backgroundProbeKey,
+              probe.pipe(
+                Effect.provideService(
+                  AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+                  runtimeCoordinator.value,
+                ),
+              ),
+            )
+          : probe.pipe(Effect.asSome)
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: `Failed to list ACP Registry commands for '${cwd}'`,
+              cause,
+            }),
+        ),
+      );
+      // A session starting for this agent stopped the probe; the registry keeps what it had and rescans.
+      if (Option.isNone(probed)) return { ...machineSnapshot, slashCommandsPending: true };
+      return {
+        ...machineSnapshot,
+        slashCommands: probed.value.slashCommands,
+        skills: probed.value.skills,
+      };
+    });
     const auth = {
       ...controller,
       invalidate: (controller.invalidate ?? Effect.void).pipe(
@@ -1238,6 +1295,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
+      snapshotForCwd,
       invalidateCaches: liveSnapshotSemaphore
         .withPermit(
           (Option.isSome(runtimeCoordinator)
