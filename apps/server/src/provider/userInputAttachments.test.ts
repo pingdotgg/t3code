@@ -590,6 +590,18 @@ describe("question answer paths", () => {
           },
           { cell_type: "raw", source: [rawSource] },
           { cell_type: "code", source: "total = 42", execution_count: null, outputs: [] },
+          {
+            cell_type: "code",
+            source: "display(chart)",
+            execution_count: 3,
+            outputs: [
+              {
+                output_type: "display_data",
+                data: { "image/png": "iVBORw0KGgo=" },
+                metadata: {},
+              },
+            ],
+          },
         ],
       });
       NodeFS.writeFileSync(path, notebook);
@@ -614,7 +626,8 @@ describe("question answer paths", () => {
       expect(extracted).not.toContain("iVBORw0KGgo");
       expect(extracted).not.toContain("<script>");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
-      expect(extracted).toMatch(/## Cell 4 \(code\)\ntotal = 42$/u);
+      expect(extracted).toContain("## Cell 4 (code)\ntotal = 42\n\n## Cell 5 (code)");
+      expect(extracted).toMatch(/## Cell 5 \(code\)\ndisplay\(chart\)$/u);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
       );
