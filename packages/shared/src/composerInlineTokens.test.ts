@@ -160,6 +160,22 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it.each([
+    [String.raw`@"C:\My Files\notes.md"`, String.raw`C:\My Files\notes.md`],
+    [String.raw`@"C:\\My Files\\notes.md"`, String.raw`C:\My Files\notes.md`],
+    [String.raw`@"docs/My \"draft\".md"`, 'docs/My "draft".md'],
+  ])("decodes quoted file mention %s without losing path characters", (source, value) => {
+    expect(collectComposerInlineTokens(`${source} `)).toEqual([
+      {
+        type: "mention",
+        value,
+        source,
+        start: 0,
+        end: source.length,
+      },
+    ]);
+  });
+
   it("still collects a file link whose label is at the length cap", () => {
     const label = `${"a".repeat(508)}.tsx`;
     const tokens = collectComposerInlineTokens(`see [${label}](src/${label}) ok`);
@@ -231,13 +247,23 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
-  it("keeps bare external schemes out of file chips even with matching labels", () => {
+  it("keeps external links out of file chips even with matching labels", () => {
     for (const link of [
       "[docs](https://example.com/docs)",
       "[reports:final.md](reports:final.md)",
+      "[guide.md](//example.com/docs/guide.md)",
     ]) {
       expect(collectComposerInlineTokens(`${link} `)).toEqual([]);
+      expect(composerFileLinksToPlainText(`${link} `)).toBe(`${link} `);
     }
+  });
+
+  it("keeps a UNC path, whose leading slashes are encoded, as a file chip", () => {
+    const path = "\\\\server\\docs\\guide.md";
+    const link = serializeComposerFileLink(path);
+    expect(collectComposerInlineTokens(`${link} `)).toMatchObject([
+      { type: "mention", value: path, source: link },
+    ]);
   });
 
   // regression: #41223 a `./` the author wrote keeps its meaning, even where the parser rejects the rest
