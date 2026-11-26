@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
@@ -10,9 +11,11 @@ import {
   type McpAppCallToolResult,
   type McpAppHost,
   type McpAppHostContext,
+  type McpAppToolApproval,
 } from "@t3tools/client-runtime/mcp-apps";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { mcpAppToolGrants } from "@t3tools/client-runtime/state/mcp-apps";
 import { CommandId, MessageId } from "@t3tools/contracts";
 import {
   mcpAppAllowAttribute,
@@ -111,6 +114,7 @@ export function ThreadMcpApp(props: {
   const [loaded, setLoaded] = useState(false);
   const [navigatedAway, setNavigatedAway] = useState(false);
   const [bridgeMissing, setBridgeMissing] = useState(false);
+  const [toolApproval, setToolApproval] = useState<McpAppToolApproval | null>(null);
   // Equal app content must retain its reference to preserve the live document host.
   // A different app needs a new document even when its asset URL is unchanged,
   // so the WebView key moves on with the document key, not only the URL.
@@ -125,6 +129,8 @@ export function ThreadMcpApp(props: {
     setDocumentKeyState((value) => value + 1);
   }
   const fullscreen = props.displayMode === "fullscreen";
+  const toolGrants = mcpAppToolGrants({ ...props, app });
+  const grantedTools = useAtomValue(toolGrants.atom);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [closed, setClosed] = useState(false);
@@ -309,7 +315,12 @@ export function ThreadMcpApp(props: {
           `window.__t3McpAppReceive&&window.__t3McpAppReceive(${JSON.stringify(message)});true;`,
         ),
       hostContext,
-      callTool: async ({ name, arguments: args }) => {
+      onToolApprovalChanged: setToolApproval,
+      toolGrants: {
+        has: (name) => appAtomRegistry.get(toolGrants.atom).includes(name),
+        allow: (name) => toolGrants.allow(appAtomRegistry, name),
+      },
+      callTool: async ({ name, arguments: args, requestApproval }) => {
         const { environmentId, input } = scope();
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
@@ -317,7 +328,7 @@ export function ThreadMcpApp(props: {
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
         if (
           !info.value.readOnly &&
-          !(await confirm(
+          !(await requestApproval(
             m(
               msg("Allow {server} to run {tool}?", {
                 server: app.server,
@@ -325,7 +336,6 @@ export function ThreadMcpApp(props: {
               }),
             ),
             JSON.stringify(args, null, 2),
-            m(msg("Allow", { $context: "verb, confirm button" })),
           ))
         ) {
           throw new McpAppHostRefusal({ message: "Declined by the user." });
@@ -518,8 +528,22 @@ export function ThreadMcpApp(props: {
     );
   }
 
+  const grantBanner =
+    grantedTools.length > 0 ? (
+      <View className="flex-row flex-wrap items-center justify-between gap-2 border-border border-b bg-background px-3 py-2">
+        <Text className="min-w-0 shrink text-sm">
+          {gt("Allowed in this conversation: {tools}", { tools: grantedTools.join(", ") })}
+        </Text>
+        <Button
+          label={gt("Revoke tool access")}
+          tone="secondary"
+          onPress={() => toolGrants.revoke(appAtomRegistry)}
+        />
+      </View>
+    ) : null;
+
   if (closed) {
-    return (
+    const closedPreview = (
       <View
         style={{ height, marginBottom: ROW_BOTTOM_MARGIN }}
         className="items-center justify-center gap-2 rounded-lg border border-border"
@@ -541,10 +565,47 @@ export function ThreadMcpApp(props: {
         </View>
       </View>
     );
+    return (
+      <>
+        {grantBanner}
+        {closedPreview}
+      </>
+    );
   }
 
-  return (
+  const approvalBanner =
+    toolApproval !== null ? (
+      <View className="flex-row flex-wrap items-center justify-between gap-2 border-border border-b bg-background px-3 py-2">
+        <Text className="min-w-0 shrink text-sm">{toolApproval.title}</Text>
+        <Button
+          label={gt("Review tool request")}
+          tone="secondary"
+          onPress={() =>
+            Dialog.alert(
+              toolApproval.title,
+              `${gt("Allowing in this conversation also approves future requests from this preview for this tool, including changes it can make, until you close or reload T3 Code.")}\n\n${toolApproval.details}`,
+              [
+                {
+                  text: gt("Cancel"),
+                  style: "cancel",
+                  onPress: () => toolApproval.respond("deny"),
+                },
+                {
+                  text: gt("Allow in this conversation"),
+                  onPress: () => toolApproval.respond("conversation"),
+                },
+                { text: gt("Allow once"), onPress: () => toolApproval.respond("once") },
+              ],
+              { cancelable: true, onDismiss: () => toolApproval.respond("deny") },
+            )
+          }
+        />
+      </View>
+    ) : null;
+  const preview = (
     <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
+      {fullscreen ? approvalBanner : null}
+      {fullscreen ? grantBanner : null}
       {bridgeMissing ? (
         // Only a server that binds the app to its document gets a bridge; without one the app cannot run.
         <View className="flex-1 items-center justify-center rounded-lg border border-border px-4">
@@ -624,5 +685,12 @@ export function ThreadMcpApp(props: {
         </View>
       ) : null}
     </View>
+  );
+  return (
+    <>
+      {!fullscreen ? approvalBanner : null}
+      {!fullscreen ? grantBanner : null}
+      {preview}
+    </>
   );
 }

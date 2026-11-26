@@ -79,6 +79,12 @@ export class McpAppHostRefusal extends Schema.TaggedError<McpAppHostRefusal>()(
 
 const isMcpAppHostRefusal = Schema.is(McpAppHostRefusal);
 
+export interface McpAppToolApproval {
+  readonly title: string;
+  readonly details: string;
+  readonly respond: (decision: "deny" | "once" | "conversation") => void;
+}
+
 export interface McpAppHostOptions {
   readonly app: McpAppReference;
   readonly hostVersion: string;
@@ -88,7 +94,13 @@ export interface McpAppHostOptions {
   readonly callTool: (input: {
     readonly name: string;
     readonly arguments: Record<string, unknown>;
+    readonly requestApproval: (title: string, details: string) => Promise<boolean>;
   }) => Promise<McpAppCallToolResult>;
+  readonly onToolApprovalChanged: (approval: McpAppToolApproval | null) => void;
+  readonly toolGrants: {
+    readonly has: (name: string) => boolean;
+    readonly allow: (name: string) => void;
+  };
   readonly readResource: (input: { readonly uri: string }) => Promise<unknown>;
   readonly openLink: (url: string) => Promise<void>;
   readonly sendMessage: (text: string) => Promise<void>;
@@ -187,6 +199,51 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   let appDisplayModes: ReadonlyArray<string> | undefined;
   let nextHostRequestId = 0;
   const hostRequests = new Map<string, () => void>();
+  let toolApprovalsClosed = false;
+  let toolApprovals: Array<{
+    readonly name: string;
+    readonly approval: McpAppToolApproval;
+    readonly resolve: (approved: boolean) => void;
+  }> = [];
+
+  const closeToolApprovals = () => {
+    toolApprovalsClosed = true;
+    if (toolApprovals.length === 0) return;
+    for (const { resolve } of toolApprovals.splice(0)) resolve(false);
+    options.onToolApprovalChanged(null);
+  };
+
+  const requestApproval = (name: string, title: string, details: string) =>
+    new Promise<boolean>((resolve) => {
+      if (toolApprovalsClosed) {
+        resolve(false);
+        return;
+      }
+      if (options.toolGrants.has(name)) {
+        resolve(true);
+        return;
+      }
+      const approval: McpAppToolApproval = {
+        title,
+        details,
+        respond: (decision) => {
+          if (toolApprovals[0]?.approval !== approval) return;
+          toolApprovals.shift();
+          resolve(decision !== "deny");
+          if (decision === "conversation") {
+            options.toolGrants.allow(name);
+            toolApprovals = toolApprovals.filter((pending) => {
+              if (pending.name !== name) return true;
+              pending.resolve(true);
+              return false;
+            });
+          }
+          options.onToolApprovalChanged(toolApprovals[0]?.approval ?? null);
+        },
+      };
+      toolApprovals.push({ name, approval, resolve });
+      if (toolApprovals.length === 1) options.onToolApprovalChanged(approval);
+    });
 
   const post = (message: unknown) => {
     if (!disposed) options.post(message);
@@ -271,7 +328,11 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         }
         answer(id, () =>
           options
-            .callTool({ name, arguments: args as Record<string, unknown> })
+            .callTool({
+              name,
+              arguments: args as Record<string, unknown>,
+              requestApproval: (title, details) => requestApproval(name, title, details),
+            })
             .then(normalizeMcpAppToolResult),
         );
         return;
@@ -468,6 +529,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
     },
     teardown: () =>
       new Promise<void>((resolve) => {
+        closeToolApprovals();
         let timer: ReturnType<typeof setTimeout> | undefined;
         const finish = () => {
           clearTimeout(timer);
@@ -490,6 +552,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
       }),
     dispose: () => {
       disposed = true;
+      closeToolApprovals();
     },
   };
   return hostHandle;
