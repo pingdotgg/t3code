@@ -777,6 +777,46 @@ it.effect.each([
   }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
+it.effect(
+  "a sessionless client is sent the request as its call's answer, and the call it makes next finds the person's answer",
+  () =>
+    Effect.gen(function* () {
+      const probed = yield* outsideProbe(() => MERGE_FIVE, { sessionless: true });
+      // The first call ends at once: its answer is the elicitation, which the client holds.
+      yield* probed.call(supervised);
+      const asked = yield* probed.asked;
+      const elicitation = yield* probed.answeredWith;
+      expect(elicitation?.requestState).toBe(asked.id);
+      expect(elicitation?.inputRequests).toMatchObject({
+        approval: {
+          method: "elicitation/create",
+          params: {
+            mode: "form",
+            message: asked.message,
+            _meta: { "t3.codes/approval-request": asked.id },
+          },
+        },
+      });
+      expect(probed.ran).toEqual([]);
+
+      // The person approves in the thread; the adapter then lets the client reply and call again.
+      yield* probed.answer(asked, "accept");
+      yield* Effect.yieldNow.pipe(Effect.repeat({ times: 20 }));
+      yield* probed.repliesTo(asked.id);
+      expect(yield* probed.call(supervised)).toEqual({ ran: "here" });
+      expect(yield* probed.answeredWith).toBeUndefined();
+      expect(yield* probed.raised).toHaveLength(1);
+
+      // A client that replies "accept" by itself, with nothing answered in the thread, runs nothing.
+      yield* probed.repliesTo(undefined);
+      yield* probed.call(supervised);
+      const second = yield* probed.asked;
+      yield* probed.repliesTo(second.id);
+      expect(yield* probed.call(supervised)).toMatchObject({ code: "capability_denied" });
+      expect(probed.ran).toEqual(["here"]);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
 it.effect("a thread with no turn running has nowhere to be asked", () =>
   Effect.gen(function* () {
     const probed = yield* outsideProbe();

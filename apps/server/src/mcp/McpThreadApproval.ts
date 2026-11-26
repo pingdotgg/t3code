@@ -21,8 +21,9 @@ import type { Caller } from "./threadAccess.ts";
  * "cancelled": the request ended without the person's answer, as when its turn ends or is
  * interrupted, or they dismiss it. "no-turn": the thread has no turn running, so there is
  * nowhere to show a request. "unavailable": this thread's client cannot be left waiting on one.
+ * "asked": a sessionless client was sent the request as this call's answer, and calls again.
  */
-export type Answer = McpProviderSessions.T3ApprovalAnswer | "no-turn" | "unavailable";
+export type Answer = McpProviderSessions.T3ApprovalAnswer | "no-turn" | "unavailable" | "asked";
 
 type Threads = ThreadManagement.ThreadManagementService["Service"];
 type Sessions = McpProviderSessions.McpProviderSessions["Service"];
@@ -203,14 +204,24 @@ export const ask = Effect.fn("McpThreadApproval.ask")(function* (
   }
 
   const waiting = kept;
-  const answered = sessions.awaitApprovalAnswer(thread.threadId, waiting.id);
-  const held = McpClientInput.elicit({ id: waiting.id, message: input.message });
-  const answer = yield* Effect.raceFirst(
-    Effect.asSome(answered),
-    // The adapter replies once the request has ended, so a reply may arrive with the answer.
-    Effect.andThen(held, sessions.approvalAnswer(thread.threadId, waiting.id)),
-  );
-  if (Option.isNone(answer)) {
+  const settled = sessions.approvalAnswer(thread.threadId, waiting.id);
+  type Outcome = Option.Option<McpProviderSessions.T3ApprovalAnswer> | "asked";
+  // Read before the client is asked again: the call that brings a reply finds the answer here.
+  const already = yield* settled;
+  const outcome: Outcome = Option.isSome(already)
+    ? already
+    : yield* Effect.raceFirst(
+        Effect.asSome(sessions.awaitApprovalAnswer(thread.threadId, waiting.id)),
+        McpClientInput.elicit({ id: waiting.id, message: input.message }).pipe(
+          Effect.flatMap((sent): Effect.Effect<Outcome> =>
+            // The adapter replies once the request has ended, so a reply may come with the answer.
+            sent === "asked" ? Effect.succeed("asked") : settled,
+          ),
+        ),
+      );
+  // The elicitation is the call's answer, and the request stays for the call that follows it.
+  if (outcome === "asked") return "asked";
+  if (Option.isNone(outcome)) {
     // The client stopped waiting before the person answered, as it does when its turn is
     // interrupted. Nothing holds this call open now, so the request ends with it.
     yield* close(threads, waiting, "cancel");
@@ -218,5 +229,5 @@ export const ask = Effect.fn("McpThreadApproval.ask")(function* (
     return "cancelled";
   }
   yield* sessions.forgetApprovalRequest(thread.threadId, waiting.id);
-  return answer.value;
+  return outcome.value;
 });

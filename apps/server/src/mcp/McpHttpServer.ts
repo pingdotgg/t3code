@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -1228,6 +1229,7 @@ const withToolAnalytics =
               return yield* options.handle(payload).pipe(
                 Effect.onExit((exit) => {
                   const result = exit._tag === "Success" ? exit.value : undefined;
+                  // A call that asks for input is retried with it, and that call is the one counted.
                   if (result instanceof McpSchema.InputRequired) return Effect.void;
                   // Handoff tools look up threads to record; the response must not wait on them.
                   return Clock.currentTimeMillis.pipe(
@@ -1282,6 +1284,9 @@ const withToolResultCapture = Effect.fn("McpHttpServer.withToolResultCapture")(f
           return yield* options.handle(payload).pipe(
             Effect.onExit((exit) => {
               if (thread === undefined) return Effect.void;
+              if (exit._tag === "Success" && exit.value instanceof McpSchema.InputRequired) {
+                return Effect.void;
+              }
               if (exit._tag === "Failure" && Cause.hasInterruptsOnly(exit.cause)) {
                 return Effect.void;
               }
@@ -1334,7 +1339,10 @@ const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, 
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, tracingServer));
 });
 
-/** Gives every tool call what it needs to ask the person behind its client. */
+/**
+ * A toolkit handler returns its tool's result type, so it cannot answer with a request for the
+ * client's input. It leaves one in `McpClientInput` and ends, and that request is the answer.
+ */
 const withClientInput = Effect.fn("McpHttpServer.withClientInput")(function* <A, E, R>(
   registration: Effect.Effect<A, E, R>,
 ) {
@@ -1347,10 +1355,16 @@ const withClientInput = Effect.fn("McpHttpServer.withClientInput")(function* <A,
     addTool: Effect.fn("McpServer.addTool")(function (options) {
       return server.addTool({
         ...options,
-        handle: (payload) =>
-          options
+        handle: Effect.fnUntraced(function* (payload) {
+          const request = yield* Ref.make<McpSchema.InputRequired | undefined>(undefined);
+          const exit = yield* options
             .handle(payload)
-            .pipe(Effect.provideService(McpClientInput.McpClientInput, { sessions })),
+            .pipe(
+              Effect.provideService(McpClientInput.McpClientInput, { request, sessions }),
+              Effect.exit,
+            );
+          return (yield* Ref.get(request)) ?? (yield* exit);
+        }),
       });
     }),
   });

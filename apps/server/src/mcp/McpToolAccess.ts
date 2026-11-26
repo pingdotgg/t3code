@@ -397,6 +397,9 @@ const askInThread = Effect.fnUntraced(function* (
       return yield* outsideActionRefused(
         `Not done: "${sentence}" needs the user's approval below Full access, and this agent's client cannot ask for it. Tell the user; they can do it themselves or switch this thread to Full access.`,
       );
+    case "asked":
+      // Never read: the elicitation is this call's answer.
+      return yield* outsideActionRefused("Waiting for the user's approval.");
     case "no-turn":
       return yield* outsideActionRefused(
         `Not done: "${sentence}" needs the user's approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.`,
