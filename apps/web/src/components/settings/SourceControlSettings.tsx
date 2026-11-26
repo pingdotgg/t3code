@@ -30,7 +30,6 @@ import {
 } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
 
@@ -55,6 +54,7 @@ import { sourceControlInstallHintText } from "@t3tools/client-runtime/contract-l
 import { isSourceControlProviderOffered } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { sourceControlIcon } from "~/sourceControlPresentation";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -311,25 +311,22 @@ function DiscoveryItemRow({
       <SettingsDisclosureHeader
         label={hasDetails ? gt("Toggle {label} details", { label: item.label }) : undefined}
         expanded={isExpanded}
+        stackOnSmallScreens
         actions={
           offered ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Switch
-                    checked={offered.checked}
-                    disabled={offered.disabled}
-                    onCheckedChange={offered.onChange}
-                    aria-label={gt("Offer {label} when adding or publishing a project", {
-                      label: item.label,
-                    })}
-                  />
-                }
-              />
-              <TooltipPopup side="top">
-                <T>Offer when adding or publishing a project</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Switch
+                  checked={offered.checked}
+                  disabled={offered.disabled}
+                  onCheckedChange={offered.onChange}
+                  aria-label={gt("Offer {label} when adding or publishing a project", {
+                    label: item.label,
+                  })}
+                />
+              }
+              label={<T>Offer when adding or publishing a project</T>}
+            />
           ) : !isVcsNotReady(item) ? (
             <Switch
               checked={item.status === "available"}
@@ -550,24 +547,24 @@ export function SourceControlSettingsPanel() {
     );
   };
   const scanButton = (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            onClick={handleScan}
-            disabled={discovery.isPending}
-            aria-label={gt("Rescan server environment")}
-          >
-            <RefreshIcon refreshing={discovery.isPending} />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">
-        <T>Rescan Git and hosting integrations</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          onClick={handleScan}
+          disabled={discovery.isPending}
+          aria-label={gt("Rescan server environment")}
+        >
+          <RefreshIcon refreshing={discovery.isPending} />
+        </Button>
+      }
+      label={
+        <>
+          <T>Rescan Git and hosting integrations</T>
+        </>
+      }
+    />
   );
 
   return (

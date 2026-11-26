@@ -7,18 +7,23 @@ import { CollapsibleTrigger } from "../ui/collapsible";
 export function SettingsDisclosureHeader({
   label,
   expanded,
+  stackOnSmallScreens = false,
   children,
   actions,
 }: {
   readonly label?: string | undefined;
   readonly expanded: boolean;
+  readonly stackOnSmallScreens?: boolean;
   readonly children: ReactNode;
   readonly actions?: ReactNode;
 }) {
   return (
     <div
       className={cn(
-        "relative flex items-center justify-between gap-3 px-3 py-3 sm:px-4",
+        "relative flex gap-3 px-3 py-3 sm:px-4",
+        stackOnSmallScreens
+          ? "flex-col sm:flex-row sm:items-center sm:justify-between"
+          : "items-center justify-between",
         label && "transition-colors hover:bg-muted/20",
       )}
     >
@@ -36,7 +41,12 @@ export function SettingsDisclosureHeader({
       <div className="pointer-events-none relative min-w-0 flex-1 space-y-1 [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
         {children}
       </div>
-      <div className="pointer-events-none relative flex shrink-0 items-center gap-2">
+      <div
+        className={cn(
+          "pointer-events-none relative flex shrink-0 items-center gap-2",
+          stackOnSmallScreens && "w-full sm:w-auto sm:justify-end",
+        )}
+      >
         {label ? (
           <ChevronDownIcon
             aria-hidden
