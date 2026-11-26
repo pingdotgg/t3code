@@ -132,10 +132,13 @@ export default function Spreadsheet(props: {
           // Focus moves before the worker confirms the selected sheet.
           const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]');
           const current = Array.from(buttons).findIndex((button) => button === event.target);
+          const isRtl = event.currentTarget.matches(":dir(rtl)");
+          const forwardKey = isRtl ? "ArrowLeft" : "ArrowRight";
+          const backwardKey = isRtl ? "ArrowRight" : "ArrowLeft";
           const next =
-            event.key === "ArrowRight"
+            event.key === forwardKey
               ? (current + 1) % opened.tabs.length
-              : event.key === "ArrowLeft"
+              : event.key === backwardKey
                 ? (current + opened.tabs.length - 1) % opened.tabs.length
                 : event.key === "Home"
                   ? 0
