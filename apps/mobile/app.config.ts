@@ -486,7 +486,8 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      ...(repoEnv.EXPO_EAS_PROJECT_ID ? { projectId: repoEnv.EXPO_EAS_PROJECT_ID } : {}),
+      // expo-observe's Android ObservabilityManager throws on native startup if projectId is absent.
+      projectId: repoEnv.EXPO_EAS_PROJECT_ID || "00000000-0000-0000-0000-000000000000",
       observe: { endpointUrl: observeEndpointUrl },
     },
   },
