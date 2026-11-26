@@ -54,7 +54,7 @@
   "929a11e234f6e5d9": "Instala las herramientas de línea de comandos de Azure ({cli}) y activa la compatibilidad con Azure DevOps con {command}.",
   "ad599e9de33538dd": "Añade un token de Bitbucket en Ajustes → Control de versiones e issues.",
   "d810ecd91e8cf9d0": "Instala la CLI de Origin con {install} y ejecuta {login}.",
-  "eb0f60ef4f92ab7d": "Instala {fj} 0.6 o posterior desde {fjUrl} y ejecuta {fjLogin}, o instala {tea} 0.16 o posterior desde {teaUrl} y ejecuta {teaLogin} para cada servidor de Forgejo o Gitea.",
+  "1a04c8d36a7b29d3": "Instala {fj} 0.6 o posterior desde {fjUrl} y ejecuta {fjLogin}, o instala {gt} 2.0 o posterior desde {gtUrl} y ejecuta {gtLogin} para cada servidor de Forgejo o Gitea.",
   "d026a85e2e50e675": "Instala la CLI de GitCafe con {install} y ejecuta {login}, guarda un token en Ajustes o define {variable} en el servidor.",
   "22d3c0c48a34b5b3": "Instala la CLI de TanStack Source con {install} y ejecuta {login}, guarda un token en Ajustes o define {variable} en el servidor.",
   "756c80ad262ef315": "En espera en el hilo original",
@@ -5398,7 +5398,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} parada} other {{count} paradas}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} parada} other {{count} paradas}}",
   "9830004326e7d8c0": "{count, plural, one {por {count} archivo} other {por {count} archivos}}",
   "e6035bad35419efa": "Opciones de la guía",
   "4d7635a2bf1f5816": "Reescribir guía",
