@@ -48,6 +48,21 @@ export function usageSourceMessages(
   sources: readonly UsageSource[],
   malformedWarning: (count: number) => string = formatMalformedUsageWarning,
 ): readonly string[] {
+  const parent = new Map<string, string>();
+  const find = (key: string): string => {
+    const next = parent.get(key);
+    if (next === undefined || next === key) return key;
+    const root = find(next);
+    parent.set(key, root);
+    return root;
+  };
+  for (const { fingerprint } of sources) {
+    const { hostId, provider, resolvedHomePath, volumeId, physicalSourceId } = fingerprint;
+    if (physicalSourceId === undefined) continue;
+    const legacy = find(JSON.stringify([hostId, provider, resolvedHomePath, volumeId]));
+    const physical = find(JSON.stringify(["physical", provider, physicalSourceId]));
+    if (legacy !== physical) parent.set(legacy, physical);
+  }
   const messages = new Set<string>();
   const malformedBySource = new Map<string, number>();
   for (const source of sources) {
@@ -62,7 +77,7 @@ export function usageSourceMessages(
     let message = source.message;
     if (source.malformedRecords > 0) {
       const { hostId, provider, resolvedHomePath, volumeId } = source.fingerprint;
-      const key = JSON.stringify([hostId, provider, resolvedHomePath, volumeId]);
+      const key = find(JSON.stringify([hostId, provider, resolvedHomePath, volumeId]));
       malformedBySource.set(
         key,
         Math.max(malformedBySource.get(key) ?? 0, source.malformedRecords),
