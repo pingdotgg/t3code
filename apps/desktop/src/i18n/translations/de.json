@@ -1,6 +1,5 @@
 {
   "743bb98558dcdddf": "T3 Code konnte nicht gestartet werden",
-  "45e444e807bececb": "Dieses T3-Home ist nicht verfügbar",
   "97665653aa9129ad": "Nach einer neueren Version wird gesucht…",
   "dce25e68e60eb512": "Version {version} ist verfügbar. Sie enthält möglicherweise eine Korrektur.",
   "2f015e6d5459dce9": "Auf {version} aktualisieren",
@@ -25,6 +24,9 @@
   "7379a43c1ac009d2": "Der T3-Code-Hintergrunddienst verwendet dieses T3-Home (PID {pid}, Port {port}). Stoppe ihn mit `t3 service uninstall` und übergib dabei `--base-dir` mit diesem T3-Home, und öffne T3 Code dann erneut. Du kannst auch ein separates T3CODE_HOME setzen und mit dem laufenden Server koppeln.",
   "1510c6547cde9c2e": "Ein anderer T3-Code-Server (zum Beispiel `t3 serve` oder einer, der über SSH gestartet wurde) verwendet dieses T3-Home (PID {pid}, Port {port}, Version {version}). Wenn eine T3-Code-App auf einem anderen Rechner ihn über SSH gestartet hat, startet diese App ihn neu: Entferne oder trenne dort diese SSH-Umgebung oder beende diese App. Stoppe dann den Server und öffne T3 Code erneut. Du kannst auch ein separates T3CODE_HOME setzen und mit dem laufenden Server koppeln.",
   "8d8628520de0d9f1": "Ein anderer T3-Code-Server (zum Beispiel `t3 serve` oder einer, der über SSH gestartet wurde) verwendet dieses T3-Home (PID {pid}, Port {port}). Wenn eine T3-Code-App auf einem anderen Rechner ihn über SSH gestartet hat, startet diese App ihn neu: Entferne oder trenne dort diese SSH-Umgebung oder beende diese App. Stoppe dann den Server und öffne T3 Code erneut. Du kannst auch ein separates T3CODE_HOME setzen und mit dem laufenden Server koppeln.",
+  "45e444e807bececb": "Dieses T3-Home ist nicht verfügbar",
+  "ac1d504af16add95": "Damit dieser Server weiterläuft, wähle „Laufenden Server verwenden“. T3 Code startet dann ohne eigenen Server neu. Führe danach `t3 pair` aus und öffne den ausgegebenen Link, um dich zu verbinden.",
+  "76e2849d0b9d9f85": "Laufenden Server verwenden",
   "6574442caf8bfd15": "Bildschirmaufnahme einrichten",
   "a8210440c691b062": "Bedienungshilfen einrichten",
   "0cbbbd8abd25f9d4": "Festplattenvollzugriff einrichten",
