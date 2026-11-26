@@ -43,6 +43,18 @@ it.each([
 // remark and the chat's plugins rendered for it before Words replaced them.
 const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
   [
+    '<ol start="3">\n<li><a href="https://example.com/a">Alpha</a>\n<li><a href="https://example.com/b">Beta</a>\n</ol>',
+    '<ol start="3" dir="ltr">\n<li><a href="https://example.com/a">Alpha</a>\n</li><li><a href="https://example.com/b">Beta</a>\n</li></ol>',
+  ],
+  [
+    '<ul><li>Outer<ul><li><div><p><a href="https://example.com/a">Alpha</a><li>Beta</ul><li>Next</ul>',
+    '<ul dir="ltr"><li>Outer<ul><li><div><p><a href="https://example.com/a">Alpha</a></p></div></li><li>Beta</li></ul></li><li>Next</li></ul>',
+  ],
+  [
+    "<ul><li><blockquote><li>quoted</li></blockquote><li>next</ul>",
+    '<ul dir="ltr"><li><blockquote><li>quoted</li></blockquote></li><li>next</li></ul>',
+  ],
+  [
     "| a | b |\n|:-|-:|\n| `x \\| y` | **2** |\n| 3 |",
     '<table dir="ltr">\n<thead>\n<tr>\n<th align="left">a</th>\n<th align="right">b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align="left"><code data-inline-code="" dir="ltr">x | y</code></td>\n<td align="right"><strong>2</strong></td>\n</tr>\n<tr>\n<td align="left">3</td>\n<td align="right"></td>\n</tr>\n</tbody>\n</table>',
   ],
