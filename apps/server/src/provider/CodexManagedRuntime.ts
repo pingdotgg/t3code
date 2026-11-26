@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveLocalOrigin } from "../startupAccess.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth, type CodexChatGptCredentials } from "./CodexChatGptAuth.ts";
@@ -90,10 +91,18 @@ function makeTeamLeasedCodexAuth(
   };
 }
 
+export interface CodexManagedSandboxBinds {
+  readonly socketPaths?: ReadonlyArray<string> | undefined;
+  readonly providerProfileDirs?: ReadonlyArray<string> | undefined;
+  readonly helperPaths?: ReadonlyArray<string> | undefined;
+  readonly extraRoBinds?: ReadonlyArray<string> | undefined;
+}
+
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly revision: string;
+  readonly sandboxBinds?: CodexManagedSandboxBinds | undefined;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
 const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
@@ -205,6 +214,36 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     delete environment.T3CODE_CODEX_LAUNCH_ARGS;
     delete environment.OPENAI_API_KEY;
     delete environment.OPENAI_BASE_URL;
+    const helperPaths = [
+      invocation.command,
+      ...(invocation.entrypoint === undefined ? [] : [invocation.entrypoint]),
+    ];
+    const hostHome = HostProcess.HomeDirectory.defaultValue();
+    const entrypointDir =
+      invocation.entrypoint !== undefined && path.isAbsolute(invocation.entrypoint)
+        ? path.dirname(invocation.entrypoint)
+        : undefined;
+    const isUnsafeDir =
+      entrypointDir === undefined ||
+      new Set([
+        "/",
+        "/tmp",
+        "/var",
+        "/var/tmp",
+        "/home",
+        "/root",
+        "/dev",
+        "/proc",
+        "/etc",
+        "/run",
+        "/srv",
+        "/mnt",
+        "/media",
+        "/data",
+      ]).has(entrypointDir) ||
+      (path.isAbsolute(hostHome) &&
+        (entrypointDir === hostHome || hostHome.startsWith(`${entrypointDir}/`)));
+    const extraRoBinds = isUnsafeDir ? [] : [entrypointDir];
     return {
       config: decodeSettings({
         enabled: options.enabled,
@@ -215,6 +254,13 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       }),
       environment,
       revision: profileKey,
+      sandboxBinds: {
+        socketPaths: [endpoint],
+        providerProfileDirs:
+          homeLayout.sharedHomePath !== homePath ? [homeLayout.sharedHomePath] : [],
+        helperPaths,
+        extraRoBinds,
+      },
     } satisfies CodexEffectiveRuntime;
   });
   return { auth, resolve, installation, homePath, homeLayout };

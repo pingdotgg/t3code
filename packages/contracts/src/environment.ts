@@ -232,6 +232,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   issueTrackerAccounts: Schema.optionalKey(Schema.Boolean),
   /** Server runs as a Team Control Plane only (`--team-hub-only`) and refuses local agent/terminal execution. */
   teamHubOnly: Schema.optionalKey(Schema.Boolean),
+  /** Server isolates spawned coding agents and shell terminals inside Linux bubblewrap (`--team-bwrap-sandbox`). */
+  teamBwrapSandbox: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

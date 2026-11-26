@@ -23,6 +23,7 @@ export interface ProcessRunInput {
   readonly spawnCwd?: string | undefined;
   readonly timeout?: Duration.Input | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly extendEnv?: boolean | undefined;
   readonly stdin?: string | undefined;
   /** Receives every stdout chunk, including bytes beyond the buffered output limit. */
   readonly onStdoutChunk?: ((chunk: Uint8Array) => void) | undefined;
@@ -273,7 +274,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
-  const extendEnv = input.env !== undefined;
+  const extendEnv = input.extendEnv ?? input.env !== undefined;
   const spawnCommand = yield* resolveSpawnCommand(
     input.command,
     input.args,

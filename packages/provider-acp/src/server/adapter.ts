@@ -34,7 +34,7 @@ import {
   isRuntimeModeAbove,
   type TurnTokenUsage,
 } from "@t3tools/contracts";
-import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import { AgentScope, AgentScopeThreadId, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import { parseGrepOutput } from "@t3tools/shared/grepOutput";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
@@ -2100,6 +2100,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope;
+  const processSandbox = yield* ProcessSandbox;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -2242,6 +2243,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 },
               }).pipe(
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                Effect.provideService(ProcessSandbox, processSandbox),
               );
         if (clientTerminals !== undefined) {
           yield* Scope.addFinalizer(sessionScope, clientTerminals.disposeAll);
@@ -8044,6 +8046,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               Effect.provideService(SecureRandom.SecureRandom, random),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
               Effect.provideService(AgentScope, agentScope),
+              Effect.provideService(ProcessSandbox, processSandbox),
               Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
             );
         });
@@ -8128,6 +8131,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.provideService(SecureRandom.SecureRandom, random),
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
                 Effect.provideService(AgentScope, agentScope),
+                Effect.provideService(ProcessSandbox, processSandbox),
                 Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
               );
             yield* replacementRuntime.handleSessionUpdate((notification) =>

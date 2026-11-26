@@ -25,7 +25,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as Cause from "effect/Cause";
@@ -297,6 +301,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const agentScope = yield* AgentScope;
+  const processSandbox = yield* ProcessSandbox;
 
   const protocolError = (detail: string, payload?: unknown) =>
     new ProviderAdapter.ProviderAdapterProtocolError({
@@ -1800,12 +1805,36 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : options.environment,
           mcpSession,
         );
+        const sandboxedLaunch = processSandbox.enabled
+          ? yield* processSandbox
+              .wrap({
+                command: options.settings.binaryPath || "muse",
+                args: [],
+                cwd,
+                env: environment,
+                name: "muse",
+                threadId: input.threadId,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterOpenSessionError({
+                      driver: MUSE_PROVIDER,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              )
+          : { command: options.settings.binaryPath || "muse", args: [], hostEnv: environment };
+        const effectiveEnv = processSandbox.enabled
+          ? (sandboxedLaunch.hostEnv ?? sanitizeHostEnvForSandboxLaunch(environment))
+          : environment;
         const launch = yield* agentScope.wrap({
-          command: options.settings.binaryPath || "muse",
-          args: [],
+          command: sandboxedLaunch.command,
+          args: sandboxedLaunch.args,
           name: "muse",
           threadId: input.threadId,
-          env: environment,
+          env: effectiveEnv,
         });
         // Finalizers run in reverse order: reap detached work after closing the host.
         const scopeUnit = launch.unit;
@@ -1821,7 +1850,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               binaryPath: launch.command,
               launchArgs: launch.args,
               cwd,
-              environment,
+              environment: effectiveEnv,
               runtimeMode: input.runtimePolicy.runtimeMode,
               onProcessExit: (exit) => {
                 Deferred.doneUnsafe(processExited, Effect.succeed(exit));

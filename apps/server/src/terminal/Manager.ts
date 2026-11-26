@@ -41,7 +41,12 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+  type ProcessSandboxShape,
+} from "@t3tools/shared/AgentScope";
 import { stripAppImageRuntimeEnv } from "@t3tools/shared/appImageRuntimeEnv";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/shell";
@@ -82,6 +87,11 @@ import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClie
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import { teamHubOnlyTerminalError } from "../team/hubOnly.ts";
+import {
+  BwrapSandboxUnavailableError,
+  isBwrapSandboxPathError,
+  isBwrapSandboxUnavailableError,
+} from "../team/bwrapSandbox.ts";
 
 export {
   TerminalCwdError,
@@ -709,6 +719,10 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
     if (typeof current === "string") {
       messages.push(current);
       continue;
+    }
+
+    if (isBwrapSandboxPathError(current) || isBwrapSandboxUnavailableError(current)) {
+      return false;
     }
 
     if (current instanceof Error) {
@@ -1710,6 +1724,8 @@ function normalizedRuntimeEnv(
 interface TerminalManagerOptions {
   logsDir: string;
   teamHubOnly?: boolean;
+  teamBwrapSandbox?: boolean;
+  processSandbox?: ProcessSandboxShape;
   historyLineLimit?: number;
   historyByteLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
@@ -1796,6 +1812,7 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const processSandbox = yield* ProcessSandbox;
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
@@ -1811,6 +1828,8 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ...(serverConfig.teamHubOnly === true ? { teamHubOnly: true } : {}),
+    ...(serverConfig.teamBwrapSandbox === true ? { teamBwrapSandbox: true } : {}),
+    processSandbox,
     ptyAdapter,
     processTable: nativeTelemetry.processTable.pipe(
       Effect.mapError(
@@ -2829,11 +2848,56 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    const processSandbox = options.processSandbox;
+    const sandboxActive = options.teamBwrapSandbox === true || processSandbox?.enabled === true;
+    const workspaceRoot =
+      session.worktreePath !== null &&
+      (session.cwd === session.worktreePath ||
+        session.cwd.startsWith(`${session.worktreePath}${path.sep}`))
+        ? session.worktreePath
+        : session.cwd;
+    const sandboxed = sandboxActive
+      ? processSandbox?.enabled !== true
+        ? yield* new PtyAdapter.PtySpawnError({
+            adapter: "terminal-manager",
+            shell: candidate.shell,
+            cause: new BwrapSandboxUnavailableError({
+              reason: "probe_failed",
+              hint: "--team-bwrap-sandbox is enabled but no active bwrap ProcessSandbox service is provided.",
+            }),
+          })
+        : yield* processSandbox
+            .wrap({
+              command: executable,
+              args: candidate.args ?? [],
+              cwd: workspaceRoot,
+              ...(workspaceRoot !== session.cwd ? { chdir: session.cwd } : {}),
+              env: spawnEnv,
+              ...(session.runtimeEnv !== null ? { sandboxEnv: session.runtimeEnv } : {}),
+              newSession: false,
+              name: "terminal",
+              threadId: session.threadId,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PtyAdapter.PtySpawnError({
+                    adapter: "terminal-manager",
+                    shell: candidate.shell,
+                    cause,
+                  }),
+              ),
+            )
+      : { command: executable, args: candidate.args ?? [], hostEnv: spawnEnv };
+
+    const hostSpawnEnv = sandboxActive
+      ? (sandboxed.hostEnv ?? sanitizeHostEnvForSandboxLaunch(spawnEnv))
+      : spawnEnv;
     const launch = yield* agentScope.wrap({
-      command: executable,
-      args: candidate.args ?? [],
+      command: sandboxed.command,
+      args: sandboxed.args,
       name: "terminal",
-      env: spawnEnv,
+      env: hostSpawnEnv,
       survivesRestart: true,
     });
     const attempt = yield* Effect.result(
@@ -2843,7 +2907,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         cwd: session.cwd,
         cols: session.cols,
         rows: session.rows,
-        env: spawnEnv,
+        env: hostSpawnEnv,
       }),
     );
 
@@ -2903,15 +2967,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
+            const sandboxActive =
+              options.teamBwrapSandbox === true || options.processSandbox?.enabled === true;
             const shellCandidates = yield* resolveShellCandidates(
               shellResolver,
               platform,
               baseEnv,
-              session.runtimeEnv?.T3CODE_TERMINAL_SHELL ?? baseEnv.T3CODE_TERMINAL_SHELL,
+              sandboxActive
+                ? baseEnv.T3CODE_TERMINAL_SHELL
+                : (session.runtimeEnv?.T3CODE_TERMINAL_SHELL ?? baseEnv.T3CODE_TERMINAL_SHELL),
             ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+            // When bwrap sandboxing is active, keep client-supplied session.runtimeEnv out of the
+            // host bwrap/AgentScope env; trySpawn forwards it strictly inside bwrap via --setenv.
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
-              session.runtimeEnv,
+              sandboxActive ? null : session.runtimeEnv,
               platform,
               yield* HostProcess.HomeDirectory,
               session.threadId,
@@ -3447,10 +3517,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const openLocked = (input: TerminalOpenInput) =>
     options.teamHubOnly === true
       ? Effect.fail(teamHubOnlyTerminalError(input.cwd))
-      : withWorkspaceLease(
-          path.resolve(input.worktreePath ?? input.cwd),
-          openWithWorkspaceLease(input),
-        );
+      : options.teamBwrapSandbox === true && options.processSandbox?.enabled !== true
+        ? Effect.fail(
+            new TerminalCwdStatError({
+              cwd: input.cwd,
+              cause: new BwrapSandboxUnavailableError({
+                reason: "probe_failed",
+                hint: "--team-bwrap-sandbox is enabled but no active bwrap ProcessSandbox service is provided.",
+              }),
+            }),
+          )
+        : withWorkspaceLease(
+            path.resolve(input.worktreePath ?? input.cwd),
+            openWithWorkspaceLease(input),
+          );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
     withThreadLock(

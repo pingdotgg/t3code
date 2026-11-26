@@ -49,6 +49,7 @@ import { resolveLauncherPath } from "./cloud/pinnedRuntime.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
+import * as BwrapSandbox from "./team/bwrapSandbox.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProcessLauncher from "./process/ProcessLauncher.ts";
 import * as SpawnWorker from "./process/SpawnWorker.ts";
@@ -1473,6 +1474,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),
+      Layer.provideMerge(BwrapSandbox.layer),
       Layer.provideMerge(layerPlatformServices),
       Layer.provideMerge(FeatureFlags.layer),
       Layer.provide(Layer.succeed(HostProcess.InvokedAs, invokedAs)),

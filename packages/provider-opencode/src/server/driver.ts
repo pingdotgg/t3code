@@ -25,12 +25,12 @@ import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
 import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
@@ -199,7 +199,19 @@ function selectOpenCodeRuntimeAdapter(input: {
     planSelectionTransition: (transition) =>
       Effect.flatMap(hot, (adapter) => adapter.planSelectionTransition(transition)),
     openSession: (session) =>
-      Effect.flatMap(pick(input.resolve), (adapter) => adapter.openSession(session)),
+      Effect.flatMap(ProcessSandbox, (processSandbox) =>
+        processSandbox.enabled
+          ? Effect.fail(
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver: ProviderDriverKind.make("opencode"),
+                providerSessionId: session.providerSessionId,
+                cause: new Error(
+                  "Shared OpenCode server daemon does not support per-worktree --team-bwrap-sandbox isolation.",
+                ),
+              }),
+            )
+          : Effect.flatMap(pick(input.resolve), (adapter) => adapter.openSession(session)),
+      ),
   };
 }
 

@@ -12,6 +12,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
+import { ProcessSandbox, sanitizeHostEnvForSandboxLaunch } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { gitForWindowsBash, SpawnExecutableResolution } from "@t3tools/shared/shell";
 
@@ -181,6 +182,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   options: AcpClientTerminalsOptions,
 ): Effect.fn.Return<AcpClientTerminals, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const processSandbox = yield* ProcessSandbox;
   const forceKillAfter = options.forceKillAfter ?? "5 seconds";
   const isWindows = yield* HostProcess.isWindows;
   const resolveExecutable = yield* SpawnExecutableResolution;
@@ -268,27 +270,68 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
           const posixShell =
             gitExecutable === undefined ? undefined : gitForWindowsBash(gitExecutable);
           const terminalScope = yield* Scope.make();
-          const child = yield* restore(
-            spawner
-              .spawn(
-                acpTerminalCommand({
-                  request,
-                  shellCommands: options.shellCommands,
-                  posixShell,
-                  defaultCwd: options.defaultCwd,
-                  environment,
+          const commandToSpawn = processSandbox.enabled
+            ? yield* Effect.gen(function* () {
+                const isShellSource =
+                  options.shellCommands === true && (request.args?.length ?? 0) === 0;
+                const rawCommand = isShellSource ? "/bin/sh" : request.command;
+                const rawArgs = isShellSource ? ["-c", request.command] : (request.args ?? []);
+                // Only pass server-owned env (never untrusted request.env) when resolving sandbox binds
+                // and when launching the host bwrap binary; forward request.env strictly inside bwrap.
+                const trustedEnv = mergeEnvironments(isWindows, [
+                  Object.entries(inheritedEnvironment),
+                  Object.entries(sessionEnvironment ?? {}),
+                ]);
+                const requestEnvRecord =
+                  request.env !== undefined && request.env.length > 0
+                    ? Object.fromEntries(
+                        request.env.map((variable) => [variable.name, variable.value] as const),
+                      )
+                    : undefined;
+                const wrapped = yield* processSandbox
+                  .wrap({
+                    command: rawCommand,
+                    args: rawArgs,
+                    cwd: options.defaultCwd,
+                    ...(request.cwd == null ? {} : { chdir: request.cwd }),
+                    env: trustedEnv,
+                    ...(requestEnvRecord === undefined ? {} : { sandboxEnv: requestEnvRecord }),
+                    allowExternalExecutableBind: false,
+                    name: "acp-terminal",
+                  })
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      terminalRequestError(
+                        `Sandboxed ACP terminal command '${request.command}' was rejected.`,
+                        cause,
+                      ),
+                    ),
+                  );
+                return ChildProcess.make(wrapped.command, wrapped.args, {
+                  cwd: options.defaultCwd,
+                  env: wrapped.hostEnv ?? sanitizeHostEnvForSandboxLaunch(trustedEnv),
                   forceKillAfter,
-                }),
-              )
-              .pipe(
-                Effect.provideService(Scope.Scope, terminalScope),
-                Effect.mapError((cause) =>
-                  terminalRequestError(
-                    `Could not start terminal command '${request.command}'.`,
-                    cause,
-                  ),
+                  shell: false,
+                });
+              })
+            : acpTerminalCommand({
+                request,
+                shellCommands: options.shellCommands,
+                posixShell,
+                defaultCwd: options.defaultCwd,
+                environment,
+                forceKillAfter,
+              });
+          const child = yield* restore(
+            spawner.spawn(commandToSpawn).pipe(
+              Effect.provideService(Scope.Scope, terminalScope),
+              Effect.mapError((cause) =>
+                terminalRequestError(
+                  `Could not start terminal command '${request.command}'.`,
+                  cause,
                 ),
               ),
+            ),
           ).pipe(
             Effect.onExit((exit) =>
               Exit.isFailure(exit) ? Scope.close(terminalScope, Exit.void) : Effect.void,

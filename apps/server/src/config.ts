@@ -114,6 +114,8 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServePort: number;
     /** Runs strictly as the Team Control Plane (no local coding agents or shell terminals). */
     readonly teamHubOnly?: boolean | undefined;
+    /** Isolates spawned coding agents and shell terminals inside Linux bubblewrap (`bwrap`). */
+    readonly teamBwrapSandbox?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

@@ -2,7 +2,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
   MessageId,
@@ -6862,6 +6862,119 @@ it.effect(
               }),
           }),
         ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 enforces --team-bwrap-sandbox fail-closed checks and per-thread session isolation",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const bwrapConfigLayer = Layer.effect(
+        ServerConfig.ServerConfig,
+        Effect.gen(function* () {
+          const cfg = yield* ServerConfig.ServerConfig;
+          return { ...cfg, teamBwrapSandbox: true };
+        }),
+      ).pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-psm-bwrap-" })),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        Layer.orDie,
+      );
+
+      // 1. Fails closed when teamBwrapSandbox=true without an active ProcessSandbox service.
+      const missingSandboxExit = yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        return yield* manager.open({
+          threadId: ThreadId.make("thread-bwrap-missing"),
+          providerSessionId: idAllocator.derive.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+          }),
+          modelSelection,
+          runtimePolicy,
+        });
+      }).pipe(
+        Effect.provide(layerTest({ state, serverConfigLayer: bwrapConfigLayer })),
+        Effect.exit,
+      );
+      assert.isTrue(Exit.isFailure(missingSandboxExit));
+      assert.strictEqual((yield* Ref.get(state)).openCount, 0);
+
+      // 2. With an active ProcessSandbox: rejects cwd=null and isolates multi-thread sessions per thread.
+      const activeSandbox = {
+        enabled: true,
+        wrap: ({
+          command,
+          args,
+        }: {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        }) => Effect.succeed({ command, args }),
+      };
+      const openedSessionIds: Array<string> = [];
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const baseSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+
+        const nullCwdExit = yield* manager
+          .open({
+            threadId: ThreadId.make("thread-bwrap-null-cwd"),
+            providerSessionId: baseSessionId,
+            modelSelection,
+            runtimePolicy: { ...runtimePolicy, cwd: null },
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(nullCwdExit));
+
+        const first = yield* manager.open({
+          threadId: ThreadId.make("thread-bwrap-1"),
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const second = yield* manager.open({
+          threadId: ThreadId.make("thread-bwrap-2"),
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(first.providerSessionId, second.providerSessionId);
+        assert.strictEqual(openedSessionIds.length, 2);
+
+        // Changing a thread's cwd under bwrap recycles the warm session instead of reusing the old mount namespace.
+        yield* manager.open({
+          threadId: ThreadId.make("thread-bwrap-1"),
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: "/tmp" },
+        });
+        assert.strictEqual(openedSessionIds.length, 3);
+        // Re-opening with the same cwd reuses the warm sandboxed session.
+        yield* manager.open({
+          threadId: ThreadId.make("thread-bwrap-1"),
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: "/tmp" },
+        });
+        assert.strictEqual(openedSessionIds.length, 3);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            capabilities: CodexCapabilities,
+            serverConfigLayer: bwrapConfigLayer,
+            beforeOpen: (openInput) =>
+              Effect.sync(() => {
+                openedSessionIds.push(openInput.providerSessionId);
+              }),
+          }),
+        ),
+        Effect.provideService(ProcessSandbox, activeSandbox),
       );
     }),
 );

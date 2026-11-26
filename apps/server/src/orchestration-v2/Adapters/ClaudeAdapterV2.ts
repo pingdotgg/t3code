@@ -70,8 +70,14 @@ import type {
   AskUserQuestionInput,
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess and resolves bundled package dirs on disk.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- resolves bundled SDK/platform package directories for bwrap RO binds.
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- pure path joins/dirnames for Claude SDK RO bind discovery.
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -82,7 +88,11 @@ import {
   MCP_APP_OUTPUT_KEY,
   mcpAppToolResourceUri,
 } from "@t3tools/shared/mcpApp";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import * as ProviderProcesses from "../../process/providerProcesses.ts";
 import * as SpawnWorker from "../../process/SpawnWorker.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -382,6 +392,87 @@ function mergeClaudeStreamUsage(
 }
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
+
+const CLAUDE_UNSAFE_RO_BIND_DIRS = new Set([
+  "/",
+  "/tmp",
+  "/var",
+  "/var/tmp",
+  "/home",
+  "/root",
+  "/dev",
+  "/proc",
+  "/etc",
+  "/run",
+  "/srv",
+  "/mnt",
+  "/media",
+  "/data",
+]);
+
+export function resolveClaudeSandboxExtraRoBinds(
+  binaryPath: string | undefined,
+): ReadonlyArray<string> {
+  const dirs = new Set<string>();
+  const homeRoots = new Set<string>();
+  const hostHome = HostProcess.HomeDirectory.defaultValue();
+  if (NodePath.isAbsolute(hostHome)) {
+    homeRoots.add(NodePath.posix.normalize(hostHome).replace(/\/+$/, "") || "/");
+    try {
+      homeRoots.add(
+        NodePath.posix.normalize(NodeFS.realpathSync(hostHome)).replace(/\/+$/, "") || "/",
+      );
+    } catch {
+      // Keep lexical home root.
+    }
+  }
+  const addSafeDir = (dirPath: string) => {
+    const normalized = NodePath.posix.normalize(dirPath).replace(/\/+$/, "") || "/";
+    if (CLAUDE_UNSAFE_RO_BIND_DIRS.has(normalized)) return;
+    for (const homeRoot of homeRoots) {
+      if (normalized === homeRoot || homeRoot.startsWith(`${normalized}/`)) return;
+    }
+    dirs.add(normalized);
+  };
+  const addDirWithRealpath = (targetPath: string) => {
+    if (!NodePath.isAbsolute(targetPath)) return;
+    addSafeDir(NodePath.dirname(targetPath));
+    try {
+      const real = NodeFS.realpathSync(targetPath);
+      addSafeDir(NodePath.dirname(real));
+    } catch {
+      // Keep lexical dirname when realpath is unavailable.
+    }
+  };
+  if (binaryPath !== undefined) {
+    addDirWithRealpath(binaryPath);
+  }
+  try {
+    const sdkEntryUrl = import.meta.resolve("@anthropic-ai/claude-agent-sdk");
+    if (sdkEntryUrl.startsWith("file://")) {
+      const sdkEntryPath = NodeURL.fileURLToPath(sdkEntryUrl);
+      addDirWithRealpath(sdkEntryPath);
+      const requireFromSdk = NodeModule.createRequire(sdkEntryPath);
+      const arch = HostProcess.Architecture.defaultValue();
+      for (const pkgName of [
+        `@anthropic-ai/claude-agent-sdk-linux-${arch}`,
+        `@anthropic-ai/claude-agent-sdk-linux-${arch}-musl`,
+      ]) {
+        for (const subpath of ["/package.json", "/claude", ""]) {
+          try {
+            addDirWithRealpath(requireFromSdk.resolve(`${pkgName}${subpath}`));
+            break;
+          } catch {
+            // Optional platform package may not be installed on this host.
+          }
+        }
+      }
+    }
+  } catch {
+    // Best-effort resolution; explicit binaryPath or system RO binds still apply.
+  }
+  return [...dirs];
+}
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 const CLAUDE_BOOT_TIMEOUT = "5 minutes";
@@ -1633,6 +1724,7 @@ export const layerQueryRunner: Layer.Layer<
     const path = yield* Path.Path;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
+    const processSandbox = yield* ProcessSandbox;
     const providerProcesses = yield* ProviderProcesses.ProviderProcesses;
     const platform = yield* HostProcess.Platform;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
@@ -1738,18 +1830,68 @@ export const layerQueryRunner: Layer.Layer<
           [PortScanner.AGENT_THREAD_ENV]: input.threadId,
         },
       };
-      // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
+      // The SDK can prepend a scope wrapper to native binaries; script entries and the default
+      // bundled SDK executable are wrapped inside spawnClaudeCodeProcess using pre-validated bwrap prefixArgs.
       const binaryPath = queryOptions.pathToClaudeCodeExecutable;
-      const launch =
-        binaryPath === undefined || CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext))
-          ? undefined
-          : yield* agentScope.wrap({
-              command: binaryPath,
-              args: [],
-              name: "claude",
-              threadId: input.threadId,
-              env: queryOptions.env,
-            });
+      const isNativeBinary =
+        binaryPath !== undefined &&
+        !CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext));
+      const claudeExtraRoBinds =
+        processSandbox.enabled && !isNativeBinary
+          ? resolveClaudeSandboxExtraRoBinds(binaryPath)
+          : [];
+      const nativeSandboxLaunch =
+        isNativeBinary && processSandbox.enabled
+          ? yield* processSandbox
+              .wrap({
+                command: binaryPath,
+                args: [],
+                cwd: queryOptions.cwd,
+                env: queryOptions.env,
+                name: "claude",
+                threadId: input.threadId,
+              })
+              .pipe(Effect.mapError((cause) => queryRunnerError(cause, "query")))
+          : undefined;
+      const scriptSandboxPrefix =
+        !isNativeBinary && processSandbox.enabled
+          ? yield* processSandbox
+              .wrap({
+                command: process.execPath,
+                args: [],
+                cwd: queryOptions.cwd,
+                env: queryOptions.env,
+                name: "claude",
+                threadId: input.threadId,
+                ...(binaryPath !== undefined ? { extraHelperPaths: [binaryPath] } : {}),
+                ...(claudeExtraRoBinds.length > 0 ? { extraRoBinds: claudeExtraRoBinds } : {}),
+              })
+              .pipe(
+                Effect.mapError((cause) => queryRunnerError(cause, "query")),
+                Effect.flatMap((wrapped) =>
+                  wrapped.prefixArgs !== undefined
+                    ? Effect.succeed({
+                        command: wrapped.command,
+                        prefixArgs: wrapped.prefixArgs,
+                      })
+                    : Effect.fail(
+                        queryRunnerError(
+                          "Active ProcessSandbox did not return prefixArgs for Claude script launch.",
+                          "query",
+                        ),
+                      ),
+                ),
+              )
+          : undefined;
+      const launch = !isNativeBinary
+        ? undefined
+        : yield* agentScope.wrap({
+            command: nativeSandboxLaunch?.command ?? binaryPath,
+            args: nativeSandboxLaunch?.args ?? [],
+            name: "claude",
+            threadId: input.threadId,
+            env: nativeSandboxLaunch?.hostEnv ?? queryOptions.env,
+          });
       const options =
         launch === undefined || launch.args.length === 0
           ? queryOptions
@@ -1757,6 +1899,9 @@ export const layerQueryRunner: Layer.Layer<
               ...queryOptions,
               pathToClaudeCodeExecutable: launch.command,
               executableArgs: [...launch.args, ...(queryOptions.executableArgs ?? [])],
+              ...(nativeSandboxLaunch?.hostEnv === undefined
+                ? {}
+                : { env: nativeSandboxLaunch.hostEnv }),
             };
       const unit = launch?.unit;
       const stopScope = unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
@@ -1805,7 +1950,28 @@ export const layerQueryRunner: Layer.Layer<
       let spawnedProcess: ClaudeSpawnedProcess | undefined;
       let processExited = false;
       let processExit: Promise<void> | undefined;
-      const spawnClaudeCodeProcess = (spawnOptions: ClaudeSpawnOptions) => {
+      const spawnClaudeCodeProcess = (rawSpawnOptions: ClaudeSpawnOptions) => {
+        // Sanitize rawSpawnOptions.env directly so SDK-injected vars (e.g. CLAUDE_CODE_ENTRYPOINT) are preserved.
+        const sanitizedEnv =
+          processSandbox.enabled && rawSpawnOptions.env !== undefined
+            ? (sanitizeHostEnvForSandboxLaunch(rawSpawnOptions.env) ?? {})
+            : rawSpawnOptions.env;
+        // Apply script/bundled-SDK sandbox wrapping before delegating to default or custom spawners.
+        const spawnOptions =
+          scriptSandboxPrefix === undefined
+            ? processSandbox.enabled && sanitizedEnv !== undefined
+              ? { ...rawSpawnOptions, env: sanitizedEnv }
+              : rawSpawnOptions
+            : {
+                ...rawSpawnOptions,
+                command: scriptSandboxPrefix.command,
+                args: [
+                  ...scriptSandboxPrefix.prefixArgs,
+                  rawSpawnOptions.command,
+                  ...rawSpawnOptions.args,
+                ],
+                ...(sanitizedEnv === undefined ? {} : { env: sanitizedEnv }),
+              };
         const child = spawnProcess(spawnOptions);
         spawnedProcess = child;
         // A spawn that fails emits only "error".

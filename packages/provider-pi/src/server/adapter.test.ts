@@ -47,7 +47,11 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import { toolOutputImages, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import {
   makePiAdapterV2,
@@ -7446,5 +7450,136 @@ process.stdout.write('{"type":"ready"}\\n');
         yield* Fiber.join(closing);
         assert.isTrue(closedBeforeGrace);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "isolates persistent PI_CODING_AGENT_DIR per thread, seeds allowlisted config without sessions, and passes sanitized hostEnv when ProcessSandbox is enabled",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const host = yield* ProviderHost.ProviderHost;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-sandbox-cwd-" });
+        const sharedProfileDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-pi-shared-profile-",
+        });
+        yield* fileSystem.writeFileString(`${sharedProfileDir}/settings.json`, '{"theme":"dark"}');
+        yield* fileSystem.writeFileString(`${sharedProfileDir}/models.json`, '{"models":[]}');
+        yield* fileSystem.writeFileString(`${sharedProfileDir}/keybindings.json`, "{}");
+        yield* fileSystem.makeDirectory(`${sharedProfileDir}/sessions`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${sharedProfileDir}/sessions/secret-sibling.jsonl`,
+          '{"secret":true}\n',
+        );
+
+        const spawnedEnvs: Array<Readonly<Record<string, unknown>> | undefined> = [];
+        const wrapCalls: Array<{
+          readonly env?: NodeJS.ProcessEnv | undefined;
+          readonly extraProviderProfileDirs?: ReadonlyArray<string> | undefined;
+        }> = [];
+        const fakeSpawner = ChildProcessSpawner.make((command) => {
+          if (command._tag === "StandardCommand") {
+            spawnedEnvs.push(command.options.env);
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(FAKE_PID),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        });
+        const sandbox = {
+          enabled: true,
+          wrap: (input: {
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+            readonly env?: NodeJS.ProcessEnv | undefined;
+            readonly extraProviderProfileDirs?: ReadonlyArray<string> | undefined;
+          }) => {
+            wrapCalls.push({
+              env: input.env,
+              extraProviderProfileDirs: input.extraProviderProfileDirs,
+            });
+            return Effect.succeed({
+              command: "/usr/bin/bwrap",
+              args: ["--unshare-pid", "--", input.command, ...input.args],
+              hostEnv: sanitizeHostEnvForSandboxLaunch(input.env),
+            });
+          },
+        };
+
+        const adapter = yield* makePiAdapterV2({
+          instanceId: PI_INSTANCE_ID,
+          settings: { enabled: true, binaryPath: "/usr/bin/pi", launchArgs: "", customModels: [] },
+          environment: {
+            PATH: "/usr/bin:/bin",
+            PI_CODING_AGENT_DIR: sharedProfileDir,
+            LD_PRELOAD: `${cwd}/evil.so`,
+          },
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, fakeSpawner),
+          Effect.provideService(ProcessSandbox, sandbox),
+        );
+
+        const threadA = ThreadId.make("thread-pi-a");
+        const threadB = ThreadId.make("thread-pi-b");
+        const dirA = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadA}`;
+        const dirB = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadB}`;
+        // Plant a symlink trap, a 0444 read-only file, and a directory inside Thread A's
+        // sandbox-writable profile to prove seeding unlinks/removes safely with O_NOFOLLOW.
+        const victimFile = `${cwd}/host-victim.txt`;
+        yield* fileSystem.writeFileString(victimFile, "untouched-host-file");
+        yield* fileSystem.makeDirectory(dirA, { recursive: true });
+        yield* fileSystem.symlink(victimFile, `${dirA}/settings.json`);
+        yield* fileSystem.writeFileString(`${dirA}/models.json`, "stale-readonly");
+        yield* fileSystem.chmod(`${dirA}/models.json`, 0o444);
+        yield* fileSystem.makeDirectory(`${dirA}/keybindings.json`, { recursive: true });
+
+        yield* adapter.openSession({
+          threadId: threadA,
+          providerSessionId: ProviderSessionId.make("provider-session-pi-a"),
+          modelSelection: modelSelection("default"),
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          }),
+        });
+        yield* adapter.openSession({
+          threadId: threadB,
+          providerSessionId: ProviderSessionId.make("provider-session-pi-b"),
+          modelSelection: modelSelection("default"),
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          }),
+        });
+
+        assert.equal(wrapCalls.length, 2);
+        assert.notEqual(dirA, dirB);
+        assert.equal(wrapCalls[0]?.env?.PI_CODING_AGENT_DIR, dirA);
+        assert.equal(wrapCalls[1]?.env?.PI_CODING_AGENT_DIR, dirB);
+        assert.deepEqual(wrapCalls[0]?.extraProviderProfileDirs, [dirA]);
+        assert.deepEqual(wrapCalls[1]?.extraProviderProfileDirs, [dirB]);
+        assert.isFalse(wrapCalls[0]?.extraProviderProfileDirs?.includes(sharedProfileDir) ?? false);
+        assert.isFalse(wrapCalls[0]?.extraProviderProfileDirs?.includes(dirB) ?? false);
+        assert.equal(yield* fileSystem.readFileString(`${dirA}/settings.json`), '{"theme":"dark"}');
+        assert.equal(yield* fileSystem.readFileString(`${dirA}/models.json`), '{"models":[]}');
+        assert.equal(yield* fileSystem.readFileString(`${dirA}/keybindings.json`), "{}");
+        assert.equal(yield* fileSystem.readFileString(victimFile), "untouched-host-file");
+        assert.isFalse(yield* fileSystem.exists(`${dirA}/sessions/secret-sibling.jsonl`));
+        assert.equal(spawnedEnvs.length, 2);
+        assert.equal(spawnedEnvs[0]?.LD_PRELOAD, undefined);
+        assert.equal(spawnedEnvs[1]?.LD_PRELOAD, undefined);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 });

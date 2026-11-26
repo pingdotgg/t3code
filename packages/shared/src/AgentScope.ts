@@ -58,6 +58,99 @@ export const AgentScopeThreadId = Context.Reference<string | undefined>(
   { defaultValue: () => undefined },
 );
 
+export interface ProcessSandboxWrapInput {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd?: string | undefined;
+  /** Optional working directory inside `cwd` (must stay within `cwd`). */
+  readonly chdir?: string | undefined;
+  /** Server-trusted environment used for executable lookup and trusted bind discovery. */
+  readonly env?: NodeJS.ProcessEnv | undefined;
+  /** Untrusted/per-request env vars applied strictly inside the sandbox via `--setenv`. */
+  readonly sandboxEnv?: Readonly<Record<string, string | undefined>> | undefined;
+  readonly name: string;
+  readonly threadId?: string | undefined;
+  /** Defaults to true; set false for dedicated PTY terminals so job control / Ctrl+C work. */
+  readonly newSession?: boolean | undefined;
+  /** Defaults to true for trusted server-configured executables; set false for untrusted terminal requests. */
+  readonly allowExternalExecutableBind?: boolean | undefined;
+  readonly extraProviderProfileDirs?: ReadonlyArray<string> | undefined;
+  readonly extraSocketPaths?: ReadonlyArray<string> | undefined;
+  readonly extraHelperPaths?: ReadonlyArray<string> | undefined;
+  readonly extraRoBinds?: ReadonlyArray<string> | undefined;
+  readonly extraRwBinds?: ReadonlyArray<string> | undefined;
+}
+
+export interface ProcessSandboxCommand {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  /** All sandbox flags up to and including `--` (without trailing target command/args). */
+  readonly prefixArgs?: ReadonlyArray<string> | undefined;
+  /** Sanitized host environment safe for running `bwrap` and any outer `AgentScope` wrapper on the host. */
+  readonly hostEnv?: NodeJS.ProcessEnv | undefined;
+}
+
+const UNSAFE_HOST_SANDBOX_ENV_KEYS = new Set([
+  "GCONV_PATH",
+  "GETCONF_DIR",
+  "HOSTALIASES",
+  "LOCALDOMAIN",
+  "LOCPATH",
+  "RES_OPTIONS",
+  "ENV",
+  "BASH_ENV",
+  "CDPATH",
+  "GLOBIGNORE",
+  "IFS",
+  "SHELLOPTS",
+  "BASHOPTS",
+  "ZDOTDIR",
+  "NODE_OPTIONS",
+  "PERL5OPT",
+  "PYTHONSTARTUP",
+  "PYTHONPATH",
+  "RUBYOPT",
+]);
+
+/**
+ * Strips dynamic-linker and shell-startup environment variables before invoking `bwrap` (and any
+ * outer `/bin/sh` / `systemd-run` wrapper) on the unsandboxed host.
+ */
+export function sanitizeHostEnvForSandboxLaunch(
+  env: NodeJS.ProcessEnv | undefined,
+): NodeJS.ProcessEnv {
+  if (env === undefined) return {};
+  const sanitized: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue;
+    const upper = key.toUpperCase();
+    if (
+      upper.startsWith("LD_") ||
+      upper.startsWith("BASH_FUNC_") ||
+      UNSAFE_HOST_SANDBOX_ENV_KEYS.has(upper)
+    ) {
+      continue;
+    }
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
+export interface ProcessSandboxShape {
+  readonly enabled: boolean;
+  readonly wrap: (input: ProcessSandboxWrapInput) => Effect.Effect<ProcessSandboxCommand, Error>;
+}
+
+export const ProcessSandbox = Context.Reference<ProcessSandboxShape>(
+  "@t3tools/shared/ProcessSandbox",
+  {
+    defaultValue: () => ({
+      enabled: false,
+      wrap: ({ command, args }) => Effect.succeed({ command, args }),
+    }),
+  },
+);
+
 export const AGENT_OOM_SCORE_ADJ = 800;
 
 export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/oom_score_adj; } 2>/dev/null`;

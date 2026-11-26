@@ -1,4 +1,4 @@
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import { ProviderSessionEnvironmentOverride } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -65,6 +65,7 @@ import {
   TEAM_HUB_ONLY_AGENT_ERROR_MESSAGE,
   TeamHubOnlyExecutionRefusedError,
 } from "../team/hubOnly.ts";
+import { BwrapSandboxUnavailableError, isTeamBwrapSandboxEnabled } from "../team/bwrapSandbox.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import {
@@ -358,6 +359,8 @@ interface LiveSessionEntry {
   readonly ownerActingMemberId: TeamMemberId | null;
   /** Tracks which team member's MCP token is bound to each attached thread so author switches recycle warm sessions. */
   readonly actingMemberIdByThread: ReadonlyMap<ThreadId, TeamMemberId | null>;
+  /** Tracks the workspace cwd this live process was opened in (used for bwrap recycle on cwd switch). */
+  readonly openedCwd: string | null;
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -504,6 +507,8 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const teamHubOnly = yield* isTeamHubOnlyServer;
+      const teamBwrapSandbox = yield* isTeamBwrapSandboxEnabled;
+      const processSandbox = yield* ProcessSandbox;
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
@@ -602,10 +607,18 @@ export const layerWithOptions = (
       );
       const activeSessionIdByThread = yield* Ref.make(new Map<ThreadId, ProviderSessionId>());
       const MEMBER_SESSION_SEPARATOR = "::member:";
+      const SANDBOX_THREAD_SESSION_SEPARATOR = "::bwrap-thread:";
       const canonicalBaseSessionId = (id: ProviderSessionId): ProviderSessionId => {
         const raw = String(id);
-        const idx = raw.indexOf(MEMBER_SESSION_SEPARATOR);
-        return idx === -1 ? id : ProviderSessionId.make(raw.slice(0, idx));
+        const memberIdx = raw.indexOf(MEMBER_SESSION_SEPARATOR);
+        const sandboxIdx = raw.indexOf(SANDBOX_THREAD_SESSION_SEPARATOR);
+        const cutIdx =
+          memberIdx === -1
+            ? sandboxIdx
+            : sandboxIdx === -1
+              ? memberIdx
+              : Math.min(memberIdx, sandboxIdx);
+        return cutIdx === -1 ? id : ProviderSessionId.make(raw.slice(0, cutIdx));
       };
       const memberScopedSessionId = (
         base: ProviderSessionId,
@@ -613,6 +626,13 @@ export const layerWithOptions = (
       ): ProviderSessionId =>
         ProviderSessionId.make(
           `${canonicalBaseSessionId(base)}${MEMBER_SESSION_SEPARATOR}${actingMemberId}`,
+        );
+      const sandboxThreadScopedSessionId = (
+        base: ProviderSessionId,
+        threadId: ThreadId,
+      ): ProviderSessionId =>
+        ProviderSessionId.make(
+          `${canonicalBaseSessionId(base)}${SANDBOX_THREAD_SESSION_SEPARATOR}${threadId}`,
         );
       const resolveThreadSessionId = (
         byThread: ReadonlyMap<ThreadId, ProviderSessionId>,
@@ -623,7 +643,8 @@ export const layerWithOptions = (
         const activeForThread = byThread.get(threadId);
         return activeForThread !== undefined &&
           (activeForThread === canonicalBase ||
-            activeForThread.startsWith(`${canonicalBase}${MEMBER_SESSION_SEPARATOR}`))
+            activeForThread.startsWith(`${canonicalBase}${MEMBER_SESSION_SEPARATOR}`) ||
+            activeForThread.startsWith(`${canonicalBase}${SANDBOX_THREAD_SESSION_SEPARATOR}`))
           ? activeForThread
           : base;
       };
@@ -632,10 +653,11 @@ export const layerWithOptions = (
         base: ProviderSessionId,
       ): ReadonlyArray<ProviderSessionId> => {
         const baseKey = sessionKey(canonicalBaseSessionId(base));
-        const prefix = `${baseKey}${MEMBER_SESSION_SEPARATOR}`;
+        const memberPrefix = `${baseKey}${MEMBER_SESSION_SEPARATOR}`;
+        const sandboxPrefix = `${baseKey}${SANDBOX_THREAD_SESSION_SEPARATOR}`;
         const matched: Array<ProviderSessionId> = [];
         for (const [key, entry] of current) {
-          if (key === baseKey || key.startsWith(prefix)) {
+          if (key === baseKey || key.startsWith(memberPrefix) || key.startsWith(sandboxPrefix)) {
             matched.push(entry.runtime.providerSessionId);
           }
         }
@@ -3400,7 +3422,27 @@ export const layerWithOptions = (
                   }),
                 });
               }
+              if (teamBwrapSandbox && !processSandbox.enabled) {
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause: new BwrapSandboxUnavailableError({
+                    reason: "probe_failed",
+                    hint: "--team-bwrap-sandbox is enabled but no active bwrap ProcessSandbox service is provided.",
+                  }),
+                });
+              }
               const cwd = input.runtimePolicy.cwd;
+              if ((teamBwrapSandbox || processSandbox.enabled) && cwd === null) {
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause: new BwrapSandboxUnavailableError({
+                    reason: "probe_failed",
+                    hint: "Sandboxed agent sessions under --team-bwrap-sandbox require an explicit workspace cwd.",
+                  }),
+                });
+              }
               if (cwd !== null) {
                 const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
                   Effect.map((stat) => stat.type === "Directory"),
@@ -3475,16 +3517,33 @@ export const layerWithOptions = (
                 input.actingMemberId !== undefined &&
                 baseEntry !== undefined &&
                 hasOtherMember(baseEntry, input.actingMemberId);
-              // Isolate multi-thread sessions by canonical base + acting member so author switches
-              // never nest `::member:` suffixes or collide with another member's warm process.
+              // Isolate multi-thread sessions per thread when bwrap sandboxing is active (each
+              // sandbox mounts strictly one thread's worktree), or by canonical base + acting member.
               const effectiveProviderSessionId =
-                memberSessionId !== undefined &&
-                (existingMemberEntry !== undefined || baseOccupiedByOtherMember)
-                  ? memberSessionId
-                  : baseSessionId;
+                teamBwrapSandbox || processSandbox.enabled
+                  ? sandboxThreadScopedSessionId(baseSessionId, input.threadId)
+                  : memberSessionId !== undefined &&
+                      (existingMemberEntry !== undefined || baseOccupiedByOtherMember)
+                    ? memberSessionId
+                    : baseSessionId;
               const key = sessionKey(effectiveProviderSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
-              if (existing !== undefined) {
+              if (
+                existing !== undefined &&
+                (teamBwrapSandbox || processSandbox.enabled) &&
+                existing.openedCwd !== cwd
+              ) {
+                yield* releaseEntry({
+                  providerSessionId: effectiveProviderSessionId,
+                  reason: "manual_shutdown",
+                  detail:
+                    "Thread workspace cwd changed; recycling sandboxed provider session for new worktree.",
+                  preserveTeamEphemeralTokens: true,
+                }).pipe(logReleaseFailure(effectiveProviderSessionId));
+              }
+              const existingAfterCwdCheck = (yield* Ref.get(sessions)).get(key);
+              if (existingAfterCwdCheck !== undefined) {
+                const existing = existingAfterCwdCheck;
                 if (
                   input.actingMemberId !== undefined &&
                   hasOtherMember(existing, input.actingMemberId)
@@ -3652,6 +3711,7 @@ export const layerWithOptions = (
                     : new Map([[input.threadId, mcpCredentialId]]),
                 ownerActingMemberId: input.actingMemberId ?? null,
                 actingMemberIdByThread: new Map([[input.threadId, input.actingMemberId ?? null]]),
+                openedCwd: cwd,
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,

@@ -16,7 +16,10 @@ import {
   type CodexTurnTokenUsageState,
 } from "../../provider/CodexTurnTokenUsage.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
+import type {
+  CodexEffectiveRuntime,
+  CodexManagedSandboxBinds,
+} from "../../provider/CodexManagedRuntime.ts";
 import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
 import {
   buildCodexInitializeParams,
@@ -49,7 +52,11 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   COMPUTER_USE_TOOL_SOURCE,
@@ -1667,6 +1674,7 @@ export interface CodexAppServerClientFactoryShape {
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    readonly sandboxBinds?: CodexManagedSandboxBinds | undefined;
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapter.ProviderAdapterOpenSessionError,
@@ -1799,23 +1807,57 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly extendEnv?: boolean | undefined;
   readonly threadId?: string | undefined;
+  readonly extraProviderProfileDirs?: ReadonlyArray<string> | undefined;
+  readonly extraSocketPaths?: ReadonlyArray<string> | undefined;
+  readonly extraHelperPaths?: ReadonlyArray<string> | undefined;
+  readonly extraRoBinds?: ReadonlyArray<string> | undefined;
 }) {
+  const processSandbox = yield* ProcessSandbox;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const sandboxInputEnv =
+    processSandbox.enabled && input.extendEnv === true
+      ? { ...hostEnvironment, ...input.env }
+      : input.env;
+  const sandboxed = processSandbox.enabled
+    ? yield* processSandbox.wrap({
+        command: input.command,
+        args: input.args,
+        cwd: input.cwd,
+        env: sandboxInputEnv,
+        name: "codex",
+        threadId: input.threadId,
+        ...(input.extraProviderProfileDirs === undefined
+          ? {}
+          : { extraProviderProfileDirs: input.extraProviderProfileDirs }),
+        ...(input.extraSocketPaths === undefined
+          ? {}
+          : { extraSocketPaths: input.extraSocketPaths }),
+        ...(input.extraHelperPaths === undefined
+          ? {}
+          : { extraHelperPaths: input.extraHelperPaths }),
+        ...(input.extraRoBinds === undefined ? {} : { extraRoBinds: input.extraRoBinds }),
+      })
+    : { command: input.command, args: input.args, hostEnv: input.env };
+  const effectiveEnv = processSandbox.enabled
+    ? (sandboxed.hostEnv ?? sanitizeHostEnvForSandboxLaunch(sandboxInputEnv) ?? {})
+    : input.env;
+  const effectiveExtendEnv = processSandbox.enabled ? false : input.extendEnv;
   const launch = yield* (yield* AgentScope).wrap({
-    command: input.command,
-    args: input.args,
+    command: sandboxed.command,
+    args: sandboxed.args,
     name: "codex",
     threadId: input.threadId,
-    env: input.env,
-    shared: true,
+    env: effectiveEnv,
+    shared: !processSandbox.enabled,
   });
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
-    ...(input.env === undefined ? {} : { env: input.env }),
-    ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+    ...(effectiveEnv === undefined ? {} : { env: effectiveEnv }),
+    ...(effectiveExtendEnv === undefined ? {} : { extendEnv: effectiveExtendEnv }),
   });
   return ChildProcess.make(spawnCommand.command, spawnCommand.args, {
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-    ...(input.env === undefined ? {} : { env: input.env }),
-    ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+    ...(effectiveEnv === undefined ? {} : { env: effectiveEnv }),
+    ...(effectiveExtendEnv === undefined ? {} : { extendEnv: effectiveExtendEnv }),
     shell: spawnCommand.shell,
     forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
   });
@@ -1982,6 +2024,7 @@ export const layerAppServerClientFactory: Layer.Layer<
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
+    const processSandbox = yield* ProcessSandbox;
     const portDiscovery = yield* PortScanner.PortDiscovery;
 
     return CodexAppServerClientFactory.of({
@@ -1996,9 +2039,33 @@ export const layerAppServerClientFactory: Layer.Layer<
           args: codexAppServerArgs(
             resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
           ),
+          ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
           env: environment,
           threadId: input.threadId,
-        }).pipe(Effect.provideService(AgentScope, agentScope));
+          ...(input.sandboxBinds?.providerProfileDirs === undefined
+            ? {}
+            : { extraProviderProfileDirs: input.sandboxBinds.providerProfileDirs }),
+          ...(input.sandboxBinds?.socketPaths === undefined
+            ? {}
+            : { extraSocketPaths: input.sandboxBinds.socketPaths }),
+          ...(input.sandboxBinds?.helperPaths === undefined
+            ? {}
+            : { extraHelperPaths: input.sandboxBinds.helperPaths }),
+          ...(input.sandboxBinds?.extraRoBinds === undefined
+            ? {}
+            : { extraRoBinds: input.sandboxBinds.extraRoBinds }),
+        }).pipe(
+          Effect.provideService(AgentScope, agentScope),
+          Effect.provideService(ProcessSandbox, processSandbox),
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver: CODEX_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+          ),
+        );
         const handle = yield* spawner.spawn(command).pipe(
           Effect.provideService(Scope.Scope, scope),
           Effect.mapError(
@@ -2169,6 +2236,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           runtimePolicy: input.runtimePolicy,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: sessionEnvironment,
+          ...(resolvedRuntime?.sandboxBinds === undefined
+            ? {}
+            : { sandboxBinds: resolvedRuntime.sandboxBinds }),
         });
         const codexZone = codexTimeZone(sessionEnvironment);
         const additionalContextByThread = yield* Ref.make(
