@@ -77,22 +77,18 @@ function fnv1a(buffer: Buffer): number {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-  options?: {
-    readonly fileName?: string;
-    readonly excludeTopLevelDir?: (name: string) => boolean;
-  },
+  options?: { readonly fileName?: string },
 ): Promise<{
   readonly files: readonly TranscriptFile[];
   readonly walked: readonly string[];
   readonly failedPaths: number;
 }> {
   const fileName = options?.fileName;
-  const excludeTopLevelDir = options?.excludeTopLevelDir;
   let failedPaths = 0;
   let reading = 0;
   const waiting: Array<() => void> = [];
   // Sibling directories read together; each returns its own list so the result keeps readdir order.
-  const walk = async (dir: string, isRoot: boolean): Promise<readonly string[]> => {
+  const walk = async (dir: string): Promise<readonly string[]> => {
     if (reading < WALK_CONCURRENCY) reading += 1;
     else await new Promise<void>((resume) => waiting.push(resume));
     let entries;
@@ -110,10 +106,7 @@ export async function listTranscriptFiles(
     const found = await Promise.all(
       entries.map((entry) => {
         const child = NodePath.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (isRoot && excludeTopLevelDir?.(entry.name)) return [];
-          return walk(child, false);
-        }
+        if (entry.isDirectory()) return walk(child);
         return (
           fileName !== undefined
             ? entry.name === fileName
@@ -125,7 +118,7 @@ export async function listTranscriptFiles(
     );
     return found.flat();
   };
-  const candidates = await walk(root, true);
+  const candidates = await walk(root);
 
   const found: Array<TranscriptFile | undefined> = Array.from({ length: candidates.length });
   const queue = candidates.entries();

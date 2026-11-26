@@ -111,7 +111,7 @@ interface TranscriptSource {
   readonly volumeId: string;
   readonly physicalSourceId?: string;
   readonly fileName?: string;
-  readonly excludeTopLevelDir?: (name: string) => boolean;
+  readonly mirrorTopLevelDir?: (name: string) => boolean;
 }
 
 const RatesCacheFile = Schema.Struct({
@@ -214,19 +214,9 @@ export const make = Effect.gen(function* () {
     coveredSince.set(coverageKey(source), windowStartMs);
     cacheDirty = true;
   };
-  const isWithinDirectory = (
-    folder: string,
-    dir: string,
-    excludeTopLevelDir?: (name: string) => boolean,
-  ) => {
-    const relative = path.relative(dir, folder);
-    if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
-      return false;
-    }
-    if (excludeTopLevelDir === undefined || relative.length === 0) return true;
-    const sepIndex = relative.indexOf(path.sep);
-    const topLevel = sepIndex === -1 ? relative : relative.slice(0, sepIndex);
-    return !excludeTopLevelDir(topLevel);
+  const isWithinDirectory = (filePath: string, dir: string) => {
+    const relative = path.relative(dir, filePath);
+    return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
   };
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
@@ -418,7 +408,7 @@ export const make = Effect.gen(function* () {
       for (const {
         dir: directory,
         fileName,
-        excludeTopLevelDir,
+        mirrorTopLevelDir,
         refreshing,
       } of directories.flat()) {
         if (refreshing) {
@@ -442,7 +432,7 @@ export const make = Effect.gen(function* () {
               entry.mtimeMs >= retentionCutoffMs &&
               (entry.records.length + entry.tailRecords.length > 0 ||
                 entry.malformedRecords.length > 0) &&
-              isWithinDirectory(path.dirname(filePath), dir, excludeTopLevelDir),
+              isWithinDirectory(filePath, dir),
           );
         const volumeId =
           previous?.dir === dir && (hasRetainedHistory || !currentVolumeId)
@@ -463,7 +453,7 @@ export const make = Effect.gen(function* () {
           volumeId,
           ...(sourceId === undefined ? {} : { physicalSourceId: sourceId }),
           ...(fileName === undefined ? {} : { fileName }),
-          ...(excludeTopLevelDir === undefined ? {} : { excludeTopLevelDir }),
+          ...(mirrorTopLevelDir === undefined ? {} : { mirrorTopLevelDir }),
         });
       }
     }
@@ -703,7 +693,7 @@ export const make = Effect.gen(function* () {
     readonly dir: string;
     readonly volumeId: string;
     readonly physicalSourceId?: string;
-    readonly excludeTopLevelDir?: (name: string) => boolean;
+    readonly mirrorTopLevelDir?: (name: string) => boolean;
     readonly hostId?: string;
     readonly status?: UsageSource["status"];
     readonly message?: string;
@@ -724,14 +714,14 @@ export const make = Effect.gen(function* () {
     windowStartMs: number,
     fromMemory: boolean,
   ) {
-    const { provider, format, dir, volumeId, physicalSourceId, fileName, excludeTopLevelDir } =
+    const { provider, format, dir, volumeId, physicalSourceId, fileName, mirrorTopLevelDir } =
       source;
     const identity = {
       provider,
       dir,
       volumeId,
       ...(physicalSourceId === undefined ? {} : { physicalSourceId }),
-      ...(excludeTopLevelDir === undefined ? {} : { excludeTopLevelDir }),
+      ...(mirrorTopLevelDir === undefined ? {} : { mirrorTopLevelDir }),
     };
     const exists = yield* fileSystem
       .exists(dir)
@@ -742,15 +732,8 @@ export const make = Effect.gen(function* () {
     }
     // scanSummary aggregates the saved files, as it does for a deleted directory.
     if (fromMemory) return { ...identity, files: [] } satisfies ScannedDir;
-    const listOptions =
-      fileName === undefined && excludeTopLevelDir === undefined
-        ? undefined
-        : {
-            ...(fileName === undefined ? {} : { fileName }),
-            ...(excludeTopLevelDir === undefined ? {} : { excludeTopLevelDir }),
-          };
     const { files, walked, failedPaths } = yield* Effect.promise(() =>
-      listTranscriptFiles(dir, windowStartMs, listOptions),
+      listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
     const read = yield* Effect.forEach(
       files,
@@ -956,22 +939,22 @@ export const make = Effect.gen(function* () {
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
     const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
     // Saved paths are files below a scanned root, so their folder decides; folders repeat thousands of times.
-    const withinDir = (dir: string, excludeTopLevelDir?: (name: string) => boolean) => {
+    const withinDir = (dir: string) => {
       const foldersWithin = new Map<string, boolean>();
       return (filePath: string) => {
         const folder = path.dirname(filePath);
         let within = foldersWithin.get(folder);
         if (within === undefined) {
-          within = isWithinDirectory(folder, dir, excludeTopLevelDir);
+          within = isWithinDirectory(folder, dir);
           foldersWithin.set(folder, within);
         }
         return within;
       };
     };
-    const filesByDir = scannedDirs.map(({ provider, dir, files, excludeTopLevelDir }) => {
+    const filesByDir = scannedDirs.map(({ provider, dir, files }) => {
       const retainedFiles = [...(files ?? [])];
       const livePaths = new Set(retainedFiles.map((file) => file.path));
-      const isRetained = withinDir(dir, excludeTopLevelDir);
+      const isRetained = withinDir(dir);
       for (const [filePath, entry] of fileCache) {
         if (
           entry.provider !== provider ||
@@ -1002,9 +985,9 @@ export const make = Effect.gen(function* () {
     });
     // Usage two transcripts share counts in the first one, so saved files take the order an exact
     // scan reads them in: walked files in walk order, then the directory's deleted files.
-    for (const { provider, dir, walked, excludeTopLevelDir } of fromMemory ? [] : scannedDirs) {
+    for (const { provider, dir, walked } of fromMemory ? [] : scannedDirs) {
       if (walked === undefined) continue;
-      const within = withinDir(dir, excludeTopLevelDir);
+      const within = withinDir(dir);
       const saved = [...fileCache.keys()];
       const members = new Set(
         saved.filter(
@@ -1105,6 +1088,7 @@ export const make = Effect.gen(function* () {
         dir,
         volumeId,
         physicalSourceId,
+        mirrorTopLevelDir,
         files,
         status,
         message,
@@ -1112,21 +1096,52 @@ export const make = Effect.gen(function* () {
         hostId: sourceHostId,
       },
     ] of scannedDirs.entries()) {
-      let scannedFiles = 0;
-      let skippedFiles = 0;
-      let malformedRecords = 0;
-      // Distinct per directory. Buckets carry per-cell session counts, but a
-      // session spans days and models, so clients total this figure instead.
-      const sessionIds = new Set<string>();
-      let counted = false;
+      // Mirror folders report as their own sources so clients can drop the ones another environment counts.
+      const groups = new Map<
+        string,
+        {
+          readonly mirrorName?: string;
+          scannedFiles: number;
+          skippedFiles: number;
+          malformedRecords: number;
+          // Distinct per directory. Buckets carry per-cell session counts, but a
+          // session spans days and models, so clients total this figure instead.
+          readonly sessionIds: Set<string>;
+          counted: boolean;
+        }
+      >();
+      const newGroup = (mirrorName?: string) => ({
+        ...(mirrorName === undefined ? {} : { mirrorName }),
+        scannedFiles: 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        sessionIds: new Set<string>(),
+        counted: false,
+      });
+      const mainGroup = newGroup();
+      groups.set(dir, mainGroup);
+      const groupOf = (filePath: string) => {
+        if (mirrorTopLevelDir === undefined) return { groupDir: dir, group: mainGroup };
+        const relative = path.relative(dir, filePath);
+        const sepIndex = relative.indexOf(path.sep);
+        const name = sepIndex <= 0 ? "" : relative.slice(0, sepIndex);
+        if (name.length === 0 || name === ".." || !mirrorTopLevelDir(name)) {
+          return { groupDir: dir, group: mainGroup };
+        }
+        const groupDir = path.join(dir, name);
+        const group = groups.get(groupDir) ?? newGroup(name);
+        groups.set(groupDir, group);
+        return { groupDir, group };
+      };
 
       for (const file of filesByDir[index] ?? []) {
-        malformedRecords += file.malformedRecords.length;
+        const { groupDir, group } = groupOf(file.path);
+        group.malformedRecords += file.malformedRecords.length;
         if (file.records.length === 0) {
-          skippedFiles += 1;
+          group.skippedFiles += 1;
           continue;
         }
-        scannedFiles += 1;
+        group.scannedFiles += 1;
         const eventOccurrences = new Map<string, number>();
         for (const rawRecord of file.records) {
           const record = correctedRecord(rawRecord);
@@ -1147,47 +1162,64 @@ export const make = Effect.gen(function* () {
             eventOccurrences.set(key, occurrence);
             usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
           }
-          if (aggregator.add(usageRecord, dir)) {
-            counted = true;
-            if (record.sessionId.length > 0) sessionIds.add(record.sessionId);
+          if (aggregator.add(usageRecord, groupDir)) {
+            group.counted = true;
+            if (record.sessionId.length > 0) group.sessionIds.add(record.sessionId);
           }
         }
       }
 
-      const sourceMessage =
-        message ?? (files === null ? "No transcript directory on this environment." : null);
-      sources.push({
-        fingerprint: {
-          hostId: sourceHostId ?? hostId,
-          provider,
-          resolvedHomePath: dir,
-          volumeId,
-          ...(physicalSourceId === undefined ? {} : { physicalSourceId }),
-        },
-        status:
-          files === null && scannedFiles === 0
-            ? "missing"
-            : malformedRecords > 0
-              ? status === undefined || status === "ok"
-                ? "partial"
-                : status
-              : (status ?? "ok"),
-        scannedFiles,
-        skippedFiles,
-        malformedRecords,
-        distinctSessions: sessionIds.size,
-        message:
-          malformedRecords > 0
-            ? [sourceMessage, formatMalformedUsageWarning(malformedRecords)]
-                .filter(Boolean)
-                .join(" ")
-            : sourceMessage,
-        // A saved answer misses what changed since its scan, so the client must ask again. An
-        // empty source stays unmarked: it would only flash a loading row.
-        ...(refreshing || (fromMemory && counted && transcriptFormats.has(provider))
-          ? { refreshing: true }
-          : {}),
-      });
+      for (const [groupDir, group] of groups) {
+        const { mirrorName, scannedFiles, skippedFiles, malformedRecords, sessionIds, counted } =
+          group;
+        const sourceMessage =
+          mirrorName !== undefined
+            ? null
+            : (message ?? (files === null ? "No transcript directory on this environment." : null));
+        sources.push({
+          fingerprint: {
+            hostId: sourceHostId ?? hostId,
+            provider,
+            resolvedHomePath: groupDir,
+            volumeId,
+            ...(physicalSourceId === undefined
+              ? {}
+              : {
+                  physicalSourceId:
+                    mirrorName === undefined
+                      ? physicalSourceId
+                      : `${physicalSourceId}/${mirrorName}`,
+                }),
+          },
+          status:
+            files === null && scannedFiles === 0
+              ? "missing"
+              : malformedRecords > 0
+                ? status === undefined || status === "ok"
+                  ? "partial"
+                  : status
+                : (status ?? "ok"),
+          scannedFiles,
+          skippedFiles,
+          malformedRecords,
+          distinctSessions: sessionIds.size,
+          message:
+            malformedRecords > 0
+              ? [sourceMessage, formatMalformedUsageWarning(malformedRecords)]
+                  .filter(Boolean)
+                  .join(" ")
+              : sourceMessage,
+          // A saved answer misses what changed since its scan, so the client must ask again. An
+          // empty source stays unmarked: it would only flash a loading row.
+          ...(refreshing || (fromMemory && counted && transcriptFormats.has(provider))
+            ? { refreshing: true }
+            : {}),
+          ...(mirrorName === undefined ? {} : { mirror: true }),
+          ...(mirrorTopLevelDir === undefined
+            ? {}
+            : { sessionKeys: [...sessionIds].map((sessionId) => sessionId.slice(0, 8)).sort() }),
+        });
+      }
     }
 
     yield* settingsService

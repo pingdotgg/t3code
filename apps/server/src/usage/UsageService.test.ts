@@ -4408,113 +4408,41 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect("ignores mirrored Claude Code ssh-* transcripts on disk and in the scan cache", () =>
+  it.effect("reports Claude Code ssh-* mirrors as their own sources and keeps their history", () =>
     Effect.gen(function* () {
-      const { home, settings } = yield* setup;
-      const projectsDir = NodePath.join(home, "claude", "projects");
+      const { home, transcript, settings } = yield* setup;
       const sessionId = "1acabe71-751c-45b0-b3e0-8710bd7aeaae";
-
-      const localProjectDir = NodePath.join(projectsDir, "C--Users-dev-app");
-      const nestedSshDir = NodePath.join(localProjectDir, "ssh-nested");
-      const mirrorDir = NodePath.join(projectsDir, `ssh-${sessionId}`);
-      yield* Effect.promise(() =>
-        Promise.all([
-          NodeFSP.mkdir(nestedSshDir, { recursive: true }),
-          NodeFSP.mkdir(mirrorDir, { recursive: true }),
-        ]),
-      );
-
-      yield* Effect.promise(() =>
-        Promise.all([
-          NodeFSP.writeFile(
-            NodePath.join(localProjectDir, "local-session.jsonl"),
-            claudeLine(1, 25, "claude-fable-5", "local-session"),
-          ),
-          NodeFSP.writeFile(
-            NodePath.join(nestedSshDir, "nested-session.jsonl"),
-            claudeLine(2, 15, "claude-fable-5", "nested-session"),
-          ),
-          NodeFSP.writeFile(
-            NodePath.join(mirrorDir, `${sessionId}.jsonl`),
-            claudeLine(3, 100, "claude-fable-5", sessionId),
-          ),
-        ]),
-      );
-
-      const serviceLayer = layerService({
-        prefix: "usage-ssh-mirror-test",
-        home,
-        settings,
+      const mirrorDir = NodePath.join(home, "claude", "projects", `ssh-${sessionId}`);
+      const mirrorTranscript = NodePath.join(mirrorDir, `${sessionId}.jsonl`);
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(mirrorDir, { recursive: true });
+        await NodeFSP.writeFile(transcript, claudeLine(1, 25, "claude-fable-5", "local-session"));
+        await NodeFSP.writeFile(mirrorTranscript, claudeLine(2, 100, "claude-fable-5", sessionId));
       });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-ssh-mirror-test", home, settings })),
+      );
+      const claudeSummary = Effect.map(service.readSummary(WINDOW), (summary) => ({
+        outputTokens: summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
+        sources: summary.sources
+          .filter((source) => source.fingerprint.provider === "claude" && source.scannedFiles > 0)
+          .map((source) => ({
+            folder: NodePath.basename(source.fingerprint.resolvedHomePath),
+            mirror: source.mirror ?? false,
+            sessionKeys: source.sessionKeys,
+          })),
+      }));
+      const expected = {
+        outputTokens: 125,
+        sources: [
+          { folder: "projects", mirror: false, sessionKeys: ["local-se"] },
+          { folder: `ssh-${sessionId}`, mirror: true, sessionKeys: ["1acabe71"] },
+        ],
+      };
 
-      // Seed an already-cached deleted ssh-* mirror file as an upgraded server would load from disk.
-      const projectsRealPath = yield* Effect.promise(() => NodeFSP.realpath(projectsDir));
-      const cachedMirrorPath = NodePath.join(
-        projectsRealPath,
-        "ssh-deleted-session",
-        "deleted-session.jsonl",
-      );
-      const writeCache = makeScanCacheWriter();
-      const cacheContents = [
-        ...writeCache(
-          new Map([
-            [
-              cachedMirrorPath,
-              {
-                size: 120,
-                mtimeMs: Date.parse("2026-08-01T10:00:00Z"),
-                provider: "claude",
-                records: [
-                  {
-                    provider: "claude",
-                    timestampMs: Date.parse("2026-08-01T10:00:00Z"),
-                    model: "claude-fable-5",
-                    sessionId: "deleted-session",
-                    totals: {
-                      uncachedInputTokens: 10,
-                      cachedInputTokens: 0,
-                      cacheCreationTokens: 0,
-                      outputTokens: 40,
-                      reasoningTokens: 0,
-                    },
-                    reportedCostUsd: null,
-                    speed: "standard",
-                    dedupeKey: "msg_5:req_5",
-                  },
-                ],
-                tailRecords: [],
-                malformedRecords: [],
-                position: { resumeOffset: 120, guardLength: 0, guardHash: 0, state: null },
-              },
-            ],
-          ]),
-          {},
-        ),
-      ].join("");
-      yield* Effect.gen(function* () {
-        const { stateDir } = yield* ServerConfig.ServerConfig;
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(stateDir, { recursive: true });
-          await NodeFSP.writeFile(NodePath.join(stateDir, SCAN_CACHE_FILE_NAME), cacheContents);
-        });
-      }).pipe(Effect.provide(serviceLayer));
-
-      const service = yield* UsageService.make.pipe(Effect.provide(serviceLayer));
-      const summary = yield* service.readSummary(WINDOW);
-      const provisional = yield* service.readSummary({ ...WINDOW, provisional: true });
-
-      assert.strictEqual(
-        summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
-        40,
-      );
-      assert.strictEqual(
-        summary.buckets.reduce((sum, bucket) => sum + bucket.records, 0),
-        2,
-      );
-      assert.strictEqual(
-        provisional.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
-        40,
-      );
+      assert.deepStrictEqual(yield* claudeSummary, expected);
+      yield* Effect.promise(() => NodeFSP.rm(mirrorDir, { recursive: true }));
+      assert.deepStrictEqual(yield* claudeSummary, expected);
     }),
   );
 });
