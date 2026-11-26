@@ -76,7 +76,7 @@ export function FoldedSettingsSection({
               aria-hidden
               className={cn(
                 "size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-                open ? "rotate-90" : "[&:dir(rtl)]:rotate-180",
+                open ? "rotate-90" : "rtl:rotate-180",
               )}
             />
             <span className="shrink-0 text-sm font-medium">{title}</span>

@@ -20,7 +20,7 @@ import * as Haptics from "expo-haptics";
 import { T, useGT, useMessages } from "gt-react-native";
 import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
-import { useInterfaceDirection } from "../../i18n/I18nProvider";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";

@@ -209,7 +209,6 @@ export function resolveChatCanvasModel({
     layout: rtl
       ? {
           ...layout,
-          chat: { ...layout.chat, left: container.width - layout.chat.left - layout.chat.width },
           frame: layout.frame
             ? { ...layout.frame, x: container.width - layout.frame.x - layout.frame.width }
             : null,

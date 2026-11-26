@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { I18nManager, Platform, type ViewStyle } from "react-native";
+import { Platform, type ViewStyle } from "react-native";
 import Animated, {
   FadeIn,
   type LayoutAnimationFunction,
@@ -24,6 +24,7 @@ import {
 import type { ScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
+import { useInterfaceDirection } from "../i18n/direction";
 import { GlassSurface } from "./ui/GlassSurface";
 
 const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
@@ -66,7 +67,7 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string, an
       (compactWidth > 0 && contentSize.width > compactWidth));
   const compactRowHeight = Math.max(44, minimum);
   const compactBottom = (compactRowHeight - minimum) / 2;
-  const isRTL = I18nManager.isRTL;
+  const isRTL = useInterfaceDirection() === "rtl";
   const expandedRowHeight = height + EXPANDED_EDITOR_BOTTOM;
   const expansion = useDerivedValue(() => {
     const target = isExpanded ? 1 : 0;

@@ -225,7 +225,7 @@ function UpdateEverythingDialogContent({
             <Collapsible>
               <CollapsibleTrigger className="group flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground">
                 <ChevronRightIcon
-                  className="size-3.5 transition-transform group-data-panel-open:rotate-90 [&:dir(rtl)]:group-aria-[expanded=false]:rotate-180"
+                  className="size-3.5 transition-transform group-data-panel-open:rotate-90 rtl:group-aria-[expanded=false]:rotate-180"
                   aria-hidden
                 />
                 {gt("{count, plural, one {{count} skipped} other {{count} skipped}}", {

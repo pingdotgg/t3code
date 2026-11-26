@@ -1242,11 +1242,16 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
   }));
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
-    const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
-    const canScrollLeft = hasOverflow && viewport.scrollLeft > TAB_SCROLL_EDGE_TOLERANCE;
-    const canScrollRight =
-      hasOverflow &&
-      viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - TAB_SCROLL_EDGE_TOLERANCE;
+    const maxScroll = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    const hasOverflow = maxScroll > TAB_SCROLL_EDGE_TOLERANCE;
+    const isRtl = getComputedStyle(viewport).direction === "rtl";
+    const distanceFromLeft = isRtl
+      ? viewport.scrollLeft <= 0
+        ? maxScroll + viewport.scrollLeft
+        : viewport.scrollLeft
+      : viewport.scrollLeft;
+    const canScrollLeft = hasOverflow && distanceFromLeft > TAB_SCROLL_EDGE_TOLERANCE;
+    const canScrollRight = hasOverflow && distanceFromLeft < maxScroll - TAB_SCROLL_EDGE_TOLERANCE;
     setTabScrollState((current) => {
       if (
         current.hasOverflow === hasOverflow &&
@@ -1553,8 +1558,9 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
 
+      const isRtl = getComputedStyle(viewport).direction === "rtl";
       const previousScrollLeft = viewport.scrollLeft;
-      viewport.scrollLeft += delta;
+      viewport.scrollLeft += isRtl ? -delta : delta;
       if (viewport.scrollLeft === previousScrollLeft) return;
       event.preventDefault();
       update();
@@ -1762,6 +1768,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
         </ScrollArea>
         {tabScrollState.hasOverflow ? (
           <div
+            dir="ltr"
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
             role="group"
             aria-label={gt("Scroll panel tabs")}

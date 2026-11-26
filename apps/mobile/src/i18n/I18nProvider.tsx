@@ -6,11 +6,9 @@ import { createContext, use, useDeferredValue, useEffect, useMemo, type ReactNod
 import { Platform, TurboModuleRegistry, View, type TurboModule } from "react-native";
 
 import { mobilePreferencesAtom } from "../state/preferences";
-import { InterfaceDirectionContext, useInterfaceDirection } from "./direction";
+import { InterfaceDirectionContext } from "./direction";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
-
-export { useInterfaceDirection };
 
 const FormattingLocaleContext = createContext(DEFAULT_LOCALE);
 

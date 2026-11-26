@@ -1,18 +1,22 @@
 import { I18nManager, type StyleProp, StyleSheet, type TextStyle } from "react-native";
 import type { NativeFontWeight } from "./T3SourceTextRunNativeComponent";
 
-export function flattenStyles(rootStyle: TextStyle, style: StyleProp<TextStyle>) {
+export function flattenStyles(
+  rootStyle: TextStyle,
+  style: StyleProp<TextStyle>,
+  isRTL = I18nManager.isRTL,
+) {
   const flattenedStyle = StyleSheet.flatten([rootStyle, style]) as TextStyle;
   const textDecorationLine = flattenedStyle.textDecorationLine;
   return {
     ...flattenedStyle,
     textAlign:
       flattenedStyle.textAlign === "start"
-        ? I18nManager.isRTL
+        ? isRTL
           ? ("right" as const)
           : ("left" as const)
         : flattenedStyle.textAlign === "end"
-          ? I18nManager.isRTL
+          ? isRTL
             ? ("left" as const)
             : ("right" as const)
           : flattenedStyle.textAlign,

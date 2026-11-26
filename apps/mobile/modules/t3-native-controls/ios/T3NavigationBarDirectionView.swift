@@ -11,6 +11,7 @@ final class T3NavigationBarDirectionView: ExpoView {
     applyDirection()
   }
 
+  // UIKit can reset navigation bar traits across push/pop transitions.
   override func layoutSubviews() {
     super.layoutSubviews()
     applyDirection()

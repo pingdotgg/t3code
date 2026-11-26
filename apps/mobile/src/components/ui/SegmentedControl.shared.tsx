@@ -8,7 +8,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { segmentedControlColors } from "./segmentedControlColors";
-import { useInterfaceDirection } from "../../i18n/I18nProvider";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { AppText } from "./AppText";
 import { useControlTheme } from "./useControlTheme";
 import type { SegmentedControlProps } from "./SegmentedControl.types";

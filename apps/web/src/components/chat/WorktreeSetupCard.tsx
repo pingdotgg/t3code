@@ -383,7 +383,7 @@ export function WorktreeSetupCard({
           {detailsOpen ? (
             <ChevronDownIcon aria-hidden />
           ) : (
-            <ChevronRightIcon aria-hidden className="[&:dir(rtl)]:rotate-180" />
+            <ChevronRightIcon aria-hidden className="rtl:rotate-180" />
           )}
           <T>Details</T>
         </Button>

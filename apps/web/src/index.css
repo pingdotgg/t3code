@@ -2739,18 +2739,14 @@ code {
   outline: none;
 }
 
-/* Code and terminal coordinates stay left-to-right in an RTL interface. */
-:is(
-  pre,
-  code,
-  kbd,
-  samp,
-  .cm-editor,
-  .monaco-editor,
-  diffs-container,
-  [data-thread-terminal-drawer]
-) {
-  direction: ltr;
-  unicode-bidi: isolate;
-  text-align: left;
+/* Code and diff surfaces stay left-to-right in an RTL interface without overriding utilities. */
+@layer base {
+  :is(pre, code, kbd, samp, diffs-container) {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  :dir(rtl) :is(pre, code, kbd, samp, diffs-container) {
+    text-align: left;
+  }
 }

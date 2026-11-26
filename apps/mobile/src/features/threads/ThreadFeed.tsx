@@ -1576,7 +1576,7 @@ function MarkdownDetailsFold(props: {
           {props.summary}
         </Text>
       </Pressable>
-      {expanded ? <View className="pb-3 pl-5">{props.children}</View> : null}
+      {expanded ? <View className="pb-3 ps-5">{props.children}</View> : null}
     </View>
   );
 }
@@ -1979,7 +1979,7 @@ function RunFoldButton({
         </Text>
         <ThreadDisclosureChevron
           expanded={entry.expanded}
-          collapsedDirection="right"
+          collapsedDirection="inline-end"
           size={15}
           tintColor={iconColor}
         />

@@ -77,36 +77,6 @@ export const SCENARIOS = [
     name: "עברית – הדגמה מלאה",
     file: "./dev-replay/hebrew_showcase_transcript.ndjson",
   },
-  {
-    id: "hebrew-todo-list",
-    name: "עברית – תוכנית וקריאת קבצים",
-    file: "./dev-replay/hebrew_todo_list_transcript.ndjson",
-  },
-  {
-    id: "hebrew-approval",
-    name: "עברית – אישור כתיבה",
-    file: "./dev-replay/hebrew_approval_transcript.ndjson",
-  },
-  {
-    id: "hebrew-question",
-    name: "עברית – שאלה עם אפשרויות",
-    file: "./dev-replay/hebrew_question_transcript.ndjson",
-  },
-  {
-    id: "hebrew-multi-turn",
-    name: "עברית – שיחה מרובת סבבים",
-    file: "./dev-replay/hebrew_multi_turn_transcript.ndjson",
-  },
-  {
-    id: "hebrew-command-output",
-    name: "עברית – פלט פקודה",
-    file: "./dev-replay/hebrew_command_output_transcript.ndjson",
-  },
-  {
-    id: "hebrew-markdown",
-    name: "עברית – טקסט ו-Markdown",
-    file: "./dev-replay/hebrew_markdown_transcript.ndjson",
-  },
 ] as const;
 
 // Session setup and vendor state stay out: they would replace the replay agent's own models.

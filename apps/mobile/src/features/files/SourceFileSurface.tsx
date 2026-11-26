@@ -315,6 +315,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   // One native text view permits document-wide selection; virtualized rows cannot.
   const selectableBlock = usesTextSelection ? (
     <SourceText
+      direction="ltr"
       selectable
       style={{
         color: foreground,

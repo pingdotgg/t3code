@@ -436,7 +436,7 @@ export function SettingInheritance({
                         >
                           <ChevronRightIcon
                             aria-hidden
-                            className="size-3 group-data-panel-open:rotate-90 [&:dir(rtl)]:group-aria-[expanded=false]:rotate-180"
+                            className="size-3 group-data-panel-open:rotate-90 rtl:group-aria-[expanded=false]:rotate-180"
                           />
                           <T>Overridden by</T>
                         </CollapsibleTrigger>

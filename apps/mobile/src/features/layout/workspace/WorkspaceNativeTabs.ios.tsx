@@ -32,6 +32,7 @@ import type { NativeLayoutMetrics } from "../../../lib/reserved-regions";
 import { useCompactWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../../components/ui/useControlTheme";
 import { useDeviceType } from "../../../native/native-layout-metrics";
+import { useInterfaceDirection } from "../../../i18n/direction";
 import { WorkspaceTabDock } from "./WorkspaceTabDock";
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
@@ -195,11 +196,13 @@ export function WorkspaceNativeTabs(props: {
     const handle = requestIdleCallback(() => setPrewarm(true), { timeout: 2_000 });
     return () => cancelIdleCallback(handle);
   }, [prewarmReady, prewarm]);
+  const direction = useInterfaceDirection();
   const request = { selectedScreenKey, baseProvenance: provenance };
   return (
     <View style={{ flex: 1 }}>
       <WorkspaceColumnMetricsContext value={sharedColumnMetrics}>
         <Tabs.Host
+          direction={direction}
           navStateRequest={request}
           tabBarHidden={props.hidden || !systemTabBar}
           ios={{

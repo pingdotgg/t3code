@@ -48,6 +48,23 @@ describe("chat canvas model", () => {
     expect(resolve(1400, 900).detailsCardMode).toBe("popover");
   });
 
+  it("keeps the html preview lane offset logical in rtl on an asymmetric canvas", () => {
+    const resolve = (direction: "ltr" | "rtl") =>
+      resolveChatCanvasModel({
+        measurements: { ...measurements(1200), maxHtmlPreviewWidth: 960, direction },
+        detailsCardMeasurement: { threadRef, width: 280, fullContentHeight: 300 },
+        threadRef,
+        preview: null,
+        detailsCardInlineOpen: true,
+      });
+    const ltr = resolve("ltr");
+    const rtl = resolve("rtl");
+    expect(rtl.layout.htmlPreview.width).toBe(ltr.layout.htmlPreview.width);
+    expect(rtl.layout.htmlPreview.left - rtl.layout.chat.left).toBe(
+      ltr.layout.htmlPreview.left - ltr.layout.chat.left,
+    );
+  });
+
   it.each(["ltr", "rtl"] as const)(
     "avoids the card when a preview leaves too little height in %s",
     (direction) => {

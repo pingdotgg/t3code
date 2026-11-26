@@ -29,7 +29,7 @@ export function AdvancedSettings({
       <CollapsibleTrigger className="group flex min-h-10 w-full items-center gap-1.5 rounded-b-xl px-3 text-left text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-panel-open:rounded-none sm:px-4">
         <ChevronRightIcon
           aria-hidden
-          className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none [&:dir(rtl)]:group-aria-[expanded=false]:rotate-180"
+          className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none rtl:group-aria-[expanded=false]:rotate-180"
         />
         <T>Advanced</T>
       </CollapsibleTrigger>

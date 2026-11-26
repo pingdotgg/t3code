@@ -206,13 +206,12 @@ export function ThreadReadLabel({
 const PATH_TOKEN_PATTERN = /(^|[\s־([{'"`])((?:~\/|\.{1,2}\/|\/|[A-Za-z]:\\)[^\s"'`<>()[\]{}]+)/g;
 
 function renderWorkEntryLabel(text: string) {
-  PATH_TOKEN_PATTERN.lastIndex = 0;
-  let match = PATH_TOKEN_PATTERN.exec(text);
-  if (!match) return text;
+  const matches = [...text.matchAll(PATH_TOKEN_PATTERN)];
+  if (matches.length === 0) return text;
 
   const parts: Array<ReactNode> = [];
   let cursor = 0;
-  while (match) {
+  for (const match of matches) {
     const prefix = match[1] ?? "";
     const token = match[2] ?? "";
     const tokenStart = match.index + prefix.length;
@@ -225,7 +224,6 @@ function renderWorkEntryLabel(text: string) {
       </bdi>,
     );
     cursor = tokenStart + token.length;
-    match = PATH_TOKEN_PATTERN.exec(text);
   }
   if (cursor < text.length) {
     parts.push(text.slice(cursor));

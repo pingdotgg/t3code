@@ -394,11 +394,15 @@ export function V5StackHeader(props: {
             ? { id: "title", render: () => titleElement }
             : undefined,
           largeTitleEnabled: options.headerLargeTitle,
+          // UIKit's minimal back button keeps English "Back" in an English bundle, so RTL
+          // supplies a localized default title unless a screen sets its own.
           backButtonDisplayMode: rightToLeft
             ? "default"
             : (options.headerBackButtonDisplayMode ?? "minimal"),
           backButtonMenuEnabled: options.headerBackButtonMenuEnabled ?? true,
-          backButtonTitle: rightToLeft ? gt("Back") : options.headerBackTitle,
+          backButtonTitle: rightToLeft
+            ? options.headerBackTitle || gt("Back")
+            : options.headerBackTitle,
           standardAppearance: appearance,
           scrollEdgeAppearance: appearance,
         }}

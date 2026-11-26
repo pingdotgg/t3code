@@ -9,8 +9,9 @@ import {
 } from "@expo/ui/jetpack-compose/modifiers";
 import { useGT } from "gt-react-native";
 import { useState } from "react";
-import { I18nManager, Pressable, View, type StyleProp, type ViewStyle } from "react-native";
+import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
+import { useInterfaceDirection } from "../i18n/direction";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { resolveScaledTextRole } from "../lib/appearancePreferences";
 
@@ -23,6 +24,7 @@ export function ScrollComposeButton(props: {
   readonly style?: StyleProp<ViewStyle>;
 }) {
   const gt = useGT();
+  const isRTL = useInterfaceDirection() === "rtl";
   const { appearance, themeVariables: colors } = useAppearancePreferences();
   const typography = resolveScaledTextRole("footnote", appearance.baseFontSize);
   const { iconSize, fabSize: scaledFabSize } = useAndroidControlSizing();
@@ -45,7 +47,7 @@ export function ScrollComposeButton(props: {
         importantForAccessibility="no-hide-descendants"
         style={{
           transform: [{ scale }],
-          transformOrigin: I18nManager.isRTL ? "top left" : "top right",
+          transformOrigin: isRTL ? "top left" : "top right",
         }}
       >
         <NativeThemeHost

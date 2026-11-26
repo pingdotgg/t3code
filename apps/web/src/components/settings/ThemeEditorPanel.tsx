@@ -1295,11 +1295,7 @@ export function ThemeEditorPanel({
                 variant="ghost"
                 onClick={() => setCssOpen(!cssOpen)}
               >
-                {cssOpen ? (
-                  <ChevronDownIcon />
-                ) : (
-                  <ChevronRightIcon className="[&:dir(rtl)]:rotate-180" />
-                )}
+                {cssOpen ? <ChevronDownIcon /> : <ChevronRightIcon className="rtl:rotate-180" />}
                 <T>Custom CSS</T>
               </Button>
               {cssOpen ? (

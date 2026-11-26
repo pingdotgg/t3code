@@ -501,7 +501,7 @@ function ProcessTreeName({
           aria-label={collapsed ? gt("Expand {name}", { name }) : gt("Collapse {name}", { name })}
         >
           {collapsed ? (
-            <ChevronRightIcon className="size-3.5 [&:dir(rtl)]:rotate-180" />
+            <ChevronRightIcon className="size-3.5 rtl:rotate-180" />
           ) : (
             <ChevronDownIcon className="size-3.5" />
           )}
