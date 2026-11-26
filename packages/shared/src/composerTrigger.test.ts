@@ -102,8 +102,30 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("keeps pull-request search active for titles with combining marks", () => {
+    expect(detectComposerTrigger("#caf\u00e9", 5)).toEqual({
+      kind: "pull-request",
+      query: "caf\u00e9",
+      rangeStart: 0,
+      rangeEnd: 5,
+    });
+    expect(detectComposerTrigger("#cafe\u0301", 6)).toEqual({
+      kind: "pull-request",
+      query: "cafe\u0301",
+      rangeStart: 0,
+      rangeEnd: 6,
+    });
+    expect(detectComposerTrigger("#नमस्ते", "#नमस्ते".length)).toEqual({
+      kind: "pull-request",
+      query: "नमस्ते",
+      rangeStart: 0,
+      rangeEnd: 7,
+    });
+  });
+
   it.each([
     "# Heading",
+    "#\u0301",
     "issue#123",
     "https://example.com/#123",
     "(#123)",
