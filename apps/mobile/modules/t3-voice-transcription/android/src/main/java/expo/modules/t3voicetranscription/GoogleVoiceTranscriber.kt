@@ -24,7 +24,13 @@ internal class VoiceTranscriptionException(
 
 // ML Kit reports every mode UNAVAILABLE for tags with Unicode extensions, which Android adds
 // for regional preferences such as the temperature unit (en-US-u-mu-celsius).
-internal fun speechLocale(systemLocale: Locale): Locale = systemLocale.stripExtensions()
+internal fun speechLocale(systemLocale: Locale): Locale {
+  val locale = systemLocale.stripExtensions()
+  // ML Kit accepts cmn-Hans-CN for Simplified Chinese, not zh-CN or zh-Hans-CN.
+  val simplifiedChinese = locale.language == "zh" &&
+    (locale.script == "Hans" || (locale.script.isEmpty() && locale.country == "CN"))
+  return if (simplifiedChinese) Locale.forLanguageTag("cmn-Hans-CN") else locale
+}
 
 private val recognitionModes = listOf(
   SpeechRecognizerOptions.Mode.MODE_ADVANCED,

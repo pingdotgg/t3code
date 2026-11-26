@@ -20,6 +20,10 @@
   "2aa1c01bf8014725": "{organization} limits threads to Auto-accept edits.",
   "89563a8fff8bb751": "{organization} limits threads to Auto.",
   "5b7ff1208620c2c2": "{organization} limits threads to Full access.",
+  "069e0382ff2496f5": "Your organization's Claude settings turn auto mode off.",
+  "8ccf7e0def66d339": "Your Claude settings turn auto mode off.",
+  "04ac2410d2cc0666": "This project's Claude settings turn auto mode off.",
+  "7e27789f5d58960e": "Claude's settings turn auto mode off.",
   "9bf017edd3847eb1": "{organization}'s policy does not allow connecting from other devices.",
   "ef9533bcc048f17b": "{organization}'s policy does not allow T3 Connect.",
   "986b0873f913a840": "{organization}'s policy does not allow webhook tasks.",
@@ -4934,8 +4938,6 @@
   "3f5c37167aa5034f": "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
   "41ba6c0b5c5e8b22": "Stashed prompt will not survive a reload",
   "94d7f150b3f7b291": "Browser storage is unavailable, so this stash is kept in memory only for this session.",
-  "f421c24666cd8c71": "Oldest stashed prompt discarded",
-  "1123f816ea2a6e3e": "The stash holds {max} prompts; the oldest was removed to make room.",
   "c3a8f9b1b2e7d588": "Stashed images were not saved",
   "fc3feba263971bce": "The prompt was stashed, but browser storage rejected its images. They will be missing if you reload.",
   "9e36559d0fa0cca8": "Stashed images did not attach",
@@ -12995,5 +12997,7 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "800966eb58181745": "Checking which languages the model supports…"
+  "800966eb58181745": "Checking which languages the model supports…",
+  "410dded6e21c280d": "Stash is full",
+  "1af8d12ac21cb183": "The stash holds {max} prompts. Restore or delete one to make room; the composer was left as-is."
 }
