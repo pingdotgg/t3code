@@ -168,8 +168,8 @@ export function officePreviewKind(file: {
   return null;
 }
 
-// GB18030 (a superset of GBK) covers Chinese sources that are not UTF-8. Hermes only implements
-// a few encodings, so a runtime without GB18030 keeps the UTF-8-only behaviour.
+// GB18030 (a superset of GBK) covers Chinese sources that are not UTF-8. Hermes lacks it, so mobile
+// installs a TextDecoder polyfill; any other runtime without it keeps the UTF-8-only error.
 const FILE_PREVIEW_ENCODINGS = ["utf-8", "gb18030"] as const;
 
 function decodeBoundedText(bounded: Uint8Array, truncated: boolean) {
