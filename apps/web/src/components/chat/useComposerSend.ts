@@ -1792,12 +1792,16 @@ export function useComposerSend(input: ComposerSendInput) {
   const onSendLatest = useStableCallback(onSend);
   const waitBeforeSend = async <T>(pending: Promise<T>) => {
     const finishWatching = watchComposerSendEdits(composerDraftTarget);
-    let draftStatus: ReturnType<typeof finishWatching> = "ready";
     sendInFlightRef.current = true;
-    const result = await pending.finally(() => {
-      draftStatus = finishWatching();
-      sendInFlightRef.current = false;
-    });
+    const result = await pending
+      .catch((error: unknown) => {
+        finishWatching();
+        return Promise.reject(error);
+      })
+      .finally(() => {
+        sendInFlightRef.current = false;
+      });
+    const draftStatus = finishWatching();
     const sameRoute = currentRouteThreadKeyRef.current === routeThreadKey;
     if (draftStatus === "edited" && sameRoute && activeThread) {
       setThreadError(
