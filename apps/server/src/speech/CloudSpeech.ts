@@ -33,7 +33,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
-import { encodeMp3, isEncodablePcm, MAX_SYNTHESIS_BYTES, monoPcm16 } from "./synthesisAudio.ts";
+import { isEncodableFormat, MAX_SYNTHESIS_BYTES, streamingMp3Encoder } from "./synthesisAudio.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { applySpeechAliases, speechRecognitionWords } from "./customWords.ts";
@@ -154,6 +154,8 @@ const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
 
+const OPENROUTER_DEFAULT_SYNTHESIS_MODEL = "google/gemini-3.8-flash-tts";
+
 function openRouterSpeechFormat(model: string) {
   return model.startsWith("google/gemini-") || model.startsWith("heygen/") ? "pcm" : "mp3";
 }
@@ -164,6 +166,27 @@ function synthesisErrorReason(status: number): SpeechSynthesisError["reason"] {
     : status === 429
       ? "rate-limit"
       : "unavailable";
+}
+
+// The opening sentence is spoken on its own when it is short, so a provider that returns audio
+// only once a piece is done still starts reading quickly.
+const LEADING_SPAN_LIMIT = 200;
+
+function leadingSpans(
+  spans: ReadonlyArray<{ readonly start: number; readonly text: string }>,
+): ReadonlyArray<{ readonly start: number; readonly text: string }> {
+  const [first, ...rest] = spans;
+  if (!first) return spans;
+  const end = /[.!?。！？](?=\s)|\n/u.exec(first.text);
+  const at = end ? end.index + end[0].length : -1;
+  const tail = at > 0 ? first.text.slice(at) : "";
+  if (at <= 0 || at > LEADING_SPAN_LIMIT || !tail.trim()) return spans;
+  const skipped = tail.length - tail.trimStart().length;
+  return [
+    { start: first.start, text: first.text.slice(0, at).trimEnd() },
+    { start: first.start + at + skipped, text: tail.trimStart() },
+    ...rest,
+  ];
 }
 
 type SynthesisBackend = {
@@ -599,7 +622,11 @@ export const layer = Layer.effect(
       return yield* backend.models.pipe(
         Effect.map(({ models }) => ({
           ...backend.catalog,
-          defaultModel: backend.catalog.defaultModel || models[0]?.id || "",
+          defaultModel:
+            provider === "openrouter" &&
+            models.some((model) => model.id === OPENROUTER_DEFAULT_SYNTHESIS_MODEL)
+              ? OPENROUTER_DEFAULT_SYNTHESIS_MODEL
+              : backend.catalog.defaultModel || models[0]?.id || "",
           models,
         })),
         Effect.catchTags({
@@ -635,23 +662,47 @@ export const layer = Layer.effect(
             reason: backend.errorReason(response.status),
           });
         const format = backend.pcmFormat?.(response, input);
-        if (format) {
-          const pcm = yield* readSynthesisBody(response, provider, MAX_SYNTHESIS_BYTES);
-          const encoded = encodeMp3(pcm, format.rate, format.channels);
-          return (
-            isEncodablePcm(pcm, format.rate, format.channels)
-              ? Stream.concat(
-                  Stream.succeed<SpeechSynthesisPart>({
-                    pcm: monoPcm16(pcm, format.channels),
-                    rate: format.rate,
-                    startSeconds: 0,
-                  }),
-                  encoded,
-                )
-              : encoded
-          ).pipe(Stream.mapError(unavailable));
-        }
         let size = 0;
+        const limited = <A extends Uint8Array>(chunks: Stream.Stream<A, unknown>) =>
+          chunks.pipe(
+            Stream.mapError(unavailable),
+            Stream.mapEffect((chunk) =>
+              (size += chunk.byteLength) > MAX_SYNTHESIS_BYTES
+                ? Effect.fail(unavailable())
+                : Effect.succeed(chunk),
+            ),
+            // The request timeout ends at the headers; a body that stalls must fail too.
+            Stream.timeoutOrElse({
+              duration: SYNTHESIS_STALL_TIMEOUT,
+              orElse: () => Stream.fail(unavailable()),
+            }),
+          );
+        if (format) {
+          if (!isEncodableFormat(format.rate, format.channels)) return yield* unavailable();
+          // Encoded as it arrives, so reading starts with the first chunk, not the whole reply.
+          const encoder = yield* Effect.promise(() =>
+            streamingMp3Encoder(format.rate, format.channels),
+          );
+          let seconds = 0;
+          return limited(response.stream).pipe(
+            Stream.flatMap((chunk) => {
+              const { pcm, mp3 } = encoder.push(chunk);
+              const parts: SpeechSynthesisPart[] = [];
+              if (pcm.length) {
+                parts.push({ pcm, rate: format.rate, startSeconds: seconds });
+                seconds += pcm.length / format.rate;
+              }
+              if (mp3.length) parts.push(mp3);
+              return Stream.fromIterable(parts);
+            }),
+            Stream.concat(
+              Stream.suspend(() => {
+                const tail = encoder.flush();
+                return Stream.fromIterable<SpeechSynthesisPart>(tail.length ? [tail] : []);
+              }),
+            ),
+          );
+        }
         const words = alignedWords(input.text);
         const parts: Stream.Stream<SpeechSynthesisPart, unknown> = backend.alignedAudio
           ? backend.alignedAudio(response).pipe(
@@ -700,13 +751,22 @@ export const layer = Layer.effect(
       Stream.suspend(() => {
         let elapsed = 0;
         return Stream.fromIterable(
-          splitReadAloudSpans(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT),
+          leadingSpans(splitReadAloudSpans(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT)),
         ).pipe(
-          Stream.flatMap((span) =>
+          // Some providers return audio only once a whole piece is spoken, so the next piece is
+          // requested while this one plays.
+          Stream.mapEffect(
+            (span) =>
+              synthesizePiece(provider, { ...request, text: span.text }).pipe(
+                Effect.map((parts) => ({ span, parts })),
+              ),
+            { concurrency: 2 },
+          ),
+          Stream.flatMap(({ span, parts }) =>
             Stream.suspend(() => {
               const offset = elapsed;
               const duration = mp3Duration();
-              return Stream.unwrap(synthesizePiece(provider, { ...request, text: span.text })).pipe(
+              return parts.pipe(
                 Stream.map((part): SpeechSynthesisPart => {
                   if (part instanceof Uint8Array) {
                     duration.push(part);

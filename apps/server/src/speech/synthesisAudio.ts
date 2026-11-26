@@ -54,7 +54,7 @@ export function splitAtPunctuation(text: string) {
 // Supertonic's reference text preprocessing (supertone-inc/supertonic `py/helper.py`): its
 // indexer has no entry for emoji and some symbols, and rejects the whole text over one.
 const SUPERTONIC_EMOJI =
-  /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}]/gu;
+  /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]|\u{FE0F}|\u{200D}/gu;
 const SUPERTONIC_REPLACEMENTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/[–‑—]/g, "-"],
   [/_/g, " "],
@@ -103,7 +103,7 @@ export function pcm16Mono(samples: Float32Array, channels: number) {
 }
 
 /** Whether `encodeMp3` takes this little-endian 16-bit PCM. */
-export function isEncodablePcm(pcm: Uint8Array, rate: number, channels: number) {
+function isEncodablePcm(pcm: Uint8Array, rate: number, channels: number) {
   return (
     MP3_SAMPLE_RATES.includes(rate) &&
     (channels === 1 || channels === 2) &&
@@ -113,8 +113,38 @@ export function isEncodablePcm(pcm: Uint8Array, rate: number, channels: number) 
   );
 }
 
+/** Whether MP3 can carry PCM at this rate and channel count unchanged. */
+export function isEncodableFormat(rate: number, channels: number) {
+  return MP3_SAMPLE_RATES.includes(rate) && (channels === 1 || channels === 2);
+}
+
+/**
+ * Encodes little-endian 16-bit PCM to MP3 as it arrives, so audio plays before the provider
+ * finishes. Network chunks can split a sample or frame; the remainder waits for the next one.
+ */
+export async function streamingMp3Encoder(rate: number, channels: number) {
+  const { Mp3Encoder } = await loadLamejs();
+  const encoder = new Mp3Encoder(1, rate, mp3Kbps(rate));
+  const frame = channels * 2;
+  let pending = new Uint8Array(0);
+  return {
+    /** The mono samples of whole frames received so far, and their MP3. */
+    push: (bytes: Uint8Array) => {
+      const joined = pending.length ? concat([pending, bytes]) : bytes;
+      const whole = joined.length - (joined.length % frame);
+      pending = joined.slice(whole);
+      const pcm = monoPcm16(joined.subarray(0, whole), channels);
+      const parts: Uint8Array[] = [];
+      for (let start = 0; start < pcm.length; start += ENCODE_SLICE_SAMPLES)
+        parts.push(encoder.encodeBuffer(pcm.subarray(start, start + ENCODE_SLICE_SAMPLES)));
+      return { pcm, mp3: concat(parts) };
+    },
+    flush: () => concat([encoder.flush()]),
+  };
+}
+
 /** Little-endian 16-bit PCM bytes as mono samples. */
-export function monoPcm16(pcm: Uint8Array, channels: number) {
+function monoPcm16(pcm: Uint8Array, channels: number) {
   const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
   const samples = new Float32Array(Math.floor(pcm.length / 2));
   for (let index = 0; index < samples.length; index++)
