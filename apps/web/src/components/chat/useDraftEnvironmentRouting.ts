@@ -202,6 +202,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           environmentSelection: "auto",
           loadBalancedEnvironmentId: target.environmentId,
           branch: originalDraft?.branch ?? null,
+          workspaceUsesDefaults: originalDraft?.workspaceUsesDefaults === true,
         }),
       );
       return true;

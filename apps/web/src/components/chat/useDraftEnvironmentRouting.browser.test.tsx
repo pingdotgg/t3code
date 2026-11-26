@@ -10,7 +10,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { DEFAULT_SERVER_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   EnvironmentId,
   ProjectId,
@@ -41,6 +41,7 @@ vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => resources.projects,
+  readThreadShells: () => [],
   readProject: (ref: { environmentId: EnvironmentId; projectId: ProjectId }) =>
     resources.projects.find(
       (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
@@ -353,3 +354,54 @@ it.each([
   expect(draft?.modelSelectionByProvider[codex]?.model).toBe(model);
   expect(draft?.modelSelectionExplicit === true).toBe(explicit);
 });
+
+it.each([
+  { workspace: "inherited", expected: { envMode: "worktree", startFromOrigin: true } },
+  { workspace: "chosen", expected: { envMode: "local", startFromOrigin: false } },
+] as const)(
+  "applies the target machine's workspace defaults only to an $workspace workspace",
+  async ({ workspace, expected }) => {
+    const { a, b, draftId, input, store } = setup();
+    resources.projects = [a, b].map((environmentId) => ({
+      environmentId,
+      id: input.draftThread!.projectId,
+      title: "Project",
+      workspaceRoot: "/workspace/project",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-11-10T01:00:00.000Z",
+      updatedAt: "2026-11-10T01:00:00.000Z",
+    }));
+    store.setDraftThreadContext(draftId, {
+      environmentSelection: "manual",
+      loadBalancedEnvironmentId: null,
+      envMode: "local",
+      startFromOrigin: false,
+      workspaceUsesDefaults: workspace === "inherited",
+    });
+    const environmentById = new Map(input.environmentById);
+    environmentById.set(b, {
+      ...environmentById.get(b)!,
+      serverConfig: {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          defaultThreadEnvMode: "worktree",
+          newWorktreesStartFromOrigin: true,
+        },
+      } as never,
+    });
+    await using screen = await render(
+      <Harness
+        input={{
+          ...input,
+          automaticEnvironment: false,
+          environmentById,
+          draftThread: store.getDraftSession(draftId),
+        }}
+      />,
+    );
+    await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+    await expect.element(screen.getByText(b)).toBeInTheDocument();
+    expect(store.getDraftSession(draftId)).toMatchObject(expected);
+  },
+);

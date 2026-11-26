@@ -399,7 +399,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             worktreePath: null,
             envMode: defaultEnvMode.envMode,
             startFromOrigin: startFromOriginFor(defaultEnvMode.envMode),
-            workspaceUsesDefaults: emptyStoredDraftThread.workspaceUsesDefaults ?? false,
+            workspaceUsesDefaults: true,
           };
         }
         if (workspaceContext) {
