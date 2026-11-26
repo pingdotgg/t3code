@@ -1,9 +1,15 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { PGlite } from "@electric-sql/pglite";
+import type { SQL } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/pglite";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import * as RelayDb from "../db.ts";
-import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
+import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 
 const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
@@ -101,4 +107,136 @@ describe("ManagedEndpointAllocations", () => {
       expect(writes[2]?.["updatedAt"]).toBe(writes[2]?.["tunnelReleasedAt"]);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
+
+  it.effect("gates markReady and enableRecovery on matching generation and unreleased tunnel", () =>
+    Effect.gen(function* () {
+      const pg = yield* Effect.acquireRelease(
+        Effect.promise(() => PGlite.create()),
+        (client) => Effect.promise(() => client.close()),
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const migrationsDir = yield* path.fromFileUrl(
+        new URL("../../migrations/postgres/", import.meta.url),
+      );
+      for (const name of (yield* fs.readDirectory(migrationsDir)).toSorted()) {
+        const migration = yield* fs.readFileString(`${migrationsDir}${name}/migration.sql`);
+        yield* Effect.promise(() => pg.exec(migration));
+      }
+
+      const db = drizzle({ client: pg });
+      const now = "2026-08-25T12:00:00.000Z";
+      const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
+      yield* Effect.promise(() =>
+        db.insert(relayEnvironmentLinks).values({
+          userId: "user-1",
+          environmentId: "env-1",
+          environmentPublicKey: "key-1",
+          endpointHttpBaseUrl: "https://env-1.example.test/",
+          endpointWsBaseUrl: "wss://env-1.example.test/ws",
+          endpointProviderKind: "cloudflare_tunnel",
+          managedTunnelsEnabled: true,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      yield* Effect.promise(() =>
+        db.insert(relayManagedEndpointAllocations).values({
+          userId: "user-1",
+          environmentId: "env-1",
+          hostname: "env-1.example.test",
+          tunnelId: "tunnel-1",
+          tunnelName: "tunnel-name-1",
+          dnsRecordId: "dns-1",
+          readyAt: now,
+          origin,
+          generation: 3,
+          tunnelReleasedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+
+      const effectDb = {
+        update: (table: typeof relayManagedEndpointAllocations) => ({
+          set: (values: Partial<typeof relayManagedEndpointAllocations.$inferInsert>) => ({
+            where: (condition: SQL | undefined) => ({
+              returning: (fields: Record<string, unknown>) =>
+                Effect.promise(() =>
+                  db
+                    .update(table)
+                    .set(values)
+                    .where(condition)
+                    .returning(fields as never),
+                ),
+            }),
+          }),
+        }),
+      } as unknown as RelayDb.RelayDb["Service"];
+
+      const allocations = yield* Effect.service(
+        ManagedEndpointAllocations.ManagedEndpointAllocations,
+      ).pipe(Effect.provide(layerWithDb(effectDb)));
+
+      expect(
+        yield* allocations.enableRecovery({
+          userId: "user-1",
+          environmentId: "env-1",
+          tunnelId: "tunnel-1",
+          environmentPublicKey: "key-1",
+          origin,
+          generation: 2,
+        }),
+      ).toBe(false);
+
+      expect(
+        yield* allocations.enableRecovery({
+          userId: "user-1",
+          environmentId: "env-1",
+          tunnelId: "tunnel-1",
+          environmentPublicKey: "key-1",
+          origin,
+          generation: 3,
+        }),
+      ).toBe(true);
+
+      const readyGen = yield* allocations.markReady({
+        userId: "user-1",
+        environmentId: "env-1",
+        tunnelId: "tunnel-1",
+        generation: 4,
+        origin,
+      });
+      expect(readyGen).toBe(5);
+
+      const releasedGen = yield* allocations.claimRelease({
+        userId: "user-1",
+        environmentId: "env-1",
+        tunnelId: "tunnel-1",
+        generation: 5,
+        markReleased: true,
+      });
+      expect(releasedGen).toBe(6);
+
+      expect(
+        yield* allocations.markReady({
+          userId: "user-1",
+          environmentId: "env-1",
+          tunnelId: "tunnel-1",
+          generation: 6,
+          origin,
+        }),
+      ).toBeNull();
+      expect(
+        yield* allocations.enableRecovery({
+          userId: "user-1",
+          environmentId: "env-1",
+          tunnelId: "tunnel-1",
+          environmentPublicKey: "key-1",
+          origin,
+          generation: 6,
+        }),
+      ).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

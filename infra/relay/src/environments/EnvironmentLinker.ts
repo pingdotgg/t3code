@@ -276,7 +276,8 @@ const make = Effect.gen(function* () {
         thumbprint: "relay-environment-link-challenge",
         jti: challenge.jti,
         iat: challenge.iat,
-        expiresAt: expiresAt.value,
+        // verifyLinkChallenge accepts tokens up to challenge.exp + 60s via verifyRelayJwt's clock tolerance.
+        expiresAt: DateTime.makeUnsafe((challenge.exp + 60 + 1) * 1_000),
       });
       if (!consumedChallenge) {
         return yield* new EnvironmentLinkProofInvalid({
@@ -358,14 +359,21 @@ const make = Effect.gen(function* () {
       }
       const environmentCredential = yield* transactions
         .withTransaction(
-          links.upsert({ ...input, proof: verified, endpoint }).pipe(
-            Effect.andThen(
-              credentials.create({
+          Effect.gen(function* () {
+            const upserted = yield* links.upsert({ ...input, proof: verified, endpoint });
+            if (!upserted) {
+              return yield* new EnvironmentLinkProofInvalid({
+                userId: input.userId,
                 environmentId: verified.environmentId,
-                environmentPublicKey: verified.environmentPublicKey,
-              }),
-            ),
-          ),
+                reason: "environment_key_mismatch",
+                stage: "validate_existing_link",
+              });
+            }
+            return yield* credentials.create({
+              environmentId: verified.environmentId,
+              environmentPublicKey: verified.environmentPublicKey,
+            });
+          }),
         )
         .pipe(
           Effect.mapError((cause) =>

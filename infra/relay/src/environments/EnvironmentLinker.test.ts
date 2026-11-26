@@ -8,7 +8,9 @@ import type {
 import { RELAY_LINK_PROOF_TYP } from "@t3tools/shared/relayJwt";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
@@ -113,9 +115,11 @@ const makeRequest = Effect.gen(function* () {
 function layerTest(input?: {
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
   readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
+  readonly createCredential?: EnvironmentCredentials.EnvironmentCredentials["Service"]["create"];
   readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
+  readonly provision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["provision"];
 }) {
   return EnvironmentLinker.layer.pipe(
     Layer.provideMerge(RelayTokens.layer.pipe(Layer.provide(CloudMintSigner.layer))),
@@ -129,7 +133,7 @@ function layerTest(input?: {
           pruneExpired: Effect.void,
         }),
         Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
-          upsert: input?.upsert ?? (() => Effect.void),
+          upsert: input?.upsert ?? (() => Effect.succeed(true)),
           listDeliveryUsersForEnvironment: () => Effect.succeed([]),
           listForUser: () => Effect.succeed([]),
           getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
@@ -140,24 +144,27 @@ function layerTest(input?: {
           revokeForUser: () => Effect.succeed(false),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
-          create: () => Effect.succeed("t3env_credential_secret"),
+          create: input?.createCredential ?? (() => Effect.succeed("t3env_credential_secret")),
           authenticate: () => Effect.succeedNone,
           revokeForEnvironmentPublicKey: () => Effect.succeed(false),
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
-          reconcileOrigin: () => Effect.succeed("ready"),
+          reconcileOrigin: () => Effect.succeed({ status: "ready", generation: 1 }),
           prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
           deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
           release: () => Effect.succeed(true),
-          provision: () =>
-            Effect.succeed({
-              endpoint: {
-                httpBaseUrl: "https://managed.example.test/",
-                wsBaseUrl: "wss://managed.example.test/ws",
-                providerKind: "cloudflare_tunnel",
-              },
-              runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
-            }),
+          provision:
+            input?.provision ??
+            (() =>
+              Effect.succeed({
+                endpoint: {
+                  httpBaseUrl: "https://managed.example.test/",
+                  wsBaseUrl: "wss://managed.example.test/ws",
+                  providerKind: "cloudflare_tunnel",
+                },
+                runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
+                generation: 1,
+              })),
         }),
       ),
     ),
@@ -181,6 +188,7 @@ describe("EnvironmentLinker", () => {
           upsert: (input) =>
             Effect.sync(() => {
               persistedEnvironmentId = input.proof.environmentId;
+              return true;
             }),
         }),
       ),
@@ -248,6 +256,7 @@ describe("EnvironmentLinker", () => {
           upsert: (input) =>
             Effect.sync(() => {
               persistedEndpoint = input.endpoint.httpBaseUrl;
+              return true;
             }),
           deprovision: (input) =>
             Effect.sync(() => {
@@ -289,6 +298,7 @@ describe("EnvironmentLinker", () => {
           upsert: () =>
             Effect.sync(() => {
               persisted = true;
+              return true;
             }),
         }),
       ),
@@ -327,7 +337,7 @@ describe("EnvironmentLinker", () => {
       Effect.provide(
         layerTest({
           getForUser: () => Effect.succeed(activeLink(linkedKey)),
-          upsert: () => Effect.sync(() => void touched.push("upsert")),
+          upsert: () => Effect.sync(() => touched.push("upsert") > 0),
           deprovision: () => Effect.sync(() => touched.push("deprovision") > 0),
         }),
       ),
@@ -372,7 +382,7 @@ describe("EnvironmentLinker", () => {
                 tunnelReleasedAt: null,
               }),
             deprovision: () => Effect.sync(() => touched.push("deprovision") > 0 && tornDown),
-            upsert: () => Effect.sync(() => void touched.push("upsert")),
+            upsert: () => Effect.sync(() => touched.push("upsert") > 0),
           }),
         ),
       );
@@ -397,5 +407,218 @@ describe("EnvironmentLinker", () => {
         }
       }
     }).pipe(Effect.provide(layerTest({ consume: () => Effect.succeed(false) }))),
+  );
+
+  it.effect("rejects concurrent links for a second key without creating credentials", () => {
+    const secondKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+      publicKeyEncoding: { format: "pem", type: "spki" },
+    });
+    const activeLinks = new Map<string, string>();
+    const createdCredentials: Array<string> = [];
+
+    return Effect.gen(function* () {
+      const bothCheckedExisting = yield* Deferred.make<void>();
+      let existingChecks = 0;
+      const firstCommitted = yield* Deferred.make<void>();
+
+      const makeSignedLinkRequest = (
+        keyPair: { readonly privateKey: string; readonly publicKey: string },
+        jtiPrefix: string,
+      ) =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
+          const expiresAtSeconds = nowSeconds + 300;
+          const relayTokens = yield* RelayTokens.RelayTokens;
+          const challenge = yield* relayTokens.issueLinkChallenge({
+            userId: "user_123",
+            request: {
+              notificationsEnabled: true,
+              liveActivitiesEnabled: true,
+              managedTunnelsEnabled: true,
+            },
+            jti: `${jtiPrefix}-challenge`,
+            issuedAtEpochSeconds: nowSeconds,
+            expiresAtEpochSeconds: expiresAtSeconds,
+          });
+          const payload = {
+            iss: "t3-env:env-link-test",
+            aud: "https://relay.example.test",
+            sub: "env-link-test",
+            jti: `${jtiPrefix}-proof`,
+            iat: nowSeconds,
+            exp: expiresAtSeconds,
+            challenge,
+            environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+            descriptor: {
+              environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+              label: "Greendale Study Room",
+              platform: { os: "darwin", arch: "arm64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            },
+            environmentPublicKey: keyPair.publicKey.trim(),
+            endpoint: {
+              httpBaseUrl: "https://env.example.test/",
+              wsBaseUrl: "wss://env.example.test/",
+              providerKind: "cloudflare_tunnel",
+            },
+            origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+            scopes: ["agent_activity_notifications", "managed_tunnels"],
+          } satisfies RelayEnvironmentLinkProofPayload;
+          return {
+            proof: signTestJwt(payload, RELAY_LINK_PROOF_TYP, keyPair.privateKey),
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: true,
+          } satisfies RelayEnvironmentLinkRequest;
+        });
+
+      const layer = layerTest({
+        getForUser: () =>
+          Effect.gen(function* () {
+            existingChecks += 1;
+            if (existingChecks === 2) {
+              yield* Deferred.succeed(bothCheckedExisting, undefined);
+            }
+            yield* Deferred.await(bothCheckedExisting);
+            return null;
+          }),
+        upsert: (input) =>
+          Effect.gen(function* () {
+            const key = `${input.userId}:${input.proof.environmentId}`;
+            const isSecond = input.proof.environmentPublicKey === secondKeyPair.publicKey.trim();
+            if (isSecond) {
+              yield* Deferred.await(firstCommitted);
+            }
+            const existingKey = activeLinks.get(key);
+            if (existingKey !== undefined && existingKey !== input.proof.environmentPublicKey) {
+              return false;
+            }
+            activeLinks.set(key, input.proof.environmentPublicKey);
+            if (!isSecond) {
+              yield* Deferred.succeed(firstCommitted, undefined);
+            }
+            return true;
+          }),
+        createCredential: (input) =>
+          Effect.sync(() => {
+            createdCredentials.push(input.environmentPublicKey);
+            return "t3env_credential_secret";
+          }),
+      });
+
+      yield* Effect.gen(function* () {
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const firstRequest = yield* makeSignedLinkRequest(environmentKeyPair, "first");
+        const secondRequest = yield* makeSignedLinkRequest(secondKeyPair, "second");
+
+        const firstFiber = yield* Effect.forkChild(
+          linker.link({ userId: "user_123", request: firstRequest }),
+        );
+        const secondFiber = yield* Effect.forkChild(
+          linker.link({ userId: "user_123", request: secondRequest }).pipe(Effect.result),
+        );
+
+        const firstResult = yield* Fiber.join(firstFiber);
+        const secondResult = yield* Fiber.join(secondFiber);
+
+        expect(firstResult.environmentCredential).toBe("t3env_credential_secret");
+        expect(Result.isFailure(secondResult)).toBe(true);
+        if (Result.isFailure(secondResult)) {
+          expect(secondResult.failure).toMatchObject({
+            _tag: "EnvironmentLinkProofInvalid",
+            reason: "environment_key_mismatch",
+            stage: "validate_existing_link",
+          });
+        }
+        expect(activeLinks.get("user_123:env-link-test")).toBe(environmentKeyPair.publicKey.trim());
+        expect(createdCredentials).toEqual([environmentKeyPair.publicKey.trim()]);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  it.effect(
+    "expires the single-use challenge replay marker from challenge.exp plus clock skew rather than proof exp",
+    () => {
+      const consumed: Array<{
+        readonly thumbprint: string;
+        readonly jti: string;
+        readonly expiresAt: DateTime.DateTime;
+      }> = [];
+      return Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
+        const challengeExp = nowSeconds + 300;
+        const proofExp = nowSeconds + 2;
+        const relayTokens = yield* RelayTokens.RelayTokens;
+        const challenge = yield* relayTokens.issueLinkChallenge({
+          userId: "user_123",
+          request: {
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: false,
+          },
+          jti: "short-proof-challenge-jti",
+          issuedAtEpochSeconds: nowSeconds,
+          expiresAtEpochSeconds: challengeExp,
+        });
+        const payload = {
+          iss: "t3-env:env-link-test",
+          aud: "https://relay.example.test",
+          sub: "env-link-test",
+          jti: "short-proof-jti",
+          iat: nowSeconds,
+          exp: proofExp,
+          challenge,
+          environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+          descriptor: {
+            environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+            label: "Link Test Environment",
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          },
+          environmentPublicKey: environmentKeyPair.publicKey.trim(),
+          endpoint: {
+            httpBaseUrl: "https://env.example.test/",
+            wsBaseUrl: "wss://env.example.test/",
+            providerKind: "manual",
+          },
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          scopes: ["agent_activity_notifications"],
+        } satisfies RelayEnvironmentLinkProofPayload;
+        const request = {
+          proof: signTestJwt(payload, RELAY_LINK_PROOF_TYP, environmentKeyPair.privateKey),
+          notificationsEnabled: true,
+          liveActivitiesEnabled: true,
+          managedTunnelsEnabled: false,
+        } satisfies RelayEnvironmentLinkRequest;
+
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        yield* linker.link({ userId: "user_123", request });
+
+        const challengeConsume = consumed.find(
+          (entry) => entry.thumbprint === "relay-environment-link-challenge",
+        );
+        expect(challengeConsume).toBeDefined();
+        expect(challengeConsume?.jti).toBe("short-proof-challenge-jti");
+        expect(challengeConsume?.expiresAt.epochMilliseconds).toBeGreaterThanOrEqual(
+          (challengeExp + 60) * 1_000,
+        );
+        expect(challengeConsume?.expiresAt.epochMilliseconds).toBe((challengeExp + 60 + 1) * 1_000);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            consume: (input) =>
+              Effect.sync(() => {
+                consumed.push(input);
+                return true;
+              }),
+          }),
+        ),
+      );
+    },
   );
 });

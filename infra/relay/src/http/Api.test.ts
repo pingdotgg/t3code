@@ -19,6 +19,7 @@ import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -556,7 +557,8 @@ function layerRelayUnlinkTest(input?: {
       ManagedEndpointProvider.ManagedEndpointProvider,
       ManagedEndpointProvider.ManagedEndpointProvider.of({
         provision: input?.provision ?? (() => Effect.die("unused provision")),
-        reconcileOrigin: input?.reconcileOrigin ?? (() => Effect.succeed("ready")),
+        reconcileOrigin:
+          input?.reconcileOrigin ?? (() => Effect.succeed({ status: "ready", generation: 1 })),
         prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
         deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
         release: input?.release ?? (() => Effect.die("unused release")),
@@ -696,6 +698,7 @@ describe("relay managed tunnel recovery", () => {
       readonly tunnelId: string;
       readonly environmentPublicKey: string;
       readonly origin: { readonly localHttpHost: string; readonly localHttpPort: number };
+      readonly generation: number;
     } | null = null;
 
     return Effect.gen(function* () {
@@ -714,6 +717,7 @@ describe("relay managed tunnel recovery", () => {
         tunnelId: "existing-tunnel",
         environmentPublicKey: "public-key",
         origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        generation: 1,
       });
     }).pipe(
       Effect.provide(
@@ -753,7 +757,7 @@ describe("relay managed tunnel recovery", () => {
         Layer.merge(
           layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
-            reconcileOrigin: () => Effect.succeed("recovery_required"),
+            reconcileOrigin: () => Effect.succeed({ status: "recovery_required" }),
           }),
           Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
             enableRecovery: () =>
@@ -834,6 +838,8 @@ describe("relay managed tunnel recovery", () => {
       readonly environmentId: string;
       readonly tunnelId: string;
       readonly environmentPublicKey: string;
+      readonly origin: { readonly localHttpHost: string; readonly localHttpPort: number };
+      readonly generation: number;
     } | null = null;
     const runtime = {
       providerKind: "cloudflare_tunnel" as const,
@@ -859,6 +865,7 @@ describe("relay managed tunnel recovery", () => {
         tunnelId: "replacement-tunnel",
         environmentPublicKey: "public-key",
         origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        generation: 3,
       });
     }).pipe(
       Effect.provide(
@@ -869,6 +876,7 @@ describe("relay managed tunnel recovery", () => {
               Effect.succeed({
                 endpoint: linkedEnvironmentRecord.endpoint,
                 runtime,
+                generation: 3,
               }),
           }),
           Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
@@ -908,6 +916,7 @@ describe("relay managed tunnel recovery", () => {
                 return {
                   endpoint: linkedEnvironmentRecord.endpoint,
                   runtime: { providerKind: "cloudflare_tunnel", connectorToken: "token" },
+                  generation: 1,
                 };
               }),
           }),
@@ -984,6 +993,7 @@ describe("relay managed tunnel recovery", () => {
                   connectorToken: "token",
                   tunnelId: "replacement-tunnel",
                 },
+                generation: 1,
               }),
             prepareDeprovision: () => Effect.die("must keep the active allocation"),
             deprovision: () => Effect.die("must keep the active link DNS"),
@@ -1061,6 +1071,7 @@ describe("relay managed tunnel recovery", () => {
                   connectorToken: "replacement-token",
                   tunnelId: "replacement-tunnel",
                 },
+                generation: 3,
               }),
             prepareDeprovision: () => Effect.succeed(target),
             deprovision: ({ target: captured }) =>
@@ -1078,6 +1089,279 @@ describe("relay managed tunnel recovery", () => {
       ),
     );
   });
+
+  it.effect.each(["recover", "register"] as const)(
+    "serializes concurrent release against %s fast paths so no deleted tunnel is returned",
+    (mode) =>
+      Effect.gen(function* () {
+        const releaseClaimed = yield* Deferred.make<void>();
+        const resumeRelease = yield* Deferred.make<void>();
+        const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
+        const userId = "user-1";
+        const environmentId = "environment-1";
+        let currentAllocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null = null;
+        let currentTunnel: { readonly id: string; readonly name: string } | null = null;
+        let currentIngress: ReadonlyArray<{
+          readonly hostname?: string;
+          readonly service: string;
+        }> = [];
+        let pauseNextRelease = false;
+        let deletedTunnels = 0;
+
+        const allocations = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+          getByTunnelName: () => Effect.die("unused"),
+          get: () => Effect.sync(() => currentAllocation),
+          reserve: (input) =>
+            Effect.sync(() => {
+              currentAllocation = currentAllocation ?? {
+                ...input,
+                tunnelId: null,
+                dnsRecordId: null,
+                readyAt: null,
+                origin: null,
+                updatedAt: "2026-07-28T00:00:00.000Z",
+                generation: 0,
+                tunnelReleasedAt: null,
+              };
+              return currentAllocation;
+            }),
+          recordTunnel: (input) =>
+            Effect.sync(() => {
+              if (currentAllocation?.generation !== input.generation) return null;
+              currentAllocation = {
+                ...currentAllocation,
+                tunnelId: input.tunnelId,
+                tunnelReleasedAt: null,
+                generation: currentAllocation.generation + 1,
+              };
+              return currentAllocation.generation;
+            }),
+          recordDns: (input) =>
+            Effect.sync(() => {
+              if (
+                currentAllocation?.generation !== input.generation ||
+                currentAllocation.tunnelId !== input.tunnelId
+              ) {
+                return null;
+              }
+              currentAllocation = {
+                ...currentAllocation,
+                dnsRecordId: input.dnsRecordId,
+                generation: currentAllocation.generation + 1,
+              };
+              return currentAllocation.generation;
+            }),
+          markReady: (input) =>
+            Effect.sync(() => {
+              if (
+                currentAllocation?.generation !== input.generation ||
+                currentAllocation.tunnelId !== input.tunnelId ||
+                currentAllocation.tunnelReleasedAt !== null
+              ) {
+                return null;
+              }
+              currentAllocation = {
+                ...currentAllocation,
+                readyAt: "2026-07-28T00:00:00.000Z",
+                origin: input.origin,
+                generation: currentAllocation.generation + 1,
+              };
+              return currentAllocation.generation;
+            }),
+          enableRecovery: (input) =>
+            Effect.sync(() => {
+              if (
+                currentAllocation?.tunnelId !== input.tunnelId ||
+                currentAllocation.generation !== input.generation ||
+                currentAllocation.tunnelReleasedAt !== null ||
+                currentAllocation.origin?.localHttpHost !== input.origin.localHttpHost ||
+                currentAllocation.origin.localHttpPort !== input.origin.localHttpPort
+              ) {
+                return false;
+              }
+              currentAllocation = {
+                ...currentAllocation,
+                generation: currentAllocation.generation + 1,
+              };
+              return true;
+            }),
+          listByTunnelNames: () => Effect.succeed([]),
+          claimRelease: (input) =>
+            Effect.gen(function* () {
+              if (
+                currentAllocation?.tunnelId !== input.tunnelId ||
+                currentAllocation.generation !== input.generation
+              ) {
+                return null;
+              }
+              currentAllocation = {
+                ...currentAllocation,
+                ...(input.markReleased === true
+                  ? { tunnelReleasedAt: "2026-07-28T00:05:00.000Z" }
+                  : {}),
+                generation: currentAllocation.generation + 1,
+              };
+              const claimed = currentAllocation.generation;
+              if (pauseNextRelease) {
+                pauseNextRelease = false;
+                yield* Deferred.succeed(releaseClaimed, undefined);
+                yield* Deferred.await(resumeRelease);
+              }
+              return claimed;
+            }),
+          withClaimedTunnel: (input, effect) =>
+            Effect.suspend(() =>
+              currentAllocation?.tunnelId === input.tunnelId &&
+              currentAllocation.generation === input.generation
+                ? Effect.asSome(effect)
+                : Effect.succeedNone,
+            ),
+          claimDeprovision: () => Effect.die("unused"),
+          removeClaimed: () => Effect.die("unused"),
+        });
+
+        const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
+          get: (tunnelId) =>
+            currentTunnel?.id === tunnelId
+              ? Effect.succeed({ ...currentTunnel, status: "down" })
+              : Effect.fail(
+                  new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+                    operation: "get",
+                    tunnelId,
+                    cause: { _tag: "NotFound" },
+                  }),
+                ),
+          list: () => Effect.sync(() => ({ result: currentTunnel ? [currentTunnel] : [] })),
+          create: (request) =>
+            Effect.sync(() => {
+              currentTunnel = { id: "tunnel-1", name: request.name };
+              return currentTunnel;
+            }),
+          putConfiguration: (_tunnelId, cfg) =>
+            Effect.sync(() => {
+              currentIngress = cfg.ingress;
+            }),
+          getConfiguration: () => Effect.sync(() => ({ ingress: currentIngress })),
+          getToken: () => Effect.succeed("live-connector-token"),
+          delete: () =>
+            Effect.sync(() => {
+              deletedTunnels += 1;
+              currentTunnel = null;
+            }),
+          disconnect: () => Effect.void,
+        });
+
+        const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
+          listRecords: () => Effect.succeed([]),
+          createRecord: () => Effect.succeed({ id: "dns-1" }),
+          updateRecord: () => Effect.void,
+          deleteRecord: () => Effect.void,
+        });
+
+        const providerLayer = ManagedEndpointProvider.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCryptoLayer.layer)),
+          Layer.provide(
+            RelayConfiguration.layer({
+              ...relaySettings,
+              managedEndpointBaseDomain: "example.test",
+              managedEndpointNamespace: "dev",
+            }),
+          ),
+          Layer.provide(ManagedEndpointProvider.layerTunnelClient(tunnelClient)),
+          Layer.provide(ManagedEndpointProvider.layerDnsClient(dnsClient)),
+          Layer.provide(
+            Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, allocations),
+          ),
+          Layer.provide(
+            Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, {
+              withCapacity: (_input, reserve) => reserve,
+              getOverride: () => Effect.succeed(null),
+            }),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+          const provisioned = yield* provider.provision({ userId, environmentId, origin });
+          const linkRecord = {
+            ...linkedEnvironmentRecord,
+            endpoint: provisioned.endpoint,
+          };
+
+          pauseNextRelease = true;
+          const releaseFiber = yield* Effect.forkChild(
+            provider.release({ userId, environmentId, markReleased: true }),
+          );
+          yield* Deferred.await(releaseClaimed);
+
+          const apiLayer = Layer.mergeAll(
+            Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, provider),
+            Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, allocations),
+            Layer.mock(EnvironmentLinks.EnvironmentLinks, {
+              getForUser: () => Effect.succeed(linkRecord),
+            }),
+          );
+
+          if (mode === "recover") {
+            const recovered = yield* recoverEnvironmentTunnelRecord({
+              userId,
+              environmentId,
+              environmentPublicKey: "public-key",
+              origin,
+            }).pipe(Effect.provide(apiLayer));
+            expect(recovered.endpointRuntime.tunnelId).toBe("tunnel-1");
+          } else {
+            const registered = yield* registerEnvironmentTunnelRecovery({
+              userId,
+              environmentId,
+              environmentPublicKey: "public-key",
+              tunnelId: "tunnel-1",
+              origin,
+            }).pipe(Effect.provide(apiLayer));
+            expect(registered).toEqual({ status: "ready" });
+          }
+
+          yield* Deferred.succeed(resumeRelease, undefined);
+          expect(yield* Fiber.join(releaseFiber)).toBe(false);
+          expect(deletedTunnels).toBe(0);
+          expect(currentTunnel).not.toBeNull();
+
+          // Conversely, if a release deletes the tunnel before enableRecovery runs, enableRecovery rejects it.
+          const afterProvider =
+            mode === "recover"
+              ? yield* provider.provision({ userId, environmentId, origin, reuseReadyTunnel: true })
+              : null;
+          const afterReconcile =
+            mode === "register"
+              ? yield* provider.reconcileOrigin({
+                  userId,
+                  environmentId,
+                  tunnelId: "tunnel-1",
+                  origin,
+                  endpoint: provisioned.endpoint,
+                })
+              : null;
+          expect(yield* provider.release({ userId, environmentId, markReleased: true })).toBe(true);
+          expect(deletedTunnels).toBe(1);
+          const staleGeneration =
+            afterProvider !== null
+              ? afterProvider.generation
+              : afterReconcile !== null && afterReconcile.status === "ready"
+                ? afterReconcile.generation
+                : -1;
+          expect(
+            yield* allocations.enableRecovery({
+              userId,
+              environmentId,
+              tunnelId: "tunnel-1",
+              environmentPublicKey: "public-key",
+              origin,
+              generation: staleGeneration,
+            }),
+          ).toBe(false);
+        }).pipe(Effect.provide(providerLayer));
+      }),
+  );
 });
 
 describe("relay environment unlink", () => {

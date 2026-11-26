@@ -641,20 +641,25 @@ export const registerEnvironmentTunnelRecovery = Effect.fn(
   ) {
     return yield* new HttpApiError.Unauthorized({});
   }
-  const status = yield* managedEndpointProvider.reconcileOrigin({
+  const reconciled = yield* managedEndpointProvider.reconcileOrigin({
     userId: input.userId,
     environmentId: input.environmentId,
     tunnelId: input.tunnelId,
     origin: input.origin,
     endpoint: link.endpoint,
   });
-  if (status === "recovery_required") {
-    return { status };
+  if (reconciled.status === "recovery_required") {
+    return { status: reconciled.status };
   }
-  if (!(yield* allocations.enableRecovery(input))) {
+  if (
+    !(yield* allocations.enableRecovery({
+      ...input,
+      generation: reconciled.generation,
+    }))
+  ) {
     return yield* new HttpApiError.Unauthorized({});
   }
-  return { status };
+  return { status: reconciled.status };
 });
 
 export const recoverEnvironmentTunnelRecord = Effect.fn(
@@ -719,6 +724,7 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
     tunnelId: recoveredTunnelId,
     environmentPublicKey: input.environmentPublicKey,
     origin: input.origin,
+    generation: recovered.generation,
   });
   if (!enabled) {
     const owner = { userId: input.userId, environmentId: input.environmentId };

@@ -16,6 +16,7 @@ import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 describe("EnvironmentLinks", () => {
   it.effect("carries the webhook-hold opt-in over only from links with the same key", () => {
     const inserted: Array<Record<string, unknown>> = [];
+    const conflictConfigs: Array<Record<string, unknown>> = [];
     const revoked: Array<{ values: Record<string, unknown>; condition: unknown }> = [];
     const fakeDb = {
       $client: {
@@ -33,14 +34,21 @@ describe("EnvironmentLinks", () => {
       insert: () => ({
         values: (values: Record<string, unknown>) => {
           inserted.push(values);
-          return { onConflictDoUpdate: () => Effect.void };
+          return {
+            onConflictDoUpdate: (config: Record<string, unknown>) => {
+              conflictConfigs.push(config);
+              return {
+                returning: () => Effect.succeed([{ environmentId: "env-1" }]),
+              };
+            },
+          };
         },
       }),
     } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const links = yield* EnvironmentLinks.EnvironmentLinks;
-      yield* links.upsert({
+      const upserted = yield* links.upsert({
         userId: "user-1",
         request: {
           notificationsEnabled: false,
@@ -54,6 +62,11 @@ describe("EnvironmentLinks", () => {
         } as never,
         endpoint: { httpBaseUrl: "https://a.example", wsBaseUrl: "wss://a.example" } as never,
       });
+      expect(upserted).toBe(true);
+      const setWhere = new PgDialect().sqlToQuery(conflictConfigs[0]?.setWhere as never);
+      expect(setWhere.sql).toContain('"revoked_at" is not null');
+      expect(setWhere.sql).toContain('"environment_public_key" =');
+      expect(setWhere.params).toEqual(["public-key-1"]);
       const query = new PgDialect().sqlToQuery(inserted[0]?.holdWebhooksWhileOffline as never);
       expect(query.sql).toContain("environment_public_key");
       expect(query.params).toEqual(["env-1", "public-key-1"]);
@@ -202,4 +215,176 @@ describe("EnvironmentLinks", () => {
       ),
     );
   });
+
+  it.effect("refuses to overwrite an active link with a different environment public key", () =>
+    Effect.gen(function* () {
+      const pg = yield* Effect.acquireRelease(
+        Effect.promise(() => PGlite.create()),
+        (client) => Effect.promise(() => client.close()),
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const migrationsDir = yield* path.fromFileUrl(
+        new URL("../../migrations/postgres/", import.meta.url),
+      );
+      for (const name of (yield* fs.readDirectory(migrationsDir)).toSorted()) {
+        const migration = yield* fs.readFileString(`${migrationsDir}${name}/migration.sql`);
+        yield* Effect.promise(() => pg.exec(migration));
+      }
+
+      const db = drizzle({ client: pg });
+      const effectDb = {
+        $client: {
+          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+        },
+        execute: (query: SQL) => Effect.promise(() => db.execute(query)),
+        insert: (table: typeof relayEnvironmentLinks) => ({
+          values: (values: typeof relayEnvironmentLinks.$inferInsert) => ({
+            onConflictDoUpdate: (config: unknown) => ({
+              returning: (fields: { environmentId: typeof relayEnvironmentLinks.environmentId }) =>
+                Effect.promise(() =>
+                  db
+                    .insert(table)
+                    .values(values)
+                    .onConflictDoUpdate(config as never)
+                    .returning(fields),
+                ),
+            }),
+          }),
+        }),
+        update: (table: typeof relayEnvironmentLinks) => ({
+          set: (values: Partial<typeof relayEnvironmentLinks.$inferInsert>) => ({
+            where: (condition: SQL | undefined) => {
+              const run = Effect.promise(() => db.update(table).set(values).where(condition));
+              return Object.assign(run, {
+                returning: (fields: {
+                  environmentId: typeof relayEnvironmentLinks.environmentId;
+                }) =>
+                  Effect.promise(() =>
+                    db.update(table).set(values).where(condition).returning(fields),
+                  ),
+              });
+            },
+          }),
+        }),
+      } as unknown as RelayDb.RelayDb["Service"];
+
+      const links = yield* Effect.service(EnvironmentLinks.EnvironmentLinks).pipe(
+        Effect.provide(
+          EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, effectDb))),
+        ),
+      );
+      const request = {
+        notificationsEnabled: true,
+        liveActivitiesEnabled: true,
+        managedTunnelsEnabled: true,
+      } as never;
+      const endpoint = {
+        httpBaseUrl: "https://env-1.example.test/",
+        wsBaseUrl: "wss://env-1.example.test/ws",
+        providerKind: "cloudflare_tunnel",
+      } as const;
+
+      expect(
+        yield* links.upsert({
+          userId: "user-1",
+          request,
+          proof: {
+            environmentId: "env-1",
+            environmentPublicKey: "key-a",
+            descriptor: { label: "Greendale Host" },
+          } as never,
+          endpoint,
+        }),
+      ).toBe(true);
+
+      expect(
+        yield* links.upsert({
+          userId: "user-2",
+          request,
+          proof: {
+            environmentId: "env-1",
+            environmentPublicKey: "key-b",
+            descriptor: { label: "Other Account Host" },
+          } as never,
+          endpoint,
+        }),
+      ).toBe(true);
+
+      // A conflicting key cannot overwrite user-1's active link or revoke user-2's link for key-b.
+      expect(
+        yield* links.upsert({
+          userId: "user-1",
+          request,
+          proof: {
+            environmentId: "env-1",
+            environmentPublicKey: "key-b",
+            descriptor: { label: "Hijacked Host" },
+          } as never,
+          endpoint,
+        }),
+      ).toBe(false);
+
+      const rowsAfterConflict = yield* Effect.promise(() =>
+        db.select().from(relayEnvironmentLinks),
+      );
+      expect(
+        rowsAfterConflict
+          .map((row) => ({
+            userId: row.userId,
+            key: row.environmentPublicKey,
+            label: row.environmentLabel,
+            revoked: row.revokedAt !== null,
+          }))
+          .toSorted((a, b) => a.userId.localeCompare(b.userId)),
+      ).toEqual([
+        { userId: "user-1", key: "key-a", label: "Greendale Host", revoked: false },
+        { userId: "user-2", key: "key-b", label: "Other Account Host", revoked: false },
+      ]);
+
+      // Same key can still update the active link.
+      expect(
+        yield* links.upsert({
+          userId: "user-1",
+          request,
+          proof: {
+            environmentId: "env-1",
+            environmentPublicKey: "key-a",
+            descriptor: { label: "Renamed Host" },
+          } as never,
+          endpoint,
+        }),
+      ).toBe(true);
+
+      // After revoking user-1's link, key-b is allowed to claim (user-1, env-1).
+      expect(yield* links.revokeForUser({ userId: "user-1", environmentId: "env-1" })).toBe(true);
+      expect(
+        yield* links.upsert({
+          userId: "user-1",
+          request,
+          proof: {
+            environmentId: "env-1",
+            environmentPublicKey: "key-b",
+            descriptor: { label: "Relinked Host" },
+          } as never,
+          endpoint,
+        }),
+      ).toBe(true);
+
+      const finalRows = yield* Effect.promise(() => db.select().from(relayEnvironmentLinks));
+      expect(
+        finalRows
+          .map((row) => ({
+            userId: row.userId,
+            key: row.environmentPublicKey,
+            label: row.environmentLabel,
+            revoked: row.revokedAt !== null,
+          }))
+          .toSorted((a, b) => a.userId.localeCompare(b.userId)),
+      ).toEqual([
+        { userId: "user-1", key: "key-b", label: "Relinked Host", revoked: false },
+        { userId: "user-2", key: "key-b", label: "Other Account Host", revoked: true },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

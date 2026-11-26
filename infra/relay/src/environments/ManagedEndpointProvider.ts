@@ -144,9 +144,12 @@ export type ManagedEndpointProviderError =
 export interface ManagedEndpointProvisioningResult {
   readonly endpoint: RelayManagedEndpoint;
   readonly runtime: RelayManagedEndpointRuntimeConfig;
+  readonly generation: number;
 }
 
-export type ManagedEndpointOriginSyncResult = "ready" | "recovery_required";
+export type ManagedEndpointOriginSyncResult =
+  | { readonly status: "ready"; readonly generation: number }
+  | { readonly status: "recovery_required" };
 
 export type ManagedEndpointDeprovisionTarget = ManagedEndpointAllocations.ManagedEndpointAllocation;
 
@@ -681,43 +684,79 @@ const make = Effect.gen(function* () {
       return Option.none<ManagedEndpointProvisioningResult>();
     }
     const failed = (
-      stage: "verify-tunnel" | "get-tunnel-token",
-      cause: ManagedEndpointTunnelClientError,
+      stage: "verify-tunnel" | "get-tunnel-token" | "mark-allocation-ready",
+      cause?: unknown,
+      reason?: "claim-lost",
     ) =>
       new ManagedEndpointProvisioningFailed({
         userId: allocation.userId,
         environmentId: allocation.environmentId,
         stage,
+        ...(reason === undefined ? {} : { reason }),
         hostname: allocation.hostname,
         tunnelName: allocation.tunnelName,
         tunnelId,
-        cause,
+        ...(cause === undefined ? {} : { cause }),
       });
-    const recorded = yield* tunnels.get(tunnelId).pipe(
-      Effect.asSome,
-      Effect.catchTags({
-        ManagedEndpointTunnelClientError: (cause) =>
-          isManagedEndpointNotFound(cause.cause)
-            ? Effect.succeedNone
-            : Effect.fail(failed("verify-tunnel", cause)),
-      }),
-    );
-    if (Option.isNone(recorded) || recorded.value.deletedAt) {
-      return Option.none<ManagedEndpointProvisioningResult>();
+    const reused = yield* allocations
+      .withClaimedTunnel(
+        {
+          userId: allocation.userId,
+          environmentId: allocation.environmentId,
+          tunnelId,
+          generation: allocation.generation,
+        },
+        Effect.gen(function* () {
+          const recorded = yield* tunnels.get(tunnelId).pipe(
+            Effect.asSome,
+            Effect.catchTags({
+              ManagedEndpointTunnelClientError: (cause) =>
+                isManagedEndpointNotFound(cause.cause)
+                  ? Effect.succeedNone
+                  : Effect.fail(failed("verify-tunnel", cause)),
+            }),
+          );
+          if (Option.isNone(recorded) || recorded.value.deletedAt) {
+            return Option.none<ManagedEndpointProvisioningResult>();
+          }
+          const connectorToken = yield* tunnels
+            .getToken(tunnelId)
+            .pipe(Effect.mapError((cause) => failed("get-tunnel-token", cause)));
+          const readyGeneration = yield* allocations
+            .markReady({
+              userId: allocation.userId,
+              environmentId: allocation.environmentId,
+              tunnelId,
+              generation: allocation.generation,
+              origin,
+            })
+            .pipe(Effect.mapError((cause) => failed("mark-allocation-ready", cause)));
+          if (readyGeneration === null) {
+            return yield* failed("mark-allocation-ready", undefined, "claim-lost");
+          }
+          yield* Effect.annotateCurrentSpan({ "relay.managed_endpoint.reused_ready_tunnel": true });
+          return Option.some<ManagedEndpointProvisioningResult>({
+            endpoint: managedEndpointForHostname(allocation.hostname),
+            runtime: {
+              providerKind: "cloudflare_tunnel",
+              connectorToken,
+              tunnelId,
+              tunnelName: allocation.tunnelName,
+            },
+            generation: readyGeneration,
+          });
+        }),
+      )
+      .pipe(
+        Effect.catchTags({
+          ManagedEndpointAllocationPersistenceError: (cause) =>
+            Effect.fail(failed("verify-tunnel", cause)),
+        }),
+      );
+    if (Option.isNone(reused)) {
+      return yield* failed("verify-tunnel", undefined, "claim-lost");
     }
-    const connectorToken = yield* tunnels
-      .getToken(tunnelId)
-      .pipe(Effect.mapError((cause) => failed("get-tunnel-token", cause)));
-    yield* Effect.annotateCurrentSpan({ "relay.managed_endpoint.reused_ready_tunnel": true });
-    return Option.some<ManagedEndpointProvisioningResult>({
-      endpoint: managedEndpointForHostname(allocation.hostname),
-      runtime: {
-        providerKind: "cloudflare_tunnel",
-        connectorToken,
-        tunnelId,
-        tunnelName: allocation.tunnelName,
-      },
-    });
+    return reused.value;
   });
 
   const prepareDeprovision = Effect.fn("relay.managed_endpoint_provider.prepare_deprovision")(
@@ -765,9 +804,10 @@ const make = Effect.gen(function* () {
         allocation === null ||
         allocation.tunnelId !== input.tunnelId ||
         allocation.dnsRecordId === null ||
-        allocation.readyAt === null
+        allocation.readyAt === null ||
+        allocation.tunnelReleasedAt !== null
       ) {
-        return "recovery_required";
+        return { status: "recovery_required" as const };
       }
       const cf = yield* requireCloudflareSettings(config, input);
       const recordedEndpoint = ManagedEndpointAllocations.resolveReadyManagedEndpoint({
@@ -805,38 +845,8 @@ const make = Effect.gen(function* () {
                   ),
           }),
         );
-      // Released records retain tunnel ids; verify Cloudflare still has the tunnel before reconnecting.
-      const recorded = yield* verifyTunnel(tunnels.get(input.tunnelId));
-      if (Option.isNone(recorded) || recorded.value.deletedAt) {
-        return "recovery_required";
-      }
       const originService = formatOriginService(input.origin);
-      if (
-        allocation.origin?.localHttpHost === input.origin.localHttpHost &&
-        allocation.origin.localHttpPort === input.origin.localHttpPort
-      ) {
-        // Live ingress can drift from the recorded origin; only a matching rule skips the rewrite.
-        const configuration = yield* verifyTunnel(tunnels.getConfiguration(input.tunnelId));
-        if (Option.isNone(configuration)) {
-          return "recovery_required";
-        }
-        const hostname = normalizeHostname(allocation.hostname);
-        // Cloudflare routes by the first matching rule, so an earlier wildcard or catch-all wins.
-        const rule = configuration.value.ingress.find((entry) => {
-          if (entry.hostname == null) return true;
-          const candidate = normalizeHostname(entry.hostname);
-          return (
-            candidate === hostname ||
-            (candidate.startsWith("*.") && hostname.endsWith(candidate.slice(1)))
-          );
-        });
-        // A path-restricted rule leaves other paths to later rules, so it cannot prove routing.
-        if (rule?.service === originService && !rule.path) {
-          return "ready";
-        }
-      }
-
-      const updated = yield* allocations
+      const reconciled = yield* allocations
         .withClaimedTunnel(
           {
             userId: input.userId,
@@ -844,55 +854,107 @@ const make = Effect.gen(function* () {
             tunnelId: input.tunnelId,
             generation: allocation.generation,
           },
-          tunnels
-            .putConfiguration(input.tunnelId, {
-              ingress: [
-                { hostname: allocation.hostname, service: originService },
-                { service: "http_status:404" },
-              ],
-            })
-            .pipe(
-              Effect.as("configured" as const),
-              Effect.catchTags({
-                ManagedEndpointTunnelClientError: (error) =>
-                  isManagedEndpointNotFound(error.cause)
-                    ? Effect.succeed("missing" as const)
-                    : Effect.fail(error),
-              }),
-              Effect.filterOrElse(
-                (result): result is "missing" => result === "missing",
-                () =>
-                  allocations
-                    .markReady({
+          Effect.gen(function* () {
+            // Released records retain tunnel ids; verify Cloudflare still has the tunnel before reconnecting.
+            const recorded = yield* verifyTunnel(tunnels.get(input.tunnelId));
+            if (Option.isNone(recorded) || recorded.value.deletedAt) {
+              return { status: "recovery_required" as const };
+            }
+            let ingressMatches = false;
+            if (
+              allocation.origin?.localHttpHost === input.origin.localHttpHost &&
+              allocation.origin.localHttpPort === input.origin.localHttpPort
+            ) {
+              // Live ingress can drift from the recorded origin; only a matching rule skips the rewrite.
+              const configuration = yield* verifyTunnel(tunnels.getConfiguration(input.tunnelId));
+              if (Option.isNone(configuration)) {
+                return { status: "recovery_required" as const };
+              }
+              const hostname = normalizeHostname(allocation.hostname);
+              // Cloudflare routes by the first matching rule, so an earlier wildcard or catch-all wins.
+              const rule = configuration.value.ingress.find((entry) => {
+                if (entry.hostname == null) return true;
+                const candidate = normalizeHostname(entry.hostname);
+                return (
+                  candidate === hostname ||
+                  (candidate.startsWith("*.") && hostname.endsWith(candidate.slice(1)))
+                );
+              });
+              // A path-restricted rule leaves other paths to later rules, so it cannot prove routing.
+              ingressMatches = rule?.service === originService && !rule.path;
+            }
+            if (!ingressMatches) {
+              const configured = yield* tunnels
+                .putConfiguration(input.tunnelId, {
+                  ingress: [
+                    { hostname: allocation.hostname, service: originService },
+                    { service: "http_status:404" },
+                  ],
+                })
+                .pipe(
+                  Effect.as("configured" as const),
+                  Effect.catchTags({
+                    ManagedEndpointTunnelClientError: (cause) =>
+                      isManagedEndpointNotFound(cause.cause)
+                        ? Effect.succeed("missing" as const)
+                        : Effect.fail(
+                            new ManagedEndpointProvisioningFailed({
+                              ...input,
+                              stage: "sync-origin",
+                              cause,
+                            }),
+                          ),
+                  }),
+                );
+              if (configured === "missing") {
+                return { status: "recovery_required" as const };
+              }
+            }
+            const readyGeneration = yield* allocations
+              .markReady({
+                ...input,
+                generation: allocation.generation,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ManagedEndpointProvisioningFailed({
                       ...input,
-                      generation: allocation.generation,
-                    })
-                    .pipe(
-                      Effect.map((updated) =>
-                        updated ? ("configured" as const) : ("stale" as const),
-                      ),
-                    ),
-              ),
-            ),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ManagedEndpointProvisioningFailed({
+                      stage: "sync-origin",
+                      cause,
+                    }),
+                ),
+              );
+            if (readyGeneration === null) {
+              return yield* new ManagedEndpointProvisioningFailed({
                 ...input,
                 stage: "sync-origin",
-                cause,
-              }),
-          ),
+                reason: "claim-lost",
+              });
+            }
+            return { status: "ready" as const, generation: readyGeneration };
+          }),
+        )
+        .pipe(
+          Effect.catchTags({
+            ManagedEndpointAllocationPersistenceError: (cause) =>
+              Effect.fail(
+                new ManagedEndpointProvisioningFailed({
+                  ...input,
+                  stage: "sync-origin",
+                  cause,
+                }),
+              ),
+          }),
         );
-      if (Option.isNone(updated) || updated.value === "stale") {
+      if (Option.isNone(reconciled)) {
         return yield* new ManagedEndpointProvisioningFailed({
           ...input,
           stage: "sync-origin",
           reason: "claim-lost",
         });
       }
-      return updated.value === "configured" ? "ready" : "recovery_required";
+      return reconciled.value;
     },
   );
 
@@ -1075,25 +1137,77 @@ const make = Effect.gen(function* () {
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
       }
-      // Claim before deleting: concurrent provisioning can advance the generation and reuse the tunnel.
-      const claimedGeneration = yield* allocations
-        .claimRelease({
-          userId: input.userId,
-          environmentId: input.environmentId,
-          tunnelId,
-          generation: allocation.generation,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ManagedEndpointDeprovisioningFailed({
-                ...input,
-                stage: "claim-release",
-                tunnelId,
-                cause,
-              }),
-          ),
+      const claimRelease = (
+        generation: number,
+        markReleased?: boolean,
+      ): Effect.Effect<number | null, ManagedEndpointDeprovisioningFailed> =>
+        allocations
+          .claimRelease({
+            userId: input.userId,
+            environmentId: input.environmentId,
+            tunnelId,
+            generation,
+            ...(markReleased === true ? { markReleased: true } : {}),
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ManagedEndpointDeprovisioningFailed({
+                  ...input,
+                  stage: "claim-release",
+                  tunnelId,
+                  cause,
+                }),
+            ),
+          );
+      if (input.expectedInactiveBefore !== undefined && input.expectedStatus !== undefined) {
+        const expectedStatus = input.expectedStatus;
+        const inactiveBefore = input.expectedInactiveBefore;
+        const currentTunnel = yield* tunnels.get(tunnelId).pipe(
+          Effect.asSome,
+          Effect.catchTags({
+            ManagedEndpointTunnelClientError: (cause) =>
+              isManagedEndpointNotFound(cause.cause)
+                ? Effect.succeedNone
+                : Effect.fail(
+                    new ManagedEndpointDeprovisioningFailed({
+                      ...input,
+                      stage: "load-tunnel",
+                      tunnelId,
+                      cause,
+                    }),
+                  ),
+          }),
         );
+        if (Option.isNone(currentTunnel)) {
+          if (input.markReleased === true) {
+            return (yield* claimRelease(allocation.generation, true)) !== null;
+          }
+          return true;
+        }
+        const inactiveAt =
+          expectedStatus === "down"
+            ? currentTunnel.value.connsInactiveAt
+            : currentTunnel.value.createdAt;
+        if (
+          currentTunnel.value.id !== tunnelId ||
+          currentTunnel.value.status !== expectedStatus ||
+          typeof inactiveAt !== "string"
+        ) {
+          return false;
+        }
+        const inactiveTime = DateTime.make(inactiveAt);
+        const cutoff = DateTime.make(inactiveBefore);
+        if (
+          Option.isNone(inactiveTime) ||
+          Option.isNone(cutoff) ||
+          inactiveTime.value.epochMilliseconds > cutoff.value.epochMilliseconds
+        ) {
+          return false;
+        }
+      }
+      // Claim before deleting: concurrent provisioning can advance the generation and reuse the tunnel.
+      const claimedGeneration = yield* claimRelease(allocation.generation);
       if (claimedGeneration === null) {
         return false;
       }
@@ -1118,49 +1232,6 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      if (input.expectedInactiveBefore !== undefined && input.expectedStatus !== undefined) {
-        const expectedStatus = input.expectedStatus;
-        const inactiveBefore = input.expectedInactiveBefore;
-        const currentTunnel = yield* tunnels.get(tunnelId).pipe(
-          Effect.asSome,
-          Effect.catchTags({
-            ManagedEndpointTunnelClientError: (cause) =>
-              isManagedEndpointNotFound(cause.cause)
-                ? Effect.succeedNone
-                : Effect.fail(
-                    new ManagedEndpointDeprovisioningFailed({
-                      ...input,
-                      stage: "load-tunnel",
-                      tunnelId,
-                      cause,
-                    }),
-                  ),
-          }),
-        );
-        if (Option.isNone(currentTunnel)) {
-          return true;
-        }
-        const inactiveAt =
-          expectedStatus === "down"
-            ? currentTunnel.value.connsInactiveAt
-            : currentTunnel.value.createdAt;
-        if (
-          currentTunnel.value.id !== tunnelId ||
-          currentTunnel.value.status !== expectedStatus ||
-          typeof inactiveAt !== "string"
-        ) {
-          return false;
-        }
-        const inactiveTime = DateTime.make(inactiveAt);
-        const cutoff = DateTime.make(inactiveBefore);
-        if (
-          Option.isNone(inactiveTime) ||
-          Option.isNone(cutoff) ||
-          inactiveTime.value.epochMilliseconds > cutoff.value.epochMilliseconds
-        ) {
-          return false;
-        }
-      }
       const released = yield* allocations
         .withClaimedTunnel(
           {
@@ -1170,25 +1241,7 @@ const make = Effect.gen(function* () {
             generation: claimedGeneration,
           },
           Effect.gen(function* () {
-            const finalGeneration = yield* allocations
-              .claimRelease({
-                userId: input.userId,
-                environmentId: input.environmentId,
-                tunnelId,
-                generation: claimedGeneration,
-                ...(input.markReleased === true ? { markReleased: true } : {}),
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ManagedEndpointDeprovisioningFailed({
-                      ...input,
-                      stage: "claim-release",
-                      tunnelId,
-                      cause,
-                    }),
-                ),
-              );
+            const finalGeneration = yield* claimRelease(claimedGeneration, input.markReleased);
             if (finalGeneration === null) {
               return false;
             }
@@ -1564,7 +1617,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      const ready = yield* allocations
+      const readyGeneration = yield* allocations
         .markReady({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -1587,7 +1640,7 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
-      if (!ready) {
+      if (readyGeneration === null) {
         return yield* new ManagedEndpointProvisioningFailed({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -1608,6 +1661,7 @@ const make = Effect.gen(function* () {
           tunnelId: tunnel.id,
           tunnelName: tunnel.name,
         },
+        generation: readyGeneration,
       } satisfies ManagedEndpointProvisioningResult;
     }),
   });

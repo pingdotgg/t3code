@@ -108,7 +108,7 @@ export class EnvironmentLinks extends Context.Service<
       readonly request: RelayEnvironmentLinkRequest;
       readonly proof: RelayEnvironmentLinkProofPayload;
       readonly endpoint: RelayManagedEndpoint;
-    }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError>;
+    }) => Effect.Effect<boolean, EnvironmentLinkUpsertPersistenceError>;
     readonly listDeliveryUsersForEnvironment: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -193,14 +193,18 @@ const make = Effect.gen(function* () {
           AND other.hold_webhooks_while_offline
       )`;
       const { endpoint } = input;
-      yield* db.$client
+      return yield* db.$client
         .withTransaction(
           Effect.gen(function* () {
-            // Serialize account switches for the same proven environment identity.
+            // Serialize concurrent links for the same account+environment across distinct keys,
+            // then lock the environment identity for cross-account switches and account deletion.
+            yield* db.execute(
+              sql`select pg_advisory_xact_lock(hashtext(${`environment-link:${input.userId}`}), hashtext(${environmentId}))`,
+            );
             yield* db.execute(
               sql`select pg_advisory_xact_lock(hashtext(${environmentId}), hashtext(${proof.environmentPublicKey}))`,
             );
-            yield* db
+            const upserted = yield* db
               .insert(relayEnvironmentLinks)
               .values({
                 userId: input.userId,
@@ -235,7 +239,12 @@ const make = Effect.gen(function* () {
                   updatedAt: now,
                   holdWebhooksWhileOffline: inheritedHoldWebhooks,
                 },
-              });
+                setWhere: sql`${relayEnvironmentLinks.revokedAt} is not null or ${relayEnvironmentLinks.environmentPublicKey} = ${proof.environmentPublicKey}`,
+              })
+              .returning({ environmentId: relayEnvironmentLinks.environmentId });
+            if (upserted.length === 0) {
+              return false;
+            }
             yield* db
               .update(relayEnvironmentLinks)
               .set({ revokedAt: now, updatedAt: now })
@@ -247,6 +256,7 @@ const make = Effect.gen(function* () {
                   isNull(relayEnvironmentLinks.revokedAt),
                 ),
               );
+            return true;
           }),
         )
         .pipe(
