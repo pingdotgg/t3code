@@ -1039,6 +1039,40 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
+// Advertises one command per file in `<session cwd>/.commands`, like agents with project commands.
+const cwdCommandsAgentSource = `
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+const commandsIn = (cwd) => {
+  try {
+    return readdirSync(join(cwd, ".commands")).map((name) => ({ name, description: "" }));
+  } catch {
+    return [];
+  }
+};
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method, params } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  } else if (method === "session/new") {
+    send({ id, result: { sessionId: "probe-session" } });
+    const availableCommands = [{ name: "builtin", description: "" }, ...commandsIn(params.cwd)];
+    send({
+      method: "session/update",
+      params: {
+        sessionId: "probe-session",
+        update: { sessionUpdate: "available_commands_update", availableCommands },
+      },
+    });
+  } else {
+    send({ id, result: {} });
+  }
+});
+`;
+
 const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
   Layer.provideMerge(IdAllocator.layer),
@@ -1712,6 +1746,46 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
             ?.isDefault,
         ).toBe(true);
       }),
+  );
+
+  it.effect("lists the commands an agent advertises for the project's directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const projectDirectory = path.join(directory, "project");
+      yield* fileSystem.writeFileString(agentPath, cwdCommandsAgentSource);
+      yield* fileSystem.makeDirectory(path.join(projectDirectory, ".commands", "demo"), {
+        recursive: true,
+      });
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ source: "local", commandPath: "agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "agent",
+            version: null,
+            distribution: "local",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "local" as const,
+              spawn: { command: process.execPath, args: [agentPath] },
+            }),
+        }),
+      );
+
+      expect(instance.snapshotForCwd).toBeDefined();
+      const workspace = yield* instance.snapshotForCwd!(projectDirectory);
+      expect(workspace.slashCommands.map((command) => command.name)).toContain("demo");
+    }),
   );
 
   it("invalidates cached enrichment when launchIdentity changes at the same version", () => {
