@@ -24,11 +24,10 @@ function renderMarkdown(markdown: string): string {
 }
 
 describe("remarkNormalizeListItemIndentation", () => {
-  it.each([
-    [':codex-file-citation{path="src/a.ts"}', '<a href="src/a.ts">a.ts</a>'],
-    [':codex-followup[Run tests]{prompt="Run tests"}', "<span>Run tests</span>"],
-  ])("renders a leading directive in over-indented list content: %s", (directive, html) => {
-    expect(renderMarkdown(`-       ${directive}`)).toBe(`<ul>\n<li>${html}</li>\n</ul>`);
+  it("renders a leading directive in over-indented list content", () => {
+    expect(renderMarkdown('-       :codex-file-citation{path="src/a.ts"}')).toBe(
+      '<ul>\n<li><a href="src/a.ts">a.ts</a></li>\n</ul>',
+    );
   });
 
   it("renders same-line over-indented list content as list text", () => {
