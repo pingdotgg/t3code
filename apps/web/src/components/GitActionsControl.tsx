@@ -1115,6 +1115,11 @@ function CheckoutGitActionsControl({
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = selectedFiles.length === allFiles.length;
   const noneSelected = selectedFiles.length === 0;
+  if (gitStatusQuery.isSuccess && excludedFiles.size > allFiles.length - selectedFiles.length) {
+    setExcludedFiles(
+      new Set(allFiles.filter((file) => excludedFiles.has(file.path)).map((file) => file.path)),
+    );
+  }
 
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
@@ -1265,6 +1270,9 @@ function CheckoutGitActionsControl({
     }
 
     const actionResult = result.value;
+    if (actionResult.commit.status === "created") {
+      setExcludedFiles((current) => (current === excludedFiles ? new Set() : current));
+    }
     const branchUpdate = resolveThreadBranchUpdate(actionResult);
     if (branchUpdate) branchFollower?.follow(branchUpdate.branch);
     const createdPullRequest = actionResult.pr.status === "created";
@@ -1307,13 +1315,11 @@ function CheckoutGitActionsControl({
     const committed = await runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(excludedFiles.size > 0 ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
       featureBranch,
       skipDefaultBranchPrompt: featureBranch,
     });
-    if (committed) {
-      setExcludedFiles((current) => (current === excludedFiles ? new Set() : current));
-    } else if (commitMessage) {
+    if (!committed && commitMessage) {
       // Keep a typed message for the retry unless the user already started a new one.
       setDialogCommitMessage((current) => current || commitMessage);
     }
