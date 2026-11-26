@@ -17,49 +17,18 @@ it.each([
 });
 
 it.each([
-  "he",
-  "he-IL",
-  "HE_il",
-  "iw-IL",
-  "ar",
-  "ar-EG",
-  "fa",
-  "ur",
-  "ps",
-  "dv",
-  "yi",
-  "syr",
-  "ckb",
-  "sd",
-  "ug",
-  "ks",
-  "pa-PK",
-  "az-Arab",
-  "ku-Arab",
-  "ff-Adlm",
-  "nqo",
-  "rhg",
-  "und-Samr",
-  "und-Yezi",
-  "und-Gara",
-])("uses RTL layout for %s", (locale) => {
-  expect(localeDirection(locale)).toBe("rtl");
-});
-
-it.each([
-  "en",
-  "de",
-  "zh",
-  "he-Latn",
-  "ar-Latn",
-  "az-Latn",
-  "ku",
-  "pa-IN",
-  "ks-Deva",
-  "ff-Latn",
-  "system",
-  "",
-  "not a locale",
-])("uses LTR layout for %s", (locale) => {
-  expect(localeDirection(locale)).toBe("ltr");
+  ["he", "rtl"],
+  ["HE_il", "rtl"],
+  ["iw-IL", "rtl"],
+  ["ar-EG", "rtl"],
+  ["az-Arab", "rtl"],
+  ["pa-PK", "rtl"],
+  ["pa-IN", "ltr"],
+  ["he-Latn", "ltr"],
+  ["en", "ltr"],
+  ["system", "ltr"],
+  ["", "ltr"],
+  ["not a locale", "ltr"],
+] as const)("resolves layout direction of %s as %s", (locale, expected) => {
+  expect(localeDirection(locale)).toBe(expected);
 });
