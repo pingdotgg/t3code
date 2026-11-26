@@ -1,4 +1,5 @@
 import type { EnvironmentId, SecretReference, UnifiedSettings } from "@t3tools/contracts";
+import { parseUrl } from "@t3tools/shared/url";
 import { T, useGT, Var } from "gt-react";
 import { useId, useState } from "react";
 
@@ -45,7 +46,7 @@ export function AddUsageLimitSourceDialog({
   const managementKey = typeof keyDraft === "string" ? keyDraft.trim() : keyDraft;
   const trimmedUrl = url.trim();
   const http = kind === "http";
-  const endpoint = URL.parse(trimmedUrl);
+  const endpoint = parseUrl(trimmedUrl);
   const canSave =
     keyValid &&
     (http

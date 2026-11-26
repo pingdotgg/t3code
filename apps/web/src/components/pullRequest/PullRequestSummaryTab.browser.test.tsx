@@ -471,3 +471,15 @@ it("opens a thread's remaining replies through the link-target setting, not a po
     },
   );
 });
+
+it("renders when reference.host is omitted and URL.canParse is missing", async () => {
+  setup();
+  const originalCanParse = URL.canParse;
+  URL.canParse = undefined as never;
+  try {
+    await using screen = await render(detail);
+    await expect.element(screen.getByText("Original description", { exact: true })).toBeVisible();
+  } finally {
+    URL.canParse = originalCanParse;
+  }
+});

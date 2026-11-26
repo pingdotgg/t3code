@@ -11,6 +11,7 @@ import {
   resolvePullRequestAnchorRange,
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
+import { parseUrl } from "@t3tools/shared/url";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
@@ -400,8 +401,7 @@ function PullRequestOverview(props: {
             projectId: ProjectId.make(props.params.projectId),
             repository: props.params.repository,
             number: props.params.number,
-            host:
-              props.params.host ?? (URL.canParse(pr.url) ? new URL(pr.url).hostname : undefined),
+            host: props.params.host ?? (parseUrl(pr.url)?.hostname || undefined),
           },
         }}
       />

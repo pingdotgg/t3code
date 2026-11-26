@@ -1,5 +1,6 @@
 import { pullRequestCommentPreview } from "./pullRequestMarkdown.logic";
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
+import { parseUrl } from "@t3tools/shared/url";
 import { holdLinkedNodeInView, holdScrollTop } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -1056,9 +1057,7 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
               projectId: reference.projectId,
               repository: reference.repository,
               number: reference.number,
-              host:
-                reference.host ??
-                (URL.canParse(detail.url) ? new URL(detail.url).hostname : undefined),
+              host: reference.host ?? parseUrl(detail.url)?.hostname,
             },
           }}
         />
