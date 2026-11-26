@@ -147,6 +147,16 @@ describe("splitMarkdown", () => {
     expect(starts(text)).toEqual(["---", "# Heading"]);
   });
 
+  it("cuts after a leading horizontal rule with no frontmatter closer", () => {
+    const md =
+      "---\n\n" +
+      Array.from({ length: 300 }, (_, i) => `## Part ${i}\n${"a".repeat(450)}`).join("\n\n");
+    const { chunks } = splitMarkdown(md);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.text.length <= LARGE_MARKDOWN_CHUNK_MAX_CHARS)).toBe(true);
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(md);
+  });
+
   it.each([
     ["one space", " # References"],
     ["two spaces", "  ### References"],
@@ -223,5 +233,8 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
     const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
     expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
+    expect(splitMarkdown("---\n[rule]: /after-leading-rule\n\n# A").definitions).toBe(
+      "[rule]: /after-leading-rule",
+    );
   });
 });
