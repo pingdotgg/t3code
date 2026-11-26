@@ -1386,6 +1386,10 @@ it.effect.each(["shutdown", "close"] as const)(
       expect(released).toHaveLength(2);
       expect(capture).toBe(2);
       expect((yield* service.state).sessions).toHaveLength(1);
+      // A Device panel session holds no agent-device claim; a bound launcher does.
+      yield* service.open(other);
+      expect(yield* service.agentClaimedByOtherThread(target(threadId))).toBe(false);
+      expect(yield* service.agentClaimedByOtherThread(target(other.threadId))).toBe(true);
       const otherSession = yield* bind(other);
       yield* service.close({ threadId: other.threadId });
       expect(launchers).toEqual(new Set([session]));
