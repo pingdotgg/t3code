@@ -524,12 +524,11 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       if (sent) editor.view.focus();
       return;
     }
+    // Cite inserts a space after the chip; typing before it glues the next words to the citation.
+    const end = pos + current.nodeSize;
+    const caret = editor.state.doc.textBetween(end, end + 1) === " " ? end + 1 : end;
     // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
-    editor
-      .chain()
-      .setMeta(SILENT_SELECTION_META, sent)
-      .focus(pos + current.nodeSize)
-      .run();
+    editor.chain().setMeta(SILENT_SELECTION_META, sent).focus(caret).run();
   };
 
   return (

@@ -158,7 +158,7 @@ it.each(["blocked", "refusedLater"] as const)(
 
     await expect
       .element(screen.getByRole("status"))
-      .toHaveAttribute("data-prompt", `See ${serializeAssistantCitation(citation)}x `);
+      .toHaveAttribute("data-prompt", `See ${serializeAssistantCitation(citation)} x`);
   },
 );
 
