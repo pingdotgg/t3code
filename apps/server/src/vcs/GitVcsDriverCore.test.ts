@@ -9109,6 +9109,20 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("ensureRemote reuses a remote whose name contains Unicode whitespace", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const url = "https://github.com/example/repository.git";
+        const remoteName = "team\u00a0remote";
+        yield* git(cwd, ["init"]);
+        yield* git(cwd, ["remote", "add", remoteName, url]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        assert.equal(yield* driver.ensureRemote({ cwd, preferredName: "fork", url }), remoteName);
+        assert.equal(yield* git(cwd, ["remote"]), remoteName);
+      }),
+    );
+
     it.effect.each(["\n", "\r\n"])(
       "ensureRemote preserves spaces in fetch URLs and reserves their names (%j)",
       (lineEnding) =>
