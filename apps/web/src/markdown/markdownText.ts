@@ -33,7 +33,8 @@ function replaceDirectives(
     const labelStart = markdown.indexOf("[", directive.start) + 1;
     const label = rendered.slice(labelStart, labelStart + directive.label.length + delta);
     const value =
-      replacement({ ...directive, label }) ?? markdown.slice(directive.start, directive.end);
+      replacement({ ...directive, label }) ??
+      rendered.slice(directive.start, directive.end + delta);
     rendered = rendered.slice(0, directive.start) + value + rendered.slice(directive.end + delta);
     changes.push({
       start: directive.start,

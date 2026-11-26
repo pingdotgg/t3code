@@ -401,6 +401,10 @@ describe("wordsHast", () => {
       ':codex-followup[    read :codex-file-citation[a]{path="a.ts"} then]{prompt="o"} end',
       "    read [a.ts](<a.ts>) then end",
     ],
+    [
+      ':codex-followup[read :codex-file-citation[a]{path="a.ts"}] end',
+      ":codex-followup[read [a.ts](<a.ts>)] end",
+    ],
   ])("copies nested directives without losing surrounding text: %s", (markdown, expected) => {
     expect(renderCodexDirectivesForCopy(markdown)).toBe(expected);
     expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(expected);
