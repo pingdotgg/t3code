@@ -5714,6 +5714,10 @@ interface ActiveClaudeSubagent {
   lastAssistantMessageId: string | null;
 }
 
+// A fresh CLI writes its session only after init, so failing before then leaves nothing to resume.
+const claudeQueryLeftNoSession = (query: ClaudeLiveQueryContext) =>
+  !query.resumed && !query.receivedInit;
+
 interface ClaudeLiveQueryContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
@@ -5732,6 +5736,7 @@ interface ClaudeLiveQueryContext {
   readonly requestedPermissionMode: PermissionMode;
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
+  readonly resumed: boolean;
   receivedInit: boolean;
   // Init listed a server still connecting or needing a sign-in; a result checks which it was.
   checkMcpSignIns: boolean;
@@ -10184,6 +10189,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly failure?: OrchestrationV2ProviderFailure;
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
+          readonly promptDropped?: boolean;
         }) {
           // A turn stopped by the retry budget settles as failed with the retry's error.
           const retryBudgetFailure = requested.context.retryBudgetFailure;
@@ -10422,6 +10428,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         retryStartedAt: providerRetry.startedAt,
                       }),
                   threadDisposition,
+                  ...(input.promptDropped === true ? { promptDropped: true as const } : {}),
                 }
               : {
                   type: "turn.terminal",
@@ -10444,6 +10451,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     status: input.status,
                     completedAt: input.completedAt,
                   }),
+                  ...(input.status === "failed" && input.promptDropped === true
+                    ? { promptDropped: true as const }
+                    : {}),
                   turnTokenUsage: normalizeClaudeTurnTokenUsage(
                     input.result,
                     input.context.subagentsByTaskId.size > 0 ||
@@ -10686,6 +10696,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(interrupted
                 ? {}
                 : {
+                    promptDropped: claudeQueryLeftNoSession(closedQuery),
                     failure: makeProviderFailure({
                       cause: cause === undefined ? undefined : Cause.squash(cause),
                       ...(cause === undefined ? {} : claudeProcessExitFailure(cause)),
@@ -13019,6 +13030,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
+              promptDropped: claudeQueryLeftNoSession(liveQuery),
             });
           }
         });
@@ -14244,6 +14256,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             promptEchoMode: "unknown",
             requestedPermissionMode: queryOptions.permissionMode,
             openedPermissionMode: queryOptions.permissionMode,
+            resumed: shouldResume,
             receivedInit: false,
             checkMcpSignIns: false,
             capabilities: new Set(),
@@ -14378,8 +14391,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   if (isClaudeConversationNotFound(exit.cause)) {
                     missingNativeThreads.add(context.nativeThreadId);
                   }
-                  // A fresh CLI that fails before init wrote no session, so the next open must not resume one.
-                  if (!shouldResume && !context.receivedInit) {
+                  if (claudeQueryLeftNoSession(context)) {
                     yield* Ref.update(openedNativeThreads, (current) => {
                       const updated = new Set(current);
                       updated.delete(context.nativeThreadId);

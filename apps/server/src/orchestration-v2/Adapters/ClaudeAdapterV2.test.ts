@@ -10130,7 +10130,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("shows a curated refusal when Claude refuses to start after the turn attaches", () =>
+  it.effect.each([
+    { name: "before init", init: false },
+    { name: "after init", init: true },
+  ])("shows a curated refusal when Claude refuses to start $name", ({ init }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const now = yield* DateTime.now;
@@ -10144,6 +10147,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         }),
       );
+      if (init) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000611",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
       yield* Queue.offer(harness.sdkMessages, {
         ...makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000610",
@@ -10161,6 +10174,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.include(terminal.failure.message, "settings your organization requires");
       assert.notInclude(terminal.failure.message, "Acme Private");
+      // Only a fresh CLI that never sent init wrote no session for orchestration to resume.
+      assert.equal(terminal.promptDropped, init ? undefined : true);
+      const providerTurn = harness.events.findLast(
+        (event) => event.type === "provider_turn.updated",
+      );
+      assert.equal(
+        providerTurn?.type === "provider_turn.updated"
+          ? providerTurn.providerTurn.promptDropped
+          : "missing",
+        init ? undefined : true,
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
