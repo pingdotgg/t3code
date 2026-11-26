@@ -234,11 +234,12 @@ export const buildRemoteOpenUrl = (input: {
     // Zed roots paths on the system drive, so omit the Windows drive prefix.
     const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
     const encodedZedPath = zedPath.split("/").map(encodeURIComponent).join("/");
+    // Zed parses this as an ssh URL, which needs a bracketed IPv6 host to carry a port.
+    const zedHost =
+      isIpv6Host && input.port !== undefined ? `[${input.host}]:${input.port}` : encodedHost;
     // Zed reads this segment as ssh URL userinfo, so the `@` stays literal.
     const zedDestination =
-      input.username === undefined
-        ? encodedHost
-        : `${encodeURIComponent(input.username)}@${encodedHost}`;
+      input.username === undefined ? zedHost : `${encodeURIComponent(input.username)}@${zedHost}`;
     return `${scheme}://ssh/${zedDestination}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");

@@ -343,6 +343,18 @@ describe("buildRemoteOpenUrl", () => {
     expect(new URL(url ?? "").searchParams.get("windowId")).toBe("_blank");
   });
 
+  it("keeps the port of an IPv6 host in Zed links", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "zed",
+        host: "2001:db8::1",
+        username: "dev",
+        port: 2222,
+        absolutePath: "/work/project",
+      }),
+    ).toBe("zed://ssh/dev@[2001:db8::1]:2222/work/project");
+  });
+
   it("drops the Windows drive letter for Zed", () => {
     expect(
       buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "C:\\Users\\theo" }),
