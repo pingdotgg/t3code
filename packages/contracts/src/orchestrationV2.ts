@@ -757,6 +757,8 @@ export type OrchestrationV2DelegatedCompletionDelivery =
 
 export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
   disposition: Schema.Literals(["open", "stopped", "disposed"]),
+  /** Reopened for a follow-up after a Stop; the tasks that Stop interrupted still need the Stop note. */
+  reopenedAfterStop: Schema.optionalKey(Schema.Literal(true)),
   nextGeneration: PositiveInt,
   delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
 });
