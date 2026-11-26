@@ -2515,6 +2515,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           { readonly context: ActiveCodexTurnContext; readonly retry: ActiveCodexProviderRetry }
         >();
         const goalActivations = new Map<string, { stopped: boolean }>();
+        const pausedGoalTurns = new Map<
+          string,
+          { readonly nativeTurnId: string; readonly startedAt: DateTime.Utc }
+        >();
         // Held runs must not complete while Stop resolves its target.
         const goalStops = new Map<string, number>();
         // Goals paused because a delegated task will wake the thread; the next ordinary turn resumes them.
@@ -5586,6 +5590,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               return;
             }
+            if (
+              rootProviderThreads.has(payload.threadId) &&
+              goalsByNativeThread.get(payload.threadId)?.status === "paused"
+            ) {
+              pausedGoalTurns.set(payload.threadId, {
+                nativeTurnId: payload.turn.id,
+                startedAt: codexTimestamp(payload.turn.startedAt),
+              });
+              return;
+            }
             yield* rememberSubagentTurnStarted({
               nativeThreadId: payload.threadId,
               nativeTurnId: payload.turn.id,
@@ -7823,7 +7837,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* restoreAdditionalContext(payload.threadId).pipe(
                 Effect.forkIn(scope, { startImmediately: true }),
               );
-            const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
+            const context = yield* turnTerminalizationPermit.withPermits(1)(
+              Effect.gen(function* () {
+                if (pausedGoalTurns.get(payload.threadId)?.nativeTurnId === payload.turn.id) {
+                  pausedGoalTurns.delete(payload.threadId);
+                }
+                return (yield* Ref.get(activeTurns)).get(payload.turn.id);
+              }),
+            );
             if (context === undefined) {
               return;
             }
@@ -8147,6 +8168,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           threadId: string,
           codexInput: ReturnType<typeof toCodexInput>,
+          resumePaused = false,
         ) {
           goalsPausedForWake.delete(threadId);
           // Hold fast first turns until activation.
@@ -8154,7 +8176,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           goalActivations.set(threadId, activation);
           yield* Effect.gen(function* () {
             yield* applyThreadName(threadId, turnInput.appThread.title);
-            yield* startNativeTurn(turnInput, yield* codexInput);
+            const adopted = resumePaused
+              ? yield* turnTerminalizationPermit.withPermits(1)(
+                  Effect.gen(function* () {
+                    const running = pausedGoalTurns.get(threadId);
+                    if (running === undefined || activation.stopped) return false;
+                    pausedGoalTurns.delete(threadId);
+                    yield* registerRootTurn({ turnInput, ...running });
+                    return true;
+                  }),
+                )
+              : false;
+            if (activation.stopped) return;
+            if (!adopted) yield* startNativeTurn(turnInput, yield* codexInput);
             if (activation.stopped) return;
             const { goal } = yield* client.request("thread/goal/set", {
               threadId,
@@ -8255,6 +8289,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     },
                   })
                 : Effect.succeed([]),
+              command.type === "resume" && current?.status === "paused",
             );
           },
           (effect, turnInput) =>
