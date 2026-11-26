@@ -126,12 +126,14 @@ const BLOCKED_FOLDER_RETRY_MS = 5 * 60 * 1000;
 const MAX_BLOCKED_FOLDERS = 1024;
 const blockedFolders = new Map<string, number>();
 
-// The `.git` folders of `$1` and of its children, so one child decides what `$1` holds. Exits 3
-// when `$1/.git` is a file: a linked worktree or a submodule, which follows another repository.
+// What `$1` holds, deciding on its own `.git` before looking inside, so a hung folder within a
+// repository cannot hide it: exits 4 when `$1` has its own history, 3 when it follows another
+// repository (a linked worktree or a submodule keeps `.git` as a file), else prints the `.git`
+// folders of its children.
 const REPOSITORIES_IN_SCRIPT = [
-  'find -L "$1" -mindepth 1 -maxdepth 2 \\( -name node_modules -o -name ".*" ! -name .git \\) -prune',
+  '[ -d "$1/.git" ] && exit 4; [ -e "$1/.git" ] && exit 3;',
+  'exec find -L "$1" -mindepth 1 -maxdepth 2 \\( -name node_modules -o -name ".*" ! -name .git \\) -prune',
   "-o -name .git -type d -print0 -prune",
-  '; [ -d "$1/.git" ] || [ ! -e "$1/.git" ] || exit 3',
 ].join(" ");
 
 class DirectoryListError extends Schema.TaggedError<DirectoryListError>()("DirectoryListError", {
@@ -261,10 +263,9 @@ const folderProbes = Effect.gen(function* () {
     }
     const result = yield* runOutOfPool(folder, "sh", ["-c", REPOSITORIES_IN_SCRIPT, "sh", folder]);
     if (Option.isNone(result)) return [];
-    const gitFolders = nulSeparated(result.value.stdout);
-    if (gitFolders.includes(path.join(folder, ".git"))) return [folder];
+    if (result.value.code === 4) return [folder];
     if (result.value.code === 3) return [];
-    return gitFolders
+    return nulSeparated(result.value.stdout)
       .map((gitFolder) => path.dirname(gitFolder))
       .filter((nested) => path.dirname(nested) === folder)
       .toSorted();

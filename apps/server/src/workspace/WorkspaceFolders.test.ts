@@ -508,19 +508,22 @@ it.live("gives up on a folder it cannot look into and does not try again while i
         const folder = (listing ? input.args[1] : input.args.at(-1)) ?? "";
         probed.push(folder);
         if (folder === stuck) return Effect.never;
-        const entries = listing
-          ? Effect.map(fileSystem.readDirectory(folder), (names) =>
-              names.map((name) => path.join(folder, name)),
-            )
-          : Effect.map(fileSystem.exists(path.join(folder, ".git")), (owns) =>
-              owns ? [path.join(folder, ".git")] : [],
-            );
-        return entries.pipe(
+        // The probe exits 4 for a folder with its own history.
+        const answer = listing
+          ? Effect.map(fileSystem.readDirectory(folder), (names) => ({
+              paths: names.map((name) => path.join(folder, name)),
+              code: 0,
+            }))
+          : Effect.map(fileSystem.exists(path.join(folder, ".git")), (owns) => ({
+              paths: [],
+              code: owns ? 4 : 0,
+            }));
+        return answer.pipe(
           Effect.orDie,
-          Effect.map((paths) => ({
+          Effect.map(({ paths, code }) => ({
             stdout: paths.map((entry) => `${entry}\0`).join(""),
             stderr: "",
-            code: ChildProcessSpawner.ExitCode(0),
+            code: ChildProcessSpawner.ExitCode(code),
             timedOut: false,
             stdoutTruncated: false,
             stderrTruncated: false,
