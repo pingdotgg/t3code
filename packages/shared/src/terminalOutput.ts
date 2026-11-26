@@ -765,8 +765,16 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
   if (screen.saved !== null) {
-    suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
-    if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+    if (screen.saved.row > lastRow) {
+      const extra = screen.saved.row - lastRow;
+      suffix +=
+        "\n".repeat(extra) +
+        `${ESC}[${screen.saved.col + 1}G${ESC}7` +
+        `${ESC}[${extra}A${ESC}[${lineWidth(screen.lines[lastRow]!) + 2}G${ESC}[J`;
+    } else {
+      suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
+      if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+    }
   }
   if (
     screen.saved !== null ||

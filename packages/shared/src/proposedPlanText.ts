@@ -7,10 +7,15 @@ function headingText(line: string): string | null {
 
 export function proposedPlanTitle(planMarkdown: string): string | null {
   let fence = "";
+  let comment = false;
   for (const line of planMarkdown.replace(/^\uFEFF/, "").split(/\r?\n/)) {
     const [, marker = "", info = ""] = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/) ?? [];
     if (fence) {
       if (marker[0] === fence[0] && marker.length >= fence.length && !info.trim()) fence = "";
+      continue;
+    }
+    if (comment || /^ {0,3}<!--/.test(line)) {
+      comment = !line.includes("-->");
       continue;
     }
     // CommonMark: a backtick fence's info string cannot contain a backtick.
