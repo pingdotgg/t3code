@@ -244,15 +244,24 @@ function OpenContentSearchDialog(props: {
               <T>Invalid regular expression</T>
             </span>
           ) : search.truncated ? (
-            gt("{results}+ results in {files} files", {
-              results: matches.length.toLocaleString(),
-              files: fileCount.toLocaleString(),
-            })
+            gt(
+              "{fileCount, plural, one {{results}+ results in {files} file} other {{results}+ results in {files} files}}",
+              {
+                fileCount,
+                results: matches.length.toLocaleString(),
+                files: fileCount.toLocaleString(),
+              },
+            )
           ) : (
-            gt("{results} results in {files} files", {
-              results: matches.length.toLocaleString(),
-              files: fileCount.toLocaleString(),
-            })
+            gt(
+              "{resultCount, plural, one {{results} result} other {{results} results}} in {fileCount, plural, one {{files} file} other {{files} files}}",
+              {
+                resultCount: matches.length,
+                results: matches.length.toLocaleString(),
+                fileCount,
+                files: fileCount.toLocaleString(),
+              },
+            )
           )}
         </div>
       ) : null}
