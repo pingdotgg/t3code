@@ -792,6 +792,35 @@ const inspectOptionalGitSubdir = Effect.fn("bwrapSandbox.inspectOptionalGitSubdi
   return true;
 });
 
+async function collectNonSystemSymlinkHops(
+  rawPath: string,
+  maxHops = 8,
+): Promise<ReadonlyArray<string>> {
+  const hops: Array<string> = [];
+  const seen = new Set<string>();
+  let current = normalizePosixPath(rawPath);
+  for (let i = 0; i < maxHops; i += 1) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    try {
+      const stat = await NodeFSP.lstat(current);
+      if (!stat.isSymbolicLink()) break;
+      if (!isCoveredBySystemRoBinds(current)) {
+        hops.push(current);
+      }
+      const linkTarget = await NodeFSP.readlink(current);
+      current = normalizePosixPath(
+        NodePath.posix.isAbsolute(linkTarget)
+          ? linkTarget
+          : NodePath.posix.resolve(NodePath.posix.dirname(current), linkTarget),
+      );
+    } catch {
+      break;
+    }
+  }
+  return hops;
+}
+
 /**
  * Resolves git metadata locks for both regular `.git/` repositories and linked git worktrees
  * (O_NOFOLLOW + bidirectional `gitdir` verification) so hooks, configs, and sibling worktrees stay locked.
@@ -1606,19 +1635,20 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
         if (!isCoveredBySystemRoBinds(validatedExecutable)) {
           extraRoBinds.push(validatedExecutable);
         }
-        const normalizedCmd = normalizePosixPath(input.command);
-        if (normalizedCmd !== validatedExecutable && !isCoveredBySystemRoBinds(normalizedCmd)) {
-          const lexicalCmdError = assertLexicalPathNotForbidden({
-            candidate: normalizedCmd,
+        const cmdHops = yield* Effect.promise(() => collectNonSystemSymlinkHops(input.command));
+        for (const hop of cmdHops) {
+          if (hop === validatedExecutable || isCoveredBySystemRoBinds(hop)) continue;
+          const lexicalHopError = assertLexicalPathNotForbidden({
+            candidate: hop,
             role: "executable",
             ownStateRoots,
             foreignForbiddenRoots,
             homeRoots,
           });
-          if (lexicalCmdError !== undefined) {
-            return yield* lexicalCmdError;
+          if (lexicalHopError !== undefined) {
+            return yield* lexicalHopError;
           }
-          extraRoBinds.push(normalizedCmd);
+          extraRoBinds.push(hop);
         }
 
         const packageRoDir = yield* Effect.promise(() =>
@@ -1675,22 +1705,22 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
             if (!isCoveredBySystemRoBinds(validatedInterpreter)) {
               extraRoBinds.push(validatedInterpreter);
             }
-            const normalizedInterp = normalizePosixPath(shebangInterpreter);
-            if (
-              normalizedInterp !== validatedInterpreter &&
-              !isCoveredBySystemRoBinds(normalizedInterp)
-            ) {
-              const lexicalInterpError = assertLexicalPathNotForbidden({
-                candidate: normalizedInterp,
+            const interpHops = yield* Effect.promise(() =>
+              collectNonSystemSymlinkHops(shebangInterpreter),
+            );
+            for (const hop of interpHops) {
+              if (hop === validatedInterpreter || isCoveredBySystemRoBinds(hop)) continue;
+              const lexicalHopError = assertLexicalPathNotForbidden({
+                candidate: hop,
                 role: "executable",
                 ownStateRoots,
                 foreignForbiddenRoots,
                 homeRoots,
               });
-              if (lexicalInterpError !== undefined) {
-                return yield* lexicalInterpError;
+              if (lexicalHopError !== undefined) {
+                return yield* lexicalHopError;
               }
-              extraRoBinds.push(normalizedInterp);
+              extraRoBinds.push(hop);
             }
           }
         }

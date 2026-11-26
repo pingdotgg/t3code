@@ -7463,6 +7463,8 @@ process.stdout.write('{"type":"ready"}\\n');
           prefix: "t3-pi-shared-profile-",
         });
         yield* fileSystem.writeFileString(`${sharedProfileDir}/settings.json`, '{"theme":"dark"}');
+        yield* fileSystem.writeFileString(`${sharedProfileDir}/models.json`, '{"models":[]}');
+        yield* fileSystem.writeFileString(`${sharedProfileDir}/keybindings.json`, "{}");
         yield* fileSystem.makeDirectory(`${sharedProfileDir}/sessions`, { recursive: true });
         yield* fileSystem.writeFileString(
           `${sharedProfileDir}/sessions/secret-sibling.jsonl`,
@@ -7531,12 +7533,15 @@ process.stdout.write('{"type":"ready"}\\n');
         const threadB = ThreadId.make("thread-pi-b");
         const dirA = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadA}`;
         const dirB = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}__${threadB}`;
-        // Plant a host-symlink trap inside Thread A's sandbox-writable profile before openSession
-        // to prove seeding uses O_NOFOLLOW + unlink and never overwrites external host files.
+        // Plant a symlink trap, a 0444 read-only file, and a directory inside Thread A's
+        // sandbox-writable profile to prove seeding unlinks/removes safely with O_NOFOLLOW.
         const victimFile = `${cwd}/host-victim.txt`;
         yield* fileSystem.writeFileString(victimFile, "untouched-host-file");
         yield* fileSystem.makeDirectory(dirA, { recursive: true });
         yield* fileSystem.symlink(victimFile, `${dirA}/settings.json`);
+        yield* fileSystem.writeFileString(`${dirA}/models.json`, "stale-readonly");
+        yield* fileSystem.chmod(`${dirA}/models.json`, 0o444);
+        yield* fileSystem.makeDirectory(`${dirA}/keybindings.json`, { recursive: true });
 
         yield* adapter.openSession({
           threadId: threadA,
@@ -7568,6 +7573,8 @@ process.stdout.write('{"type":"ready"}\\n');
         assert.isFalse(wrapCalls[0]?.extraProviderProfileDirs?.includes(sharedProfileDir) ?? false);
         assert.isFalse(wrapCalls[0]?.extraProviderProfileDirs?.includes(dirB) ?? false);
         assert.equal(yield* fileSystem.readFileString(`${dirA}/settings.json`), '{"theme":"dark"}');
+        assert.equal(yield* fileSystem.readFileString(`${dirA}/models.json`), '{"models":[]}');
+        assert.equal(yield* fileSystem.readFileString(`${dirA}/keybindings.json`), "{}");
         assert.equal(yield* fileSystem.readFileString(victimFile), "untouched-host-file");
         assert.isFalse(yield* fileSystem.exists(`${dirA}/sessions/secret-sibling.jsonl`));
         assert.equal(spawnedEnvs.length, 2);

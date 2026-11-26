@@ -37,6 +37,7 @@ import {
   trimAsciiWhitespace,
   type VcsRef,
 } from "@t3tools/contracts";
+import { ProcessSandbox } from "@t3tools/shared/AgentScope";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
@@ -49,8 +50,9 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import {
+  canRunHostGitInWorkspaceSandbox,
   gitConfigEnv,
-  sandboxSafeGitConfigEnv,
+  resolveSandboxSafeGitConfigEnv,
   serverGitConfigEnv,
   unsetInheritedRepositoryEnv,
 } from "./VcsProcess.ts";
@@ -1043,8 +1045,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { worktreesDir, worktreeCheckoutCacheDir, teamBwrapSandbox } =
+  const { worktreesDir, worktreeCheckoutCacheDir, stateDir, teamBwrapSandbox } =
     yield* ServerConfig.ServerConfig;
+  const processSandbox = yield* ProcessSandbox;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
   const random = yield* SecureRandom.SecureRandom;
@@ -1099,43 +1102,125 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
         const env = { ...baseEnv, ...serverGitConfigEnv(baseEnv, hostPlatform) };
         const longPathEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
-        // Under --team-bwrap-sandbox, neutralize untrusted workspace git hooks, fsmonitor,
-        // clean/smudge/process filters, diff/merge drivers, and protocol helpers on host git calls.
-        const spawnEnv =
-          teamBwrapSandbox === true
-            ? {
-                ...longPathEnv,
-                ...sandboxSafeGitConfigEnv(
-                  commandInput.cwd,
-                  longPathEnv,
-                  hostPlatform,
-                  commandInput.args,
-                ),
-              }
-            : longPathEnv;
-        const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
-        const spawnError = (cause: unknown) =>
+        const spawnError = (cause: unknown, detail = "Failed to spawn Git process.") =>
           new GitCommandError({
             ...gitCommandContext(commandInput),
-            detail: "Failed to spawn Git process.",
+            detail,
             cause,
           });
+        let spawnEnv: NodeJS.ProcessEnv = longPathEnv;
+        let sandboxWrapConfig:
+          | { readonly eligible: true; readonly extraRwBinds: ReadonlyArray<string> }
+          | undefined;
+        if (teamBwrapSandbox === true) {
+          const sandboxCheck = canRunHostGitInWorkspaceSandbox({
+            processSandboxEnabled: processSandbox.enabled,
+            cwd: commandInput.cwd,
+            args: commandInput.args,
+            env: longPathEnv,
+            ownStateDir: stateDir,
+          });
+          if (sandboxCheck.eligible) {
+            sandboxWrapConfig = { eligible: true, extraRwBinds: sandboxCheck.extraRwBinds };
+          }
+          const safeOverrides = yield* resolveSandboxSafeGitConfigEnv({
+            cwd: commandInput.cwd,
+            env: longPathEnv,
+            platform: hostPlatform,
+            args: commandInput.args,
+            allowWorkspaceIncludes: sandboxCheck.eligible,
+            runProbe: ({ args: probeArgs, cwd: probeCwd, env: probeEnv }) =>
+              Effect.scoped(
+                Effect.gen(function* () {
+                  const probeResolved = yield* resolveSpawnCommand("git", [], { env: probeEnv });
+                  const probeExe = probeResolved.shell ? "git" : probeResolved.command;
+                  const probeChild = yield* commandSpawner.spawn(
+                    ChildProcess.make(probeExe, probeArgs, {
+                      ...(probeCwd !== undefined ? { cwd: probeCwd } : {}),
+                      env: probeEnv,
+                      forceKillAfter: "1 second",
+                    }),
+                  );
+                  const maxBytes = 4 * 1024 * 1024;
+                  const collectProbe = Effect.all(
+                    [
+                      collectOutput(
+                        commandInput,
+                        probeChild.stdout,
+                        maxBytes,
+                        false,
+                        undefined,
+                        false,
+                      ),
+                      probeChild.exitCode,
+                    ],
+                    { concurrency: "unbounded" },
+                  );
+                  const timed = yield* collectProbe.pipe(Effect.timeoutOption(Duration.seconds(5)));
+                  if (Option.isNone(timed)) {
+                    return {
+                      exitCode: null,
+                      stdout: "",
+                      timedOut: true,
+                      stdoutTruncated: false,
+                    };
+                  }
+                  const [stdoutOut, exitCode] = timed.value;
+                  return {
+                    exitCode: Number(exitCode),
+                    stdout: stdoutOut.text,
+                    timedOut: false,
+                    stdoutTruncated: stdoutOut.truncated,
+                  };
+                }),
+              ),
+          }).pipe(Effect.mapError((cause) => spawnError(cause, cause.message)));
+          spawnEnv = { ...longPathEnv, ...safeOverrides };
+        }
+        const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
-        const executable = resolved.shell ? "git" : resolved.command;
-        const child = yield* commandSpawner
-          .spawn(
-            ChildProcess.make(executable, commandInput.args, {
+        let executable = resolved.shell ? "git" : resolved.command;
+        let launchArgs: ReadonlyArray<string> = commandInput.args;
+        let extendEnvOption: boolean | undefined;
+        if (sandboxWrapConfig !== undefined) {
+          const wrapped = yield* processSandbox
+            .wrap({
+              command: executable,
+              args: commandInput.args,
               cwd: commandInput.cwd,
               env: spawnEnv,
+              ...(sandboxWrapConfig.extraRwBinds.length > 0
+                ? { extraRwBinds: sandboxWrapConfig.extraRwBinds }
+                : {}),
+              name: "git",
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                spawnError(cause, "Failed to wrap host Git command inside bwrap sandbox."),
+              ),
+            );
+          executable = wrapped.command;
+          launchArgs = wrapped.args;
+          if (wrapped.hostEnv !== undefined) {
+            spawnEnv = wrapped.hostEnv;
+          }
+          extendEnvOption = false;
+        }
+        const child = yield* commandSpawner
+          .spawn(
+            ChildProcess.make(executable, launchArgs, {
+              cwd: commandInput.cwd,
+              env: spawnEnv,
+              ...(extendEnvOption === undefined ? {} : { extendEnv: extendEnvOption }),
               // SIGTERM first lets git remove its lock files; SIGKILL ends one that ignores it.
               forceKillAfter: "1 second",
-              ...(runsGitWithoutConsole(hostPlatform, executable, commandInput.args)
+              ...(runsGitWithoutConsole(hostPlatform, executable, launchArgs)
                 ? { detached: true, windowsHide: true }
                 : {}),
             }),
           )
           .pipe(
-            Effect.mapError(spawnError),
+            Effect.mapError((cause) => spawnError(cause)),
             // Synchronous spawn throws (such as E2BIG) arrive as defects.
             Effect.catchDefect((cause) => Effect.fail(spawnError(cause))),
           );

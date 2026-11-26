@@ -1,4 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Generates unpredictable temp filenames for O_EXCL fork-source staging.
+import * as NodeCrypto from "node:crypto";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Uses O_NOFOLLOW/lstat when seeding files into sandbox-writable per-thread Pi profile dirs.
 import * as NodeFS from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Uses O_NOFOLLOW/lstat when seeding files into sandbox-writable per-thread Pi profile dirs.
@@ -549,21 +551,30 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           ? input.initialNativeThreadId
           : undefined;
       // Writes into a sandbox-writable profile directory without ever following symlinks on the host.
-      const writeSandboxProfileFileNoFollow = (destPath: string, bytes: Uint8Array) =>
+      const writeSandboxProfileFileNoFollow = (
+        destPath: string,
+        bytes: Uint8Array,
+        opts?: { readonly exclusive?: boolean },
+      ) =>
         Effect.tryPromise({
           try: async () => {
-            try {
-              const existing = await NodeFSP.lstat(destPath);
-              if (existing.isSymbolicLink() || !existing.isFile()) {
-                await NodeFSP.unlink(destPath);
+            if (opts?.exclusive !== true) {
+              try {
+                const existing = await NodeFSP.lstat(destPath);
+                if (existing.isDirectory()) {
+                  await NodeFSP.rm(destPath, { recursive: true, force: true });
+                } else {
+                  // Unlink unconditionally so symlinks and 0444 read-only regular files are replaced safely.
+                  await NodeFSP.unlink(destPath);
+                }
+              } catch {
+                // Destination does not exist yet.
               }
-            } catch {
-              // Destination does not exist yet.
             }
             const flags =
               NodeFS.constants.O_WRONLY |
               NodeFS.constants.O_CREAT |
-              NodeFS.constants.O_TRUNC |
+              (opts?.exclusive === true ? NodeFS.constants.O_EXCL : NodeFS.constants.O_TRUNC) |
               (NodeFS.constants.O_NOFOLLOW ?? 0);
             const handle = await NodeFSP.open(destPath, flags, 0o600);
             try {
@@ -573,8 +584,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               await handle.close();
             }
           },
-          catch: () => undefined,
-        }).pipe(Effect.ignore);
+          catch: (cause) => protocolError("Failed to write Pi sandbox profile file", cause),
+        });
 
       const prepareSandboxPiAgentDir = Effect.fnUntraced(function* (env: NodeJS.ProcessEnv) {
         // Isolate Pi's mutable profile + sessions directory per thread so sibling threads
@@ -626,14 +637,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 .readFile(realSrc)
                 .pipe(Effect.orElseSucceed(() => undefined));
               if (bytes !== undefined) {
-                yield* writeSandboxProfileFileNoFollow(path.join(threadAgentDir, fileName), bytes);
+                yield* writeSandboxProfileFileNoFollow(
+                  path.join(threadAgentDir, fileName),
+                  bytes,
+                ).pipe(Effect.ignore);
               }
             }
           }
         }
         return threadAgentDir;
       });
-      let sandboxForkCounter = 0;
 
       const startConnection = Effect.fnUntraced(function* (sessionPath?: string) {
         const connectionScope = yield* Scope.fork(scope, "sequential");
@@ -3159,10 +3172,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 resolvedSource === resolvedAgentDir ||
                 resolvedSource.startsWith(`${resolvedAgentDir}${path.sep}`);
               if (!alreadyInsideAgentDir) {
-                sandboxForkCounter += 1;
                 const stagedPath = path.join(
                   sandboxForkAgentDir,
-                  `.fork-source-${sandboxForkCounter}.jsonl`,
+                  `.fork-source-${NodeCrypto.randomUUID()}.jsonl`,
                 );
                 const sourceBytes = yield* fileSystem
                   .readFile(sourceFile)
@@ -3171,7 +3183,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       protocolError("Failed to read Pi fork source", cause),
                     ),
                   );
-                yield* writeSandboxProfileFileNoFollow(stagedPath, sourceBytes);
+                yield* writeSandboxProfileFileNoFollow(stagedPath, sourceBytes, {
+                  exclusive: true,
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    protocolError("Failed to stage Pi fork source", cause),
+                  ),
+                );
                 yield* Effect.addFinalizer(() =>
                   Effect.promise(() => NodeFSP.unlink(stagedPath).catch(() => {})),
                 );

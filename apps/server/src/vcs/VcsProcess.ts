@@ -1,6 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Uses git config --includes --list via execFileSync to inspect local repo configs without hand-rolling INI parsing.
-import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics nodeBuiltinImport:off -- Checks enclosing .git markers and resolves include paths safely for sandboxed host Git calls.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as Context from "effect/Context";
@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -25,6 +26,7 @@ import {
   VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
+import { ProcessSandbox } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SourceControlProcessInput } from "@t3tools/source-control-core/server/SourceControlHost";
 
@@ -172,6 +174,7 @@ const SANDBOX_SAFE_FIXED_GIT_CONFIG = [
   ["core.askPass", ""],
   ["core.pager", "cat"],
   ["core.editor", "false"],
+  ["sequence.editor", "false"],
   ["core.alternateRefsCommand", ""],
   ["uploadpack.packObjectsHook", ""],
   ["gpg.program", "false"],
@@ -181,40 +184,232 @@ const SANDBOX_SAFE_FIXED_GIT_CONFIG = [
   ["gpg.ssh.defaultKeyCommand", ""],
 ] as const;
 
-function extractGitLocationArgs(args: ReadonlyArray<string> | undefined): {
-  readonly gitDirArg?: string | undefined;
-  readonly chdirArgs: ReadonlyArray<string>;
-} {
-  if (args === undefined || args.length === 0) {
-    return { chdirArgs: [] };
+const SANDBOX_GIT_DANGEROUS_KEY_REGEX =
+  "^(filter\\.|diff\\..+\\.(textconv|command)$|merge\\..+\\.driver$|credential(\\..+)?\\.helper$|remote\\..+\\.(uploadpack|receivepack|proxy)$|difftool\\..+\\.cmd$|mergetool\\..+\\.cmd$|gpg(\\..+)?\\.(program|defaultkeycommand)$|submodule\\..+\\.update$|core\\.sshcommand$|include\\.path$|includeif\\..+\\.path$)";
+
+const GIT_GLOBAL_VALUE_OPTIONS = new Set([
+  "-c",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--config-env",
+  "--exec-path",
+]);
+
+const SANDBOXABLE_WORKSPACE_GIT_SUBCOMMANDS = new Set([
+  "add",
+  "apply",
+  "branch",
+  "cat-file",
+  "check-attr",
+  "check-ignore",
+  "checkout",
+  "commit",
+  "commit-tree",
+  "config",
+  "describe",
+  "diff",
+  "diff-files",
+  "diff-index",
+  "diff-tree",
+  "for-each-ref",
+  "grep",
+  "hash-object",
+  "index-pack",
+  "log",
+  "ls-files",
+  "ls-tree",
+  "merge-base",
+  "name-rev",
+  "read-tree",
+  "reset",
+  "restore",
+  "rev-list",
+  "rev-parse",
+  "rm",
+  "show",
+  "show-ref",
+  "stash",
+  "status",
+  "symbolic-ref",
+  "tag",
+  "unpack-objects",
+  "update-index",
+  "update-ref",
+  "write-tree",
+]);
+
+class SandboxGitConfigError extends Schema.TaggedError<SandboxGitConfigError>()(
+  "SandboxGitConfigError",
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
   }
-  const chdirArgs: Array<string> = [];
+}
+
+interface GitParsedGlobalOptions {
+  readonly locationArgs: ReadonlyArray<string>;
+  readonly gitDirArg?: string | undefined;
+  readonly workTreeArg?: string | undefined;
+  readonly subcommand?: string | undefined;
+}
+
+function parseGitGlobalOptions(args: ReadonlyArray<string> | undefined): GitParsedGlobalOptions {
+  if (args === undefined || args.length === 0) {
+    return { locationArgs: [] };
+  }
+  const locationArgs: Array<string> = [];
   let gitDirArg: string | undefined;
+  let workTreeArg: string | undefined;
+  let subcommand: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     if (arg === "--") break;
     if (arg === "-C" && i + 1 < args.length) {
-      chdirArgs.push("-C", args[i + 1]!);
+      locationArgs.push("-C", args[i + 1]!);
       i += 1;
       continue;
     }
     if (arg.startsWith("-C") && arg.length > 2) {
-      chdirArgs.push(arg);
+      locationArgs.push(arg);
       continue;
     }
     if (arg === "--git-dir" && i + 1 < args.length) {
       gitDirArg = args[i + 1]!;
+      locationArgs.push("--git-dir", gitDirArg);
       i += 1;
       continue;
     }
     if (arg.startsWith("--git-dir=")) {
       gitDirArg = arg.slice("--git-dir=".length);
+      locationArgs.push(arg);
       continue;
     }
-    // Stop scanning global git options once the subcommand token is reached.
-    if (!arg.startsWith("-")) break;
+    if (arg === "--work-tree" && i + 1 < args.length) {
+      workTreeArg = args[i + 1]!;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--work-tree=")) {
+      workTreeArg = arg.slice("--work-tree=".length);
+      continue;
+    }
+    if (GIT_GLOBAL_VALUE_OPTIONS.has(arg) && i + 1 < args.length) {
+      i += 1;
+      continue;
+    }
+    if (!arg.startsWith("-")) {
+      subcommand = arg;
+      break;
+    }
   }
-  return { gitDirArg, chdirArgs };
+  return {
+    locationArgs,
+    ...(gitDirArg === undefined ? {} : { gitDirArg }),
+    ...(workTreeArg === undefined ? {} : { workTreeArg }),
+    ...(subcommand === undefined ? {} : { subcommand }),
+  };
+}
+
+function isSameOrInsideDir(candidate: string, root: string): boolean {
+  const normCandidate = NodePath.resolve(candidate);
+  const normRoot = NodePath.resolve(root);
+  return normCandidate === normRoot || normCandidate.startsWith(`${normRoot}${NodePath.sep}`);
+}
+
+function tryRealpathSync(target: string): string {
+  try {
+    return NodeFS.realpathSync(target);
+  } catch {
+    return NodePath.resolve(target);
+  }
+}
+
+export function canRunHostGitInWorkspaceSandbox(input: {
+  readonly processSandboxEnabled: boolean;
+  readonly cwd: string | undefined;
+  readonly args: ReadonlyArray<string> | undefined;
+  readonly env: NodeJS.ProcessEnv;
+  readonly ownStateDir: string | undefined;
+}): { readonly eligible: boolean; readonly extraRwBinds: ReadonlyArray<string> } {
+  if (!input.processSandboxEnabled || input.cwd === undefined || !NodePath.isAbsolute(input.cwd)) {
+    return { eligible: false, extraRwBinds: [] };
+  }
+  const parsed = parseGitGlobalOptions(input.args);
+  if (
+    parsed.subcommand === undefined ||
+    !SANDBOXABLE_WORKSPACE_GIT_SUBCOMMANDS.has(parsed.subcommand)
+  ) {
+    return { eligible: false, extraRwBinds: [] };
+  }
+  if (parsed.gitDirArg !== undefined || parsed.workTreeArg !== undefined) {
+    return { eligible: false, extraRwBinds: [] };
+  }
+  if (!NodeFS.existsSync(input.cwd)) {
+    return { eligible: false, extraRwBinds: [] };
+  }
+
+  const realCwd = tryRealpathSync(input.cwd);
+  const realStateDir =
+    input.ownStateDir !== undefined ? tryRealpathSync(input.ownStateDir) : undefined;
+  if (realStateDir !== undefined && isSameOrInsideDir(realCwd, realStateDir)) {
+    return { eligible: false, extraRwBinds: [] };
+  }
+
+  const extraRw = new Set<string>();
+  const unsafeTempRoots = new Set(["/", "/tmp", "/var", "/var/tmp"]);
+  const registerDirIfSafe = (dirPath: string) => {
+    if (!NodePath.isAbsolute(dirPath) || !NodeFS.existsSync(dirPath)) return true;
+    const real = tryRealpathSync(dirPath);
+    if (realStateDir !== undefined && isSameOrInsideDir(real, realStateDir)) return false;
+    if (unsafeTempRoots.has(real)) return false;
+    if (!isSameOrInsideDir(real, realCwd)) {
+      extraRw.add(real);
+    }
+    return true;
+  };
+  const registerFileIfSafe = (filePath: string) => {
+    if (!NodePath.isAbsolute(filePath) || !NodeFS.existsSync(filePath)) return true;
+    const real = tryRealpathSync(filePath);
+    if (realStateDir !== undefined && isSameOrInsideDir(real, realStateDir)) return false;
+    if (!isSameOrInsideDir(real, realCwd)) {
+      extraRw.add(real);
+    }
+    return true;
+  };
+
+  for (const dirKey of ["GIT_OBJECT_DIRECTORY", "GIT_QUARANTINE_PATH"] as const) {
+    const value = input.env[dirKey]?.trim();
+    if (value && !registerDirIfSafe(value)) return { eligible: false, extraRwBinds: [] };
+  }
+  const indexFile = input.env.GIT_INDEX_FILE?.trim();
+  if (indexFile) {
+    if (!registerDirIfSafe(NodePath.dirname(indexFile))) {
+      return { eligible: false, extraRwBinds: [] };
+    }
+  }
+  const trace2 = input.env.GIT_TRACE2_EVENT?.trim();
+  if (trace2 && !registerFileIfSafe(trace2)) {
+    return { eligible: false, extraRwBinds: [] };
+  }
+  // Checkpoints may also inject `lfs.storage` into a scoped temp directory via GIT_CONFIG_*.
+  const cfgCount = Number.parseInt(input.env.GIT_CONFIG_COUNT ?? "0", 10);
+  if (Number.isFinite(cfgCount) && cfgCount > 0) {
+    for (let i = 0; i < cfgCount; i += 1) {
+      if (input.env[`GIT_CONFIG_KEY_${i}`]?.toLowerCase() === "lfs.storage") {
+        const storageVal = input.env[`GIT_CONFIG_VALUE_${i}`]?.trim();
+        if (storageVal && !registerDirIfSafe(storageVal)) {
+          return { eligible: false, extraRwBinds: [] };
+        }
+      }
+    }
+  }
+
+  return { eligible: true, extraRwBinds: [...extraRw] };
 }
 
 function hasEnclosingGitMarker(cwd: string): boolean {
@@ -228,64 +423,18 @@ function hasEnclosingGitMarker(cwd: string): boolean {
   return false;
 }
 
-/**
- * Queries Git's own config parser (`git config --includes --name-only --null --list` with system
- * and global configs disabled) so comment padding, line continuations, single-line `[sec] k=v`,
- * `config.worktree`, and arbitrary `[include]`/`[includeIf]` chains cannot bypass neutralization.
- */
-function discoverUntrustedRepoGitOverrides(
+interface SandboxGitConfigProbeResult {
+  readonly exitCode: number | null;
+  readonly stdout: string;
+  readonly timedOut: boolean;
+  readonly stdoutTruncated: boolean;
+}
+
+function parseScopedGitConfigProbeOutput(
+  stdout: string,
   cwd: string | undefined,
-  env: NodeJS.ProcessEnv,
-  args: ReadonlyArray<string> | undefined,
-): ReadonlyArray<readonly [string, string]> {
-  const { gitDirArg, chdirArgs } = extractGitLocationArgs(args);
-  const envGitDir = env.GIT_DIR?.trim();
-  const effectiveGitDir =
-    gitDirArg !== undefined && gitDirArg.length > 0
-      ? gitDirArg
-      : envGitDir !== undefined && envGitDir.length > 0
-        ? envGitDir
-        : undefined;
-
-  if (effectiveGitDir === undefined && chdirArgs.length === 0) {
-    if (cwd === undefined || cwd.trim().length === 0 || !hasEnclosingGitMarker(cwd)) {
-      return [];
-    }
-  }
-
-  const probeArgs = [
-    ...chdirArgs,
-    ...(effectiveGitDir !== undefined ? [`--git-dir=${effectiveGitDir}`] : []),
-    "config",
-    "--includes",
-    "--name-only",
-    "--null",
-    "--list",
-  ];
-
-  const probeEnv: NodeJS.ProcessEnv = {
-    PATH: env.PATH ?? process.env.PATH,
-    HOME: env.HOME ?? process.env.HOME,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_COUNT: "0",
-    GIT_OPTIONAL_LOCKS: "0",
-  };
-
-  let stdout: string;
-  try {
-    stdout = NodeChildProcess.execFileSync("git", probeArgs, {
-      ...(cwd !== undefined && cwd.length > 0 ? { cwd } : {}),
-      env: probeEnv,
-      encoding: "utf8",
-      timeout: 5_000,
-      maxBuffer: 4 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch {
-    return [];
-  }
-
+  allowWorkspaceIncludes: boolean,
+): Effect.Effect<ReadonlyArray<readonly [string, string]>, SandboxGitConfigError> {
   const filters = new Set<string>();
   const diffs = new Set<string>();
   const merges = new Set<string>();
@@ -295,11 +444,64 @@ function discoverUntrustedRepoGitOverrides(
   const remoteProxies = new Set<string>();
   const diffToolCmds = new Set<string>();
   const mergeToolCmds = new Set<string>();
-  const gpgKeys = new Set<string>();
+  const gpgProgramKeys = new Set<string>();
+  const gpgDefaultKeyCmdKeys = new Set<string>();
+  const submoduleUpdates = new Set<string>();
   let hasSshCommand = false;
 
-  for (const rawKey of stdout.split("\0")) {
+  const realCwd =
+    cwd !== undefined && cwd.length > 0 && NodeFS.existsSync(cwd)
+      ? tryRealpathSync(cwd)
+      : undefined;
+  const tokens = stdout.split("\0");
+  // `--show-scope --show-origin --null --get-regexp` emits 3 NUL-terminated tokens per match:
+  // [scope, origin, "key\nvalue"] (followed by one trailing empty token).
+  for (let i = 0; i + 2 < tokens.length; i += 3) {
+    const scope = tokens[i]!;
+    const origin = tokens[i + 1]!;
+    const keyVal = tokens[i + 2]!;
+    if (scope !== "local" && scope !== "worktree") continue;
+    const nlIdx = keyVal.indexOf("\n");
+    const rawKey = nlIdx === -1 ? keyVal : keyVal.slice(0, nlIdx);
+    const rawVal = nlIdx === -1 ? "" : keyVal.slice(nlIdx + 1);
     if (rawKey.length === 0) continue;
+
+    // Refuse unsandboxed host Git when repo config includes a file inside the writable workspace
+    // (eliminates TOCTOU races where a concurrent sandboxed agent swaps an included file).
+    if (
+      !allowWorkspaceIncludes &&
+      realCwd !== undefined &&
+      (rawKey === "include.path" ||
+        (rawKey.startsWith("includeif.") && rawKey.endsWith(".path"))) &&
+      rawVal.trim().length > 0
+    ) {
+      const originFile = origin.startsWith("file:") ? origin.slice("file:".length) : undefined;
+      const baseDir =
+        originFile !== undefined
+          ? NodePath.dirname(
+              NodePath.isAbsolute(originFile) ? originFile : NodePath.resolve(cwd!, originFile),
+            )
+          : cwd!;
+      const rawInclude = rawVal.trim();
+      const expandedInclude = rawInclude.startsWith("~/")
+        ? NodePath.join(NodeOS.homedir(), rawInclude.slice(2))
+        : rawInclude;
+      const resolvedInclude = tryRealpathSync(
+        NodePath.isAbsolute(expandedInclude)
+          ? expandedInclude
+          : NodePath.resolve(baseDir, expandedInclude),
+      );
+      if (isSameOrInsideDir(resolvedInclude, realCwd)) {
+        return Effect.fail(
+          new SandboxGitConfigError({
+            detail:
+              "Refused unsandboxed host Git execution: repository config includes a file inside the writable workspace.",
+          }),
+        );
+      }
+      continue;
+    }
+
     const firstDot = rawKey.indexOf(".");
     const lastDot = rawKey.lastIndexOf(".");
     if (firstDot <= 0 || lastDot <= firstDot) {
@@ -307,8 +509,6 @@ function discoverUntrustedRepoGitOverrides(
         hasSshCommand = true;
       } else if (rawKey === "credential.helper") {
         credentialKeys.add("credential.helper");
-      } else if (rawKey === "gpg.program") {
-        gpgKeys.add("gpg.program");
       }
       continue;
     }
@@ -332,8 +532,12 @@ function discoverUntrustedRepoGitOverrides(
       diffToolCmds.add(subsection);
     } else if (section === "mergetool" && variable === "cmd") {
       mergeToolCmds.add(subsection);
-    } else if (section === "gpg" && (variable === "program" || variable === "defaultkeycommand")) {
-      gpgKeys.add(`gpg.${subsection}.${variable}`);
+    } else if (section === "gpg") {
+      if (variable === "program") gpgProgramKeys.add(`gpg.${subsection}.program`);
+      else if (variable === "defaultkeycommand")
+        gpgDefaultKeyCmdKeys.add(`gpg.${subsection}.defaultkeycommand`);
+    } else if (section === "submodule" && variable === "update") {
+      submoduleUpdates.add(subsection);
     }
   }
 
@@ -370,34 +574,107 @@ function discoverUntrustedRepoGitOverrides(
   for (const name of mergeToolCmds) {
     overrides.push([`mergetool.${name}.cmd`, ""]);
   }
-  for (const key of gpgKeys) {
+  for (const key of gpgProgramKeys) {
     overrides.push([key, "false"]);
+  }
+  for (const key of gpgDefaultKeyCmdKeys) {
+    overrides.push([key, ""]);
+  }
+  for (const name of submoduleUpdates) {
+    overrides.push([`submodule.${name}.update`, "none"]);
   }
   if (hasSshCommand) {
     overrides.push(["core.sshCommand", "false"]);
   }
-  return overrides;
+  return Effect.succeed(overrides);
 }
 
 /**
- * Neutralizes repo-local executable Git config vectors (hooks, fsmonitor, clean/smudge/process
- * filters, diff/merge drivers, ext::, sshCommand, credential helpers, remote/gpg exec keys).
+ * Asynchronously inspects the exact effective Git config context (`--show-scope --show-origin
+ * --includes --null --get-regexp`), fails closed on probe errors/truncation or workspace-local
+ * includes for unsandboxed host Git, and returns `GIT_CONFIG_*` overrides neutralizing exec keys.
  */
-export const sandboxSafeGitConfigEnv = (
-  cwd: string | undefined,
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  args?: ReadonlyArray<string>,
-): NodeJS.ProcessEnv => {
+export const resolveSandboxSafeGitConfigEnv = Effect.fn(
+  "VcsProcess.resolveSandboxSafeGitConfigEnv",
+)(function* <E = never>(input: {
+  readonly cwd: string | undefined;
+  readonly env: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+  readonly args?: ReadonlyArray<string> | undefined;
+  readonly allowWorkspaceIncludes: boolean;
+  readonly runProbe: (probe: {
+    readonly args: ReadonlyArray<string>;
+    readonly cwd: string | undefined;
+    readonly env: NodeJS.ProcessEnv;
+  }) => Effect.Effect<SandboxGitConfigProbeResult, E>;
+}): Effect.fn.Return<NodeJS.ProcessEnv, SandboxGitConfigError> {
+  const parsed = parseGitGlobalOptions(input.args);
+  const envGitDir = input.env.GIT_DIR?.trim();
+  const hasExplicitGitLocation =
+    parsed.locationArgs.length > 0 || (envGitDir !== undefined && envGitDir.length > 0);
+  const shouldProbe =
+    hasExplicitGitLocation ||
+    (input.cwd !== undefined && input.cwd.trim().length > 0 && hasEnclosingGitMarker(input.cwd));
+
+  let dynamicOverrides: ReadonlyArray<readonly [string, string]> = [];
+  if (shouldProbe) {
+    const probeArgs = [
+      ...parsed.locationArgs,
+      "-c",
+      "safe.directory=*",
+      "config",
+      "--show-scope",
+      "--show-origin",
+      "--includes",
+      "--null",
+      "--get-regexp",
+      SANDBOX_GIT_DANGEROUS_KEY_REGEX,
+    ];
+    // Preserve global/system/env config so `includeIf "hasconfig:..."` matches execution 1:1.
+    const probeEnv: NodeJS.ProcessEnv = {
+      ...input.env,
+      GIT_OPTIONAL_LOCKS: "0",
+    };
+    const probeResult = yield* input
+      .runProbe({
+        args: probeArgs,
+        cwd: input.cwd,
+        env: probeEnv,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new SandboxGitConfigError({
+              detail: "Refused host Git execution because sandbox Git config inspection failed.",
+              cause,
+            }),
+        ),
+      );
+    if (probeResult.timedOut || probeResult.stdoutTruncated) {
+      return yield* new SandboxGitConfigError({
+        detail:
+          "Refused host Git execution because sandbox Git config inspection timed out or exceeded output limits.",
+      });
+    }
+    if (probeResult.exitCode === 0) {
+      dynamicOverrides = yield* parseScopedGitConfigProbeOutput(
+        probeResult.stdout,
+        input.cwd,
+        input.allowWorkspaceIncludes,
+      );
+    } else if (probeResult.exitCode !== 1) {
+      return yield* new SandboxGitConfigError({
+        detail: `Refused host Git execution because sandbox Git config inspection exited with code ${String(probeResult.exitCode)}.`,
+      });
+    }
+  }
+
   const added: NodeJS.ProcessEnv = {};
-  for (const [key, value] of [
-    ...SANDBOX_SAFE_FIXED_GIT_CONFIG,
-    ...discoverUntrustedRepoGitOverrides(cwd, env, args),
-  ]) {
-    Object.assign(added, gitConfigEnv({ ...env, ...added }, key, value, platform));
+  for (const [key, value] of [...SANDBOX_SAFE_FIXED_GIT_CONFIG, ...dynamicOverrides]) {
+    Object.assign(added, gitConfigEnv({ ...input.env, ...added }, key, value, input.platform));
   }
   return added;
-};
+});
 
 const REPOSITORY_SELECTORS = new Set([
   "GIT_DIR",
@@ -472,9 +749,13 @@ const canRetryFullFsync = (stderr: string) =>
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcess.Platform;
+  const processSandbox = yield* ProcessSandbox;
   const serverConfigOption = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   const teamBwrapSandbox =
     Option.isSome(serverConfigOption) && serverConfigOption.value.teamBwrapSandbox === true;
+  const ownStateDir = Option.isSome(serverConfigOption)
+    ? serverConfigOption.value.stateDir
+    : undefined;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
   const backgroundProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY - 1);
@@ -493,41 +774,105 @@ export const make = Effect.gen(function* () {
     baseError: VcsProcessErrorContext,
   ) {
     let failedExit = false;
+    const baseEnv: NodeJS.ProcessEnv = {
+      ...(input.command === "git" ? unsetInheritedRepositoryEnv(process.env, hostPlatform) : {}),
+      // Failures are read by English patterns; without LANG, macOS Git follows the system language.
+      // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
+      ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
+      ...input.env,
+    };
+    const withServerGitConfig: NodeJS.ProcessEnv = {
+      ...baseEnv,
+      ...serverGitConfigEnv({ ...process.env, ...baseEnv }, hostPlatform),
+    };
+    let finalEnv: NodeJS.ProcessEnv = withServerGitConfig;
+    let launchCommand = input.command;
+    let launchArgs = input.args;
+
+    if (input.command === "git" && teamBwrapSandbox) {
+      const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...withServerGitConfig };
+      const sandboxCheck = canRunHostGitInWorkspaceSandbox({
+        processSandboxEnabled: processSandbox.enabled,
+        cwd: input.cwd,
+        args: input.args,
+        env: mergedEnv,
+        ownStateDir,
+      });
+      const safeOverrides = yield* resolveSandboxSafeGitConfigEnv({
+        cwd: input.cwd,
+        env: mergedEnv,
+        platform: hostPlatform,
+        args: input.args,
+        allowWorkspaceIncludes: sandboxCheck.eligible,
+        runProbe: ({ args: probeArgs, cwd: probeCwd, env: probeEnv }) =>
+          processRunner
+            .run({
+              command: "git",
+              args: probeArgs,
+              ...(probeCwd !== undefined ? { cwd: probeCwd } : {}),
+              env: probeEnv,
+              timeout: 5_000,
+              maxOutputBytes: 4 * 1024 * 1024,
+              outputMode: "truncate",
+              timeoutBehavior: "timedOutResult",
+            })
+            .pipe(
+              Effect.map((res) => ({
+                exitCode: res.code === null ? null : Number(res.code),
+                stdout: res.stdout,
+                timedOut: res.timedOut,
+                stdoutTruncated: res.stdoutTruncated,
+              })),
+            ),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new VcsProcessSpawnError({
+              ...baseError,
+              cause,
+            }),
+        ),
+      );
+      finalEnv = { ...withServerGitConfig, ...safeOverrides };
+      if (sandboxCheck.eligible) {
+        const wrapped = yield* processSandbox
+          .wrap({
+            command: "git",
+            args: input.args,
+            cwd: input.cwd,
+            env: { ...process.env, ...finalEnv },
+            ...(sandboxCheck.extraRwBinds.length > 0
+              ? { extraRwBinds: sandboxCheck.extraRwBinds }
+              : {}),
+            name: "git",
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new VcsProcessSpawnError({
+                  ...baseError,
+                  cause,
+                }),
+            ),
+          );
+        launchCommand = wrapped.command;
+        launchArgs = wrapped.args;
+        if (wrapped.hostEnv !== undefined) {
+          finalEnv = wrapped.hostEnv;
+        }
+      }
+    }
+
     const execution = processRunner
       .run({
-        command: input.command,
-        args: input.args,
+        command: launchCommand,
+        args: launchArgs,
         cwd: input.cwd,
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
-        env: (() => {
-          const baseEnv: NodeJS.ProcessEnv = {
-            ...(input.command === "git"
-              ? unsetInheritedRepositoryEnv(process.env, hostPlatform)
-              : {}),
-            // Failures are read by English patterns; without LANG, macOS Git follows the system language.
-            // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
-            ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
-            ...input.env,
-          };
-          const withServerGitConfig: NodeJS.ProcessEnv = {
-            ...baseEnv,
-            ...serverGitConfigEnv({ ...process.env, ...baseEnv }, hostPlatform),
-          };
-          return input.command === "git" && teamBwrapSandbox
-            ? {
-                ...withServerGitConfig,
-                ...sandboxSafeGitConfigEnv(
-                  input.cwd,
-                  { ...process.env, ...withServerGitConfig },
-                  hostPlatform,
-                  input.args,
-                ),
-              }
-            : withServerGitConfig;
-        })(),
+        env: finalEnv,
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",

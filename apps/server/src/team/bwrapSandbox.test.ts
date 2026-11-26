@@ -1210,20 +1210,178 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             ["config", "--worktree", "core.fsmonitor", evilScript],
             { cwd: wtAlice },
           );
-          // Verify sandboxSafeGitConfigEnv neutralizes padded, single-line, URL-scoped, and remote exec keys.
-          const computedGitEnv = VcsProcess.sandboxSafeGitConfigEnv(mainRepo, {}, "linux");
-          const computedPairs = new Map<string, string>();
-          const count = Number.parseInt(computedGitEnv.GIT_CONFIG_COUNT ?? "0", 10);
-          for (let i = 0; i < count; i += 1) {
-            const k = computedGitEnv[`GIT_CONFIG_KEY_${i}`];
-            const v = computedGitEnv[`GIT_CONFIG_VALUE_${i}`];
-            if (k !== undefined && v !== undefined) computedPairs.set(k.toLowerCase(), v);
-          }
+          // Verify async resolveSandboxSafeGitConfigEnv neutralizes padded, single-line, URL-scoped,
+          // remote, conditional-include (triggered by global remote URL), and key-flooded configs,
+          // AND fails closed on probe truncation/errors or workspace-local includes for unsandboxed Git.
+          const runLocalGitProbe = (probe: {
+            readonly args: ReadonlyArray<string>;
+            readonly cwd: string | undefined;
+            readonly env: NodeJS.ProcessEnv;
+          }) =>
+            Effect.sync(() => {
+              const res = NodeChildProcess.spawnSync("git", [...probe.args], {
+                ...(probe.cwd !== undefined ? { cwd: probe.cwd } : {}),
+                env: probe.env,
+                encoding: "utf8",
+              });
+              return {
+                exitCode: res.status,
+                stdout: res.stdout ?? "",
+                timedOut: false,
+                stdoutTruncated: false,
+              };
+            });
+          const extractPairs = (envObj: NodeJS.ProcessEnv) => {
+            const pairs = new Map<string, string>();
+            const count = Number.parseInt(envObj.GIT_CONFIG_COUNT ?? "0", 10);
+            for (let i = 0; i < count; i += 1) {
+              const k = envObj[`GIT_CONFIG_KEY_${i}`];
+              const v = envObj[`GIT_CONFIG_VALUE_${i}`];
+              if (k !== undefined && v !== undefined) pairs.set(k.toLowerCase(), v);
+            }
+            return pairs;
+          };
+
+          // Conditional include triggered by global remote.origin.url + 4.5 MiB dummy key flood.
+          const globalCfg = NodePath.join(root, "global.cfg");
+          const condIncCfg = NodePath.join(root, "cond-include.cfg");
+          NodeFS.writeFileSync(
+            globalCfg,
+            `[remote "origin"]\n\turl = https://corp.example.test/team/app.git\n[credential]\n\thelper = store\n`,
+          );
+          NodeFS.writeFileSync(condIncCfg, `[filter "condfilt"]\n\tclean = ${evilScript}\n`);
+          const dummyPad = `[x "${"a".repeat(180)}"]\n\tk = 1\n`;
+          NodeFS.appendFileSync(
+            NodePath.join(mainRepo, ".git", "config"),
+            `\n[includeIf "hasconfig:remote.*.url:https://corp.example.test/**"]\n\tpath = ${condIncCfg}\n` +
+              dummyPad.repeat(24_000) +
+              `[filter "afterflood"]\n\tclean = ${evilScript}\n`,
+          );
+
+          const hostPath = (yield* HostProcess.Environment).PATH;
+          const computedGitEnv = yield* VcsProcess.resolveSandboxSafeGitConfigEnv({
+            cwd: mainRepo,
+            env: {
+              PATH: hostPath,
+              GIT_CONFIG_NOSYSTEM: "1",
+              GIT_CONFIG_GLOBAL: globalCfg,
+            },
+            platform: "linux",
+            allowWorkspaceIncludes: false,
+            runProbe: runLocalGitProbe,
+          });
+          const computedPairs = extractPairs(computedGitEnv);
           expect(computedPairs.get("filter.singleline.clean")).toBe("");
+          expect(computedPairs.get("filter.condfilt.clean")).toBe("");
+          expect(computedPairs.get("filter.afterflood.clean")).toBe("");
           expect(computedPairs.get("credential.https://example.test.helper")).toBe("");
+          // Global host credential.helper MUST NOT be clobbered when only global scope sets it.
+          expect(computedPairs.has("credential.helper")).toBe(false);
           expect(computedPairs.get("core.sshcommand")).toBe("false");
           expect(computedPairs.get("remote.origin.uploadpack")).toBe("git-upload-pack");
           expect(computedPairs.get("gpg.program")).toBe("false");
+
+          // Value-taking global flags (`-c fetch.unpackLimit=1 --git-dir <bareDir>`) preserve `--git-dir`.
+          const bareRepo = NodePath.join(root, "bare.git");
+          NodeChildProcess.execFileSync("git", ["init", "--bare", bareRepo]);
+          NodeChildProcess.execFileSync("git", [
+            "--git-dir",
+            bareRepo,
+            "config",
+            "remote.origin.uploadpack",
+            evilScript,
+          ]);
+          const bareEnv = yield* VcsProcess.resolveSandboxSafeGitConfigEnv({
+            cwd: root,
+            env: { PATH: hostPath, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+            platform: "linux",
+            args: ["-c", "fetch.unpackLimit=1", "--git-dir", bareRepo, "fetch", "--quiet"],
+            allowWorkspaceIncludes: false,
+            runProbe: runLocalGitProbe,
+          });
+          expect(extractPairs(bareEnv).get("remote.origin.uploadpack")).toBe("git-upload-pack");
+
+          // Fail-closed when probe overflows/truncates or exits unexpectedly.
+          const truncatedProbeResult = yield* Effect.result(
+            VcsProcess.resolveSandboxSafeGitConfigEnv({
+              cwd: mainRepo,
+              env: { PATH: hostPath },
+              platform: "linux",
+              allowWorkspaceIncludes: false,
+              runProbe: () =>
+                Effect.succeed({
+                  exitCode: 0,
+                  stdout: "",
+                  timedOut: false,
+                  stdoutTruncated: true,
+                }),
+            }),
+          );
+          expect(Result.isFailure(truncatedProbeResult)).toBe(true);
+
+          // Fail-closed for unsandboxed host Git when repo config includes a file inside writable cwd.
+          const wsIncludeRepo = NodePath.join(root, "ws-include-repo");
+          NodeFS.mkdirSync(wsIncludeRepo, { recursive: true });
+          NodeChildProcess.execFileSync("git", ["init", "-b", "main"], { cwd: wsIncludeRepo });
+          NodeFS.writeFileSync(NodePath.join(wsIncludeRepo, "mutable.cfg"), "[core]\n");
+          NodeChildProcess.execFileSync("git", ["config", "include.path", "../mutable.cfg"], {
+            cwd: wsIncludeRepo,
+          });
+          const wsIncludeRefused = yield* Effect.result(
+            VcsProcess.resolveSandboxSafeGitConfigEnv({
+              cwd: wsIncludeRepo,
+              env: { PATH: hostPath, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+              platform: "linux",
+              allowWorkspaceIncludes: false,
+              runProbe: runLocalGitProbe,
+            }),
+          );
+          expect(Result.isFailure(wsIncludeRefused)).toBe(true);
+
+          // When ProcessSandbox is enabled, workspace-local host git commands run inside ProcessSandbox.
+          const wrappedGitCalls: Array<ReadonlyArray<string>> = [];
+          const trackingSandbox = {
+            enabled: true,
+            wrap: (wrapInput: {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+              readonly env?: NodeJS.ProcessEnv | undefined;
+            }) => {
+              wrappedGitCalls.push(wrapInput.args);
+              return Effect.succeed({
+                command: wrapInput.command,
+                args: wrapInput.args,
+                hostEnv: wrapInput.env,
+              });
+            },
+          };
+          yield* Effect.gen(function* () {
+            const vcsProc = yield* VcsProcess.VcsProcess;
+            yield* vcsProc.run({
+              operation: "GitVcsDriver.listWorkspaceFiles",
+              command: "git",
+              args: ["status", "--porcelain=2", "--branch", "-z"],
+              cwd: wsIncludeRepo,
+            });
+          }).pipe(
+            Effect.provide(
+              VcsProcess.layer.pipe(
+                Layer.provide(
+                  Layer.effect(
+                    ServerConfig.ServerConfig,
+                    Effect.gen(function* () {
+                      const cfg = yield* ServerConfig.ServerConfig;
+                      return { ...cfg, teamBwrapSandbox: true };
+                    }),
+                  ).pipe(Layer.provide(ServerConfig.layerTest(wsIncludeRepo, baseDir))),
+                ),
+                Layer.provide(Layer.succeed(ProcessSandbox, trackingSandbox)),
+                Layer.provide(NodeServices.layer),
+              ),
+            ),
+          );
+          expect(wrappedGitCalls).toHaveLength(1);
+          expect(wrappedGitCalls[0]?.[0]).toBe("status");
           // Modify tracked files with identical length and bumped mtime to force clean-filter evaluation.
           const futureEpochSec = 4_070_908_800;
           for (const dir of [mainRepo, wtAlice]) {
