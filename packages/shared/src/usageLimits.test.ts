@@ -1164,6 +1164,7 @@ describe("pools", () => {
             plan: undefined,
             accentColor: undefined,
             environments: [],
+            instances: [],
             sourceLabel: null,
             redeem: null,
             limits: { checkedAt, windows: [{ ...window, usedPercent, resetsAt: order[index] }] },
