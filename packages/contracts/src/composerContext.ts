@@ -70,8 +70,6 @@ const ContextAttachmentId = TrimmedNonEmptyString.check(
 );
 const ContextLabel = Schema.String.check(Schema.isMaxLength(COMPOSER_CONTEXT_LABEL_MAX_CHARS));
 const BoundedString = (max: number) => Schema.String.check(Schema.isMaxLength(max));
-const NonEmptyBoundedString = (max: number) =>
-  Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(max));
 const ShortString = BoundedString(2_048);
 const NullableShortString = Schema.NullOr(ShortString);
 
@@ -184,9 +182,9 @@ export type PreviewAnnotationContextRecord = typeof PreviewAnnotationContextReco
 export const ReviewCommentContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("review-comment"),
-  sectionId: NonEmptyBoundedString(255),
+  sectionId: Schema.NonEmptyString.check(Schema.isMaxLength(255)),
   sectionTitle: ShortString,
-  filePath: NonEmptyBoundedString(2_048),
+  filePath: Schema.NonEmptyString.check(Schema.isMaxLength(2_048)),
   startIndex: NonNegativeInt,
   endIndex: NonNegativeInt,
   rangeLabel: ShortString,
@@ -200,7 +198,7 @@ export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;
 export const MentionContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("mention"),
-  path: NonEmptyBoundedString(2_048),
+  path: Schema.NonEmptyString.check(Schema.isMaxLength(2_048)),
 });
 export type MentionContextRecord = typeof MentionContextRecord.Type;
 
