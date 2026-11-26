@@ -156,14 +156,6 @@ const OpenRouterCatalog = Schema.Struct({
 
 const OPENROUTER_DEFAULT_SYNTHESIS_MODEL = "qwen/qwen-audio-3.0-tts-flash";
 
-function openRouterSpeechFormat(model: string) {
-  return model.startsWith("google/gemini-") ||
-    model.startsWith("heygen/") ||
-    model.startsWith("qwen/")
-    ? "pcm"
-    : "mp3";
-}
-
 function synthesisErrorReason(status: number): SpeechSynthesisError["reason"] {
   return status === 401 || status === 403
     ? "rejected-key"
@@ -543,15 +535,17 @@ export const layer = Layer.effect(
               input: input.text,
               model: input.model,
               ...(voice ? { voice } : {}),
-              response_format: openRouterSpeechFormat(input.model),
+              // Raw audio for every model, so the environment can time each word; the
+              // response's content type names its rate.
+              response_format: "pcm",
             }),
           );
         }),
-        pcmFormat: (response, input) => {
-          if (openRouterSpeechFormat(input.model) !== "pcm") return undefined;
+        pcmFormat: (response) => {
           const contentType = response.headers["content-type"] ?? "";
-          const defaultRate = input.model.startsWith("heygen/") ? 44100 : 24000;
-          const rate = Number(/(?:^|;)\s*rate\s*=([^;]*)/i.exec(contentType)?.[1] ?? defaultRate);
+          // A model that answers with encoded audio anyway plays as it is, without word timings.
+          if (!/^audio\/(?:pcm|l16)\b/i.test(contentType)) return undefined;
+          const rate = Number(/(?:^|;)\s*rate\s*=([^;]*)/i.exec(contentType)?.[1] ?? "24000");
           const channels = Number(/(?:^|;)\s*channels\s*=([^;]*)/i.exec(contentType)?.[1] ?? "1");
           return { rate, channels };
         },

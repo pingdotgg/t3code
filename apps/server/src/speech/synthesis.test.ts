@@ -435,32 +435,33 @@ it.effect.each(["xai", "openrouter"] as const)(
           });
           yield* synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
-          for (const [model, expectedRate] of [
-            ["google/gemini-tts", 24000],
-            ["heygen/heygen-voice-1", 44100],
+          // Every model is asked for PCM, and its content type names the rate.
+          for (const [contentType, expectedRate] of [
+            ["audio/pcm", 24000],
+            ["audio/pcm;rate=44100;channels=1", 44100],
           ] as const) {
             upstream.mockResolvedValueOnce(
-              new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),
+              new Response(Uint8Array.of(0, 1), { headers: { "content-type": contentType } }),
             );
             const plainPcm = yield* synthesize(provider, {
               ...request,
-              model,
+              model: "heygen/heygen-voice-1",
               voice: "reader",
             });
             expect(mp3SampleRate(plainPcm)).toBe(expectedRate);
-          }
-          for (const model of ["minimax/speech-test:free", "mistralai/voxtral-mini-tts-2603"]) {
-            upstream.mockResolvedValueOnce(new Response(new Uint8Array([73, 68, 51, 1])));
-            expect([
-              ...(yield* synthesize(provider, {
-                ...request,
-                model,
-              })),
-            ]).toEqual([73, 68, 51, 1]);
             expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).response_format).toBe(
-              "mp3",
+              "pcm",
             );
           }
+          // A model that sends MP3 anyway plays it unchanged.
+          upstream.mockResolvedValueOnce(
+            new Response(new Uint8Array([73, 68, 51, 1]), {
+              headers: { "content-type": "audio/mpeg" },
+            }),
+          );
+          expect([
+            ...(yield* synthesize(provider, { ...request, model: "minimax/speech-test:free" })),
+          ]).toEqual([73, 68, 51, 1]);
           for (const contentType of [
             "audio/pcm;rate=garbage",
             "audio/pcm;rate=",

@@ -117,8 +117,8 @@ beside a completed assistant reply. Select it again to stop playback. Leaving th
 thread stops it. Code blocks are skipped by default.
 
 The paragraph and the word being read are highlighted, and the thread scrolls along until
-you scroll away. ElevenLabs reports when each word is spoken. For Grok TTS, local models and
-OpenRouter voices that return raw audio, your environment works it out from the audio with a
+you scroll away. ElevenLabs reports when each word is spoken. For Grok TTS, OpenRouter and local
+models, your environment works it out from the audio with a
 small speech recognition model, downloaded the first time you choose one of them: 135 MB for
 English, or 740 MB for 25 languages, which non-English app languages use and which you can turn
 on under **Multilingual word timing**. Until it is installed, and for Japanese, Korean and
