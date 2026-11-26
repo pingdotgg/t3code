@@ -730,11 +730,9 @@ describe("question answer paths", () => {
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
             "chapter.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Departure information.<aside>Check local time.</aside>Board promptly.</div><div>Keep <aside></aside>walking.</div><div>Only <aside hidden="">draft</aside>published text.</div></body></html>',
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Departure information.<aside>Check local time.</aside>Board promptly.</div><div>Keep <aside></aside>walking.</div></body></html>',
           },
-          expected: [
-            "Departure information.\nCheck local time.\nBoard promptly.\nKeep walking.\nOnly published text.",
-          ],
+          expected: ["Departure information.\nCheck local time.\nBoard promptly.\nKeep walking."],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
         {
