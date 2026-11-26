@@ -11284,6 +11284,25 @@
   "2e487089c231536b": "Service",
   "c732b08a5fa8c3d7": "Base URL",
   "3953d1cccd71ab7e": "Name (optional)",
+  "b63146c5b314d4a0": "Request timeout (seconds)",
+  "74e3a5e66acb02a9": "How long one generation may take before it is given up on. Raise it for a slow model, such as one running on your own machine.",
+  "7e1e7e99d7bd9156": [
+    "Enter a whole number between",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " and",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
+  ],
   "304d6712ac5d3a89": [
     {
       "i": 1,

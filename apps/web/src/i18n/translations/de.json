@@ -11275,6 +11275,25 @@
   "2e487089c231536b": "Dienst",
   "c732b08a5fa8c3d7": "Basis-URL",
   "3953d1cccd71ab7e": "Name (optional)",
+  "b63146c5b314d4a0": "Zeitlimit für Anfragen (Sekunden)",
+  "74e3a5e66acb02a9": "Wie lange eine Generierung dauern darf, bevor sie abgebrochen wird. Erhöhen Sie den Wert für ein langsames Modell, zum Beispiel ein Modell, das auf Ihrem eigenen Rechner läuft.",
+  "7e1e7e99d7bd9156": [
+    "Ganzzahl zwischen",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " und",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
+  ],
   "304d6712ac5d3a89": [
     {
       "i": 1,

@@ -11283,6 +11283,25 @@
   "2e487089c231536b": "Tjänst",
   "c732b08a5fa8c3d7": "Bas-URL",
   "3953d1cccd71ab7e": "Namn (valfritt)",
+  "b63146c5b314d4a0": "Tidsgräns för begäran (sekunder)",
+  "74e3a5e66acb02a9": "Hur länge en generering får pågå innan den avbryts. Höj värdet för en långsam modell, till exempel en som körs på din egen dator.",
+  "7e1e7e99d7bd9156": [
+    "Ange ett heltal mellan",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " och",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
+  ],
   "304d6712ac5d3a89": [
     {
       "i": 1,

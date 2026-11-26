@@ -2,6 +2,7 @@ import {
   type ListTextGeneratorModelsInput,
   type ListTextGeneratorModelsResult,
   type ProviderInstanceId,
+  TEXT_GENERATOR_DEFAULT_TIMEOUT_SECONDS,
   TextGenerationError,
   type TextGeneratorConfig,
   TextGeneratorError,
@@ -11,6 +12,7 @@ import {
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
@@ -81,7 +83,12 @@ export const make = Effect.gen(function* () {
     const apiKey = yield* requireSettingsSecret(secrets, config.apiKey).pipe(
       Effect.mapError((cause) => new TextGeneratorRequestError({ detail: cause.message, cause })),
     );
-    return { baseUrl: config.baseUrl, apiKey, label } satisfies TextGeneratorConnection;
+    return {
+      baseUrl: config.baseUrl,
+      apiKey,
+      label,
+      timeout: Duration.seconds(config.timeoutSeconds ?? TEXT_GENERATOR_DEFAULT_TIMEOUT_SECONDS),
+    } satisfies TextGeneratorConnection;
   });
 
   const runnerFor =

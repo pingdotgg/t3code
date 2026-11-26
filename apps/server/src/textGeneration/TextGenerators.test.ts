@@ -7,8 +7,10 @@ import {
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { expect, vi } from "vite-plus/test";
 
@@ -84,6 +86,27 @@ it.effect.each([
       run!(request).pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
     );
     expect(failure.detail).toMatch(/rejected the API key: Incorrect API key provided$/);
+  }),
+);
+
+it.effect("a generate call is given up on after the generator's own timeout", () =>
+  Effect.gen(function* () {
+    const hang = vi.fn<typeof fetch>(() => new Promise<Response>(() => {}));
+    const generators = yield* TextGenerators.TextGenerators.pipe(
+      Effect.provide(layer({ apiKey: "secret", timeoutSeconds: 5 })),
+    );
+    const run = yield* generators.runner(ID);
+    const attempt = yield* Effect.flip(
+      run!(request).pipe(Effect.provideService(FetchHttpClient.Fetch, hang)),
+    ).pipe(Effect.forkDetach);
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("4 seconds");
+    expect(attempt.pollUnsafe()).toBeUndefined();
+    yield* TestClock.adjust("1 second");
+
+    const failure = yield* Fiber.join(attempt);
+    expect(failure.detail).toMatch(/^api\.test took longer than 5 seconds\. A slow endpoint/);
+    expect(hang).toHaveBeenCalledTimes(1);
   }),
 );
 

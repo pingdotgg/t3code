@@ -11275,6 +11275,25 @@
   "2e487089c231536b": "Serviço",
   "c732b08a5fa8c3d7": "URL base",
   "3953d1cccd71ab7e": "Nome (opcional)",
+  "b63146c5b314d4a0": "Tempo limite da solicitação (segundos)",
+  "74e3a5e66acb02a9": "Quanto tempo uma geração pode levar antes de ser interrompida. Aumente o valor para um modelo lento, como um executado no seu próprio computador.",
+  "7e1e7e99d7bd9156": [
+    "Insira um número inteiro entre",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " e",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
+  ],
   "304d6712ac5d3a89": [
     {
       "i": 1,

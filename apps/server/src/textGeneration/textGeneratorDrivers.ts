@@ -1,4 +1,5 @@
 import type { TextGeneratorKind, TextGeneratorModel } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -14,6 +15,8 @@ export interface TextGeneratorConnection {
   readonly apiKey: string;
   /** Names the generator in errors, such as its label or host. */
   readonly label: string;
+  /** How long one generate call may take. */
+  readonly timeout: Duration.Duration;
 }
 
 /** Why a model API call failed, worded for the person who configured it. */
@@ -38,7 +41,6 @@ export interface TextGeneratorDriver {
   >;
 }
 
-const GENERATE_TIMEOUT = "2 minutes";
 const LIST_MODELS_TIMEOUT = "25 seconds";
 const MAX_MODEL_PAGES = 10;
 
@@ -103,14 +105,30 @@ const sendJson = Effect.fn("TextGenerator.sendJson")(function* <S extends Schema
 });
 
 const withTimeout =
-  (label: string, duration: typeof GENERATE_TIMEOUT | typeof LIST_MODELS_TIMEOUT) =>
+  (label: string, duration: Duration.Input) =>
   <A, R>(effect: Effect.Effect<A, TextGeneratorRequestError, R>) =>
     effect.pipe(
       Effect.timeoutOrElse({
         duration,
         orElse: () =>
+          Effect.fail(new TextGeneratorRequestError({ detail: `${label} took too long.` })),
+      }),
+    );
+
+/** Generate calls are bounded by the generator's own timeout, which a slow endpoint can raise. */
+const withGenerateTimeout =
+  (connection: TextGeneratorConnection) =>
+  <A, R>(effect: Effect.Effect<A, TextGeneratorRequestError, R>) =>
+    effect.pipe(
+      Effect.timeoutOrElse({
+        duration: connection.timeout,
+        orElse: () =>
           Effect.fail(
-            new TextGeneratorRequestError({ detail: `${label} took too long to respond.` }),
+            new TextGeneratorRequestError({
+              detail:
+                `${connection.label} took longer than ${Duration.toSeconds(connection.timeout)} seconds. ` +
+                "A slow endpoint, such as a local model, needs a longer timeout in Settings → Providers.",
+            }),
           ),
       }),
     );
@@ -156,7 +174,7 @@ const openAICompatible: TextGeneratorDriver = {
           ? Effect.succeed(text)
           : Effect.fail(new TextGeneratorRequestError({ detail: `${label} returned no text.` }));
       }),
-      withTimeout(label, GENERATE_TIMEOUT),
+      withGenerateTimeout(connection),
     );
   },
   listModels: (connection) => {
@@ -220,7 +238,7 @@ const anthropic: TextGeneratorDriver = {
           ? Effect.succeed(text)
           : Effect.fail(new TextGeneratorRequestError({ detail: `${label} returned no text.` }));
       }),
-      withTimeout(label, GENERATE_TIMEOUT),
+      withGenerateTimeout(connection),
     );
   },
   listModels: Effect.fn("TextGenerator.anthropic.listModels")(

@@ -4,6 +4,8 @@ import {
   type ProviderInstanceId,
   type SecretReference,
   type ServerProvider,
+  TEXT_GENERATOR_DEFAULT_TIMEOUT_SECONDS,
+  TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS,
   TextGeneratorConfig,
   type TextGeneratorModel,
 } from "@t3tools/contracts";
@@ -286,6 +288,12 @@ function TextGeneratorWizard({
   const [preset, setPreset] = useState(TEXT_GENERATOR_PRESETS[0]!);
   const [baseUrl, setBaseUrl] = useState(existing?.baseUrl ?? preset.baseUrl);
   const [label, setLabel] = useState(existing?.label ?? "");
+  const [timeoutDraft, setTimeoutDraft] = useState(
+    existing?.timeoutSeconds === undefined ? "" : String(existing.timeoutSeconds),
+  );
+  // A number input reports unparseable entries (e.g. "120e") as an empty value,
+  // which would otherwise read as "use the default".
+  const [timeoutBadInput, setTimeoutBadInput] = useState(false);
   const secretSources = useSecretSources(environmentId);
   const [keyDraft, setKeyDraft] = useState<string | SecretReference>(
     isSecretReference(existing?.apiKey) ? existing.apiKey : "",
@@ -303,12 +311,21 @@ function TextGeneratorWizard({
   const storedKey = typeof existing?.apiKey === "string" ? existing.apiKey : "";
   const apiKey = typeof keyDraft === "string" ? keyDraft.trim() || storedKey : keyDraft;
   const kind = existing?.kind ?? preset.kind;
+  const timeoutValue = timeoutDraft.trim();
+  const timeoutSeconds = timeoutValue === "" ? undefined : Number(timeoutValue);
+  const timeoutInvalid =
+    timeoutBadInput ||
+    (timeoutSeconds !== undefined &&
+      (!Number.isInteger(timeoutSeconds) ||
+        timeoutSeconds < TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS.minimum ||
+        timeoutSeconds > TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS.maximum));
   const config = decodeTextGenerator({
     kind,
     ...(label.trim() ? { label: label.trim() } : {}),
     baseUrl: baseUrl.trim(),
     apiKey,
     enabled: existing?.enabled ?? true,
+    ...(timeoutSeconds === undefined || timeoutInvalid ? {} : { timeoutSeconds }),
   });
   const keyRequired = existing === null && preset.id !== "custom";
   // Presets know their URL; only a custom endpoint, or one already saved as such, asks for it.
@@ -316,7 +333,8 @@ function TextGeneratorWizard({
     existing === null
       ? preset.id === "custom"
       : !["openai", "anthropic", "openrouter"].includes(textGeneratorBrand(existing));
-  const canConnect = keyValid && Option.isSome(config) && (!keyRequired || apiKey !== "");
+  const canConnect =
+    keyValid && !timeoutInvalid && Option.isSome(config) && (!keyRequired || apiKey !== "");
   const name = Option.isSome(config)
     ? textGeneratorDisplayName(config.value, messages)
     : messages(preset.label);
@@ -473,6 +491,46 @@ function TextGeneratorWizard({
                     value={label}
                     onChange={(event) => setLabel(event.target.value)}
                   />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="text-generator-timeout">
+                    <T>Request timeout (seconds)</T>
+                  </Label>
+                  <Input
+                    id="text-generator-timeout"
+                    type="number"
+                    min={TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS.minimum}
+                    max={TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS.maximum}
+                    step={1}
+                    inputMode="numeric"
+                    placeholder={String(TEXT_GENERATOR_DEFAULT_TIMEOUT_SECONDS)}
+                    value={timeoutDraft}
+                    aria-invalid={timeoutInvalid}
+                    aria-describedby={timeoutInvalid ? "text-generator-timeout-error" : undefined}
+                    onChange={(event) => {
+                      setTimeoutDraft(event.target.value);
+                      setTimeoutBadInput(event.target.validity.badInput);
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    <T>
+                      How long one generation may take before it is given up on. Raise it for a slow
+                      model, such as one running on your own machine.
+                    </T>
+                  </p>
+                  {timeoutInvalid ? (
+                    <p
+                      id="text-generator-timeout-error"
+                      role="alert"
+                      className="text-sm text-destructive"
+                    >
+                      <T>
+                        Enter a whole number between{" "}
+                        <Var>{TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS.minimum}</Var> and{" "}
+                        <Var>{TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS.maximum}</Var>.
+                      </T>
+                    </p>
+                  ) : null}
                 </div>
                 {checkError ? (
                   <p role="alert" className="text-sm text-destructive">
