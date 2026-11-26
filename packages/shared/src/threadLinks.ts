@@ -63,7 +63,8 @@ function codeSpanLines(markdown: string) {
   const listIndents: number[] = [];
   let paragraphDepth: number | undefined;
   let start = 0;
-  for (const line of markdown.split("\n")) {
+  for (const rawLine of markdown.split(/(?<=\n)|(?<=\r)(?!\n)/u)) {
+    const line = rawLine.replace(/[\r\n]+$/u, "");
     let offset = 0;
     let depth = 0;
     let hasList = false;
@@ -112,7 +113,7 @@ function codeSpanLines(markdown: string) {
     const effectiveDepth = endsParagraph || hasList ? depth : Math.max(depth, paragraphDepth ?? 0);
     lines.push({ start, depth: effectiveDepth, breaksSpan });
     paragraphDepth = endsParagraph ? undefined : effectiveDepth;
-    start += line.length + 1;
+    start += rawLine.length;
   }
   return lines;
 }
@@ -125,17 +126,20 @@ function findCodeSpanEnd(
   lineIndex: number,
 ): number {
   const openDepth = lines[lineIndex]!.depth;
+  let nextLine = lines[lineIndex + 1];
   for (let i = openIndex + tickCount; i < markdown.length; i++) {
+    if (i === nextLine?.start) {
+      SPAN_BREAK_LINE.lastIndex = i;
+      if (SPAN_BREAK_LINE.test(markdown) || nextLine.breaksSpan || nextLine.depth > openDepth)
+        return -1;
+      lineIndex++;
+      nextLine = lines[lineIndex + 1];
+    }
     if (markdown[i] === "`") {
       let runEnd = i + 1;
       while (markdown[runEnd] === "`") runEnd++;
       if (runEnd - i === tickCount) return runEnd;
       i = runEnd - 1;
-    } else if (markdown[i] === "\n") {
-      lineIndex++;
-      SPAN_BREAK_LINE.lastIndex = i + 1;
-      const line = lines[lineIndex]!;
-      if (SPAN_BREAK_LINE.test(markdown) || line.breaksSpan || line.depth > openDepth) return -1;
     }
   }
   return -1;
