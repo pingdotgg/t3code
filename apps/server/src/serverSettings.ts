@@ -1232,48 +1232,47 @@ const make = Effect.gen(function* () {
   };
 
   /** What `update` would write, after the managed-policy checks every write must pass. */
-  const vetSettingsUpdate = (
+  const vetSettingsUpdate = Effect.fn("ServerSettings.vetSettingsUpdate")(function* (
     current: ServerSettings,
     patch: ServerSettingsPatch,
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
-  ) =>
-    Effect.gen(function* () {
-      // An older client echoes a reference as the redacted marker; restore it before vetting so
-      // a removed provider's reference is cleared below rather than restored by persistence.
-      const updated = withoutRedirectedSecrets(
-        current,
-        withEchoedSecretReferences(current, yield* update(current)),
-      );
-      // Vet before secrets: a variable the policy hides from clients is not one they removed.
-      const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
-      if (vetted._tag === "Locked") {
-        return yield* new ServerSettingsError({
-          settingsPath,
-          operation: "write-managed-setting",
-          managedSetting: vetted.path,
-          managedBy: managedPolicy?.organization,
-        });
-      }
-      const vettedProviders = managedProviders.vetWrite(current, vetted.settings);
-      if (vettedProviders._tag === "Locked") {
-        return yield* new ServerSettingsError({
-          settingsPath,
-          operation: "write-managed-setting",
-          managedSetting: vettedProviders.path,
-          managedBy: managedPolicy?.organization,
-        });
-      }
-      if (vettedProviders._tag === "Disallowed") {
-        return yield* new ServerSettingsError({
-          settingsPath,
-          operation: "use-disallowed-provider",
-          providerInstanceId: vettedProviders.instanceId,
-          providerLabel: vettedProviders.label,
-          managedBy: managedPolicy?.organization,
-        });
-      }
-      return vettedProviders.settings;
-    });
+  ) {
+    // An older client echoes a reference as the redacted marker; restore it before vetting so
+    // a removed provider's reference is cleared below rather than restored by persistence.
+    const updated = withoutRedirectedSecrets(
+      current,
+      withEchoedSecretReferences(current, yield* update(current)),
+    );
+    // Vet before secrets: a variable the policy hides from clients is not one they removed.
+    const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
+    if (vetted._tag === "Locked") {
+      return yield* new ServerSettingsError({
+        settingsPath,
+        operation: "write-managed-setting",
+        managedSetting: vetted.path,
+        managedBy: managedPolicy?.organization,
+      });
+    }
+    const vettedProviders = managedProviders.vetWrite(current, vetted.settings);
+    if (vettedProviders._tag === "Locked") {
+      return yield* new ServerSettingsError({
+        settingsPath,
+        operation: "write-managed-setting",
+        managedSetting: vettedProviders.path,
+        managedBy: managedPolicy?.organization,
+      });
+    }
+    if (vettedProviders._tag === "Disallowed") {
+      return yield* new ServerSettingsError({
+        settingsPath,
+        operation: "use-disallowed-provider",
+        providerInstanceId: vettedProviders.instanceId,
+        providerLabel: vettedProviders.label,
+        managedBy: managedPolicy?.organization,
+      });
+    }
+    return vettedProviders.settings;
+  });
 
   const storedSettingsOf = <E, R>(
     load: Effect.Effect<

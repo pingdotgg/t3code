@@ -53,7 +53,6 @@ import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
@@ -1847,7 +1846,7 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
-              getProjectByCommandId: () => Effect.succeed(Option.none()),
+              getProjectByCommandId: () => Effect.succeedNone,
             }),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               readShellSnapshot: (options) =>

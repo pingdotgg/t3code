@@ -589,19 +589,6 @@ export const make = Effect.gen(function* () {
       : Effect.void;
   // Settings are written only once the row commits, so a policy that would refuse them refuses the
   // whole update first; otherwise the row would change and the agent would see only a failure.
-  const refuseProjectSettings = (projectId: ProjectId, input: ProjectSettingsInput) =>
-    projectSettingsPatch(projectId, input).pipe(
-      Effect.flatMap(serverSettings.checkSettingsUpdate),
-      Effect.mapError((cause) =>
-        cause.operation === "write-managed-setting" || cause.operation === "use-disallowed-provider"
-          ? new ProjectInvalidError({ projectId, detail: cause.message })
-          : new ProjectOperationError({
-              operation: "dispatch-project-command",
-              projectId,
-              cause,
-            }),
-      ),
-    );
   // A replay returns its first receipt and writes nothing, so a policy deployed since can't refuse it.
   const checkProjectSettings = (
     commandId: CommandId,
@@ -613,7 +600,21 @@ export const make = Effect.gen(function* () {
           Effect.map(Option.isSome),
           Effect.orElseSucceed(() => false),
           Effect.flatMap((replay) =>
-            replay ? Effect.void : refuseProjectSettings(projectId, input),
+            replay
+              ? Effect.void
+              : projectSettingsPatch(projectId, input).pipe(
+                  Effect.flatMap(serverSettings.checkSettingsUpdate),
+                  Effect.mapError((cause) =>
+                    cause.operation === "write-managed-setting" ||
+                    cause.operation === "use-disallowed-provider"
+                      ? new ProjectInvalidError({ projectId, detail: cause.message })
+                      : new ProjectOperationError({
+                          operation: "dispatch-project-command",
+                          projectId,
+                          cause,
+                        }),
+                  ),
+                ),
           ),
         )
       : Effect.void;
