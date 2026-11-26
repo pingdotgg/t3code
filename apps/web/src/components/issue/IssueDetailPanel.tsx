@@ -43,6 +43,7 @@ import { m } from "~/i18n/messages";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
 import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
@@ -70,6 +71,7 @@ import {
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
 import { IssueThreadLinks } from "./IssueThreadLinks";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
@@ -132,7 +134,7 @@ function IssueLabelPicker({
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const applied = new Set(detail.labels.map((label) => label.name));
-  const needle = query.toLowerCase();
+  const needle = query.trim().toLowerCase();
   const candidates = (candidatesQuery.data?.labels ?? []).filter(
     (label) =>
       needle.length === 0 ||
@@ -248,7 +250,7 @@ function IssueAssigneePicker({
     open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const needle = query.toLowerCase();
+  const needle = query.trim().toLowerCase();
   const candidates = (candidatesQuery.data?.assignees ?? []).filter(
     (candidate) =>
       needle.length === 0 ||
@@ -443,6 +445,7 @@ export function IssueDetailPanel({
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
+  const openLink = useOpenLink(threadRef);
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -618,6 +621,10 @@ export function IssueDetailPanel({
                 provider: tracker.providerName,
               })}
               render={<a href={detail.url} target="_blank" rel="noopener noreferrer" />}
+              onClick={(event) => {
+                event.preventDefault();
+                void openLink(detail.url, { event }).catch(console.error);
+              }}
             >
               {detail.displayKey}
               <ExternalLinkIcon aria-hidden className="size-2.5" />
@@ -637,9 +644,13 @@ export function IssueDetailPanel({
               aria-label={gt("Refresh issue")}
               disabled={detailQuery.isPending}
               onClick={() =>
-                void pager.refresh(registry, () =>
-                  executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
-                )
+                void pager.refresh(registry, () => {
+                  issueEnvironment.oweDetailRefresh(registry, detailAtom);
+                  return executeAtomQuery(registry, detailAtom, {
+                    refresh: true,
+                    reportFailure: false,
+                  });
+                })
               }
             >
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
@@ -672,7 +683,10 @@ export function IssueDetailPanel({
                 disabled={saving}
                 onChange={(event) => setTitleDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") setEditing(null);
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setEditing(null);
                 }}
               />
               <Button type="submit" size="sm" disabled={saving}>
@@ -725,6 +739,14 @@ export function IssueDetailPanel({
               </span>
             )}
           </PullRequestMetaLine>
+
+          <WorkflowRunsAbout
+            environmentId={environmentId}
+            item={{
+              subject: detail.url,
+              issue: { ...reference, host: reference.host ?? detail.host },
+            }}
+          />
 
           <div className="mt-4 space-y-2">
             <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>
@@ -896,6 +918,10 @@ export function IssueDetailPanel({
                           render={
                             <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
                           }
+                          onClick={(event) => {
+                            event.preventDefault();
+                            void openLink(item.comment.url!, { event }).catch(console.error);
+                          }}
                         >
                           {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
                         </InlineButton>

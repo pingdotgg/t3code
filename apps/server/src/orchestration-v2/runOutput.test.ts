@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
-import { checkOutput, outputRequestProblem } from "./runOutput.ts";
+import { checkOutput, outputRequestProblem, rejectionText } from "./runOutput.ts";
 
 const open = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
 const closed = { ...open, additionalProperties: false };
@@ -14,6 +14,18 @@ it.effect("a closed schema turns down a key it does not name, and an open one ke
     const rejected = yield* checkOutput(closed, extra);
     assert.isTrue(Result.isFailure(rejected));
     assert.isTrue(Result.isSuccess(yield* checkOutput(closed, '{"verdict":"merge"}')));
+  }),
+);
+
+it.effect("a long rejection is cut without splitting an emoji", () =>
+  Effect.gen(function* () {
+    const rejected = yield* checkOutput(closed, `{"verdict":"merge","${"😀".repeat(1100)}":1}`);
+    assert.isTrue(Result.isFailure(rejected));
+    if (Result.isFailure(rejected)) {
+      const text = rejectionText(rejected.failure);
+      assert.isTrue(text.isWellFormed());
+      assert.isTrue(text.endsWith("😀"));
+    }
   }),
 );
 
