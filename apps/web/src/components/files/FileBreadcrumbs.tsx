@@ -293,7 +293,7 @@ function FolderBreadcrumb(props: {
           type="button"
           onClick={() => props.onNavigate(props.crumb.path)}
           className={cn(
-            "relative block max-w-40 cursor-pointer rounded-sm px-0.5 text-left outline-none pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-3 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            "relative block max-w-40 cursor-pointer rounded-sm px-0.5 text-start outline-none pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-3 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
             props.descendant ? "text-muted-foreground/70" : "text-muted-foreground",
           )}
         />

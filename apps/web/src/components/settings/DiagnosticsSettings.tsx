@@ -168,7 +168,7 @@ function DiagnosticsTable({
       className="w-full max-w-full"
     >
       <table
-        className={cn("w-full text-left text-xs", minTableWidth, columnWidths && "table-fixed")}
+        className={cn("w-full text-start text-xs", minTableWidth, columnWidths && "table-fixed")}
       >
         {columnWidths ? (
           <colgroup>
@@ -352,7 +352,7 @@ function ProcessDiagnosticsTable({
         hideScrollbars
         className="max-h-[min(64vh,44rem)] w-full max-w-full"
       >
-        <table className="w-full min-w-[1040px] table-fixed text-left text-xs">
+        <table className="w-full min-w-[1040px] table-fixed text-start text-xs">
           <colgroup>
             <col className="w-[24%]" />
             <col className="w-[8%]" />
@@ -367,22 +367,22 @@ function ProcessDiagnosticsTable({
               <th className="px-4 py-2 font-semibold sm:pl-5">
                 <T>Name</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>CPU</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Memory</T>
               </th>
               <th className="px-3 py-2 font-semibold">
                 <T>Command</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>PID</T>
               </th>
               <th className="px-3 py-2 font-semibold">
                 <T>Type</T>
               </th>
-              <th className="p-2 text-right font-semibold sm:pr-4">
+              <th className="p-2 text-end font-semibold sm:pr-4">
                 <T>Kill</T>
               </th>
             </tr>
@@ -404,10 +404,10 @@ function ProcessDiagnosticsTable({
                     onToggle={toggleProcess}
                   />
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {process.cpuPercent.toFixed(1)}%
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {formatBytes(process.rssBytes)}
                 </td>
                 <td className="px-3 py-2 align-middle text-muted-foreground">
@@ -417,7 +417,7 @@ function ProcessDiagnosticsTable({
                     variant="code"
                   />
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums text-muted-foreground">
                   {process.pid}
                 </td>
                 <td className="truncate px-3 py-2 align-middle text-muted-foreground">
@@ -584,7 +584,7 @@ function ProcessResourceHistoryTable({
         hideScrollbars
         className="max-h-[min(64vh,44rem)] w-full max-w-full"
       >
-        <table className="w-full min-w-[980px] table-fixed text-left text-xs">
+        <table className="w-full min-w-[980px] table-fixed text-start text-xs">
           <colgroup>
             <col className="w-[24%]" />
             <col className="w-[10%]" />
@@ -600,25 +600,25 @@ function ProcessResourceHistoryTable({
               <th className="px-4 py-2 font-semibold sm:pl-5">
                 <T>Process</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>CPU Time</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Current</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Average</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Peak</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Max Mem</T>
               </th>
               <th className="px-3 py-2 font-semibold">
                 <T>Command</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold sm:pr-5">
+              <th className="px-3 py-2 text-end font-semibold sm:pr-5">
                 <T>PID</T>
               </th>
             </tr>
@@ -643,19 +643,19 @@ function ProcessResourceHistoryTable({
                     }
                   />
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {formatCpuTime(process.cpuSecondsApprox, m)}
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {process.currentCpuPercent.toFixed(1)}%
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {process.avgCpuPercent.toFixed(1)}%
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {process.maxCpuPercent.toFixed(1)}%
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {formatBytes(process.maxRssBytes)}
                 </td>
                 <td className="px-3 py-2 align-middle text-muted-foreground">
@@ -665,7 +665,7 @@ function ProcessResourceHistoryTable({
                     variant="code"
                   />
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground sm:pr-5">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums text-muted-foreground sm:pr-5">
                   {process.pid}
                 </td>
               </tr>
@@ -1308,7 +1308,7 @@ function DiagnosticsSettingsBody() {
             hideScrollbars
             className="w-full max-w-full"
           >
-            <table className="w-full min-w-[920px] table-fixed text-left text-xs">
+            <table className="w-full min-w-[920px] table-fixed text-start text-xs">
               <colgroup>
                 <col className="w-[11%]" />
                 <col className="w-[9%]" />

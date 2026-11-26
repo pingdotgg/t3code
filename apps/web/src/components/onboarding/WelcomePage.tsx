@@ -692,12 +692,12 @@ function AgentsSection({
         </p>
       ) : null}
       {notes.map((note) => (
-        <p key={note} className="pl-8 text-xs text-muted-foreground">
+        <p key={note} className="ps-8 text-xs text-muted-foreground">
           {note}
         </p>
       ))}
       <Collapsible open={showMore} onOpenChange={setMoreOpen}>
-        <CollapsibleTrigger className="group flex min-h-10 w-full items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+        <CollapsibleTrigger className="group flex min-h-10 w-full items-center gap-3 rounded-md text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
           <RowIcon>
             <PlusIcon className="size-4" />
           </RowIcon>
@@ -710,7 +710,7 @@ function AgentsSection({
             {found.length > 0 ? gt("Add more agents") : gt("Set up an agent")}
           </span>
           {showMore ? null : <AgentLogoStack providers={available} acp={acpAllowed} />}
-          <ChevronDownIcon className="ml-auto size-4 text-muted-foreground group-data-panel-open:rotate-180" />
+          <ChevronDownIcon className="ms-auto size-4 text-muted-foreground group-data-panel-open:rotate-180" />
         </CollapsibleTrigger>
         <CollapsiblePanel>
           <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
@@ -1051,7 +1051,7 @@ function ProjectsSection({
             </div>
           </div>
           <ScrollArea scrollFade className="mt-1 h-auto max-h-80">
-            <div className="space-y-0.5 pr-3">
+            <div className="space-y-0.5 pe-3">
               <ImportCandidateList
                 candidates={candidates}
                 selectedKeys={selectedKeys}
@@ -1062,21 +1062,21 @@ function ProjectsSection({
         </fieldset>
       ) : null}
       {scan.data?.truncated ? (
-        <p className="pl-8 text-xs text-muted-foreground" role="status">
+        <p className="ps-8 text-xs text-muted-foreground" role="status">
           {m(SCAN_LIMIT_MESSAGE)}
         </p>
       ) : null}
       {scan.error !== null ? (
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 pl-8 text-sm text-muted-foreground"
+          className="flex items-center justify-between gap-3 ps-8 text-sm text-muted-foreground"
         >
           <span>{gt("Could not check projects again. {error}", { error: scan.error })}</span>
           {retry}
         </div>
       ) : null}
       {visibleImportError ? (
-        <p className="pt-1 pl-8 text-sm text-destructive">{m(visibleImportError)}</p>
+        <p className="pt-1 ps-8 text-sm text-destructive">{m(visibleImportError)}</p>
       ) : null}
     </WelcomeSection>
   );
@@ -1101,7 +1101,7 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
           </CollapsibleTrigger>
         </div>
         <CollapsiblePanel>
-          <div className="flex items-center gap-8 pt-2 pb-3 pl-8">
+          <div className="flex items-center gap-8 pt-2 pb-3 ps-8">
             <ol className="min-w-0 flex-1 space-y-5">
               <PhoneStep step={1}>
                 <p className="text-sm text-foreground">
@@ -1899,12 +1899,12 @@ function ImportCandidateList({
                 )
               }
             />
-            <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
+            <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-start">
               <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90 rtl:group-aria-[expanded=false]:rotate-180" />
               <span className="truncate text-sm text-muted-foreground">
                 <T>Other folders</T>
               </span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+              <span className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums">
                 {gt("{count, plural, one {{count} folder} other {{count} folders}}", {
                   count: other.length,
                 })}
@@ -1961,7 +1961,7 @@ function ImportRepositoryGroup({
           indeterminate={selectedCount > 0 && selectedCount < keys.length}
           onCheckedChange={(checked) => onToggle(keys, checked === true)}
         />
-        <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
+        <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-start">
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90 rtl:group-aria-[expanded=false]:rotate-180" />
           <span className="truncate text-sm font-medium">{group.label}</span>
           <ImportRowMeta
@@ -1996,7 +1996,7 @@ function ProjectPathText({
 }) {
   const { name, parent } = splitOnboardingProjectPath(path);
   return (
-    <span className={cn("flex min-w-0 items-baseline font-mono", className)}>
+    <span dir="ltr" className={cn("flex min-w-0 items-baseline font-mono", className)}>
       {parent.length > 0 ? <span className="truncate">{parent}</span> : null}
       <span className="max-w-full shrink-0 truncate">{name}</span>
     </span>
@@ -2022,7 +2022,7 @@ function ImportCandidateRow({
     <label
       className={cn(
         "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40 has-disabled:cursor-default",
-        nested && "pl-8",
+        nested && "ps-8",
       )}
     >
       <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
@@ -2087,7 +2087,7 @@ function ImportRowMeta({
         ? gt("now", { $context: "relative time" })
         : relative.value;
   return (
-    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
+    <span className="ms-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
       {AgentSessionSource.literals.map((source) => (
         <span key={source} className="flex size-4 items-center justify-center">
           {sources?.includes(source) ? (
@@ -2101,8 +2101,8 @@ function ImportRowMeta({
           ) : null}
         </span>
       ))}
-      <span className="text-right">{threadCount}</span>
-      <span className="text-right whitespace-nowrap">{age}</span>
+      <span className="text-end">{threadCount}</span>
+      <span className="text-end whitespace-nowrap">{age}</span>
     </span>
   );
 }

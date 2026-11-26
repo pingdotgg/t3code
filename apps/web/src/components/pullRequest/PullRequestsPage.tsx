@@ -1458,7 +1458,7 @@ export function PullRequestsPage() {
         aria-hidden
         className={cn(
           "shrink-0",
-          rightPanelState.isOpen ? "-ml-3 w-0" : "w-7 sm:w-5",
+          rightPanelState.isOpen ? "-ms-3 w-0" : "w-7 sm:w-5",
           panelAnimationsActive && "transition-[width,margin] ease-out",
         )}
         style={

@@ -1013,7 +1013,7 @@ export function ThemeEditorPanel({
             value={roleQuery}
           />
         ) : null}
-        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium">
+        <label className="ms-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium">
           <span>
             <T>Advanced</T>
           </span>
@@ -1276,7 +1276,7 @@ export function ThemeEditorPanel({
 
       {isMinimized ? null : (
         <>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 pl-3 pr-1.5">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 ps-3 pe-1.5">
             {renderNameField()}
             {error ? (
               <p aria-live="polite" className="text-sm text-destructive">

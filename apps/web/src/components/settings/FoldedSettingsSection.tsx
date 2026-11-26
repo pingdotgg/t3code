@@ -71,7 +71,7 @@ export function FoldedSettingsSection({
       <Collapsible open={open} onOpenChange={setOpen} render={<SettingsGroup divided={false} />}>
         {/* On a narrow screen the controls drop below the title instead of covering it. */}
         <div className="flex flex-wrap items-center gap-x-4 px-3 sm:px-4">
-          <CollapsibleTrigger className="flex min-h-11 min-w-0 flex-1 basis-40 items-center gap-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring rounded-md">
+          <CollapsibleTrigger className="flex min-h-11 min-w-0 flex-1 basis-40 items-center gap-2 py-2 text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring rounded-md">
             <ChevronRightIcon
               aria-hidden
               className={cn(

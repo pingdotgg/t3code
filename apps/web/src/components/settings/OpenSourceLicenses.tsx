@@ -90,7 +90,7 @@ function LicenseNoticeRow({
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <article>
         <div className="flex min-h-10 items-center hover:bg-muted/35 sm:min-h-9">
-          <CollapsibleTrigger className="group flex min-h-10 min-w-0 flex-1 items-center gap-2.5 px-3 text-left sm:min-h-9 sm:px-4">
+          <CollapsibleTrigger className="group flex min-h-10 min-w-0 flex-1 items-center gap-2.5 px-3 text-start sm:min-h-9 sm:px-4">
             <ChevronRightIcon
               aria-hidden
               className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-panel-open:rotate-90 rtl:group-aria-[expanded=false]:rotate-180"

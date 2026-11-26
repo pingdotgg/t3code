@@ -125,7 +125,7 @@ export function GuideStop({
               </Button>
               <span
                 aria-hidden
-                className="ml-1 flex items-center gap-0.5 @max-[30rem]/guide:hidden"
+                className="ms-1 flex items-center gap-0.5 @max-[30rem]/guide:hidden"
               >
                 <Kbd>J</Kbd>
                 <Kbd>K</Kbd>
@@ -191,7 +191,7 @@ export function GuideStop({
                   return (
                     <li key={file.path} className="border-border/60 not-first:border-t">
                       <Collapsible>
-                        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+                        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-start text-xs outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
                           <ChevronRightIcon
                             aria-hidden
                             className="size-3.5 shrink-0 text-muted-foreground group-data-panel-open:rotate-90 rtl:group-aria-[expanded=false]:rotate-180"
@@ -204,7 +204,7 @@ export function GuideStop({
                             {file.path}
                           </span>
                           {file.note !== undefined && file.note.trim() !== "" ? (
-                            <span className="ml-auto min-w-0 truncate text-muted-foreground @max-[30rem]/guide:hidden">
+                            <span className="ms-auto min-w-0 truncate text-muted-foreground @max-[30rem]/guide:hidden">
                               <GuideProse text={file.note} plain />
                             </span>
                           ) : null}
@@ -259,7 +259,7 @@ export function GuideStop({
                     key={question}
                     type="button"
                     onClick={() => onAsk(question)}
-                    className="flex min-w-0 items-start gap-2 rounded-lg border border-border/60 px-3 py-1.5 text-left text-sm text-foreground outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    className="flex min-w-0 items-start gap-2 rounded-lg border border-border/60 px-3 py-1.5 text-start text-sm text-foreground outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                   >
                     <MessageCircleQuestionIcon
                       aria-hidden

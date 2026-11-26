@@ -381,7 +381,9 @@ function GitActionProgressButtonContent({
       role="status"
     >
       <Spinner aria-hidden="true" className="row-start-1 -mx-0.5 shrink-0" />
-      <p className={cn("row-start-1 min-w-0 truncate text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+      <p
+        className={cn("row-start-1 min-w-0 truncate text-start", THREAD_DETAILS_PANEL_LABEL_CLASS)}
+      >
         {progress.status}
       </p>
       <GitActionElapsedTime
@@ -397,7 +399,7 @@ function GitActionProgressButtonContent({
         <div className="min-h-0 overflow-hidden">
           <SharedTooltipTrigger
             render={
-              <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
+              <p className="truncate pt-0.5 text-start text-2xs font-normal text-muted-foreground" />
             }
             label={progress.output}
             side="bottom"
@@ -421,7 +423,7 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
       role="status"
     >
       <CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" />
-      <p className={cn("min-w-0 truncate text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+      <p className={cn("min-w-0 truncate text-start", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
         {success.title}
       </p>
       <div
@@ -433,7 +435,7 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
         <div className="min-h-0 overflow-hidden">
           <SharedTooltipTrigger
             render={
-              <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
+              <p className="truncate pt-0.5 text-start text-2xs font-normal text-muted-foreground" />
             }
             label={success.description}
             side="bottom"
@@ -659,7 +661,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   return (
                     <div
                       key={option.value}
-                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-64 dark:border-transparent dark:bg-white/[0.035]"
+                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-start opacity-64 dark:border-transparent dark:bg-white/[0.035]"
                     >
                       <option.Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
@@ -694,7 +696,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     key={option.value}
                     value={option.value}
                     className={cn(
-                      "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                      "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-start outline-none transition-[background-color,border-color,box-shadow]",
                       "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                       isSelected
                         ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
@@ -787,7 +789,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       key={option.value}
                       value={option.value}
                       className={cn(
-                        "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                        "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-start outline-none transition-[background-color,border-color,box-shadow]",
                         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                         isSelected
                           ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
@@ -1584,7 +1586,7 @@ function CheckoutGitActionsControl({
           onClick={initializeGit}
         >
           <GitBranchPlusIcon className="size-3.5" aria-hidden />
-          <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+          <span className={cn("ms-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
             {initAction.isPending ? <T>Initializing...</T> : <T>Initialize Git</T>}
           </span>
         </ThreadDetailsControl>
@@ -1640,8 +1642,8 @@ function CheckoutGitActionsControl({
                 />
                 <span
                   className={cn(
-                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                    cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5",
+                    cn("not-sr-only ms-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
                   )}
                 >
                   {quickAction.label}
@@ -1673,8 +1675,8 @@ function CheckoutGitActionsControl({
               />
               <span
                 className={cn(
-                  "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                  cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+                  "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5",
+                  cn("not-sr-only ms-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
                 )}
               >
                 {quickAction.label}
@@ -1824,7 +1826,7 @@ function CheckoutGitActionsControl({
                     {gitStatusForActions?.refName ?? gt("(detached HEAD)")}
                   </span>
                   {isDefaultRef && (
-                    <span className="text-right text-warning">
+                    <span className="text-end text-warning">
                       <T>Default branch</T>
                     </span>
                   )}
@@ -1906,7 +1908,7 @@ function CheckoutGitActionsControl({
                                 )}
                                 <button
                                   type="button"
-                                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left enabled:cursor-pointer"
+                                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-start enabled:cursor-pointer"
                                   disabled={!canOperateThread || workingTreeRoot === null}
                                   aria-label={gt("Open {path} in editor", { path: file.path })}
                                   onClick={() => openChangedFileInEditor(file.path)}

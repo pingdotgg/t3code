@@ -1297,7 +1297,7 @@ export default function DiffPanel({
                     <span className="flex min-w-0 items-center gap-3">
                       <span className="min-w-0 truncate">{section.name}</span>
                       {section.relativePath !== "" && section.relativePath !== section.name ? (
-                        <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
+                        <span className="ms-auto min-w-0 truncate text-xs text-muted-foreground">
                           {section.relativePath}
                         </span>
                       ) : null}
@@ -1374,7 +1374,7 @@ export default function DiffPanel({
                     <span>
                       <T context="git branch">Branch</T>
                     </span>
-                    <span className="text-right">
+                    <span className="text-end">
                       <T context="git remote">Remote</T>
                     </span>
                   </div>
@@ -1462,7 +1462,7 @@ export default function DiffPanel({
             <DiffStatLabel
               additions={diffLineStat.additions}
               deletions={diffLineStat.deletions}
-              className="mr-1 text-2xs"
+              className="me-1 text-2xs"
               layout="inline"
             />
           </span>
