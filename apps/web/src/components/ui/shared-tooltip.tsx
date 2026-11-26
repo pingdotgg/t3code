@@ -42,18 +42,15 @@ interface SharedTooltipState extends SharedTooltipContent {
 
 interface HoveredTrigger {
   readonly content: SharedTooltipContent;
-  readonly onRestore: () => void;
+  readonly onHover: () => void;
 }
 
 interface SharedTooltipApi {
-  show(
-    anchor: HTMLElement,
-    content: SharedTooltipContent,
-    immediate: boolean,
-    onHoverRestore?: () => void,
-  ): void;
+  hover(anchor: HTMLElement, content: SharedTooltipContent, onHover: () => void): void;
+  leave(anchor: HTMLElement, relatedTarget: EventTarget | null): void;
+  show(anchor: HTMLElement, content: SharedTooltipContent, immediate: boolean): void;
   refresh(anchor: HTMLElement, content: SharedTooltipContent): void;
-  hide(anchor: HTMLElement, relatedTarget?: EventTarget | null): void;
+  hide(anchor: HTMLElement): void;
   /** A press closes it at once, as Base UI's closeOnClick does. */
   dismiss(anchor: HTMLElement): void;
   /** An unmounting trigger drops its own pending open and closes the popup only if it is its. */
@@ -85,7 +82,7 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
   const pending = useRef<SharedTooltipState | null>(null);
   const lastClosedAt = useRef(0);
   const current = useRef<SharedTooltipState | null>(null);
-  const hovered = useRef<Map<HTMLElement, HoveredTrigger>>(new Map());
+  const hovered = useRef<WeakMap<HTMLElement, HoveredTrigger>>(new WeakMap());
 
   const commit = (next: SharedTooltipState | null) => {
     current.current = next;
@@ -97,24 +94,20 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
     pending.current = null;
   };
   const findHoveredAncestor = (
-    relatedTarget: EventTarget | null | undefined,
+    relatedTarget: EventTarget | null,
   ): [HTMLElement, HoveredTrigger] | null => {
-    if (!(relatedTarget instanceof Node)) return null;
-    let match: [HTMLElement, HoveredTrigger] | null = null;
-    for (const [candidate, entry] of hovered.current) {
-      if (!candidate.isConnected) {
-        hovered.current.delete(candidate);
-        continue;
+    let node: Node | null = relatedTarget instanceof Node ? relatedTarget : null;
+    while (node) {
+      if (node instanceof HTMLElement) {
+        const entry = hovered.current.get(node);
+        if (entry) return [node, entry];
       }
-      if (candidate.contains(relatedTarget) && (!match || match[0].contains(candidate))) {
-        match = [candidate, entry];
-      }
+      node = node.parentNode;
     }
-    return match;
+    return null;
   };
   const [api] = useState<SharedTooltipApi>(() => {
-    const show: SharedTooltipApi["show"] = (anchor, content, immediate, onHoverRestore) => {
-      if (onHoverRestore) hovered.current.set(anchor, { content, onRestore: onHoverRestore });
+    const show: SharedTooltipApi["show"] = (anchor, content, immediate) => {
       clearTimer();
       // A Root that mounts open skips Base UI's mount transition, so the popup would slide in from (0,0).
       if (!current.current) flushSync(() => commit({ ...content, anchor, open: false }));
@@ -131,7 +124,39 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
         if (next) commit(next);
       }, OPEN_DELAY_MS);
     };
+    const hover: SharedTooltipApi["hover"] = (anchor, content, onHover) => {
+      hovered.current.set(anchor, { content, onHover });
+      show(anchor, content, false);
+      onHover();
+    };
+    const hide: SharedTooltipApi["hide"] = (anchor) => {
+      if (pending.current?.anchor === anchor) {
+        clearTimer();
+        return;
+      }
+      if (current.current?.anchor !== anchor || !current.current.open) return;
+      clearTimer();
+      timer.current = setTimeout(() => {
+        if (current.current?.open) lastClosedAt.current = performance.now();
+        if (current.current) commit({ ...current.current, open: false });
+      }, CLOSE_GRACE_MS);
+    };
     return {
+      hover,
+      leave(anchor, relatedTarget) {
+        hovered.current.delete(anchor);
+        const isOwnActive = current.current?.anchor === anchor && current.current.open;
+        const isOwnPending = pending.current?.anchor === anchor;
+        if (isOwnActive || isOwnPending) {
+          const ancestor = findHoveredAncestor(relatedTarget);
+          if (ancestor) {
+            const [parentAnchor, parentEntry] = ancestor;
+            hover(parentAnchor, parentEntry.content, parentEntry.onHover);
+            return;
+          }
+        }
+        hide(anchor);
+      },
       show,
       refresh(anchor, content) {
         const existingHover = hovered.current.get(anchor);
@@ -153,39 +178,19 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
         }
         commit({ ...active, ...content });
       },
-      hide(anchor, relatedTarget) {
-        hovered.current.delete(anchor);
-        const isOwnActive = current.current?.anchor === anchor && current.current.open;
-        const isOwnPending = pending.current?.anchor === anchor;
-        if (isOwnActive || isOwnPending) {
-          const ancestor = findHoveredAncestor(relatedTarget);
-          if (ancestor) {
-            const [parentAnchor, parentEntry] = ancestor;
-            parentEntry.onRestore();
-            show(parentAnchor, parentEntry.content, false, parentEntry.onRestore);
-            return;
-          }
-        }
-        if (current.current && current.current.anchor !== anchor) {
-          clearTimer();
-          return;
-        }
-        clearTimer();
-        timer.current = setTimeout(() => {
-          if (current.current?.open) lastClosedAt.current = performance.now();
-          if (current.current) commit({ ...current.current, open: false });
-        }, CLOSE_GRACE_MS);
-      },
+      hide,
       dismiss(anchor) {
+        if (pending.current?.anchor === anchor) clearTimer();
+        if (current.current?.anchor !== anchor || !current.current.open) return;
         clearTimer();
-        if (current.current?.anchor !== anchor) return;
-        if (current.current.open) lastClosedAt.current = 0;
+        lastClosedAt.current = 0;
         commit({ ...current.current, open: false });
       },
       release(anchor) {
         hovered.current.delete(anchor);
         if (pending.current?.anchor === anchor) clearTimer();
         if (current.current?.anchor === anchor && current.current.open) {
+          clearTimer();
           commit({ ...current.current, open: false });
         }
       },
@@ -272,12 +277,12 @@ export function useSharedTooltip(
       if (event.pointerType === "touch" || !enabled) return;
       const trigger = event.currentTarget;
       anchorRef.current = trigger;
-      const trackScroll = () => scrollTracker?.hover(trigger, api, () => api.dismiss(trigger));
-      api.show(trigger, content, false, trackScroll);
       // Scrolling the timeline closes it, as it does a TooltipTrigger's.
-      trackScroll();
+      api.hover(trigger, content, () =>
+        scrollTracker?.hover(trigger, api, () => api.dismiss(trigger)),
+      );
     },
-    onPointerLeave: (event) => api.hide(event.currentTarget, event.relatedTarget),
+    onPointerLeave: (event) => api.leave(event.currentTarget, event.relatedTarget),
     // Keyboard focus shows it at once, as Base UI does.
     onFocus: (event) => {
       // A wrapper's handler sees focus bubble from the control inside it, so check the focused element.
