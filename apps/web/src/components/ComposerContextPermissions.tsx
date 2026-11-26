@@ -1,10 +1,15 @@
-import type { EnvironmentId, RuntimeMode } from "@t3tools/contracts";
+import type { EnvironmentId, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { use } from "react";
 import { T, useGT, useMessages } from "gt-react";
 
 import { shortcutLabelForCommand } from "../keybindings";
 import { useManagedPolicy } from "../state/managedPolicy";
+import {
+  RuntimeModeLimitsTargetContext,
+  runtimeModeLimitsTarget,
+  useProviderRuntimeModeLimits,
+} from "../state/runtimeModeLimits";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { HiddenThreadContext } from "./chat/backgroundThread";
 import { ComposerControl } from "./chat/ComposerControl";
@@ -24,6 +29,9 @@ export function ComposerContextPermissions(props: {
   environmentId: EnvironmentId | null;
   runtimeMode: RuntimeMode;
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
+  /** The one provider this draft sends to and its folder; undefined for a multi-model send. */
+  instanceId: ProviderInstanceId | undefined;
+  cwd: string | null;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const gt = useGT();
@@ -36,7 +44,13 @@ export function ComposerContextPermissions(props: {
     props.runtimeMode,
     props.supportedRuntimeModes,
   );
-  const options = resolveRuntimeModeOptions(modes, useManagedPolicy(props.environmentId), messages);
+  const limitsFor = runtimeModeLimitsTarget(props.environmentId, props.instanceId, props.cwd);
+  const options = resolveRuntimeModeOptions(
+    modes,
+    useManagedPolicy(props.environmentId),
+    messages,
+    useProviderRuntimeModeLimits(limitsFor),
+  );
   const composerMenuProps = useComposerMenuProps();
   const [open, setOpen] = useComposerMenuState(use(HiddenThreadContext));
   const { icon: Icon } = runtimeModeConfig[mode];
@@ -67,11 +81,13 @@ export function ComposerContextPermissions(props: {
         <ComposerContextLabel>{label}</ComposerContextLabel>
       </SharedTooltipTrigger>
       <MenuPopup side="top" align="end" {...composerMenuProps}>
-        <ComposerPermissionsSection
-          runtimeMode={mode}
-          runtimeModeOptions={options}
-          onRuntimeModeChange={props.onRuntimeModeChange}
-        />
+        <RuntimeModeLimitsTargetContext value={limitsFor}>
+          <ComposerPermissionsSection
+            runtimeMode={mode}
+            runtimeModeOptions={options}
+            onRuntimeModeChange={props.onRuntimeModeChange}
+          />
+        </RuntimeModeLimitsTargetContext>
       </MenuPopup>
     </Menu>
   );

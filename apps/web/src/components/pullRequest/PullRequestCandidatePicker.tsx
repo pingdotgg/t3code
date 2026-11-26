@@ -107,7 +107,7 @@ export function PullRequestCandidatePicker<T>({
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
         />
-        <ComboboxList className="max-h-72">
+        <ComboboxList scrollAreaClassName="max-h-72">
           {isPending ? (
             <PullRequestPeopleGhost rows={4} />
           ) : error !== null ? (

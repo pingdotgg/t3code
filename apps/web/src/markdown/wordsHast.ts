@@ -12,10 +12,11 @@ import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
+import { expandIndentedCodeTabs } from "@t3tools/shared/markdownListIndentation";
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
-  rehypeNormalizeLocalEditorLinks,
+  rehypeNormalizeLocalFileLinks,
   rehypePreserveImageSourceMeta,
   sanitizeChatHast,
 } from "@t3tools/shared/markdownHast";
@@ -83,6 +84,12 @@ const PARAGRAPH_SCOPE = new Set([
   "template",
   "button",
 ]);
+// HTML special elements stop implicit </li> closing, except address, div, and p.
+const LIST_ITEM_SCOPE = new Set(
+  "applet area article aside base basefont bgsound blockquote body br button caption center col colgroup dd details dir dl dt embed fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hgroup hr html iframe img input li link listing main marquee menu meta nav noembed noframes noscript object ol param plaintext pre script search section select source style summary table tbody td template textarea tfoot th thead title tr track ul wbr xmp".split(
+    " ",
+  ),
+);
 
 type RenderOptions = Omit<WordsRenderOptions, "frontmatter">;
 
@@ -182,6 +189,16 @@ function tokenize(html: string, offsetOf: (byte: number) => number): Tokenized {
       continue;
     }
     const inSvg = svgDepth > 0 || tagName === "svg";
+    if (!inSvg && tagName === "li") {
+      for (let index = stack.length - 1; index > 0; index--) {
+        const openTag = (stack[index] as Element).tagName;
+        if (openTag === "li") {
+          stack.length = index;
+          break;
+        }
+        if (LIST_ITEM_SCOPE.has(openTag)) break;
+      }
+    }
     if (!inSvg && CLOSES_PARAGRAPH.has(tagName)) {
       const paragraph = openParagraph(stack);
       if (paragraph > 0) stack.length = paragraph;
@@ -464,7 +481,7 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
   };
 }
 
-const INLINE_PREFIX = "t3-markdown-inline-prefix:";
+const INLINE_PREFIX = "t3-markdown-inline-prefix ";
 
 function stripPositions(node: ElementContent) {
   delete node.position;
@@ -487,11 +504,12 @@ function recoverIndentedCode(
   const start = code?.position?.start.offset;
   const itemStart = item.position?.start.offset;
   if (!isElement(code, "pre") || start === undefined || itemStart === undefined) return false;
-  const value = textOf(code);
+  let value = textOf(code);
   if (!/^[\t ]/.test(value)) return false;
   if (walk.source.slice(itemStart, start).includes("\n") || /[`~]/.test(walk.source[start]!)) {
     return false;
   }
+  value = expandIndentedCodeTabs(value, walk.source, itemStart);
   // The trimmed first line sets where the item's content starts.
   const indent = [.../^[\t ]*/.exec(value)![0]].reduce(
     (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
@@ -906,7 +924,7 @@ function restoreMath(node: Root | Element, math: Map<string, Element>) {
 const addHeadingIds = rehypeHeadingIds();
 const addTextDirection = rehypeTextDirection();
 const preserveImageSourceMeta = rehypePreserveImageSourceMeta();
-const normalizeLocalEditorLinks = rehypeNormalizeLocalEditorLinks();
+const normalizeLocalFileLinks = rehypeNormalizeLocalFileLinks();
 const groupChipPunctuation = rehypeChipPunctuation();
 
 const INSIGHT_OPENING = /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u;
@@ -941,7 +959,7 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
   const nonce = Math.random().toString(36).slice(2);
   const marker = new RegExp(String.raw`^\[!T3-INSIGHT-${nonce}-(\d+)\](?:\r?\n)?`);
   const anywhere = new RegExp(String.raw`\[!T3-INSIGHT-${nonce}-(\d+)\]`, "g");
-  const lines = text.split(/(?<=\n)/u);
+  const lines = text.split(/(?<=\n)|(?<=\r)(?!\n)/u);
   const skipped = new Set<number>();
   for (;;) {
     // Each line's offset in the message and in the source, and how much longer it got.
@@ -1007,7 +1025,14 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
       tree,
       marker,
       toOriginal: (offset) => {
-        const line = offsets.findLast((entry) => entry.source <= offset) ?? offsets[0]!;
+        let low = 0;
+        let high = offsets.length - 1;
+        while (low < high) {
+          const mid = (low + high + 1) >>> 1;
+          if (offsets[mid]!.source <= offset) low = mid;
+          else high = mid - 1;
+        }
+        const line = offsets[low]!;
         return (
           line.original + Math.min(Math.max(offset - line.source - line.delta, 0), line.length)
         );
@@ -1178,7 +1203,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   };
   transform(tree, walk, false, false);
   preserveImageSourceMeta(tree as never);
-  normalizeLocalEditorLinks(tree as never);
+  normalizeLocalFileLinks(tree as never);
   const hast = sanitizeChatHast(tree);
   if (walk.math.size > 0) restoreMath(hast, walk.math);
   if (insights) restorePositions(hast, insights.toOriginal);
@@ -1307,32 +1332,37 @@ export function markdownHtmlComments(markdown: string): Array<{ start: number; e
 
 /**
  * The first definition of each label in `markdown`, as one line of Markdown. Words decides which
- * `[label]:` text defines one: each label is looked up again after the text.
+ * `[label]:` text defines one: each label is looked up before the text so an unclosed trailing
+ * block cannot consume the lookups.
  */
 export function markdownReferenceDefinitions(markdown: string): string[] {
   const labels = new Map<string, string>();
   for (const match of markdown.matchAll(/\[((?:[^\\[\]]|\\.){1,999})\]:/g)) {
-    const key = match[1]!.replace(/\s+/g, " ").trim().toLowerCase();
+    const label = match[1]!.replace(/[ \t\r\n\f\v]+/g, " ");
+    const key = label.trim().toLowerCase();
     // `[^1]:` is a footnote.
-    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, match[1]!);
+    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, label);
   }
   if (labels.size === 0) return [];
-  let probe = `${markdown}\n\n`;
+  let probe = "";
   const lookups = new Map<number, string>();
   for (const label of labels.values()) {
     lookups.set(probe.length, label);
     probe += `[${label}]\n\n`;
   }
+  probe += markdown.replace(/^\uFEFF/, "");
   const definitions: string[] = [];
   const visit = (node: Root | Element) => {
     for (const child of node.children) {
       if (child.type !== "element") continue;
       const label = lookups.get(child.position?.start.offset ?? -1);
       if (child.tagName === "a" && label !== undefined) {
-        const href = String(child.properties.href ?? "").replace(/[<>\\\n]/g, encodeURIComponent);
+        const href = String(child.properties.href ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/[<>\\\n]/g, encodeURIComponent);
         const title = child.properties.title;
         definitions.push(
-          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&")}"` : ""}`,
+          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&").replace(/&/g, "&amp;")}"` : ""}`,
         );
       } else visit(child);
     }

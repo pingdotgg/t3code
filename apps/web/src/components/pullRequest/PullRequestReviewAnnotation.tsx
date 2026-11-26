@@ -61,6 +61,7 @@ function submitKeys(input: {
     }
     if (event.key === "Escape" && input.onCancel) {
       event.preventDefault();
+      event.stopPropagation();
       input.onCancel();
     }
     if (isCommentSubmitShortcut(event, input.value, input.pending, input.allowEmpty)) {

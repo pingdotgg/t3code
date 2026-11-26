@@ -117,6 +117,11 @@ export function effectiveSpeechLanguage(
   return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
 }
 
+/** The final byte count can arrive before the download finishes writing to disk. */
+export function speechModelDownloadPercent(downloaded: number, size: number) {
+  return Math.min(99, Math.floor((downloaded * 100) / size));
+}
+
 /**
  * The model first-run setup offers: the selected one, else the benchmark pick, else any that the
  * server would really transcribe the person's language with. Without a language hint,

@@ -700,6 +700,19 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
   });
 
+  it("asks about tools Claude sends back in Auto", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: "/workspace",
+        }),
+      ),
+      { permissionMode: "auto", installPermissionCallback: true },
+    );
+  });
+
   it("keeps approval-required mode interactive with danger-full-access sandboxing", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
       ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -5300,6 +5313,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    it.effect("names the settings that turn auto mode off, through the real SDK", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sdk = yield* Effect.promise(() =>
+          vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk"),
+        );
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(sdk.resolveSettings);
+        const disabledBy = Effect.fnUntraced(function* (
+          file: "project" | "local" | "home" | "remote" | null,
+        ) {
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-auto-home-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-auto-cwd-" });
+          yield* fileSystem.makeDirectory(path.join(cwd, ".claude"));
+          if (file !== null) {
+            yield* fileSystem.writeFileString(
+              {
+                project: path.join(cwd, ".claude", "settings.json"),
+                local: path.join(cwd, ".claude", "settings.local.json"),
+                home: path.join(home, "settings.json"),
+                remote: path.join(home, "remote-settings.json"),
+              }[file],
+              JSON.stringify(
+                file === "local"
+                  ? { permissions: { disableAutoMode: "disable" } }
+                  : { disableAutoMode: "disable" },
+              ),
+            );
+          }
+          const availability = yield* ClaudeAdapterV2.resolveClaudeModeAvailability({
+            settings: DEFAULT_CLAUDE_SETTINGS,
+            homePath: home,
+            customHome: true,
+            cwd,
+            fileSystem,
+            path,
+          });
+          return [availability.autoDisabled, availability.autoDisabledBy];
+        });
+        assert.deepEqual(yield* disabledBy(null), [false, undefined]);
+        assert.deepEqual(yield* disabledBy("project"), [true, "project-settings"]);
+        assert.deepEqual(yield* disabledBy("local"), [true, "project-settings"]);
+        assert.deepEqual(yield* disabledBy("home"), [true, "user-settings"]);
+        assert.deepEqual(yield* disabledBy("remote"), [true, "managed-settings"]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
     it.effect("asks before restricted Full access tools and follows policy across turns", () =>
       Effect.gen(function* () {
         const resolveSettings = vi
@@ -6079,6 +6141,212 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
   });
+
+  it.effect.each([
+    { reported: "auto", when: "runs in Auto" },
+    { reported: "default", when: "cannot run in Auto" },
+  ] as const)("asks about a tool Claude sends back when the thread $when", ({ reported }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-auto-ask"),
+        text: "Run git status.",
+        attachments: [],
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: "/workspace",
+        }),
+      });
+      yield* harness.runtime.startTurn({
+        ...input,
+        appThread: { ...input.appThread, runtimeMode: "auto" },
+      });
+      const opened = harness.getOpenedOptions()!;
+      assert.equal(opened.permissionMode, "auto");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: reported,
+          uuid: "auto-ask-init",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      const decision = yield* Effect.promise(() =>
+        opened.canUseTool!(
+          "Bash",
+          { command: "git status" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "auto-ask-command",
+            requestId: "request-auto-ask-command",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      const first = yield* Effect.raceFirst(
+        Queue.take(harness.runtimeRequestReceipts).pipe(
+          Effect.map((event) => ({ type: "request", event }) as const),
+        ),
+        Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+      );
+      assert.equal(first.type, "request", "Auto answered a tool request without asking");
+      if (first.type !== "request") return;
+      assert.equal(first.event.runtimeRequest.kind, "command");
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: first.event.runtimeRequest.id,
+        decision: "decline",
+      });
+      assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+      // A second init, as a resumed process sends, must not repeat the notice.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: reported,
+          uuid: "auto-ask-init-again",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        ),
+        reported === "auto" ? [] : [ClaudeAdapterV2.claudeAutoModeUnavailableNotice(undefined)],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  const autoModeNotices = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+        ? [event.turnItem.message]
+        : [],
+    );
+  const autoTurnInput = (
+    harness: {
+      readonly threadId: ThreadId;
+      readonly providerThread: OrchestrationV2ProviderThread;
+    },
+    ordinal: number,
+    providerThread = harness.providerThread,
+  ) => {
+    const input = makeClaudeTestTurnInput({
+      threadId: harness.threadId,
+      providerThread,
+      now: DateTime.makeUnsafe(0),
+      attemptId: RunAttemptId.make(`attempt-claude-auto-notice-${ordinal}`),
+      text: "Run git status.",
+      attachments: [],
+      providerTurnOrdinal: ordinal,
+      runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+    });
+    return { ...input, appThread: { ...input.appThread, runtimeMode: "auto" as const } };
+  };
+
+  it.effect("says nothing about Auto when launch arguments ask Claude for another mode", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: {
+          ...DEFAULT_CLAUDE_SETTINGS,
+          launchArgs: "--permission-mode bypassPermissions",
+        },
+      });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 1));
+      assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: "bypassPermissions",
+          uuid: "auto-launch-arg-init",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      // Events arrive in order, so the terminal one follows any notice the init caused.
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(autoModeNotices(harness.events), []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("tells a session Claude started under another id about Auto once", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const init = (uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: "default",
+          uuid,
+          session_id: "adopted-native-session",
+        });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 1));
+      // A start-up retry runs under a new id, which the adapter adopts from this init.
+      yield* harness.offerAndWait(init("auto-adopted-init"));
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      const adopted = harness.events.findLast((event) => event.type === "provider_thread.updated");
+      assert.equal(adopted?.providerThread.nativeThreadRef?.nativeId, "adopted-native-session");
+      yield* harness.runtime.interruptTurn({
+        providerThread: adopted!.providerThread,
+        providerTurnId: lastProviderTurn(harness.events).id,
+        requestRuntimeRestart: true,
+      });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 2, adopted!.providerThread));
+      assert.equal(harness.getOpenedOptions()?.resume, "adopted-native-session");
+      yield* harness.offerAndWait(init("auto-adopted-init-resumed"));
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "auto-adopted-result-resumed", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(autoModeNotices(harness.events), [
+        ClaudeAdapterV2.claudeAutoModeUnavailableNotice(undefined),
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect(
     "carries earlier user-only skill instructions on sends and steering with attachments",

@@ -13,12 +13,15 @@ const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
+const THEMATIC_BREAK = Symbol("thematic-break");
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 type TextPart =
   | string
   | typeof CELL_START
   | typeof CELL_END
   | typeof LINE_START
+  | typeof THEMATIC_BREAK
+  | { imageDescription: string }
   | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
@@ -59,6 +62,7 @@ interface XmlNode {
   name: string;
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
+  imageDescription?: string;
   spaceCount?: number;
   hasText?: boolean;
   hasTextChoice?: boolean;
@@ -125,10 +129,16 @@ function xml(source: string, extension: string): XmlNode {
     const node: XmlNode = {
       name: tag.name.split(":").at(-1)!,
       attrs: Object.fromEntries(
-        Object.entries(tag.attributes).flatMap(([key, value]) => [
-          [key, String(value)],
-          [key.split(":").at(-1)!, String(value)],
-        ]),
+        Object.entries(tag.attributes).flatMap(([key, value]) => {
+          const local = key.split(":").at(-1)!;
+          // XHTML table spans are unqualified; a prefixed colspan is a foreign attribute.
+          return extension === ".epub" && (local === "colspan" || local === "rowspan")
+            ? [[key, String(value)]]
+            : [
+                [key, String(value)],
+                [local, String(value)],
+              ];
+        }),
       ),
       children: [],
     };
@@ -195,7 +205,7 @@ function xml(source: string, extension: string): XmlNode {
         String(tag.attributes.style ?? ""),
       )
     ) {
-      node.children.push(alt);
+      node.imageDescription = alt;
       node.hasText = true;
     }
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
@@ -273,6 +283,10 @@ function* all(
 }
 function* text(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
+  if (node.imageDescription !== undefined) {
+    yield { imageDescription: node.imageDescription };
+    return;
+  }
   // Word text boxes hold their own paragraphs inside the anchoring paragraph.
   if (node.name === "txbxContent") yield* paragraphs(node);
   else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
@@ -306,11 +320,21 @@ function* xstringText(node: XmlNode): Generator<string, void> {
 }
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
+  if (node.imageDescription !== undefined) {
+    yield* text(node);
+    return;
+  }
   for (const child of node.children) {
     if (typeof child === "string") yield child;
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
+    else if (child.name === "hr") yield THEMATIC_BREAK;
     else if (["tbl", "table"].includes(child.name)) yield* table(child);
-    else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
+    else if (child.name === "pre" && child.hasText) {
+      yield LINE_START;
+      yield* text(child);
+      yield LINE_START;
+    } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
+      yield THEMATIC_BREAK;
       const style =
         all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =
@@ -322,10 +346,23 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       if (level) yield `${"#".repeat(Math.min(6, level))} `;
       yield* text(child);
       yield "\n";
-    } else {
-      if (node.name === "li" && ["ol", "ul"].includes(child.name)) yield LINE_START;
+    } else if (
+      ["blockquote", "figcaption", "aside", "address", "header", "footer"].includes(child.name) &&
+      child.hasText
+    ) {
+      yield LINE_START;
       yield* paragraphs(child);
-      if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
+      yield LINE_START;
+    } else {
+      if (["ol", "ul", "dl"].includes(child.name)) {
+        if (!child.hasText) continue;
+        yield LINE_START;
+      }
+      const block = ["li", "div", "section", "dt", "dd"].includes(child.name);
+      // Like a thematic break, a nested block starts a new line once its content arrives.
+      if (block) yield THEMATIC_BREAK;
+      yield* paragraphs(child);
+      if (block) yield "\n";
     }
   }
 }
@@ -376,7 +413,8 @@ function odfValue(cell: XmlNode): string {
 const covered = (cell: XmlNode) => cell.name === "covered-table-cell";
 function hasCellText(cell: XmlNode): boolean {
   if (covered(cell)) return false;
-  if (odfValue(cell).trim() || cell.name === "noBreakHyphen") return true;
+  if (cell.imageDescription !== undefined || odfValue(cell).trim() || cell.name === "noBreakHyphen")
+    return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
   if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
   return cell.children.some((child) =>
@@ -404,6 +442,7 @@ function* epubTable(node: XmlNode): Generator<TextPart, void> {
         .map((cell) => ({ cell, rowSpan: epubSpan(cell.attrs.rowspan) }));
       const lastText = cells.findLastIndex(({ cell }) => hasCellText(cell));
       if (lastText >= 0 && ++rowCount > 10_000) throw new Truncation("Row limit");
+      if (lastText >= 0 && rowCount === 1) yield LINE_START;
       // An empty cell can still reserve columns in later rows.
       const lastCell = Math.max(
         lastText,
@@ -461,10 +500,14 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     while (cells.length && !hasCellText(cells.at(-1)!)) cells.pop();
     if (!cells.length) continue;
     const repeat = repeatCount(row.attrs["number-rows-repeated"]);
+    // Word emits no cells for the grid columns w:gridBefore skips at the start of a row.
+    const trPr = row.name === "tr" ? children(row).find((c) => c.name === "trPr") : undefined;
+    const before = trPr && children(trPr).find((c) => c.name === "gridBefore")?.attrs.val;
+    const skipped = before ? Math.max(0, Number.parseInt(before, 10) || 0) : 0;
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
-      let column = 0;
-      let gap = 0;
+      let column = skipped;
+      let gap = skipped;
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
         // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
@@ -592,7 +635,7 @@ function* notebook(source: string): Generator<string, void> {
     const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
-    if ("outputs" in cell && Array.isArray(cell.outputs)) {
+    if ("outputs" in cell && Array.isArray(cell.outputs) && cell.outputs.length > 0) {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
@@ -602,10 +645,15 @@ function* notebook(source: string): Generator<string, void> {
           "data" in output &&
           output.data &&
           typeof output.data === "object" &&
-          "text/plain" in output.data
-        )
-          yield outputText(output.data["text/plain"]);
-        else if ("output_type" in output && output.output_type === "error") {
+          ("text/plain" in output.data || "text/markdown" in output.data)
+        ) {
+          const plain = outputText(
+            "text/plain" in output.data ? output.data["text/plain"] : undefined,
+          );
+          yield "text/markdown" in output.data && !plain.replaceAll("\0", "").trim()
+            ? outputText(output.data["text/markdown"])
+            : plain;
+        } else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {
             yield ": ";
@@ -1103,6 +1151,9 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let started = false;
   let space = false;
   let midLine = false;
+  let pendingThematicBreak: string | undefined;
+  let endsWithWord = false;
+  let afterImageDescription = false;
   let truncated = false;
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
@@ -1115,31 +1166,78 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === CELL_END) {
+        remaining -= pendingThematicBreak?.length ?? 0;
+        pendingThematicBreak = undefined;
         cellDepth--;
         if (cellDepth > 0 && started) space = true;
         continue;
       }
+      if (part === THEMATIC_BREAK) {
+        if (midLine) pendingThematicBreak ??= "";
+        continue;
+      }
       if (part === LINE_START) {
-        // A nested list starts its own line unless its parent item's text already ended one.
+        // A list starts its own line unless the text before it already ended one.
         if (!midLine) continue;
         part = "\n";
       }
-      if (typeof part !== "string" && started) continue;
-      const raw = typeof part === "string" ? part : part.fallback;
+      let raw: string;
+      let isImageDescription = false;
+      if (typeof part === "string") raw = part;
+      else if ("imageDescription" in part) {
+        raw = part.imageDescription;
+        isImageDescription = true;
+      } else {
+        if (started) continue;
+        raw = part.fallback;
+      }
+      if (pendingThematicBreak !== undefined) {
+        const next = pendingThematicBreak + raw;
+        const hasContent = /[^ \t]/u.test(raw);
+        // Inline markup can split significant indentation across chunks.
+        if (!hasContent && next.length < remaining) {
+          pendingThematicBreak = next;
+          continue;
+        }
+        raw = hasContent && !/^[ \t]*\n/u.test(raw) ? "\n" + next : next;
+        pendingThematicBreak = undefined;
+      }
+      // Resolve image boundaries here, after inline markup has been flattened.
+      // Pending cell whitespace has already used its share of the output budget.
+      if (
+        (isImageDescription || afterImageDescription) &&
+        endsWithWord &&
+        !(cellDepth > 0 && started && space) &&
+        /^\u00ad*[\p{L}\p{M}\p{N}_]/u.test(raw)
+      )
+        raw = " " + raw;
       let value = raw.slice(0, remaining).replaceAll("\0", "");
       remaining -= Math.min(raw.length, remaining);
       if (cellDepth) {
         value = value.replaceAll(/\s+/g, " ");
         const trimmed = value.trim();
         if (trimmed) {
-          result += (started && (space || value.startsWith(" ")) ? " " : "") + trimmed;
+          const separator = started && (space || value.startsWith(" ")) ? " " : "";
           started = true;
           midLine = true;
+          space = value.endsWith(" ");
+          value = separator + trimmed;
+        } else {
+          space = value.endsWith(" ") || (!value && space);
+          value = "";
         }
-        space = value.endsWith(" ") || (!value && space);
       } else {
-        result += value;
         midLine = endsMidLine(value) ?? midLine;
+      }
+      result += value;
+      if (extension === ".epub") {
+        // Soft hyphens stay in the output but do not decide where a visible word ends.
+        let end = value.length;
+        while (value[end - 1] === "\u00ad") end--;
+        if (end > 0) {
+          endsWithWord = /[\p{L}\p{M}\p{N}_]$/u.test(value.slice(Math.max(0, end - 2), end));
+          afterImageDescription = isImageDescription;
+        }
       }
       if (remaining === 0) throw new Truncation("Output budget");
     }

@@ -578,7 +578,8 @@ function limitContext(value: string, maxChars: number): string {
 function limitCommandOutput(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   if (item.type !== "command_execution" || item.output === undefined) return item;
   if (item.output.length <= PR_THREAD_COMMAND_OUTPUT_CHARS) return item;
-  return { ...item, output: `[truncated]\n${item.output.slice(-PR_THREAD_COMMAND_OUTPUT_CHARS)}` };
+  const tail = item.output.slice(-PR_THREAD_COMMAND_OUTPUT_CHARS).replace(/^[\uDC00-\uDFFF]/u, "");
+  return { ...item, output: `[truncated]\n${tail}` };
 }
 
 function shortenSha(sha: string | undefined): string | null {
@@ -593,7 +594,10 @@ function truncateText(
   if (!value) return undefined;
   if (value.length <= maxLength) return value;
   if (maxLength <= 3) return "...".slice(0, maxLength);
-  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  return `${value
+    .slice(0, Math.max(0, maxLength - 3))
+    .replace(/[\uD800-\uDBFF]$/u, "")
+    .trimEnd()}...`;
 }
 
 function withDescription(title: string, description: string | undefined) {
@@ -657,7 +661,11 @@ function sanitizeCommitMessage(
         (_, prefix: string, word: string) => prefix + word.toLowerCase(),
       )
     : trimmedSubject;
-  const safeSubject = subject.length > 0 ? subject.slice(0, 72).trimEnd() : "Update project files";
+  const safeSubject =
+    subject
+      .slice(0, 72)
+      .replace(/[\uD800-\uDBFF]$/u, "")
+      .trimEnd() || "Update project files";
   return {
     subject: safeSubject,
     body: generated.body.trim(),
@@ -673,7 +681,10 @@ function sanitizeProgressText(value: string): string | null {
   if (trimmed.length <= MAX_PROGRESS_TEXT_LENGTH) {
     return trimmed;
   }
-  return trimmed.slice(0, MAX_PROGRESS_TEXT_LENGTH).trimEnd();
+  return trimmed
+    .slice(0, MAX_PROGRESS_TEXT_LENGTH)
+    .replace(/[\uD800-\uDBFF]$/u, "")
+    .trimEnd();
 }
 
 interface CommitAndBranchSuggestion {

@@ -134,7 +134,7 @@ function IssueLabelPicker({
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const applied = new Set(detail.labels.map((label) => label.name));
-  const needle = query.toLowerCase();
+  const needle = query.trim().toLowerCase();
   const candidates = (candidatesQuery.data?.labels ?? []).filter(
     (label) =>
       needle.length === 0 ||
@@ -250,7 +250,7 @@ function IssueAssigneePicker({
     open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const needle = query.toLowerCase();
+  const needle = query.trim().toLowerCase();
   const candidates = (candidatesQuery.data?.assignees ?? []).filter(
     (candidate) =>
       needle.length === 0 ||
@@ -644,9 +644,13 @@ export function IssueDetailPanel({
               aria-label={gt("Refresh issue")}
               disabled={detailQuery.isPending}
               onClick={() =>
-                void pager.refresh(registry, () =>
-                  executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
-                )
+                void pager.refresh(registry, () => {
+                  issueEnvironment.oweDetailRefresh(registry, detailAtom);
+                  return executeAtomQuery(registry, detailAtom, {
+                    refresh: true,
+                    reportFailure: false,
+                  });
+                })
               }
             >
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
@@ -679,7 +683,10 @@ export function IssueDetailPanel({
                 disabled={saving}
                 onChange={(event) => setTitleDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") setEditing(null);
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setEditing(null);
                 }}
               />
               <Button type="submit" size="sm" disabled={saving}>
