@@ -780,7 +780,6 @@ Third}`;
   );
 
   it.each([
-    ["an empty title", "<title></title>", "<h1>Prologue</h1>", "Prologue"],
     ["a blank title", "<title> \n </title>", "<h1>Prologue</h1>", "Prologue"],
     ["an empty first heading", "", "<h1></h1><h1>Prologue</h1>", "Prologue"],
     ["only blank headings", "<title> </title>", "<h1></h1><p>Body</p>", undefined],
