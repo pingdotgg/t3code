@@ -13014,5 +13014,7 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "b62b5c8ef10071e1": "Impossible d’appliquer le mode d’autorisation",
+  "6c86fefc59f0698f": "Ce mode s’appliquera à votre prochain message. {detail}"
 }

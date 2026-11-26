@@ -86,13 +86,13 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useThreadReportedModelSelection } from "../../state/entities";
 import {
   setComposerDraftText,
-  updateComposerDraftSettings,
   useComposerDraft,
   useComposerDraftSettings,
 } from "../../state/use-composer-drafts";
 import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { activeComposerDraftKey, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { selectThreadModel } from "../../state/thread-model-selection";
+import { selectThreadRuntimeMode } from "../../state/thread-runtime-mode";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
@@ -1583,7 +1583,7 @@ export function ExistingThreadSettingsRouteScreen({
         updateModelSelection({ ...modelSelection, options });
       }}
       runtimeMode={threadDraftSettings.runtimeMode ?? selectedThread.runtimeMode}
-      onUpdateRuntimeMode={(runtimeMode) => updateComposerDraftSettings(threadKey, { runtimeMode })}
+      onUpdateRuntimeMode={(runtimeMode) => selectThreadRuntimeMode(route.params, runtimeMode)}
       onClose={() => navigation.goBack()}
     />
   );

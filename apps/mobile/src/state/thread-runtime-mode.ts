@@ -1,0 +1,68 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type RuntimeMode,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import * as Dialog from "../components/ui/Dialog";
+import { m } from "../i18n/messages";
+import { scopedThreadKey } from "../lib/scopedEntities";
+import { appAtomRegistry } from "./atom-registry";
+import { readEnvironmentScope } from "./session";
+import { environmentThreadShells, threadEnvironment } from "./threads";
+import {
+  releaseComposerDraftRuntimeMode,
+  updateComposerDraftSettings,
+} from "./use-composer-drafts";
+
+/**
+ * Sets an idle thread's runtime-mode pick on the thread, so turns that other threads, PR
+ * watches, and schedules start there run in the mode the composer shows.
+ */
+export function selectThreadRuntimeMode(
+  ref: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+  runtimeMode: RuntimeMode,
+): void {
+  const threadKey = scopedThreadKey(ref.environmentId, ref.threadId);
+  updateComposerDraftSettings(threadKey, { runtimeMode });
+  const thread = appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
+  // A mode change can end the provider session, so a busy thread takes the pick with its
+  // next message instead.
+  if (
+    !thread ||
+    thread.runtimeMode === runtimeMode ||
+    threadRuntimeIsActive(thread.runtime) ||
+    !readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
+  ) {
+    return;
+  }
+  void runAtomCommand(
+    appAtomRegistry,
+    threadEnvironment.setRuntimeMode,
+    {
+      environmentId: ref.environmentId,
+      input: { threadId: ref.threadId, runtimeMode, createdAt: new Date().toISOString() },
+    },
+    { label: "change permission mode", reportFailure: true, reportDefect: true },
+  ).then((result) => {
+    // Released on the reply, so a later change from another client shows.
+    if (result._tag === "Success") {
+      releaseComposerDraftRuntimeMode(threadKey, runtimeMode);
+    } else {
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(
+        m(msg("Could not apply permission mode")),
+        m(
+          msg("This mode applies to your next message. {detail}", {
+            detail: errorDisplayMessage(error, m) ?? m(msg("Try again.")),
+          }),
+        ),
+      );
+    }
+  });
+}

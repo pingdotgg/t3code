@@ -13021,5 +13021,7 @@
       "v": "v"
     },
     " till i Länkade objekt"
-  ]
+  ],
+  "b62b5c8ef10071e1": "Det gick inte att tillämpa behörighetsläget",
+  "6c86fefc59f0698f": "Det här läget gäller ditt nästa meddelande. {detail}"
 }
