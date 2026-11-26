@@ -17,6 +17,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as References from "effect/References";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
@@ -35,6 +36,7 @@ import {
 import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
+import { currentScheduleId } from "./triggers.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import {
   answerStamped,
@@ -48,7 +50,7 @@ import {
   type Woke,
   type WorkflowDefinition,
 } from "./workflow.ts";
-import { issueReference, noteFor, stepReferences } from "./runReferences.ts";
+import { issueReference, noteFor, stepReferences, subjectSet } from "./runReferences.ts";
 import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import { answerProblem, settleTurn, TurnEnd, TurnWatch } from "./workflowAgent.ts";
@@ -72,6 +74,7 @@ import {
   Workflows,
 } from "./Workflows.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
+import { routineSpan, withoutRoutineSpans } from "@t3tools/shared/observability";
 
 const SWEEP_EVERY = Duration.seconds(15);
 const LOOK_EVERY = Duration.minutes(1);
@@ -147,10 +150,14 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const digest = yield* Digest.Digest;
   const context = yield* Effect.context<WorkflowEngine.WorkflowEngine>();
   // The engine keeps 64-bit ids, which this SQLite client only reads when asked for BigInts.
+  // Callers keep their own span annotations, so a user's start or cancel is not marked routine.
   const withEngine = <A, E>(effect: Effect.Effect<A, E, WorkflowEngine.WorkflowEngine>) =>
-    effect.pipe(
-      Effect.provideContext(context),
-      Effect.provideService(SqlClient.SafeIntegers, true),
+    Effect.flatMap(References.TracerSpanAnnotations, (annotations) =>
+      effect.pipe(
+        Effect.provideService(References.TracerSpanAnnotations, annotations),
+        Effect.provideContext(context),
+        Effect.provideService(SqlClient.SafeIntegers, true),
+      ),
     );
   const byTag = new Map(registered.map(([, engine]) => [engine._tag, engine] as const));
   const definitionByTag = new Map(
@@ -193,6 +200,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     ...(row.tags_json === "[]"
       ? {}
       : { tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string> }),
+    ...(row.subject_json === null ? {} : { subject: WorkflowStore.subjectOf(row.subject_json) }),
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -341,6 +349,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       // The key is unique, so the row holding it is the run, even one another version started.
       const holder = yield* store.runByKey(name, options.idempotencyKey);
       if (holder !== undefined && holder.run_id !== runId) return yield* other(holder);
+      if (earlier === undefined && options.subject !== undefined) {
+        yield* subjectSet(store, runId, options.subject);
+      }
       yield* withEngine(engine.execute(payload, { discard: true }));
       if (options.parent !== undefined) {
         // The key named a run that someone else started: it would never tell this parent.
@@ -361,11 +372,29 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const latestDefinitions = [...new Set(registered.map(([definition]) => definition.name))].map(
     (name) => latest(name)![0],
   );
+  // A daily schedule saved under an id that followed its spelling keeps that id, for its next
+  // time and for the keys of its runs: a time it has started is then not started again.
+  const savedIds = yield* store.triggerIds;
+  const stateId = (
+    definition: WorkflowDefinition,
+    trigger: Exclude<WorkflowDefinition["triggers"][number], { readonly kind: "webhook" }>,
+  ) => {
+    const prefix = `${definition.name}/`;
+    const id = `${prefix}${trigger.id}`;
+    if (trigger.kind !== "schedule" || savedIds.includes(id)) return id;
+    const earlier = savedIds
+      .filter(
+        (saved) =>
+          saved.startsWith(prefix) && currentScheduleId(saved.slice(prefix.length)) === trigger.id,
+      )
+      .toSorted();
+    return earlier[0] ?? id;
+  };
   // A schedule taken out and put back is new again: its first run is one interval away.
   yield* store.triggersKeep(
     latestDefinitions.flatMap((definition) =>
       definition.triggers.flatMap((trigger) =>
-        trigger.kind === "webhook" ? [] : [`${definition.name}/${trigger.id}`],
+        trigger.kind === "webhook" ? [] : [stateId(definition, trigger)],
       ),
     ),
   );
@@ -375,7 +404,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const definition of latestDefinitions) {
       for (const trigger of definition.triggers) {
         if (trigger.kind !== "schedule") continue;
-        const id = `${definition.name}/${trigger.id}`;
+        const id = stateId(definition, trigger);
         const due = yield* store.triggerNext(id);
         if (due !== undefined) {
           const dueAt = DateTime.makeUnsafe(due);
@@ -425,7 +454,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const definition of latestDefinitions) {
       for (const trigger of definition.triggers) {
         if (trigger.kind !== "issues" && trigger.kind !== "pullRequests") continue;
-        const id = `${definition.name}/${trigger.id}`;
+        const id = stateId(definition, trigger);
         const since = yield* store.triggerNext(id);
         if (since === undefined) {
           yield* store.triggerSet(id, DateTime.formatIso(now));
@@ -733,11 +762,13 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     const decode = Schema.decodeEffect(payloadCodec);
     yield* decode(row.input_json === null ? null : WorkflowStore.jsonValue(row.input_json)).pipe(
       Effect.flatMap((input) =>
-        onEnd(input as never, {
-          id: row.run_id,
-          outcome: "cancelled",
-          reason: row.detail ?? undefined,
-        }),
+        withoutRoutineSpans(
+          onEnd(input as never, {
+            id: row.run_id,
+            outcome: "cancelled",
+            reason: row.detail ?? undefined,
+          }),
+        ),
       ),
       Effect.provideContext(forStep(store, keyValues, link, forge, row.run_id, END_STEP)),
       // The sweep that runs it reads the engine's BigInts; the cleanup's own code must not.
@@ -1079,8 +1110,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         yield* wake(late, answered);
         return "delivered" as const;
       }
-      // The kept copy went to a wait that opened, or was dropped as already delivered.
-      if (outcome === "gone") return "delivered" as const;
+      if (outcome === "claimed") continue;
+      if (yield* store.signalSeen(options.id)) return "delivered" as const;
+      return yield* new WorkflowInputError({ problem: "Buffered signal expired or was removed." });
     }
   });
   const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
@@ -1237,6 +1269,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         status: row.status,
         detail: row.detail,
         tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string>,
+        subject: row.subject_json === null ? null : WorkflowStore.subjectOf(row.subject_json),
         startedAt: row.started_at,
         endedAt: row.ended_at,
       }));
@@ -1286,10 +1319,38 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
       const rows =
-        filter?.tag === undefined
+        filter?.tag === undefined && filter?.subject === undefined
           ? yield* store.runs(filter?.status)
-          : yield* store.runsWhere({ status: filter.status, tag: filter.tag });
+          : yield* store.runsWhere({
+              status: filter.status,
+              tag: filter.tag,
+              subject: filter.subject,
+            });
       return rows.map(toRun);
+    }),
+    about: Effect.fn("Workflows.about")(function* (item) {
+      // Keyed as the subject was kept, so an item named without its address is found too.
+      const identity =
+        item.issue !== undefined
+          ? issueReference(item.issue)
+          : item.pullRequest !== undefined
+            ? pullRequestReferenceOf(item.pullRequest, { url: item.subject })
+            : undefined;
+      const found = [
+        ...(yield* store.runsWhere({ subject: item.subject })),
+        ...(identity === undefined
+          ? []
+          : yield* store.runsWhere({ subject: { kind: identity.kind, key: identity.key } })),
+      ];
+      const runs = [...new Map(found.map((row) => [row.run_id, row])).values()]
+        .toSorted((left, right) =>
+          left.started_at === right.started_at ? 0 : left.started_at < right.started_at ? 1 : -1,
+        )
+        .slice(0, 500)
+        .map(toRun);
+      const about = new Set(runs.map((run) => run.runId));
+      const open = yield* questions;
+      return { runs, questions: open.filter((question) => about.has(question.runId)) };
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {
       // Subscribed before the first look, so a change in between is not missed.
@@ -1347,5 +1408,7 @@ export const layer = (
           ),
     ),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),
+    // Engine fibers fork from this build, so polls, activities and their store calls are all marked.
+    Layer.provide(Layer.succeed(References.TracerSpanAnnotations, routineSpan)),
   );
 };

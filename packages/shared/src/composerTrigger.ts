@@ -64,7 +64,7 @@ function clampCursor(text: string, cursor: number): number {
 }
 
 function isWhitespace(char: string): boolean {
-  return char === " " || char === "\n" || char === "\t" || char === "\r";
+  return /\s/.test(char);
 }
 
 /** A second slash or backslash makes the whole word a path, even when the caret precedes it. */
