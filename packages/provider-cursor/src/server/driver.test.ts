@@ -4,9 +4,11 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   MessageId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   RunAttemptId,
@@ -172,20 +174,51 @@ it.layer(layerTest)("CursorDriver", (it) => {
         yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
         expect(openedKeys).toEqual([["instance-browser-key", 42]]);
         expect(closed).toBe(0);
+        const hostSettings = yield* TestProviderHost.TestProviderHostSettings;
+        const saveTeamId = (value: string) =>
+          hostSettings.set({
+            ...DEFAULT_SERVER_SETTINGS,
+            providerInstances: {
+              [input.instanceId]: {
+                driver: ProviderDriverKind.make("cursor"),
+                environment: [{ name: "CURSOR_TEAM_ID", value, sensitive: false }],
+              },
+            },
+          });
+        const otherThreadId = ThreadId.make("cursor-browser-thread-2");
+        const openOtherThread = Effect.flatMap(
+          instance.orchestrationAdapter.openSession({
+            threadId: otherThreadId,
+            providerSessionId: ProviderSessionId.make("cursor-browser-session-2"),
+            modelSelection,
+            runtimePolicy,
+          }),
+          (other) => other.ensureThread({ threadId: otherThreadId, modelSelection, runtimePolicy }),
+        );
+        yield* saveTeamId("7");
+        expect((yield* Effect.exit(openOtherThread))._tag).toBe("Failure");
+        expect(openedKeys).toEqual([["instance-browser-key", 42]]);
+        yield* saveTeamId("42");
+        yield* openOtherThread;
+        expect(openedKeys).toEqual([
+          ["instance-browser-key", 42],
+          ["instance-browser-key", 42],
+        ]);
+        yield* hostSettings.set(DEFAULT_SERVER_SETTINGS);
         const recreated = yield* CursorDriver.create(input).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
         );
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
         yield* instance.auth!.logout(Effect.void);
-        expect(closed).toBe(1);
+        expect(closed).toBe(2);
         expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("unauthenticated");
         expect(
           (yield* Effect.exit(runtime.ensureThread({ threadId, modelSelection, runtimePolicy })))
             ._tag,
         ).toBe("Failure");
-        expect(openedKeys).toEqual([["instance-browser-key", 42]]);
-        expect(closed).toBe(1);
+        expect(openedKeys).toHaveLength(2);
+        expect(closed).toBe(2);
       }),
   );
 
