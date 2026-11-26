@@ -4523,6 +4523,18 @@ function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
 // Same bound as stored file-change diffs: the prompt is persisted and sent on every snapshot.
 const MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH = 32_768;
 
+const ClaudeFileEditApprovalInput = Schema.Struct({
+  file_path: Schema.String,
+  old_string: Schema.String,
+  new_string: Schema.String,
+});
+const ClaudeFileWriteApprovalInput = Schema.Struct({
+  file_path: Schema.String,
+  content: Schema.String,
+});
+const decodeClaudeFileEditApprovalInput = Schema.decodeUnknownOption(ClaudeFileEditApprovalInput);
+const decodeClaudeFileWriteApprovalInput = Schema.decodeUnknownOption(ClaudeFileWriteApprovalInput);
+
 // The approval card is shown before the tool result, so the diff has to come from the tool input.
 function claudeFileChangeApprovalPrompt(
   toolName: string,
@@ -4530,22 +4542,23 @@ function claudeFileChangeApprovalPrompt(
 ): string | undefined {
   const normalizedName = classifyClaudeNativeTool(toolName).normalizedName;
   if (normalizedName !== "edit" && normalizedName !== "write") return undefined;
-  const path = firstStringInputField(input, ["file_path"]) ?? "file";
+  const value = input.type === "record" ? input.value : undefined;
+  if (value === undefined) return undefined;
   const bound = (text: string) =>
     text.length <= MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH
       ? text
       : `${withoutTrailingHighSurrogate(text.slice(0, MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH))}\n… ${(text.length - MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH).toLocaleString("en-US")} more characters are not shown`;
   if (normalizedName === "write") {
-    const content = inputRecordValue(input, "content");
+    const decoded = decodeClaudeFileWriteApprovalInput(value);
     // Write can replace an existing file: its new body is the preview, not a diff from an empty file.
-    return typeof content === "string" && content.length > 0
-      ? bound(`Write replaces ${path} with:\n${content}`)
+    return Option.isSome(decoded) && decoded.value.content.length > 0
+      ? bound(`Write replaces ${decoded.value.file_path} with:\n${decoded.value.content}`)
       : undefined;
   }
-  const oldString = inputRecordValue(input, "old_string");
-  const newString = inputRecordValue(input, "new_string");
-  if (typeof oldString !== "string" || typeof newString !== "string") return undefined;
-  const patch = structuredPatch(path, path, oldString, newString);
+  const decoded = decodeClaudeFileEditApprovalInput(value);
+  if (Option.isNone(decoded)) return undefined;
+  const { file_path, old_string, new_string } = decoded.value;
+  const patch = structuredPatch(file_path, file_path, old_string, new_string);
   if (patch.hunks.length === 0) return undefined;
   return bound(formatPatch(patch, FILE_HEADERS_ONLY));
 }
