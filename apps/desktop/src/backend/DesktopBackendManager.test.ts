@@ -484,6 +484,54 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("tells ownership recording when the backend reports ready", () =>
+    Effect.gen(function* () {
+      const reported = yield* Deferred.make<boolean>();
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              exitCode: Deferred.await(reported).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            }),
+          ),
+        ),
+      );
+      yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        trackProcess: (_pid, ready) =>
+          ready.pipe(
+            Effect.flatMap((isReady) => Deferred.succeed(reported, isReady)),
+            Effect.as(Effect.void),
+          ),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
+      assert.isTrue(yield* Deferred.await(reported));
+    }),
+  );
+
+  it.effect("finishes a run that exits before ready while ownership recording waits for it", () =>
+    Effect.gen(function* () {
+      const reported = yield* Deferred.make<boolean>();
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(makeProcess({ getOutputFd: () => Stream.empty })),
+        ),
+      );
+      yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        trackProcess: (_pid, ready) =>
+          ready.pipe(
+            Effect.flatMap((isReady) => Deferred.succeed(reported, isReady)),
+            Effect.as(Effect.void),
+          ),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
+      assert.isFalse(yield* Deferred.await(reported));
+    }),
+  );
+
   it.effect("reports a SIGKILL exit without an exit code", () =>
     Effect.gen(function* () {
       const exitCause = PlatformError.systemError({

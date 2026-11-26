@@ -208,7 +208,11 @@ export const BackendProcessError = Schema.Union([
 ]);
 export type BackendProcessError = typeof BackendProcessError.Type;
 
-type TrackBackendProcess = (pid: number) => Effect.Effect<Effect.Effect<void>>;
+/** `ready` is true once the backend reports ready, or false when it exits first. */
+type TrackBackendProcess = (
+  pid: number,
+  ready: Effect.Effect<boolean>,
+) => Effect.Effect<Effect.Effect<void>>;
 
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly desktopTelemetryStream: Stream.Stream<Uint8Array>;
@@ -531,8 +535,9 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   // The child has a deadline for reading fd 3. Keep recovery bookkeeping off its startup path.
+  const reported = yield* Deferred.make<boolean>();
   const tracking = options.trackProcess
-    ? yield* options.trackProcess(handle.pid).pipe(Effect.forkScoped)
+    ? yield* options.trackProcess(handle.pid, Deferred.await(reported)).pipe(Effect.forkScoped)
     : undefined;
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
   const serverReady = yield* Deferred.make<void>();
@@ -657,6 +662,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   // Cold WSL boots across /mnt/c can exceed one probe budget; retry while the backend is alive.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
     awaitReady.pipe(
+      Effect.andThen(Deferred.succeed(reported, true)),
       Effect.flatMap(() => options.onReady?.(handle.pid) ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({
@@ -699,6 +705,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.exit,
   );
   yield* options.onExitObserved?.() ?? Effect.void;
+  yield* Deferred.succeed(reported, false);
   // A cancelled run may leave a survivor. Only forget after observing a real exit.
   if (tracking && Exit.isSuccess(exit)) {
     const forgetProcess = yield* Fiber.join(tracking);

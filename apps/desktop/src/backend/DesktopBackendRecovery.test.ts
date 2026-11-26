@@ -11,10 +11,10 @@ import * as NodeProcess from "node:process";
 
 import { assert, describe, expect, it } from "@effect/vitest";
 
-import { macHelperExecutable } from "../macHelperExecutable.ts";
-import { make, settledBackend } from "./DesktopBackendRecovery.ts";
+import { macHelperExecutable } from "../macHelperExec.ts";
+import { make } from "./DesktopBackendRecovery.ts";
 import { linuxProcessIdentity } from "./LinuxProcessIdentity.ts";
-import { loadMacProcessAuditToken, type MacProcessAuditToken } from "./MacProcessAuditToken.ts";
+import { loadMacProcessAuditToken } from "./MacProcessAuditToken.ts";
 
 const loadNative = () =>
   NodeProcess.platform === "darwin"
@@ -279,7 +279,7 @@ describe.runIf(NodeProcess.platform === "darwin" || NodeProcess.platform === "li
       },
     );
 
-    it("records a backend running as the app's Helper, but not another executable", async () => {
+    it("records a backend running as the app's Helper only on macOS, and no other executable", async () => {
       await using cleanup = new AsyncDisposableStack();
       const appDataDirectory = await NodeFSP.realpath(
         await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-helper-recovery-")),
@@ -287,64 +287,27 @@ describe.runIf(NodeProcess.platform === "darwin" || NodeProcess.platform === "li
       cleanup.defer(() => NodeFSP.rm(appDataDirectory, { recursive: true, force: true }));
       const stateDir = NodePath.join(appDataDirectory, "home");
       const main = NodePath.join(appDataDirectory, "T3 Code.app", "Contents", "MacOS", "T3 Code");
+      const helper = macHelperExecutable(main);
       await linkExecutable(main);
-      await linkExecutable(macHelperExecutable(main));
+      await linkExecutable(helper);
+      const notRecorded = "Fixture launcher exited before its backend was ready";
 
-      const helper = await spawnTrackedBackend(appDataDirectory, stateDir, cleanup, {
+      const helperBackend = spawnTrackedBackend(appDataDirectory, stateDir, cleanup, {
         execPath: main,
-        backendExecPath: macHelperExecutable(main),
+        backendExecPath: helper,
       });
-      const native = await loadNative();
-      assert.equal(native.executable(helper.pid), macHelperExecutable(main));
+      if (NodeProcess.platform === "darwin") {
+        const { pid } = await helperBackend;
+        assert.equal((await loadNative()).executable(pid), helper);
+      } else {
+        await expect(helperBackend).rejects.toThrow(notRecorded);
+      }
       await expect(
         spawnTrackedBackend(appDataDirectory, stateDir, cleanup, {
           execPath: main,
           backendExecPath: NodeProcess.execPath,
         }),
-      ).rejects.toThrow("Fixture launcher exited before its backend was ready");
+      ).rejects.toThrow(notRecorded);
     });
   },
 );
-
-describe("settledBackend", () => {
-  const launcherPid = 7;
-  const backendPid = 42;
-  const main = "/Applications/T3 Code.app/Contents/MacOS/T3 Code";
-  const helper = macHelperExecutable(main);
-
-  // A backend that runs each image in turn, one per look at its executable. Each exec gives it a
-  // new token, as it does a macOS audit token.
-  const execingBackend = (images: ReadonlyArray<string>): MacProcessAuditToken => {
-    let image = 0;
-    const token = () => `${String(image).padStart(2, "0")}${"0".repeat(62)}`;
-    return {
-      read: (pid) => (pid === backendPid ? token() : undefined),
-      executable: (pid) => {
-        if (pid !== backendPid) return undefined;
-        const current = images[image];
-        image = Math.min(image + 1, images.length - 1);
-        return current;
-      },
-      parent: (pid) => (pid === backendPid ? launcherPid : undefined),
-      signal: () => {},
-    };
-  };
-
-  it.each([
-    { name: "a backend already running as the Helper", images: [helper], expected: 0 },
-    { name: "the token after the exec into the Helper", images: [main, helper], expected: 1 },
-    { name: "the main executable when the app has no Helper", images: [main], expected: 0 },
-    { name: "no other executable", images: ["/usr/local/bin/node"], expected: undefined },
-  ])("accepts $name", async ({ images, expected }) => {
-    const identity = await settledBackend(execingBackend(images), {
-      backendPid,
-      launcherPid,
-      executable: main,
-      helper: images.includes(helper) ? helper : undefined,
-    });
-    assert.equal(
-      identity,
-      expected === undefined ? undefined : `${String(expected).padStart(2, "0")}${"0".repeat(62)}`,
-    );
-  });
-});
