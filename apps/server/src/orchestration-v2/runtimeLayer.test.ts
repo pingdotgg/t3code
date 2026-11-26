@@ -4083,7 +4083,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.map((link) => link.number),
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests
+          ?.filter((link) => link.source !== "stack-dismissed")
+          .map((link) => link.number),
         [2, 3, 4],
       );
       for (const [index, route] of ["pull", "pulls"].entries()) {
@@ -4240,7 +4242,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           number,
           source,
         })),
-        [{ number: 2, source: "stack-dismissed" }],
+        [
+          { number: 1, source: "stack-dismissed" },
+          { number: 2, source: "stack-dismissed" },
+        ],
       );
       yield* orchestrator.dispatch({
         type: "thread.pull-request.link",
@@ -4252,12 +4257,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         source: "stack",
       });
       assert.equal(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.source,
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.find(
+          (link) => link.number === 2,
+        )?.source,
         "stack-dismissed",
       );
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.equal(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.source,
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.find(
+          (link) => link.number === 2,
+        )?.source,
         "stack-dismissed",
       );
       yield* orchestrator.dispatch({
@@ -4270,7 +4279,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         source: "manual",
       });
       assert.equal(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.source,
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.find(
+          (link) => link.number === 2,
+        )?.source,
         "manual",
       );
     }),

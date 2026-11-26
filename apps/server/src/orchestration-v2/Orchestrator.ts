@@ -908,6 +908,11 @@ function withPullRequestWatch(
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
 }
 
+function withoutPullRequestWatches(link: ThreadPullRequestLink): ThreadPullRequestLink {
+  const { watch: _watch, endedWatch: _endedWatch, ...rest } = link;
+  return rest;
+}
+
 function syncedPullRequestWatch(
   existing: ThreadPullRequestWatch | undefined,
   command: {
@@ -5282,14 +5287,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const existing = links.find((link) => threadPullRequestKeysEqual(link, key));
           let pullRequests = links;
           if (command.type === "thread.pull-request.link") {
+            // Only an explicit link brings back one the user unlinked; automatic lookups would
+            // otherwise re-add it every turn.
             const undismisses =
               existing?.source === "stack-dismissed" &&
-              command.source !== "stack" &&
-              command.source !== "stack-dismissed";
+              (command.source === "manual" || command.source === "agent");
             if (existing && !undismisses) return thread;
             const link = existing
               ? {
-                  ...existing,
+                  // A relink starts fresh, so the unlinked watch's final notice stays dead.
+                  ...withoutPullRequestWatches(existing),
+                  linkedAt: DateTime.formatIso(now),
                   source: command.source,
                   url: canonicalizeGitCafePullRequestUrl(command.url),
                   ...(command.repositoryWebUrl !== undefined && {
@@ -5339,26 +5347,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               link,
             ];
           } else if (command.type === "thread.pull-request.unlink") {
-            if (!existing) return thread;
-            const belongsToStack =
-              existing.source === "stack" ||
-              existing.stack !== null ||
-              links.some(
-                (link) =>
-                  link.host.toLowerCase() === key.host &&
-                  link.repository.toLowerCase() === key.repository &&
-                  link.stack?.layers.some((layer) => layer.number === key.number),
-              );
-            pullRequests = belongsToStack
-              ? links.map((link) =>
-                  link === existing
-                    ? {
-                        ...withPullRequestWatch(link, undefined),
-                        source: "stack-dismissed" as const,
-                      }
-                    : link,
-                )
-              : links.filter((link) => link !== existing);
+            if (!existing || existing.source === "stack-dismissed") return thread;
+            // The tombstone keeps sync and post-turn lookups from adding the link back.
+            pullRequests = links.map((link) =>
+              link === existing
+                ? {
+                    ...withPullRequestWatch(link, undefined),
+                    source: "stack-dismissed" as const,
+                  }
+                : link,
+            );
           } else {
             if (!existing) return thread;
             pullRequests = links.map((link) =>

@@ -1,3 +1,4 @@
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { CircleAlertIcon, GitBranchIcon } from "lucide-react";
@@ -45,7 +46,9 @@ export function ThreadChipHoverCard(props: {
     <ThreadHoverCard
       title={props.title}
       footer={
-        supportsMultiplePullRequests && shell && shell.pullRequests.length > 0 ? (
+        supportsMultiplePullRequests &&
+        shell &&
+        visibleThreadPullRequests(shell.pullRequests).length > 0 ? (
           <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
             <ThreadPullRequestsMiniList pullRequests={shell.pullRequests} />
           </div>

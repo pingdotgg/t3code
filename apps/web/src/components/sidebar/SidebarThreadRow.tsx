@@ -1,3 +1,4 @@
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardTrigger } from "../ThreadHoverCard";
@@ -322,7 +323,8 @@ function SidebarThreadTooltip({
       <ThreadHoverCard
         title={thread.title}
         footer={
-          supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
+          supportsMultiplePullRequests &&
+          visibleThreadPullRequests(thread.pullRequests).length > 0 ? (
             <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
               <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
             </div>

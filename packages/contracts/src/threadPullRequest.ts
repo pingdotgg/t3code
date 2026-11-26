@@ -25,7 +25,7 @@ export const ThreadLinkedPullRequest = Schema.Struct({
 });
 export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
 
-/** stack-dismissed hides an unlinked native member and prevents sync from re-adding it. */
+/** stack-dismissed hides a link the user removed and prevents automatic links from re-adding it. */
 export const ThreadPullRequestLinkSource = Schema.Literals([
   "manual",
   "created",
