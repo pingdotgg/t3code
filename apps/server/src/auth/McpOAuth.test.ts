@@ -538,6 +538,44 @@ it.live("signs in Gemini, which registers six user-bound redirect URIs for one c
   ),
 );
 
+it.live("issues no session for a sign-in approved before all other sessions were revoked", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const clientId = yield* registeredClientId(handler);
+      const params = authorizeParams(clientId);
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code: (yield* auth.issuePairingCredential()).credential,
+      });
+      const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+      const owner = yield* auth.issueSession();
+      yield* auth.revokeOtherClientSessions(owner.sessionId);
+
+      const response = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: params.redirect_uri,
+            client_id: clientId,
+            code_verifier: verifier,
+          }),
+        ),
+      );
+      expect(response.status).toBe(400);
+      expect(yield* json<unknown>(response)).toEqual({
+        error: "invalid_grant",
+        error_description: "The authorization code is invalid or expired.",
+      });
+      expect((yield* auth.listSessions()).map((session) => session.sessionId)).toEqual([
+        owner.sessionId,
+      ]);
+    }),
+  ),
+);
+
 it.live("rejects a wrong PKCE verifier and spends the code", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {

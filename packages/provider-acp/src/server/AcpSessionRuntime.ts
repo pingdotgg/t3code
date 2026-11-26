@@ -103,6 +103,11 @@ export interface AcpSpawnInput {
   readonly shell?: false;
 }
 
+// A provided env is the complete child environment, as in OpenCodeRuntime. Extending it would
+// put back variables the AppImage scrub deleted, such as a mount-only LD_LIBRARY_PATH.
+const spawnExtendsEnv = (spawn: AcpSpawnInput): boolean =>
+  spawn.extendEnv ?? spawn.env === undefined;
+
 export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
   readonly cwd: string;
@@ -167,6 +172,7 @@ export interface AcpSessionRuntimeOptions {
   readonly onTermination?: (error: EffectAcpErrors.AcpError) => Effect.Effect<void>;
   readonly onOutgoingResponseFailure?: EffectAcpClient.AcpClientOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: EffectAcpClient.AcpClientOptions["onOutgoingResponse"];
+  readonly onUndecodableNotification?: EffectAcpClient.AcpClientOptions["onUndecodableNotification"];
   /** Unadvertised model IDs accepted by the config option; the agent validates them. */
   readonly customModels?: ReadonlyArray<string>;
 }
@@ -1462,8 +1468,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ? { command: options.spawn.command, args: options.spawn.args, shell: false }
       : yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
           ...(options.spawn.env ? { env: options.spawn.env } : {}),
-          extendEnv: options.spawn.extendEnv ?? true,
+          extendEnv: spawnExtendsEnv(options.spawn),
         });
+  const commandLookupEnv = spawnExtendsEnv(options.spawn)
+    ? { ...process.env, ...options.spawn.env }
+    : (options.spawn.env ?? {});
   const linuxCgroupLease =
     options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
       ? yield* Effect.sync(() => {
@@ -1492,7 +1501,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           const resolved = resolveLinuxCgroupTargetCommand(
             spawnCommand.command,
             options.spawn.cwd ?? options.cwd,
-            { ...process.env, ...options.spawn.env },
+            commandLookupEnv,
           );
           if (resolved !== undefined) return resolved;
           return yield* new EffectAcpErrors.AcpSpawnError({
@@ -1509,7 +1518,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           args: spawnCommand.args,
           name: "acp",
           threadId: yield* AgentScopeThreadId,
-          env: { ...process.env, ...options.spawn.env },
+          env: commandLookupEnv,
         });
   const scopedSpawnCommand =
     scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
@@ -1538,7 +1547,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ChildProcess.make(containedSpawnCommand.command, containedSpawnCommand.args, {
         ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
         ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
-        extendEnv: options.spawn.extendEnv ?? true,
+        extendEnv: spawnExtendsEnv(options.spawn),
         // Windows `detached` gives the child its own console, which breaks stdio pipes through
         // `.cmd` shims; taskkill /T cleans up the tree there without it.
         ...(options.ownDetachedProcessGroup === undefined
@@ -1767,6 +1776,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         ? { onOutgoingResponseFailure: options.onOutgoingResponseFailure }
         : {}),
       ...(options.onOutgoingResponse ? { onOutgoingResponse: options.onOutgoingResponse } : {}),
+      ...(options.onUndecodableNotification
+        ? { onUndecodableNotification: options.onUndecodableNotification }
+        : {}),
     }),
   ).pipe(Effect.provideService(Scope.Scope, runtimeScope));
 

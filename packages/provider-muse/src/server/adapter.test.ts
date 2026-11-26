@@ -1503,6 +1503,13 @@ describe("MuseAdapterV2", () => {
       const harness = yield* makeHarness(fake, INSTANCE_ID, "saved-session");
       const resumed = yield* fake.takeCall("session/resume");
       assert.strictEqual(resumed.params.sessionId, "saved-session");
+      // Loading the saved session is reported while Muse answers, then cleared.
+      const phases: Array<string | null> = [];
+      for (let index = 0; index < 2; index += 1) {
+        const update = yield* harness.takeEvent("provider_session.updated");
+        phases.push(update.providerSession.startupPhase ?? null);
+      }
+      assert.deepStrictEqual(phases, ["resume", null]);
       assert.strictEqual(resumed.params.excludeItems, true);
       assert.isFalse(fake.calls.some((call) => call.method === "session/start"));
       assert.strictEqual(harness.providerThread.nativeThreadRef?.nativeId, "saved-session");

@@ -954,6 +954,7 @@ it.effect.each(
         yield* orchestrator.dispatch({
           type: "queued-run.edit",
           commandId: CommandId.make("edit-steer-to-compact"),
+          modelSelection: composerSelection,
           threadId,
           runId: edited.id,
           text: "/compact",
@@ -962,6 +963,7 @@ it.effect.each(
           (candidate) => candidate.id === edited.id,
         )!;
         assert.isUndefined(compact.steerWhenReadyRunId);
+        assert.deepEqual(compact.modelSelection, composerSelection);
         assert.equal(compact.queuePosition, edited.queuePosition);
       }
       if (direct) {
@@ -993,7 +995,10 @@ it.effect.each(
       const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
         (candidate) => candidate.userMessageId === MessageId.make("message:steer-after-setup"),
       )!;
-      assert.deepEqual(queued.modelSelection, runSelection);
+      assert.deepEqual(
+        queued.modelSelection,
+        status === "preparing" && !direct ? composerSelection : runSelection,
+      );
       for (const text of ["/compact", "/logout"]) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -4487,5 +4492,64 @@ it.effect("a side chat that opens with /goal gets its context on the next questi
       assert.include(question, "- User: first");
       assert.isTrue(question?.endsWith("What is the main thread doing?"));
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("an agent's auto send steers past its own explicitly queued message", () =>
+  Effect.gen(function* () {
+    const name = "agent-auto-after-explicit-queue";
+    const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(name);
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const manager = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = yield* startFirstTurn;
+      const send = (text: string, mode: "auto" | "queue") =>
+        manager.sendToThread({
+          projectId: ProjectId.make(`project:${name}`),
+          threadId,
+          commandId: CommandId.make(text),
+          messageId: MessageId.make(text),
+          text,
+          attachments: [],
+          mode,
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: ThreadId.make("thread:sender"),
+        });
+      const later = yield* send("later", "queue");
+      const now = yield* send("now", "auto");
+      yield* worker.drain();
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        {
+          later: later.delivery,
+          now: now.delivery,
+          targetsRunningTurn: now.run.id === started[0]?.runId,
+          adapterReceived: steered.map((text) => text.split("\n").at(-1)),
+          queuedRunIds: projection.runs
+            .filter((run) => run.status === "queued")
+            .map((run) => run.id),
+        },
+        {
+          later: "queued",
+          now: "steered",
+          targetsRunningTurn: true,
+          adapterReceived: ["now"],
+          queuedRunIds: [later.run.id],
+        },
+      );
+    }).pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layer),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ),
+        ),
+      ),
+    );
   }),
 );

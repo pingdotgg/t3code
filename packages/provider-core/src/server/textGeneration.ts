@@ -87,7 +87,10 @@ export interface ReviewGuideStackLayer {
 }
 
 export interface ReviewGuideGenerationInput {
+  /** A scratch checkout of the pull request's head. */
   cwd: string;
+  /** The project folder the checkout was made from; the user's own relative paths resolve here. */
+  projectCwd: string;
   number: number;
   title: string;
   description: string;

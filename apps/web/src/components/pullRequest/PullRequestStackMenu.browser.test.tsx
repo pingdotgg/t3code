@@ -64,6 +64,10 @@ it.each([
         shownHeadSha="shown"
         stale={false}
         canRebase
+        canAutoMerge={false}
+        preferAutoMerge={false}
+        autoMergeArmed={false}
+        canCancelAutoMerge={false}
         mergeMethod="squash"
         onActed={() => {}}
       />

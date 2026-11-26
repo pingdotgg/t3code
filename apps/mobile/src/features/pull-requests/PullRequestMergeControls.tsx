@@ -152,9 +152,16 @@ export function PullRequestMergeControls(props: {
                   ? { label: gt("Checking stack…"), icon: PullRequestGlyph.merged }
                   : null;
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
+  // A stack auto-merge request on this layer also covers the open layers below it.
+  const stackAutoMerge =
+    stack.stack !== null &&
+    stack.supportsStackActions &&
+    stack.isFresh &&
+    pr.capabilities.stackAutoMerge === true;
   const canAutoMerge =
     !busy &&
-    (autoAction === "disable-auto-merge" || (!stack.stack && canMergeSingle)) &&
+    (autoAction === "disable-auto-merge" ||
+      (stack.stack ? stackAutoMerge && scope !== null && !scope.reason : canMergeSingle)) &&
     permissions.canWrite &&
     canPerformPullRequestAction(pr, autoAction);
 
@@ -179,33 +186,43 @@ export function PullRequestMergeControls(props: {
         ...(action !== "disable-auto-merge" && shownHeadSha
           ? { expectedHeadSha: shownHeadSha }
           : {}),
-        ...(action === "merge" && method && stack.stack && scope
-          ? {
-              stackNumber: stack.stack.number,
-              expectedStackHeads: scope.heads,
-              mergeMethod: method,
-            }
-          : action === "merge" && method
+        // A cancel needs no pinned heads, so it keeps the stack scope even while the stack refreshes.
+        ...(stack.stack &&
+        ((action === "enable-auto-merge" && stackAutoMerge) ||
+          (action === "disable-auto-merge" &&
+            stack.supportsStackActions &&
+            pr.capabilities.stackAutoMerge === true))
+          ? { stackNumber: stack.stack.number }
+          : {}),
+        ...(action === "enable-auto-merge" && method && stackAutoMerge && scope
+          ? { expectedStackHeads: scope.heads, mergeMethod: method }
+          : action === "merge" && method && stack.stack && scope
             ? {
-                resolveMergeMethod: (fresh) => {
-                  if (
-                    !canPerformPullRequestAction(fresh, "merge") ||
-                    !allowedMergeMethods(fresh).includes(method)
-                  )
-                    throw new Error(
-                      gt(
-                        "The {term, select, mr {merge request} cr {change request} other {pull request}} changed. Refresh before merging.",
-                        {
-                          term: changeRequestTermKind(terminology),
-                        },
-                      ),
-                    );
-                  return method;
-                },
+                stackNumber: stack.stack.number,
+                expectedStackHeads: scope.heads,
+                mergeMethod: method,
               }
-            : action === "enable-auto-merge" && method
-              ? { mergeMethod: method }
-              : {}),
+            : action === "merge" && method
+              ? {
+                  resolveMergeMethod: (fresh) => {
+                    if (
+                      !canPerformPullRequestAction(fresh, "merge") ||
+                      !allowedMergeMethods(fresh).includes(method)
+                    )
+                      throw new Error(
+                        gt(
+                          "The {term, select, mr {merge request} cr {change request} other {pull request}} changed. Refresh before merging.",
+                          {
+                            term: changeRequestTermKind(terminology),
+                          },
+                        ),
+                      );
+                    return method;
+                  },
+                }
+              : action === "enable-auto-merge" && method
+                ? { mergeMethod: method }
+                : {}),
       },
     });
     // A stack can partly merge before the provider reports a failure.
@@ -253,27 +270,37 @@ export function PullRequestMergeControls(props: {
               number: pr.number,
             },
           )
-        : action === "enable-auto-merge"
+        : action === "enable-auto-merge" && stackAutoMerge && scope
           ? gt(
-              "Merge #{number} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} when its requirements are met. This may happen immediately.",
-              { number: pr.number, kind: mergeMethodKind(method), method: method ?? "" },
+              "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} once their requirements are met. This may happen immediately.",
+              {
+                layers: scope.layers.map((layer) => `#${layer.number}`).join(" → "),
+                base: stack.stack?.base ?? "",
+                kind: mergeMethodKind(method),
+                method: method ?? "",
+              },
             )
-          : action === "disable-auto-merge"
+          : action === "enable-auto-merge"
             ? gt(
-                "Stop the provider from automatically merging this {term, select, mr {merge request} cr {change request} other {pull request}}.",
-                {
-                  term: changeRequestTermKind(terminology),
-                },
+                "Merge #{number} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} when its requirements are met. This may happen immediately.",
+                { number: pr.number, kind: mergeMethodKind(method), method: method ?? "" },
               )
-            : gt(
-                "Merge #{number} into {branch} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}}.",
-                {
-                  number: pr.number,
-                  branch: pr.baseBranch,
-                  kind: mergeMethodKind(method),
-                  method: method ?? "",
-                },
-              );
+            : action === "disable-auto-merge"
+              ? gt(
+                  "Stop the provider from automatically merging this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+                  {
+                    term: changeRequestTermKind(terminology),
+                  },
+                )
+              : gt(
+                  "Merge #{number} into {branch} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}}.",
+                  {
+                    number: pr.number,
+                    branch: pr.baseBranch,
+                    kind: mergeMethodKind(method),
+                    method: method ?? "",
+                  },
+                );
     Dialog.alert(title, message, [
       { text: gt("Cancel"), style: "cancel" },
       {

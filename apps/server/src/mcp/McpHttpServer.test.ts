@@ -57,6 +57,7 @@ import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
+import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -117,6 +118,7 @@ const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
       Layer.mock(GitManager.GitManager)({}),
       Layer.mock(Orchestrator.OrchestratorV2)({}),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+      ServerSettings.layerTest(),
       NodeServices.layer,
       NodeCrypto.layer,
     ),
@@ -1066,6 +1068,138 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       expect(reusedSessionResponse.status).toBe(404);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a tool asks a sessionless client for approval and reads the answer on the next call",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const token = "providerTokenWithoutDots";
+        const scope: McpInvocationContext.McpInvocationScope = {
+          environmentId,
+          requestNamespace: "provider-session",
+          thread: {
+            threadId: ThreadId.make("thread-provider"),
+            providerSessionId: "provider-session",
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 1,
+        };
+        const AskToolkit = Toolkit.make(
+          Tool.make("ask", {
+            description: "Asks for approval.",
+            success: Schema.Struct({ answer: Schema.String }),
+          }),
+        );
+        let runs = 0;
+        const layerServer = McpHttpServer.layerMcpTransport(
+          McpHttpServer.toolkitRegistration(
+            AskToolkit,
+            McpToolAccess.toLayer(AskToolkit, {
+              ask: McpToolAccess.reads(() =>
+                Effect.sync(() => runs++).pipe(
+                  Effect.andThen(
+                    McpClientInput.askApproval({
+                      key: "go",
+                      state: "state-1",
+                      message: "Run it?",
+                    }),
+                  ),
+                  Effect.map((answer) => ({ answer })),
+                ),
+              ),
+            }),
+          ),
+        ).pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              resolve: (presented) =>
+                Effect.succeed(
+                  presented === token
+                    ? (scope as McpInvocationContext.McpThreadInvocationScope)
+                    : undefined,
+                ),
+            }),
+          ),
+        );
+        yield* HttpRouter.serve(layerServer, {
+          disableListenLog: true,
+          disableLogger: true,
+        }).pipe(Layer.build);
+        const httpClient = (yield* HttpClient.HttpClient).pipe(
+          HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+        );
+        const call = (clientCapabilities: object, continuation: object = {}) =>
+          httpClient
+            .post("/mcp", {
+              headers: {
+                accept: "application/json, text/event-stream",
+                "mcp-method": "tools/call",
+                "mcp-name": "ask",
+                "mcp-protocol-version": "2026-07-28",
+              },
+              body: HttpBody.text(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "tools/call",
+                  params: {
+                    name: "ask",
+                    arguments: {},
+                    ...continuation,
+                    _meta: {
+                      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                      "io.modelcontextprotocol/clientCapabilities": clientCapabilities,
+                      "io.modelcontextprotocol/clientInfo": { name: "mcp-test", version: "1.0.0" },
+                    },
+                  },
+                }),
+                "application/json",
+              ),
+            })
+            .pipe(
+              Effect.flatMap((response) => response.json),
+              Effect.map((body) => (body as { readonly result: Record<string, unknown> }).result),
+            );
+        const canAsk = { elicitation: { form: {} } };
+
+        const asked = yield* call(canAsk);
+        expect(asked).toMatchObject({
+          resultType: "input_required",
+          requestState: "state-1",
+          inputRequests: {
+            go: {
+              method: "elicitation/create",
+              params: {
+                mode: "form",
+                message: "Run it?",
+                requestedSchema: { type: "object", properties: {} },
+              },
+            },
+          },
+        });
+        const answer = (action: string, requestState: string) =>
+          call(canAsk, { inputResponses: { go: { action } }, requestState });
+        expect(yield* answer("accept", "state-1")).toMatchObject({
+          structuredContent: { answer: "accepted" },
+        });
+        expect(yield* answer("decline", "state-1")).toMatchObject({
+          structuredContent: { answer: "declined" },
+        });
+        // An answer given for another state is not an answer to this question.
+        expect(yield* answer("accept", "state-0")).toMatchObject({ resultType: "input_required" });
+        expect(yield* call({})).toMatchObject({ structuredContent: { answer: "unavailable" } });
+        // A client that takes only URL requests cannot show this one.
+        expect(yield* call({ elicitation: { url: {} } })).toMatchObject({
+          structuredContent: { answer: "unavailable" },
+        });
+        expect(runs).toBe(6);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize fallback", () =>

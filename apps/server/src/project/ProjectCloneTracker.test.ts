@@ -74,7 +74,7 @@ describe("ProjectCloneTracker", () => {
         Effect.gen(function* () {
           yield* (
             options?.onProgress?.({ stage: "receiving", percent: 40, detail: "1 MiB" }) ??
-              Effect.void
+            Effect.void
           );
           yield* Deferred.await(release);
           return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };

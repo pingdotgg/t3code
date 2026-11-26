@@ -310,6 +310,8 @@ export const PullRequestCapabilities = Schema.Struct({
   edit: Schema.optional(PullRequestEditCapabilities),
   stacks: Schema.optional(Schema.Boolean),
   stackActions: Schema.optional(Schema.Boolean),
+  /** Stack actions also arm and cancel auto-merge for a layer and the open layers below it. */
+  stackAutoMerge: Schema.optional(Schema.Boolean),
   labels: Schema.optional(Schema.Boolean),
   /** The host searches the repository's users, so composers can complete `@login`. */
   mentions: Schema.optional(Schema.Boolean),
@@ -700,6 +702,7 @@ export const PullRequestChecks = Schema.Struct({
   observedAt: Schema.optional(Schema.Finite),
   state: PullRequestState,
   checks: Schema.Array(PullRequestCheck),
+  workflowApprovalsRequired: Schema.optional(NonNegativeInt),
 });
 export type PullRequestChecks = typeof PullRequestChecks.Type;
 
@@ -1062,10 +1065,11 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
     listResult: Schema.optional(PullRequestListResult),
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(PullRequestOperationError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(PullRequestOperationError)(this, { status: 503 });
   }
 
   override get message(): string {
