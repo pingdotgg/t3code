@@ -1935,31 +1935,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (questionAttachmentTarget && activePendingIsResponding) return false;
     const existingImages =
       getComposerDraft(attachmentDraftTarget)?.images ?? composerImagesRef.current;
-    const liveIds = new Set(existingImages.map((image) => image.id));
-    const removedInBatch = new Set<string>();
-    for (const change of changes) {
-      if (change.targetKey !== attachmentTargetKey || change.kind !== "remove") continue;
-      for (const image of change.images) {
-        if (liveIds.has(image.id)) removedInBatch.add(image.id);
-      }
-    }
-    const existingIds = new Set(
-      existingImages.filter((image) => !removedInBatch.has(image.id)).map((image) => image.id),
+    // Walk the batch in the order onImageHistoryChange replays it, so capacity matches replay.
+    const dedupKeyById = new Map(
+      existingImages.map((image) => [image.id, composerImageDedupKey(image)]),
     );
-    const existingDedupKeys = new Set(
-      existingImages
-        .filter((image) => !removedInBatch.has(image.id))
-        .map((image) => composerImageDedupKey(image)),
-    );
-    let reservedCount = Math.max(0, countReservedAttachmentsStable() - removedInBatch.size);
+    let reservedCount = countReservedAttachmentsStable();
     const capacityRejectedNames: string[] = [];
     const duplicateRejectedNames: string[] = [];
     for (const change of changes) {
-      if (change.targetKey !== attachmentTargetKey || change.kind !== "add") continue;
+      if (change.targetKey !== attachmentTargetKey) continue;
       for (const retained of change.images) {
-        if (existingIds.has(retained.id)) continue;
+        if (change.kind === "remove") {
+          if (dedupKeyById.delete(retained.id)) reservedCount = Math.max(0, reservedCount - 1);
+          continue;
+        }
+        if (dedupKeyById.has(retained.id)) continue;
         const dedupKey = composerImageDedupKey(retained);
-        if (existingDedupKeys.has(dedupKey)) {
+        if ([...dedupKeyById.values()].includes(dedupKey)) {
           duplicateRejectedNames.push(retained.name);
           continue;
         }
@@ -1967,8 +1959,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           capacityRejectedNames.push(retained.name);
           continue;
         }
-        existingIds.add(retained.id);
-        existingDedupKeys.add(dedupKey);
+        dedupKeyById.set(retained.id, dedupKey);
         reservedCount += 1;
       }
     }
