@@ -324,6 +324,14 @@ Third}`;
         String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
         "<p>Привет</p>",
       ],
+      [
+        String.raw`{\rtf1\ansi\ansicpg54936 Quarterly notes: \'d6\'d0\'ce\'c4 \'95\'32\'82\'36 \'82\'35\'8f\'33 \uc2\u20320\'c4\'e3 done\par}`,
+        "<p>Quarterly notes: 中文 𠀀 龦 你 done<br></p>",
+      ],
+      [
+        String.raw`{\rtf1\ansi{\fonttbl{\f0\fnil\fcharset0\cpg54936 SimSun;}}\f0 \'d6\'d0\'ce\'c4}`,
+        "<p>中文</p>",
+      ],
     ] as const) {
       const decoded = openRtf(bytes(rtf));
       if (decoded.type !== "document") throw new Error("Expected document");
@@ -395,6 +403,8 @@ Third}`;
                   text: ["\r 10%|#         |", "\r100%|##########|\n", "done\r\n", "🚀 ready\rX\n"],
                 },
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
+                { output_type: "display_data", data: { "text/markdown": ["| a |\n", "|---|"] } },
+                { data: { "text/plain": "plain wins", "text/markdown": "**markdown**" } },
               ],
             },
           ],
@@ -416,10 +426,16 @@ Third}`;
             { kind: "text", text: "42\n" },
             { kind: "text", text: "100%|##########|\ndone\nX  ready\n" },
             { kind: "html", text: "<b>Results</b>" },
+            { kind: "text", text: "| a |\n|---|" },
+            { kind: "text", text: "plain wins" },
           ],
         },
       ],
     });
+    for (const name of ["", "Питон"]) {
+      const blank = { nbformat: 4, metadata: { language_info: { name } }, cells: [] };
+      expect(openNotebook(bytes(JSON.stringify(blank)))).toMatchObject({ language: "text" });
+    }
     // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
     const failed = openNotebook(
       bytes(
@@ -547,6 +563,22 @@ Third}`;
     const result = await openDocument(archive, "ods");
     if (result.type !== "ods") throw new Error("Expected workbook");
     expect(result.sheets[0]!.rows).toEqual([["PT03H30M00S"]]);
+  });
+
+  it("reports zero columns for an empty ODS sheet", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet>' +
+        '<table:table table:name="Empty"><table:table-row table:number-rows-repeated="1048576"><table:table-cell table:number-columns-repeated="1024"/></table:table-row></table:table>' +
+        '<table:table table:name="Data"><table:table-row><table:table-cell><text:p>A</text:p></table:table-cell><table:table-cell><text:p>B</text:p></table:table-cell><table:table-cell><text:p>C</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Late"><table:table-row table:number-rows-repeated="500"><table:table-cell/></table:table-row><table:table-row><table:table-cell><text:p>Z</text:p></table:table-cell></table:table-row></table:table>' +
+        "</office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]).toMatchObject({ rowCount: 0, columns: 0 });
+    expect(result.sheets[1]).toMatchObject({ rowCount: 1, columns: 3 });
+    expect(result.sheets[2]).toMatchObject({ rowCount: 500, columns: 1, truncated: true });
   });
 
   it.each([1, 500])("ignores styled ODS filler after %s populated rows", async (count) => {

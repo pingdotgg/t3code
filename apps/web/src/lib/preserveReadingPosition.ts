@@ -5,13 +5,14 @@ export function preserveReadingPosition(
   scroller: HTMLElement,
   enabled: () => boolean = () => true,
 ): () => void {
-  // Seeded by the observer's first report, which follows the browser's own layout; reading it
-  // here would force a layout mid-commit.
+  // Seeded by the observer's first report or an earlier scroll, never read here: that would force
+  // a layout mid-commit. A resize before either is not corrected.
   let width: number | null = null;
   let anchor: { range: Range; top: number } | null = null;
   let frame: number | null = null;
 
   const capture = () => {
+    width ??= scroller.clientWidth;
     if (frame !== null || scroller.clientWidth !== width) return;
     anchor = null;
     if (!enabled() || scroller.scrollTop === 0) return;

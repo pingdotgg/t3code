@@ -135,6 +135,23 @@ interface SourceControlTextGenerationSettings {
   readonly style: SourceControlWritingStyleSettings;
 }
 
+/** A push would run hooks nobody approved as they are now. Nothing was pushed. */
+export class GitPushHooksUnapprovedError extends Schema.TaggedError<GitPushHooksUnapprovedError>()(
+  "GitPushHooksUnapprovedError",
+  {
+    branch: Schema.String,
+    files: Schema.Array(Schema.String),
+    commands: Schema.Array(Schema.Struct({ name: Schema.String, command: Schema.String })),
+    digest: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Pushing ${this.branch} would run repository hooks that were not approved.`;
+  }
+}
+
+const isPushHooksUnapproved = Schema.is(GitVcsDriver.PushHooksUnapprovedError);
+
 export interface GitCreatePullRequestResult {
   readonly status: "created" | "opened_existing";
   /** Absent when the host accepted the PR but did not list it back yet. */
@@ -211,7 +228,16 @@ export class GitManager extends Context.Service<
        * without private pull requests.
        */
       readonly private?: boolean | undefined;
-    }) => Effect.Effect<GitCreatePullRequestResult, GitManagerServiceError>;
+      /**
+       * For a caller whose own commands wait for a person: the push runs the repository's hooks
+       * only when `approvedDigest` is the digest of what it would run, and otherwise fails with
+       * `GitPushHooksUnapprovedError` before pushing. "off", or no hook to run, pushes with none.
+       */
+      readonly pushHooks?: { readonly approvedDigest: string | null } | "off" | undefined;
+    }) => Effect.Effect<
+      GitCreatePullRequestResult,
+      GitManagerServiceError | GitPushHooksUnapprovedError
+    >;
     readonly subscribePullRequestStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
       never,
@@ -567,7 +593,10 @@ function truncateText(
   if (!value) return undefined;
   if (value.length <= maxLength) return value;
   if (maxLength <= 3) return "...".slice(0, maxLength);
-  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  return `${value
+    .slice(0, Math.max(0, maxLength - 3))
+    .replace(/[\uD800-\uDBFF]$/u, "")
+    .trimEnd()}...`;
 }
 
 function withDescription(title: string, description: string | undefined) {
@@ -631,7 +660,11 @@ function sanitizeCommitMessage(
         (_, prefix: string, word: string) => prefix + word.toLowerCase(),
       )
     : trimmedSubject;
-  const safeSubject = subject.length > 0 ? subject.slice(0, 72).trimEnd() : "Update project files";
+  const safeSubject =
+    subject
+      .slice(0, 72)
+      .replace(/[\uD800-\uDBFF]$/u, "")
+      .trimEnd() || "Update project files";
   return {
     subject: safeSubject,
     body: generated.body.trim(),
@@ -647,7 +680,10 @@ function sanitizeProgressText(value: string): string | null {
   if (trimmed.length <= MAX_PROGRESS_TEXT_LENGTH) {
     return trimmed;
   }
-  return trimmed.slice(0, MAX_PROGRESS_TEXT_LENGTH).trimEnd();
+  return trimmed
+    .slice(0, MAX_PROGRESS_TEXT_LENGTH)
+    .replace(/[\uD800-\uDBFF]$/u, "")
+    .trimEnd();
 }
 
 interface CommitAndBranchSuggestion {
@@ -931,6 +967,41 @@ export const make = Effect.gen(function* () {
     }
     return result;
   });
+  /**
+   * Before a push's first side effect: a caller that needs approval learns which hooks to ask
+   * about. The driver reads them again as it starts the push, so this is only the early answer.
+   */
+  const requireApprovedPushHooks = Effect.fn("GitManager.requireApprovedPushHooks")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    const policy = yield* GitVcsDriver.RepositoryHooks;
+    if (policy._tag !== "approved-push") return;
+    const hooks = yield* gitCore.pushHooks(cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: "createPullRequest",
+            cwd,
+            detail: "Could not read the repository's push hooks. Nothing was pushed.",
+            cause,
+          }),
+      ),
+    );
+    if (hooks !== null && hooks.digest !== policy.digest) {
+      return yield* new GitPushHooksUnapprovedError({ branch, ...hooks });
+    }
+  });
+  /** The driver's refusal to start a push whose hooks changed, as the caller's cue to ask again. */
+  const pushHooksUnapproved = (branch: string, cause: GitCommandError) =>
+    isPushHooksUnapproved(cause.cause)
+      ? new GitPushHooksUnapprovedError({
+          branch,
+          files: cause.cause.files,
+          commands: cause.cause.commands,
+          digest: cause.cause.digest,
+        })
+      : undefined;
   const createPrNeedsPush = Effect.fn("GitManager.createPrNeedsPush")(function* (
     cwd: string,
     status: {
@@ -2967,6 +3038,7 @@ export const make = Effect.gen(function* () {
         `${branch} is the base branch. Check out a feature branch to create ${terms.shortLabelWithArticle}.`,
       );
     }
+    yield* requireApprovedPushHooks(cwd, branch);
     const companion = yield* provider.privateChangeRequestRemote({ cwd });
     const remoteName = yield* gitCore.ensureRemote({
       cwd,
@@ -2975,21 +3047,40 @@ export const make = Effect.gen(function* () {
     });
     // Recorded before the push, so a later push of this branch, by T3 or by plain `git push`,
     // goes to the companion too and never publishes the branch.
-    yield* gitCore.writeConfigValue({
-      cwd,
-      key: `branch.${branch}.pushRemote`,
-      value: remoteName,
-    });
+    const pushRemoteKey = `branch.${branch}.pushRemote`;
+    const readPushRemote = gitCore
+      .readConfigValue(cwd, pushRemoteKey)
+      .pipe(Effect.orElseSucceed(() => null));
+    const previousPushRemote = yield* readPushRemote;
+    yield* gitCore.writeConfigValue({ cwd, key: pushRemoteKey, value: remoteName });
+    // A push refused for its hooks never started, so the branch goes back to pushing where it
+    // did, unless something else has set that since.
+    const restorePushRemote = Effect.gen(function* () {
+      if (previousPushRemote === remoteName || (yield* readPushRemote) !== remoteName) return;
+      yield* previousPushRemote === null
+        ? gitCore.execute({
+            operation: "GitManager.openPrivatePullRequest.restorePushRemote",
+            cwd,
+            args: ["config", "--unset", pushRemoteKey],
+          })
+        : gitCore.writeConfigValue({ cwd, key: pushRemoteKey, value: previousPushRemote });
+    }).pipe(Effect.ignore);
     yield* gitCore
       .execute({
         operation: "GitManager.openPrivatePullRequest.push",
         cwd,
         args: ["push", "--", remoteName, `refs/heads/${branch}:refs/heads/${branch}`],
         timeoutMs: null,
+        pushes: true,
       })
       .pipe(
-        Effect.mapError((cause) =>
-          fail(`Could not push ${branch} to ${companion.repository}: ${cause.detail}`, cause),
+        Effect.mapError(
+          (cause) =>
+            pushHooksUnapproved(branch, cause) ??
+            fail(`Could not push ${branch} to ${companion.repository}: ${cause.detail}`, cause),
+        ),
+        Effect.tapError((error) =>
+          error._tag === "GitPushHooksUnapprovedError" ? restorePushRemote : Effect.void,
         ),
         Effect.tapError(() => invalidateStatus(cwd)),
       );
@@ -3066,11 +3157,13 @@ export const make = Effect.gen(function* () {
         { ...status, branch: status.branch },
         (yield* changeRequestTermsFor(input.cwd)).shortLabelWithArticle,
       );
+      yield* requireApprovedPushHooks(input.cwd, status.branch);
     }
     const push = needsPush
       ? yield* pushCurrentBranch(input.cwd, status.branch).pipe(
           Effect.mapError(
             (cause) =>
+              pushHooksUnapproved(status.branch ?? "HEAD", cause) ??
               new GitManagerError({
                 operation: "createPullRequest",
                 cwd: input.cwd,
@@ -3115,10 +3208,18 @@ export const make = Effect.gen(function* () {
   const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
     "GitManager.createPullRequest",
   )(function* (input) {
-    const result =
-      input.private === true
-        ? yield* openPrivatePullRequest(input)
-        : yield* pushAndOpenPullRequest(input);
+    const opening =
+      input.private === true ? openPrivatePullRequest(input) : pushAndOpenPullRequest(input);
+    const result = yield* input.pushHooks === undefined
+      ? opening
+      : opening.pipe(
+          Effect.provideService(
+            GitVcsDriver.RepositoryHooks,
+            input.pushHooks === "off"
+              ? { _tag: "none" }
+              : { _tag: "approved-push", digest: input.pushHooks.approvedDigest },
+          ),
+        );
     const openedAsDraft =
       result.status === "created" &&
       (yield* sourceControlProvider(input.cwd)).createsDraftChangeRequests === true;

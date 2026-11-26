@@ -129,8 +129,8 @@ const analyticsLayerWith = (
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           ...telemetryEnv,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
+          T3CODE_TELEMETRY_KEY: "phc_test_key",
+          T3CODE_TELEMETRY_HOST: "http://localhost",
         }),
       ),
     ),
@@ -368,8 +368,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: true,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
+          T3CODE_TELEMETRY_KEY: "phc_test_key",
+          T3CODE_TELEMETRY_HOST: "http://localhost",
           T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
         }),
       );
@@ -470,8 +470,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: false,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
+          T3CODE_TELEMETRY_KEY: "phc_test_key",
+          T3CODE_TELEMETRY_HOST: "http://localhost",
         }),
       );
       const layerBatchServer = HttpServer.serve(
