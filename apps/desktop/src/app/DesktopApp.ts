@@ -175,8 +175,9 @@ const refuseOwnedHome = Effect.fn("desktop.bootstrap.refuseOwnedHome")(function*
     message: title,
     detail: `${DesktopHomeOwner.homeOwnedMessage(owner)}\n\n${m(
       msg(
-        "To keep that server running, choose Use the running server. T3 Code restarts without its own server. Then run `t3 pair` and open the link it prints to connect.",
+        'To keep that server running, choose Use the running server. T3 Code restarts without its own server. Then run `t3 pair --base-dir "{home}"` and open the link it prints to connect.',
       ),
+      { home: (yield* DesktopEnvironment.DesktopEnvironment).baseDir },
     )}`,
     buttons: [
       m(msg("Quit", { $context: "button, quits the app" })),
