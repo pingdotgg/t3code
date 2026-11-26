@@ -622,6 +622,66 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("installs into its managed prefix with an npm that ignores npm_config_prefix", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-npm-shim-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_IGNORE_PREFIX_ENV: "1" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", environment);
+
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("names the npm shim when npm cannot install into the managed prefix", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-npm-shim-no-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_IGNORE_PREFIX: "1" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const error = yield* resolver
+        .resolve(settings(), "/workspace", environment)
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("shim");
+      const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(npmCommands).not.toMatch(/^install /mu);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("gives Windows npm commands only the managed prefix spelling", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     return Effect.gen(function* () {
@@ -2223,6 +2283,99 @@ describe("AcpRegistrySupport", () => {
             ),
           ),
         ),
+      ),
+    );
+  });
+
+  it.effect("refreshes stale disk indexes with max-age, offline backoff, and invalidation", () => {
+    const v1 = makeAgent({ npx: { package: "example-agent@1.0.0" } });
+    const v2 = {
+      ...makeAgent({ npx: { package: "example-agent@2.0.0" } }),
+      version: "2.0.0",
+    };
+    let currentAgent = v2;
+    let failNetwork = false;
+    let requests = 0;
+
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-refresh-index-",
+      });
+      yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+      yield* fileSystem.writeFileString(`${cacheDir}/acp-registry/registry.json`, makeRegistry(v1));
+
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "1.2.3",
+      });
+      expect(requests).toBe(0);
+
+      // Cold disk cache has no network timestamp, so refreshIndex fetches v2.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        true,
+      );
+      expect(requests).toBe(1);
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "2.0.0",
+      });
+
+      // Within maxAgeMs, no network call happens.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(1);
+
+      // After invalidateIndex, an offline failure preserves in-memory v2 and backs off.
+      yield* resolver.invalidateIndex();
+      failNetwork = true;
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(2);
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "2.0.0",
+      });
+
+      // Within failureBackoffMs, repeated background refreshes do not hammer the network.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(2);
+
+      // Explicit invalidateIndex clears backoff so the next refresh retries immediately.
+      failNetwork = false;
+      currentAgent = {
+        ...makeAgent({ npx: { package: "example-agent@2.0.0", args: ["--flag"] } }),
+        version: "2.0.0",
+      };
+      yield* resolver.invalidateIndex();
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        true,
+      );
+      expect(requests).toBe(3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          if (failNetwork) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(currentAgent))),
+          );
+        }),
       ),
     );
   });

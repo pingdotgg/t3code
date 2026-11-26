@@ -96,6 +96,7 @@ import {
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { outputRequestProblem } from "./runOutput.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import { isSlashCommand } from "@t3tools/shared/composerTrigger";
 import {
@@ -1661,6 +1662,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const taskFolderStore = yield* TaskFolderStore.TaskFolderStore;
+  const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
@@ -6142,15 +6144,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.sourceThreadId} was deleted.`,
       });
     }
-    // The fork would copy no worktree path and run in the project checkout.
     if (
       command.sideChat === true &&
-      orchestrationV2WorktreePending(sourceProjection.thread.worktreePath, sourceProjection.runs)
+      (orchestrationV2WorktreePending(
+        sourceProjection.thread.worktreePath,
+        sourceProjection.runs,
+      ) ||
+        (yield* worktreeSetupTracker.workspaceIsHeld(command.sourceThreadId)))
     ) {
+      const workspaceStatus =
+        sourceProjection.thread.worktreePath === null
+          ? "has no worktree yet"
+          : "is still preparing its worktree";
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.sourceThreadId} has no worktree yet. Start the side chat once its worktree is set up.`,
+        cause: `Thread ${command.sourceThreadId} ${workspaceStatus}. Start the side chat once its worktree is set up.`,
       });
     }
     if ((yield* findThread(command.targetThreadId)) !== null) {
@@ -7535,10 +7544,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = applyToProjection(projection, event);
     }
-    // Background wakes and delegated completions continue work the user already snoozed, so
-    // only a message someone actually sent ends the snooze.
+    // Background wakes, delegated completions and scheduled-task runs continue work the user
+    // already snoozed, so only a message someone actually sent ends the snooze.
     const automaticWake =
-      command.notification !== undefined || command.delegatedCompletion !== undefined;
+      command.notification !== undefined ||
+      command.delegatedCompletion !== undefined ||
+      command.scheduledTaskId !== undefined;
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
@@ -9188,7 +9199,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const portableForkItems =
       !requiresPortableFork || sourceProjection === null || sourceRun === null
         ? []
-        : yield* readForkHistoryItems(projectionStore, sourceProjection, sourceRun).pipe(
+        : yield* readForkHistoryItems(
+            projectionStore,
+            sourceProjection,
+            sourceRun,
+            projection.thread,
+          ).pipe(
             Effect.mapError(
               (cause) =>
                 new OrchestratorProjectionError({ threadId: sourceProjection.thread.id, cause }),
@@ -13207,10 +13223,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (Option.isNone(session) || session.value.hasPendingBackgroundWorkForThread === undefined) {
         return false;
       }
-      return yield* session.value
-        .hasPendingBackgroundWorkForThread(providerThread)
-        // A failed probe cannot confirm that the work ended.
-        .pipe(Effect.catchCause(() => Effect.succeed(true)));
+      return yield* (
+        session.value
+          .hasPendingBackgroundWorkForThread(providerThread)
+          // A failed probe cannot confirm that the work ended.
+          .pipe(Effect.catchCause(() => Effect.succeed(true)))
+      );
     });
     for (const item of pendingBackgroundTurnItems({
       turnItems: input.projection.turnItems,
@@ -16134,6 +16152,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return {
           events: plans.flatMap((plan) => plan.events),
           effects: plans.flatMap((plan) => plan.effects),
+          // A continuation would hold off the purge, and a late title would bring text back.
+          cancelUnsettledEffects: {
+            effectTypes: ["provider-runtime.continue", "thread-title.generate"],
+            reason: "Thread deleted.",
+          },
         };
       }
       case "thread.archive":
@@ -17669,5 +17692,6 @@ export const layer: Layer.Layer<
   | TaskFolderStore.TaskFolderStore
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
-  Layer.provide(ThreadCommandExecutor.layer),
+  // Layers memoize by reference, so this is the tracker ThreadLaunchService holds workspaces in.
+  Layer.provide(Layer.merge(ThreadCommandExecutor.layer, WorktreeSetupTracker.layer)),
 );
