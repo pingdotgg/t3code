@@ -417,6 +417,9 @@ describe("wordsHast", () => {
     ["<div>\n[a]: https://x.dev\n</div>", []],
     ["- ```\n  [a]: https://x.dev\n  ```", []],
     ["text\n[a]: https://x.dev", []],
+    ["[doc]: https://example.com\n\nSee [doc].\n\n```js\nx", ["[doc]: <https://example.com>"]],
+    ["[a]: https://x.dev\n\n<!--\nunclosed", ["[a]: <https://x.dev>"]],
+    ["[not\n```\ndef]: x\n```\n\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
   ])("finds the reference definitions in %j as Words reads them", (markdown, definitions) => {
     expect(markdownReferenceDefinitions(markdown)).toEqual(definitions);
   });
