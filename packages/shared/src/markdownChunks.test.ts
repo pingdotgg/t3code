@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, splitMarkdown } from "./markdownChunks.ts";
+import { toHtml } from "hast-util-to-html";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { unified } from "unified";
+
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  splitMarkdown,
+  withMarkdownDefinitions,
+} from "./markdownChunks.ts";
+import { taskListMarkerOffset } from "./markdownTaskEdits.ts";
 
 const splitLargeMarkdown = (text: string, targetChars?: number) =>
   splitMarkdown(text, targetChars).chunks;
@@ -236,5 +247,41 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown("---\n[rule]: /after-leading-rule\n\n# A").definitions).toBe(
       "[rule]: /after-leading-rule",
     );
+  });
+});
+
+describe("withMarkdownDefinitions", () => {
+  const html = (text: string) => {
+    const processor = unified().use(remarkParse).use(remarkRehype);
+    return toHtml(processor.runSync(processor.parse(text)));
+  };
+
+  it("keeps the first document definition ahead of later chunk definitions", () => {
+    const text = "[id]: /first\n\n" + "x".repeat(4100) + "\n\n# Next\n[id]: /later\n\n[id]";
+    const { chunks, definitions } = splitMarkdown(text);
+    expect(html(text)).toContain('href="/first"');
+    expect(chunks).toHaveLength(2);
+    expect(html(withMarkdownDefinitions(chunks[1]!.text, definitions))).toContain('href="/first"');
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+  });
+
+  it("keeps frontmatter hidden and task offsets shifted by exactly the prefix", () => {
+    const text = "\uFEFF---\r\ntitle: hidden\r\n---\r\n\r\n[ref]: /x\r\n\r\n- [ ] task";
+    const { definitions } = splitMarkdown(text);
+    const rendered = withMarkdownDefinitions(text, definitions);
+    expect(html(rendered)).not.toContain("hidden");
+    const list = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .parse(rendered)
+      .children.find((node) => node.type === "list");
+    const marker = taskListMarkerOffset(rendered, list!.position!.start.offset!);
+    expect(marker! - (definitions.length + 2)).toBe(text.indexOf("[ ]"));
+  });
+
+  it("keeps shared definitions out of a trailing unclosed code fence", () => {
+    const text = "[ref]: /dst\n\n```text\nshown";
+    const { definitions } = splitMarkdown(text);
+    expect(html(withMarkdownDefinitions(text, definitions))).toBe(html(text));
   });
 });
