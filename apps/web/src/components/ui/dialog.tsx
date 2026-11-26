@@ -123,12 +123,15 @@ function DialogPopup({
 }) {
   const gt = useGT();
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
+  const nativeTitlebarHeight = useNativeTitlebarHeight();
   const popup = useRender({
     ref: popupRef,
     render: (
       <DialogPrimitive.Popup
         className={cn(
-          variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
+          variant === "media"
+            ? cn(DIALOG_MEDIA_POPUP_CLASS, "[-webkit-app-region:no-drag]")
+            : DIALOG_POPUP_CLASS,
           "row-start-2 text-popover-foreground",
           variant === "default" && "max-h-full max-w-lg",
           bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
@@ -173,6 +176,15 @@ function DialogPopup({
             : undefined
         }
       >
+        {variant === "media" && nativeTitlebarHeight > 0 ? (
+          // The titlebar keeps moving the window instead of closing the media. Electron applies
+          // regions in DOM order, so this follows the no-drag viewport and precedes the popup.
+          <div
+            aria-hidden
+            className="absolute inset-x-0 top-0 [-webkit-app-region:drag]"
+            style={{ height: nativeTitlebarHeight }}
+          />
+        ) : null}
         {popup}
       </DialogViewport>
     </DialogPortal>
