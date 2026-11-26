@@ -30,6 +30,10 @@ answering, the answer it finished before reading your steer stays too. On web an
 shows the in-between messages while it is open. Approvals, questions, and errors always show. The
 setting applies to this browser or device only.
 
+## Auto-open thinking
+
+**Auto-open thinking** in **Settings → Chat** opens the finished turn's **Worked for** fold and its tool groups by default, and expands any thinking traces inside them. Each one can still be toggled, and Find and citations open the folds they point at either way. Off, everything starts collapsed as before. The setting applies to this browser or device only.
+
 ## Screen reader announcements
 
 On web and desktop, a screen reader hears the open thread's turn as it runs. **Screen reader

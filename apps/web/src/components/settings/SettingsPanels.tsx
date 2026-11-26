@@ -1472,6 +1472,7 @@ export function ChatSettingsPanel() {
 
       <SettingsSection id="activity" title={gt("Activity")}>
         <ToolCallVisibilityRow />
+        <AutoOpenThinkingRow />
       </SettingsSection>
 
       <SettingsSection id="screen-reader" title={gt("Screen reader")}>
@@ -1479,6 +1480,40 @@ export function ChatSettingsPanel() {
         <ScreenReaderWindowTitleRow />
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function AutoOpenThinkingRow() {
+  const setting = useSearchableSetting();
+  const gt = useGT();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...setting("auto-open-thinking")}
+      description={gt(
+        "Open thinking traces and the folds that hold them. Tool calls stay as they are.",
+      )}
+      resetAction={
+        settings.autoOpenThinking !== DEFAULT_UNIFIED_SETTINGS.autoOpenThinking ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset auto-open thinking to default")}
+            onClick={() =>
+              updateSettings({
+                autoOpenThinking: DEFAULT_UNIFIED_SETTINGS.autoOpenThinking,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.autoOpenThinking}
+          onCheckedChange={(checked) => updateSettings({ autoOpenThinking: checked })}
+          aria-label={gt("Auto-open thinking")}
+        />
+      }
+    />
   );
 }
 

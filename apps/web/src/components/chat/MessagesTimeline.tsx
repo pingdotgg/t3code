@@ -146,6 +146,11 @@ import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 import { useClientSettings } from "../../hooks/useSettings";
+import {
+  disclosureOpen,
+  ensureDisclosureOpen,
+  toggleDisclosure,
+} from "./MessagesTimeline.logic";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -585,26 +590,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
     preserveDisclosurePosition(`turn-fold:${runId}`);
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
-      if (next.has(runId)) {
-        next.delete(runId);
-      } else {
-        next.add(runId);
-      }
+      toggleDisclosure(next, runId, autoOpenThinking);
       return next;
     });
   };
-  const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
+  const onToggleWorkGroup = (groupId: string, anchorKey: string, currentlyOpen: boolean) => {
     preserveDisclosurePosition(
       anchorKey,
-      expandedWorkGroupIds.has(groupId) ? undefined : { contentKey: `${groupId}:details` },
+      currentlyOpen ? undefined : { contentKey: `${groupId}:details` },
     );
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
+      toggleDisclosure(next, groupId, autoOpenThinking);
       return next;
     });
   };
@@ -612,11 +609,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     preserveDisclosurePosition(`attempt-fold:${attemptId}`);
     setExpandedAttemptIds((existing) => {
       const next = new Set(existing);
-      if (next.has(attemptId)) {
-        next.delete(attemptId);
-      } else {
-        next.add(attemptId);
-      }
+      toggleDisclosure(next, attemptId, autoOpenThinking);
       return next;
     });
   };
@@ -658,6 +651,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   }
 
+  const autoOpenThinking = useClientSettings((settings) => settings.autoOpenThinking);
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   const screenReaderAnnouncements = useClientSettings(
     (settings) => settings.screenReaderAnnouncements,
@@ -683,9 +677,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   if (expandedFindRunId !== activeFindRunId) {
     setExpandedFindRunId(activeFindRunId);
     if (activeFindRunId) {
-      setExpandedRunIds((previous) =>
-        previous.has(activeFindRunId) ? previous : new Set(previous).add(activeFindRunId),
-      );
+      setExpandedRunIds((previous) => {
+        const next = new Set(previous);
+        ensureDisclosureOpen(next, activeFindRunId, autoOpenThinking);
+        return next;
+      });
     }
   }
   // A cited response folded inside a turn opens its fold once per activation;
@@ -723,21 +719,29 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ).get(citedEntry.id);
     setCitationExpandedFor(citationRequest.key);
     if (citedRunId) {
-      setExpandedRunIds((previous) =>
-        previous.has(citedRunId) ? previous : new Set(previous).add(citedRunId),
-      );
+      setExpandedRunIds((previous) => {
+        const next = new Set(previous);
+        ensureDisclosureOpen(next, citedRunId, autoOpenThinking);
+        return next;
+      });
     }
     const citedAttempt = citedEntry.attempt;
     if (citedAttempt?.status === "superseded") {
-      setExpandedAttemptIds((previous) =>
-        previous.has(citedAttempt.id) ? previous : new Set(previous).add(citedAttempt.id),
-      );
+      setExpandedAttemptIds((previous) => {
+        const next = new Set(previous);
+        ensureDisclosureOpen(next, citedAttempt.id, autoOpenThinking);
+        return next;
+      });
     }
   }
   const visibleExpandedRunIds =
-    !activeFindRunId || paintedExpandedRunIds.has(activeFindRunId)
+    !activeFindRunId || disclosureOpen(paintedExpandedRunIds, activeFindRunId, autoOpenThinking)
       ? paintedExpandedRunIds
-      : new Set(paintedExpandedRunIds).add(activeFindRunId);
+      : (() => {
+          const next = new Set(paintedExpandedRunIds);
+          ensureDisclosureOpen(next, activeFindRunId, autoOpenThinking);
+          return next;
+        })();
 
   const activeFindAttemptId = activeFindMatch
     ? timelineEntries.find((entry) => entry.id === activeFindMatch.entryId)?.attempt?.id
@@ -746,14 +750,21 @@ const ConversationTimeline = memo(function ConversationTimeline({
   if (expandedFindAttemptId !== activeFindAttemptId) {
     setExpandedFindAttemptId(activeFindAttemptId);
     if (activeFindAttemptId) {
-      setExpandedAttemptIds((previous) =>
-        previous.has(activeFindAttemptId) ? previous : new Set(previous).add(activeFindAttemptId),
-      );
+      setExpandedAttemptIds((previous) => {
+        const next = new Set(previous);
+        ensureDisclosureOpen(next, activeFindAttemptId, autoOpenThinking);
+        return next;
+      });
     }
   }
   const visibleExpandedAttemptIds =
-    activeFindAttemptId && !paintedExpandedAttemptIds.has(activeFindAttemptId)
-      ? new Set(paintedExpandedAttemptIds).add(activeFindAttemptId)
+    activeFindAttemptId &&
+    !disclosureOpen(paintedExpandedAttemptIds, activeFindAttemptId, autoOpenThinking)
+      ? (() => {
+          const next = new Set(paintedExpandedAttemptIds);
+          ensureDisclosureOpen(next, activeFindAttemptId, autoOpenThinking);
+          return next;
+        })()
       : paintedExpandedAttemptIds;
 
   const isVisiblePendingApproval = (approval: PendingApproval) =>
@@ -780,6 +791,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
     toolCallVisibility,
     revealedMessageId,
+    autoOpenThinking,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();

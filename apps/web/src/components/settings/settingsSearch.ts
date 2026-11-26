@@ -542,6 +542,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "auto-open-thinking",
+    title: msg("Auto-open thinking"),
+    to: "/settings/chat",
+    searchTerms: [
+      msg("thinking traces reasoning work log open folds rows expand default activity"),
+    ],
+  },
+  {
     id: "screen-reader-window-title",
     title: msg("Screen reader window title"),
     to: "/settings/chat",

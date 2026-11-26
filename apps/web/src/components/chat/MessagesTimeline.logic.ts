@@ -84,6 +84,41 @@ import {
 } from "@t3tools/shared/toolActivityCopy";
 import { isHostPath } from "@t3tools/shared/path";
 
+/**
+ * Expanded/collapsed rows and folds start at the view's default (open when the
+ * auto-open thinking setting is on). Sets record the ids flipped away from that
+ * default, so an open-by-default row closed by hand is kept closed.
+ */
+export function disclosureOpen(
+  set: ReadonlySet<string> | undefined,
+  id: string,
+  defaultOpen: boolean,
+): boolean {
+  return set?.has(id) ? !defaultOpen : defaultOpen;
+}
+
+export function toggleDisclosure<Id extends string>(
+  set: Set<Id>,
+  id: Id,
+  defaultOpen: boolean,
+): void {
+  const current = disclosureOpen(set, id, defaultOpen);
+  const next = !current;
+  if (next === defaultOpen) set.delete(id);
+  else set.add(id);
+}
+
+/** Forces a row or fold open, whatever it started as. */
+export function ensureDisclosureOpen<Id extends string>(
+  set: Set<Id>,
+  id: Id,
+  defaultOpen: boolean,
+): void {
+  if (disclosureOpen(set, id, defaultOpen)) return;
+  if (defaultOpen) set.delete(id);
+  else set.add(id);
+}
+
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
     return entry.message.role === "assistant" ? (entry.message.runId ?? null) : null;
@@ -1629,6 +1664,8 @@ export function deriveMessagesTimelineRows(
     worktreeSetup?: WorktreeSetupSnapshot | null;
     toolCallVisibility?: ToolCallVisibility;
     revealedMessageId?: MessageId | null;
+    /** Finished rows and folds start open, thinking rows included. */
+    autoOpenThinking?: boolean;
   },
   resolve: MessageResolver = m,
 ): MessagesTimelineRow[] {
@@ -1695,10 +1732,11 @@ export function deriveMessagesTimelineRows(
           resolve,
         });
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
+  const autoOpenDefault = input.autoOpenThinking === true;
   const collapsedEntryIds = new Set<string>();
   const collapsedFoldMemberIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedRunIds?.has(fold.runId)) {
+    if (!disclosureOpen(input.expandedRunIds, fold.runId, autoOpenDefault)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
@@ -1709,7 +1747,7 @@ export function deriveMessagesTimelineRows(
   }
   const collapsedSupersededEntryIds = new Set<string>();
   for (const fold of supersededFoldsByAnchorEntryId.values()) {
-    if (!input.expandedAttemptIds?.has(fold.attemptId)) {
+    if (!disclosureOpen(input.expandedAttemptIds, fold.attemptId, autoOpenDefault)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedSupersededEntryIds.add(entryId);
       }
@@ -1802,7 +1840,7 @@ export function deriveMessagesTimelineRows(
             entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
             groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
             groupId,
-            expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            expanded: disclosureOpen(input.expandedWorkGroupIds, groupId, autoOpenDefault),
             active: latestToolKeepsActivityLive,
             ...(latestThoughtEntry ? { thought: latestThoughtEntry.entry } : {}),
           };
@@ -1970,7 +2008,7 @@ export function deriveMessagesTimelineRows(
         createdAt: turnFold.createdAt,
         runId: turnFold.runId,
         label: turnFold.label,
-        expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
+        expanded: disclosureOpen(input.expandedRunIds, turnFold.runId, autoOpenDefault),
       });
     }
 
@@ -1988,7 +2026,7 @@ export function deriveMessagesTimelineRows(
         runId: supersededFold.runId,
         attemptId: supersededFold.attemptId,
         label: resolve(msg("Superseded attempt")),
-        expanded: input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false,
+        expanded: disclosureOpen(input.expandedAttemptIds, supersededFold.attemptId, autoOpenDefault),
       });
     }
 
@@ -2110,7 +2148,7 @@ export function deriveMessagesTimelineRows(
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded = disclosureOpen(input.expandedWorkGroupIds, groupId, autoOpenDefault);
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
           nextRows.push({
             kind: "work-live",
@@ -2146,7 +2184,7 @@ export function deriveMessagesTimelineRows(
           });
         } else {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded = disclosureOpen(input.expandedWorkGroupIds, groupId, autoOpenDefault);
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
           const primarySourceEntry = visibleGroupedEntries.find(
             (entry) => entry.toolSource !== undefined,
@@ -2393,7 +2431,7 @@ export function deriveMessagesTimelineRows(
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
       const groupId = workGroupId(failedGroupAnchor.id);
-      const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+      const expanded = disclosureOpen(input.expandedWorkGroupIds, groupId, autoOpenDefault);
       const groupedEntries = visibleActiveToolEntries.map((entry) => entry.entry);
       nextRows.push({
         kind: "thinking",

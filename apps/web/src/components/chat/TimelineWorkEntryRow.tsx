@@ -27,6 +27,8 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { useClientSettings } from "../../hooks/useSettings";
+import { disclosureOpen, toggleDisclosure } from "./MessagesTimeline.logic";
 import { memo, use, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
@@ -306,8 +308,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
   const groupView = use(WorkGroupViewCtx);
+  const autoOpenThinking = useClientSettings((settings) => settings.autoOpenThinking);
+  const rowDefaultOpen = autoOpenThinking && workEntry.itemType === "reasoning";
   const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+    () => disclosureOpen(groupView?.state.expandedEntries, workEntry.id, rowDefaultOpen),
   );
   const noticeMessage =
     workEntry.structuredPayload?.type === "system_notice"
@@ -331,8 +335,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     const next = !expanded;
     if (groupView) {
       groupView.onToggleEntry(!next, workEntry.id);
-      if (next) groupView.state.expandedEntries.add(workEntry.id);
-      else groupView.state.expandedEntries.delete(workEntry.id);
+      toggleDisclosure(groupView.state.expandedEntries, workEntry.id, rowDefaultOpen);
     } else {
       props.onToggleEntry?.(!next);
     }
