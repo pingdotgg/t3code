@@ -114,6 +114,34 @@ describe("subscription widget snapshots", () => {
     ]);
     expect(JSON.stringify(snapshot)).not.toContain("example.com");
   });
+  it.each([
+    [
+      ["AB", "AB2", "AB"],
+      ["AB", "AB2", "AB3"],
+    ],
+    [
+      ["AB", "AB", "AB2"],
+      ["AB", "AB3", "AB2"],
+    ],
+  ])("keeps widget account names unique for %j", (names, expected) => {
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations(
+        names.map((displayName, index) =>
+          provider({
+            instanceId: ProviderInstanceId.make(`account${index}`),
+            displayName,
+            auth: { status: "authenticated", email: `account${index}@example.com` },
+            usageLimits: {
+              checkedAt,
+              windows: [{ ...window, resetsAt: `2026-09-05T12:1${index}:00.000Z` }],
+            },
+          }),
+        ),
+      ),
+      deepLink,
+    );
+    expect(snapshot.providers[0]?.windows[0]?.accounts?.map((a) => a.name)).toStrictEqual(expected);
+  });
   it("uses upstream deduplication for a native account also present in a proxy hub", () => {
     const input = new Map([
       [
