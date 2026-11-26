@@ -43,7 +43,8 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { SWIPEABLE_DIRECTION, useInterfaceDirection } from "../../i18n/direction";
+import { useInterfaceDirection } from "../../i18n/direction";
+import { SWIPEABLE_DIRECTION } from "../../i18n/swipeableDirection";
 import type { MessageResolver } from "../../i18n/messages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";

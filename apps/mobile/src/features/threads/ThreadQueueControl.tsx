@@ -22,7 +22,8 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
-import { SWIPEABLE_DIRECTION, useInterfaceDirection } from "../../i18n/direction";
+import { useInterfaceDirection } from "../../i18n/direction";
+import { SWIPEABLE_DIRECTION } from "../../i18n/swipeableDirection";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
