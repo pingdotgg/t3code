@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => AsyncResult.success({ readAloud: mocks.settings }),
 }));
+// Its provider logo loads Expo's image module, which this test environment does not run.
+vi.mock("./OpenRouterSignIn", () => ({ OpenRouterSignIn: () => null }));
 vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   saveMobilePreferences: {},
