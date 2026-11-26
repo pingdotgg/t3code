@@ -6,6 +6,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { ForwardChevron } from "../../../components/ui/ForwardChevron";
+import { useInterfaceDirection } from "../../../i18n/direction";
 import { PullRequestMarkdown } from "../PullRequestMarkdown";
 import { Menu } from "../../../components/ui/Menu";
 
@@ -21,6 +22,7 @@ export function GuideOutline({
   readonly onRewrite?: () => void;
 }) {
   const gt = useGT();
+  const forwardArrow = useInterfaceDirection() === "rtl" ? "arrow.left" : "arrow.right";
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const files = new Set(guide.stops.flatMap(stopFilePaths));
   return (
@@ -118,7 +120,7 @@ export function GuideOutline({
             label={gt("Start tour")}
             tone="text"
             onPress={() => onOpen(0)}
-            icon="arrow.right"
+            icon={forwardArrow}
           />
         </View>
       ) : null}

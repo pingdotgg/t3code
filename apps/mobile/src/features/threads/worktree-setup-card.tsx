@@ -159,7 +159,7 @@ export function WorktreeSetupFoldChip(props: WorktreeSetupCardProps & SetupDetai
       )}
       onPress={props.onOpenDetails}
       hitSlop={8}
-      className="ml-2 min-w-0 max-w-[55%] flex-row items-center gap-1 rounded-full border border-border px-2 py-1 active:opacity-70"
+      className="ms-2 min-w-0 max-w-[55%] flex-row items-center gap-1 rounded-full border border-border px-2 py-1 active:opacity-70"
     >
       <AppActivityIndicator
         size={Platform.OS === "android" ? 12 : "small"}
@@ -329,7 +329,7 @@ function SetupDetailsSheet({
             </View>
           ))}
         {snapshot.phase === "failed" && snapshot.error ? (
-          <Text selectable className="ml-8 mt-2 text-xs text-danger-foreground">
+          <Text selectable className="ms-8 mt-2 text-xs text-danger-foreground">
             {snapshot.error}
           </Text>
         ) : null}
@@ -460,8 +460,8 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
       accessibilityLabel={gt("Setup script output")}
       className={
         failed
-          ? "mb-2 ml-8 rounded-md border border-danger-border bg-danger px-3 py-2"
-          : "mb-2 ml-8 rounded-md border border-border bg-card-alt px-3 py-2"
+          ? "mb-2 ms-8 rounded-md border border-danger-border bg-danger px-3 py-2"
+          : "mb-2 ms-8 rounded-md border border-border bg-card-alt px-3 py-2"
       }
     >
       {OUTPUT_TAIL_SLOTS.map((slot) => (

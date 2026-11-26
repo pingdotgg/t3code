@@ -162,7 +162,7 @@ function LinkRowImpl({
       }}
       style={{ paddingInlineStart: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
     >
-      {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
+      {depth > 0 ? <span aria-hidden className="-ms-2 h-6 w-px shrink-0 bg-border/70" /> : null}
       {snapshot === null ? (
         <PullRequestGlyph.pullRequest
           aria-label={gt("Waiting for host state")}
@@ -322,8 +322,8 @@ function LinkRowImpl({
       ) : null}
       <span
         className={cn(
-          "absolute right-0 bottom-0.5 flex items-center rounded-r-md bg-background pr-1 pl-5",
-          "[mask-image:linear-gradient(to_right,transparent,black_1rem)]",
+          "absolute end-0 bottom-0.5 flex items-center rounded-e-md bg-background pe-1 ps-5",
+          "[mask-image:linear-gradient(to_right,transparent,black_1rem)] rtl:[mask-image:linear-gradient(to_left,transparent,black_1rem)]",
           // Hidden controls would intercept link taps on touch screens.
           "pointer-events-none opacity-0 group-hover/pr-row:pointer-events-auto group-hover/pr-row:opacity-100",
           "has-[[data-popup-open]]:pointer-events-auto has-[[data-popup-open]]:opacity-100",
