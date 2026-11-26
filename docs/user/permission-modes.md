@@ -73,7 +73,9 @@ asking. Codex still asks before network access its managed network settings don'
 you already allowed commands for the session.
 
 In **Auto**, Claude asks you about the actions its review leaves open. Where Claude's settings turn
-its Auto mode off, or the model has none, a Claude thread set to **Auto** asks like **Supervised**.
+its Auto mode off, the permissions menu shows **Auto** as unavailable for that project, with whose
+settings do it. A Claude thread that is set to **Auto** anyway, or whose model has no Auto mode,
+asks like **Supervised** and says so once in the thread.
 
 Claude can still ask in **Full access** when its settings disable bypass permissions or require
 approval for an action. Dangerous-removal safety checks in bypass mode reject the command with

@@ -729,6 +729,21 @@ describe("workflowOneLine", () => {
     expect(workflowOneLine("- See [the issue](https://x.test/2) first")).toBe(
       "See the issue first",
     );
+    expect(workflowOneLine("_italic_ __bold__ *italic* **bold** (_nested_) **yes**_now_.")).toBe(
+      "italic bold italic bold (nested) yesnow.",
+    );
+    expect(workflowOneLine("Fixed **`foo_bar`** and _see `x`_ now.")).toBe(
+      "Fixed foo_bar and see x now.",
+    );
+  });
+
+  it("keeps underscores inside identifiers, paths and code", () => {
+    expect(workflowOneLine("Set MY_API_KEY in src/__tests__/my_module.test.ts and a__b__c.")).toBe(
+      "Set MY_API_KEY in src/__tests__/my_module.test.ts and a__b__c.",
+    );
+    expect(workflowOneLine("Run `__init__`, ``*glob*`` and `[api](url)` now.")).toBe(
+      "Run __init__, *glob* and [api](url) now.",
+    );
   });
 });
 
