@@ -92,3 +92,24 @@ it("suggests loadable dashboard icons from the project name and saves the pick",
     vi.unstubAllGlobals();
   }
 });
+
+it("drops a selected logo whose image fails to load", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ plexamp: { base: "svg", aliases: [] } })),
+  );
+  try {
+    await using _screen = await render(
+      <ProjectIconPickerDialog
+        current={{ kind: "dashboard-icon", name: "plexamp", file: "plexamp.svg" }}
+        projectName="Project"
+        open
+        onOpenChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+    await expect.element(page.getByRole("button", { name: "Save icon" })).toBeDisabled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

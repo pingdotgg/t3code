@@ -372,7 +372,7 @@ function DashboardIconGrid({
   readonly query: string;
   readonly projectName: string;
   readonly selected: ProjectDashboardIcon | null;
-  readonly onSelect: (icon: ProjectDashboardIcon) => void;
+  readonly onSelect: (icon: ProjectDashboardIcon | null) => void;
 }) {
   const appearance = useRenderedAppearance();
   // Some catalog files fail on the CDN; hide them rather than show blank tiles.
@@ -439,9 +439,10 @@ function DashboardIconGrid({
               loading="lazy"
               referrerPolicy="no-referrer"
               className="size-6 object-contain"
-              onError={() =>
-                setFailed((current) => new Set(current).add(dashboardIconUrl(icon, appearance)))
-              }
+              onError={() => {
+                setFailed((current) => new Set(current).add(dashboardIconUrl(icon, appearance)));
+                if (icon.name === selected?.name) onSelect(null);
+              }}
             />
           </PickerGridButton>
         ))}
