@@ -250,6 +250,9 @@ import { closeNonPrivateNetworkConnections, loopbackUrlHostForAddress } from "./
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as TeamAssetsRepository from "./team/TeamAssetsRepository.ts";
+import * as TeamGitHubBroker from "./team/TeamGitHubBroker.ts";
+import * as TeamGitHubHttp from "./team/githubBrokerHttp.ts";
+import * as TeamGitHubRepository from "./team/TeamGitHubRepository.ts";
 import * as TeamHttp from "./team/http.ts";
 import * as TeamProviderManager from "./team/TeamProviderManager.ts";
 import * as TeamProviderProxyHttp from "./team/providerProxyHttp.ts";
@@ -860,14 +863,17 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
   Layer.provideMerge(layerServerEnvironment),
+  Layer.provideMerge(TeamGitHubBroker.layer),
   Layer.provideMerge(
     TeamService.layer.pipe(Layer.provide(layerServerEnvironment), Layer.provide(layerPersistence)),
   ),
   Layer.provideMerge(TeamProviderManager.layer),
   Layer.provideMerge(
-    Layer.mergeAll(TeamRepository.layer, TeamAssetsRepository.layer).pipe(
-      Layer.provide(layerPersistence),
-    ),
+    Layer.mergeAll(
+      TeamRepository.layer,
+      TeamAssetsRepository.layer,
+      TeamGitHubRepository.layer,
+    ).pipe(Layer.provide(layerPersistence)),
   ),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(
@@ -940,6 +946,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerBrowserStream.routeLayer,
     PreviewTunnel.routeLayer,
     TeamProviderProxyHttp.layer,
+    TeamGitHubHttp.layer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
     speechStreamRouteLayer,

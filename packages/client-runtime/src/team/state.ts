@@ -3,7 +3,9 @@ import {
   TEAM_WS_METHODS,
   type EnvironmentId,
   type ProjectId,
+  type TeamAutomationGitHubIdentity,
   type TeamEnvironment,
+  type TeamGitHubIdentity,
   type TeamInvite,
   type TeamMember,
   type TeamMemberId,
@@ -72,6 +74,8 @@ export interface TeamEnvironmentState {
   readonly skills: ReadonlyArray<TeamSkill>;
   readonly preprompts: ReadonlyArray<TeamPreprompt>;
   readonly assetsRevision: number;
+  readonly myGitHubIdentity: TeamGitHubIdentity | null;
+  readonly automationGitHubIdentity: TeamAutomationGitHubIdentity | null;
 }
 
 export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
@@ -97,6 +101,8 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   skills: [],
   preprompts: [],
   assetsRevision: 0,
+  myGitHubIdentity: null,
+  automationGitHubIdentity: null,
 };
 
 function sortTeamEnvironments(
@@ -194,6 +200,8 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     skills: snapshot.skills ?? [],
     preprompts: snapshot.preprompts ?? [],
     assetsRevision: snapshot.assetsRevision ?? 0,
+    myGitHubIdentity: snapshot.myGitHubIdentity ?? null,
+    automationGitHubIdentity: snapshot.automationGitHubIdentity ?? null,
   };
 }
 
@@ -567,6 +575,23 @@ export function applyTeamStreamEvent(
         assetsRevision: Math.max(current.assetsRevision, event.payload.revision),
       };
     }
+
+    case "myGitHubIdentityUpdated": {
+      if (current.currentMember?.id !== event.payload.memberId) {
+        return current;
+      }
+      return {
+        ...current,
+        myGitHubIdentity: event.payload.identity,
+      };
+    }
+
+    case "automationGitHubIdentityUpdated": {
+      return {
+        ...current,
+        automationGitHubIdentity: event.payload.identity,
+      };
+    }
   }
 }
 
@@ -767,6 +792,22 @@ export function createTeamEnvironmentAtoms<R, E>(
     revokeMyMobilePairingLink: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:revoke-my-mobile-pairing-link",
       tag: TEAM_WS_METHODS.teamRevokeMyMobilePairingLink,
+    }),
+    connectMyGitHub: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:connect-my-github",
+      tag: TEAM_WS_METHODS.teamConnectMyGitHub,
+    }),
+    disconnectMyGitHub: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:disconnect-my-github",
+      tag: TEAM_WS_METHODS.teamDisconnectMyGitHub,
+    }),
+    setAutomationGitHub: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:set-automation-github",
+      tag: TEAM_WS_METHODS.teamSetAutomationGitHub,
+    }),
+    clearAutomationGitHub: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:clear-automation-github",
+      tag: TEAM_WS_METHODS.teamClearAutomationGitHub,
     }),
   };
 }

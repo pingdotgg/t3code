@@ -36,7 +36,10 @@ import {
 } from "@t3tools/provider-core/server/adapterDriver";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  applyProviderSessionEnvironmentOverride,
+  mergeProviderInstanceEnvironment,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import type * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -543,7 +546,10 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
       return makeKiroAcpRuntime({
         ...runtimeInput,
         settings: options.settings,
-        environment: { ...options.environment, ...processEnvironment },
+        environment: applyProviderSessionEnvironmentOverride(
+          options.environment,
+          processEnvironment,
+        ),
       });
     });
   const stripSteeringNote = makeKiroSteeringNoteFilter();

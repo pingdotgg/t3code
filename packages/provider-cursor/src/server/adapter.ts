@@ -9,6 +9,7 @@ import type {
   SettingSource,
   ToolCall,
 } from "@cursor/sdk";
+import { applyProviderSessionEnvironmentOverride } from "@t3tools/provider-core/server/instanceEnvironment";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -1091,7 +1092,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const sessionEnvironment: NodeJS.ProcessEnv =
           input.sessionEnvironmentOverride !== undefined &&
           Object.keys(input.sessionEnvironmentOverride).length > 0
-            ? { ...adapterOptions.environment, ...input.sessionEnvironmentOverride }
+            ? applyProviderSessionEnvironmentOverride(
+                adapterOptions.environment,
+                input.sessionEnvironmentOverride,
+              )
             : adapterOptions.environment;
         const sessionApiKey = sessionEnvironment.CURSOR_API_KEY?.trim() || apiKey;
         const session = providerSession({
@@ -2831,6 +2835,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               options,
               threadId: openInput.threadId,
               providerSessionId: input.providerSessionId,
+              ...(input.sessionEnvironmentOverride === undefined
+                ? {}
+                : { sessionEnvironmentOverride: input.sessionEnvironmentOverride }),
             })
             .pipe(Effect.mapError(classifyCursorModelRejection(openInput.modelSelection)));
           const next = {

@@ -322,6 +322,10 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamCreateMobilePairingLink]: "team",
   [TEAM_WS_METHODS.teamListMyMobilePairingLinks]: "team",
   [TEAM_WS_METHODS.teamRevokeMyMobilePairingLink]: "team",
+  [TEAM_WS_METHODS.teamConnectMyGitHub]: "team",
+  [TEAM_WS_METHODS.teamDisconnectMyGitHub]: "team",
+  [TEAM_WS_METHODS.teamSetAutomationGitHub]: "team",
+  [TEAM_WS_METHODS.teamClearAutomationGitHub]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

@@ -59,7 +59,10 @@ import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/s
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  applyProviderSessionEnvironmentOverride,
+  mergeProviderInstanceEnvironment,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -670,8 +673,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const connectionScope = yield* Scope.fork(scope, "sequential");
         return yield* Effect.gen(function* () {
           const baseEnvironment: NodeJS.ProcessEnv = {
-            ...options.environment,
-            ...input.sessionEnvironmentOverride,
+            ...applyProviderSessionEnvironmentOverride(
+              options.environment,
+              input.sessionEnvironmentOverride,
+            ),
             T3CODE_THREAD_ID: input.threadId,
           };
           let sandboxPiAgentDir: string | undefined;

@@ -92,6 +92,7 @@ export interface CursorAgentSdkOpenInput {
   readonly options: AgentOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  readonly sessionEnvironmentOverride?: Readonly<Record<string, string>>;
 }
 
 export interface CursorAgentSdkSendInput<Error> {

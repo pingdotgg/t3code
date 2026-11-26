@@ -6,6 +6,7 @@ import {
   canAssignTeamRole,
   canChangeTeamMemberRole,
   canChangeThreadTeamView,
+  canManageTeamAutomationGitHub,
   canManageTeamEnvironments,
   canManageTeamInvites,
   canManageTeamPreprompts,
@@ -707,5 +708,12 @@ describe("Milestone 6 team providers, skills, and pre-prompts contracts", () => 
     expect(defaultTeamProviderDeliveryStrategy(ProviderDriverKind.make("kiro"))).toBe(
       "remote-only",
     );
+  });
+
+  it("restricts team automation GitHub configuration to owner and admin", () => {
+    expect(canManageTeamAutomationGitHub("owner")).toBe(true);
+    expect(canManageTeamAutomationGitHub("admin")).toBe(true);
+    expect(canManageTeamAutomationGitHub("modo")).toBe(false);
+    expect(canManageTeamAutomationGitHub("regular")).toBe(false);
   });
 });

@@ -3958,6 +3958,16 @@ const make = Effect.gen(function* () {
           mode = "queue";
         }
       }
+      const preSendRuns =
+        mode === "queue"
+          ? []
+          : yield* threadManagement.getThreadRecords(input.threadId, ["runs"]).pipe(
+              Effect.map((records) => records.runs),
+              Effect.catchCause(() => Effect.succeed([] as const)),
+            );
+      const supersededActiveRunId = preSendRuns.findLast(
+        (candidate) => candidate.status === "running" || candidate.status === "starting",
+      )?.id;
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,
@@ -4001,6 +4011,22 @@ const make = Effect.gen(function* () {
                 ),
           ),
         );
+      if (
+        supersededActiveRunId !== undefined &&
+        (result.delivery === "steered" ||
+          result.delivery === "restarted" ||
+          mode === "steer" ||
+          mode === "restart")
+      ) {
+        yield* TeamMcpAccess.notifyTurnInterruptedByCaller({
+          threadId: input.threadId,
+          runId: supersededActiveRunId,
+          reason:
+            result.delivery === "restarted" || mode === "restart"
+              ? "mcp_interrupt"
+              : "promote_to_steer",
+        });
+      }
       yield* TeamMcpAccess.recordTurnAuthoredByCaller({
         threadId: input.threadId,
         turnId: result.run.id,

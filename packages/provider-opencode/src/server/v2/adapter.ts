@@ -1,6 +1,7 @@
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as NodeURL from "node:url";
+import { shouldSanitizeTeamGitHubEnv } from "@t3tools/provider-core/server/instanceEnvironment";
 
 import {
   AbsolutePath,
@@ -5664,6 +5665,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     // spawned server is not idle-stopped under a long tool call.
     openSession: Effect.fn("OpenCode2Adapter.borrowAndOpenSession")(
       function* (input) {
+        if (
+          shouldSanitizeTeamGitHubEnv(input.sessionEnvironmentOverride) &&
+          options?.makeSessionServer === undefined
+        ) {
+          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+            driver,
+            providerSessionId: input.providerSessionId,
+            cause: new Error(
+              "External OpenCode servers (serverUrl) cannot enforce per-turn Team GitHub credential isolation. Use a managed OpenCode server instead.",
+            ),
+          });
+        }
         const sessionServer =
           input.sessionEnvironmentOverride !== undefined &&
           Object.keys(input.sessionEnvironmentOverride).length > 0 &&

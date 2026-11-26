@@ -25,6 +25,7 @@ import {
   BellOffIcon,
   BookOpenIcon,
   CloudIcon,
+  GitBranchIcon,
   GitForkIcon,
   LayersIcon,
   LockIcon,
@@ -268,6 +269,16 @@ export function useTeamCommandPaletteActions(
       icon: <BellIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         toggleShowFollowedThreadsOnly();
+      },
+    });
+    items.push({
+      kind: "action",
+      value: "action:team-open-github",
+      searchTerms: ["team", "github", "pat", "token", "identity", "commit", "automation"],
+      title: gt("Open Team GitHub Identity settings"),
+      icon: <GitBranchIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/settings/teams", hash: "teams-github" });
       },
     });
     items.push({

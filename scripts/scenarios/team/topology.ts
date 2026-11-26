@@ -1,6 +1,9 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- lightweight HTTP + WebSocket upgrade reverse proxy per E2E member origin
+// @effect-diagnostics nodeBuiltinImport:off -- lightweight HTTP + WebSocket upgrade reverse proxy & Fake Git HTTP/GitHub server per E2E run
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
+import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -93,10 +96,49 @@ export interface FakeTeamLlmHandle {
   readonly reset: () => void;
 }
 
+export interface RecordedFakeGitRequest {
+  readonly method: string;
+  readonly url: string;
+  readonly username: string;
+  readonly token: string;
+  readonly authorization: string;
+}
+
+export interface RecordedFakeGitHubApiRequest {
+  readonly method: string;
+  readonly url: string;
+  readonly token: string | null;
+  readonly authorization: string | undefined;
+  readonly body: string;
+}
+
+export interface RecordedFakePullRequest {
+  readonly number: number;
+  readonly title: string;
+  readonly authorLogin: string;
+  readonly token: string;
+}
+
+export interface FakeGitHubHandle {
+  readonly origin: string;
+  readonly repoUrl: string;
+  readonly bareRepoPath: string;
+  readonly tokens: {
+    readonly alice: string;
+    readonly bob: string;
+    readonly automation: string;
+  };
+  readonly gitRequests: () => ReadonlyArray<RecordedFakeGitRequest>;
+  readonly apiRequests: () => ReadonlyArray<RecordedFakeGitHubApiRequest>;
+  readonly createdPullRequests: () => ReadonlyArray<RecordedFakePullRequest>;
+  readonly reset: () => void;
+}
+
 export interface TeamTopology extends AsyncDisposable {
   readonly teamServer: TeamServerHandle;
   readonly extraRemoteEnvironments: ReadonlyArray<TeamServerHandle>;
   readonly fakeTeamLlm?: FakeTeamLlmHandle;
+  readonly fakeGitHub?: FakeGitHubHandle;
   readonly members: Readonly<Record<string, TeamMemberHandle>>;
   readonly member: (pseudo: string) => TeamMemberHandle;
 }
@@ -287,6 +329,246 @@ function startFakeTeamLlmServer(input: {
   });
 }
 
+function startFakeGitHubServer(input: {
+  readonly port: number;
+  readonly rootDir: string;
+}): Promise<FakeGitHubHandle & { readonly close: () => Promise<void> }> {
+  const tokens = {
+    alice: "PAT_ALICE_M7_SECRET",
+    bob: "PAT_BOB_M7_SECRET",
+    automation: "PAT_BOT_M7_SECRET",
+  } as const;
+
+  const usersByToken: Readonly<
+    Record<
+      string,
+      { readonly id: number; readonly login: string; readonly name: string; readonly email: string }
+    >
+  > = {
+    [tokens.alice]: {
+      id: 101,
+      login: "alice-gh",
+      name: "Alice Owner",
+      email: "alice@test.example",
+    },
+    [tokens.bob]: {
+      id: 202,
+      login: "bob-gh",
+      name: "Bob Regular",
+      email: "bob@test.example",
+    },
+    [tokens.automation]: {
+      id: 303,
+      login: "acme-bot",
+      name: "Acme Automation",
+      email: "bot@test.example",
+    },
+  };
+
+  const gitProjectRoot = NodePath.join(input.rootDir, "fake-github");
+  const bareRepoPath = NodePath.join(gitProjectRoot, "org", "repo.git");
+  NodeFS.mkdirSync(bareRepoPath, { recursive: true });
+  const initRes = NodeChildProcess.spawnSync(
+    "git",
+    ["init", "--bare", "--initial-branch=main", bareRepoPath],
+    {
+      encoding: "utf8",
+    },
+  );
+  if (initRes.status !== 0) {
+    throw new Error(`Failed to initialize bare git repo: ${initRes.stderr}`);
+  }
+  NodeChildProcess.spawnSync(
+    "git",
+    ["--git-dir", bareRepoPath, "config", "http.receivepack", "true"],
+    {
+      encoding: "utf8",
+    },
+  );
+  const execPathRes = NodeChildProcess.spawnSync("git", ["--exec-path"], { encoding: "utf8" });
+  const gitHttpBackend = NodePath.join(execPathRes.stdout.trim(), "git-http-backend");
+
+  const gitRequests: Array<RecordedFakeGitRequest> = [];
+  const apiRequests: Array<RecordedFakeGitHubApiRequest> = [];
+  const createdPullRequests: Array<RecordedFakePullRequest> = [];
+
+  return new Promise((resolve, reject) => {
+    const server = NodeHttp.createServer((req, res) => {
+      const chunks: Array<Buffer> = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const bodyBuf = Buffer.concat(chunks);
+        const fullUrl = new URL(req.url ?? "/", `http://127.0.0.1:${input.port}`);
+        const pathname = fullUrl.pathname;
+
+        // Smart Git HTTP endpoint: /org/repo.git/*
+        if (pathname.startsWith("/org/repo.git")) {
+          const authHeader = req.headers.authorization;
+          if (typeof authHeader !== "string" || !authHeader.startsWith("Basic ")) {
+            res.writeHead(401, {
+              "www-authenticate": 'Basic realm="FakeGitHub"',
+              "content-type": "text/plain",
+            });
+            res.end("Authentication required");
+            return;
+          }
+          const decoded = Buffer.from(authHeader.slice("Basic ".length).trim(), "base64").toString(
+            "utf8",
+          );
+          const sep = decoded.indexOf(":");
+          const username = sep >= 0 ? decoded.slice(0, sep) : "";
+          const password = sep >= 0 ? decoded.slice(sep + 1) : "";
+          const user = usersByToken[password];
+          if (!user) {
+            res.writeHead(403, { "content-type": "text/plain" });
+            res.end("Invalid token");
+            return;
+          }
+          gitRequests.push({
+            method: req.method ?? "GET",
+            url: req.url ?? "/",
+            username,
+            token: password,
+            authorization: authHeader,
+          });
+          const child = NodeChildProcess.spawn(gitHttpBackend, [], {
+            env: {
+              ...process.env,
+              GIT_PROJECT_ROOT: gitProjectRoot,
+              GIT_HTTP_EXPORT_ALL: "1",
+              PATH_INFO: pathname,
+              REQUEST_METHOD: req.method ?? "GET",
+              QUERY_STRING: fullUrl.search.replace(/^\?/, ""),
+              CONTENT_TYPE:
+                typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : "",
+              CONTENT_LENGTH: String(bodyBuf.byteLength),
+              REMOTE_USER: user.login,
+            },
+          });
+          const outChunks: Array<Buffer> = [];
+          child.stdout.on("data", (c: Buffer) => outChunks.push(c));
+          child.on("close", () => {
+            const raw = Buffer.concat(outChunks);
+            let headerEnd = raw.indexOf("\r\n\r\n");
+            let sepLen = 4;
+            if (headerEnd === -1) {
+              headerEnd = raw.indexOf("\n\n");
+              sepLen = 2;
+            }
+            if (headerEnd === -1) {
+              res.writeHead(500, { "content-type": "text/plain" });
+              res.end("Malformed CGI response from git-http-backend");
+              return;
+            }
+            const headerText = raw.subarray(0, headerEnd).toString("utf8");
+            const payload = raw.subarray(headerEnd + sepLen);
+            let status = 200;
+            const outHeaders: Record<string, string> = {};
+            for (const line of headerText.split(/\r?\n/)) {
+              const colon = line.indexOf(":");
+              if (colon <= 0) continue;
+              const name = line.slice(0, colon).trim().toLowerCase();
+              const value = line.slice(colon + 1).trim();
+              if (name === "status") {
+                const code = Number.parseInt(value.split(/\s+/)[0] ?? "200", 10);
+                if (Number.isFinite(code)) status = code;
+              } else {
+                outHeaders[name] = value;
+              }
+            }
+            res.writeHead(status, outHeaders);
+            res.end(payload);
+          });
+          child.stdin.end(bodyBuf);
+          return;
+        }
+
+        // Fake GitHub REST API
+        const authHeader = req.headers.authorization;
+        const bearerMatch =
+          typeof authHeader === "string" ? /^Bearer\s+(\S+)$/i.exec(authHeader.trim()) : null;
+        const token = bearerMatch?.[1] ?? null;
+        const bodyText = bodyBuf.toString("utf8");
+        apiRequests.push({
+          method: req.method ?? "GET",
+          url: req.url ?? "/",
+          token,
+          authorization: authHeader,
+          body: bodyText,
+        });
+        const user = token ? usersByToken[token] : undefined;
+        if (!user) {
+          res.writeHead(401, { "content-type": "application/json" });
+          res.end(JSON.stringify({ message: "Bad credentials" }));
+          return;
+        }
+        if (pathname === "/user") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(user));
+          return;
+        }
+        if (pathname === "/user/emails") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify([{ email: user.email, primary: true, verified: true }]));
+          return;
+        }
+        if (req.method === "POST" && pathname === "/repos/org/repo/pulls") {
+          let title = "Untitled PR";
+          try {
+            const parsed = JSON.parse(bodyText) as { readonly title?: string };
+            if (typeof parsed.title === "string" && parsed.title.length > 0) {
+              title = parsed.title;
+            }
+          } catch {
+            // ignore
+          }
+          const pr: RecordedFakePullRequest = {
+            number: createdPullRequests.length + 1,
+            title,
+            authorLogin: user.login,
+            token: token!,
+          };
+          createdPullRequests.push(pr);
+          res.writeHead(201, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              number: pr.number,
+              title: pr.title,
+              user: { login: user.login },
+            }),
+          );
+          return;
+        }
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ message: "Not found" }));
+      });
+    });
+
+    server.on("error", reject);
+    server.listen(input.port, "127.0.0.1", () =>
+      resolve({
+        origin: `http://127.0.0.1:${input.port}`,
+        repoUrl: `http://127.0.0.1:${input.port}/org/repo.git`,
+        bareRepoPath,
+        tokens,
+        gitRequests: () => [...gitRequests],
+        apiRequests: () => [...apiRequests],
+        createdPullRequests: () => [...createdPullRequests],
+        reset: () => {
+          gitRequests.length = 0;
+          apiRequests.length = 0;
+          createdPullRequests.length = 0;
+        },
+        close: () =>
+          new Promise<void>((done) => {
+            server.closeAllConnections?.();
+            server.close(() => done());
+          }),
+      }),
+    );
+  });
+}
+
 export function startT3ServerProcess(input: {
   readonly home: string;
   readonly port: number;
@@ -296,6 +578,7 @@ export function startT3ServerProcess(input: {
   readonly environmentLabel: string;
   readonly userHomeOverride?: string;
   readonly extraArgs?: ReadonlyArray<string>;
+  readonly extraEnv?: Readonly<Record<string, string>>;
   readonly settingsPatch?: Readonly<Record<string, unknown>>;
 }): Promise<StartedServerHandle> {
   const ready = Promise.withResolvers<{ readonly pairingToken: string }>();
@@ -341,6 +624,7 @@ export function startT3ServerProcess(input: {
         T3CODE_DEV_AUTH_TOKEN: input.devAuthToken,
         ...SCENARIO_MACHINE_ENV,
         T3CODE_ENVIRONMENT_LABEL: input.environmentLabel,
+        ...input.extraEnv,
       },
       onLine: (line) => {
         recentStdout.push(line);
@@ -431,6 +715,7 @@ export async function startTeamTopology(input: {
   readonly members: ReadonlyArray<TeamMemberSpec>;
   readonly extraRemoteEnvironments?: number;
   readonly fakeTeamLlm?: boolean;
+  readonly fakeGitHub?: boolean;
   readonly isolateMemberHome?: boolean;
   readonly teamServerSettingsPatch?: Readonly<Record<string, unknown>>;
 }): Promise<TeamTopology> {
@@ -463,6 +748,16 @@ export async function startTeamTopology(input: {
       stack.defer(() => fakeTeamLlm!.close());
     }
 
+    let fakeGitHub: (FakeGitHubHandle & { readonly close: () => Promise<void> }) | undefined;
+    if (input.fakeGitHub) {
+      const ghPort = await Effect.runPromise(reservePort);
+      fakeGitHub = await startFakeGitHubServer({
+        port: ghPort,
+        rootDir: runDir,
+      });
+      stack.defer(() => fakeGitHub!.close());
+    }
+
     const teamServerPort = await Effect.runPromise(reservePort);
     const memberAllocations = await Promise.all(
       input.members.map(async (spec) => {
@@ -490,6 +785,9 @@ export async function startTeamTopology(input: {
       allowedOrigins: allMemberOrigins,
       devAuthToken: `${teamRawToken}${teamRawToken}`,
       environmentLabel: "Team Server",
+      ...(fakeGitHub === undefined
+        ? {}
+        : { extraEnv: { T3_TEAM_GITHUB_ALLOWED_API_ORIGINS: fakeGitHub.origin } }),
       ...(input.teamServerSettingsPatch === undefined
         ? {}
         : { settingsPatch: input.teamServerSettingsPatch }),
@@ -775,6 +1073,7 @@ export async function startTeamTopology(input: {
       },
       extraRemoteEnvironments,
       ...(fakeTeamLlm ? { fakeTeamLlm } : {}),
+      ...(fakeGitHub ? { fakeGitHub } : {}),
       members: memberHandles,
       member: (pseudo) => {
         const handle = memberHandles[pseudo];

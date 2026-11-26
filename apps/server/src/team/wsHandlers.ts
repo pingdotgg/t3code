@@ -297,6 +297,15 @@ export function makeTeamWsRpcHandlers(
         payload,
         ...(deps?.serverAuth !== undefined ? { serverAuth: deps.serverAuth } : {}),
       }),
+    [TEAM_WS_METHODS.teamConnectMyGitHub]: (
+      payload: Parameters<typeof teamService.connectMyGitHub>[0]["payload"],
+    ) => teamService.connectMyGitHub({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamDisconnectMyGitHub]: () => teamService.disconnectMyGitHub({ sessionId }),
+    [TEAM_WS_METHODS.teamSetAutomationGitHub]: (
+      payload: Parameters<typeof teamService.setAutomationGitHub>[0]["payload"],
+    ) => teamService.setAutomationGitHub({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamClearAutomationGitHub]: () =>
+      teamService.clearAutomationGitHub({ sessionId }),
   };
 }
 
