@@ -68,7 +68,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
     retained?.excluded ?? new Set(),
   );
   const [selectionBranch, setSelectionBranch] = useState(
-    retained?.refName ?? gitStatus.data?.refName ?? null,
+    retained !== undefined ? retained.refName : (gitStatus.data?.refName ?? null),
   );
   if (gitStatus.data && selectionBranch !== gitStatus.data.refName) {
     setSelectionBranch(gitStatus.data.refName);
