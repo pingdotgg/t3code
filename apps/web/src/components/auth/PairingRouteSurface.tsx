@@ -270,7 +270,7 @@ export function HostedPairingRouteSurface() {
               variant="outline"
               onClick={() => {
                 stripPairingTokenFromUrl();
-                window.location.href = "/";
+                window.location.href = import.meta.env.BASE_URL;
               }}
             >
               <T>Cancel</T>
@@ -286,7 +286,11 @@ export function HostedPairingRouteSurface() {
           </Button>
         ) : null}
         {status === "paired" ? (
-          <Button size="sm" variant="outline" onClick={() => (window.location.href = "/")}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => (window.location.href = import.meta.env.BASE_URL)}
+          >
             <T>Open app</T>
           </Button>
         ) : null}
