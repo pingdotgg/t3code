@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as FileSystem from "effect/FileSystem";
@@ -7,9 +8,19 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
 
+function normalizeForCompare(value: string): string {
+  return HostProcess.Platform.defaultValue() === "win32" ? value.toLowerCase() : value;
+}
+
 function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  const relative = path.relative(normalizeForCompare(root), normalizeForCompare(candidate));
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !relative.startsWith("../") &&
+      !path.isAbsolute(relative))
+  );
 }
 
 /** Resolve all symlinks, including the final component, before checking workspace containment. */
@@ -18,6 +29,8 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
     readonly allowedRoots: ReadonlyArray<string>;
+    readonly attachmentsDir?: string;
+    readonly isAllowedAttachment?: (canonicalPath: string) => Effect.Effect<boolean>;
     readonly requestPath: string;
   }) {
     const { path } = input;
@@ -46,6 +59,18 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
       missingSuffix.unshift(path.basename(candidate));
       candidate = parent;
     }
+    if (input.attachmentsDir !== undefined) {
+      const attachmentsRoot = yield* input.fileSystem
+        .realPath(input.attachmentsDir)
+        .pipe(Effect.option);
+      if (Option.isSome(attachmentsRoot) && isInsideRoot(path, attachmentsRoot.value, real)) {
+        const allowed =
+          input.isAllowedAttachment !== undefined &&
+          normalizeForCompare(path.dirname(real)) === normalizeForCompare(attachmentsRoot.value) &&
+          (yield* input.isAllowedAttachment(real));
+        return allowed ? real : yield* outside;
+      }
+    }
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
@@ -61,6 +86,8 @@ export const readAntigravityClientTextFile = Effect.fn("AntigravityClientFiles.r
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
     readonly allowedRoots: ReadonlyArray<string>;
+    readonly attachmentsDir?: string;
+    readonly isAllowedAttachment?: (canonicalPath: string) => Effect.Effect<boolean>;
     readonly request: EffectAcpSchema.ReadTextFileRequest;
   }): Effect.fn.Return<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError> {
     const filePath = yield* resolveClientFilePath({ ...input, requestPath: input.request.path });

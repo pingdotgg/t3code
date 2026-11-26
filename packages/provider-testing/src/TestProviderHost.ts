@@ -14,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 export interface TestProviderHostOptions {
+  readonly canReadThreadAttachment?: ProviderHost.ProviderHost["Service"]["canReadThreadAttachment"];
   readonly cwd?: string;
   readonly settings?: ServerSettings;
   readonly runBackgroundWork?: boolean;
@@ -64,6 +65,9 @@ export const layer = (
         },
         shouldRunBackgroundWork: Effect.fn("ProviderHost.shouldRunBackgroundWork")(function () {
           return Effect.succeed(options.runBackgroundWork ?? true);
+        }),
+        ...(options.canReadThreadAttachment && {
+          canReadThreadAttachment: options.canReadThreadAttachment,
         }),
         resolveAttachmentPath: (attachment) => path.join(attachmentsDir, attachment.id),
         credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {

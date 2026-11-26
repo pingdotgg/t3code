@@ -107,6 +107,9 @@ import {
   type AcpToolCallState,
 } from "./runtimeModel.ts";
 import {
+  acpReadRequiresApprovalForUnownedAttachment,
+  acpReadTargetsInRoot,
+  isAcpReadKind,
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpChangedPathsOfToolCall,
@@ -438,6 +441,11 @@ interface AcpPromptOutcomeFailure {
   readonly resumeWith?: string;
 }
 
+export interface AcpClientFileSystemContext {
+  readonly policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly canReadAttachment: (canonicalPath: string) => Effect.Effect<boolean>;
+}
+
 export interface AcpAdapterV2Flavor {
   readonly buildAttachmentPrompt?: (input: {
     readonly text: string;
@@ -568,11 +576,11 @@ export interface AcpAdapterV2Flavor {
   readonly clientFileSystem?: {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
-      cwd: string | null,
+      context: AcpClientFileSystemContext,
     ) => Effect.Effect<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError>;
     readonly writeTextFile?: (
       request: EffectAcpSchema.WriteTextFileRequest,
-      cwd: string | null,
+      context: AcpClientFileSystemContext,
     ) => Effect.Effect<EffectAcpSchema.WriteTextFileResponse, EffectAcpErrors.AcpError>;
   };
   readonly extractPermissionQuestion?: (request: EffectAcpSchema.RequestPermissionRequest) =>
@@ -762,6 +770,10 @@ export interface AcpAdapterV2Flavor {
   readonly enablePostSettleContinuation?: AcpNegotiatedFlag;
   /** A native request after prompt settlement starts a continuation before it is handled. */
   readonly wakeOnDetachedRequest?: boolean;
+  /** Allow unregistered native child sessions (e.g. agy early subagent reads) to read active thread attachments. */
+  readonly fallbackUnregisteredSubagentAttachments?: boolean;
+  /** Additional flavor-specific rawInput keys whose values name read permission file targets. */
+  readonly readPermissionPathKeys?: ReadonlyArray<string>;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
   /**
@@ -2324,6 +2336,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const clientPolicyGrants = makeAcpClientPolicyGrants();
         let latestRuntimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy =
           input.runtimePolicy;
+        const sessionPolicies = new Map<string, ProviderAdapter.ProviderAdapterV2RuntimePolicy>();
+        const subagentParentThreads = new Map<string, ThreadId>();
+        let initialSessionId: string | null = null;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         // Keyed by the agent's steer id; an injection can arrive before its send returns.
@@ -4044,6 +4059,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               now,
             });
             subagent.task = { ...subagent.task, providerThreadId: providerThread.id };
+            subagentParentThreads.set(childSessionId, context.input.threadId);
+            sessionPolicies.set(childSessionId, context.input.runtimePolicy);
             yield* Ref.update(providerThreadByNativeSessionId, (current) =>
               new Map(current).set(childSessionId, providerThread),
             );
@@ -7452,6 +7469,54 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           policy: context?.input.runtimePolicy ?? latestRuntimePolicy,
           turnKey: context === null ? null : String(context.providerTurnId),
         }));
+        const sessionPolicyFor = Effect.fnUntraced(function* (sessionId: string) {
+          const turn = yield* Ref.get(activeTurn);
+          if (turn?.nativeThreadId === sessionId) return turn.input.runtimePolicy;
+          return sessionPolicies.get(sessionId) ?? latestRuntimePolicy;
+        });
+        const canSessionReadAttachment = Effect.fnUntraced(function* (
+          sessionId: string,
+          canonicalPath: string,
+        ) {
+          if (host.canReadThreadAttachment === undefined) return false;
+          const bySession = yield* Ref.get(providerThreadByNativeSessionId);
+          const known = bySession.get(sessionId);
+          if (known !== undefined) {
+            if (
+              known.appThreadId !== null &&
+              (yield* host.canReadThreadAttachment(known.appThreadId, canonicalPath))
+            )
+              return true;
+            const parent = subagentParentThreads.get(sessionId);
+            return (
+              parent !== undefined && (yield* host.canReadThreadAttachment(parent, canonicalPath))
+            );
+          }
+          if (sessionId === initialSessionId) {
+            return (
+              input.threadId !== null &&
+              (yield* host.canReadThreadAttachment(input.threadId, canonicalPath))
+            );
+          }
+          if (!flavor.fallbackUnregisteredSubagentAttachments) return false;
+          const turn = yield* Ref.get(activeTurn);
+          const active = yield* Ref.get(activeSessionId);
+          const fallbackThreadId =
+            turn?.input.threadId ??
+            (active === null ? undefined : bySession.get(active)?.appThreadId) ??
+            input.threadId;
+          return (
+            fallbackThreadId !== null &&
+            (yield* host.canReadThreadAttachment(fallbackThreadId, canonicalPath))
+          );
+        });
+        const clientFileSystemContextFor = Effect.fnUntraced(function* (sessionId: string) {
+          return {
+            policy: yield* sessionPolicyFor(sessionId),
+            canReadAttachment: (canonicalPath: string) =>
+              canSessionReadAttachment(sessionId, canonicalPath),
+          } satisfies AcpClientFileSystemContext;
+        });
 
         const denyClientRequest = (operation: string, disposition: "ask" | "deny") =>
           Effect.logWarning("ACP client policy denied a client-mediated operation", {
@@ -7603,15 +7668,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const clientFileSystem = flavor.clientFileSystem;
           if (clientFileSystem !== undefined) {
             yield* targetRuntime.handleReadTextFile((request) =>
-              clientPolicyContext.pipe(
-                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
+              clientFileSystemContextFor(request.sessionId).pipe(
+                Effect.flatMap((context) => clientFileSystem.readTextFile(request, context)),
               ),
             );
             const writeTextFile = clientFileSystem.writeTextFile;
             if (writeTextFile !== undefined) {
               yield* targetRuntime.handleWriteTextFile((request) =>
-                clientPolicyContext.pipe(
-                  Effect.flatMap(({ policy }) => writeTextFile(request, policy.cwd)),
+                clientFileSystemContextFor(request.sessionId).pipe(
+                  Effect.flatMap((context) => writeTextFile(request, context)),
                 ),
               );
             }
@@ -7669,10 +7734,40 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 flavor.answerablePermissionOptions === undefined
                   ? params
                   : { ...params, options: flavor.answerablePermissionOptions(params) };
-              const dispositionFor = (
+              const effectiveDispositionFor = Effect.fnUntraced(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest,
-              ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
+              ): Effect.fn.Return<AcpPermissionDisposition> {
+                const base = (flavor.permissionDisposition ?? acpPermissionDisposition)(
+                  policy,
+                  request,
+                );
+                if (
+                  base !== "allow" ||
+                  !isAcpReadKind(request.toolCall.kind ?? "other") ||
+                  !acpReadRequiresApprovalForUnownedAttachment(policy)
+                ) {
+                  return base;
+                }
+                const targets = acpReadTargetsInRoot({
+                  cwd: policy.cwd,
+                  root: host.paths.attachmentsDir,
+                  ...(flavor.readPermissionPathKeys === undefined
+                    ? {}
+                    : { extraPathKeys: flavor.readPermissionPathKeys }),
+                  toolCall: request.toolCall,
+                });
+                if (targets === "unknown") return "ask";
+                for (const target of targets) {
+                  if (
+                    target === null ||
+                    !(yield* canSessionReadAttachment(request.sessionId, target))
+                  ) {
+                    return "ask";
+                  }
+                }
+                return "allow";
+              });
               // Kiro leaves the kind off the permission request for a `tool_call` it already
               // sent, so policy takes it and the call's changed paths from that tool. Tool ids
               // are only unique within a session and these are the root session's tools, so
@@ -7692,7 +7787,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   : undefined;
               if (
                 (followsAgentWorkState &&
-                  dispositionFor(latestRuntimePolicy, policyRequest(arrivalTool)) === "ask") ||
+                  (yield* effectiveDispositionFor(
+                    yield* sessionPolicyFor(params.sessionId),
+                    policyRequest(arrivalTool),
+                  )) === "ask") ||
                 (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
               ) {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
@@ -7704,8 +7802,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const context = followsAgentWorkState
                     ? yield* Ref.get(activeTurn)
                     : yield* activeContext;
-                  const disposition = dispositionFor(
-                    context?.input.runtimePolicy ?? latestRuntimePolicy,
+                  const disposition = yield* effectiveDispositionFor(
+                    yield* sessionPolicyFor(params.sessionId),
                     policyRequest(
                       params.sessionId === (yield* Ref.get(activeSessionId))
                         ? context?.tools.get(params.toolCall.toolCallId)
@@ -8349,6 +8447,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
               return yield* startAcpRuntime(input.threadId);
             });
+        initialSessionId = started.sessionId;
+        sessionPolicies.set(started.sessionId, input.runtimePolicy);
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* Ref.set(loadingSessionId, null);
         yield* setActiveSessionSetup(started);
@@ -9814,6 +9914,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // load/resume can invoke client methods; install the incoming policy before activation.
             latestRuntimePolicy = turnInput.runtimePolicy;
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
+            sessionPolicies.set(requestedSessionId, turnInput.runtimePolicy);
             const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
               turnInput.threadId,
             );
@@ -10551,6 +10652,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     threadInput.forceNewNativeThread && threadInput.existingProviderThread
                       ? { ...created, id: threadInput.existingProviderThread.id }
                       : { ...created, contextUsage };
+                  latestRuntimePolicy = threadInput.runtimePolicy;
+                  sessionPolicies.set(sessionId, threadInput.runtimePolicy);
                   yield* Ref.update(providerThreadByNativeSessionId, (current) =>
                     new Map(current).set(sessionId, providerThread),
                   );
@@ -10587,6 +10690,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   const sessionId = yield* nativeThreadId(driver, threadInput.providerThread);
+                  const nextSelection = threadInput.modelSelection ?? input.modelSelection;
+                  const nextRuntimePolicy =
+                    threadInput.runtimePolicy ??
+                    sessionPolicies.get(sessionId) ??
+                    input.runtimePolicy;
+                  latestRuntimePolicy = nextRuntimePolicy;
+                  sessionPolicies.set(sessionId, nextRuntimePolicy);
+                  yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                    new Map(current).set(sessionId, threadInput.providerThread),
+                  );
                   const previousItemIdentityVersion = itemIdentityVersion;
                   useProviderThreadIdentity(threadInput.providerThread);
                   const restorePreviousItemIdentity = Effect.sync(() => {
@@ -10595,28 +10708,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
                     threadInput.providerThread.appThreadId,
                   ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
+                  let finalSessionId = sessionId;
                   if ((yield* Ref.get(activeSessionId)) !== sessionId || restartAfterInterrupt) {
                     yield* Ref.set(snapshot, emptySnapshotState());
                     const activated = yield* activateSession(
                       sessionId,
                       threadInput.providerThread.appThreadId,
                     ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
+                    finalSessionId = activated.sessionId;
+                    sessionPolicies.set(activated.sessionId, nextRuntimePolicy);
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* Ref.set(loadingSessionId, null);
                     yield* setActiveSessionSetup(activated);
-                    const nextSelection = threadInput.modelSelection ?? input.modelSelection;
-                    const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
                     yield* configureSession(activated, nextSelection, nextRuntimePolicy);
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
                   }
                   const now = yield* DateTime.now;
-                  return {
+                  const providerThread = {
                     ...threadInput.providerThread,
                     providerSessionId: input.providerSessionId,
                     status: "idle" as const,
                     updatedAt: now,
                   };
+                  yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                    new Map(current).set(finalSessionId, providerThread),
+                  );
+                  return providerThread;
                 }),
               );
             },
@@ -11256,22 +11374,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       commitReplacementSession(rollbackInput.providerThread.appThreadId, candidate),
                   ).pipe(Effect.retry({ times: 1 }));
                   const now = yield* DateTime.now;
-                  return {
-                    providerThread: {
-                      ...rollbackInput.providerThread,
-                      nativeThreadRef: {
-                        driver,
-                        nativeId: replacement.sessionId,
-                        strength: "strong" as const,
-                      },
-                      nativeConversationHeadRef: null,
-                      nativeMetadata: {
-                        ...rollbackInput.providerThread.nativeMetadata,
-                        itemIdentityVersion: 2 as const,
-                      },
-                      status: "idle" as const,
-                      updatedAt: now,
+                  const original = rollbackInput.providerThread.nativeThreadRef?.nativeId;
+                  const rollbackPolicy =
+                    (original != null ? sessionPolicies.get(original) : undefined) ??
+                    input.runtimePolicy;
+                  latestRuntimePolicy = rollbackPolicy;
+                  sessionPolicies.set(replacement.sessionId, rollbackPolicy);
+                  const providerThread = {
+                    ...rollbackInput.providerThread,
+                    nativeThreadRef: {
+                      driver,
+                      nativeId: replacement.sessionId,
+                      strength: "strong" as const,
                     },
+                    nativeConversationHeadRef: null,
+                    nativeMetadata: {
+                      ...rollbackInput.providerThread.nativeMetadata,
+                      itemIdentityVersion: 2 as const,
+                    },
+                    status: "idle" as const,
+                    updatedAt: now,
+                  };
+                  yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                    new Map(current).set(replacement.sessionId, providerThread),
+                  );
+                  return {
+                    providerThread,
                     messages: [],
                     runtimeRequests: [],
                   };
@@ -11326,6 +11454,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     acpMcpActivation(mcpContext),
                     forkMeta,
                   );
+                  const forkedPolicy =
+                    forkInput.runtimePolicy ??
+                    sessionPolicies.get(sourceSessionId) ??
+                    input.runtimePolicy;
+                  latestRuntimePolicy = forkedPolicy;
+                  sessionPolicies.set(forked.sessionId, forkedPolicy);
                   rememberTerminalEnvironment(
                     forked.sessionId,
                     yield* readMcpContext(forkInput.targetThreadId),

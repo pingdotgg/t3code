@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -16,6 +17,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as DocumentText from "./DocumentText.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
+import { makeThreadAttachmentAccess } from "./threadAttachmentAccess.ts";
 
 export const layer = Layer.effect(
   ProviderHost.ProviderHost,
@@ -26,6 +28,7 @@ export const layer = Layer.effect(
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
+    const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
     // Optional so standalone provider layers in tests probe at once.
     const lifecycleEvents = yield* Effect.serviceOption(
       ServerLifecycleEvents.ServerLifecycleEvents,
@@ -63,6 +66,13 @@ export const layer = Layer.effect(
       ...Option.match(portDiscovery, {
         onNone: () => ({}),
         onSome: (discovery) => ({ trackAgent: discovery.trackAgent }),
+      }),
+      ...(Option.isSome(sql) && {
+        canReadThreadAttachment: makeThreadAttachmentAccess({
+          sql: sql.value,
+          fileSystem,
+          attachmentsDir: config.attachmentsDir,
+        }),
       }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),

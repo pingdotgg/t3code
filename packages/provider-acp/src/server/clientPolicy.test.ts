@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as EffectAcpSchema from "effect-acp/compat";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -12,6 +13,8 @@ import {
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpPermissionDisposition,
+  acpReadRequiresApprovalForUnownedAttachment,
+  acpReadTargetsInRoot,
   makeAcpClientPolicyGrants,
   mergeAcpChangedPaths,
   type AcpRuntimePolicy,
@@ -623,4 +626,73 @@ describe("makeAcpClientPolicyGrants", () => {
     assert.isFalse(grants.allowsExecute("turn-1"));
     assert.isTrue(grants.allowsExecute("turn-2"));
   });
+});
+
+describe("acpReadTargetsInRoot", () => {
+  it.effect(
+    "identifies attachment targets, extra flavor keys, empty fields, and web searches",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+        const root = NodePath.join(cwd, "attachments");
+        const file = NodePath.join(root, "a.txt");
+        yield* fileSystem.makeDirectory(root);
+        yield* fileSystem.writeFileString(file, "secret");
+        yield* fileSystem.symlink(root, NodePath.join(cwd, "linked"));
+
+        const extraPathKeys = ["AbsolutePath", "SearchPath", "TargetFile", "TargetDirectory"];
+        const targets = (toolCall: Parameters<typeof acpReadTargetsInRoot>[0]["toolCall"]) =>
+          acpReadTargetsInRoot({ cwd, root, extraPathKeys, toolCall });
+
+        assert.deepEqual(targets({ rawInput: { AbsolutePath: file } }), [file]);
+        assert.deepEqual(targets({ locations: [{ path: "linked/a.txt" }] }), [file]);
+        assert.deepEqual(targets({ kind: "search", rawInput: { query: "effect ts" } }), []);
+        assert.deepEqual(
+          acpReadTargetsInRoot({
+            cwd: null,
+            root,
+            extraPathKeys,
+            toolCall: { kind: "search", rawInput: { query: "effect ts" } },
+          }),
+          [],
+        );
+        assert.deepEqual(targets({ rawInput: { path: "", SearchPath: "  " } }), []);
+        assert.deepEqual(targets({ rawInput: { SearchPath: cwd } }), [null]);
+        assert.deepEqual(targets({ rawInput: { path: NodePath.join(cwd, "missing.txt") } }), []);
+        assert.equal(targets({ rawInput: { SearchPath: "~other/file" } }), "unknown");
+
+        const homeAttachment = NodePath.join(NodeOS.homedir(), ".t3", "attachments", "x.txt");
+        assert.deepEqual(
+          acpReadTargetsInRoot({
+            cwd,
+            root: NodePath.dirname(homeAttachment),
+            extraPathKeys,
+            toolCall: { rawInput: { TargetFile: "~/.t3/attachments/x.txt" } },
+          }),
+          [homeAttachment],
+        );
+        assert.deepEqual(
+          acpReadTargetsInRoot({
+            cwd,
+            root: NodePath.dirname(homeAttachment),
+            extraPathKeys,
+            toolCall: { rawInput: { TargetDirectory: "~" } },
+          }),
+          [null],
+        );
+
+        assert.isTrue(acpReadRequiresApprovalForUnownedAttachment({ runtimeMode: "auto", cwd }));
+        assert.isTrue(
+          acpReadRequiresApprovalForUnownedAttachment({
+            runtimeMode: "full-access",
+            cwd,
+            sandboxPolicy: { type: "readOnly" },
+          }),
+        );
+        assert.isFalse(
+          acpReadRequiresApprovalForUnownedAttachment({ runtimeMode: "full-access", cwd }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
