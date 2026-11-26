@@ -16,7 +16,8 @@ export const startFileDrag = makeIpcMethod({
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.fileDrag.start")(function* (input, event) {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    if (environment.platform !== "darwin" || !environment.path.isAbsolute(input.path)) return false;
+    if (environment.platform !== "darwin" && environment.platform !== "win32") return false;
+    if (!environment.path.isAbsolute(input.path)) return false;
     const hostEnvironmentId = yield* getHostEnvironmentId.handler(undefined);
     if (hostEnvironmentId === null || input.environmentId !== hostEnvironmentId) return false;
     const window = yield* (yield* ElectronWindow.ElectronWindow).main;

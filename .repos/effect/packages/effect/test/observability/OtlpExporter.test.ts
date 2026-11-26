@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Clock, ConfigProvider, Deferred, type Duration, Effect, Exit, Fiber, Layer, Metric, Ref, Scope } from "effect"
+import { Clock, ConfigProvider, Deferred, Duration, Effect, Exit, Fiber, Layer, Metric, Ref, Scope } from "effect"
 import { type Headers, HttpBody, HttpClient, type HttpClientError, HttpClientResponse } from "effect/http"
 import { Otlp, OtlpExporter, OtlpLogger, OtlpMetrics, OtlpSerialization, OtlpTracer } from "effect/observability"
 import { TestClock } from "effect/testing"
@@ -53,13 +53,14 @@ const makeExporter = (
 
 const makeExporterRaw = (
   maxBatchSize: number | "disabled" = 1,
-  body: (data: Array<any>) => HttpBody.HttpBody = () => HttpBody.empty
+  body: (data: Array<any>) => HttpBody.HttpBody = () => HttpBody.empty,
+  exportInterval: Duration.Input = "1 hour"
 ) =>
   OtlpExporter.make({
     label: "OtlpExporterTest",
     url: "http://localhost:4318/v1/logs",
     headers: undefined,
-    exportInterval: "1 hour",
+    exportInterval,
     maxBatchSize,
     body: (data) => [body(data), Effect.void],
     shutdownTimeout: "1 second"
@@ -127,6 +128,44 @@ describe("OtlpExporter", () => {
         `my-app/1.0 OTel-OTLP-Exporter-JavaScript-Effect-OtlpExporterTest/${Version.getCurrentVersion()}`
       ])
     }))
+
+  it.effect("keeps no background fiber with an infinite interval", () => {
+    let activeFibers = 0
+    const runtimeMetrics: Metric.FiberRuntimeMetricsService = {
+      recordFiberStart: () => {
+        activeFibers++
+      },
+      recordFiberEnd: () => {
+        activeFibers--
+      }
+    }
+    return Effect.gen(function*() {
+      const { attempts, httpClient } = yield* makeStatusHttpClient(200)
+      yield* Effect.scoped(
+        Effect.gen(function*() {
+          const exporter = yield* makeExporterRaw(2, undefined, Duration.infinity)
+          const flusher = yield* OtlpExporter.Flusher
+          assert.strictEqual(activeFibers, 0)
+
+          exporter.push({ value: 1 })
+          yield* flusher.flush
+          assert.strictEqual(yield* Ref.get(attempts), 1)
+
+          exporter.push({ value: 2 })
+          exporter.push({ value: 3 })
+          yield* yieldNowN(3)
+          assert.strictEqual(activeFibers, 0)
+          assert.strictEqual(yield* Ref.get(attempts), 2)
+
+          exporter.push({ value: 4 })
+        }).pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provide(OtlpExporter.layerFlusher)
+        )
+      )
+      assert.strictEqual(yield* Ref.get(attempts), 3)
+    }).pipe(Effect.provideService(Metric.FiberRuntimeMetrics, runtimeMetrics))
+  })
 
   it.effect("allows an in-flight timer export to finish during shutdown", () =>
     Effect.gen(function*() {

@@ -6,7 +6,7 @@ export type PullRequestSavedViewScope = Pick<
 >;
 
 export function pullRequestViewMatches(
-  view: PullRequestSavedView,
+  view: PullRequestSavedViewScope,
   scope: PullRequestSavedViewScope,
 ) {
   const key = ({ environmentId, controls, query }: PullRequestSavedViewScope) =>

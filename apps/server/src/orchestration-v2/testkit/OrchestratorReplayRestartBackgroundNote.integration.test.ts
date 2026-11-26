@@ -37,7 +37,7 @@ const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
 const SECOND_AFTER_RESTART = "Thanks. Anything else?";
 const NOTE = [
   "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
-  "- subagent: Background subagent test (id a2995bfced8019363)",
+  "- subagent: Background subagent test (id a2995bfced8019363; resume it with SendMessage to 'a2995bfced8019363')",
 ].join("\n");
 
 const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
@@ -294,5 +294,27 @@ describe("restart-cancelled background work", () => {
           Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
+  );
+
+  it.effect("sends a slash command verbatim and tells the next user turn instead", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const slashCommand = "/review the diff";
+        const projection = yield* runRestart({
+          resumedPrompts: [slashCommand, `${NOTE}\n\nUser message:\n${SECOND_AFTER_RESTART}`],
+          userMessagesAfterRestart: [slashCommand, SECOND_AFTER_RESTART],
+          continueThreadsAfterServerUpdate: false,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed", "completed"],
+        );
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
   );
 });

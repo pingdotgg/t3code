@@ -10,6 +10,8 @@ import { responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
 const MAX_CONNECTIONS = 16;
 const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
+// Runtime teardown waits on disconnect, so an endpoint that never answers must not hold it.
+const DISCONNECT_TIMEOUT = "5 seconds";
 
 interface JsonRpcEnvelope {
   readonly id?: unknown;
@@ -207,6 +209,15 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
           () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
         );
       }).pipe(
+        Effect.timeoutOrElse({
+          duration: DISCONNECT_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new AcpMcpOverAcpError({
+                message: "T3 Code MCP endpoint did not answer disconnect.",
+              }),
+            ),
+        }),
         // Restore a session that failed to close, so a retry or dispose can close it.
         Effect.onError(() => Effect.sync(() => connections.set(request.connectionId, connection))),
       );
@@ -272,7 +283,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       Effect.forEach(
         [...connections.keys()],
         (connectionId) => disconnect({ connectionId }).pipe(Effect.ignore),
-        { discard: true },
+        { concurrency: "unbounded", discard: true },
       ),
     ),
   };

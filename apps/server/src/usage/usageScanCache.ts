@@ -10,7 +10,7 @@ import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { mergeUsageCopies } from "./usageAggregation.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 18 as const;
+const USAGE_SCAN_CACHE_VERSION = 19 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -18,8 +18,9 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * the newer one; older files are removed once it is saved.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v18.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v19.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v18.json",
   "usage-scan-cache-v17.json",
   "usage-scan-cache-v16.json",
   "usage-scan-cache-v15.json",
@@ -45,8 +46,8 @@ export interface CachedFile {
   readonly records: readonly UsageRecord[];
   /** Unterminated tail records stay separate because incremental parsing rereads them. */
   readonly tailRecords: readonly UsageRecord[];
-  /** Whole-file count, including diagnostics from the tentative tail. */
-  readonly malformedRecords: number;
+  /** Whole-file timestamps, including diagnostics from the tentative tail. */
+  readonly malformedRecords: readonly number[];
   readonly position: TranscriptParsePosition;
 }
 
@@ -67,6 +68,7 @@ type SerializedRecord = readonly [
   rateModelIndex?: number | null,
   unresolvedServiceTierTurnId?: string | null,
   cacheCreation1hTokens?: number,
+  modelCalls?: number,
   supersedesDedupeKey?: string,
 ];
 
@@ -77,6 +79,7 @@ interface SerializedFile {
   readonly r: readonly SerializedRecord[];
   readonly t: readonly SerializedRecord[];
   readonly mr: number;
+  readonly mt?: readonly number[];
   readonly o: number;
   readonly gl: number;
   readonly gh: number;
@@ -130,13 +133,20 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
       ? ([
           record.unresolvedServiceTierTurnId ?? null,
           record.cacheCreation1hTokens ?? 0,
+          record.modelCalls ?? 1,
           record.supersedesDedupeKey,
         ] as const)
-      : record.cacheCreation1hTokens !== undefined
-        ? ([record.unresolvedServiceTierTurnId ?? null, record.cacheCreation1hTokens] as const)
-        : record.unresolvedServiceTierTurnId !== undefined
-          ? ([record.unresolvedServiceTierTurnId] as const)
-          : ([] as const)),
+      : record.modelCalls !== undefined && record.modelCalls > 1
+        ? ([
+            record.unresolvedServiceTierTurnId ?? null,
+            record.cacheCreation1hTokens ?? 0,
+            record.modelCalls,
+          ] as const)
+        : record.cacheCreation1hTokens !== undefined
+          ? ([record.unresolvedServiceTierTurnId ?? null, record.cacheCreation1hTokens] as const)
+          : record.unresolvedServiceTierTurnId !== undefined
+            ? ([record.unresolvedServiceTierTurnId] as const)
+            : ([] as const)),
   ];
   return {
     s: entry.size,
@@ -144,7 +154,8 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     p: entry.provider,
     r: entry.records.map(serializeRecord),
     t: entry.tailRecords.map(serializeRecord),
-    mr: entry.malformedRecords,
+    mr: entry.malformedRecords.length,
+    ...(entry.malformedRecords.length === 0 ? {} : { mt: entry.malformedRecords }),
     o: entry.position.resumeOffset,
     gl: entry.position.guardLength,
     gh: entry.position.guardHash,
@@ -228,8 +239,14 @@ export function decodeScanCache(
         rateModelIndex,
         unresolvedServiceTierTurnId,
         cacheCreation1h = 0,
-        supersedesDedupeKey,
+        savedModelCalls = 1,
+        savedSupersedesDedupeKey,
       ] = row as SerializedRecord;
+      // Earlier fallback builds wrote v18 Claude replacement keys in the modelCalls slot.
+      const legacyReplacement =
+        version === 18 && provider === "claude" && typeof savedModelCalls === "string";
+      const modelCalls = legacyReplacement ? 1 : savedModelCalls;
+      const supersedesDedupeKey = legacyReplacement ? savedModelCalls : savedSupersedesDedupeKey;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -241,6 +258,9 @@ export function decodeScanCache(
         (unresolvedServiceTierTurnId != null && typeof unresolvedServiceTierTurnId !== "string") ||
         !Number.isFinite(cacheCreation1h) ||
         (supersedesDedupeKey !== undefined && typeof supersedesDedupeKey !== "string") ||
+        typeof modelCalls !== "number" ||
+        !Number.isFinite(modelCalls) ||
+        modelCalls < 0 ||
         (rateModelIndex != null && rateModel === undefined) ||
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
@@ -256,6 +276,7 @@ export function decodeScanCache(
       // parser cannot remove their previously saved local placeholders.
       if (provider === "claude" && model === CLAUDE_SYNTHETIC_MODEL) continue;
 
+      const calls = Math.trunc(modelCalls);
       records.push({
         provider,
         timestampMs,
@@ -272,6 +293,7 @@ export function decodeScanCache(
         ...(cacheCreation1h > 0 ? { cacheCreation1hTokens: cacheCreation1h } : {}),
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
+        ...(calls > 1 ? { modelCalls: calls } : {}),
         ...(version >= 7 && unresolvedServiceTierTurnId != null
           ? { unresolvedServiceTierTurnId }
           : {}),
@@ -299,8 +321,18 @@ export function decodeScanCache(
     const format = formats.get(entry.p);
     if (format === undefined) continue;
     if (!isRecordArray(entry.r) || !isRecordArray(entry.t)) continue;
-    const malformedRecords = entry.mr === undefined ? 0 : entry.mr;
-    if (!Number.isSafeInteger(malformedRecords) || malformedRecords < 0) continue;
+    const malformedCount = entry.mr === undefined ? 0 : entry.mr;
+    if (!Number.isSafeInteger(malformedCount) || malformedCount < 0) continue;
+    const malformedRecords = entry.mt ?? (malformedCount === 0 ? [] : undefined);
+    if (
+      malformedRecords !== undefined &&
+      (!Array.isArray(malformedRecords) ||
+        malformedRecords.length !== malformedCount ||
+        !malformedRecords.every(Number.isFinite))
+    )
+      continue;
+    // A count saved without dates cannot be limited to a window, so the file re-parses whole.
+    const undated = malformedRecords === undefined;
     // Position fields feed byte offsets and a Buffer allocation in the reader,
     // so anything outside their real ranges must reject the entry: a bogus
     // guard length would otherwise fail every parse of the file, silently
@@ -319,23 +351,22 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v14 uses Codex request ledgers; v15 repairs rewinds while serving clean v14 entries.
-    // v17 keys Grok turns by time, restoring turns previously dropped as repeats.
-    // v18 adds authoritative Claude fallback replacement keys.
+    // Keep history for deleted rollouts, but re-parse incompatible reducer state:
+    // v14 Codex ledgers, v15 rewound Codex counters, v17 time-keyed Grok turns,
+    // v19 combines Grok modelCalls and Claude replacement keys from incompatible v18 builds.
     const legacy =
-      (entry.p === "claude" && version < 18) ||
-      (entry.p === "grok" && version < 17) ||
+      (entry.p === "claude" && version < 19) ||
+      (entry.p === "grok" && version < 19) ||
       (format.state !== undefined &&
         (version < 6 ||
-          (entry.p === "codex" && (version < 14 || (version < 15 && malformedRecords > 0)))));
+          (entry.p === "codex" && (version < 14 || (version < 15 && malformedCount > 0)))));
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
     // Before v16 a Codex baseline can lack the time of its latest move, or carry an older one,
     // and that time keeps a re-emitted older snapshot from billing twice. A grown file re-parses
     // whole instead of resuming.
-    const resumable = !legacy && !(entry.p === "codex" && version < 16);
+    const resumable = !legacy && !undated && !(entry.p === "codex" && version < 16);
 
     const provider = entry.p;
     const records = decodeRecords(entry.r, provider);
@@ -343,12 +374,12 @@ export function decodeScanCache(
     if (records === null || tailRecords === null) continue;
 
     cache.set(path, {
-      size: legacy ? -1 : entry.s,
+      size: legacy || undated ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      malformedRecords,
+      malformedRecords: malformedRecords ?? [],
       position: resumable
         ? {
             resumeOffset: entry.o,

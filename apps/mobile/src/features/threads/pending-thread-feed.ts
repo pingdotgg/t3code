@@ -7,6 +7,9 @@ import { LIVE_ACTIVITY_ROW_ID, type ThreadFeedEntry } from "../../lib/threadActi
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { threadHasCaughtUpTo } from "@t3tools/client-runtime/state/threads";
 import { resolveUserMessageGrouping } from "@t3tools/client-runtime/user-message";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import type {
   AcknowledgedThreadMessage,
   QueuedThreadMessage,
@@ -113,10 +116,11 @@ export function createThreadFeedGrouping() {
 export function appendGuestPendingMessages(
   presentedFeed: ReadonlyArray<PendingThreadFeedEntry | PendingFoldFeedEntry>,
   share: ThreadGuestShare | null,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ThreadFeedRow> {
   const pending = share?.messages.filter((message) => message.status === "pending") ?? [];
   if (share === null || pending.length === 0) return presentedFeed;
-  const guestName = share.guestName ?? "Guest";
+  const guestName = share.guestName ?? resolve(msg("Guest"));
   return [
     ...presentedFeed,
     ...pending.map((message): GuestPendingFeedEntry => ({
@@ -197,6 +201,7 @@ export function createPendingTurnAppender() {
   return (
     feed: ReadonlyArray<PendingThreadFeedEntry>,
     options: { readonly zen: boolean },
+    resolve: MessageResolver = m,
   ): ReadonlyArray<PendingThreadFeedEntry | PendingFoldFeedEntry> => {
     const last = feed.at(-1);
     if (
@@ -213,7 +218,7 @@ export function createPendingTurnAppender() {
     ) {
       return feed;
     }
-    const label = last.acknowledged ? "Starting…" : "Sending…";
+    const label = last.acknowledged ? resolve(msg("Starting…")) : resolve(msg("Sending…"));
     if (activity?.createdAt !== last.createdAt || activity.label !== label) {
       activity = {
         type: "thinking",

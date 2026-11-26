@@ -10,8 +10,10 @@ import {
 } from "@t3tools/client-runtime/issue-selection";
 import { isSelected, toggleSelection } from "@t3tools/client-runtime/pull-request-selection";
 import type { IssueAssigneeCandidate } from "@t3tools/contracts";
+import { msg, useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 
+import { m } from "../../i18n/messages";
 import * as Dialog from "../../components/ui/Dialog";
 import { issueEnvironment, refreshIssueLists } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
@@ -23,6 +25,7 @@ import { issueAssigneePicksFamily } from "./issuePicks";
 import { issueCommandError, useIssueAccess } from "./issuePresentation";
 
 export function IssueAssigneesScreen({ route }: StaticScreenProps<IssueParams>) {
+  const gt = useGT();
   const navigation = useNavigation();
   const target = issueTarget(route.params);
   const detail = useEnvironmentQuery(issueEnvironment.detail(target)).data;
@@ -66,14 +69,14 @@ export function IssueAssigneesScreen({ route }: StaticScreenProps<IssueParams>) 
           if (failure === null) return refreshIssueLists(target.environmentId);
           // Picks made after this write was sent are kept.
           setStored((latest) => issuePicksAfterFailedWrite(latest, sent));
-          Dialog.alert("Couldn't change assignees", failure);
+          Dialog.alert(m(msg("Couldn't change assignees")), failure);
         });
       }),
     [navigation, detail, draft, current, setStored, update, target],
   );
   return (
     <IssueCandidatesSheet
-      title="Assignees"
+      title={gt("Assignees")}
       noun="people"
       query={query}
       onQueryChange={setQuery}
@@ -88,7 +91,7 @@ export function IssueAssigneesScreen({ route }: StaticScreenProps<IssueParams>) 
       allowed={allowed}
       notice={
         detail && !allowed
-          ? (access?.blocked ?? "Changing assignees needs triage access on this tracker.")
+          ? (access?.blocked ?? gt("Changing assignees needs triage access on this tracker."))
           : null
       }
       pending={result.isPending && !result.data}

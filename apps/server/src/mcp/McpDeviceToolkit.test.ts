@@ -405,7 +405,7 @@ describe("device targeting across hosts", () => {
     const closed: Array<{ hostId?: string | undefined; deviceId?: string | undefined }> = [];
     const layerDevices = Layer.mock(DeviceService.DeviceService)({
       state: Effect.succeed(multiHostState),
-      list: Effect.succeed(multiHostState),
+      list: Effect.succeed({ ...multiHostState, sessions }),
       agentReadinessIfSupported: () => Effect.succeed(readiness),
       open: (input) =>
         Effect.sync(() => {
@@ -478,6 +478,31 @@ describe("device targeting across hosts", () => {
   };
   const text = (result: McpSchema.CallToolResult) =>
     result.content.flatMap((entry) => (entry.type === "text" ? [entry.text] : [])).join("\n");
+
+  const localOpen = { hostId: device.hostId, deviceId: device.id };
+  const macOpen = { hostId: macIphone.hostId, deviceId: macIphone.id };
+
+  it.effect.each([
+    { selection: "without a host filter", args: {}, open: [localOpen, macOpen] },
+    { selection: "by host label", args: { hostId: "MAC MINI" }, open: [macOpen] },
+    { selection: "by host id", args: { hostId: "local" }, open: [localOpen] },
+  ])("lists open devices for the current thread $selection", ({ args, open }) =>
+    run(
+      [
+        openSession,
+        session(macIphone.hostId, macIphone.id, macIphone.platform),
+        {
+          ...session(macPixel.hostId, macPixel.id, macPixel.platform),
+          threadId: ThreadId.make("other-thread"),
+        },
+      ],
+      ({ call }) =>
+        Effect.gen(function* () {
+          const result = yield* call("device_list", args);
+          expect(result.structuredContent).toHaveProperty("open", open);
+        }),
+    ),
+  );
 
   it.effect("opens a device id that exists only on another host", () =>
     run([], ({ opened, call }) =>

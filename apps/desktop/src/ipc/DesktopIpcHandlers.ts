@@ -2,6 +2,11 @@ import { startFileDrag } from "./methods/fileDrag.ts";
 import * as Effect from "effect/Effect";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
+import {
+  appleSpeechAvailable,
+  appleSpeechPrepare,
+  appleSpeechTranscribe,
+} from "./methods/appleSpeech.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
@@ -36,6 +41,7 @@ import {
 } from "./methods/updates.ts";
 import {
   getAppBranding,
+  getDatabaseMigrationProgress,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
   installRelayTelemetryEnabled,
@@ -100,6 +106,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(takeLegacyLocalStorage);
   yield* ipc.handle(completeLegacyLocalStorage);
   yield* ipc.handleSync(getAppBranding);
+  yield* ipc.handle(getDatabaseMigrationProgress);
   yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
@@ -161,6 +168,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(cancelProviderAuthCallback);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
+  yield* ipc.handle(appleSpeechAvailable);
+  yield* ipc.handle(appleSpeechPrepare);
+  yield* ipc.handle(appleSpeechTranscribe);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(syncHtmlFullscreen);

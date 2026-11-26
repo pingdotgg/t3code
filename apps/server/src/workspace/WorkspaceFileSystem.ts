@@ -27,7 +27,7 @@ import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
-import { toWslDrivePath } from "./wslDrivePath.ts";
+import { toHostDrivePath } from "./hostDrivePath.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -167,7 +167,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const toHostPath = (requestedPath: string) =>
-    toWslDrivePath(requestedPath).pipe(
+    toHostDrivePath(requestedPath).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 

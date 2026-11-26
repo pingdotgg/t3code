@@ -8,11 +8,12 @@ import * as Option from "effect/Option";
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
 
 const RUNBOOK_URL =
-  "https://github.com/pingdotgg/t3code/blob/main/docs/operations/relay-observability.md#alerts";
+  "https://github.com/pingdotgg/t3code/blob/main/docs/operations/05_relay-observability.md#alerts";
 
 const LINK_ROUTE = `"/v1/client/environment-links"`;
 const TUNNEL_ROUTES = `"/v1/environments/:environmentId/tunnel", "/v1/environments/:environmentId/tunnel/recovery"`;
-const CLOUDFLARE_API = `['attributes.url.full'] startswith "https://api.cloudflare.com"`;
+// The Cloudflare SDK client spans record the host but not the full URL.
+const CLOUDFLARE_API = `['attributes.server.address'] == "api.cloudflare.com"`;
 const STATUS = `toint(['attributes.http.response.status_code'])`;
 // The tunnel reaper records its counters on this span every five minutes,
 // including while cleanup is off.
@@ -180,15 +181,17 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
   },
   {
     id: "RelayTunnelCleanupStoppedMonitor",
-    severity: "warn",
+    // Pages because nothing else surfaces it: unnoticed, it ran 2026-11-15..18 while 27k+ idle tunnels piled up.
+    severity: "page",
     name: "T3 Connect relay: tunnel cleanup stopped",
     description:
-      "Tunnel cleanup sweeps that finished in 30 min. Healthy: 6. The cron is not running, or every sweep fails, as during the 2026-10-19 Cloudflare 429s when listing tunnels timed out. Idle tunnels pile up and are billed meanwhile.",
+      "Tunnel cleanup sweeps that finished in 2 h. Healthy: 24. The cron is not running, or every sweep fails, as during the 2026-10-19 Cloudflare 429s and from 2026-11-15 when listing tunnels timed out. Idle tunnels pile up and are billed meanwhile.",
     query: (dataset) =>
       `['${dataset}']\n| where ${SWEEP} and error != true\n| summarize sweeps = count()`,
     operator: "Below",
     threshold: 1,
-    rangeMinutes: 30,
+    rangeMinutes: 120,
+    intervalMinutes: 15,
     triggerFromNRuns: 2,
     alertOnNoData: true,
   },
@@ -203,6 +206,21 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
     operator: "Above",
     threshold: 10,
     rangeMinutes: 30,
+    triggerFromNRuns: 2,
+  },
+  {
+    id: "RelayAccountDeletionFailingMonitor",
+    // Pages because a stuck deletion is a privacy request we have accepted and not carried out.
+    severity: "page",
+    name: "T3 Connect relay: account deletions failing",
+    description:
+      "Failed account deletion passes, plus sweeps that failed outright, in 2 h. The cron retries every 5 min, so one stuck deletion or a broken sweep fails 24 times in 2 h; a one-off Cloudflare blip fails once or twice. Healthy: 0. Pending rows and their attempts are in relay_account_deletions.",
+    query: (dataset) =>
+      `['${dataset}']\n| where name == "relay.account_deletion.process_pending"\n| summarize passes = sum(toint(['attributes.custom']['relay.account_deletion.failed'])), sweeps = countif(error == true)\n| project failed = coalesce(passes, 0) + sweeps`,
+    operator: "AboveOrEqual",
+    threshold: 12,
+    rangeMinutes: 120,
+    intervalMinutes: 15,
     triggerFromNRuns: 2,
   },
 ];
@@ -227,6 +245,11 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
   const tunnelRequests = `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and ['attributes.http.route'] in (${TUNNEL_ROUTES})`;
   const clientConnections = `${source}\n| where name == "relay.connection.attempt" and error != true\n| extend surface = tostring(['resource.custom']['t3.client.surface'])\n| where isnotempty(surface)`;
   return [
+    timeSeries(
+      "traffic",
+      "Requests and agent activity publishes",
+      `${source}\n| where kind == "server" or name == "relay.agent_activity_publisher.publish"\n| summarize requests = countif(kind == "server"), publishes = countif(name == "relay.agent_activity_publisher.publish") by bin_auto(_time)`,
+    ),
     timeSeries(
       "links",
       "Links by outcome",

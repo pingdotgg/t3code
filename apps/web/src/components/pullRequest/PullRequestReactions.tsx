@@ -5,15 +5,17 @@ import type {
   PullRequestReactionContent,
   PullRequestRef,
 } from "@t3tools/contracts";
+import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { SmilePlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   applyPendingPullRequestReactions,
   type PendingPullRequestReaction,
@@ -42,6 +44,9 @@ export function ReactionBar({
   readonly onReact: (content: PullRequestReactionContent, reacted: boolean) => Promise<boolean>;
   readonly className?: string | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const locale = useLocale();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState<{
     readonly signature: string;
@@ -62,7 +67,7 @@ export function ReactionBar({
       next.delete(content);
       return { signature: current.signature, values: next };
     });
-    toastManager.add({ type: "error", title: "The reaction could not be saved" });
+    toastManager.add({ type: "error", title: m(msg("The reaction could not be saved")) });
   };
 
   if (shown.length === 0 && !canReact) return null;
@@ -70,30 +75,33 @@ export function ReactionBar({
   return (
     <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
       {shown.map((reaction) => (
-        <Tooltip key={reaction.content}>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-pressed={reaction.viewerHasReacted}
-                aria-label={`${pullRequestReactionName(reaction.content)}, ${reaction.count}`}
-                disabled={!canReact}
-                className={cn(
-                  PILL_CLASS,
-                  reaction.viewerHasReacted
-                    ? "border-primary/60 bg-primary/10 text-foreground"
-                    : "border-border/70 bg-muted/40 text-muted-foreground",
-                  canReact ? "hover:border-primary/60" : "cursor-default",
-                )}
-                onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
-              />
-            }
-          >
-            <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
-            <span className="tabular-nums">{reaction.count}</span>
-          </TooltipTrigger>
-          <TooltipPopup side="top">{pullRequestReactionTooltip(reaction)}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          key={reaction.content}
+          render={
+            <button
+              type="button"
+              aria-pressed={reaction.viewerHasReacted}
+              aria-label={gt("{reaction}, {count}", {
+                reaction: pullRequestReactionName(reaction.content, messages),
+                count: reaction.count,
+                $context: "reaction button: reaction name and how many people used it",
+              })}
+              disabled={!canReact}
+              className={cn(
+                PILL_CLASS,
+                reaction.viewerHasReacted
+                  ? "border-primary/60 bg-primary/10 text-foreground"
+                  : "border-border/70 bg-muted/40 text-muted-foreground",
+                canReact ? "hover:border-primary/60" : "cursor-default",
+              )}
+              onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
+            />
+          }
+          label={pullRequestReactionTooltip(reaction, messages, locale)}
+        >
+          <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
+          <span className="tabular-nums">{reaction.count}</span>
+        </SharedTooltipTrigger>
       ))}
 
       {canReact ? (
@@ -102,7 +110,7 @@ export function ReactionBar({
             render={
               <button
                 type="button"
-                aria-label="Add a reaction"
+                aria-label={gt("Add a reaction")}
                 className={cn(
                   PILL_CLASS,
                   "border-border/70 px-1.5 text-muted-foreground hover:border-primary/60 hover:text-foreground",
@@ -122,7 +130,7 @@ export function ReactionBar({
                     key={content}
                     type="button"
                     aria-pressed={reacted}
-                    aria-label={pullRequestReactionName(content)}
+                    aria-label={pullRequestReactionName(content, messages)}
                     className={cn(
                       "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       reacted && "bg-primary/10",

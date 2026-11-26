@@ -986,7 +986,7 @@ function parserResult<T, R>(
   result: Effect.Effect<unknown, SchemaIssue.Issue, any>,
   input: unknown
 ): Effect.Effect<T, SchemaIssue.Issue, R> {
-  if (result === InternalParser.sameExit) {
+  if (InternalParser.isSameExit(result)) {
     return Effect.succeed(input) as Effect.Effect<T, SchemaIssue.Issue, R>
   }
   if (!effectIsExit(result)) {
@@ -1005,7 +1005,7 @@ function runWithCompiler<T, R>(compiler: Compiler, ast: SchemaAST.AST) {
       input,
       options ?? SchemaAST.defaultParseOptions
     )
-    if (result === InternalParser.sameExit) {
+    if (InternalParser.isSameExit(result)) {
       return Effect.succeed(input) as Effect.Effect<T, SchemaIssue.Issue, R>
     }
     if (!effectIsExit(result)) {

@@ -236,7 +236,7 @@ describe("UsageAggregator", () => {
                 mtimeMs: 100,
                 records,
                 tailRecords: [],
-                malformedRecords: 0,
+                malformedRecords: [],
                 position: { resumeOffset: 100, guardLength: 0, guardHash: 0, state: null },
               },
             ] as const,

@@ -46,3 +46,9 @@ export * as OpenRouterLanguageModel from "./OpenRouterLanguageModel.ts"
  * @since 4.0.0
  */
 export * as OpenRouterSchema from "./OpenRouterSchema.ts"
+
+/**
+ * @stability unstable
+ * @since 4.1.3
+ */
+export * as OpenRouterWorkloadIdentity from "./OpenRouterWorkloadIdentity.ts"

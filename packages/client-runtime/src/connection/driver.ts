@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -138,18 +140,23 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     // A route still silent after its whole check can hold the attempt open far
     // longer than the check did. Once another route failed in a way that
     // retries, the retry reaches it sooner than waiting here would.
-    if (transient !== undefined && stillSilent.some((entry) => entry.route === route)) break;
+    const neverAnswered = stillSilent.some((entry) => entry.route === route);
+    if (transient !== undefined && neverAnswered) break;
     const result = yield* attempt(route);
     if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
+    // A route that never answered cannot explain why a host that answered refused.
+    if (neverAnswered && blocked !== undefined) transient = undefined;
   }
   return yield* (
     transient ??
-      blocked ??
-      new ConnectionTransientError({
-        reason: "endpoint-unavailable",
-        detail: `${entry.target.label} did not answer on any saved route.`,
-      })
+    blocked ??
+    new ConnectionTransientError({
+      reason: "endpoint-unavailable",
+      ...translatableDetail(
+        msg("{host} did not answer on any saved route.", { host: entry.target.label }),
+      ),
+    })
   );
 });
 
@@ -250,6 +257,9 @@ export const make = Effect.gen(function* () {
             .renewDpopBeforeExpiry({
               expectedEnvironmentId: prepared.environmentId,
               expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
+              ...(prepared.httpAuthorization.directConnection
+                ? { directConnection: prepared.httpAuthorization.directConnection }
+                : {}),
             })
             .pipe(
               Effect.catch((error) =>
