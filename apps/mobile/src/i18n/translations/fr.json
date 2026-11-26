@@ -2461,7 +2461,6 @@
   "a6eeff30440d26a2": "Ticket {key}",
   "c0e2d952114e7d59": "par {author}",
   "2195cdd7774c1c23": "auteur inconnu",
-  "093394ace72dbd79": "{count, plural, one {{count} commentaire} other {{count} commentaires}}",
   "217e1e7b60469736": "État du ticket, {state}",
   "5fd6c9c736b80b62": "État du ticket",
   "a749275f1ad66618": "Auteur inconnu",

@@ -2464,7 +2464,6 @@
   "a6eeff30440d26a2": "issue {key}",
   "c0e2d952114e7d59": "作者：{author}",
   "2195cdd7774c1c23": "未知作者",
-  "093394ace72dbd79": "{count, plural, other {{count} 条评论}}",
   "217e1e7b60469736": "issue 状态，{state}",
   "5fd6c9c736b80b62": "issue 状态",
   "a749275f1ad66618": "未知作者",

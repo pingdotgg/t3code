@@ -676,6 +676,32 @@ describe("question answer paths", () => {
           parts: {
             "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
             "book.opf":
+              '<package><manifest><item id="a" href="a.xhtml"/></manifest><spine><itemref idref="a"/></spine></package>',
+            "a.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table></body></html>',
+          },
+          expected: [
+            "## Chapter 1\nIntro\nBody paragraph",
+            "Summary\nDetails",
+            "Intro\n## Section Title",
+            "First Second\tNeighbor",
+          ],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Before</w:t></w:r><w:r><w:drawing><w:txbxContent><w:p><w:r><w:t>Box text</w:t></w:r></w:p></w:txbxContent></w:drawing></w:r><w:r><w:t>After</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Before\nBox text\nAfter"],
+        },
+        {
+          ext: "epub",
+          bounded: true,
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
             "chapter.xhtml":
               '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Board<em>&shy;</em><img alt="Anchor symbol"/>&shy;here.</p><p>Dock<img alt="&shy;Anchor&shy;"/>now.</p><p>Stop!&shy;<img alt="Anchor"/>.</p></body></html>',
@@ -756,6 +782,24 @@ describe("question answer paths", () => {
           expected: [
             "Departure information.\nCheck local time.\nBoard promptly.\nKeep walking.",
             "Contact the duty editor.\nHarbor Office\nPier 7\nInclude your reference.",
+          ],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Deposit: $100<div>Balance: $500</div></div><div>Purchased in June<section>Delivered in July</section></div><div>Keep <div></div>walking</div><div>Order <span>number</span> 42</div><div>Name<div>\nValue</div></div><div>Note<div>  <em>indented</em></div></div></body></html>',
+          },
+          expected: [
+            "Deposit: $100\nBalance: $500\n",
+            "Purchased in June\nDelivered in July\n",
+            "Keep \nwalking\n",
+            "Order number 42",
+            "Name\nValue",
+            "Note\n  indented",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
@@ -1130,7 +1174,7 @@ describe("question answer paths", () => {
             "## Report & totals",
             "North\t12 34",
             "Annual report\tDraft",
-            "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. # Box title",
+            "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. \n# Box title",
           ],
         },
         {
