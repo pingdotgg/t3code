@@ -1805,11 +1805,16 @@ export function useComposerSend(input: ComposerSendInput) {
     const workspaceDefault =
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
+    const { getComposerDraft } = useComposerDraftStore.getState();
+    const submitted = getComposerDraft(composerDraftTarget);
     sendInFlightRef.current = true;
     await workspaceDefault.finally(() => {
       sendInFlightRef.current = false;
     });
-    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+    if (
+      currentRouteThreadKeyRef.current === routeThreadKey &&
+      getComposerDraft(composerDraftTarget) === submitted
+    ) {
       return sendWithEnvironmentRefreshLatest(...args);
     }
   };

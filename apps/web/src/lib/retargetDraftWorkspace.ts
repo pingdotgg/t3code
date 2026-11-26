@@ -57,7 +57,13 @@ function newThreadWorkspace(projectRef: ScopedProjectRef) {
     workspace: resolve(projectFile ?? null),
     load:
       projectFile === undefined && project !== null
-        ? () => readT3ProjectFile(projectRef.environmentId, project.workspaceRoot).then(resolve)
+        ? () =>
+            // A send waits on this; a read stuck on a reconnecting machine falls back to no file.
+            readT3ProjectFile(
+              projectRef.environmentId,
+              project.workspaceRoot,
+              AbortSignal.timeout(5_000),
+            ).then(resolve)
         : null,
   };
 }
