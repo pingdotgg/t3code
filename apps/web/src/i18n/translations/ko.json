@@ -346,6 +346,7 @@
   "cbba2216dafdd91d": "{count, plural, other {첨부 파일을 {count}회 보냄}}",
   "f6589d3539e5e4b0": "{count, plural, other {첨부 파일 보내기 {count}회 시도함}}",
   "bba19d414974a12c": "연결된 풀 리퀘스트",
+  "4eb908d895a28c5f": "연결된 풀 리퀘스트",
   "3ab4b1ee5133f899": "풀 리퀘스트 연결 시도함",
   "72d699ac25327b32": "{count, plural, other {풀 리퀘스트 {count}개 연결함}}",
   "c4c26dc511a3e964": "{count, plural, other {풀 리퀘스트 {count}개 연결 시도함}}",

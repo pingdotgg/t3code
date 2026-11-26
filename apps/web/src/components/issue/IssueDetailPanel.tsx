@@ -908,7 +908,10 @@ export function IssueDetailPanel({
         </PullRequestSection>
 
         {detail.linkedPullRequests.length > 0 ? (
-          <PullRequestSection key={`linked:${detail.url}`} title={gt("Linked pull requests")}>
+          <PullRequestSection
+            key={`linked:${detail.url}`}
+            title={gt("Linked pull requests", { $context: "section heading in issue details" })}
+          >
             <div className="flex flex-col gap-1">
               {detail.linkedPullRequests.map((link) => (
                 <LinkedPullRequestRow

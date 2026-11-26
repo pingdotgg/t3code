@@ -14,9 +14,13 @@ export function AndroidHomeFabLayout(props: {
  * cannot drift apart. In dp rather than a rem class so Material's 16dp margin does
  * not grow with the app's text size.
  */
-export function androidHomeFabPosition(safeAreaBottom: number, sidebar: boolean | undefined) {
+export function androidHomeFabPosition(
+  safeAreaBottom: number,
+  sidebar: boolean | undefined,
+  safeAreaEnd = 0,
+) {
   return {
-    end: 16,
+    end: Math.max(16, safeAreaEnd),
     bottom: sidebar ? Math.max(safeAreaBottom, 12) + 6 : safeAreaBottom + 16,
   };
 }

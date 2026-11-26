@@ -23,6 +23,7 @@ import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
 import { Pressable, View } from "react-native";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -61,6 +62,7 @@ function WindowRow(props: {
   readonly now: number;
 }) {
   const { window, now } = props;
+  const isRtl = useInterfaceDirection() === "rtl";
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const pace = paceOf(window, now);
@@ -104,6 +106,7 @@ function WindowRow(props: {
       </View>
       <View
         className="h-3 justify-center"
+        style={{ direction: "ltr", transform: isRtl ? [{ scaleX: -1 }] : undefined }}
         onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
       >
         {tickX === null ? (

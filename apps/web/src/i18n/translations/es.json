@@ -346,6 +346,7 @@
   "cbba2216dafdd91d": "{count, plural, one {Envió adjuntos {count} vez} other {Envió adjuntos {count} veces}}",
   "f6589d3539e5e4b0": "{count, plural, one {Intentó enviar adjuntos {count} vez} other {Intentó enviar adjuntos {count} veces}}",
   "bba19d414974a12c": "Pull requests vinculadas",
+  "4eb908d895a28c5f": "Pull requests vinculadas",
   "3ab4b1ee5133f899": "Intentó vincular pull requests",
   "72d699ac25327b32": "{count, plural, one {Se vinculó {count} pull request} other {Se vincularon {count} pull requests}}",
   "c4c26dc511a3e964": "{count, plural, one {Intentó vincular {count} pull request} other {Intentó vincular {count} pull requests}}",

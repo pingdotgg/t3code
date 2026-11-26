@@ -6,3 +6,8 @@ export function useStartSafeAreaInset() {
   const insets = useSafeAreaInsets();
   return useInterfaceDirection() === "rtl" ? insets.right : insets.left;
 }
+
+export function useEndSafeAreaInset() {
+  const insets = useSafeAreaInsets();
+  return useInterfaceDirection() === "rtl" ? insets.left : insets.right;
+}

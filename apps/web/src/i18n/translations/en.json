@@ -346,6 +346,7 @@
   "cbba2216dafdd91d": "{count, plural, one {Sent attachments {count} time} other {Sent attachments {count} times}}",
   "f6589d3539e5e4b0": "{count, plural, one {Tried to send attachments {count} time} other {Tried to send attachments {count} times}}",
   "bba19d414974a12c": "Linked pull requests",
+  "4eb908d895a28c5f": "Linked pull requests",
   "3ab4b1ee5133f899": "Tried to link pull requests",
   "72d699ac25327b32": "{count, plural, one {Linked {count} pull request} other {Linked {count} pull requests}}",
   "c4c26dc511a3e964": "{count, plural, one {Tried to link {count} pull request} other {Tried to link {count} pull requests}}",

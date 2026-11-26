@@ -149,6 +149,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
               fontFamily: monoFontFamily,
               fontSize,
               lineHeight: Math.round(fontSize * 1.35),
+              writingDirection: "ltr",
             }}
           >
             {props.buffer || "$ "}
