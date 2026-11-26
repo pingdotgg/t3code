@@ -326,7 +326,11 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
     if (typeof child === "string") yield child;
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
     else if (["tbl", "table"].includes(child.name)) yield* table(child);
-    else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
+    else if (child.name === "pre" && child.hasText) {
+      yield LINE_START;
+      yield* text(child);
+      yield LINE_START;
+    } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
       const style =
         all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =

@@ -697,6 +697,17 @@ describe("question answer paths", () => {
           },
           expected: ["North\tJune\t400\n\tJuly\t520"],
         },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Example command:<pre><code>git status --short\n  git log -1</code></pre><p>Inspect the output.</p></div></body></html>',
+          },
+          expected: ["Example command:\ngit status --short\n  git log -1\nInspect the output."],
+        },
         // A prefixed span attribute is foreign markup, not an XHTML span.
         {
           ext: "epub",
