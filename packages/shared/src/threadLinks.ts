@@ -53,10 +53,8 @@ function quoteDepthAt(markdown: string, lineStart: number): number {
 }
 
 function findCodeSpanEnd(markdown: string, openIndex: number, tickCount: number): number {
-  const openDepth = quoteDepthAt(
-    markdown,
-    openIndex === 0 ? 0 : markdown.lastIndexOf("\n", openIndex - 1) + 1,
-  );
+  // Found only once the span wraps: looking back for the line start per backtick is quadratic on a long line.
+  let openDepth: number | undefined;
   for (let i = openIndex + tickCount; i < markdown.length; i++) {
     if (markdown[i] === "`") {
       let runEnd = i + 1;
@@ -64,6 +62,7 @@ function findCodeSpanEnd(markdown: string, openIndex: number, tickCount: number)
       if (runEnd - i === tickCount) return runEnd;
       i = runEnd - 1;
     } else if (markdown[i] === "\n") {
+      openDepth ??= quoteDepthAt(markdown, markdown.lastIndexOf("\n", openIndex) + 1);
       SPAN_BREAK_LINE.lastIndex = i + 1;
       if (SPAN_BREAK_LINE.test(markdown) || quoteDepthAt(markdown, i + 1) > openDepth) return -1;
     }
