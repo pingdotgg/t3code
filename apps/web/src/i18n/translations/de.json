@@ -12993,5 +12993,23 @@
   "1af8d12ac21cb183": "Die Ablage fasst {max} Prompts. Stelle einen wieder her oder lösche einen, um Platz zu schaffen; das Eingabefeld wurde unverändert gelassen.",
   "381ceed77cb8b2b3": "{name} stoppen",
   "5b9fda36b610d25c": "Stoppen",
-  "1d372f6d555dde3c": "Alle Geräte stoppen"
+  "1d372f6d555dde3c": "Alle Geräte stoppen",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " weitere"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " weitere unter Verknüpfte Elemente"
+  ]
 }

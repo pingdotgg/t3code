@@ -13002,5 +13002,23 @@
   "1af8d12ac21cb183": "The stash holds {max} prompts. Restore or delete one to make room; the composer was left as-is.",
   "381ceed77cb8b2b3": "Stop {name}",
   "5b9fda36b610d25c": "Stop",
-  "1d372f6d555dde3c": "Stop all devices"
+  "1d372f6d555dde3c": "Stop all devices",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more in Linked items"
+  ]
 }
