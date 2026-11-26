@@ -314,6 +314,11 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
     expect(endChevron!.hasAttribute("data-can-scroll")).toBe(true);
   });
   expect(getComputedStyle(endChevron!).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+  expect(getComputedStyle(strip).overscrollBehaviorX).toBe("contain");
+  const siblingStrip = [
+    ...document.querySelectorAll<HTMLElement>("[data-layout-tab-strip]"),
+  ].find((candidate) => candidate !== strip);
+  expect(siblingStrip && getComputedStyle(siblingStrip).overscrollBehaviorX).toBe("auto");
   endChevron!.click();
   await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(0));
   await vi.waitFor(() => expect(startChevron!.hasAttribute("data-can-scroll")).toBe(true));
@@ -413,6 +418,7 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   await vi.waitFor(() =>
     expect(strip.closest("[data-pane-header]")?.hasAttribute("data-tab-row-overflow")).toBe(false),
   );
+  expect(getComputedStyle(strip).overscrollBehaviorX).toBe("auto");
   await vi.waitFor(() =>
     expect(
       strip.closest("[data-pane-header]")?.querySelectorAll("[data-strip-scroll-button]").length,

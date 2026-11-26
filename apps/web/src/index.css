@@ -5630,6 +5630,10 @@ body {
   -webkit-app-region: no-drag;
 }
 
+[data-pane-header][data-tab-row-overflow] [data-layout-tab-strip] {
+  overscroll-behavior-x: contain;
+}
+
 /* Electron 44 inherits app-region. Reset children to the initial value so they
    do not add drag rectangles over fixed controls. Explicit `none` is treated
    as `no-drag` and breaks titlebar dragging; `initial` emits no rectangle.
@@ -6780,7 +6784,7 @@ body {
    every swipe from reaching the strip. :where(pre) lets Blink bucket the rule by tag;
    the :is() after it keeps the class weight pre had inside one :is() with the classes. */
 [data-layout-strip] [data-layout-pane-id] :where(pre):is(pre, .overflow-x-auto),
-[data-layout-strip] [data-layout-pane-id] .overflow-x-auto,
+[data-layout-strip] [data-layout-pane-id] .overflow-x-auto:not([data-layout-tab-strip]),
 [data-layout-strip] [data-layout-pane-id] .overflow-x-scroll {
   overscroll-behavior-x: contain;
 }

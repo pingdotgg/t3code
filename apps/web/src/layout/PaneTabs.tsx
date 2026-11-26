@@ -352,7 +352,7 @@ function createPaneStrip(role?: "panel"): PaneStrip {
   const strip = document.createElement("div");
   strip.dataset.layoutTabStrip = "";
   strip.className =
-    "relative flex min-w-0 items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
+    "relative flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
   // The joined tab: two caps (corner, side, ear, rim) and a middle that
   // scales, so it moves by transform alone. Held outside the strip's alpha mask
   // so its fill and rim never dissolve into the chrome at the scrolled edges.
