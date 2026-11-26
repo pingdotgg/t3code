@@ -50,7 +50,11 @@ export function trackPendingWorkspaceDefault(
       const draft = getDraftSession(draftId);
       if (pendingDefaults.get(draftId) !== pending || !acceptsWorkspaceDefault(draft, pending))
         return;
-      if (resolved.envMode === workspace.envMode) return;
+      if (
+        resolved.envMode === workspace.envMode &&
+        resolved.startFromOrigin === workspace.startFromOrigin
+      )
+        return;
       // A send waiting on this promise must see the resolved workspace when it resumes.
       flushSync(() =>
         setDraftThreadContext(draftId, {
