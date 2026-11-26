@@ -98,6 +98,7 @@ describe("formatAssistantCitationForComposer", () => {
 describe("composerSubmissionIntentForKey", () => {
   const input = {
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+    context: {},
     platform: "Linux",
     isSoftwareKeyboardOpen: false,
     isDraftThread: false,
@@ -244,6 +245,19 @@ describe("composerSubmissionIntentForKey", () => {
     },
   );
 
+  it("sends on Enter when a binding conditioned on !rightPanelOpen is inactive", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "enter", command: "commandPalette.toggle", when: "!rightPanelOpen" },
+      ]),
+    );
+    const conditioned = { ...input, keybindings, sendShortcut: "enter" as const, event: enter };
+    expect(composerSubmissionIntentForKey(conditioned)).toBeNull();
+    expect(
+      composerSubmissionIntentForKey({ ...conditioned, context: { rightPanelOpen: true } }),
+    ).toBe("foreground");
+  });
+
   it.each([
     { isSoftwareKeyboardOpen: true },
     { event: { ...enter, isComposing: true } },
@@ -255,6 +269,24 @@ describe("composerSubmissionIntentForKey", () => {
 });
 
 describe("detectComposerTrigger", () => {
+  it.each(["\u3000", "\u00a0"])("detects completion after Unicode space %j", (space) => {
+    for (const [token, kind, query] of [
+      ["@src", "path", "src"],
+      ["#123", "pull-request", "123"],
+      ["$review", "skill", "review"],
+      ["/model", "slash-command", "model"],
+    ]) {
+      const prefix = `日本語${space}`;
+      const text = `${prefix}${token}`;
+      expect(detectComposerTrigger(text, text.length)).toEqual({
+        kind,
+        query,
+        rangeStart: prefix.length,
+        rangeEnd: text.length,
+      });
+    }
+  });
+
   it.each([
     ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
     ["/etc/hosts", "/etc/hosts".length],

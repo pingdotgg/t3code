@@ -61,19 +61,22 @@ const Providers = Schema.Struct({
   ),
 });
 
+const ErrorBody = Schema.Struct({ message: Schema.String });
+const probeFailedMessage = "OpenCode could not read workspace usage.";
+
 const resetTime = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const budgetPercent = (spent: number, limit: number) =>
   limit <= 0 ? 100 : clampPercent((spent / limit) * 100);
 
 /** Undefined alone permits the legacy credential reader; null data is authoritative. */
 export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(function* (
-  directory: string,
+  directory: string | undefined,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const options =
+    directory === undefined ? undefined : { urlParams: { "location[directory]": directory } };
   return yield* Effect.gen(function* () {
-    const response = yield* HttpClient.get("/api/experimental/usage/limits", {
-      urlParams: { "location[directory]": directory },
-    });
+    const response = yield* HttpClient.get("/api/experimental/usage/limits", options);
     if (
       response.status === 404 ||
       response.status === 405 ||
@@ -81,22 +84,35 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         response.headers["content-type"]?.split(";")[0]?.trim() === "text/html")
     )
       return undefined;
-    const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(ResponseBody)),
-    );
-    if (body.data === null)
+    // OpenCode names the upstream cause, such as an expired Console login, in its error body.
+    if (response.status < 200 || response.status >= 300)
       return makeUnavailableUsageLimits({
         checkedAt,
-        reason: "unsupported",
-        message: "No OpenCode Console workspace is signed in.",
+        reason: "probeFailed",
+        message: yield* HttpClientResponse.schemaBodyJson(ErrorBody)(response).pipe(
+          Effect.map((error) => error.message.trim() || probeFailedMessage),
+          Effect.orElseSucceed(() => probeFailedMessage),
+        ),
       });
+    const body = yield* HttpClientResponse.schemaBodyJson(ResponseBody)(response);
+    // OpenCode needs no Console workspace, so its absence is not worth a notice.
+    if (body.data === null) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const { go, budgets, workspace } = body.data;
+    const usageURL = URL.parse(workspace.usageURL);
+    const externalUsage =
+      usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
+        ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
+        : {};
+    // A Zen-only workspace has neither a Go subscription nor spend limits.
+    if (!go && budgets.length === 0)
+      return {
+        ...makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+        ...externalUsage,
+      };
     const consoleProviders = budgets.some(
       (budget) => budget.coverage === "all" && budget.per === "set",
     )
-      ? yield* HttpClient.get("/api/provider", {
-          urlParams: { "location[directory]": directory },
-        }).pipe(
+      ? yield* HttpClient.get("/api/provider", options).pipe(
           Effect.flatMap(HttpClientResponse.filterStatusOk),
           Effect.flatMap(HttpClientResponse.schemaBodyJson(Providers)),
           Effect.map((page) =>
@@ -168,20 +184,14 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         });
       }
     }
-    const usageURL = URL.parse(workspace.usageURL);
-    return {
-      ...makeUsageLimits({ checkedAt, windows }),
-      ...(usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
-        ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
-        : {}),
-    };
+    return { ...makeUsageLimits({ checkedAt, windows }), ...externalUsage };
   }).pipe(
     Effect.timeout("5 seconds"),
     Effect.orElseSucceed(() =>
       makeUnavailableUsageLimits({
         checkedAt,
         reason: "probeFailed",
-        message: "OpenCode could not read workspace usage.",
+        message: probeFailedMessage,
       }),
     ),
   );

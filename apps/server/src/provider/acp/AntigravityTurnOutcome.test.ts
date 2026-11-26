@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as EffectAcpSchema from "effect-acp/compat";
+import type { OrchestrationV2ProviderFailure } from "@t3tools/contracts";
 
 import { watchAntigravityPromptOutcome } from "./AntigravityTurnOutcome.ts";
 
@@ -29,13 +30,75 @@ const QUOTA_ERROR = errorPayload(
 const RATE_LIMIT_ERROR = errorPayload(
   "Error 429, Message: Resource has been exhausted (e.g. check quota)., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:cloudcode-pa.googleapis.com reason:RATE_LIMIT_EXCEEDED] map[@type:type.googleapis.com/google.rpc.RetryInfo retryDelay:42s]]",
 );
+const RETIRED_QUOTA_ERROR = errorPayload(
+  "Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s quotaResetTimeStamp:2026-11-09T01:05:00Z] reason:QUOTA_EXHAUSTED]]",
+);
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+// The harness renders a gateway failure with its HTTP status line in place of a gRPC status.
+const BAD_GATEWAY_ERROR = Buffer.concat([
+  errorPayload(
+    "Error 502, Message: Bad Gateway: Failed to connect to backend API, Status: 502 Bad Gateway, Details: []",
+  ),
+  Buffer.from("\nThe model is currently unreachable."),
+]);
+const VERIFICATION_URL =
+  "https://accounts.google.com/v3/signin/continue?plt=fixture&flowName=GlifWebSignIn";
+const CLASSIC_VERIFICATION_URL =
+  "https://accounts.google.com/signin/continue?sarp=1&scc=1&plt=fixture&flowName=GlifWebSignIn";
+const verificationError = (url: string | undefined, compact = false) => {
+  const response = {
+    error: {
+      code: 403,
+      details: [
+        { "@type": "type.googleapis.com/google.rpc.Help", links: [] },
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          domain: "cloudcode-pa.googleapis.com",
+          metadata: { validation_url: url },
+          reason: "VALIDATION_REQUIRED",
+        },
+      ],
+      message: "Verify your account to continue.",
+      status: "PERMISSION_DENIED",
+    },
+  };
+  const body = compact ? JSON.stringify(response) : JSON.stringify(response, null, 2);
+  return errorPayload(
+    `Verification Required\u0012PERMISSION_DENIED (code 403): Verify your account to continue.\u001aHTTP 403 Forbidden\n\n${body}\n`,
+  );
+};
+// Vertex Claude rejects a resumed history whose saved thinking block lost its signature.
+const MISSING_SIGNATURE_ERROR = errorPayload(
+  'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0.thinking.signature: Field required"},"request_id":"req_vrtx_test"}, Status: INVALID_ARGUMENT, Details: []',
+);
+const INVALID_SIGNATURE_ERROR = errorPayload(
+  'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.3.content.0: Invalid `signature` in `thinking` block"}}, Status: INVALID_ARGUMENT, Details: []',
+);
+const NOT_FOUND_ERROR = errorPayload(
+  "Error 404, Message: Requested entity was not found., Status: NOT_FOUND, Details: []",
+);
+// Antigravity 1.5 with a Google account writes "STATUS (code NNN): message", then the HTTP body.
+const STATUS_NOT_FOUND_ERROR = Buffer.concat([
+  Buffer.from([0x12, 0x37]),
+  Buffer.from(
+    'NOT_FOUND (code 404): Requested entity was not found.\u001a\u0080\u0001HTTP 404 Not Found\n\n{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}',
+  ),
+]);
+// Antigravity 1.5 states the quota reset only as a Go duration in its message.
+const STATUS_QUOTA_ERROR = Buffer.concat([
+  Buffer.from([0x12, 0x6e]),
+  Buffer.from(
+    "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4m42s.",
+  ),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
 );
+const reusable = (failure: OrchestrationV2ProviderFailure) =>
+  ({ failure, threadDisposition: "reusable" }) as const;
 
 describe("watchAntigravityPromptOutcome", () => {
   it.effect("fails only turns whose own steps end in an upstream error", () =>
@@ -62,11 +125,12 @@ describe("watchAntigravityPromptOutcome", () => {
       const turn = (
         steps: ReadonlyArray<readonly [number, Uint8Array]>,
         result: EffectAcpSchema.PromptResponse = { stopReason: "end_turn" },
+        options?: { readonly retired?: boolean },
       ) =>
         Effect.gen(function* () {
           const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
           appendSteps(steps);
-          return yield* check(result);
+          return yield* check(result, options);
         });
       const input = Buffer.from("Run the fixture.");
       const reply = Buffer.from("FIXTURE_OK");
@@ -83,13 +147,20 @@ describe("watchAntigravityPromptOutcome", () => {
           [USER_INPUT, input],
           [ERROR_MESSAGE, QUOTA_ERROR],
         ]),
-        {
+        reusable({
           class: "usage_limit",
           message: "You have reached your Antigravity quota for this period.",
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T01:00:00.000Z",
-        },
+        }),
+      );
+      assert.deepInclude(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, STATUS_QUOTA_ERROR],
+        ]))?.failure,
+        { class: "usage_limit", resetAt: "1970-01-01T00:04:42.000Z" },
       );
       // The earlier error step is outside this turn.
       assert.isUndefined(
@@ -109,26 +180,125 @@ describe("watchAntigravityPromptOutcome", () => {
           [USER_INPUT, input],
           [ERROR_MESSAGE, RATE_LIMIT_ERROR],
         ]),
-        {
+        reusable({
           class: "usage_limit",
           message: "Resource has been exhausted (e.g. check quota).",
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T00:00:42.000Z",
-        },
+        }),
       );
       assert.deepEqual(
         yield* turn([
           [USER_INPUT, input],
           [ERROR_MESSAGE, INVALID_ARGUMENT_ERROR],
         ]),
-        {
+        reusable({
           class: "provider_error",
           message: "Request contains an invalid argument.",
           code: "INVALID_ARGUMENT",
           retryable: false,
+        }),
+      );
+      assert.deepInclude(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, BAD_GATEWAY_ERROR],
+        ]))?.failure,
+        {
+          class: "provider_error",
+          message: "Bad Gateway: Failed to connect to backend API",
+          retryable: true,
         },
       );
+      // A prompt the watchdog retired keeps an absolute reset time but drops a relative one.
+      assert.deepEqual(
+        (yield* turn(
+          [
+            [USER_INPUT, input],
+            [ERROR_MESSAGE, RATE_LIMIT_ERROR],
+          ],
+          undefined,
+          { retired: true },
+        ))?.failure.resetAt,
+        undefined,
+      );
+      assert.equal(
+        (yield* turn(
+          [
+            [USER_INPUT, input],
+            [ERROR_MESSAGE, RETIRED_QUOTA_ERROR],
+          ],
+          undefined,
+          { retired: true },
+        ))?.failure.resetAt,
+        "2026-11-09T01:05:00.000Z",
+      );
+      // A 404 after the turn already reached the model is a transient edge error, not a bad model.
+      for (const error of [NOT_FOUND_ERROR, STATUS_NOT_FOUND_ERROR]) {
+        assert.deepEqual(
+          yield* turn([
+            [USER_INPUT, input],
+            [PLANNER_RESPONSE, reply],
+            [TOOL, reply],
+            [ERROR_MESSAGE, error],
+          ]),
+          {
+            ...reusable({
+              class: "provider_error",
+              message: "Requested entity was not found.",
+              code: "NOT_FOUND",
+              retryable: true,
+            }),
+            resumeWith: "continue",
+          },
+        );
+      }
+      // A 404 before the model answered is an unknown or unentitled model.
+      assert.equal(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, STATUS_NOT_FOUND_ERROR],
+        ]))?.failure.retryable,
+        false,
+      );
+      // Google account verification errors surface the verified continuation link on both
+      // pretty-printed and compact HTTP bodies, while rejecting untrusted or malformed URLs.
+      for (const [url, compact, accepted] of [
+        [VERIFICATION_URL, false, true],
+        [CLASSIC_VERIFICATION_URL, true, true],
+        [undefined, false, false],
+        [
+          "https://accounts.google.com.example.invalid/v3/signin/continue?plt=fixture",
+          false,
+          false,
+        ],
+        ["https://accounts.google.com/v3/signin/continue?plt=fixture\u0007", false, false],
+      ] as const) {
+        assert.deepEqual(
+          yield* turn([
+            [USER_INPUT, input],
+            [ERROR_MESSAGE, verificationError(url, compact)],
+          ]),
+          reusable({
+            class: "permission_error",
+            message: "Verify your Google account, then retry this turn.",
+            code: "VALIDATION_REQUIRED",
+            retryable: false,
+            ...(accepted && url !== undefined ? { verificationUrl: url } : {}),
+          }),
+        );
+      }
+      assert.isUndefined(yield* turn([[PLANNER_RESPONSE, verificationError(VERIFICATION_URL)]]));
+      // A saved thinking block without a valid signature fails every later prompt.
+      for (const error of [MISSING_SIGNATURE_ERROR, INVALID_SIGNATURE_ERROR]) {
+        const outcome = yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, error],
+        ]);
+        assert.equal(outcome?.failure.code, "INVALID_THINKING_SIGNATURE");
+        assert.equal(outcome?.threadDisposition, "broken");
+      }
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
         (yield* turn(
@@ -142,7 +312,7 @@ describe("watchAntigravityPromptOutcome", () => {
             stopReason: "end_turn",
             usage: { inputTokens: 40, outputTokens: 5, totalTokens: 45 },
           },
-        ))?.class,
+        ))?.failure.class,
         "usage_limit",
       );
       assert.isUndefined(
@@ -152,12 +322,15 @@ describe("watchAntigravityPromptOutcome", () => {
         ]),
       );
       // The agent maps the SDK's QUOTA_EXHAUSTED stop reason to `refusal`.
-      assert.deepEqual(yield* turn([], { stopReason: "refusal" }), {
-        class: "usage_limit",
-        message: "You have reached your Antigravity quota for this period.",
-        code: "QUOTA_EXHAUSTED",
-        retryable: true,
-      });
+      assert.deepEqual(
+        yield* turn([], { stopReason: "refusal" }),
+        reusable({
+          class: "usage_limit",
+          message: "You have reached your Antigravity quota for this period.",
+          code: "QUOTA_EXHAUSTED",
+          retryable: true,
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -193,19 +366,22 @@ describe("watchAntigravityPromptOutcome", () => {
       const linked = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       append(peer, ERROR_MESSAGE, QUOTA_ERROR);
       assert.isUndefined(yield* linked({ stopReason: "end_turn" }));
-      assert.equal((yield* linked({ stopReason: "refusal" }))?.class, "usage_limit");
+      assert.equal((yield* linked({ stopReason: "refusal" }))?.failure.class, "usage_limit");
 
       // An unreadable log gives no evidence, but the agent's typed refusal still fails the turn.
       yield* fs.remove(path.join(conversations, `${own}.db`));
       yield* fs.writeFileString(path.join(conversations, `${own}.db`), "not a database");
       const corrupt = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       assert.isUndefined(yield* corrupt({ stopReason: "end_turn" }));
-      assert.deepEqual(yield* corrupt({ stopReason: "refusal" }), {
-        class: "usage_limit",
-        message: "You have reached your Antigravity quota for this period.",
-        code: "QUOTA_EXHAUSTED",
-        retryable: true,
-      });
+      assert.deepEqual(
+        yield* corrupt({ stopReason: "refusal" }),
+        reusable({
+          class: "usage_limit",
+          message: "You have reached your Antigravity quota for this period.",
+          code: "QUOTA_EXHAUSTED",
+          retryable: true,
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

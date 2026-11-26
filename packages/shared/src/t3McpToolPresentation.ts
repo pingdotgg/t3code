@@ -67,6 +67,23 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "list-issues"
+  | "read-issue"
+  | "create-issue"
+  | "comment-issue"
+  | "set-issue-state"
+  | "link-issue"
+  | "unlink-issue"
+  | "list-thread-issues"
+  | "read-pr"
+  | "list-repo-prs"
+  | "create-pr"
+  | "update-pr"
+  | "respond-pr"
+  | "merge-pr"
+  | "review-pr"
+  | "ci-logs"
+  | "ci-rerun"
   | "browser"
   | "device"
   | "html-preview"
@@ -142,6 +159,50 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   read_pull_request_guide: tool(
     ["Read", "Reading", "Read", "a review guide"],
     "read-pr-guide",
+    "pull-request",
+  ),
+  list_issues: tool(["List", "Listing", "Listed", "issues"], "list-issues"),
+  read_issue: tool(["Read", "Reading", "Read", "an issue"], "read-issue"),
+  create_issue: tool(["File", "Filing", "Filed", "an issue"], "create-issue"),
+  comment_on_issue: tool(
+    ["Comment on", "Commenting on", "Commented on", "an issue"],
+    "comment-issue",
+  ),
+  set_issue_state: tool(["Change", "Changing", "Changed", "an issue's state"], "set-issue-state"),
+  link_issue: tool(["Link", "Linking", "Linked", "an issue"], "link-issue"),
+  unlink_issue: tool(["Unlink", "Unlinking", "Unlinked", "an issue"], "unlink-issue"),
+  list_thread_issues: tool(["Check", "Checking", "Checked", "linked issues"], "list-thread-issues"),
+  pull_request_read: tool(["Read", "Reading", "Read", "a pull request"], "read-pr", "pull-request"),
+  pull_request_list: tool(
+    ["List", "Listing", "Listed", "pull requests"],
+    "list-repo-prs",
+    "pull-request",
+  ),
+  pull_request_create: tool(
+    ["Open", "Opening", "Opened", "a pull request"],
+    "create-pr",
+    "pull-request",
+  ),
+  pull_request_update: tool(
+    ["Update", "Updating", "Updated", "a pull request"],
+    "update-pr",
+    "pull-request",
+  ),
+  pull_request_respond: tool(
+    ["Respond", "Responding", "Responded", "on a pull request"],
+    "respond-pr",
+    "pull-request",
+  ),
+  pull_request_review: tool(
+    ["Review", "Reviewing", "Reviewed", "a pull request"],
+    "review-pr",
+    "pull-request",
+  ),
+  ci_logs: tool(["Read", "Reading", "Read", "CI logs"], "ci-logs", "pull-request"),
+  ci_rerun: tool(["Re-run", "Re-running", "Re-ran", "CI"], "ci-rerun", "pull-request"),
+  pull_request_merge: tool(
+    ["Merge", "Merging", "Merged", "a pull request"],
+    "merge-pr",
     "pull-request",
   ),
   orchestrator_capabilities: tool(
@@ -298,6 +359,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Handle", "Handling", "Handled", "pending questions"],
     "question-respond",
   ),
+  t3_workflow: tool(["Use", "Using", "Used", "workflow runs"], "thread-send"),
+  t3_submit_output: tool(["Submit", "Submitting", "Submitted", "the result"], "thread-send"),
   t3_queue_list: tool(["List", "Listing", "Listed", "queued messages"], "queue-list"),
   t3_queue_read: tool(["Read", "Reading", "Read", "a queued message"], "queue-read"),
   t3_queue_edit: tool(["Edit", "Editing", "Edited", "a queued message"], "queue-edit"),

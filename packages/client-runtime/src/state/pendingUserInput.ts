@@ -5,6 +5,7 @@ export interface PendingUserInputQuestion {
   readonly multiSelect?: boolean | undefined;
   readonly allowCustomAnswer?: boolean | undefined;
   readonly initialAnswer?: string | undefined;
+  readonly required?: boolean | undefined;
 }
 
 export interface PendingUserInputDraftAnswer {
@@ -71,19 +72,21 @@ export function resolvePendingUserInputAnswer(
   if (customAnswer !== null && customAnswer.length > 0) {
     return customAnswer;
   }
+  if (question.required === false && question.options.length === 0) {
+    return "";
+  }
 
   const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
+  const fallback =
+    customAnswer ??
+    (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null);
   if (question.multiSelect) {
+    // Checking nothing answers "none of these" unless the provider requires a choice.
     return selectedOptionValues.length > 0
       ? selectedOptionValues
-      : (customAnswer ??
-          (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null));
+      : (fallback ?? (question.required ? null : []));
   }
-  return (
-    selectedOptionValues[0] ??
-    customAnswer ??
-    (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null)
-  );
+  return selectedOptionValues[0] ?? fallback;
 }
 
 export function setPendingUserInputCustomAnswer(
@@ -157,7 +160,10 @@ export function togglePendingUserInputOptionSelection(
   };
 }
 
-/** Every question's answer keyed by question id, or null while any is unanswered. */
+/**
+ * The answers to submit keyed by question id, or null while a question still needs one.
+ * An optional single choice left unselected is skipped: it gets no entry.
+ */
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<PendingUserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
@@ -165,8 +171,10 @@ export function buildPendingUserInputAnswers(
   const entries: Array<[string, PendingUserInputAnswer]> = [];
 
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
+    const draft = draftAnswers[question.id];
+    const answer = resolvePendingUserInputAnswer(question, draft);
     if (answer === null) {
+      if (question.required === false && !draft?.attachmentsBlocked) continue;
       return null;
     }
     entries.push([question.id, answer]);

@@ -55,6 +55,20 @@ function isCursorClosedStreamWrite(reason: unknown): boolean {
   );
 }
 
+/**
+ * When the SDK's stall detector fires it aborts the request, then rejects a promise
+ * nothing awaits. The abort is the SDK's own recovery, so it must not stop the server.
+ * Only an abort raised from `onStall` counts; any other AbortError is still unexpected.
+ */
+function isCursorStallAbort(reason: unknown): boolean {
+  return (
+    reason instanceof Error &&
+    reason.name === "AbortError" &&
+    typeof reason.stack === "string" &&
+    /^\s+at (?:\S+\.)?onStall\b/m.test(reason.stack)
+  );
+}
+
 function onUnhandledRejection(reason: unknown): void {
   if (isCursorShellSpawnFailure(reason)) {
     console.error("Cursor shell spawn failed. The server will keep running.", reason);
@@ -62,6 +76,10 @@ function onUnhandledRejection(reason: unknown): void {
   }
   if (isCursorClosedStreamWrite(reason)) {
     console.error("Cursor SDK wrote to a closed stream. The server will keep running.");
+    return;
+  }
+  if (isCursorStallAbort(reason)) {
+    console.error("Cursor SDK aborted a stalled request. The server will keep running.");
     return;
   }
   if (process.listenerCount("unhandledRejection") > 1) {

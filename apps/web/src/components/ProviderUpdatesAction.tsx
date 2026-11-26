@@ -1,3 +1,5 @@
+import { m } from "../i18n/messages";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -5,6 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState } from "react";
+import { T, useGT } from "gt-react";
 
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
@@ -18,11 +21,12 @@ import {
 } from "./ProviderUpdateLaunchNotification.logic";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 // `refreshModels` always drops the server's hour-long latest-version cache. `modelCatalogOnly`
 // drops it only when the model manifest changed.
 export function useCheckProviderUpdates() {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -42,7 +46,7 @@ export function useCheckProviderUpdates() {
           const result = await refreshProviders({ environmentId, input: { refreshModels: true } });
           if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
           const error = squashAtomCommandFailure(result);
-          return [`${label}: ${error instanceof Error ? error.message : "Refresh failed."}`];
+          return [`${label}: ${thrownErrorMessage(error, m) ?? gt("Refresh failed.")}`];
         }),
     );
     const lines = failures.flat();
@@ -50,7 +54,7 @@ export function useCheckProviderUpdates() {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not check provider updates",
+        title: gt("Could not check provider updates"),
         description: <span className="whitespace-pre-line">{lines.join("\n")}</span>,
       }),
     );
@@ -138,29 +142,25 @@ export function ProviderUpdatesAction() {
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            disabled={isPending}
-            onClick={() => void handleUpdate()}
-          >
-            {isPending ? "Updating…" : "Update all"}
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">
-        {machines.map((machine) => (
-          <div key={machine.environmentId}>
-            {machine.label}:{" "}
-            {machine.candidates
-              .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
-              .join(", ")}
-          </div>
-        ))}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          disabled={isPending}
+          onClick={() => void handleUpdate()}
+        >
+          {isPending ? <T>Updating…</T> : <T>Update all</T>}
+        </Button>
+      }
+      label={machines.map((machine) => (
+        <div key={machine.environmentId}>
+          {machine.label}:{" "}
+          {machine.candidates
+            .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
+            .join(", ")}
+        </div>
+      ))}
+    />
   );
 }
