@@ -12981,5 +12981,8 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Comprobando qué idiomas admite el modelo…"
+  "800966eb58181745": "Comprobando qué idiomas admite el modelo…",
+  "381ceed77cb8b2b3": "Detener {name}",
+  "5b9fda36b610d25c": "Detener",
+  "1d372f6d555dde3c": "Detener todos los dispositivos"
 }

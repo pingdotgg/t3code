@@ -12995,5 +12995,8 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "800966eb58181745": "Checking which languages the model supports…"
+  "800966eb58181745": "Checking which languages the model supports…",
+  "381ceed77cb8b2b3": "Stop {name}",
+  "5b9fda36b610d25c": "Stop",
+  "1d372f6d555dde3c": "Stop all devices"
 }

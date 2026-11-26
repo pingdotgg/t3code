@@ -12993,5 +12993,8 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…"
+  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
+  "381ceed77cb8b2b3": "Stoppa {name}",
+  "5b9fda36b610d25c": "Stoppa",
+  "1d372f6d555dde3c": "Stoppa alla enheter"
 }

@@ -12986,5 +12986,8 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "92e129bf413a1220": "retirée",
-  "800966eb58181745": "Vérification des langues prises en charge par le modèle…"
+  "800966eb58181745": "Vérification des langues prises en charge par le modèle…",
+  "381ceed77cb8b2b3": "Arrêter {name}",
+  "5b9fda36b610d25c": "Arrêter",
+  "1d372f6d555dde3c": "Arrêter tous les appareils"
 }

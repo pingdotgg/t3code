@@ -12986,5 +12986,8 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "92e129bf413a1220": "zurückgezogen",
-  "800966eb58181745": "Prüfe, welche Sprachen das Modell unterstützt…"
+  "800966eb58181745": "Prüfe, welche Sprachen das Modell unterstützt…",
+  "381ceed77cb8b2b3": "{name} stoppen",
+  "5b9fda36b610d25c": "Stoppen",
+  "1d372f6d555dde3c": "Alle Geräte stoppen"
 }
