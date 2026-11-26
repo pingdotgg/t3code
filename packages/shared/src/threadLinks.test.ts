@@ -154,6 +154,19 @@ describe("thread links", () => {
     );
   });
 
+  it.each(["\r", "\r\n", "\n"])(
+    "keeps BOM-prefixed thread link examples literal with %j line endings",
+    (eol) => {
+      const link = "<t3-thread://v2/local/t>";
+      for (const fence of ["~~~", "```"]) {
+        const example = [`\uFEFF${fence}`, link, fence].join(eol);
+        expect(replaceThreadLinks(`${example}${eol}${link}`, () => "linked")).toBe(
+          `${example}${eol}linked`,
+        );
+      }
+    },
+  );
+
   it("leaves links inside code spans and fences as written", () => {
     const markdown = [
       "Live [old](t3-thread://v1/t1), literal `[old](t3-thread://v1/t1)`.",
