@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import { FetchHttpClient } from "effect/http";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -290,7 +291,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -889,4 +890,104 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         yield* h.assertClosed;
       }),
   );
+});
+
+const makeExternalHarness = Effect.fn("makeAntigravityExternalRuntimeHarness")(function* (
+  source: "path" | "override",
+  symlink: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const node = yield* HostProcess.ExecutablePath;
+  const environment = yield* HostProcess.Environment;
+  const agent = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+  );
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-executable-" });
+  const executable = path.join(root, "agy");
+  const target = path.join(root, "runtime");
+  const versionFile = path.join(root, "version");
+  const writeRuntime = (file: string, version: string) =>
+    fs
+      .writeFileString(
+        file,
+        [
+          "#!/bin/sh",
+          `export T3_ACP_AGENT_VERSION=${version === "variable" ? `$(cat ${shellQuote(versionFile)})` : shellQuote(version)}`,
+          `exec ${shellQuote(node)} ${shellQuote(agent)} "$@"`,
+          "",
+        ].join("\n"),
+      )
+      .pipe(Effect.andThen(fs.chmod(file, 0o755)));
+  const initialTarget = symlink ? path.join(root, "original-runtime") : executable;
+  yield* writeRuntime(initialTarget, "variable");
+  yield* fs.writeFileString(versionFile, "1.5.12");
+  if (symlink) yield* fs.symlink(initialTarget, executable);
+
+  const installation = yield* AntigravityInstallation.makeAntigravityInstallation({
+    baseDir: root,
+    releaseAsset: null,
+    updateChecksEnabled: Effect.succeed(false),
+  });
+  const instance = yield* AntigravityDriver.create({
+    instanceId: ProviderInstanceId.make(path.basename(root)),
+    displayName: "Antigravity",
+    enabled: true,
+    config: {
+      ...AntigravityDriver.defaultConfig(),
+      ...(source === "override" ? { binaryPath: executable } : {}),
+    },
+    environment: [
+      { name: "PATH", value: `${root}:${environment.PATH ?? ""}`, sensitive: false },
+      { name: "T3_ACP_ANTIGRAVITY", value: "1", sensitive: false },
+    ],
+  }).pipe(Effect.provideService(AntigravityInstallation.AntigravityInstallation, installation));
+  if (!instance.refreshModels) return yield* Effect.die("Antigravity model refresh is missing");
+  return {
+    fs,
+    executable,
+    target,
+    versionFile,
+    writeRuntime,
+    refresh: instance.refreshModels,
+    check: instance.snapshot.refresh,
+  };
+});
+
+it.layer(layerTest)("external Antigravity runtime health", (it) => {
+  for (const [source, upgrade] of [
+    ["path", "in-place upgrade"],
+    ["override", "symlink retarget"],
+    ["path", "compatible handshake"],
+    ["path", "handshake without a version"],
+  ] as const) {
+    it.effect.skipIf(windowsHost)(`clears a ${source} refusal after ${upgrade}`, () =>
+      Effect.gen(function* () {
+        const h = yield* makeExternalHarness(source, upgrade === "symlink retarget");
+        yield* h.refresh();
+        yield* h.fs.writeFileString(h.versionFile, "1.5.0");
+        const refused = yield* h.refresh().pipe(Effect.flip);
+        expect(yield* h.check).toMatchObject({
+          status: "error",
+          version: "1.5.0",
+          message: refused.detail,
+        });
+        if (upgrade === "in-place upgrade") {
+          yield* h.writeRuntime(h.executable, "1.5.12");
+        } else if (upgrade === "symlink retarget") {
+          yield* h.writeRuntime(h.target, "variable");
+          yield* h.fs.remove(h.executable);
+          yield* h.fs.symlink(h.target, h.executable);
+          yield* h.fs.writeFileString(h.versionFile, "1.5.12");
+        } else {
+          yield* h.fs.writeFileString(
+            h.versionFile,
+            upgrade === "compatible handshake" ? "1.5.12" : "",
+          );
+          yield* h.refresh();
+        }
+        expect((yield* h.check).status).toBe("ready");
+      }),
+    );
+  }
 });
