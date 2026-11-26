@@ -80,13 +80,11 @@ describe("threadSelectionStore", () => {
 
     it("ignores the open thread once a selection exists", () => {
       const store = useThreadSelectionStore.getState();
-      store.toggleThread(THREAD_A);
-      store.toggleThread(THREAD_A);
       store.toggleThread(THREAD_D, THREAD_B);
+      store.toggleThread(THREAD_B, THREAD_B);
       store.toggleThread(THREAD_E, THREAD_B);
 
       expect([...useThreadSelectionStore.getState().selectedThreadKeys]).toEqual([
-        THREAD_B,
         THREAD_D,
         THREAD_E,
       ]);
