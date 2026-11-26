@@ -581,9 +581,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (
     ready: DeviceReadiness,
+    host = hosts.get(ready.hostId),
   ): Effect.fn.Return<DeviceServiceState, DeviceError> {
-    const host = hosts.get(ready.hostId);
-    const shutdownRevision = host && shutdownRevisions.get(host);
+    if (!host || hosts.get(ready.hostId) !== host)
+      return (yield* SynchronizedRef.get(stateRef)).state;
+    const shutdownRevision = shutdownRevisions.get(host);
     // A session opened while the listing ran is on a device the listing could
     // not have seen yet; only sessions from before it can be pruned by it.
     const sessionKey = (session: DeviceSession) =>
@@ -594,7 +596,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
     const refreshed = yield* lifecycleLock.withPermit(
       Effect.gen(function* () {
-        if (!(yield* readDeviceSettings).enabled || !host || hosts.get(ready.hostId) !== host)
+        if (!(yield* readDeviceSettings).enabled || hosts.get(ready.hostId) !== host)
           return (yield* SynchronizedRef.get(stateRef)).state;
         if (shutdownRevisions.get(host) !== shutdownRevision) return;
         if (detail && (incompletePlatforms.length > 0 || androidDiscoveryIncomplete))
@@ -635,7 +637,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }),
     );
     // A Stop committed while the host was listing. Fetch again outside the lifecycle lock.
-    return refreshed ?? (yield* refresh(ready));
+    return refreshed ?? (yield* refresh(ready, host));
   });
 
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
