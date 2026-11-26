@@ -76,12 +76,6 @@ describe("shouldStartWorkspaceWebPreviewLoad", () => {
     ).toEqual({ action: "block" });
     expect(
       shouldStartWorkspaceWebPreviewLoad(
-        { url: "https://evil.example/phish", isTopFrame: true },
-        INITIAL_HTTPS_URI,
-      ),
-    ).toBe(false);
-    expect(
-      shouldStartWorkspaceWebPreviewLoad(
         { url: "https://greendale.test/api/other", isTopFrame: true, navigationType: "other" },
         INITIAL_HTTPS_URI,
       ),
@@ -101,6 +95,15 @@ describe("shouldStartWorkspaceWebPreviewLoad", () => {
         INITIAL_HTTPS_URI,
       ),
     ).toBe(false);
+  });
+
+  it("loads Android link taps, which carry no navigationType or isTopFrame, in place", () => {
+    expect(
+      decideWorkspaceWebPreviewNavigation({ url: "https://example.test/docs" }, INITIAL_HTTPS_URI),
+    ).toEqual({ action: "allow" });
+    expect(
+      decideWorkspaceWebPreviewNavigation({ url: "t3code://settings" }, INITIAL_HTTPS_URI),
+    ).toEqual({ action: "block" });
   });
 
   it("hands same-origin PDFs to the native PDF viewer and blocks cross-origin PDF redirects", () => {

@@ -108,6 +108,7 @@ const ALLOWED_MAIN_WINDOW_PERMISSIONS: ReadonlySet<string> = new Set([
   "clipboard-sanitized-write",
   "notifications",
   "fullscreen",
+  "local-fonts",
 ]);
 
 type WindowTitleBarOptions = Pick<

@@ -7,6 +7,7 @@ import {
   type SpeechStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -87,7 +88,7 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   });
   const read = Effect.gen(function* () {
     const pending = yield* Queue.bounded<string | Uint8Array>(2);
-    yield* Effect.forever(
+    const worker = yield* Effect.forever(
       Queue.take(pending).pipe(
         Effect.flatMap(receive),
         Effect.andThen(() => {
@@ -95,15 +96,19 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
           return Queue.offer(activity, undefined);
         }),
       ),
-    ).pipe(Effect.forkScoped);
-    while (true) {
-      const frames = yield* reader.pull;
-      unanswered += frames.length;
-      yield* Queue.offer(activity, undefined);
-      yield* Effect.forEach(frames, (frame) => Queue.offer(pending, frame), {
-        discard: true,
-      });
-    }
+    ).pipe(Effect.forkChild);
+    // Stop the worker before the caller's scope releases the speech stream, so an in-flight
+    // transcription cannot answer a socket that was closed for revocation.
+    yield* Effect.gen(function* () {
+      while (true) {
+        const frames = yield* reader.pull;
+        unanswered += frames.length;
+        yield* Queue.offer(activity, undefined);
+        yield* Effect.forEach(frames, (frame) => Queue.offer(pending, frame), {
+          discard: true,
+        });
+      }
+    }).pipe(Effect.ensuring(Fiber.interrupt(worker)));
   });
   yield* Effect.raceFirst(read, idle).pipe(
     Effect.timeoutOrElse({

@@ -196,53 +196,6 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("skips local image inlining when allowLocalImages is false or omitted on publish", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const config = yield* ServerConfig.ServerConfig;
-      const htmlRender = yield* HtmlRender.HtmlRender;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-no-inline-" });
-      const png = path.join(directory, "private.png");
-      yield* fileSystem.writeFile(png, PNG_BYTES);
-      const html = `<img src="${png}">`;
-
-      const prepared = yield* htmlRender.prepare(html, { allowLocalImages: false });
-      expect(prepared).toContain(`<img src="${png}">`);
-      expect(prepared).not.toContain("data:image/png;base64,");
-
-      const threadId = ThreadId.make("thread-html-no-inline");
-      const defaultPublish = yield* htmlRender.publish({
-        threadId,
-        html,
-        title: "No inline",
-        height: 200,
-      });
-      const defaultStored = yield* fileSystem.readFileString(
-        resolveAttachmentPathById({
-          attachmentsDir: config.attachmentsDir,
-          attachmentId: defaultPublish.attachmentId,
-        }) ?? "",
-      );
-      expect(defaultStored).not.toContain("data:image/png;base64,");
-
-      const allowedPublish = yield* htmlRender.publish({
-        threadId,
-        html,
-        title: "Allowed inline",
-        height: 200,
-        allowLocalImages: true,
-      });
-      const allowedStored = yield* fileSystem.readFileString(
-        resolveAttachmentPathById({
-          attachmentsDir: config.attachmentsDir,
-          attachmentId: allowedPublish.attachmentId,
-        }) ?? "",
-      );
-      expect(allowedStored).toContain(`data:image/png;base64,${Base64.encode(PNG_BYTES)}`);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect(
     "rejects internal image paths, symlinks to internal files, and avoids leaking sizes of oversized non-images",
     () =>

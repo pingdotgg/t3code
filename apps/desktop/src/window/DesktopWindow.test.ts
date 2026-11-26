@@ -1737,6 +1737,7 @@ describe("DesktopWindow", () => {
           "clipboard-sanitized-write",
           "notifications",
           "fullscreen",
+          "local-fonts",
         ] as const) {
           assert.isTrue(
             requestPermission(permission, {

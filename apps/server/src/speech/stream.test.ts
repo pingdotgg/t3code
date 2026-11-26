@@ -256,16 +256,27 @@ const withAuthenticatedServer = <E>(
   );
 
 it.live.each(["session", "device-key"] as const)(
-  "closes an open voice stream and releases its speech stream on %s revocation",
+  "stops transcribing before releasing the speech stream on %s revocation",
   (revocationKind) => {
     const released = Promise.withResolvers<void>();
+    const feeding = Promise.withResolvers<void>();
+    const order: Array<string> = [];
     const stream: SpeechStream = {
-      feed: () => Effect.never,
+      feed: () =>
+        Effect.sync(() => feeding.resolve()).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Effect.sync(() => order.push("feed interrupted"))),
+        ),
       finish: Effect.succeed("unexpected"),
     };
     return withAuthenticatedServer(
       () =>
-        Effect.acquireRelease(Effect.succeed(stream), () => Effect.sync(() => released.resolve())),
+        Effect.acquireRelease(Effect.succeed(stream), () =>
+          Effect.sync(() => {
+            order.push("stream released");
+            released.resolve();
+          }),
+        ),
       ({ baseWsUrl, auth, sessions }) =>
         Effect.gen(function* () {
           const deviceKey = "Kq3vZ8sYbTn0eW1pLr5uXc7dHf9gJm2aQs4tVw6yBzE";
@@ -301,6 +312,12 @@ it.live.each(["session", "device-key"] as const)(
           const socketClosed = new Promise<void>((resolve) =>
             connection.socket.addEventListener("close", () => resolve(), { once: true }),
           );
+          const updates: Array<unknown> = [];
+          connection.socket.addEventListener("message", ({ data }) => {
+            if (decodeEvent(data).type === "update") updates.push(data);
+          });
+          connection.socket.send(new Uint8Array([1, 2, 3, 4]));
+          yield* Effect.promise(() => feeding.promise);
 
           if (revocationKind === "session") {
             expect(yield* auth.revokeSession(sessionIdToRevoke)).toBe(true);
@@ -308,6 +325,8 @@ it.live.each(["session", "device-key"] as const)(
             expect(yield* auth.revokeConnectDevice(deviceKey)).toBe(true);
           }
           yield* Effect.promise(() => Promise.all([socketClosed, released.promise]));
+          expect(order).toEqual(["feed interrupted", "stream released"]);
+          expect(updates).toEqual([]);
         }),
     );
   },

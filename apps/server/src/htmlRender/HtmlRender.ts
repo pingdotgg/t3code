@@ -148,16 +148,12 @@ export interface HtmlPreview {
 export class HtmlRender extends Context.Service<
   HtmlRender,
   {
-    readonly prepare: (
-      html: string,
-      options?: { readonly allowLocalImages?: boolean | undefined },
-    ) => Effect.Effect<string, HtmlRenderPrepareError>;
+    readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
     readonly publish: (
       input: HtmlRenderSource & {
         readonly threadId: ThreadId;
         readonly title: string;
         readonly height: number;
-        readonly allowLocalImages?: boolean | undefined;
       },
     ) => Effect.Effect<
       HtmlRenderReference,
@@ -170,7 +166,6 @@ export class HtmlRender extends Context.Service<
       input: HtmlRenderSource & {
         readonly width?: number | undefined;
         readonly appearance?: ThemeAppearance | undefined;
-        readonly allowLocalImages?: boolean | undefined;
       },
     ) => Effect.Effect<
       HtmlPreview,
@@ -559,26 +554,14 @@ const make = Effect.gen(function* () {
     "path" in input ? readPageFile(input.path) : Effect.succeed(input.html);
 
   // The bootstrap goes in first so its head scan never runs over inlined image data.
-  const inline = (html: string, allowLocalImages: boolean) => {
-    const bootstrapped = injectHtmlRenderBootstrap(html);
-    if (!allowLocalImages) {
-      const sizeBytes = Buffer.byteLength(bootstrapped);
-      if (sizeBytes > MAX_PAGE_BYTES) {
-        return Effect.fail(new HtmlRenderPageTooLargeError({ sizeBytes }));
-      }
-      return Effect.succeed({ html: bootstrapped, missing: [] as ReadonlyArray<string> });
-    }
-    return inlineLocalImages(bootstrapped, isServerInternalPath).pipe(
+  const inline = (html: string) =>
+    inlineLocalImages(injectHtmlRenderBootstrap(html), isServerInternalPath).pipe(
       Effect.provideContext(services),
     );
-  };
 
-  const prepare = Effect.fn("HtmlRender.prepare")(function* (
-    html: string,
-    options?: { readonly allowLocalImages?: boolean | undefined },
-  ) {
+  const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
     yield* rejectViewportHeight(html);
-    const inlined = yield* inline(html, options?.allowLocalImages ?? true);
+    const inlined = yield* inline(html);
     if (inlined.missing.length > 0) {
       return yield* new HtmlRenderImagesNotFoundError({ paths: inlined.missing });
     }
@@ -590,11 +573,10 @@ const make = Effect.gen(function* () {
       readonly threadId: ThreadId;
       readonly title: string;
       readonly height: number;
-      readonly allowLocalImages?: boolean | undefined;
     },
   ) {
     const source = yield* readSource(input);
-    const html = yield* prepare(source, { allowLocalImages: input.allowLocalImages ?? false });
+    const html = yield* prepare(source);
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
     const attachmentId = createAttachmentId(input.threadId, "html");
     const filePath =
@@ -651,7 +633,6 @@ const make = Effect.gen(function* () {
     input: HtmlRenderSource & {
       readonly width?: number | undefined;
       readonly appearance?: ThemeAppearance | undefined;
-      readonly allowLocalImages?: boolean | undefined;
     },
   ) {
     const width = Math.min(
@@ -661,7 +642,7 @@ const make = Effect.gen(function* () {
     const appearance = input.appearance ?? "dark";
     const source = yield* readSource(input);
     yield* rejectViewportHeight(source);
-    const inlined = yield* inline(source, input.allowLocalImages ?? false);
+    const inlined = yield* inline(source);
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(
       appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,

@@ -70,6 +70,11 @@ export function decideWorkspaceWebPreviewNavigation(
     return { action: "open-external", url: requestUrl.href };
   }
 
+  // Android WebView reports no navigationType, so a link tap cannot be told from a redirect.
+  if (request.navigationType === undefined) {
+    return { action: "allow" };
+  }
+
   return { action: "block" };
 }
 
