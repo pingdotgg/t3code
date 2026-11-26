@@ -473,6 +473,12 @@ describe("provider projection", () => {
     expect(projectComposerContextForProvider({ text: withControl, records: [] })).toBe(
       `${fenced}\n[File: example; ref=demo]\n\n<t3_context version="1">\n<context kind="file" id="demo" unavailable="true"/>\n</t3_context>`,
     );
+    // An unclosed fence ends with its list item, and a four-space indent opens no fence.
+    for (const before of ["- ~~~md\n  example", "    ~~~"]) {
+      expect(projectComposerContextForProvider({ text: `${before}\n\n${link}`, records: [] })).toBe(
+        `${before}\n\n[File: example; ref=demo]\n\n<t3_context version="1">\n<context kind="file" id="demo" unavailable="true"/>\n</t3_context>`,
+      );
+    }
   });
 });
 

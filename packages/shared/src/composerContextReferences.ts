@@ -10,8 +10,12 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
+import type { Nodes } from "mdast";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
 import { expandAssistantCitationsForProvider } from "./assistantCitations.ts";
-import { fencedCodeRanges, replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
+import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
@@ -153,6 +157,33 @@ export interface ComposerContextReferenceOccurrence {
   source: string;
   start: number;
   end: number;
+}
+
+const markdownParser = unified().use(remarkParse);
+const FENCE_MARKER = /^(?:`{3}|~{3})/;
+
+// Parsed rather than matched: a fence ends with its list item or blockquote, and a four-space
+// indent is not one. Overreaching here would silently drop context from the prompt.
+function fencedCodeRanges(markdown: string) {
+  const ranges: Array<{ start: number; end: number }> = [];
+  if (!markdown.includes("```") && !markdown.includes("~~~")) return ranges;
+  const visit = (node: Nodes) => {
+    if (node.type === "code") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (
+        start !== undefined &&
+        end !== undefined &&
+        FENCE_MARKER.test(markdown.slice(start, start + 3))
+      ) {
+        ranges.push({ start, end });
+      }
+    } else if ("children" in node) {
+      for (const child of node.children) visit(child);
+    }
+  };
+  visit(markdownParser.parse(markdown));
+  return ranges;
 }
 
 export function collectComposerContextReferences(

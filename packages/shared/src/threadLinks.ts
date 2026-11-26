@@ -33,16 +33,6 @@ const fencedCode = (char: "`" | "~", name: string) => {
   const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
   return String.raw`^[ \t]*${LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]*${LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
 };
-const FENCED_CODE = new RegExp(`${fencedCode("`", "bt")}|${fencedCode("~", "tl")}`, "gm");
-
-/** Source ranges of CommonMark fenced code blocks, including quote and list prefixes. */
-export function fencedCodeRanges(markdown: string) {
-  if (!markdown.includes("```") && !markdown.includes("~~~")) return [];
-  return Array.from(threadLinkSource(markdown).matchAll(FENCED_CODE), (match) => ({
-    start: match.index,
-    end: match.index + match[0].length,
-  }));
-}
 // A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, rule,
 // setext underline, or deeper blockquote.
 const SPAN_BREAK_LINE =
