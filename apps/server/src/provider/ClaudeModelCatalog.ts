@@ -186,22 +186,27 @@ export function claudeReportedModels(
       .flatMap(({ model }) => [model.slug, ...(model.aliases ?? [])])
       .map((id) => stripClaudeContextWindowSuffix(id).toLowerCase()),
   );
-  const known = new Set([
-    ...catalogIds,
-    ...readCustomModelEntries(customModels).map((entry) =>
+  const customIds = new Set(
+    readCustomModelEntries(customModels).map((entry) =>
       stripClaudeContextWindowSuffix(entry.slug).toLowerCase(),
     ),
-  ]);
+  );
+  const known = new Set([...catalogIds, ...customIds]);
   let hasNonCatalogModels = false;
   const models: Array<ServerProviderModel> = [];
   for (const info of reported) {
     const slug = info.value.trim();
     // `default` is Claude Code's pointer at its own default model, not a model.
     if (!slug || slug === "default") continue;
-    const ids = [slug, info.resolvedModel ?? ""]
-      .map((id) => stripClaudeContextWindowSuffix(id).toLowerCase())
-      .filter((id) => id.length > 0);
-    if (!ids.some((id) => catalogIds.has(id))) hasNonCatalogModels = true;
+    const valueId = stripClaudeContextWindowSuffix(slug).toLowerCase();
+    const resolvedId = stripClaudeContextWindowSuffix(info.resolvedModel ?? "").toLowerCase();
+    const ids = [valueId, resolvedId].filter((id) => id.length > 0);
+    if (
+      (valueId !== "" && customIds.has(valueId) && !catalogIds.has(valueId)) ||
+      !ids.some((id) => catalogIds.has(id))
+    ) {
+      hasNonCatalogModels = true;
+    }
     if (ids.some((id) => known.has(id))) continue;
     for (const id of ids) known.add(id);
     const efforts = info.supportsEffort ? (info.supportedEffortLevels ?? []) : [];

@@ -6,6 +6,7 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   capClaudeCatalogEffort,
   type ClaudeModelCatalog,
+  claudeReportedModels,
   formatClaudeVersionUpgradeMessage,
   getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
@@ -205,6 +206,27 @@ describe("Claude model catalog", () => {
       }),
       "claude-synthetic-next[large]",
     );
+  });
+
+  it("counts a configured gateway alias as reported even when it resolves to a catalog model", () => {
+    const catalog = catalogFromManifest(manifest());
+    const reported = [
+      {
+        value: "gateway/current[1m]",
+        resolvedModel: "claude-synthetic-next",
+        displayName: "Current",
+        description: "",
+      },
+    ];
+
+    assert.deepStrictEqual(claudeReportedModels(catalog, ["GATEWAY/current"], reported), {
+      models: [],
+      hasNonCatalogModels: true,
+    });
+    assert.deepStrictEqual(claudeReportedModels(catalog, [], reported), {
+      models: [],
+      hasNonCatalogModels: false,
+    });
   });
 
   it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
