@@ -81,7 +81,8 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
     const quotedPath = match[2];
-    const path = quotedPath !== undefined ? quotedPath.replace(/\\(.)/g, "$1") : (match[3] ?? "");
+    const path =
+      quotedPath !== undefined ? quotedPath.replace(/\\(["\\])/g, "$1") : (match[3] ?? "");
     if (
       !path ||
       (quotedPath === undefined &&
