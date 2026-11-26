@@ -1,10 +1,18 @@
+// @effect-diagnostics nodeBuiltinImport:off - a FIFO gate must be released with a synchronous
+// open on the main thread, because the Effect FileSystem queues behind the pinned libuv pool.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import { assert, it } from "@effect/vitest";
 import { ProjectId, type ProjectTrackedFolder } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -243,6 +251,61 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         [],
       );
     }),
+  );
+
+  // Opening a FIFO waits in `open()` for a writer, like listing a folder behind a macOS privacy
+  // prompt, and pins a libuv pool thread that interruption cannot free.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps scanning without using up the libuv pool while a folder's listing never returns",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tmp = yield* makeTempDir;
+        const home = path.join(tmp, "home");
+        const other = path.join(tmp, "other");
+        const blocked = path.join(home, "Desktop");
+        for (const folder of ["home/api/.git", "home/Desktop", "other/web/.git"]) {
+          yield* fileSystem.makeDirectory(path.join(tmp, folder), { recursive: true });
+        }
+        const gate = path.join(tmp, "gate");
+        NodeChildProcess.execFileSync("mkfifo", [gate]);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            try {
+              NodeFS.closeSync(
+                NodeFS.openSync(gate, NodeFS.constants.O_WRONLY | NodeFS.constants.O_NONBLOCK),
+              );
+            } catch {
+              // ENXIO: no reader is waiting.
+            }
+          }),
+        );
+        const listing = yield* Deferred.make<void>();
+        const hanging = FileSystem.FileSystem.of({
+          ...fileSystem,
+          readDirectory: (target, options) =>
+            target === blocked
+              ? Deferred.succeed(listing, undefined).pipe(
+                  Effect.andThen(fileSystem.readFileString(gate)),
+                  Effect.as([]),
+                )
+              : fileSystem.readDirectory(target, options),
+        });
+        const discover = (workspaceRoot: string) =>
+          WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
+            Effect.map((folders) => folders.map((folder) => folder.path)),
+            Effect.provideService(FileSystem.FileSystem, hanging),
+          );
+
+        const first = yield* Effect.forkChild(discover(home));
+        yield* Deferred.await(listing);
+        yield* TestClock.adjust("2 seconds");
+        assert.deepEqual(yield* Fiber.join(first), [path.join(home, "api")]);
+        // Each pass would otherwise pin another thread, and four leave the server unanswered.
+        for (let pass = 0; pass < 4; pass++) assert.deepEqual(yield* discover(home), []);
+        assert.deepEqual(yield* discover(other), [path.join(other, "web")]);
+      }),
   );
 
   it.effect("keeps the folders someone added when a project holds more than fit", () =>

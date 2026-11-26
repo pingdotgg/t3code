@@ -16,13 +16,16 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
@@ -111,6 +114,60 @@ export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
     return normalized === "" ? [] : [normalized];
   });
 
+// A listing behind a macOS privacy prompt or a hung mount can block in `open()` for good, holding
+// one of the 4 libuv threads all fs, dns and crypto calls share; interruption cannot free it. So a
+// root lists one folder at a time, a listing holds the root's slot until it returns, and a root
+// still busy after the deadline lists nothing more until it does.
+const LISTING_DEADLINE = "2 seconds";
+const rootListings = new Map<
+  string,
+  { readonly slot: Semaphore.Semaphore; users: number; busy: boolean; overdue: boolean }
+>();
+
+const listFolder = Effect.fnUntraced(function* (root: string, folder: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const entry = rootListings.get(root) ?? {
+    slot: Semaphore.makeUnsafe(1),
+    users: 0,
+    busy: false,
+    overdue: false,
+  };
+  if (entry.overdue) return yield* new Cause.TimeoutError(`A listing in ${root} is overdue.`);
+  rootListings.set(root, entry);
+  entry.users += 1;
+  const listing = yield* entry.slot
+    .withPermit(
+      Effect.suspend(() => {
+        entry.busy = true;
+        return fileSystem.readDirectory(folder);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            entry.busy = false;
+            entry.overdue = false;
+          }),
+        ),
+        Effect.uninterruptible,
+      ),
+    )
+    .pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          entry.users -= 1;
+          if (entry.users === 0) rootListings.delete(root);
+        }),
+      ),
+      Effect.forkDetach,
+    );
+  const names = yield* Fiber.join(listing).pipe(
+    Effect.timeoutOption(LISTING_DEADLINE),
+    Effect.ensuring(Effect.sync(() => listing.interruptUnsafe())),
+  );
+  if (Option.isSome(names)) return names.value;
+  if (entry.busy) entry.overdue = true;
+  return yield* new Cause.TimeoutError(`Listing ${folder} took too long.`);
+});
+
 // Built once per operation: the probes share the caller's file system and path services.
 const folderProbes = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -139,8 +196,8 @@ const folderProbes = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  const childFolders = (folder: string) =>
-    fileSystem.readDirectory(folder).pipe(
+  const childFolders = (root: string, folder: string) =>
+    listFolder(root, folder).pipe(
       Effect.orElseSucceed((): ReadonlyArray<string> => []),
       Effect.map((names) =>
         names
@@ -193,13 +250,11 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   const root = path.resolve(
     expandHomePath(input.workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
   );
-  const names = (yield* fileSystem
-    .readDirectory(root)
-    .pipe(
-      Effect.mapError(
-        () => new WorkspaceFoldersError({ operation: "scan", detail: `Could not read ${root}.` }),
-      ),
-    )).toSorted();
+  const names = (yield* listFolder(root, root).pipe(
+    Effect.mapError(
+      () => new WorkspaceFoldersError({ operation: "scan", detail: `Could not read ${root}.` }),
+    ),
+  )).toSorted();
   const codeWorkspaceFile = names.find((name) => name.endsWith(CODE_WORKSPACE_EXTENSION)) ?? null;
   const listed =
     codeWorkspaceFile === null ? null : yield* readCodeWorkspaceFolders(root, codeWorkspaceFile);
@@ -213,7 +268,7 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
       return Effect.gen(function* () {
         if (yield* ownsHistory(folderPath)) return [{ path: folderPath, name: boundedName(name) }];
         if (yield* exists(path.join(folderPath, ".git"))) return [];
-        const nested = yield* Effect.filter(yield* childFolders(folderPath), ownsHistory, {
+        const nested = yield* Effect.filter(yield* childFolders(root, folderPath), ownsHistory, {
           concurrency: DETECTION_CONCURRENCY,
         });
         return nested.map((nestedPath) => ({
