@@ -37,9 +37,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import ChatView from "../ChatView";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { closeThreadFindIn } from "./threadFindStore";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /**
  * A side chat or a subagent as a tab: the thread's own chat, which decides its bottom, the
@@ -160,25 +160,24 @@ export default function SideThreadPane(props: {
       {isSideChat ? (
         <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
           <h2 className="min-w-0 flex-1 truncate text-xs font-medium">{title}</h2>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  aria-disabled={!canAddToChat || undefined}
-                  onClick={addToChat}
-                >
-                  <T>Add to chat</T>
-                </Button>
-              }
-            />
-            <TooltipPopup side="bottom">
-              {canAddToChat
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="xs"
+                aria-disabled={!canAddToChat || undefined}
+                onClick={addToChat}
+              >
+                <T>Add to chat</T>
+              </Button>
+            }
+            label={
+              canAddToChat
                 ? gt("Adds this side chat to the main thread's next message.")
-                : gt("Available after the first message.")}
-            </TooltipPopup>
-          </Tooltip>
+                : gt("Available after the first message.")
+            }
+            side="bottom"
+          />
           <Button
             variant="ghost"
             size="icon-xs"

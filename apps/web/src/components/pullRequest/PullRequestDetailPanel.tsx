@@ -60,6 +60,7 @@ import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import {
+  prepareDraftCheckout,
   usePullRequestDefaultMergeMethodResolver,
   writeHandoffToComposer,
 } from "./usePullRequestActions";
@@ -87,7 +88,6 @@ import { useUiStateStore } from "~/uiStateStore";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import {
   PullRequestChecksStatusLine,
@@ -98,7 +98,7 @@ import {
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { SharedTooltipProvider } from "../ui/shared-tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   internPullRequestReference,
   pullRequestRefKey,
@@ -1149,11 +1149,14 @@ export function PullRequestDetailPanel({
       });
       return;
     }
-    const prepared = await prepareThread.run({
-      reference: handoffSummary.url,
-      mode,
-      threadId: opened.threadId,
-    });
+    const prepared = await prepareDraftCheckout(
+      opened.draftId,
+      prepareThread.run({
+        reference: handoffSummary.url,
+        mode,
+        threadId: opened.threadId,
+      }),
+    );
     if (prepared._tag === "Failure") {
       setHandoff(null);
       toastManager.update(toastId, {
@@ -1170,36 +1173,6 @@ export function PullRequestDetailPanel({
       });
       return;
     }
-    const pointed = await newThread(projectRef, {
-      branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
-    }).then(
-      (session) => session,
-      () => null,
-    );
-    if (pointed === null) {
-      setHandoff(null);
-      // Sending after failed rebinding would use the previous checkout.
-      toastManager.update(toastId, {
-        type: "error",
-        title: m(msg("Checked out, but the thread stayed where it was")),
-        description: m(
-          msg(
-            "The checkout is ready on `{branch}`. Point a thread at it from the branch picker, then ask again.",
-            { branch: prepared.value.branch },
-          ),
-        ),
-      });
-      return;
-    }
-    // The draft carries the pull request until its first send makes it a thread, which links it.
-    useComposerDraftStore.getState().setDraftThreadContext(pointed.draftId, {
-      checkoutPullRequest: {
-        url: prepared.value.pullRequest.url,
-        branch: prepared.value.branch,
-      },
-    });
     setHandoff(null);
     if (task === null) {
       toastManager.update(
@@ -1231,9 +1204,7 @@ export function PullRequestDetailPanel({
       );
       return;
     }
-    // The task goes on the checkout draft: if the user typed into `opened` while the
-    // checkout ran, that is no longer the draft the user is looking at.
-    await openThreadWithTask(projectRef, task, pointed);
+    await openThreadWithTask(projectRef, task, opened);
     toastManager.update(
       toastId,
       prepared.value.isOnPullRequestHead
@@ -1589,12 +1560,12 @@ export function PullRequestDetailPanel({
         {...(onClose ? { onClose } : {})}
         actions={
           handoffSummary ? (
-            <TooltipProvider delay={150} closeDelay={150} timeout={400}>
+            <>
               {handoffSummary.state === "open" && handoffSummary.mergeability === "conflicting"
                 ? resolveConflictsControl
                 : null}
               {checkoutControl}
-            </TooltipProvider>
+            </>
           ) : undefined
         }
       />
@@ -1602,740 +1573,734 @@ export function PullRequestDetailPanel({
   }
 
   return (
-    // One tooltip for the panel's many triggers; mounting one per trigger dominated opening it.
-    <SharedTooltipProvider>
-      <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
-        {threadPickerOpen && detail ? (
-          <PullRequestThreadLinks
-            key={`${environmentId}:${detail.url}`}
-            display="picker"
-            environmentId={environmentId}
-            reference={reference}
-            url={detail.url}
-            threadRef={null}
-            onPickerOpenChange={setThreadPickerOpen}
-          />
-        ) : null}
-        <div
-          className={cn(
-            "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
-            detail && "border-b border-border/60",
-            !detail && !onClose && "hidden",
-          )}
-        >
-          <PullRequestDetailCrumbs
-            detail={detail}
-            threadRef={threadRef}
-            toneClassName={statePresentation?.toneClassName ?? null}
-            condensed={condensed}
-            repositoryUrl={repositoryUrl}
-            openOnHostText={openOnHostText}
-            onBack={onBack}
-          />
-          <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
-            {detail ? (
-              <TooltipProvider delay={150} closeDelay={150} timeout={400}>
-                {detail.visibility === "private" ? <PullRequestPrivateBadge /> : null}
-                {context === "page" ? (
-                  <PullRequestThreadLinks
-                    display="count"
-                    environmentId={environmentId}
-                    reference={reference}
-                    url={detail.url}
-                    threadRef={null}
-                  />
-                ) : null}
-                {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
-                  <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
-                    <T>Retry stack lookup</T>
-                  </Button>
-                ) : null}
-                {nativeStack ? (
-                  <PullRequestStackMenu
-                    hostLabel={hostClient.label}
-                    terminology={terminology}
-                    stack={nativeStack}
-                    notice={nativeStackQuery.notice}
-                    onRetry={nativeStackQuery.error ? nativeStackQuery.refresh : undefined}
-                    reference={reference}
-                    environmentId={environmentId}
-                    shownHeadSha={shownHeadSha}
-                    onSelect={onSelectPullRequest}
-                    mergeMethod={selectedMergeMethod}
-                    stale={!nativeStackQuery.isFresh}
-                    canMerge={
-                      supportsStackActions && can("merge") && allowedMergeMethods.length > 0
-                    }
-                    canRebase={
-                      supportsStackActions && detail.viewerPermissions.stackRebase === true
-                    }
-                    canAutoMerge={
-                      stackAutoMerge && can("enable-auto-merge") && allowedMergeMethods.length > 0
-                    }
-                    preferAutoMerge={checksState !== null && checksState !== "passing"}
-                    autoMergeArmed={stackAutoMerge && autoMergeArmed}
-                    canCancelAutoMerge={stackAutoMerge && can("disable-auto-merge")}
-                    onActed={() => {
-                      refreshDetail();
-                      onActed?.();
-                    }}
-                  />
-                ) : null}
-                <PullRequestPrimaryAction
-                  mergeBlockedReason={mergeBlockedReason}
-                  pullRequestKey={pullRequestKey}
-                  primaryAction={primaryAction}
-                  autoMergeArmed={autoMergeArmed}
-                  armedAutoMergeLabel={armedAutoMergeLabel}
-                  pendingAutoMergeLabel={pendingAutoMergeLabel}
-                  selectedMergeMethod={selectedMergeMethod}
-                  selectedMergeMethodLabel={selectedMergeMethodLabel}
-                  statePresentation={statePresentation}
-                  pendingAction={pendingAction}
-                  perform={perform}
-                  resolveConflicts={resolveConflictsControl}
-                />
-                {checkoutControl}
-                <PullRequestActionsMenu
+    <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
+      {threadPickerOpen && detail ? (
+        <PullRequestThreadLinks
+          key={`${environmentId}:${detail.url}`}
+          display="picker"
+          environmentId={environmentId}
+          reference={reference}
+          url={detail.url}
+          threadRef={null}
+          onPickerOpenChange={setThreadPickerOpen}
+        />
+      ) : null}
+      <div
+        className={cn(
+          "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
+          detail && "border-b border-border/60",
+          !detail && !onClose && "hidden",
+        )}
+      >
+        <PullRequestDetailCrumbs
+          detail={detail}
+          threadRef={threadRef}
+          toneClassName={statePresentation?.toneClassName ?? null}
+          condensed={condensed}
+          repositoryUrl={repositoryUrl}
+          openOnHostText={openOnHostText}
+          onBack={onBack}
+        />
+        <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
+          {detail ? (
+            <>
+              {detail.visibility === "private" ? <PullRequestPrivateBadge /> : null}
+              {context === "page" ? (
+                <PullRequestThreadLinks
+                  display="count"
                   environmentId={environmentId}
                   reference={reference}
-                  pullRequestKey={pullRequestKey}
-                  detail={detail}
-                  observedAt={observedAt}
-                  terminology={terminology}
-                  threadRef={threadRef}
-                  linkThreadRef={
-                    threadRef ??
-                    (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
-                  }
-                  onThreadPickerOpenChange={setThreadPickerOpen}
-                  refreshing={refreshing}
-                  refreshFromHost={refreshFromHost}
-                  handoff={handoff}
-                  attachesToComposer={attachTarget !== null}
-                  askAboutPullRequest={askAboutPullRequest}
-                  explainPullRequest={explainPullRequest}
-                  canFixFindings={canFixFindings}
-                  startFixFindings={startFixFindings}
-                  handoffLabels={handoffLabels}
-                  canWriteGuide={reviewGuidesEnabled && guideWriter.canWrite}
-                  guideRunning={guideWriter.running}
-                  guideWritten={guideWriter.data?.guide != null}
-                  writeGuide={writeGuide}
-                  pickableEnvironments={pickableEnvironments}
-                  actingEnvironmentId={actingEnvironmentId}
-                  onActingEnvironmentChange={selectActingEnvironment}
-                  can={can}
-                  autoMergeArmed={autoMergeArmed}
-                  showsDraftToggle={showsDraftToggle}
-                  showsMergeNow={showsMergeNow}
-                  showsAutoMerge={showsAutoMerge}
-                  showsMergeMethods={showsMergeMethods}
-                  allowedMergeMethods={allowedMergeMethods}
-                  selectedMergeMethod={selectedMergeMethod}
-                  onSelectMergeMethod={selectMergeMethod}
-                  showsDeleteBranch={showsDeleteBranch}
-                  environmentConnected={environmentConnected}
-                  canWriteSourceControl={canWriteSourceControl}
-                  onMaintainerEditsSaved={refreshDetail}
-                  confirmDeleteBranch={confirmDeleteBranch}
-                  pendingAction={pendingAction}
-                  perform={perform}
-                  openOnHostText={openOnHostText}
-                  copyReference={copyReference}
+                  url={detail.url}
+                  threadRef={null}
                 />
-              </TooltipProvider>
-            ) : null}
-            {onClose ? (
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label={gt(
-                  "Collapse {term, select, mr {merge request} cr {change request} other {pull request}} panel",
-                  { term: changeRequestTermKind(terminology) },
-                )}
-                onClick={onClose}
-              >
-                <PanelRightIcon className="size-3.5" />
-              </Button>
-            ) : null}
-          </div>
-
-          <div
-            className={cn(
-              "col-span-2 grid",
-              condensed
-                ? "grid-rows-[1fr]"
-                : "grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-            )}
-          >
-            <div
-              ref={condensedRowRef}
-              className={cn(
-                "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
-                condensed
-                  ? "translate-y-0 opacity-100 delay-50"
-                  : "translate-y-1 opacity-0 duration-100",
-              )}
-              inert={!condensed}
-              data-workspace-scroll-swap
-            >
-              {detail ? (
-                <div className="col-span-2 min-w-0 px-4 pb-2 pt-1">
-                  <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                    <span className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
-                      <PullRequestActorLabel
-                        actor={detail.author}
-                        profileUrl={authorProfileUrl}
-                        variant="avatar"
-                        className="shrink-0"
-                      />
-                      <span className="shrink-0">
-                        <RelativeTime timestamp={detail.updatedAt} />
-                      </span>
-                    </span>
-                    <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-                    <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground/65">
-                      <PullRequestBaseBranch
-                        baseBranch={detail.baseBranch}
-                        freshness={freshness}
-                        stacked={isStackedPullRequest}
-                        pending={actionPending}
-                        onUpdate={(method) => void perform("update-branch", undefined, method)}
-                        iconClassName="size-3"
-                      />
-                      <ArrowLeftIcon
-                        aria-label={gt("receives changes from", {
-                          $context:
-                            "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
-                        })}
-                        className="size-3 shrink-0 opacity-60"
-                      />
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <code className="flex min-w-0 flex-1">
-                              <MiddleTruncate value={detail.headBranch} showTitle={false} />
-                            </code>
-                          }
-                        />
-                        <TooltipPopup side="top">{detail.headBranch}</TooltipPopup>
-                      </Tooltip>
-                    </span>
-                    <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
-                      <span
-                        className="inline-flex items-baseline gap-1 tabular-nums"
-                        aria-label={gt(
-                          "{count, plural, one {{formatted} changed file} other {{formatted} changed files}}",
-                          {
-                            count: detail.changedFiles,
-                            formatted: detail.changedFiles.toLocaleString(),
-                          },
-                        )}
-                      >
-                        <FileDiffIcon aria-hidden className="size-3 self-center" />
-                        {detail.changedFiles.toLocaleString()}
-                      </span>
-                      <PullRequestChangeBreakdownStat
-                        environmentId={environmentId}
-                        reference={reference}
-                        additions={detail.additions}
-                        deletions={detail.deletions}
-                        className="shrink-0 font-mono text-2xs"
-                        eager
-                      />
-                    </span>
-                  </div>
-                </div>
               ) : null}
-            </div>
-          </div>
-
-          <div
-            className={cn(
-              "col-span-2 grid",
-              condensed
-                ? "grid-rows-[0fr]"
-                : "grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-            )}
-          >
-            <div
-              ref={foldRef}
-              className={cn(
-                "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
-                condensed
-                  ? "-translate-y-1 opacity-0 duration-100"
-                  : "translate-y-0 opacity-100 delay-50",
+              {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
+                <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
+                  <T>Retry stack lookup</T>
+                </Button>
+              ) : null}
+              {nativeStack ? (
+                <PullRequestStackMenu
+                  hostLabel={hostClient.label}
+                  terminology={terminology}
+                  stack={nativeStack}
+                  notice={nativeStackQuery.notice}
+                  onRetry={nativeStackQuery.error ? nativeStackQuery.refresh : undefined}
+                  reference={reference}
+                  environmentId={environmentId}
+                  shownHeadSha={shownHeadSha}
+                  onSelect={onSelectPullRequest}
+                  mergeMethod={selectedMergeMethod}
+                  stale={!nativeStackQuery.isFresh}
+                  canMerge={supportsStackActions && can("merge") && allowedMergeMethods.length > 0}
+                  canRebase={supportsStackActions && detail.viewerPermissions.stackRebase === true}
+                  canAutoMerge={
+                    stackAutoMerge && can("enable-auto-merge") && allowedMergeMethods.length > 0
+                  }
+                  preferAutoMerge={checksState !== null && checksState !== "passing"}
+                  autoMergeArmed={stackAutoMerge && autoMergeArmed}
+                  canCancelAutoMerge={stackAutoMerge && can("disable-auto-merge")}
+                  onActed={() => {
+                    refreshDetail();
+                    onActed?.();
+                  }}
+                />
+              ) : null}
+              <PullRequestPrimaryAction
+                mergeBlockedReason={mergeBlockedReason}
+                pullRequestKey={pullRequestKey}
+                primaryAction={primaryAction}
+                autoMergeArmed={autoMergeArmed}
+                armedAutoMergeLabel={armedAutoMergeLabel}
+                pendingAutoMergeLabel={pendingAutoMergeLabel}
+                selectedMergeMethod={selectedMergeMethod}
+                selectedMergeMethodLabel={selectedMergeMethodLabel}
+                statePresentation={statePresentation}
+                pendingAction={pendingAction}
+                perform={perform}
+                resolveConflicts={resolveConflictsControl}
+              />
+              {checkoutControl}
+              <PullRequestActionsMenu
+                environmentId={environmentId}
+                reference={reference}
+                pullRequestKey={pullRequestKey}
+                detail={detail}
+                observedAt={observedAt}
+                terminology={terminology}
+                threadRef={threadRef}
+                linkThreadRef={
+                  threadRef ??
+                  (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
+                }
+                onThreadPickerOpenChange={setThreadPickerOpen}
+                refreshing={refreshing}
+                refreshFromHost={refreshFromHost}
+                handoff={handoff}
+                attachesToComposer={attachTarget !== null}
+                askAboutPullRequest={askAboutPullRequest}
+                explainPullRequest={explainPullRequest}
+                canFixFindings={canFixFindings}
+                startFixFindings={startFixFindings}
+                handoffLabels={handoffLabels}
+                canWriteGuide={reviewGuidesEnabled && guideWriter.canWrite}
+                guideRunning={guideWriter.running}
+                guideWritten={guideWriter.data?.guide != null}
+                writeGuide={writeGuide}
+                pickableEnvironments={pickableEnvironments}
+                actingEnvironmentId={actingEnvironmentId}
+                onActingEnvironmentChange={selectActingEnvironment}
+                can={can}
+                autoMergeArmed={autoMergeArmed}
+                showsDraftToggle={showsDraftToggle}
+                showsMergeNow={showsMergeNow}
+                showsAutoMerge={showsAutoMerge}
+                showsMergeMethods={showsMergeMethods}
+                allowedMergeMethods={allowedMergeMethods}
+                selectedMergeMethod={selectedMergeMethod}
+                onSelectMergeMethod={selectMergeMethod}
+                showsDeleteBranch={showsDeleteBranch}
+                environmentConnected={environmentConnected}
+                canWriteSourceControl={canWriteSourceControl}
+                onMaintainerEditsSaved={refreshDetail}
+                confirmDeleteBranch={confirmDeleteBranch}
+                pendingAction={pendingAction}
+                perform={perform}
+                openOnHostText={openOnHostText}
+                copyReference={copyReference}
+              />
+            </>
+          ) : null}
+          {onClose ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={gt(
+                "Collapse {term, select, mr {merge request} cr {change request} other {pull request}} panel",
+                { term: changeRequestTermKind(terminology) },
               )}
-              inert={condensed}
-              data-workspace-scroll-swap
+              onClick={onClose}
             >
-              {detail ? (
-                <PullRequestDetailHeaderBody
-                  title={
-                    <PullRequestTitleEditor
-                      environmentId={environmentId}
-                      reference={reference}
-                      pullRequestKey={pullRequestKey}
-                      detail={detail}
-                      canWriteSourceControl={canWriteSourceControl}
+              <PanelRightIcon className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
+
+        <div
+          className={cn(
+            "col-span-2 grid",
+            condensed
+              ? "grid-rows-[1fr]"
+              : "grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          )}
+        >
+          <div
+            ref={condensedRowRef}
+            className={cn(
+              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              condensed
+                ? "translate-y-0 opacity-100 delay-50"
+                : "translate-y-1 opacity-0 duration-100",
+            )}
+            inert={!condensed}
+            data-workspace-scroll-swap
+          >
+            {detail ? (
+              <div className="col-span-2 min-w-0 px-4 pb-2 pt-1">
+                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                  <span className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
+                    <PullRequestActorLabel
+                      actor={detail.author}
+                      profileUrl={authorProfileUrl}
+                      threadRef={threadRef}
+                      variant="avatar"
+                      className="shrink-0"
                     />
-                  }
-                  author={
-                    <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
-                  }
-                  updated={
-                    <span>
-                      <T context="followed by a relative time such as 5m ago or just now">
-                        updated{" "}
-                        <Var>
-                          <RelativeTime timestamp={detail.updatedAt} />
-                        </Var>
-                      </T>
+                    <span className="shrink-0">
+                      <RelativeTime timestamp={detail.updatedAt} />
                     </span>
-                  }
-                  checkout={
-                    checkoutCommand ? (
-                      <PullRequestCopyableCode
-                        key={checkoutCommand}
-                        value={checkoutCommand}
-                        target={{
-                          target: `${terminology.singular} checkout command`,
-                          unavailableMessage: msg(
-                            "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} checkout command.",
-                            { term: changeRequestTermKind(terminology) },
-                          ),
-                          failureMessage: msg(
-                            "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} checkout command to the clipboard.",
-                            { term: changeRequestTermKind(terminology) },
-                          ),
-                        }}
-                        copyLabel={gt("Copy checkout command")}
-                        copiedLabel={gt("Checkout command copied")}
-                        className="ml-auto font-mono"
-                        tooltipSide="bottom"
-                        onError={reportCheckoutCommandError}
-                      />
-                    ) : null
-                  }
-                  base={
+                  </span>
+                  <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground/65">
                     <PullRequestBaseBranch
                       baseBranch={detail.baseBranch}
                       freshness={freshness}
                       stacked={isStackedPullRequest}
                       pending={actionPending}
                       onUpdate={(method) => void perform("update-branch", undefined, method)}
+                      iconClassName="size-3"
                     />
-                  }
-                  head={
-                    <PullRequestCopyableCode
-                      key={detail.headBranch}
-                      value={detail.headBranch}
-                      target={{
-                        target: "branch name",
-                        unavailableMessage: msg(
-                          "Clipboard API is unavailable while copying branch name.",
-                        ),
-                        failureMessage: msg("Failed to copy branch name to the clipboard."),
-                      }}
-                      copyLabel={gt(
-                        "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
-                        { term: changeRequestTermKind(terminology) },
+                    <ArrowLeftIcon
+                      aria-label={gt("receives changes from", {
+                        $context:
+                          "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
+                      })}
+                      className="size-3 shrink-0 opacity-60"
+                    />
+                    <SharedTooltipTrigger
+                      render={
+                        <code className="flex min-w-0 flex-1">
+                          <MiddleTruncate value={detail.headBranch} showTitle={false} />
+                        </code>
+                      }
+                      label={detail.headBranch}
+                    />
+                  </span>
+                  <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
+                    <span
+                      className="inline-flex items-baseline gap-1 tabular-nums"
+                      aria-label={gt(
+                        "{count, plural, one {{formatted} changed file} other {{formatted} changed files}}",
+                        {
+                          count: detail.changedFiles,
+                          formatted: detail.changedFiles.toLocaleString(),
+                        },
                       )}
-                      copiedLabel={gt("Branch name copied")}
-                    />
-                  }
-                  files={gt("{count, plural, one {{formatted} file} other {{formatted} files}}", {
-                    count: detail.changedFiles,
-                    formatted: detail.changedFiles.toLocaleString(),
-                  })}
-                  diffStat={
+                    >
+                      <FileDiffIcon aria-hidden className="size-3 self-center" />
+                      {detail.changedFiles.toLocaleString()}
+                    </span>
                     <PullRequestChangeBreakdownStat
                       environmentId={environmentId}
                       reference={reference}
                       additions={detail.additions}
                       deletions={detail.deletions}
-                      className="shrink-0 font-mono text-xs"
+                      className="shrink-0 font-mono text-2xs"
                       eager
                     />
-                  }
-                />
-              ) : null}
-            </div>
-          </div>
-
-          {unseenHeadSha !== undefined && shownHeadSha !== undefined ? (
-            <div className="col-span-2 px-4 pb-2">
-              <Alert variant="warning">
-                <TriangleAlertIcon />
-                <AlertDescription>
-                  {gt("New commits were pushed. A merge or review still applies to {sha}.", {
-                    sha: shownHeadSha.slice(0, 7),
-                  })}
-                </AlertDescription>
-                <AlertAction>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={isInvalidating}
-                    onClick={() => {
-                      // The pin moves once the host read that reloads the diff has been asked for.
-                      void refetchFromHost().then(() =>
-                        setSeenHead({ key: seenHeadKey, sha: unseenHeadSha }),
-                      );
-                    }}
-                  >
-                    {gt("Load new commits")}
-                  </Button>
-                </AlertAction>
-              </Alert>
-            </div>
-          ) : null}
-          {detail ? (
-            <PullRequestDetailTabBar
-              tabs={visibleTabs}
-              value={tab}
-              onValueChange={selectTab}
-              onTabIntent={(item) => {
-                if (item !== "code") return;
-                void loadCodeTab();
-                setCodeIntentKey(pullRequestKey);
-              }}
-            >
-              {tab === "summary" ? (
-                showsApproveWorkflows ? (
-                  <PullRequestApproveWorkflowsButton
-                    pullRequestKey={pullRequestKey}
-                    pendingAction={pendingAction}
-                    perform={perform}
-                  />
-                ) : (
-                  <PullRequestChecksStatusLine
-                    className="text-muted-foreground"
-                    aria-label={
-                      checksSummary
-                        ? gt("Checks: {summary}", { summary: checksSummary })
-                        : gt("Checks", { $context: "CI checks section" })
-                    }
-                    icon={
-                      checksState !== null ? (
-                        <PullRequestChecksPopover
-                          checks={detail.checks}
-                          stale={checksStale}
-                          checksState={checksState}
-                          threadRef={threadRef}
-                        />
-                      ) : (
-                        <CircleDotIcon aria-hidden className="size-3.5" />
-                      )
-                    }
-                    label={checksSummary}
-                  />
-                )
-              ) : tab === "timeline" ? (
-                <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                  <PullRequestMetaLine
-                    className={cn(
-                      "whitespace-nowrap text-2xs transition-opacity",
-                      (activityPending || activityError) && "opacity-35",
-                    )}
-                  >
-                    <span
-                      className="inline-flex items-center gap-1"
-                      aria-label={
-                        activityError
-                          ? gt("Comments unavailable")
-                          : gt(
-                              "{count, plural, one {{formatted} comment} other {{formatted} comments}}",
-                              {
-                                count: detail.commentCount,
-                                formatted: detail.commentCount.toLocaleString(),
-                              },
-                            )
-                      }
-                    >
-                      <MessageSquareIcon aria-hidden className="size-3" />
-                      {activityError
-                        ? "-"
-                        : activityPending
-                          ? "…"
-                          : detail.commentCount.toLocaleString()}
-                    </span>
-                    <span
-                      className="inline-flex items-center gap-1"
-                      aria-label={
-                        activityError
-                          ? gt("Commits unavailable")
-                          : gt(
-                              "{count, plural, one {{formatted} commit} other {{formatted} commits}}",
-                              {
-                                count: detail.commits.length,
-                                formatted: detail.commits.length.toLocaleString(),
-                              },
-                            )
-                      }
-                    >
-                      <GitCommitHorizontalIcon aria-hidden className="size-3" />
-                      {activityError
-                        ? "-"
-                        : activityPending
-                          ? "…"
-                          : detail.commits.length.toLocaleString()}
-                    </span>
-                    {approvalCount > 0 ? (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1",
-                          pullRequestReviewOutcomeToneClassName("approved"),
-                        )}
-                      >
-                        <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
-                        <span aria-hidden>{approvalCount.toLocaleString()}</span>
-                        <span className="sr-only">
-                          {gt(
-                            "{count, plural, one {{formatted} approval} other {{formatted} approvals}}",
-                            { count: approvalCount, formatted: approvalCount.toLocaleString() },
-                          )}
-                        </span>
-                      </span>
-                    ) : null}
-                  </PullRequestMetaLine>
-                  <Button
-                    size="xs"
-                    variant="ghost-muted"
-                    aria-label={
-                      timelineOrder === "newest"
-                        ? gt("Show oldest activity first")
-                        : gt("Show newest activity first")
-                    }
-                    onClick={() =>
-                      setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
-                    }
-                  >
-                    <ArrowDownUpIcon aria-hidden className="size-3" />
-                    {timelineOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
-                  </Button>
+                  </span>
                 </div>
-              ) : null}
-            </PullRequestDetailTabBar>
-          ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
 
-        <SourceControlAppAccessNotice
-          environmentId={environmentId}
-          provider={detail?.provider ?? repositoryIdentity?.provider}
-          host={reference.host}
-          repository={reference.repository}
-          className="border-b border-border/60"
-        />
         <div
-          className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
-          onScrollCapture={(event) => {
-            const scroller = scrollerByTab.current[tab];
-            if (event.target !== scroller || scroller === null || scroller === undefined) return;
-            const top = scroller.scrollTop;
-            const previous = condensedByTab[tab] ?? false;
-            const foldHeight = foldRef.current?.scrollHeight ?? 0;
-            let next = previous;
-            if (previous) {
-              if (top < 4 && foldHeight > 0) next = false;
-            } else if (foldHeight > 0 && top > foldHeight + 32) {
-              const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
-              compensationRef.current = { tab, scroller, target: top - chromeDelta };
-              next = true;
-            }
-            if (next === previous) return;
-            if (tab === "summary") summaryCondensedByScopeKey.set(tabScopeKey, next);
-            setCondensedByTab({ ...condensedByTab, [tab]: next });
-          }}
+          className={cn(
+            "col-span-2 grid",
+            condensed
+              ? "grid-rows-[0fr]"
+              : "grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          )}
         >
-          {detailQuery.error && !detail ? (
-            <PullRequestsUnavailableState
-              {...(isPullRequestNotFound(detailQuery.failure)
-                ? {
-                    title: gt(
-                      "{term, select, mr {Merge request} cr {Change request} other {Pull request}} #{number} not found",
-                      {
-                        term: changeRequestTermKind(terminology),
-                        number: reference.number,
-                      },
-                    ),
-                    error: gt(
-                      "It may be an issue rather than a {term, select, mr {merge request} cr {change request} other {pull request}}, or this account can't see it.",
-                      { term: changeRequestTermKind(terminology) },
-                    ),
-                  }
-                : { error: detailQuery.error })}
-              refreshing={detailQuery.isPending}
-              onRetry={refreshDetail}
-              {...(unavailableHostUrl
-                ? {
-                    host: {
-                      url: unavailableHostUrl,
-                      openLabel: openOnHostLabel(
-                        sourceControlClients.get(repositoryIdentity?.provider),
-                        resolve,
+          <div
+            ref={foldRef}
+            className={cn(
+              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              condensed
+                ? "-translate-y-1 opacity-0 duration-100"
+                : "translate-y-0 opacity-100 delay-50",
+            )}
+            inert={condensed}
+            data-workspace-scroll-swap
+          >
+            {detail ? (
+              <PullRequestDetailHeaderBody
+                title={
+                  <PullRequestTitleEditor
+                    environmentId={environmentId}
+                    reference={reference}
+                    pullRequestKey={pullRequestKey}
+                    detail={detail}
+                    canWriteSourceControl={canWriteSourceControl}
+                  />
+                }
+                author={
+                  <PullRequestActorLabel
+                    actor={detail.author}
+                    profileUrl={authorProfileUrl}
+                    threadRef={threadRef}
+                  />
+                }
+                updated={
+                  <span>
+                    <T context="followed by a relative time such as 5m ago or just now">
+                      updated{" "}
+                      <Var>
+                        <RelativeTime timestamp={detail.updatedAt} />
+                      </Var>
+                    </T>
+                  </span>
+                }
+                checkout={
+                  checkoutCommand ? (
+                    <PullRequestCopyableCode
+                      key={checkoutCommand}
+                      value={checkoutCommand}
+                      target={{
+                        target: `${terminology.singular} checkout command`,
+                        unavailableMessage: msg(
+                          "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} checkout command.",
+                          { term: changeRequestTermKind(terminology) },
+                        ),
+                        failureMessage: msg(
+                          "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} checkout command to the clipboard.",
+                          { term: changeRequestTermKind(terminology) },
+                        ),
+                      }}
+                      copyLabel={gt("Copy checkout command")}
+                      copiedLabel={gt("Checkout command copied")}
+                      className="ml-auto font-mono"
+                      tooltipSide="bottom"
+                      onError={reportCheckoutCommandError}
+                    />
+                  ) : null
+                }
+                base={
+                  <PullRequestBaseBranch
+                    baseBranch={detail.baseBranch}
+                    freshness={freshness}
+                    stacked={isStackedPullRequest}
+                    pending={actionPending}
+                    onUpdate={(method) => void perform("update-branch", undefined, method)}
+                  />
+                }
+                head={
+                  <PullRequestCopyableCode
+                    key={detail.headBranch}
+                    value={detail.headBranch}
+                    target={{
+                      target: "branch name",
+                      unavailableMessage: msg(
+                        "Clipboard API is unavailable while copying branch name.",
                       ),
-                    },
+                      failureMessage: msg("Failed to copy branch name to the clipboard."),
+                    }}
+                    copyLabel={gt(
+                      "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
+                      { term: changeRequestTermKind(terminology) },
+                    )}
+                    copiedLabel={gt("Branch name copied")}
+                  />
+                }
+                files={gt("{count, plural, one {{formatted} file} other {{formatted} files}}", {
+                  count: detail.changedFiles,
+                  formatted: detail.changedFiles.toLocaleString(),
+                })}
+                diffStat={
+                  <PullRequestChangeBreakdownStat
+                    environmentId={environmentId}
+                    reference={reference}
+                    additions={detail.additions}
+                    deletions={detail.deletions}
+                    className="shrink-0 font-mono text-xs"
+                    eager
+                  />
+                }
+              />
+            ) : null}
+          </div>
+        </div>
+
+        {unseenHeadSha !== undefined && shownHeadSha !== undefined ? (
+          <div className="col-span-2 px-4 pb-2">
+            <Alert variant="warning">
+              <TriangleAlertIcon />
+              <AlertDescription>
+                {gt("New commits were pushed. A merge or review still applies to {sha}.", {
+                  sha: shownHeadSha.slice(0, 7),
+                })}
+              </AlertDescription>
+              <AlertAction>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={isInvalidating}
+                  onClick={() => {
+                    // The pin moves once the host read that reloads the diff has been asked for.
+                    void refetchFromHost().then(() =>
+                      setSeenHead({ key: seenHeadKey, sha: unseenHeadSha }),
+                    );
+                  }}
+                >
+                  {gt("Load new commits")}
+                </Button>
+              </AlertAction>
+            </Alert>
+          </div>
+        ) : null}
+        {detail ? (
+          <PullRequestDetailTabBar
+            tabs={visibleTabs}
+            value={tab}
+            onValueChange={selectTab}
+            onTabIntent={(item) => {
+              if (item !== "code") return;
+              void loadCodeTab();
+              setCodeIntentKey(pullRequestKey);
+            }}
+          >
+            {tab === "summary" ? (
+              showsApproveWorkflows ? (
+                <PullRequestApproveWorkflowsButton
+                  pullRequestKey={pullRequestKey}
+                  pendingAction={pendingAction}
+                  perform={perform}
+                />
+              ) : (
+                <PullRequestChecksStatusLine
+                  className="text-muted-foreground"
+                  aria-label={
+                    checksSummary
+                      ? gt("Checks: {summary}", { summary: checksSummary })
+                      : gt("Checks", { $context: "CI checks section" })
                   }
-                : {})}
-            />
-          ) : detail ? (
-            <PullRequestMarkdownContext value={markdownContext}>
-              {mountedTabs.has("summary") ? (
-                <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
-                  <PullRequestSummaryTab
-                    scrollerRef={scrollerRefs.summary}
-                    revealUrl={tab === "summary" ? revealUrl : undefined}
-                    onRevealSettled={settleRevealStable}
+                  icon={
+                    checksState !== null ? (
+                      <PullRequestChecksPopover
+                        checks={detail.checks}
+                        stale={checksStale}
+                        checksState={checksState}
+                        threadRef={threadRef}
+                      />
+                    ) : (
+                      <CircleDotIcon aria-hidden className="size-3.5" />
+                    )
+                  }
+                  label={checksSummary}
+                />
+              )
+            ) : tab === "timeline" ? (
+              <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                <PullRequestMetaLine
+                  className={cn(
+                    "whitespace-nowrap text-2xs transition-opacity",
+                    (activityPending || activityError) && "opacity-35",
+                  )}
+                >
+                  <span
+                    className="inline-flex items-center gap-1"
+                    aria-label={
+                      activityError
+                        ? gt("Comments unavailable")
+                        : gt(
+                            "{count, plural, one {{formatted} comment} other {{formatted} comments}}",
+                            {
+                              count: detail.commentCount,
+                              formatted: detail.commentCount.toLocaleString(),
+                            },
+                          )
+                    }
+                  >
+                    <MessageSquareIcon aria-hidden className="size-3" />
+                    {activityError
+                      ? "-"
+                      : activityPending
+                        ? "…"
+                        : detail.commentCount.toLocaleString()}
+                  </span>
+                  <span
+                    className="inline-flex items-center gap-1"
+                    aria-label={
+                      activityError
+                        ? gt("Commits unavailable")
+                        : gt(
+                            "{count, plural, one {{formatted} commit} other {{formatted} commits}}",
+                            {
+                              count: detail.commits.length,
+                              formatted: detail.commits.length.toLocaleString(),
+                            },
+                          )
+                    }
+                  >
+                    <GitCommitHorizontalIcon aria-hidden className="size-3" />
+                    {activityError
+                      ? "-"
+                      : activityPending
+                        ? "…"
+                        : detail.commits.length.toLocaleString()}
+                  </span>
+                  {approvalCount > 0 ? (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1",
+                        pullRequestReviewOutcomeToneClassName("approved"),
+                      )}
+                    >
+                      <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
+                      <span aria-hidden>{approvalCount.toLocaleString()}</span>
+                      <span className="sr-only">
+                        {gt(
+                          "{count, plural, one {{formatted} approval} other {{formatted} approvals}}",
+                          { count: approvalCount, formatted: approvalCount.toLocaleString() },
+                        )}
+                      </span>
+                    </span>
+                  ) : null}
+                </PullRequestMetaLine>
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-label={
+                    timelineOrder === "newest"
+                      ? gt("Show oldest activity first")
+                      : gt("Show newest activity first")
+                  }
+                  onClick={() =>
+                    setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
+                  }
+                >
+                  <ArrowDownUpIcon aria-hidden className="size-3" />
+                  {timelineOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
+                </Button>
+              </div>
+            ) : null}
+          </PullRequestDetailTabBar>
+        ) : null}
+      </div>
+
+      <SourceControlAppAccessNotice
+        environmentId={environmentId}
+        provider={detail?.provider ?? repositoryIdentity?.provider}
+        host={reference.host}
+        repository={reference.repository}
+        className="border-b border-border/60"
+      />
+      <div
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+        onScrollCapture={(event) => {
+          const scroller = scrollerByTab.current[tab];
+          if (event.target !== scroller || scroller === null || scroller === undefined) return;
+          const top = scroller.scrollTop;
+          const previous = condensedByTab[tab] ?? false;
+          const foldHeight = foldRef.current?.scrollHeight ?? 0;
+          let next = previous;
+          if (previous) {
+            if (top < 4 && foldHeight > 0) next = false;
+          } else if (foldHeight > 0 && top > foldHeight + 32) {
+            const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
+            compensationRef.current = { tab, scroller, target: top - chromeDelta };
+            next = true;
+          }
+          if (next === previous) return;
+          if (tab === "summary") summaryCondensedByScopeKey.set(tabScopeKey, next);
+          setCondensedByTab({ ...condensedByTab, [tab]: next });
+        }}
+      >
+        {detailQuery.error && !detail ? (
+          <PullRequestsUnavailableState
+            {...(isPullRequestNotFound(detailQuery.failure)
+              ? {
+                  title: gt(
+                    "{term, select, mr {Merge request} cr {Change request} other {Pull request}} #{number} not found",
+                    {
+                      term: changeRequestTermKind(terminology),
+                      number: reference.number,
+                    },
+                  ),
+                  error: gt(
+                    "It may be an issue rather than a {term, select, mr {merge request} cr {change request} other {pull request}}, or this account can't see it.",
+                    { term: changeRequestTermKind(terminology) },
+                  ),
+                }
+              : { error: detailQuery.error })}
+            refreshing={detailQuery.isPending}
+            onRetry={refreshDetail}
+            {...(unavailableHostUrl
+              ? {
+                  host: {
+                    url: unavailableHostUrl,
+                    threadRef,
+                    openLabel: openOnHostLabel(
+                      sourceControlClients.get(repositoryIdentity?.provider),
+                      resolve,
+                    ),
+                  },
+                }
+              : {})}
+          />
+        ) : detail ? (
+          <PullRequestMarkdownContext value={markdownContext}>
+            {mountedTabs.has("summary") ? (
+              <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
+                <PullRequestSummaryTab
+                  scrollerRef={scrollerRefs.summary}
+                  revealUrl={tab === "summary" ? revealUrl : undefined}
+                  onRevealSettled={settleRevealStable}
+                  environmentId={environmentId}
+                  threadRef={threadRef}
+                  reference={reference}
+                  detail={detail}
+                  observedAt={observedAt}
+                  activityPending={activityPending}
+                  checksStale={checksStale}
+                  activityError={activityError}
+                  pendingFinding={handoff}
+                  fixFindingLabel={handoffLabels.fixFinding}
+                  fixCheckLabel={handoffLabels.fixCheck}
+                  {...(canFixFindings ? { onFixFinding: startFixFindingStable } : {})}
+                  {...(attachTarget === null ? {} : { onAddToChat: addCommentToChatStable })}
+                  onRefresh={refreshDetail}
+                  onRefreshChecks={refreshFromHostStable}
+                />
+              </div>
+            ) : null}
+            {mountedTabs.has("guide") ? (
+              <div
+                className={cn("absolute inset-0", tab !== "guide" && "invisible")}
+                // Read by the guide run notifier, which stays quiet for a guide on screen.
+                data-guide-shown={tab === "guide" ? guideKey : undefined}
+              >
+                <PullRequestGuideTab
+                  environmentId={environmentId}
+                  reference={reference}
+                  active={tab === "guide"}
+                  title={detail.title}
+                  workspaceRoot={detail.workspaceRoot}
+                  canComment={
+                    detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
+                  }
+                  rangeComments={detail.capabilities.review.rangeComment === true}
+                  completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
+                  onAskAboutLines={(comment, request) =>
+                    addSelectionToAgent({ comment, request }, { keepGuide: true })
+                  }
+                  onAskAboutStop={askAboutGuideStop}
+                  onFinishReview={
+                    detail.capabilities.review.verdicts.some((verdict) =>
+                      detail.viewerPermissions.verdicts.includes(verdict),
+                    )
+                      ? () => setOpenReviewRequest((count) => count + 1)
+                      : null
+                  }
+                  onOpenFile={openFileInCode}
+                  onTourShown={onGuideShown}
+                />
+              </div>
+            ) : null}
+            {mountedTabs.has("timeline") ? (
+              <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
+                {activityPending ? (
+                  <div tabIndex={-1} data-workspace-focus-default className="h-full outline-none">
+                    <PullRequestTimelineGhost />
+                  </div>
+                ) : activityError ? (
+                  <PullRequestActivityUnavailableState
+                    error={activityError}
+                    term={changeRequestTermKind(terminology)}
+                    onRetry={activityQuery.refresh}
+                  />
+                ) : (
+                  <PullRequestTimelineTab
+                    scrollerRef={scrollerRefs.timeline}
+                    revealUrl={tab === "timeline" ? revealUrl : undefined}
+                    onRevealSettled={settleReveal}
+                    detail={detail}
+                    environmentId={environmentId}
+                    threadRef={threadRef}
+                    reference={reference}
+                    order={timelineOrder}
+                    onOpenCommit={openCommit}
+                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
+                    onRefresh={refreshDetail}
+                  />
+                )}
+              </div>
+            ) : null}
+            {mountedTabs.has("code") ? (
+              <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
+                <Suspense
+                  fallback={
+                    // Loading placeholders hold panel focus until the tab's scroller replaces them.
+                    <div tabIndex={-1} data-workspace-focus-default className="h-full outline-none">
+                      <DiffPanelLoadingState
+                        label={gt(
+                          "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
+                          { term: changeRequestTermKind(terminology) },
+                        )}
+                      />
+                    </div>
+                  }
+                >
+                  <PullRequestCodeTab
+                    scrollerRef={scrollerRefs.code}
+                    onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
                     threadRef={threadRef}
                     reference={reference}
                     detail={detail}
-                    observedAt={observedAt}
-                    activityPending={activityPending}
-                    checksStale={checksStale}
-                    activityError={activityError}
+                    selectedCommitOid={selectedCodeCommitOid}
+                    onSelectedCommitChange={selectCodeCommit}
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
-                    fixCheckLabel={handoffLabels.fixCheck}
-                    {...(canFixFindings ? { onFixFinding: startFixFindingStable } : {})}
-                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChatStable })}
+                    {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onRefresh={refreshDetail}
-                    onRefreshChecks={refreshFromHostStable}
+                    refreshToken={refreshToken}
+                    backgroundRefreshToken={turnRefresh ?? 0}
+                    revealRequest={codeRevealRequest}
+                    revealUrl={tab === "code" ? revealUrl : undefined}
+                    onRevealSettled={settleReveal}
                   />
-                </div>
-              ) : null}
-              {mountedTabs.has("guide") ? (
-                <div
-                  className={cn("absolute inset-0", tab !== "guide" && "invisible")}
-                  // Read by the guide run notifier, which stays quiet for a guide on screen.
-                  data-guide-shown={tab === "guide" ? guideKey : undefined}
-                >
-                  <PullRequestGuideTab
-                    environmentId={environmentId}
-                    reference={reference}
-                    active={tab === "guide"}
-                    title={detail.title}
-                    workspaceRoot={detail.workspaceRoot}
-                    canComment={
-                      detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
-                    }
-                    rangeComments={detail.capabilities.review.rangeComment === true}
-                    completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
-                    onAskAboutLines={(comment, request) =>
-                      addSelectionToAgent({ comment, request }, { keepGuide: true })
-                    }
-                    onAskAboutStop={askAboutGuideStop}
-                    onFinishReview={
-                      detail.capabilities.review.verdicts.some((verdict) =>
-                        detail.viewerPermissions.verdicts.includes(verdict),
-                      )
-                        ? () => setOpenReviewRequest((count) => count + 1)
-                        : null
-                    }
-                    onOpenFile={openFileInCode}
-                    onTourShown={onGuideShown}
-                  />
-                </div>
-              ) : null}
-              {mountedTabs.has("timeline") ? (
-                <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
-                  {activityPending ? (
-                    <div tabIndex={-1} data-workspace-focus-default className="h-full outline-none">
-                      <PullRequestTimelineGhost />
-                    </div>
-                  ) : activityError ? (
-                    <PullRequestActivityUnavailableState
-                      error={activityError}
-                      term={changeRequestTermKind(terminology)}
-                      onRetry={activityQuery.refresh}
-                    />
-                  ) : (
-                    <PullRequestTimelineTab
-                      scrollerRef={scrollerRefs.timeline}
-                      revealUrl={tab === "timeline" ? revealUrl : undefined}
-                      onRevealSettled={settleReveal}
-                      detail={detail}
-                      environmentId={environmentId}
-                      threadRef={threadRef}
-                      reference={reference}
-                      order={timelineOrder}
-                      onOpenCommit={openCommit}
-                      {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
-                      onRefresh={refreshDetail}
-                    />
-                  )}
-                </div>
-              ) : null}
-              {mountedTabs.has("code") ? (
-                <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
-                  <Suspense
-                    fallback={
-                      // Loading placeholders hold panel focus until the tab's scroller replaces them.
-                      <div
-                        tabIndex={-1}
-                        data-workspace-focus-default
-                        className="h-full outline-none"
-                      >
-                        <DiffPanelLoadingState
-                          label={gt(
-                            "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
-                            { term: changeRequestTermKind(terminology) },
-                          )}
-                        />
-                      </div>
-                    }
-                  >
-                    <PullRequestCodeTab
-                      scrollerRef={scrollerRefs.code}
-                      onAddToAgentSelection={addSelectionToAgent}
-                      environmentId={environmentId}
-                      reference={reference}
-                      detail={detail}
-                      selectedCommitOid={selectedCodeCommitOid}
-                      onSelectedCommitChange={selectCodeCommit}
-                      pendingFinding={handoff}
-                      fixFindingLabel={handoffLabels.fixFinding}
-                      {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
-                      {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
-                      onRefresh={refreshDetail}
-                      refreshToken={refreshToken}
-                      backgroundRefreshToken={turnRefresh ?? 0}
-                      revealRequest={codeRevealRequest}
-                      revealUrl={tab === "code" ? revealUrl : undefined}
-                      onRevealSettled={settleReveal}
-                    />
-                  </Suspense>
-                </div>
-              ) : null}
-            </PullRequestMarkdownContext>
-          ) : null}
-        </div>
-
-        {detail ? (
-          <div className="absolute right-4 bottom-3 z-20">
-            <PullRequestComposer
-              key={JSON.stringify([
-                environmentId,
-                reference.projectId,
-                reference.host,
-                reference.repository,
-                reference.number,
-              ])}
-              environmentId={environmentId}
-              reference={reference}
-              detail={detail}
-              shownHeadSha={shownHeadSha}
-              actionPending={actionPending}
-              onCommentAction={performCommentAction}
-              onCommented={refreshDetail}
-              onReviewSubmitted={refreshDetail}
-              openReviewRequest={openReviewRequest}
-            />
-          </div>
+                </Suspense>
+              </div>
+            ) : null}
+          </PullRequestMarkdownContext>
         ) : null}
       </div>
-    </SharedTooltipProvider>
+
+      {detail ? (
+        <div className="absolute right-4 bottom-3 z-20">
+          <PullRequestComposer
+            key={JSON.stringify([
+              environmentId,
+              reference.projectId,
+              reference.host,
+              reference.repository,
+              reference.number,
+            ])}
+            environmentId={environmentId}
+            reference={reference}
+            detail={detail}
+            shownHeadSha={shownHeadSha}
+            actionPending={actionPending}
+            onCommentAction={performCommentAction}
+            onCommented={refreshDetail}
+            onReviewSubmitted={refreshDetail}
+            openReviewRequest={openReviewRequest}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }

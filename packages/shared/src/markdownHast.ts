@@ -3,7 +3,11 @@ import type { Root } from "hast";
 import { defaultSchema, sanitize, type Schema } from "hast-util-sanitize";
 
 import { CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES } from "./codexArtifactTemplates.ts";
-import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
+import {
+  isWindowsDrivePathHref,
+  normalizeMarkdownLinkDestination,
+  parseMarkdownSandboxFileLink,
+} from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -107,8 +111,11 @@ export function rehypePreserveImageSourceMeta() {
 
 const IMAGE_SRC_PROTOCOLS = [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"];
 
-// The sanitizer compares schemes case-sensitively, so lowercase accepted editor links first.
-function normalizeLocalEditorHref(href: string): string {
+// The sanitizer compares schemes case-sensitively, so lowercase accepted file link schemes first.
+function normalizeLocalFileHref(href: string): string {
+  if (/^sandbox:/i.test(href)) {
+    return parseMarkdownSandboxFileLink(href) ? href.replace(/^sandbox:/i, "sandbox:") : "";
+  }
   try {
     const url = new URL(href);
     return isLocalEditorFileUrl(url) ? url.href : href;
@@ -118,12 +125,12 @@ function normalizeLocalEditorHref(href: string): string {
   }
 }
 
-export function rehypeNormalizeLocalEditorLinks() {
+export function rehypeNormalizeLocalFileLinks() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
       const href = node.properties?.href;
       if (node.type === "element" && node.tagName === "a" && typeof href === "string") {
-        const normalized = normalizeLocalEditorHref(href);
+        const normalized = normalizeLocalFileHref(href);
         if (normalized !== href) node.properties = { ...node.properties, href: normalized };
       }
       node.children?.forEach(visit);
@@ -163,6 +170,7 @@ export const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     href: [
       ...(defaultSchema.protocols?.href ?? []),
       "file",
+      "sandbox",
       "t3-citation",
       "t3-context",
       THREAD_LINK_PROTOCOL,

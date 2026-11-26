@@ -582,6 +582,38 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelectionPosition()).toBeNull();
   });
 
+  it("keeps a multiline selection when Control-click opens the context menu on macOS", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    let selectionAtContextMenu: string | null = null;
+    const surface = await harness.create({
+      onContextMenu: () => {
+        selectionAtContextMenu = surface.getSelection();
+      },
+    });
+    surface.write("alpha\r\nbravo\r\ncharlie");
+    harness.flushFrame();
+    harness.pointer("pointerdown", 1, 1, {}, 0, 1);
+    harness.pointer("pointermove", 55, 1, {}, 0, 30);
+    harness.pointer("pointerup", 55, 0, {}, 0, 30);
+    const selected = surface.getSelection();
+    expect(selected.split("\n").length).toBeGreaterThan(1);
+
+    // macOS Chromium reports Control-click as a primary press, then fires contextmenu on press.
+    harness.pointer("pointerdown", 9, 1, { ctrlKey: true }, 0, 1);
+    harness.canvas.dispatchEvent(
+      Object.assign(new Event("contextmenu", { cancelable: true }), {
+        clientX: 9,
+        clientY: 1,
+        button: 0,
+        buttons: 1,
+        ctrlKey: true,
+      }),
+    );
+
+    expect(selectionAtContextMenu).toBe(selected);
+  });
+
   it("reports where a selection sits after output scrolls it", async () => {
     const harness = createHarness();
     const surface = await harness.create();
@@ -697,6 +729,37 @@ describe("GhosttyTerminalSurface visibility", () => {
       }
     },
   );
+
+  it.each([
+    { scenario: "the whole candidate exists", existing: "./a:1:22:DD", opened: "./a:1:22:DD" },
+    { scenario: "only its location exists", existing: "./a:1:22", opened: "./a:1:22" },
+    { scenario: "neither exists", existing: "", opened: null },
+  ])("opens a path with text after its location when $scenario", async ({ existing, opened }) => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const onLinkHover = vi.fn();
+    const validateLink = vi.fn(async (text: string) => text === existing);
+    const surface = await harness.create({
+      beforeKey: () => true,
+      canActivateLink: () => false,
+      validateLink,
+      onLinkActivate,
+      onLinkHover,
+    });
+    surface.write("./a:1:22:DD");
+    harness.flushFrame();
+    vi.advanceTimersByTime(250);
+    harness.pointer("pointermove", 5, 0);
+    expect(onLinkHover).toHaveBeenLastCalledWith("./a:1:22:DD", "./a:1:22");
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointerup", 5, 0);
+    await vi.waitFor(() =>
+      expect(validateLink).toHaveBeenCalledTimes(existing === "./a:1:22:DD" ? 1 : 2),
+    );
+    await Promise.resolve();
+    expect(onLinkActivate.mock.calls.map(([text]) => text)).toEqual(opened ? [opened] : []);
+  });
 
   it("only requests validation for a stable visible link under the pointer", async () => {
     const harness = createHarness();
@@ -873,6 +936,25 @@ describe("terminalLinkAtPositionWithRange", () => {
     } finally {
       core.dispose();
     }
+  });
+
+  it("offers the location of a grep hit as the fallback only from the pointer on it", () => {
+    const text = "./src/a.js:1:function inner() {";
+    const row: GhosttyRow = {
+      cells: Array.from(text, (character) => cell(character)),
+      text,
+      isWrapContinuation: false,
+      wrapsToNext: false,
+    };
+    const whole = {
+      text: "./src/a.js:1:function",
+      range: { start: { x: 0, y: 0 }, end: { x: 20, y: 0 } },
+    };
+    expect(terminalLinkAtPositionWithRange([row], 0, 11)).toEqual({
+      ...whole,
+      fallback: { text: "./src/a.js:1", range: { start: { x: 0, y: 0 }, end: { x: 11, y: 0 } } },
+    });
+    expect(terminalLinkAtPositionWithRange([row], 0, 12)).toEqual(whole);
   });
 
   it("activates a wrapped quoted Windows path from its spaces and position suffix", () => {
