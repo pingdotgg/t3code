@@ -239,6 +239,10 @@ it("indexes insight bodies without hidden fences and keeps user and plan text li
   expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
 });
 
+it("does not index the hidden marker of an alert written with CR-only line endings", () => {
+  expect(assistantSegments("> [!NOTE]\r> hi")).toEqual(["hi"]);
+});
+
 it("keeps insight line breaks for backticked openers on their own line, not in prose", () => {
   expect(assistantSegments("`★ Insight ─────`\nfirst line\nsecond line\n`─────`")).toEqual([
     "first line",
