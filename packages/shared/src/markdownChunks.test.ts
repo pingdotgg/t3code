@@ -223,5 +223,22 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
     const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
     expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
+    const unbalanced = [
+      "[x]: /docs/example)",
+      "[after]: /continues-paragraph",
+      "",
+      "[open]: /docs/example(",
+      "",
+      "[bs]: /docs/example\\\\)",
+      "",
+      `[deep]: /docs/${"(".repeat(33)}${")".repeat(33)}`,
+      "",
+      "[balanced]: /docs/example(a(b))",
+      "[escaped]: /docs/example\\)",
+      "[angle]: </docs/example)>",
+    ];
+    expect(splitMarkdown(unbalanced.join("\n")).definitions).toBe(
+      "[balanced]: /docs/example(a(b))\n[escaped]: /docs/example\\)\n[angle]: </docs/example)>",
+    );
   });
 });
