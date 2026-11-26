@@ -70,7 +70,10 @@ function stripMarkup(input: string, keepBold = false): string {
 
 function truncateReleaseNoteItem(item: string): string {
   if (item.length <= MAX_RELEASE_NOTE_ITEM_LENGTH) return item;
-  return `${item.slice(0, MAX_RELEASE_NOTE_ITEM_LENGTH - 3).trimEnd()}...`;
+  return `${item
+    .slice(0, MAX_RELEASE_NOTE_ITEM_LENGTH - 3)
+    .replace(/\p{Surrogate}$/u, "")
+    .trimEnd()}...`;
 }
 
 function normalizeReleaseNoteLine(line: string): string {

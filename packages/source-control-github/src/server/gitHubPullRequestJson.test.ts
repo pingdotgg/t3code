@@ -1644,6 +1644,7 @@ describe("review submission payload", () => {
     const payload = buildReviewSubmission({
       verdict: "request-changes",
       body: "Two things.",
+      expectedHeadSha: "0a1b2c3d4e5f",
       comments: [
         {
           path: "src/a.ts",
@@ -1658,6 +1659,7 @@ describe("review submission payload", () => {
       ],
     });
     expect(payload).toEqual({
+      commit_id: "0a1b2c3d4e5f",
       event: "REQUEST_CHANGES",
       body: "Two things.",
       comments: [
@@ -1806,6 +1808,20 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.patch).toContain("diff --git a/src/app.ts b/src/app.ts");
     expect(result.truncated).toBe(true);
     expect(result.rawCount).toBe(2);
+  });
+
+  it("treats a modified file sent with no patch and zero counts as withheld", () => {
+    // GitHub's larger pages can report a changed text file as 0/0 with its patch dropped.
+    const result = expectSuccess(
+      decodePullRequestFilesJson(
+        JSON.stringify([
+          { filename: "example.ts", status: "modified", additions: 0, deletions: 0 },
+        ]),
+      ),
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.omittedFileStats).toEqual([{ path: "example.ts", additions: 0, deletions: 0 }]);
   });
 });
 

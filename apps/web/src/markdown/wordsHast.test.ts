@@ -1,10 +1,17 @@
 import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
+import { extractMarkdownLinkHrefs } from "@t3tools/shared/markdownLinks";
 
+import {
+  decodeMarkdownLinkEscapes,
+  renderCodexDirectivesForCopy,
+  renderCodexInlineDirectivesAsMarkdown,
+} from "./markdownText";
 import {
   codexDirectiveSources,
   markdownReferenceDefinitions,
+  markdownTree,
   wordsHast,
   type WordsHastOptions,
 } from "./wordsHast";
@@ -20,9 +27,33 @@ const ASSISTANT: WordsHastOptions = {
 const wordsHtml = (markdown: string, options: Partial<WordsHastOptions> = {}) =>
   toHtml(wordsHast(markdown, { ...ASSISTANT, ...options }));
 
+it.each([
+  [String.raw`/tmp/a\&amp;b/index.ts`, "/tmp/a&amp;b/index.ts"],
+  ["/tmp/a&#92;&amp;b/index.ts", String.raw`/tmp/a\&b/index.ts`],
+  [String.raw`C:\work\&amp;b\index.ts`, String.raw`C:\work\&b\index.ts`],
+])("decodes link destination %s as the renderer does", (href, expected) => {
+  const markdown = `[index.ts](${href})`;
+  const paragraph = markdownTree(markdown).children[0] as Element;
+  const anchor = paragraph.children[0] as Element;
+  expect(decodeURIComponent(String(anchor.properties.href))).toBe(expected);
+  expect(decodeMarkdownLinkEscapes(extractMarkdownLinkHrefs(markdown)[0]!)).toBe(expected);
+});
+
 // The chat's syntax in the shapes agents and review bots write it, and raw HTML, with the HTML
 // remark and the chat's plugins rendered for it before Words replaced them.
 const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
+  [
+    '<ol start="3">\n<li><a href="https://example.com/a">Alpha</a>\n<li><a href="https://example.com/b">Beta</a>\n</ol>',
+    '<ol start="3" dir="ltr">\n<li><a href="https://example.com/a">Alpha</a>\n</li><li><a href="https://example.com/b">Beta</a>\n</li></ol>',
+  ],
+  [
+    '<ul><li>Outer<ul><li><div><p><a href="https://example.com/a">Alpha</a><li>Beta</ul><li>Next</ul>',
+    '<ul dir="ltr"><li>Outer<ul><li><div><p><a href="https://example.com/a">Alpha</a></p></div></li><li>Beta</li></ul></li><li>Next</li></ul>',
+  ],
+  [
+    "<ul><li><blockquote><li>quoted</li></blockquote><li>next</ul>",
+    '<ul dir="ltr"><li><blockquote><li>quoted</li></blockquote></li><li>next</li></ul>',
+  ],
   [
     "| a | b |\n|:-|-:|\n| `x \\| y` | **2** |\n| 3 |",
     '<table dir="ltr">\n<thead>\n<tr>\n<th align="left">a</th>\n<th align="right">b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align="left"><code data-inline-code="" dir="ltr">x | y</code></td>\n<td align="right"><strong>2</strong></td>\n</tr>\n<tr>\n<td align="left">3</td>\n<td align="right"></td>\n</tr>\n</tbody>\n</table>',
@@ -168,6 +199,11 @@ describe("wordsHast", () => {
     expect(wordsHtml(markdown, { breaks: true })).toBe(
       '<p dir="ltr">one<br>\ntwo <strong>three<br>\nfour</strong></p>\n<ul dir="ltr">\n<li>item<br>\nnext\n<ul>\n<li>sub</li>\n</ul>\n</li>\n</ul>\n<pre><code>kept\nlines\n</code></pre>',
     );
+    const rawHtml =
+      '<p align="center">\n  <img src="https://x.dev/a.png" width="400">\n</p>\n\n<ul>\n<li>\none\ntwo\n</li>\n</ul>';
+    expect(wordsHtml(rawHtml, { breaks: true })).toBe(
+      '<p align="center">\n  <img src="https://x.dev/a.png" width="400" data-standalone>\n</p>\n<ul dir="ltr">\n<li>\none\ntwo\n</li>\n</ul>',
+    );
   });
 
   it("keeps the composer's tildes and list numbers in user messages", () => {
@@ -205,6 +241,15 @@ describe("wordsHast", () => {
   });
 
   it("renders insight blocks as remarkAssistantInsights did", () => {
+    for (const ending of ["\n", "\r\n", "\r"]) {
+      expect(
+        wordsHtml(["★ Insight ─────", "Cache is warm.", "─────", "After."].join(ending), {
+          insights: true,
+        }),
+      ).toBe(
+        '<blockquote data-alert="insight" dir="ltr">\n<p>Cache is warm.</p>\n</blockquote>\n<p dir="ltr">After.</p>',
+      );
+    }
     const markdown =
       "Intro\n\n`★ Insight ─────────────────────────────────────`\n- one\n- two\n`─────────────────────────────────────────────────`\n\nAfter\n\n```\n★ Insight ─────\n```";
     expect(wordsHtml(markdown, { insights: true })).toBe(
@@ -222,14 +267,27 @@ describe("wordsHast", () => {
       '<ul dir="ltr">\n<li>x\n<pre><code>★ Insight ─────\n</code></pre>\n</li>\n</ul>\n<div dir="ltr">\n★ Insight ─────\n</div>\n<blockquote dir="ltr">\n<p>q\n★ Insight ─────</p>\n</blockquote>',
     );
     // What follows an opening keeps its offsets in the message, which components slice.
-    const insight = "★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────";
+    const insight =
+      "[x](./x.ts)\n\n★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────\n\n[y](./y.ts)\n\n★ Insight ─────\n[z](./z.ts)\n─────";
     const tree = wordsHast(insight, { ...ASSISTANT, insights: true });
-    const quote = tree.children.find((child): child is Element => child.type === "element")!;
-    const sliced = (node: Element) =>
-      insight.slice(node.position!.start.offset, node.position!.end.offset);
-    const [paragraph, pre] = quote.children.filter((child) => child.type === "element");
-    const link = paragraph!.children.find((child): child is Element => child.type === "element")!;
-    expect([sliced(link), sliced(pre!)]).toEqual(["[a](./a.ts)", "```sh\nls\n```"]);
+    const sliced: string[] = [];
+    const visit = (node: Root | Element) => {
+      for (const child of node.children) {
+        if (child.type !== "element") continue;
+        if (child.tagName === "a" || child.tagName === "pre") {
+          sliced.push(insight.slice(child.position!.start.offset, child.position!.end.offset));
+        }
+        visit(child);
+      }
+    };
+    visit(tree);
+    expect(sliced).toEqual([
+      "[x](./x.ts)",
+      "[a](./a.ts)",
+      "```sh\nls\n```",
+      "[y](./y.ts)",
+      "[z](./z.ts)",
+    ]);
   });
 
   it("shows raw HTML as its text when asked", () => {
@@ -323,6 +381,16 @@ describe("wordsHast", () => {
       '<p dir="ltr"><strong>Label</strong><br>\n<a href="https://x.dev"><img src="https://x.dev/b.png" alt="shot"></a><br>\ncontinues</p>',
     ],
     [
+      "**Shot** (dark) ![a](https://x.dev/a.png) ![b](https://x.dev/b.png)",
+      '<p dir="ltr"><strong>Shot</strong> (dark)<br>\n<img src="https://x.dev/a.png" alt="a"> <img src="https://x.dev/b.png" alt="b"></p>',
+      '<p dir="ltr"><strong>Shot</strong> (dark)<br>\n<img src="https://x.dev/a.png" alt="a"> <img src="https://x.dev/b.png" alt="b"></p>',
+    ],
+    [
+      "**A favicon ![i](https://x.dev/i.png)** stays inline",
+      '<p dir="ltr"><strong>A favicon <img src="https://x.dev/i.png" alt="i"></strong> stays inline</p>',
+      '<p dir="ltr"><strong>A favicon <img src="https://x.dev/i.png" alt="i"></strong> stays inline</p>',
+    ],
+    [
       'Status\n<img src="https://x.dev/b.png" />\ncontinues',
       '<p dir="ltr">Status\n<img src="https://x.dev/b.png">\ncontinues</p>',
       '<p dir="ltr">Status<br>\n<img src="https://x.dev/b.png"><br>\ncontinues</p>',
@@ -370,14 +438,49 @@ describe("wordsHast", () => {
   });
 
   it.each([
+    [
+      ':codex-followup[try :codex-followup[inner]{prompt="i"} then]{prompt="o"} end',
+      "try inner then end",
+    ],
+    [
+      '😀 :codex-followup[[see :codex-file-citation[a]{path="a.ts"}][ref]]{prompt="o"} and :codex-followup[again]{prompt="a"} end\n\n[ref]: https://x.dev',
+      '😀 [see :codex-file-citation[a]{path="a.ts"}][ref] and again end\n\n[ref]: https://x.dev',
+    ],
+    [
+      ':codex-followup[    read :codex-file-citation[a]{path="a.ts"} then]{prompt="o"} end',
+      "    read [a.ts](<a.ts>) then end",
+    ],
+    [
+      ':codex-followup[read :codex-file-citation[a]{path="a.ts"}] end',
+      ":codex-followup[read [a.ts](<a.ts>)] end",
+    ],
+  ])("copies nested directives without losing surrounding text: %s", (markdown, expected) => {
+    expect(renderCodexDirectivesForCopy(markdown)).toBe(expected);
+    expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(expected);
+  });
+
+  it.each([
     ["# Title\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
     ['> [a]:\n> https://x.dev "The\n> guide"', ['[a]: <https://x.dev> "The guide"']],
     ["- [a]: https://x.dev\n\n[A]: https://second.dev", ["[a]: <https://x.dev>"]],
     ["<div>\n[a]: https://x.dev\n</div>", []],
     ["- ```\n  [a]: https://x.dev\n  ```", []],
     ["text\n[a]: https://x.dev", []],
+    ["[doc]: https://example.com\n\nSee [doc].\n\n```js\nx", ["[doc]: <https://example.com>"]],
+    ["[a]: https://x.dev\n\n<!--\nunclosed", ["[a]: <https://x.dev>"]],
+    ["[not\n```\ndef]: x\n```\n\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
   ])("finds the reference definitions in %j as Words reads them", (markdown, definitions) => {
     expect(markdownReferenceDefinitions(markdown)).toEqual(definitions);
+  });
+
+  it.each([
+    ["https://example.com/?x=1&amp;copy;", "a &amp;copy; &amp;quot; &amp;#65;"],
+    ["https://example.com/?x=1&amp;#65;", "a &amp;amp; b"],
+  ])("preserves the reference destination and title when reserializing %s", (url, title) => {
+    const content = "Read [ref] and ![alt][ref].";
+    const markdown = `${content}\n\n[ref]: ${url} "${title}"`;
+    const definitions = markdownReferenceDefinitions(markdown);
+    expect(wordsHtml(`${content}\n\n${definitions.join("\n")}`)).toBe(wordsHtml(markdown));
   });
 
   it("keeps authored SVG and ids out of the math it restores", () => {

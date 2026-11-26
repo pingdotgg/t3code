@@ -11,6 +11,7 @@ import {
   type WorkspaceScanFoldersResult,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
@@ -79,7 +80,11 @@ export class WorkspaceFolders extends Context.Service<
 const DETECTION_CONCURRENCY = 8;
 // What `ProjectTrackedFolder.name` allows.
 const FOLDER_NAME_MAX = 128;
-const boundedName = (name: string) => name.slice(0, FOLDER_NAME_MAX).trim();
+const boundedName = (name: string) => {
+  const trimmed = name.trimStart();
+  const end = splitsSurrogatePair(trimmed, FOLDER_NAME_MAX) ? FOLDER_NAME_MAX - 1 : FOLDER_NAME_MAX;
+  return trimmed.slice(0, end).trimEnd();
+};
 const CODE_WORKSPACE_EXTENSION = ".code-workspace";
 
 const decodeCodeWorkspace = Schema.decodeUnknownEffect(
@@ -100,7 +105,7 @@ const decodeCodeWorkspace = Schema.decodeUnknownEffect(
 /** Submodule paths a `.gitmodules` file declares, relative to its folder with `/` separators. */
 export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
   text.split(/\r?\n/).flatMap((line) => {
-    const value = /^\s*path\s*=\s*(.*?)\s*$/.exec(line)?.[1];
+    const value = /^\s*path\s*=\s*(.*?)\s*$/i.exec(line)?.[1];
     if (value === undefined) return [];
     const normalized = value.replaceAll('"', "").replaceAll("\\", "/").replace(/\/+$/, "");
     return normalized === "" ? [] : [normalized];
@@ -450,16 +455,46 @@ const make = Effect.gen(function* () {
     return found.flat().filter((folder) => !taken.has(folder.path));
   });
 
+  // A tracked repository an agent checked out where the task folder would have put it, after the
+  // folder was laid out. Only those inside the thread's own folder count: they need no grant.
+  const checkedOutSince = Effect.fnUntraced(function* (cwd: string, taskFolder: TaskFolder) {
+    const project = yield* readProject(taskFolder.projectId).pipe(Effect.option);
+    if (Option.isNone(project)) return [];
+    const recorded = new Set(
+      taskFolder.repositories.flatMap((repository) => [
+        repository.repositoryPath,
+        repository.worktreePath,
+      ]),
+    );
+    const found = yield* Effect.forEach(
+      yield* foldersOf(project.value),
+      Effect.fnUntraced(function* (folder) {
+        if (recorded.has(folder.path) || !isWithinRoot(path, folder.path, taskFolder.anchor))
+          return [];
+        const checkout = path.join(taskFolder.root, path.relative(taskFolder.anchor, folder.path));
+        if (recorded.has(checkout) || !(yield* exists(path.join(checkout, ".git")))) return [];
+        const real = yield* realPath(checkout);
+        if (real === cwd || !isWithinRoot(path, real, cwd)) return [];
+        return [
+          { name: folder.name, path: checkout, isGitRepository: true, repositoryPath: folder.path },
+        ];
+      }),
+      { concurrency: DETECTION_CONCURRENCY },
+    );
+    return found.flat();
+  });
+
   // A task folder's worktrees stand in for the tracked folders: the thread is told about, granted
   // and checkpoints only those, never the checkouts they were made from.
   const forTaskFolder = Effect.fnUntraced(function* (worktreePath: string, taskFolder: TaskFolder) {
     const cwd = yield* realPath(worktreePath);
-    const folders = taskFolder.repositories.map((repository) => ({
+    const recorded = taskFolder.repositories.map((repository) => ({
       name: repository.name,
       path: repository.worktreePath,
       isGitRepository: true,
       repositoryPath: repository.repositoryPath,
     }));
+    const folders = [...recorded, ...(yield* checkedOutSince(cwd, taskFolder))];
     const outside = yield* Effect.forEach(
       folders,
       (folder) =>

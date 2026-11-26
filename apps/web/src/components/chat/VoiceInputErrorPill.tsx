@@ -4,8 +4,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { VoiceInputPill } from "./VoiceInputPill";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const VOICE_ERROR_LABELS: Readonly<Record<VoiceInputErrorCode, string>> = {
   "microphone-blocked": msg("Mic blocked"),
@@ -51,44 +51,40 @@ export function VoiceInputErrorPill(props: {
       : { label: gt("Record again"), text: gt("Record again") };
   return (
     <VoiceInputPill tone="error" size={props.size}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              size={compact ? "icon-xs" : "icon-sm-pill"}
-              variant="ghost"
-              aria-label={gt("Dismiss voice input error")}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={props.onDismiss}
-              className="shrink-0"
-            >
-              <XIcon />
-            </Button>
-          }
-        />
-        <TooltipPopup side="top">
-          {props.cancelShortcutLabel
+      <SharedTooltipTrigger
+        render={
+          <Button
+            type="button"
+            size={compact ? "icon-xs" : "icon-sm-pill"}
+            variant="ghost"
+            aria-label={gt("Dismiss voice input error")}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={props.onDismiss}
+            className="shrink-0"
+          >
+            <XIcon />
+          </Button>
+        }
+        label={
+          props.cancelShortcutLabel
             ? gt("Dismiss ({shortcut})", { shortcut: props.cancelShortcutLabel })
-            : gt("Dismiss")}
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              tabIndex={0}
-              role="status"
-              aria-label={message}
-              className="flex min-w-0 items-center gap-1.5 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-            />
-          }
-        >
-          <CircleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-          <span className="truncate">{errorLabel ? m(errorLabel) : gt("Voice input failed")}</span>
-        </TooltipTrigger>
-        <TooltipPopup side="top">{message}</TooltipPopup>
-      </Tooltip>
+            : gt("Dismiss")
+        }
+      />
+      <SharedTooltipTrigger
+        render={
+          <span
+            tabIndex={0}
+            role="status"
+            aria-label={message}
+            className="flex min-w-0 items-center gap-1.5 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          />
+        }
+        label={message}
+      >
+        <CircleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+        <span className="truncate">{errorLabel ? m(errorLabel) : gt("Voice input failed")}</span>
+      </SharedTooltipTrigger>
       {props.errorAction ? (
         <Button
           type="button"
