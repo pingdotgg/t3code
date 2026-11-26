@@ -430,7 +430,7 @@ export async function openDocument(
           name: table.attrs["table:name"] || undefined,
           rows,
           rowCount: rows.length,
-          columns: rows.reduce((columns, row) => Math.max(columns, row.length), 1),
+          columns: rows.length && rows.reduce((columns, row) => Math.max(columns, row.length), 1),
           truncated,
         };
       }),
@@ -505,9 +505,10 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
-  const language = String(record(record(notebook.metadata).language_info).name ?? "text")
-    .replaceAll(/[^a-z\d+#-]/gi, "")
-    .slice(0, 40);
+  const language =
+    String(record(record(notebook.metadata).language_info).name ?? "")
+      .replaceAll(/[^a-z\d+#-]/gi, "")
+      .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
     const cell = record(value);
     const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
@@ -583,6 +584,7 @@ const rtfCodePageLabel = (codePage: number) =>
       950: "big5",
       874: "windows-874",
       10000: "macintosh",
+      54936: "gb18030",
     } as Record<number, string>
   )[codePage] ?? `windows-${codePage}`;
 

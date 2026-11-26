@@ -18,6 +18,7 @@ import WorkflowRunIndexesMigration from "../persistence/Migrations/114_WorkflowR
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
 import WorkflowPoolsMigration from "../persistence/Migrations/118_WorkflowPools.ts";
+import WorkflowRunSubjectMigration from "../persistence/Migrations/119_WorkflowRunSubject.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
@@ -41,6 +42,7 @@ const withStore = <A, E>(
         Effect.andThen(WorkflowRunTagsMigration),
         Effect.andThen(WorkflowMailSenderMigration),
         Effect.andThen(WorkflowPoolsMigration),
+        Effect.andThen(WorkflowRunSubjectMigration),
       ),
     );
     return yield* Effect.provide(
@@ -218,6 +220,40 @@ it.effect("keeps each thing a run touched once, with what the latest touch knew"
         { ...machine, url: null, state: null, steps: ["make"], origin: "step" },
       ]);
       assert.deepStrictEqual(yield* store.references("r2"), []);
+    }),
+  ),
+);
+
+it.effect("a run's subject learns its title and address from whatever touches it", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: "fix",
+        version: 1,
+        engineTag: "fix@1",
+        idempotencyKey: "k",
+        input: null,
+      });
+      const issue = { kind: "issue", key: "i1", address: { scope: "me/app", key: "1" } };
+      const subject = Effect.map(store.run("r1"), (run) =>
+        run?.subject_json == null ? null : WorkflowStore.subjectOf(run.subject_json),
+      );
+      yield* store.runSubject("r1", { ...issue, title: "" });
+      // Another thing the run touches is not its subject, and leaves it alone.
+      yield* store.referenceNoted("r1", "read", { ...issue, key: "i2", title: "Other" });
+      assert.deepStrictEqual(yield* subject, { ...issue, title: "", url: null });
+      yield* store.referenceNoted("r1", "read", { ...issue, title: "Crash", url: "https://x/1" });
+      assert.deepStrictEqual(yield* subject, { ...issue, title: "Crash", url: "https://x/1" });
+      assert.deepStrictEqual(
+        (yield* store.runsWhere({ subject: "https://x/1" })).map((row) => row.run_id),
+        ["r1"],
+      );
+      // A touch that knows no title keeps the one known, and so does saying the subject again.
+      yield* store.referenceNoted("r1", "look", { ...issue, title: "" });
+      yield* store.runSubject("r1", { ...issue, title: "" });
+      assert.deepStrictEqual(yield* subject, { ...issue, title: "Crash", url: "https://x/1" });
     }),
   ),
 );
@@ -448,6 +484,59 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
       yield* TestClock.adjust("10 days");
       yield* store.mailExpire;
       assert.isTrue(yield* store.signalSeen("long"));
+    }),
+  ),
+);
+
+it.effect.each([999, 1000])("buffered mail with a 1s TTL claimed after %i ms", (elapsed) =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const address = { workflow: "gate", channel: "ready" };
+      yield* store.waitOpened({
+        runId: "r1",
+        name: "go",
+        workflow: address.workflow,
+        key: address.channel,
+        token: "token",
+        schemaJson: "{}",
+        requestJson: null,
+        watchJson: null,
+        deadline: null,
+      });
+      yield* store.mailPut({
+        signalId: "first",
+        address,
+        valueJson: "1",
+        expiresAt: "1970-01-01T00:00:01.000Z",
+        sender,
+      });
+      yield* store.mailPut({
+        signalId: "second",
+        address,
+        valueJson: "2",
+        expiresAt: "1970-01-01T00:00:02.000Z",
+        sender,
+      });
+      const selected = yield* store.mailNext([address]);
+      assert.equal(selected?.signalId, "first");
+      yield* TestClock.adjust(elapsed);
+      const live = elapsed < 1000;
+      assert.deepStrictEqual(
+        {
+          next: (yield* store.mailNext([address]))?.signalId,
+          claim: yield* store.mailDeliver(selected!.signalId, "r1", "go", {
+            expired: false,
+            value: 1,
+          }),
+          waitOpen: (yield* store.waitAt({ runId: "r1", wait: "go" })) !== undefined,
+          receipt: yield* store.signalSeen("first"),
+          rowPresent: (yield* store.mailSender("first")) !== undefined,
+        },
+        live
+          ? { next: "first", claim: "delivered", waitOpen: false, receipt: true, rowPresent: false }
+          : { next: "second", claim: "gone", waitOpen: true, receipt: false, rowPresent: true },
+      );
     }),
   ),
 );

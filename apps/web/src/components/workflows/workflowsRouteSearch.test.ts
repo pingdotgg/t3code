@@ -40,4 +40,25 @@ describe("workflows route search", () => {
       ),
     ).toMatchObject({ env, run, file });
   });
+
+  it("clears an unusable pane or tab instead of keeping the raw search value", () => {
+    const pane = JSON.stringify([
+      { kind: "issue", key: "i412" },
+      { kind: "pullRequest", key: "p418" },
+    ]);
+    for (const tab of ["", "null", "true"]) {
+      const search = matchedSearch(`/workflows?${new URLSearchParams({ pane, tab })}`);
+      expect(search?.pane).toHaveLength(2);
+      expect(search?.tab).toBeUndefined();
+    }
+    for (const params of [
+      new URLSearchParams({ pane: "nope", tab: "0" }),
+      new URLSearchParams({ pane: "[]", tab: "" }),
+      new URLSearchParams({ tab: "null" }),
+    ]) {
+      const search = matchedSearch(`/workflows?${params}`);
+      expect(search?.pane).toBeUndefined();
+      expect(search?.tab).toBeUndefined();
+    }
+  });
 });
