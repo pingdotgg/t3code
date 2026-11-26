@@ -116,7 +116,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         closeToast();
         continue;
       }
-      if (sameAttempt && tracked.renderedKey === key) continue;
       if (
         (isProjectCloneToastSilenced(ref) || toastHolds.has(scopedProjectKey(ref))) &&
         (clone.phase === "running" || clone.phase === "done")
@@ -124,6 +123,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         closeToast();
         continue;
       }
+      if (sameAttempt && tracked.renderedKey === key) continue;
       if (
         sameAttempt &&
         tracked.closed &&
