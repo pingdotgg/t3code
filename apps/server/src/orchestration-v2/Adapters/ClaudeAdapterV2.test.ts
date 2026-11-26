@@ -10130,6 +10130,49 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("shows a curated refusal when Claude refuses to start after the turn attaches", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-startup-refused"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, {
+        ...makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000610",
+          result: "",
+          subtype: "error_during_execution",
+          isError: true,
+          errors: ["Acme Private requires organization settings that are still loading."],
+          terminalReason: null,
+        }),
+        startup_failure_reason: "org_config_required_unavailable",
+      } as SDKMessage);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.include(terminal.failure.message, "settings your organization requires");
+      assert.notInclude(terminal.failure.message, "Acme Private");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const lastProviderTurn = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) => {
     const event = events.findLast((candidate) => candidate.type === "provider_turn.updated");
     if (event?.type !== "provider_turn.updated") {

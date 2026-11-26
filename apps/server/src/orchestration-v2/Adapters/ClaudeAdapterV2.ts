@@ -873,6 +873,11 @@ export class ClaudeConversationNotFoundError extends Schema.TaggedError<ClaudeCo
   }
 }
 
+const claudeStartupRefusalMessage = (reason: string) =>
+  reason === "org_config_required_unavailable"
+    ? "Claude Code could not load the settings your organization requires before a session starts. This usually clears in a few seconds; send the message again."
+    : `Claude Code refused to start (${reason}). Check the server logs for its message, then send the message again.`;
+
 export class ClaudeStartupRefusedError extends Schema.TaggedError<ClaudeStartupRefusedError>()(
   "ClaudeStartupRefusedError",
   {
@@ -881,9 +886,7 @@ export class ClaudeStartupRefusedError extends Schema.TaggedError<ClaudeStartupR
   },
 ) {
   override get message(): string {
-    return this.reason === "org_config_required_unavailable"
-      ? "Claude Code could not load the settings your organization requires before a session starts. This usually clears in a few seconds; send the message again."
-      : `Claude Code refused to start (${this.reason}). Check the server logs for its message, then send the message again.`;
+    return claudeStartupRefusalMessage(this.reason);
   }
 }
 
@@ -5356,7 +5359,10 @@ function providerFailureFromResult(
       : terminalResultError(message.terminal_reason, failureHint ?? apiErrorMessage);
   if (message.subtype !== "success") {
     return makeProviderFailure({
-      message: listedError ?? structuredError ?? message.errors.join("\n"),
+      message:
+        message.startup_failure_reason === undefined
+          ? (listedError ?? structuredError ?? message.errors.join("\n"))
+          : claudeStartupRefusalMessage(message.startup_failure_reason),
       code: message.subtype,
       class: failureClass,
     });
