@@ -443,6 +443,8 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     if (strip.scrollWidth <= strip.clientWidth) return;
     scrollFocusedTabIntoClearRange(strip, target);
   });
+  strip.addEventListener("pointerover", () => markHoverAtStart(strip, true));
+  strip.addEventListener("pointerleave", () => markHoverAtStart(strip, false));
   setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
   // A tab opening, closing or changing size moves the others without a render here.
   // Not observeResize: no React state changes, and its flushSync would force the
@@ -547,6 +549,43 @@ function markPaneJoinedAtStart(pane: HTMLElement | null): void {
   if (pane.hasAttribute("data-pane-joined-start") !== joined) {
     pane.toggleAttribute("data-pane-joined-start", joined);
   }
+}
+
+/** What a strip's hovered tab last marked. The strip moves between its pane's headers. */
+const hoverStartMarks = new WeakMap<HTMLElement, readonly [name: string, element: HTMLElement][]>();
+const HOVERED_OUTLINE_TAB_SELECTOR =
+  ":is([data-layout-pane-tab], [data-tab-key]):not([data-joined]):is(:hover, .group\\/tab:hover > *)";
+
+/**
+ * A hovered tab's outline (index.css) runs straight down the pane's edge when
+ * the tab sits on it, so the pane's corner under it takes the outline's fill.
+ * Attributes, as the joined tab's are: a `:has()` would restyle the whole pane.
+ */
+function markHoverAtStart(strip: HTMLElement, hovering: boolean): void {
+  const row = strip.closest<HTMLElement>("[data-pane-header]");
+  const tab =
+    hovering && strip.closest('[data-pane-notch=""]:not([data-pane-notch-unfocused])')
+      ? strip.querySelector<HTMLElement>(HOVERED_OUTLINE_TAB_SELECTOR)
+      : null;
+  const next: [name: string, element: HTMLElement][] = [];
+  // A scrolled strip fades its start, and the outline with it.
+  if (row && tab && strip.scrollLeft < 1) {
+    const rowLeft = row.getBoundingClientRect().left;
+    if (Math.abs(tab.getBoundingClientRect().left - rowLeft) < 1) {
+      next.push(["data-pane-hover-start", row]);
+      const pane = row.closest<HTMLElement>("[data-layout-tab-id]");
+      if (pane && Math.abs(pane.getBoundingClientRect().left - rowLeft) < 1) {
+        next.push(["data-pane-hovered-start", pane]);
+      }
+    }
+  }
+  for (const [name, element] of hoverStartMarks.get(strip) ?? []) {
+    if (!next.some((mark) => mark[1] === element)) element.removeAttribute(name);
+  }
+  for (const [name, element] of next) {
+    if (!element.hasAttribute(name)) element.setAttribute(name, "");
+  }
+  hoverStartMarks.set(strip, next);
 }
 
 /** The strip starts at its pane's edge, which clips its ear room (index.css, --pane-join-lead). */
