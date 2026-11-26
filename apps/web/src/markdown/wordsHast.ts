@@ -1307,22 +1307,25 @@ export function markdownHtmlComments(markdown: string): Array<{ start: number; e
 
 /**
  * The first definition of each label in `markdown`, as one line of Markdown. Words decides which
- * `[label]:` text defines one: each label is looked up again after the text.
+ * `[label]:` text defines one: each label is looked up before the text so an unclosed trailing
+ * block cannot consume the lookups.
  */
 export function markdownReferenceDefinitions(markdown: string): string[] {
   const labels = new Map<string, string>();
   for (const match of markdown.matchAll(/\[((?:[^\\[\]]|\\.){1,999})\]:/g)) {
-    const key = match[1]!.replace(/\s+/g, " ").trim().toLowerCase();
+    const label = match[1]!.replace(/[ \t\r\n\f\v]+/g, " ");
+    const key = label.trim().toLowerCase();
     // `[^1]:` is a footnote.
-    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, match[1]!);
+    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, label);
   }
   if (labels.size === 0) return [];
-  let probe = `${markdown}\n\n`;
+  let probe = "";
   const lookups = new Map<number, string>();
   for (const label of labels.values()) {
     lookups.set(probe.length, label);
     probe += `[${label}]\n\n`;
   }
+  probe += markdown;
   const definitions: string[] = [];
   const visit = (node: Root | Element) => {
     for (const child of node.children) {
