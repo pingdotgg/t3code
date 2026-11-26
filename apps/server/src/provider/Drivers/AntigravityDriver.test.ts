@@ -314,6 +314,23 @@ const layerTest = ProviderHostLive.layer.pipe(
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
+    "reports an incompatible managed runtime during a health check",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const installed = yield* h.makeExecutable("1.5.0", { agentVersion: "1.5.0" });
+        h.controls.selected = installed;
+        const rejected = yield* h.refresh().pipe(Effect.flip);
+        expect(rejected.detail).toContain("Update it in Antigravity setup");
+
+        const snapshot = yield* h.instance.snapshot.refresh;
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.message).toContain("Update it in Antigravity setup");
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "refreshes the selected executable and limits form capabilities to chat",
     () =>
       Effect.gen(function* () {
