@@ -1,8 +1,16 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
+
+const clone = vi.hoisted(() => vi.fn());
+
+vi.mock(import("../lib/addProjectToMachine"), async (original) => ({
+  ...(await original()),
+  addProjectToMachine: clone,
+}));
 
 const project = vi.hoisted(() => {
   let value: unknown = null;
@@ -45,7 +53,13 @@ vi.mock(import("../hooks/useHandleNewThread"), async (original) => ({
 }));
 vi.mock(import("../hooks/useAddProjectTargets"), async (original) => ({
   ...(await original()),
-  useAddProjectTargets: (() => []) as never,
+  useAddProjectTargets: () => [
+    {
+      environmentId: EnvironmentId.make("environment-2"),
+      label: "Remote machine",
+      machine: "linux",
+    },
+  ],
 }));
 vi.mock(import("../hooks/useLogicalProjectEnvironments"), async (original) => ({
   ...(await original()),
@@ -59,6 +73,7 @@ import {
 
 const environmentId = EnvironmentId.make("environment-1");
 const projectRef = scopeProjectRef(environmentId, ProjectId.make("project-1"));
+const nextProjectRef = scopeProjectRef(environmentId, ProjectId.make("project-2"));
 const PROJECT = {
   environmentId,
   id: projectRef.projectId,
@@ -68,6 +83,31 @@ const PROJECT = {
 };
 
 describe("AddProjectToMachineDialog", () => {
+  it("keeps the replacement open after the dismissed clone finishes starting", async () => {
+    project.setup(PROJECT);
+    const reply = Promise.withResolvers<{ projectId: ProjectId }>();
+    clone.mockReturnValueOnce(reply.promise);
+    await using screen = await render(<AddProjectToMachineDialogHost />);
+
+    await act(() => openAddProjectToMachine({ projectRef, targetEnvironmentId: null }));
+    const folder = screen.getByRole("textbox", { name: /^Folder on/ });
+    await folder.fill("/checkout");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    await userEvent.keyboard("{Escape}");
+
+    await act(() => {
+      project.set({ ...PROJECT, id: nextProjectRef.projectId, title: "Next repo" });
+      openAddProjectToMachine({ projectRef: nextProjectRef, targetEnvironmentId: null });
+    });
+    await expect.element(screen.getByText(/Clone Next repo/)).toBeVisible();
+    await act(async () => {
+      reply.resolve({ projectId: ProjectId.make("new-checkout") });
+      await reply.promise;
+    });
+    await expect.element(screen.getByText(/Clone Next repo/)).toBeVisible();
+  });
+
   it("closes when its project goes away", async () => {
     project.setup(PROJECT);
     await using screen = await render(<AddProjectToMachineDialogHost />);

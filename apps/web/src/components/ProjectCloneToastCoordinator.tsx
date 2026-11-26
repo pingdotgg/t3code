@@ -112,12 +112,13 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       };
       const ref = { environmentId, projectId: clone.projectId };
       if (isViewingProjectDraft(clone.projectId)) {
-        silenceProjectCloneToasts(ref);
+        silenceProjectCloneToasts(ref, clone.startedAt);
         closeToast();
         continue;
       }
       if (
-        (isProjectCloneToastSilenced(ref) || toastHolds.has(scopedProjectKey(ref))) &&
+        (isProjectCloneToastSilenced(ref, clone.startedAt) ||
+          toastHolds.has(scopedProjectKey(ref))) &&
         (clone.phase === "running" || clone.phase === "done")
       ) {
         closeToast();

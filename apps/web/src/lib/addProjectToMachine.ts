@@ -110,9 +110,9 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
 /**
  * Clones onto another machine, then relays the chosen ignored files, since the
  * two servers never talk. Resolves with the cloning project once it starts; the
- * caller opens it, and its composer shows progress, so nothing toasts.
+ * caller decides whether to open it and show progress in the composer.
  */
-export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<ProjectId> {
+export async function addProjectToMachine(input: AddProjectToMachineInput) {
   // Read first, so the copy reflects the files as they were when the user asked.
   const reads = await Promise.all(
     input.files.map(async (relativePath) => {
@@ -163,7 +163,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     }
   }
   void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
-  if (reads.length === 0) return projectId;
+  if (reads.length === 0) return started.value;
 
   void (async () => {
     const clone = await waitForClone(input.target.environmentId, projectId);
@@ -209,5 +209,5 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
           },
     );
   })();
-  return projectId;
+  return started.value;
 }

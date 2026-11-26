@@ -323,9 +323,11 @@ describe("ProjectCloneTracker", () => {
       yield* Effect.yieldNow;
       expect(yield* tracker.get(owner)).toMatchObject({
         projectId: owner,
+        startedAt: expect.any(String),
         destinationPath: "/workspace/t3code",
         phase: "done",
       });
+      expect(result.startedAt).toBe((yield* tracker.get(owner))?.startedAt);
       expect(harness.cloned).toEqual([owner]);
       expect(yield* tracker.get(projectId)).toBeNull();
     }).pipe(Effect.provide(harness.layer));

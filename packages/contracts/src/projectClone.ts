@@ -60,6 +60,8 @@ export type ProjectCloneStartInput = typeof ProjectCloneStartInput.Type;
 
 export const ProjectCloneStartResult = Schema.Struct({
   projectId: ProjectId,
+  // Older servers only include this timestamp in the clone stream.
+  startedAt: Schema.optionalKey(IsoDateTime),
   cwd: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
   repository: Schema.NullOr(SourceControlRepositoryInfo),

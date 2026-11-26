@@ -39,7 +39,7 @@ export function useEnvironmentProjectClones(
   return useAtomValue(environmentProjectClonesAtom(environmentId));
 }
 
-const silencedCloneToasts = new Set<string>();
+const silencedCloneToasts = new Map<string, ProjectCloneSnapshot["startedAt"]>();
 export const useProjectCloneToastHolds = create<ReadonlySet<string>>(() => new Set());
 
 /** Defers toasts for a newly requested project until its start reply is handled. */
@@ -58,10 +58,20 @@ export function holdProjectCloneToasts(ref: ScopedProjectRef) {
  * project, whose composer shows the same progress. Failures still toast
  * whenever the project is not on screen.
  */
-export function silenceProjectCloneToasts(ref: ScopedProjectRef) {
-  silencedCloneToasts.add(scopedProjectKey(ref));
+export function silenceProjectCloneToasts(
+  ref: ScopedProjectRef,
+  startedAt: ProjectCloneSnapshot["startedAt"],
+) {
+  const key = scopedProjectKey(ref);
+  const previous = silencedCloneToasts.get(key);
+  if (previous === undefined || Date.parse(startedAt) >= Date.parse(previous)) {
+    silencedCloneToasts.set(key, startedAt);
+  }
 }
 
-export function isProjectCloneToastSilenced(ref: ScopedProjectRef): boolean {
-  return silencedCloneToasts.has(scopedProjectKey(ref));
+export function isProjectCloneToastSilenced(
+  ref: ScopedProjectRef,
+  startedAt: ProjectCloneSnapshot["startedAt"],
+): boolean {
+  return silencedCloneToasts.get(scopedProjectKey(ref)) === startedAt;
 }

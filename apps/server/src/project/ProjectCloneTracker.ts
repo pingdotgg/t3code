@@ -366,6 +366,7 @@ export const make = Effect.gen(function* () {
       );
       return {
         projectId,
+        startedAt,
         cwd: prepared.destinationPath,
         remoteUrl: prepared.remoteUrl,
         repository: prepared.repository,
