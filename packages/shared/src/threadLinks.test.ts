@@ -180,6 +180,7 @@ describe("thread links", () => {
       ["> ```ts", '> const fence = "```";', `> ${hidden}`, "> ```", `> ${after}`],
       ["> ```", ` > ${hidden}`, "> ```", after],
       ["- ```bash", "  echo hi", "  ```", "", after],
+      ["- > ```md", `  > ${hidden}`, "  > ```", "", after],
       ["1. Run:", "", "    ```bash", '    echo "```"', `    ${hidden}`, "    ```", "", after],
       ["````md", "```", hidden, "````", after],
       ["Use ~~~ to mark it.", after],

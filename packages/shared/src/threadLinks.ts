@@ -23,7 +23,7 @@ const fencedCode = (char: "`" | "~", name: string) => {
   const bq = `${name}Bq`;
   const info = char === "`" ? "[^`\\r\\n]*" : "[^\\r\\n]*";
   const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
-  return String.raw`^[ \t]*(?<${bq}>(?:>(?:[ \t]*>)*)?)${AFTER_QUOTE}${LIST_MARKERS}(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:\r?\n(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:\r?\n${closer})?`;
+  return String.raw`^[ \t]*${LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]*${LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:\r?\n(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:\r?\n${closer})?`;
 };
 // A code span may wrap lines but ends at a blank line or a fence, as its paragraph does.
 const SPAN_LINE_BREAK = String.raw`\n(?![ \t>]*(?:\r?$|${LIST_MARKERS}(?:\`{3}|~{3})))`;
