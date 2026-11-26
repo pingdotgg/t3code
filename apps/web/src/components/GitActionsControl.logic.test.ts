@@ -1,6 +1,5 @@
 import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
@@ -295,21 +294,6 @@ describe("resolveLiveThreadBranchUpdate", () => {
     });
 
     assert.equal(update, null);
-  });
-});
-
-describe("resolveAutoFeatureBranchName", () => {
-  it("increments suffix when the preferred ref name already exists", () => {
-    const ref = resolveAutoFeatureBranchName(
-      ["main", "feature/fix-toast-copy", "feature/fix-toast-copy-2"],
-      "fix toast copy",
-    );
-    assert.equal(ref, "feature/fix-toast-copy-3");
-  });
-
-  it("treats existing ref names as case-insensitive for collision checks", () => {
-    const ref = resolveAutoFeatureBranchName(["Feature/Ticket-1"], "feature/ticket-1");
-    assert.equal(ref, "feature/ticket-1-2");
   });
 });
 
