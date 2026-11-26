@@ -23,7 +23,7 @@ import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useInterfaceDirection } from "../../i18n/direction";
-import { SWIPEABLE_DIRECTION, swipeOpenDirection } from "../../i18n/swipeableDirection";
+import { SWIPEABLE_DIRECTION } from "../../i18n/swipeableDirection";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -475,11 +475,6 @@ function QueueRowSwipeable(props: {
         direction: SWIPEABLE_DIRECTION,
       }}
       childrenContainerStyle={{ backgroundColor: props.background, direction: interfaceDirection }}
-      onSwipeableOpen={(direction) => {
-        if (direction !== swipeOpenDirection(interfaceDirection)) return;
-        swipeableRef.current?.close();
-        props.onRemove();
-      }}
       renderLeftActions={isRtl ? renderRemoveAction : undefined}
       renderRightActions={isRtl ? undefined : renderRemoveAction}
     >

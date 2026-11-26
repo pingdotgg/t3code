@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef } from "react";
+import type { ComponentPropsWithoutRef, CSSProperties } from "react";
 
 import { cn } from "../lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
@@ -7,6 +7,7 @@ export function WorkspacePageHeader({
   electron = false,
   reserveNativeControls = electron,
   className,
+  style,
   ...props
 }: ComponentPropsWithoutRef<"header"> & {
   readonly electron?: boolean;
@@ -22,6 +23,15 @@ export function WorkspacePageHeader({
         COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         className,
       )}
+      style={
+        reserveNativeControls
+          ? ({
+              "--workspace-page-header-end":
+                "max(var(--workspace-gutter-start), var(--workspace-controls-left))",
+              ...style,
+            } as CSSProperties)
+          : style
+      }
       {...props}
     />
   );

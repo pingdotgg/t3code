@@ -9,8 +9,3 @@ export const SWIPEABLE_DIRECTION: "ltr" | "rtl" = I18nManager.isRTL ? "rtl" : "l
 export function swipeRevealSign(direction: "ltr" | "rtl"): 1 | -1 {
   return direction === "rtl" ? 1 : -1;
 }
-
-/** `onSwipeableOpen` direction emitted by RNGH when the trailing actions open. */
-export function swipeOpenDirection(direction: "ltr" | "rtl"): "left" | "right" {
-  return direction === "rtl" ? "right" : "left";
-}
