@@ -4,8 +4,10 @@ name: Upstream Fixes
 # follow. Every six hours this picks upstream's non-breaking `fix` and `perf` commits
 # that apply cleanly, puts them on the `upstream-fixes` branch, and opens or
 # updates one pull request with what was picked and what did not apply.
-# upstream-fixes-land.yml merges that pull request once CI passes on it, and
-# narrows the batch when CI fails, so a broken fix never reaches main.
+# The same run then waits for CI on that branch and, through
+# .github/scripts/upstream-fixes-land.sh, merges the pull request when CI
+# passes or picks again with half the fixes when it fails, so a broken fix
+# never reaches main and the ones before it still land.
 # The rules live in .github/scripts/upstream-fixes.cjs; commits to never pick go
 # in .github/upstream-fixes/skip.
 on:
@@ -26,6 +28,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
   actions: write
 
 concurrency:
@@ -36,7 +39,8 @@ jobs:
   pick:
     name: Pick upstream fixes
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Picking takes minutes; waiting for CI, and one retry of it, takes the rest.
+    timeout-minutes: 150
     env:
       BRANCH: upstream-fixes
       UPSTREAM: https://github.com/pingdotgg/t3code.git
@@ -88,8 +92,17 @@ jobs:
             gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
           fi
 
+      # Only this dispatched run counts: it covers every job, and the land step
+      # looks for it by event, whatever the pull request itself starts.
       - name: Run CI on the branch
-        if: steps.pick.outputs.changed == 'true' && env.HAS_TOKEN != 'true'
+        if: steps.pick.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+      - name: Land or narrow
+        if: steps.pick.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: SHA="$(git rev-parse HEAD)" bash .github/scripts/upstream-fixes-land.sh
