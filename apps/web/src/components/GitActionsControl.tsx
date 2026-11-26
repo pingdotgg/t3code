@@ -1108,6 +1108,11 @@ function CheckoutGitActionsControl({
       : gt("vs {ref}", { ref: resolvedChangesTotals.baseRef })
     : null;
 
+  const [selectionBranch, setSelectionBranch] = useState(gitStatusForActions?.refName ?? null);
+  if (gitStatusForActions && selectionBranch !== gitStatusForActions.refName) {
+    setSelectionBranch(gitStatusForActions.refName);
+    setExcludedFiles(new Set());
+  }
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   // Changed-file paths are repository-relative, so they must resolve against
   // the worktree root from the same status snapshot, not the project cwd.
