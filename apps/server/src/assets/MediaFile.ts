@@ -44,6 +44,10 @@ const realpathLikeFileSystem = (filePath: string) =>
     NodeFS.realpath(filePath, (error, resolved) => (error ? reject(error) : resolve(resolved)));
   });
 
+/** The path as stored on disk (links resolved, its stored letter case); null when it cannot be resolved. */
+export const onDiskPath = (filePath: string) =>
+  Effect.promise(() => NodeFSP.realpath(filePath).catch(() => null));
+
 /** Null when the path cannot be resolved. */
 export const realPathWithoutNativeResolver = (filePath: string) =>
   Effect.promise(() => realpathLikeFileSystem(filePath).catch(() => null));

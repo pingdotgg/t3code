@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../../../config.ts";
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as WorkspaceFolders from "../../../workspace/WorkspaceFolders.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller } from "../../threadAccess.ts";
@@ -32,11 +33,13 @@ const toFailure = (error: { readonly _tag: string; readonly message: string }) =
 
 const handlers = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
+  const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
   const config = yield* ServerConfig.ServerConfig;
 
   // The server reads files for the caller, so only a thread that reads files without asking may
   // pass a path or inline any local image. A supervised thread's images must sit where its provider
-  // reads without asking: its cwd, or T3's own attachments and screenshots.
+  // reads without asking: its cwd and the folders it is granted, or T3's own attachments and
+  // screenshots.
   const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
     readonly html?: string | undefined;
     readonly path?: string | undefined;
@@ -66,10 +69,17 @@ const handlers = Effect.gen(function* () {
         ? Option.none()
         : yield* projects.getById(caller.projectId).pipe(Effect.orElseSucceed(Option.none));
     const cwd = caller?.worktreePath ?? Option.getOrUndefined(project)?.workspaceRoot;
+    const granted =
+      caller === undefined
+        ? []
+        : ((yield* workspaceFolders
+            .forThread({ projectId: caller.projectId, worktreePath: caller.worktreePath })
+            .pipe(Effect.orElseSucceed(() => undefined)))?.extraRoots ?? []);
     return {
       html: source.html,
       imageRoots: [
         ...(cwd === undefined ? [] : [cwd]),
+        ...granted,
         config.attachmentsDir,
         config.browserArtifactsDir,
       ],

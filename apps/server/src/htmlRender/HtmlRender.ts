@@ -29,7 +29,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { openMediaFile } from "../assets/MediaFile.ts";
+import { onDiskPath, openMediaFile } from "../assets/MediaFile.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
@@ -305,6 +305,14 @@ const afterDoctype = (text: string, from: number) => {
 
 // Like `readPageFile`: open without following links and recheck the path, so a link swapped in
 // after the roots check is refused, and refuse a second hard link to a file outside the roots.
+// The size comes from that open file too, never from a path a link could redirect.
+const confinedImageSize = (filePath: string) =>
+  Effect.scoped(
+    Effect.map(openMediaFile(filePath), (file) =>
+      file === null || file.info.nlink !== 1n ? undefined : Number(file.info.size),
+    ),
+  );
+
 const readConfinedImage = (filePath: string) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -333,26 +341,33 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const references = findLocalImages(html);
-  const realPathOf = (filePath: string) =>
-    fileSystem.realPath(filePath).pipe(Effect.orElseSucceed(() => pathService.resolve(filePath)));
+  // The on-disk path, `/private/tmp` for `/tmp` and the stored letter case included. A path that
+  // does not exist yet resolves through its nearest existing folder, so a missing image is placed
+  // by where it would be: inside the roots it is missing, outside it is refused, existing or not.
+  const canonical = (filePath: string): Effect.Effect<string> =>
+    Effect.flatMap(onDiskPath(filePath), (resolved) => {
+      if (resolved !== null) return Effect.succeed(resolved);
+      const parent = pathService.dirname(filePath);
+      return parent === filePath
+        ? Effect.succeed(filePath)
+        : Effect.map(canonical(parent), (folder) =>
+            pathService.join(folder, pathService.basename(filePath)),
+          );
+    });
   const realRoots =
     imageRoots === undefined
       ? undefined
-      : yield* Effect.forEach(imageRoots, realPathOf, { concurrency: "unbounded" });
-  const within = (filePath: string, roots: ReadonlyArray<string>) =>
-    roots.some((root) => isWithinRoot(pathService, filePath, root));
-  // The path check comes before any file access, so an outside path reveals nothing about itself;
-  // the resolved check keeps a link inside the roots from reaching out of them.
+      : yield* Effect.forEach(imageRoots, (root) => canonical(pathService.resolve(root)), {
+          concurrency: "unbounded",
+        });
   const locate = Effect.fn(function* (path: string) {
-    if (imageRoots === undefined || realRoots === undefined) {
-      return { path, filePath: filePathFor(path), outside: false };
-    }
-    const filePath = pathService.resolve(filePathFor(path));
-    if (!within(filePath, imageRoots) && !within(filePath, realRoots)) {
-      return { path, filePath, outside: true };
-    }
-    const realPath = yield* realPathOf(filePath);
-    return { path, filePath: realPath, outside: !within(realPath, realRoots) };
+    if (realRoots === undefined) return { path, filePath: filePathFor(path), outside: false };
+    const filePath = yield* canonical(pathService.resolve(filePathFor(path)));
+    return {
+      path,
+      filePath,
+      outside: !realRoots.some((root) => isWithinRoot(pathService, filePath, root)),
+    };
   });
   const located = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
@@ -361,17 +376,21 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
   );
   const outside = located.filter((file) => file.outside).map((file) => file.path);
   if (outside.length > 0) return yield* new HtmlRenderImagesOutsideRootsError({ paths: outside });
+  const sizeOf = (filePath: string): Effect.Effect<number | undefined> =>
+    realRoots === undefined
+      ? fileSystem.stat(filePath).pipe(
+          Effect.map((info) => (info.type === "File" ? Number(info.size) : undefined)),
+          Effect.orElseSucceed(() => undefined),
+        )
+      : confinedImageSize(filePath).pipe(Effect.orElseSucceed(() => undefined));
   const files = yield* Effect.forEach(
     located,
     (file) =>
-      fileSystem.stat(file.filePath).pipe(
-        Effect.map((info) => ({
-          path: file.path,
-          filePath: file.filePath,
-          size: info.type === "File" ? Number(info.size) : undefined,
-        })),
-        Effect.orElseSucceed(() => ({ path: file.path, filePath: file.filePath, size: undefined })),
-      ),
+      Effect.map(sizeOf(file.filePath), (size) => ({
+        path: file.path,
+        filePath: file.filePath,
+        size,
+      })),
     { concurrency: 8 },
   );
   const oversized = files.find((file) => file.size !== undefined && file.size > MAX_IMAGE_BYTES);
@@ -400,7 +419,7 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
     files.filter((file) => file.size !== undefined),
     (file) =>
       Effect.gen(function* () {
-        const read = yield* imageRoots === undefined
+        const read = yield* realRoots === undefined
           ? fileSystem
               .stream(file.filePath, { bytesToRead: MAX_IMAGE_BYTES + 1 })
               .pipe(Stream.mkUint8Array, Effect.option)

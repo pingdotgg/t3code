@@ -57,6 +57,7 @@ import type * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as WorkspaceFolders from "../../workspace/WorkspaceFolders.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
@@ -352,8 +353,9 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
 
 const fullAccessThreadId = ThreadId.make("mcp-core-full-access-thread");
 const htmlProjectId = ProjectId.make("mcp-core-html-project");
-// Set by a test before it calls a tool; the project lookup reads it at call time.
+// Set by a test before it calls a tool; the project and folder lookups read them at call time.
 let htmlWorkspace = "/t3-missing-workspace";
+let htmlExtraFolder = "/t3-missing-extra-folder";
 
 const layerHtmlTools = McpHttpServer.layerHtmlToolkit.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -366,6 +368,11 @@ const layerHtmlTools = McpHttpServer.layerHtmlToolkit.pipe(
     ),
   ),
   Layer.provide(FetchHttpClient.layer),
+  Layer.provide(
+    Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+      forThread: () => Effect.succeed({ folders: [], extraRoots: [htmlExtraFolder] }),
+    }),
+  ),
   Layer.provide(
     Layer.mock(ProjectService.ProjectService)({
       getById: (projectId) =>
@@ -446,15 +453,18 @@ it.effect("inlines a supervised thread's local images only from its workspace", 
     const config = yield* ServerConfig.ServerConfig;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mcp-html-images-" });
     htmlWorkspace = path.join(directory, "workspace");
+    htmlExtraFolder = path.join(directory, "extra-folder");
     const elsewhere = path.join(directory, "elsewhere");
     yield* fileSystem.makeDirectory(htmlWorkspace);
+    yield* fileSystem.makeDirectory(htmlExtraFolder);
     yield* fileSystem.makeDirectory(elsewhere);
     yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const chart = path.join(htmlWorkspace, "chart.png");
     const attached = path.join(config.attachmentsDir, "mcp-core-attached.png");
+    const extra = path.join(htmlExtraFolder, "extra.png");
     const secret = path.join(elsewhere, "secret.png");
-    for (const file of [chart, attached, secret]) yield* fileSystem.writeFile(file, png);
+    for (const file of [chart, attached, extra, secret]) yield* fileSystem.writeFile(file, png);
     const pngUri = `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
     const fullAccess = { ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } };
 
@@ -486,9 +496,13 @@ it.effect("inlines a supervised thread's local images only from its workspace", 
     });
 
     const ownImages = yield* published(
-      yield* call("html_render", `<img src="${chart}"><img src="${attached}">`, scope),
+      yield* call(
+        "html_render",
+        `<img src="${chart}"><img src="${attached}"><img src="${extra}">`,
+        scope,
+      ),
     );
-    expect(ownImages).toContain(`<img src="${pngUri}"><img src="${pngUri}">`);
+    expect(ownImages).toContain(`<img src="${pngUri}"><img src="${pngUri}"><img src="${pngUri}">`);
 
     for (const name of ["html_preview", "html_render"] as const) {
       const refused = yield* call(name, `<img src="${chart}"><img src="${secret}">`, scope);

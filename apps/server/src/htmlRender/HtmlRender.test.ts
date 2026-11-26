@@ -283,11 +283,22 @@ describe("HtmlRender", () => {
         yield* fileSystem.symlink(workspace, linkedRoot);
         const inside = path.join(workspace, "inside.png");
         yield* fileSystem.writeFile(inside, PNG_BYTES);
-        const prepared = yield* htmlRender.prepare(
-          `<img src="${path.join(linkedRoot, "inside.png")}"><img src="${inside}">`,
-          { imageRoots: [linkedRoot] },
+        const both = `<img src="${path.join(linkedRoot, "inside.png")}"><img src="${inside}">`;
+        // Either spelling of the root serves both spellings of the image, as `/tmp` and
+        // `/private/tmp` do on macOS.
+        expect(yield* htmlRender.prepare(both, { imageRoots: [linkedRoot] })).not.toContain(
+          directory,
         );
-        expect(prepared).not.toContain(directory);
+        expect(yield* htmlRender.prepare(both, { imageRoots: [workspace] })).not.toContain(
+          directory,
+        );
+        // A missing image under the root's other spelling is missing, not outside.
+        const missing = yield* htmlRender
+          .prepare(`<img src="${path.join(linkedRoot, "missing.png")}">`, {
+            imageRoots: [workspace],
+          })
+          .pipe(Effect.flip);
+        expect(missing._tag).toBe("HtmlRenderImagesNotFoundError");
       }).pipe(Effect.provide(layerTest)),
   );
 
