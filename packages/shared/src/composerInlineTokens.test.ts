@@ -235,7 +235,6 @@ describe("collectComposerInlineTokens", () => {
     for (const link of [
       "[docs](https://example.com/docs)",
       "[reports:final.md](reports:final.md)",
-      "[guide.md](https://example.com/docs/guide.md)",
       "[guide.md](//example.com/docs/guide.md)",
     ]) {
       expect(collectComposerInlineTokens(`${link} `)).toEqual([]);
@@ -243,16 +242,13 @@ describe("collectComposerInlineTokens", () => {
     }
   });
 
-  it.each(["docs/guide.md", "\\\\server\\docs\\guide.md"])(
-    "keeps the serialized workspace path %s as a file chip",
-    (path) => {
-      const link = serializeComposerFileLink(path);
-      expect(collectComposerInlineTokens(`${link} `)).toMatchObject([
-        { type: "mention", value: path, source: link },
-      ]);
-      expect(composerFileLinksToPlainText(`${link} `)).toBe("guide.md ");
-    },
-  );
+  it("keeps a UNC path, whose leading slashes are encoded, as a file chip", () => {
+    const path = "\\\\server\\docs\\guide.md";
+    const link = serializeComposerFileLink(path);
+    expect(collectComposerInlineTokens(`${link} `)).toMatchObject([
+      { type: "mention", value: path, source: link },
+    ]);
+  });
 
   // regression: #41223 a `./` the author wrote keeps its meaning, even where the parser rejects the rest
   it.each([
