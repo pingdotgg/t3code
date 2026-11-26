@@ -265,6 +265,14 @@ it("indexes image destinations rendered as file chips", () => {
   ).toEqual(["notes.ts · L42–64 "]);
 });
 
+it.each(["\n", "\r\n", "\r"])(
+  "does not search across a standalone image with %j line endings",
+  (ending) => {
+    const text = ["Caption", "![pic](https://x.test/pic.png)", "After"].join(ending);
+    expect(assistantSegments(text)).toEqual(["Caption", " After"]);
+  },
+);
+
 it("projects carriage-return soft line breaks to a space outside code blocks", () => {
   expect(assistantSegments("First\rsecond")).toEqual(["First second"]);
   expect(assistantSegments("```text\nFirst\rsecond\n```")).toEqual(["First\rsecond\n"]);
