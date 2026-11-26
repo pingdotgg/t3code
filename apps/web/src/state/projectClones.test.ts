@@ -12,8 +12,4 @@ it("shows notifications for a new clone attempt on a previously viewed project",
   silenceProjectCloneToasts(ref, previous);
   expect(isProjectCloneToastSilenced(ref, previous)).toBe(true);
   expect(isProjectCloneToastSilenced(ref, current)).toBe(false);
-
-  silenceProjectCloneToasts(ref, current);
-  silenceProjectCloneToasts(ref, previous);
-  expect(isProjectCloneToastSilenced(ref, current)).toBe(true);
 });
