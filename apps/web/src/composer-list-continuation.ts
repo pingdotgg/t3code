@@ -103,10 +103,11 @@ function renumberFollowingItems(
   afterLineEnd: number,
   marker: Extract<ListMarker, { kind: "ordered" }>,
   tokens: ReturnType<typeof inlineTokenRanges>,
+  startExpected = Number.parseInt(marker.numberText, 10) + 2,
 ): { end: number; text: string } | null {
   const baseWidth = indentWidth(marker.indent);
   const parts: string[] = [];
-  let expected = Number.parseInt(marker.numberText, 10) + 2;
+  let expected = startExpected;
   let position = afterLineEnd;
   let copiedUntil = afterLineEnd;
   let tokenIndex = 0;
@@ -290,15 +291,29 @@ export function listIndentForTab(
     const number = nestedNumber(marker, previousChild);
     const replacedEnd = line.start + marker.indent.length + number.replacedLength;
     const replacement = indent + number.text;
-    return {
-      start: line.start,
-      end: replacedEnd,
-      replacement,
-      cursorAfter:
-        start < replacedEnd
-          ? line.start + indent.length
-          : start - replacedEnd + line.start + replacement.length,
-    };
+    const cursorAfter =
+      start < replacedEnd
+        ? line.start + indent.length
+        : start - replacedEnd + line.start + replacement.length;
+    const renumbered =
+      marker.kind === "ordered"
+        ? renumberFollowingItems(
+            value,
+            line.end,
+            marker,
+            tokens,
+            Number.parseInt(marker.numberText, 10),
+          )
+        : null;
+    if (renumbered) {
+      return {
+        start: line.start,
+        end: renumbered.end,
+        replacement: replacement + value.slice(replacedEnd, line.end) + renumbered.text,
+        cursorAfter,
+      };
+    }
+    return { start: line.start, end: replacedEnd, replacement, cursorAfter };
   }
   return { start: line.start, end: line.start, replacement: "  ", cursorAfter: start + 2 };
 }
