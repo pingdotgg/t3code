@@ -2460,7 +2460,6 @@
   "a6eeff30440d26a2": "Issue {key}",
   "c0e2d952114e7d59": "作成者: {author}",
   "2195cdd7774c1c23": "不明な作成者",
-  "093394ace72dbd79": "{count, plural, other {{count} 件のコメント}}",
   "217e1e7b60469736": "Issue の状態、{state}",
   "5fd6c9c736b80b62": "Issue の状態",
   "a749275f1ad66618": "不明な作成者",
