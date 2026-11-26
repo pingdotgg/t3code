@@ -247,15 +247,28 @@ describe("splitMarkdown", () => {
     ["an indented thematic break", "  - - -\n", ""],
     ["an empty list item", "-\n\n", "  "],
     ["an empty list item with trailing spaces", "-  \n\n", "  "],
+    ["an empty list item followed by dedented prose", "-\nfoo\n", "  "],
+    ["a list item with an indented definition", "- Item\n", "  "],
+    ["a fence on the first content line of an empty marker", "-\n", "  "],
   ])("collects definitions after a fence following %s", (_, beforeFence, definitionIndent) => {
     const definition = "[ref]: /target";
     const text = beforeFence + "  ```sh\n  example\n  ```\n" + definitionIndent + definition;
     expect(splitMarkdown(text).definitions).toBe(definition);
   });
 
-  it("keeps definitions inside a top-level fence opened by dedenting from a list fence", () => {
-    const text = ["- Item", "  ```", "  code", "```", "[ref]: /fake", "```"].join("\n");
-    expect(splitMarkdown(text).definitions).toBe("");
+  it.each([
+    ["a fence on the marker line", "- ```sh\n  x", ""],
+    ["a fence on a nested marker line", "- Item\n  - ```\n    x\n    ```", "  "],
+  ])("collects definitions after %s", (_, code, definitionIndent) => {
+    const definition = "[ref]: /target";
+    expect(splitMarkdown(code + "\n" + definitionIndent + definition).definitions).toBe(definition);
+  });
+
+  it.each([
+    ["after a list fence", ["- Item", "  ```", "  code", "```", "[ref]: /fake", "```"]],
+    ["after a paragraph", ["Paragraph", "2. continuation", "   ```", "[ref]: /fake", "   ```"]],
+  ])("keeps definitions inside a top-level fence %s literal", (_, lines) => {
+    expect(splitMarkdown(lines.join("\n")).definitions).toBe("");
   });
 
   it.each(["", " ", "  ", "   "])(

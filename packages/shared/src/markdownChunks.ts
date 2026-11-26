@@ -34,12 +34,9 @@ const HTML_STANDALONE_TAG =
 const BLANK_LINE = /^[ \t]*\r?$/;
 const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
 
-function listContentColumn(markerEnd: number, padding: string): number {
-  // CommonMark gives items starting with indented code one column of padding.
-  let column = markerEnd;
-  for (const character of padding) {
+function indentationColumn(whitespace: string, column = 0): number {
+  for (const character of whitespace) {
     column += character === "\t" ? 4 - (column % 4) : 1;
-    if (column - markerEnd > 4) return markerEnd + 1;
   }
   return column;
 }
@@ -72,20 +69,6 @@ function openedWrappers(line: string): number {
 
 /** Returns how to recognize the end of a block that `line` opens, or null for none. */
 function blockCloser(line: string): ((line: string) => boolean) | null {
-  const fence = FENCE_OPEN.exec(line)?.[1];
-  if (fence) {
-    return (next) => {
-      const match = FENCE_OPEN.exec(next);
-      const closer = match?.[1];
-      return (
-        match !== null &&
-        closer !== undefined &&
-        closer[0] === fence[0] &&
-        closer.length >= fence.length &&
-        BLANK_LINE.test(next.slice(match[0].length))
-      );
-    };
-  }
   for (const [open, close] of SPANNING_BLOCKS) {
     const opener = open.exec(line)?.[0];
     if (opener === undefined) continue;
@@ -93,6 +76,15 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
   }
   // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
   return HTML_BLOCK_TAG.test(line) || HTML_STANDALONE_TAG.test(line) ? closesAtBlankLine : null;
+}
+
+function fenceCloser(fence: string, contentColumn: number): (line: string) => boolean {
+  return (line) => {
+    const match = /^([ \t]*)(`{3,}|~{3,})[ \t]*\r?$/.exec(line);
+    if (!match || match[2]![0] !== fence[0] || match[2]!.length < fence.length) return false;
+    const indent = indentationColumn(match[1]!);
+    return indent >= contentColumn && indent <= contentColumn + 3;
+  };
 }
 
 export interface MarkdownChunk {
@@ -156,8 +148,11 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterDefinition = false;
   let afterHeading = false;
   let openedFence = false;
+  let fenceContentIndent = 0;
   let listContentIndent = Infinity;
+  let listMarker = "";
   let emptyListItem = false;
+  let paragraphOpen = false;
   let definitionChars = 0;
   let openWrappers = 0;
   let heldCut = 0;
@@ -170,11 +165,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   const sourceLines = text.split("\n");
   for (const line of sourceLines) {
     const blank = BLANK_LINE.test(line);
-    if (emptyListItem && blank) listContentIndent = Infinity;
+    const whitespace = /^[ \t]*/.exec(line)![0];
+    const indent = indentationColumn(whitespace);
+    if (emptyListItem && (blank || indent < listContentIndent)) listContentIndent = Infinity;
     emptyListItem = false;
-    const indent = /^ */.exec(line)![0].length;
-    const dedented = indent < listContentIndent && line[indent] !== "\t";
-    if (closes !== null && openedFence && listContentIndent !== Infinity && dedented && !blank) {
+    const dedented = indent < listContentIndent;
+    if (closes !== null && openedFence && indent < fenceContentIndent && !blank) {
       // A dedent ends the list fence before this line, which may open a new fence.
       closes = null;
       afterHeading = true;
@@ -194,28 +190,47 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           (afterBlankLine && BLOCK_START.test(line) && !LIST_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
-      closes = blockCloser(line);
-      const fence = FENCE_OPEN.test(line);
       const afterFence = afterHeading && openedFence && dedented;
+      const heading = ATX_HEADING.test(line);
       const thematicBreak = THEMATIC_BREAK.test(line);
-      const item = thematicBreak ? null : LIST_ITEM.exec(line);
+      const quote = BLOCK_QUOTE.test(line);
+      const htmlOrMath =
+        HTML_BLOCK_TAG.test(line) || SPANNING_BLOCKS.some(([open]) => open.test(line));
+      let contentColumn = dedented ? 0 : listContentIndent;
+      const canStartBlock = indent - contentColumn <= 3;
+      const content = canStartBlock ? line.slice(whitespace.length) : "";
+      const item = thematicBreak ? null : LIST_ITEM.exec(content);
+      const marker = item?.[1];
+      const itemContent = item ? content.slice(item[0].length) : "";
+      const itemIsEmpty = BLANK_LINE.test(itemContent);
+      const markerKind = marker?.at(-1);
+      const continuesList = dedented && listContentIndent !== Infinity && markerKind === listMarker;
+      const opensItem =
+        item !== null &&
+        (!paragraphOpen ||
+          continuesList ||
+          (!itemIsEmpty && (!/^\d/.test(marker!) || /^1[.)]$/.test(marker!))));
+      let fenceLine = content;
+      let startsIndentedCode = false;
+      if (opensItem) {
+        const markerEnd = indent + item[1]!.length;
+        const paddedColumn = indentationColumn(item[2]!, markerEnd);
+        emptyListItem = dedented && itemIsEmpty;
+        // Empty items and items starting with indented code use one column of padding.
+        startsIndentedCode = paddedColumn - markerEnd > 4;
+        contentColumn = itemIsEmpty || startsIndentedCode ? markerEnd + 1 : paddedColumn;
+        fenceLine = startsIndentedCode ? "" : itemContent;
+      }
+      const fence = FENCE_OPEN.exec(fenceLine)?.[1];
+      closes = fence ? fenceCloser(fence, contentColumn) : blockCloser(line);
+      fenceContentIndent = fence ? contentColumn : 0;
       if (dedented) {
-        if (item) {
-          const markerEnd = item[1]!.length;
-          emptyListItem = item[0].length === line.length || line[item[0].length] === "\r";
-          listContentIndent = emptyListItem
-            ? markerEnd + 1
-            : listContentColumn(markerEnd, item[2]!);
+        if (opensItem) {
+          listContentIndent = contentColumn;
+          listMarker = markerKind!;
         } else if (
           !blank &&
-          (afterBlankLine ||
-            afterFence ||
-            ATX_HEADING.test(line) ||
-            thematicBreak ||
-            BLOCK_QUOTE.test(line) ||
-            fence ||
-            SPANNING_BLOCKS.some(([open]) => open.test(line)) ||
-            HTML_BLOCK_TAG.test(line))
+          (afterBlankLine || afterFence || heading || thematicBreak || quote || fence || htmlOrMath)
         ) {
           // Dedented prose can still be a lazy continuation until a block boundary.
           listContentIndent = Infinity;
@@ -224,14 +239,19 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
-        (first ||
-          afterBlankLine ||
-          afterDefinition ||
-          afterFence ||
-          (afterHeading && !openedFence)) &&
-        isLinkDefinition(line);
-      openedFence = fence;
+        (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
+      openedFence = fence !== undefined;
       afterDefinition = definition;
+      paragraphOpen =
+        !blank &&
+        !definition &&
+        !heading &&
+        !thematicBreak &&
+        !quote &&
+        !htmlOrMath &&
+        closes === null &&
+        (canStartBlock || paragraphOpen) &&
+        (!opensItem || (!itemIsEmpty && !startsIndentedCode));
       if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
         definitions.push(line.trim());
         definitionChars += line.length + 1;
