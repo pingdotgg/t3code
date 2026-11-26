@@ -19,7 +19,7 @@ Install Git and authenticate on the machine running your T3 Code server (for rem
 
 > Note: Git `push` and `clone` still require Git SSH/HTTPS credentials on the server, separate from API tokens.
 
-> Note: With several `gt` servers and no `fj` login, `owner/repo` and newly published repositories go to gt's default server (`gt config set default_host https://your-server`). If an SSH remote uses a different host name than the server's web address, run `gt config set ssh_host <ssh-host> --host https://your-server`.
+> Note: With several `gt` servers and no `fj` login, `owner/repo` and newly published repositories go to `gt`'s default server (`gt config set default_host https://your-server`). With several `gt` accounts on one server, pick one with `gt auth switch <user> --host https://your-server`. If an SSH remote uses a different host name than the server's web address, run `gt config set ssh_host <ssh-host> --host https://your-server`.
 
 ## Start, clone, or publish a project
 
