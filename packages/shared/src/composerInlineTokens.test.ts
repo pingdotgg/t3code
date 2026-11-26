@@ -222,6 +222,8 @@ describe("collectComposerInlineTokens", () => {
     "docs/100%.md",
     "docs/why?.md",
     "icon@2x.png",
+    "reports:final.md",
+    "file:notes.md",
   ])("reads a link to the punctuated file %s as that file's path", (path) => {
     const link = serializeComposerFileLink(path);
     expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
@@ -229,14 +231,54 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it("keeps bare external schemes out of file chips even with matching labels", () => {
+    for (const link of [
+      "[docs](https://example.com/docs)",
+      "[reports:final.md](reports:final.md)",
+    ]) {
+      expect(collectComposerInlineTokens(`${link} `)).toEqual([]);
+    }
+  });
+
   // regression: #41223 a `./` the author wrote keeps its meaning, even where the parser rejects the rest
   it.each([
-    ["[draft:notes.md](./draft:notes.md)", "./draft:notes.md"],
     ["[scratch](./%2Fscratch)", ".//scratch"],
     ["[a.ts](./src/a.ts)", "./src/a.ts"],
   ])("keeps the authored link %s as its own path", (link, value) => {
     expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
       { type: "mention", value, source: link },
+    ]);
+  });
+
+  it.each(["docs/🧪 @abc final.md", "docs/use $ui kit.md"])(
+    "does not emit nested tokens inside a file link label: %s",
+    (path) => {
+      const link = serializeComposerFileLink(path);
+      expect(collectComposerInlineTokens(`${link} remainder`)).toEqual([
+        {
+          type: "mention",
+          value: path,
+          source: link,
+          start: 0,
+          end: link.length,
+        },
+      ]);
+    },
+  );
+
+  it("keeps only the preserved trailing file link when its label contains a bare mention", () => {
+    const path = "docs/🧪 @abc final.md";
+    const link = serializeComposerFileLink(path);
+    const confirmed = collectComposerInlineTokens(`${link} `);
+
+    expect(collectComposerInlineTokens(link, { preserveTrailingFrom: confirmed })).toEqual([
+      {
+        type: "mention",
+        value: path,
+        source: link,
+        start: 0,
+        end: link.length,
+      },
     ]);
   });
 
