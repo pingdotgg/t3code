@@ -173,16 +173,25 @@ it.each(["blocked", "refusedLater"] as const)(
 );
 
 it.each([
-  { input: "typing", word: "x" },
-  { input: "pasting", word: "hello" },
-  { input: "composing", word: "あ" },
+  { input: "typing", text: "x", expected: " x world", blocked: false },
+  { input: "pasting", text: "hello", expected: " hello world", blocked: false },
+  { input: "composing", text: "あ", expected: " あ world", blocked: false },
+  { input: "leaving the composer", text: "", expected: " world", blocked: false },
+  { input: "typing punctuation", text: ",", expected: ", world", blocked: false },
+  { input: "moving the caret and returning", text: "x", expected: "x world", blocked: false },
+  { input: "typing", text: "x", expected: " x world", blocked: true },
 ] as const)(
-  "keeps spaces on both sides when $input after a mid-text citation save",
-  async ({ input, word }) => {
+  "keeps citation spacing when $input after saving (send blocked: $blocked)",
+  async ({ input, text, expected, blocked }) => {
     const editorRef = createRef<ComposerPromptEditorHandle>();
     const promptMidText = `See ${serializeAssistantCitation(citation)} world`;
     await using screen = await render(
-      <Composer question={false} editorRef={editorRef} initialPrompt={promptMidText} />,
+      <Composer
+        question={false}
+        editorRef={editorRef}
+        initialPrompt={promptMidText}
+        send={blocked ? "blocked" : "clears"}
+      />,
     );
 
     const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
@@ -198,17 +207,26 @@ it.each([
     );
     const comment = page.getByLabelText("Comment on selected text");
     await expect.element(comment).toHaveFocus();
-    await userEvent.keyboard("note{Enter}");
+    await userEvent.keyboard(blocked ? "note{Control>}{Enter}{/Control}" : "note{Enter}");
     await expect.element(comment).not.toBeInTheDocument();
     const composer = page.getByTestId("composer-editor");
     await expect.element(composer).toHaveFocus();
     switch (input) {
       case "typing":
-        await userEvent.keyboard(word);
+      case "typing punctuation":
+        await userEvent.keyboard(text);
+        break;
+      case "leaving the composer":
+        await page.getByText("hello world", { exact: true }).click();
+        await expect.element(composer).not.toHaveFocus();
+        break;
+      case "moving the caret and returning":
+        await userEvent.keyboard("{ArrowRight}{ArrowLeft}");
+        await userEvent.keyboard(text);
         break;
       case "pasting": {
         const clipboardData = new DataTransfer();
-        clipboardData.setData("text/plain", word);
+        clipboardData.setData("text/plain", text);
         composer
           .element()
           .dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
@@ -221,7 +239,7 @@ it.each([
           selectionStart: 1,
           selectionEnd: 1,
         });
-        await session.send("Input.insertText", { text: word });
+        await session.send("Input.insertText", { text });
         break;
       }
     }
@@ -230,7 +248,7 @@ it.each([
       .element(screen.getByRole("status"))
       .toHaveAttribute(
         "data-prompt",
-        `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "note"))} ${word} world`,
+        `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "note"))}${expected}`,
       );
   },
 );

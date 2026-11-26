@@ -450,6 +450,82 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   );
 }
 
+const citationResumeKey = new PluginKey<{ from: number; to: number } | null>(
+  "composer-citation-resume",
+);
+
+function citationResumePlugin() {
+  let editorView: EditorView | undefined;
+  return new Plugin({
+    key: citationResumeKey,
+    state: {
+      init: () => null,
+      apply(tr, pending) {
+        const resume = tr.getMeta(citationResumeKey) as number | null | undefined;
+        if (resume !== undefined) return resume === null ? null : { from: resume, to: resume };
+        if (!pending) return null;
+        let { from, to } = pending;
+        for (const map of tr.mapping.maps) {
+          let editsOutsideRange = false;
+          map.forEach((start, end) => {
+            if (start < from || end > to) editsOutsideRange = true;
+          });
+          if (editsOutsideRange) return null;
+          from = map.map(from, -1);
+          to = map.map(to, 1);
+        }
+        return tr.selection.empty && tr.selection.from === to ? { from, to } : null;
+      },
+    },
+    view(view) {
+      editorView = view;
+      return {
+        destroy: () => {
+          editorView = undefined;
+        },
+      };
+    },
+    appendTransaction(_transactions, _oldState, state) {
+      const pending = citationResumeKey.getState(state);
+      if (!pending || pending.from === pending.to || editorView?.composing) return null;
+      const { from, to } = pending;
+      const tr = state.tr.setMeta(citationResumeKey, null);
+      if (
+        state.doc.resolve(from).sameParent(state.doc.resolve(to)) &&
+        /^[^\s.,;:!?)\]}]/.test(state.doc.textBetween(from, to, undefined, "\uFFFC"))
+      ) {
+        tr.insertText(" ", from);
+      }
+      return tr;
+    },
+    props: {
+      handleDOMEvents: {
+        blur: clearCitationResume,
+        mousedown: clearCitationResume,
+        compositionend(view) {
+          // Let ProseMirror flush the final composition before touching its text.
+          queueMicrotask(() =>
+            queueMicrotask(() => {
+              const pending = citationResumeKey.getState(view.state);
+              if (!view.isDestroyed && pending && pending.from !== pending.to && !view.composing) {
+                view.dispatch(view.state.tr);
+              }
+            }),
+          );
+          return false;
+        },
+      },
+    },
+  });
+}
+
+function clearCitationResume(view: EditorView): false {
+  if (citationResumeKey.getState(view.state)) {
+    view.dispatch(view.state.tr.setMeta(citationResumeKey, null));
+  }
+  return false;
+}
+
 const ComposerCitationExtension = Node.create({
   name: "composer-citation",
   group: "inline",
@@ -485,6 +561,7 @@ const ComposerCitationExtension = Node.create({
           },
         },
       }),
+      citationResumePlugin(),
     ];
   },
 });
@@ -550,24 +627,16 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const { doc } = editor.state;
     const hasSpace = doc.textBetween(end, end + 1) === " ";
     const blockEnd = doc.resolve(end).end();
-    const chain = editor.chain();
-    if (action === "saved" && hasSpace && end + 1 < blockEnd) {
-      // Leave a separator on each side of the restored caret for typing, paste, and composition.
-      if (!/\s/.test(doc.textBetween(end + 1, end + 2, undefined, "\uFFFC"))) {
-        chain.command(({ tr }) => {
-          tr.insertText(" ", end);
-          tr.setSelection(TextSelection.create(tr.doc, end + 1));
-          return true;
-        });
-      }
-      chain.focus(end + 1).run();
-      return;
-    }
     // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
     // Mid-text, skipping the space would glue them to the next word instead.
     const caret = hasSpace && blockEnd === end + 1 ? end + 1 : end;
     // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
-    chain.setMeta(SILENT_SELECTION_META, sent).focus(caret).run();
+    editor
+      .chain()
+      .setMeta(SILENT_SELECTION_META, sent)
+      .setMeta(citationResumeKey, action === "saved" && hasSpace && end + 1 < blockEnd ? end : null)
+      .focus(caret)
+      .run();
   };
 
   return (
@@ -613,7 +682,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;
-            commentActionRef.current = commentContext.onSubmitAndSend() ? "sent" : null;
+            commentActionRef.current = commentContext.onSubmitAndSend() ? "sent" : "saved";
             return true;
           },
           onRestoreFocus: () => onRestoreFocus(true),
