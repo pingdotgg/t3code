@@ -15,7 +15,7 @@ import {
 // Inlined like the dictation worker, so packaged builds need no separate worker artifact.
 const entry = `
   const { createRequire, findPackageJSON } = await import("node:module");
-  const { existsSync, readFileSync, readdirSync, statSync } = await import("node:fs");
+  const { readFileSync } = await import("node:fs");
   const { dirname, join } = await import("node:path");
   const { pathToFileURL } = await import("node:url");
   const bindAudioCpp = ${bindAudioCpp.toString()};
@@ -25,15 +25,6 @@ const entry = `
   const speechLines = ${speechLines.toString()};
   const splitAtPunctuation = ${splitAtPunctuation.toString()};
   const wavAudio = ${wavAudio.toString()};
-  // Where the runtime unpacked the eSpeak data package, newest first.
-  const espeakDirectory = () => {
-    const root = process.env.AUDIOCPP_ESPEAK_CACHE && join(process.env.AUDIOCPP_ESPEAK_CACHE, "audio.cpp", "espeak-data");
-    if (!root || !existsSync(root)) return undefined;
-    return readdirSync(root)
-      .map((name) => join(root, name, "espeak-ng-data"))
-      .filter((path) => existsSync(join(path, "phontab")))
-      .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
-  };
   const clips = new Map();
   const packageJson = (name) => {
     const path = findPackageJSON(name, baseUrl);
@@ -65,7 +56,7 @@ const entry = `
         const lameEntry = join(dirname(lamePath), JSON.parse(readFileSync(lamePath, "utf8")).module);
         lame = await import(pathToFileURL(lameEntry).href);
         model = bindAudioCpp(koffi, message.libraryPath).loadSpeechModel(message.modelPath, {
-          backend: message.backend, threads: message.threads, espeakDirectory,
+          backend: message.backend, threads: message.threads,
         });
         reply({ ok: true, backend: model.backend, languages: model.languages });
       } else if (message.kind === "synthesize") {

@@ -40,12 +40,7 @@ export type AudioCppLibrary = {
    */
   readonly loadSpeechModel: (
     path: string,
-    options: {
-      readonly backend: string;
-      readonly threads: number;
-      /** The unpacked espeak-ng-data directory, for families that cannot find it themselves. */
-      readonly espeakDirectory?: () => string | undefined;
-    },
+    options: { readonly backend: string; readonly threads: number },
   ) => AudioCppModel;
 };
 
@@ -98,9 +93,6 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
     sessionFree: lib.func("audiocpp_session_free", "void", [Session]),
     sessionRun: lib.func("audiocpp_session_run", "int", [Session, Request, out(Result)]),
     resultFree: lib.func("audiocpp_result_free", "void", [Result]),
-    optionsCreate: lib.func("audiocpp_options_create", "void *", []),
-    optionsSet: lib.func("audiocpp_options_set", "int", ["void *", "const char *", "const char *"]),
-    optionsFree: lib.func("audiocpp_options_free", "void", ["void *"]),
     streamStart: lib.func("audiocpp_stream_start", "int", [Session, Request]),
     streamNextEvent: lib.func("audiocpp_stream_next_event", "int", [Session, out(Event)]),
     streamReset: lib.func("audiocpp_stream_reset", "int", [Session]),
@@ -155,25 +147,12 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
   const registry: [unknown] = [null];
   check(native.registryCreate(null, registry), "registry creation");
 
-  const openSession = (
-    model: unknown,
-    mode: string,
-    backend: string,
-    threads: number,
-    sessionOptions: Readonly<Record<string, string>>,
-  ) => {
+  const openSession = (model: unknown, mode: string, backend: string, threads: number) => {
     const session: [unknown] = [null];
-    const options = native.optionsCreate();
-    try {
-      for (const [key, value] of Object.entries(sessionOptions))
-        check(native.optionsSet(options, key, value), `session option ${key}`);
-      check(
-        native.sessionCreate(model, "tts", mode, { backend, device: 0, threads }, options, session),
-        `${backend} session creation`,
-      );
-    } finally {
-      native.optionsFree(options);
-    }
+    check(
+      native.sessionCreate(model, "tts", mode, { backend, device: 0, threads }, null, session),
+      `${backend} session creation`,
+    );
     return session[0];
   };
   // Chunked families name each piece; families that generate in one pass do not.
@@ -199,7 +178,7 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
 
   return {
     buildVersion: native.buildVersion(),
-    loadSpeechModel(path, { backend, threads, espeakDirectory }) {
+    loadSpeechModel(path, { backend, threads }) {
       const loaded: [unknown] = [null];
       check(native.modelLoad(registry[0], path, null, null, loaded), "model load");
       const model = loaded[0];
@@ -210,24 +189,12 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
       try {
         if (!streaming && !native.modelSupports(model, "tts", "offline"))
           throw new Error("This model does not support text to speech.");
-        let sessionOptions: Record<string, string> = {};
-        const open = (target: string) => {
-          try {
-            return openSession(model, mode, target, threads, sessionOptions);
-          } catch (error) {
-            // Some families read espeak-ng-data only from an explicit path; failing once unpacks it.
-            const directory = /espeak-ng-data directory/.test(String(error)) && espeakDirectory?.();
-            if (!directory) throw error;
-            sessionOptions = { [`${native.modelFamily(model)}.espeak_data_path`]: directory };
-            return openSession(model, mode, target, threads, sessionOptions);
-          }
-        };
         try {
-          session = open(backend);
+          session = openSession(model, mode, backend, threads);
         } catch (error) {
           if (backend === "cpu") throw error;
           sessionBackend = "cpu";
-          session = open("cpu");
+          session = openSession(model, mode, "cpu", threads);
         }
       } catch (error) {
         native.modelFree(model);

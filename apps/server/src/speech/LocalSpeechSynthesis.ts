@@ -65,8 +65,6 @@ type LocalModel = {
   readonly voiceOption?: false;
   /** Request options the model needs beyond voice and speed. */
   readonly options?: Readonly<Record<string, string>>;
-  /** Overrides the host's backend, for a model whose GPU output is broken. */
-  readonly backend?: "cpu";
   /** False for a model that rejects a language in the request, taking it from the voice. */
   readonly takesLanguage?: false;
 };
@@ -623,8 +621,6 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
       id,
     })),
     languages: ["en"],
-    // GPU backends return silence.
-    backend: "cpu",
     espeakData: {
       id: "pingdotgg/audio.cpp",
       revision: AUDIO_CPP_VERSION,
@@ -1473,7 +1469,7 @@ const make = Effect.gen(function* () {
       try: () =>
         loadLocalSynthesisModel({
           libraryPath,
-          backend: definition.backend ?? runtime.backend,
+          backend: runtime.backend,
           modelPath: paths.modelPath,
           ...(paths.espeakPath && {
             env: { AUDIOCPP_ESPEAK_DATA: paths.espeakPath, AUDIOCPP_ESPEAK_CACHE: espeakCache },
