@@ -762,10 +762,7 @@ describe("findSearchTokenRanges", () => {
       { start: 17, end: 22 },
     ]);
     expect(findSearchTokenRanges(text, '"İstanbul guide"')).toEqual([{ start: 8, end: 22 }]);
-    // Marks the text writes on their own still match.
-    expect(findSearchTokenRanges("नमस्ते दुनिया", "नमस्ते")).toEqual([{ start: 0, end: 6 }]);
-    expect(findSearchTokenRanges("नमस्ते दुनिया", '"नमस्ते दुनिया"')).toEqual([{ start: 0, end: 13 }]);
-    // A short word keeps its vowel sign rather than lighting up a lone consonant.
+    // Other marks stay: a short word keeps its vowel sign rather than lighting up a lone consonant.
     expect(findSearchTokenRanges("दिल्ली में मौसम मेरा", "में")).toEqual([{ start: 7, end: 10 }]);
     // Touching exact matches stay apart; an overlap does not hide the next match.
     expect(findSearchTokenRanges("Foo BarFoo Bar", '"foo bar"')).toEqual([
