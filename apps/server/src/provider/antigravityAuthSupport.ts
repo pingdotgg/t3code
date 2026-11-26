@@ -29,6 +29,34 @@ export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
 export const ANTIGRAVITY_AUTH_BROWSER_MARKER = "__T3_ANTIGRAVITY_AUTH_URL__";
 export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
+export const ANTIGRAVITY_FAKE_SSH_CONNECTION = "127.0.0.1 0 127.0.0.1 0";
+export const ANTIGRAVITY_TERMINAL_LOGIN_METHOD = "terminal-login";
+
+const TERMINAL_LOGIN_RELEASE = [1, 5, 17] as const;
+
+export function parseAntigravityVersion(version: string | null | undefined) {
+  const match = /^(?:v|agy_acp_server_)?(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
+  return match === null
+    ? undefined
+    : ([Number(match[1]), Number(match[2]), Number(match[3])] as const);
+}
+
+export function compareAntigravityVersions(
+  left: ReadonlyArray<number>,
+  right: ReadonlyArray<number>,
+) {
+  for (let index = 0; index < 3; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/** Whether a runtime's known version supports file-storage env and `terminal-login` without fake SSH. */
+function antigravitySupportsTerminalLogin(version: string | null | undefined): boolean {
+  const parsed = parseAntigravityVersion(version);
+  return parsed !== undefined && compareAntigravityVersions(parsed, TERMINAL_LOGIN_RELEASE) >= 0;
+}
 
 const maxAuthorizationUrlLength = 16_384;
 const maxBrowserHelperLineLength =
@@ -73,6 +101,7 @@ const removedEnvironmentKeys = new Set([
   "AGY_ACP_ENABLE_OAUTH",
   "GEMINI_HOME",
   "AGY_ACP_FORCE_FILE_STORAGE",
+  "AGY_CLI_FORCE_FILE_TOKEN_STORAGE",
   "AGY_CLI_DISABLE_AUTO_UPDATE",
   "BROWSER",
   "PYTHONUNBUFFERED",
@@ -204,6 +233,7 @@ function antigravityEnvironment(
   baseEnv: NodeJS.ProcessEnv,
   auth: AntigravityAuthConfig,
   runtimeTempDirectory?: string,
+  runtimeVersion?: string | null,
 ) {
   const environment: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -219,6 +249,8 @@ function antigravityEnvironment(
         : {};
   // Each launch unpacks about 1 GB; use T3-owned temp so the driver can reclaim files after force-kill.
   const tempDirectory = runtimeTempDirectory ?? profile.tempDirectory;
+  const needsFakeSsh =
+    auth.authMethod === "oauth-personal" && !antigravitySupportsTerminalLogin(runtimeVersion);
   return {
     ...environment,
     ...credential,
@@ -227,10 +259,15 @@ function antigravityEnvironment(
     baseEnv.SSL_CERT_DIR === undefined
       ? { SSL_CERT_FILE: profile.caBundlePath }
       : {}),
-    // The 1.5 CLI ignores AGY_ACP_FORCE_FILE_STORAGE and keeps Google sign-ins in one OS keyring
-    // entry for every profile, unless it believes it runs over SSH. Sign-in then uses `--login`.
+    // 1.5.17+ keeps tokens in the profile via AGY_CLI_FORCE_FILE_TOKEN_STORAGE and avoids browser
+    // popups via ACP `terminal-login`; older or unversioned runtimes still rely on SSH detection.
     ...(auth.authMethod === "oauth-personal"
-      ? { SSH_CONNECTION: baseEnv.SSH_CONNECTION || "127.0.0.1 0 127.0.0.1 0" }
+      ? {
+          AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
+          ...(needsFakeSsh
+            ? { SSH_CONNECTION: baseEnv.SSH_CONNECTION || ANTIGRAVITY_FAKE_SSH_CONNECTION }
+            : {}),
+        }
       : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
@@ -545,7 +582,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 });
 
 export function buildAntigravityAcpSpawnInput(input: {
-  readonly installation: { readonly executablePath: string };
+  readonly installation: { readonly executablePath: string; readonly version?: string | null };
   readonly profile: AntigravityProfile;
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
@@ -568,6 +605,7 @@ export function buildAntigravityAcpSpawnInput(input: {
       input.baseEnv ?? process.env,
       input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
       input.runtimeTempDirectory,
+      input.installation.version,
     ),
     extendEnv: false,
   };

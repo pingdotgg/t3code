@@ -18,6 +18,7 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const antigravityTerminalLogin = process.env.T3_ACP_ANTIGRAVITY_TERMINAL_LOGIN === "1";
 const antigravityThoughtLevel = process.env.T3_ACP_ANTIGRAVITY_THOUGHT_LEVEL === "1";
 const antigravityResumeThoughtLevel = process.env.T3_ACP_RESUME_THOUGHT_LEVEL;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
@@ -608,17 +609,33 @@ const program = Effect.gen(function* () {
           },
           ...(supportsV2Management ? { providers: {} } : {}),
         },
-        ...(initializeAuthMethodId
+        ...(antigravityProfile && antigravityTerminalLogin && request.capabilities?.auth?.terminal
           ? {
               authMethods: [
                 {
                   type: "agent" as const,
-                  methodId: initializeAuthMethodId,
-                  name: "Mock agent authentication",
+                  methodId: "oauth-personal",
+                  name: "Log in with Google",
+                },
+                {
+                  type: "terminal" as const,
+                  methodId: "terminal-login",
+                  name: "Log in with Google (terminal)",
+                  args: ["acp", "--login"],
                 },
               ],
             }
-          : {}),
+          : initializeAuthMethodId
+            ? {
+                authMethods: [
+                  {
+                    type: "agent" as const,
+                    methodId: initializeAuthMethodId,
+                    name: "Mock agent authentication",
+                  },
+                ],
+              }
+            : {}),
       };
     }),
   );
@@ -629,11 +646,15 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         if (
           request.methodId !== "oauth-personal" &&
+          !(antigravityTerminalLogin && request.methodId === "terminal-login") &&
           !(request.methodId === "gemini-api-key" && geminiApiKey)
         ) {
           return yield* AcpError.AcpRequestError.invalidParams(
             `Mock Antigravity rejected auth method ${request.methodId}.`,
           );
+        }
+        if (requiresAuthentication && request.methodId === "terminal-login") {
+          return yield* AcpError.AcpRequestError.authRequired();
         }
       } else if (advertisedAuthMethodId && request.methodId !== advertisedAuthMethodId) {
         return yield* AcpError.AcpRequestError.invalidParams(

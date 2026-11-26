@@ -14,11 +14,12 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
-  applyAntigravityAcpModelSelection,
+  antigravityAuthMethodId,
   antigravityPermissionDisposition,
   antigravityServesT3Code,
   antigravitySessionMeta,
   antigravitySessionMode,
+  applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
 } from "./AntigravityAcpSupport.ts";
 
@@ -69,6 +70,28 @@ describe("antigravityServesT3Code", () => {
     ["custom", true],
   ] as const)("%s → %s", (version, serves) => {
     expect(antigravityServesT3Code(version)).toBe(serves);
+  });
+});
+
+describe("antigravityAuthMethodId", () => {
+  const withTerminalLogin: EffectAcpSchema.InitializeResponse = {
+    protocolVersion: 1,
+    authMethods: [
+      { id: "oauth-personal", name: "Log in with Google" },
+      { id: "terminal-login", name: "Log in with Google (terminal)", type: "terminal" },
+    ],
+  };
+  const withoutTerminalLogin: EffectAcpSchema.InitializeResponse = {
+    protocolVersion: 1,
+    authMethods: [{ id: "oauth-personal", name: "Log in with Google" }],
+  };
+
+  it("prefers terminal-login for oauth-personal only when advertised and leaves other methods unchanged", () => {
+    expect(antigravityAuthMethodId("oauth-personal", withTerminalLogin)).toBe("terminal-login");
+    expect(antigravityAuthMethodId("oauth-personal", withoutTerminalLogin)).toBe("oauth-personal");
+    expect(antigravityAuthMethodId("oauth-business", withTerminalLogin)).toBe("oauth-business");
+    expect(antigravityAuthMethodId("gemini-api-key", withTerminalLogin)).toBe("gemini-api-key");
+    expect(antigravityAuthMethodId("agent-platform", withTerminalLogin)).toBe("agent-platform");
   });
 });
 

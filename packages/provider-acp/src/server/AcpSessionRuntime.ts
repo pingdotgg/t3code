@@ -137,7 +137,9 @@ export interface AcpSessionRuntimeOptions {
     readonly title?: string;
     readonly version: string;
   };
-  readonly authMethodId?: string;
+  readonly authMethodId?:
+    | string
+    | ((initializeResult: EffectAcpSchema.InitializeResponse) => string | undefined);
   /** Authenticate before opening: Antigravity selects its credential source from the method. */
   readonly authenticateEagerly?: boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -2407,12 +2409,16 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   const startOnce = Effect.gen(function* () {
     const initializeResult = yield* initialize;
+    const configuredAuthMethodId = (
+      typeof options.authMethodId === "function"
+        ? options.authMethodId(initializeResult)
+        : options.authMethodId
+    )?.trim();
 
     const authenticateAfterRequired = Effect.fn("AcpSessionRuntime.authenticateAfterRequired")(
       function* (
         authRequiredError: EffectAcpErrors.AcpError,
       ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
-        const configuredAuthMethodId = options.authMethodId?.trim();
         const authMethod = selectAcpAgentAuthMethod(
           initializeResult.authMethods,
           configuredAuthMethodId,
@@ -2514,7 +2520,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       // The configured method is authoritative here: Antigravity accepts
       // methods (API key, Vertex) it does not list in `initialize`.
       const authenticatePayload = {
-        methodId: options.authMethodId ?? "",
+        methodId: configuredAuthMethodId ?? "",
       } satisfies EffectAcpSchema.AuthenticateRequest;
       yield* runLoggedRequest(
         "authenticate",

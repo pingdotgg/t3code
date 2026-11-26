@@ -39,6 +39,7 @@ import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import { brokenRuntimeError } from "../providerCompatibility.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
+  ANTIGRAVITY_FAKE_SSH_CONNECTION,
   antigravityAuthConfigIssue,
   antigravityAuthLabel,
   antigravityAuthUsesBrowser,
@@ -161,7 +162,10 @@ export const AntigravityDriver: ProviderDriver<
       gcpLocation: settings.gcpLocation,
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
-    const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    const processEnvironment = yield* mergeProviderInstanceEnvironment(
+      environment,
+      yield* HostProcess.Environment,
+    );
     const userHome = resolveAntigravityUserHome(
       yield* HostProcess.Platform,
       processEnvironment,
@@ -439,8 +443,12 @@ export const AntigravityDriver: ProviderDriver<
       const { spawn } = yield* prepareSpawn(cwd, processEnvironment);
       const failed = (detail: string, cause?: unknown) =>
         new ProviderSetupError({ instanceId, operation: "start", detail, cause });
-      // Without a display it prints the link only, instead of opening a browser on this machine.
-      const { DISPLAY: _display, WAYLAND_DISPLAY: _wayland, ...env } = spawn.env ?? {};
+      // Without a display (Linux) or SSH_* (macOS/Windows), `--login` opens a host browser.
+      const { DISPLAY: _display, WAYLAND_DISPLAY: _wayland, ...spawnEnv } = spawn.env ?? {};
+      const env = {
+        ...spawnEnv,
+        SSH_CONNECTION: spawnEnv.SSH_CONNECTION || ANTIGRAVITY_FAKE_SSH_CONNECTION,
+      };
       const child = yield* spawner
         .spawn(
           ChildProcess.make(spawn.command, [...spawn.args, "--login"], {

@@ -20,8 +20,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import {
+  ANTIGRAVITY_TERMINAL_LOGIN_METHOD,
+  compareAntigravityVersions,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
+  parseAntigravityVersion,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -57,19 +60,6 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly authMethod?: AntigravityAuthMethod;
 }
 
-function parseAntigravityVersion(version: string | null | undefined) {
-  const match = /^(?:v|agy_acp_server_)?(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
-  return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function compareVersions(left: ReadonlyArray<number>, right: ReadonlyArray<number>) {
-  for (let index = 0; index < 3; index++) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return 0;
-}
-
 // `agy acp` 1.5.1 offers every model to every ACP client; older runtimes allowlist editors.
 export const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
 // `agy acp` 1.5.0 steers a running turn with the next prompt; the 1.4 harness queues it.
@@ -79,14 +69,28 @@ export const antigravitySteersWithPrompt = (
   initializeResult: EffectAcpSchema.InitializeResponse,
 ) => {
   const parsed = parseAntigravityVersion(initializeResult.agentInfo?.version);
-  return parsed !== undefined && compareVersions(parsed, PROMPT_STEERING_RELEASE) >= 0;
+  return parsed !== undefined && compareAntigravityVersions(parsed, PROMPT_STEERING_RELEASE) >= 0;
 };
 
 /** Whether a runtime that reported its version serves T3 Code, not only allowlisted editors. */
 export const antigravityServesT3Code = (version: string) => {
   const parsed = parseAntigravityVersion(version);
-  return parsed === undefined || compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0;
+  return parsed === undefined || compareAntigravityVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0;
 };
+
+/** Prefer `terminal-login` when advertised so personal OAuth never opens a host browser in ACP sessions. */
+export function antigravityAuthMethodId(
+  authMethod: AntigravityAuthMethod,
+  initializeResult: EffectAcpSchema.InitializeResponse,
+): string {
+  if (
+    authMethod === "oauth-personal" &&
+    initializeResult.authMethods?.some((method) => method.id === ANTIGRAVITY_TERMINAL_LOGIN_METHOD)
+  ) {
+    return ANTIGRAVITY_TERMINAL_LOGIN_METHOD;
+  }
+  return authMethod;
+}
 
 export const antigravityAppendsSystemPrompt = (
   initializeResult: EffectAcpSchema.InitializeResponse,
@@ -115,11 +119,13 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   EffectAcpErrors.AcpError,
   SecureRandom.SecureRandom | Scope.Scope
 > {
+  const authMethod = input.authMethod ?? "oauth-personal";
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
-      authMethodId: input.authMethod ?? "oauth-personal",
+      authMethodId: (initializeResult) => antigravityAuthMethodId(authMethod, initializeResult),
       authenticateEagerly: true,
+      authenticateOnAuthRequired: false,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
       clientInfo: { name: "t3-code", title: "T3 Code", version: packageJson.version },
@@ -127,6 +133,9 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
         antigravitySessionMeta(initializeResult, input.sessionSystemPromptAppend),
       clientCapabilities: {
         ...input.clientCapabilities,
+        ...(authMethod === "oauth-personal"
+          ? { auth: { ...input.clientCapabilities?.auth, terminal: true } }
+          : {}),
         // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.
         fs: {
           readTextFile: input.clientFileReads === true,
