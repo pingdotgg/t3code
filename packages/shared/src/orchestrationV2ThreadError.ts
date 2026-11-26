@@ -72,9 +72,10 @@ export function latestExecutedRun(
 }
 
 /**
- * Work started now would run in the project checkout, not the worktree the thread asked for. A
- * failed or interrupted setup leaves the request standing until a worktree exists or later work
- * has run past it.
+ * Work started now would run in the project checkout, not the worktree the thread asked for, or
+ * in a worktree that cancelling setup still removes (its path is saved before the setup script
+ * runs). A failed or interrupted setup leaves the request standing until a worktree exists or later
+ * work has run past it.
  */
 export function orchestrationV2WorktreePending(
   worktreePath: string | null,
@@ -82,10 +83,9 @@ export function orchestrationV2WorktreePending(
 ): boolean {
   const latest = latestExecutedRun(runs);
   return (
-    worktreePath === null &&
     (latest?.status === "preparing" ||
-      latest?.status === "failed" ||
-      latest?.status === "interrupted") &&
+      (worktreePath === null &&
+        (latest?.status === "failed" || latest?.status === "interrupted"))) &&
     latest.startedAt === null &&
     latest.workspacePreparation?.type === "worktree"
   );
