@@ -599,6 +599,7 @@ export const ORCHESTRATOR_APPROVAL_OPTIONS = [
 
 export const ORCHESTRATOR_APPROVAL_ISSUER = "t3-environment" as const;
 export const ORCHESTRATOR_APPROVAL_AUDIENCE = "claude-review-gate" as const;
+export const ORCHESTRATOR_APPROVAL_BODY_SUFFIX = "\n\nEnd of exact comment body." as const;
 
 const OrchestratorApprovalRepository = TrimmedNonEmptyString.check(
   Schema.isPattern(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
@@ -653,7 +654,7 @@ export function orchestratorApprovalQuestion(input: OrchestratorApprovalQuestion
     JSON.stringify(canonicalApprovalJson(input.scope), null, 2),
     "",
     "Exact comment body:",
-    input.body,
+    `${input.body}${ORCHESTRATOR_APPROVAL_BODY_SUFFIX}`,
   ].join("\n");
 }
 

@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   EventId,
   NodeId,
+  ORCHESTRATOR_APPROVAL_BODY_SUFFIX,
   ORCHESTRATOR_APPROVAL_OPTIONS,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -104,6 +105,7 @@ const events = (
     readonly answerOrigin?: { readonly surface: "web" | "cli" } | null;
     readonly completionOrigin?: { readonly surface: "web" | "cli" } | null;
     readonly completionCommandId?: CommandId;
+    readonly body?: string;
     readonly questionText?: string;
     readonly answer?: string;
   } = {},
@@ -112,7 +114,7 @@ const events = (
   const cardQuestion = {
     id: QUESTION_ID,
     header: "Approval",
-    question: overrides.questionText ?? question(),
+    question: overrides.questionText ?? question(input({ body: overrides.body ?? BODY })),
     options,
     multiSelect: false,
     allowCustomAnswer: false,
@@ -266,6 +268,19 @@ it.effect("binds the exact body and human answer into a receipt payload", () =>
       (payload as Record<string, unknown>).exp,
       Math.floor(NOW.epochMilliseconds / 1_000) + 24 * 60 * 60,
     );
+  }),
+);
+
+it.effect("keeps a body ending in a newline stable through question trimming", () =>
+  Effect.gen(function* () {
+    const body = `${BODY}\n`;
+    const exactQuestion = question(input({ body }));
+    assert.equal(exactQuestion.trim(), exactQuestion);
+    assert.isTrue(exactQuestion.endsWith(ORCHESTRATOR_APPROVAL_BODY_SUFFIX));
+
+    const payload = yield* build(input({ body }), events({ body }));
+    assert.equal(payload.body, body);
+    assert.equal(payload.question, exactQuestion);
   }),
 );
 
