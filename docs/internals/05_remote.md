@@ -19,6 +19,13 @@ execution model.
 - Pull request routing trust covers the saved route set: adding or changing a route revokes trust;
   reordering does not.
 
+## Direct routes and T3 Connect
+
+The connection driver starts T3 Connect if a direct route answers the identity check and then
+stalls while opening a session. T3 Connect races that route and subsequent direct attempts.
+It can reach a different server, such as a preview app sharing the home directory, so an
+incompatible relay server only surfaces if no direct route connects.
+
 ## Peer links
 
 A [peer link](../../apps/server/src/peer/PeerLinks.ts) lets one environment's agents work in another
