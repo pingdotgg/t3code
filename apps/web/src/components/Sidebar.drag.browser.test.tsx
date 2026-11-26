@@ -19,7 +19,7 @@ import { act, render } from "../../test/render";
 import { makeThreadFixture } from "../test-fixtures";
 import { SidebarSearchResultRow } from "./sidebar/SidebarThreadRow";
 
-// The socket is the only fake layer; see test/appScenarios.renders.tsx.
+// The socket is the only fake layer.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
   const [actual, { fakeDriver }, Layer] = await Promise.all([
     importOriginal<{ readonly ConnectionDriver: Context.Key<unknown, FakeDriver> }>(),

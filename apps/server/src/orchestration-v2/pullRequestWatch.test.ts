@@ -170,6 +170,42 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it.each([false, true])(
+    "reports CI that passes during registration once (required: %s)",
+    (required) => {
+      const green = detail({ checks: [{ ...check("test", "success"), required }] });
+      for (const awaitingBaseline of ["all", "checks"] as const) {
+        const first = evaluatePullRequestWatch(
+          watch({ awaitingBaseline, checksPending: true }),
+          green,
+          noRemarks,
+        );
+        assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required }]);
+        assert.isFalse(first.next.checksPending);
+        assert.deepEqual(evaluatePullRequestWatch(first.next, green, noRemarks).changes, []);
+      }
+    },
+  );
+
+  it("does not announce an unchanged required gate while optional CI still runs", () => {
+    const pending = detail({
+      checks: [{ ...check("test", "success"), required: true }, check("advisory", "pending")],
+    });
+    const first = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      pending,
+      noRemarks,
+    );
+    assert.deepEqual(first.changes, []);
+    const green = {
+      ...pending,
+      checks: pending.checks.map((check) => ({ ...check, status: "success" as const })),
+    };
+    const finished = evaluatePullRequestWatch(first.next, green, noRemarks);
+    assert.deepEqual(finished.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(evaluatePullRequestWatch(finished.next, green, noRemarks).changes, []);
+  });
+
   it("baselines existing failures and conflicts, then reports new ones", () => {
     const broken = detail({
       checks: [check("lint", "failure"), check("test", "pending")],

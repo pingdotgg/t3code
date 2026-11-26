@@ -24,6 +24,9 @@ on:
         description: Install link for the client with this fingerprint
         value: ${{ jobs.android.outputs.client || jobs.ios.outputs.client }}
 
+permissions:
+  contents: read
+
 jobs:
   android:
     name: Build
