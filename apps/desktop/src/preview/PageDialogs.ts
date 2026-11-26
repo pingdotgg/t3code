@@ -15,6 +15,9 @@ export interface PageDialogHold {
   readonly current: () => DesktopPreviewDialog | null;
 }
 
+// Ids are process-wide so an answer for a replaced guest's dialog cannot match its successor's.
+let nextDialogId = 0;
+
 // Electron shows page dialogs as a native app-modal box from the `-run-dialog` event and never
 // closes it when CDP answers. Replacing that listener keeps the dialog pending for the tab's UI.
 // Electron does not support `prompt()` and rejects it at once; we keep that.
@@ -23,7 +26,6 @@ export function holdPageDialogs(
   changed: (dialog: DesktopPreviewDialog | null) => void,
 ): PageDialogHold {
   let pending: DialogCallback | null = null;
-  let nextId = 0;
   let shown: DesktopPreviewDialog | null = null;
   const clear = () => {
     if (pending === null) return;
@@ -47,9 +49,9 @@ export function holdPageDialogs(
     const previous = pending;
     if (previous !== null) deliver(previous, false, "");
     pending = callback;
-    nextId += 1;
+    nextDialogId += 1;
     shown = {
-      id: nextId,
+      id: nextDialogId,
       type: info.dialogType,
       message: info.messageText,
       defaultValue: info.defaultPromptText,

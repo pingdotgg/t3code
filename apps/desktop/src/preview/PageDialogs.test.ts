@@ -24,7 +24,7 @@ describe("holdPageDialogs", () => {
     expect(native).not.toHaveBeenCalled();
     expect(callback).not.toHaveBeenCalled();
     expect(changed).toHaveBeenLastCalledWith({
-      id: 1,
+      id: expect.any(Number),
       type: "confirm",
       message: "Delete it?",
       defaultValue: "",
@@ -34,19 +34,32 @@ describe("holdPageDialogs", () => {
   it("answers only the dialog it was meant for, once", () => {
     const { contents, changed, hold, callback } = setup();
     contents.emit("-run-dialog", info, callback);
+    const id = hold.current()!.id;
 
-    expect(hold.answer(true, 1)).toBe(true);
+    expect(hold.answer(true, id)).toBe(true);
     expect(hold.answer(false)).toBe(false);
     expect(callback).toHaveBeenCalledExactlyOnceWith(true, "");
     expect(changed).toHaveBeenLastCalledWith(null);
 
     const next = vi.fn();
     contents.emit("-run-dialog", info, next);
-    expect(hold.answer(true, 1)).toBe(false);
+    expect(hold.answer(true, id)).toBe(false);
     expect(next).not.toHaveBeenCalled();
 
     contents.emit("-run-dialog", info, callback);
     expect(next).toHaveBeenCalledExactlyOnceWith(false, "");
+  });
+
+  it("does not let an answer for a replaced guest's dialog match its successor's", () => {
+    const replaced = setup();
+    replaced.contents.emit("-run-dialog", info, replaced.callback);
+    const staleId = replaced.hold.current()!.id;
+
+    const successor = setup();
+    successor.contents.emit("-run-dialog", info, successor.callback);
+
+    expect(successor.hold.answer(true, staleId)).toBe(false);
+    expect(successor.callback).not.toHaveBeenCalled();
   });
 
   // A frame without the renderer prompt override reaches the hold
@@ -61,7 +74,7 @@ describe("holdPageDialogs", () => {
     expect(prompt).toHaveBeenCalledExactlyOnceWith(false, "");
     expect(changed).not.toHaveBeenCalled();
     expect(hold.current()).toEqual({
-      id: 1,
+      id: expect.any(Number),
       type: "confirm",
       message: "Delete it?",
       defaultValue: "",
