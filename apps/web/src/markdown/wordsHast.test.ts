@@ -225,6 +225,15 @@ describe("wordsHast", () => {
     ).toBe(
       '<ul dir="ltr">\n<li>wide<br>\n<span data-leading-whitespace="">  </span>continued</li>\n</ul>',
     );
+    // The tab after five spaces only reaches column 8, so `bar` sits two columns past `foo`.
+    expect(
+      wordsHtml("-     \tfoo\n          bar", {
+        breaks: true,
+        extensions: { userMessage: true, leadingWhitespace: true },
+      }),
+    ).toBe(
+      '<ul dir="ltr">\n<li>foo<br>\n<span data-leading-whitespace="">  </span>bar</li>\n</ul>',
+    );
   });
 
   it("gives elements the source positions components read", () => {
