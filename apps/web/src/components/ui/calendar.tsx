@@ -42,8 +42,15 @@ const defaultComponents = {
 
 // DayPicker otherwise formats and labels with date-fns enUS, whatever the app language.
 function localizedFormatters(locale: string | undefined, timeZone: string | undefined) {
-  const caption = new Intl.DateTimeFormat(locale, { month: "long", year: "numeric", timeZone });
-  const monthDropdown = new Intl.DateTimeFormat(locale, { month: "short", timeZone });
+  // DayPicker's grid is always Gregorian, so the month names must be too (fa-IR defaults to Persian).
+  const calendar = "gregory";
+  const caption = new Intl.DateTimeFormat(locale, {
+    month: "long",
+    year: "numeric",
+    calendar,
+    timeZone,
+  });
+  const monthDropdown = new Intl.DateTimeFormat(locale, { month: "short", calendar, timeZone });
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone });
   const formatters = {
     formatCaption: (month: Date) => caption.format(month),

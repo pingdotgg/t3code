@@ -29,3 +29,9 @@ it("labels the month and weekdays in the app language", () => {
 it("keeps two-letter English weekdays", () => {
   expect(renderNovember("en-US").weekdays).toEqual(["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]);
 });
+
+it("names the grid's Gregorian month under a non-Gregorian host locale", () => {
+  const { grid, caption } = renderNovember("fa-IR");
+  expect(grid).toBe("نوامبر ۲۰۲۶");
+  expect(caption).toBe("نوامبر ۲۰۲۶");
+});
