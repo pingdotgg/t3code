@@ -129,6 +129,7 @@ const reply = (
   id: string,
   runId: string,
   phase?: "commentary" | "partial_answer" | "final_answer",
+  delivery?: "async",
 ): OrchestrationV2TurnItem => ({
   ...itemBase(id, runId),
   type: "assistant_message",
@@ -136,6 +137,7 @@ const reply = (
   text: id,
   streaming: false,
   ...(phase === undefined ? {} : { phase }),
+  ...(delivery === undefined ? {} : { delivery }),
 });
 
 const tool = (
@@ -391,6 +393,8 @@ describe("deriveThreadMap", () => {
           prompt("unphased", "Two"),
           reply("unphased-first", "unphased"),
           reply("unphased-last", "unphased"),
+          // Sent mid-turn apart from the answer, so it never becomes the answer.
+          reply("unphased-async", "unphased", undefined, "async"),
           prompt("live", "Three"),
           reply("live-first", "live"),
           // The window starts inside this turn: its prompt and earlier work are not loaded.

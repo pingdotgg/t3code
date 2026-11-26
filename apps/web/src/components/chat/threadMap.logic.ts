@@ -280,7 +280,7 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
         });
       } else if (item.type === "assistant_message") {
         firstAssistant ??= item.id;
-        lastAssistant = item.id;
+        if (item.delivery !== "async") lastAssistant = item.id;
         if (item.phase === "commentary") firstCommentary ??= item.id;
         if (item.phase === "final_answer") finalAnswer = item.id;
       } else if (

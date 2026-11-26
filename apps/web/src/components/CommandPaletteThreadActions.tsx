@@ -23,6 +23,7 @@ import { useGT } from "gt-react";
 
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import { useThreadMapChosen, useThreadMapViewStore } from "../threadMapViewStore";
+import { useThreadFindOpen } from "./chat/threadFindStore";
 import {
   ADDON_ICON_CLASS,
   ITEM_ICON_CLASS,
@@ -69,6 +70,8 @@ export function useCommandPaletteThreadActions(input: {
   const gt = useGT();
   const { readMenu } = useThreadActionMenu({ ...input, canShareWithGuest: false });
   const mapChosen = useThreadMapChosen(input.threadRef);
+  // Find keeps the conversation on screen, so the map choice would not show until it closed.
+  const findOpen = useThreadFindOpen(input.threadRef, true);
   const setThreadMapShown = useThreadMapViewStore((state) => state.setThreadMapShown);
   const menu = readMenu();
   const { threadRef } = input;
@@ -112,13 +115,17 @@ export function useCommandPaletteThreadActions(input: {
 
   return [
     ...menu.items.flatMap((item) => toPaletteItem(item) ?? []),
-    {
-      kind: "action",
-      value: "thread-action:map",
-      searchTerms: ["map", "conversation", "view"],
-      title: mapChosen ? gt("Show conversation") : gt("Show thread map"),
-      icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
-      run: async () => setThreadMapShown(threadRef, !mapChosen),
-    },
+    ...(findOpen
+      ? []
+      : [
+          {
+            kind: "action" as const,
+            value: "thread-action:map",
+            searchTerms: ["map", "conversation", "view"],
+            title: mapChosen ? gt("Show conversation") : gt("Show thread map"),
+            icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
+            run: async () => setThreadMapShown(threadRef, !mapChosen),
+          },
+        ]),
   ];
 }

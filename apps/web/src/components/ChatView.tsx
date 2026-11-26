@@ -2939,6 +2939,12 @@ export default function ChatView(props: ChatViewProps) {
   // Find and a side pane work on the conversation, so the map steps aside for them.
   const threadMapRef = isServerThread && !embedded && !isThreadFindActive ? activeThreadRef : null;
   const threadMapShown = threadMapChosen && threadMapRef !== null;
+  const citedKey = citationRequest?.key ?? null;
+  const showCitedConversation = useStableCallback(() => {
+    if (citedKey !== null && activeThreadRef !== null) setThreadMapShown(activeThreadRef, false);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a citation arrives by navigation, and only the conversation can show the cited message
+  useEffect(showCitedConversation, [citedKey, showCitedConversation]);
   const setThreadViewStable = useStableCallback((view: "conversation" | "map") => {
     if (activeThreadRef !== null) setThreadMapShown(activeThreadRef, view === "map");
   });
