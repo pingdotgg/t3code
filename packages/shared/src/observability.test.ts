@@ -140,6 +140,53 @@ describe("truncateTraceAttributes", () => {
 });
 
 describe("observability", () => {
+  it.effect("samples only fast successful SQLite spans in the local file", () =>
+    Effect.gen(function* () {
+      const names: Array<string> = [];
+      const delegates: Array<Tracer.Span> = [];
+      const tracer = yield* makeLocalFileTracer({
+        filePath: "unused",
+        maxBytes: 1024,
+        maxFiles: 1,
+        batchWindowMs: 1000,
+        sampleFastSqliteSpans: true,
+        sink: {
+          filePath: "unused",
+          push: (r) => names.push(r.name),
+          flush: Effect.void,
+          flushSync: () => {},
+          close: () => Effect.void,
+        },
+        delegate: Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            delegates.push(span);
+            return span;
+          },
+        }),
+      });
+      for (const name of ["fast", "sample", "slow", "failed", "logged", "other"]) {
+        const parent = Tracer.externalSpan({
+          traceId: "1".repeat(30) + (name === "sample" ? "00" : "01"),
+          spanId: "1".repeat(16),
+        });
+        const span = yield* Effect.makeSpan(name, { parent }).pipe(
+          Effect.provideService(Tracer.Tracer, tracer),
+        );
+        if (name !== "other") span.attribute("db.system.name", "sqlite");
+        if (name === "logged") span.event("diagnostic", span.status.startTime);
+        span.end(
+          span.status.startTime + (name === "slow" ? 100_000_000n : 1n),
+          name === "failed" ? Exit.fail("busy") : Exit.void,
+        );
+      }
+      assert.deepEqual(names, ["sample", "slow", "failed", "logged", "other"]);
+      assert.isTrue(
+        delegates.length === 6 && delegates.every((span) => span.status._tag === "Ended"),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "preserves successful results without retaining them in sampled or unsampled spans",
     () =>

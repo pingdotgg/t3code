@@ -181,6 +181,7 @@ export interface TraceSink {
 }
 
 export interface LocalFileTracerOptions extends TraceSinkOptions {
+  readonly sampleFastSqliteSpans?: boolean;
   readonly delegate?: Tracer.Tracer;
   readonly sink?: TraceSink;
 }
@@ -596,14 +597,17 @@ class LocalFileSpan implements Tracer.Span {
   attributes: Map<string, unknown>;
   events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]>;
   private readonly delegate: Tracer.Span;
+  private readonly sampleFastSqliteSpans: boolean;
   private readonly push: (record: EffectTraceRecord) => void;
 
   constructor(
     options: Parameters<Tracer.Tracer["span"]>[0],
     delegate: Tracer.Span,
     push: (record: EffectTraceRecord) => void,
+    sampleFastSqliteSpans: boolean,
   ) {
     this.delegate = delegate;
+    this.sampleFastSqliteSpans = sampleFastSqliteSpans;
     this.push = push;
     this.name = delegate.name;
     this.spanId = delegate.spanId;
@@ -632,9 +636,18 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (this.sampled) {
-      this.push(spanToTraceRecord(this));
-    }
+    if (!this.sampled) return;
+    if (
+      this.sampleFastSqliteSpans &&
+      this.attributes.get("db.system.name") === "sqlite" &&
+      ExitRuntime.isSuccess(traceExit) &&
+      this.events.length === 0 &&
+      endTime - this.status.startTime < 100_000_000n &&
+      !this.traceId.endsWith("00")
+    )
+      return;
+
+    this.push(spanToTraceRecord(this));
   }
 
   attribute(key: string, value: unknown): void {
@@ -683,7 +696,12 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
 
   return Tracer.make({
     span(spanOptions) {
-      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), sink.push);
+      return new LocalFileSpan(
+        spanOptions,
+        delegate.span(spanOptions),
+        sink.push,
+        options.sampleFastSqliteSpans === true,
+      );
     },
     ...(delegate.context ? { context: delegate.context } : {}),
   });
