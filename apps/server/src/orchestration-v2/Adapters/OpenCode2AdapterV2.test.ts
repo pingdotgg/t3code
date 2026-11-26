@@ -341,6 +341,8 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly previousHead?: string;
+    readonly instructions?: false;
   },
 ) =>
   Effect.gen(function* () {
@@ -361,17 +363,19 @@ const resumed = (
                   ? [out("job.list", { kind: "shell" }), reply("job.list", { data: [] })]
                   : emptyShellInventory),
               ])),
-        ...withInstructions([
-          ...(options?.supervised === true
-            ? [
-                out("agent.list", "<any>"),
-                reply("agent.list", agentList),
-                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
-                reply("session.update", null),
-              ]
-            : []),
-          ...entries,
-        ]),
+        ...(options?.instructions === false
+          ? entries
+          : withInstructions([
+              ...(options?.supervised === true
+                ? [
+                    out("agent.list", "<any>"),
+                    reply("agent.list", agentList),
+                    out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+                    reply("session.update", null),
+                  ]
+                : []),
+              ...entries,
+            ])),
       ],
       {
         ...(options?.version === undefined ? {} : { version: options.version }),
@@ -403,6 +407,15 @@ const resumed = (
         ...(options?.pendingBackgroundTasks === undefined
           ? {}
           : { pendingBackgroundTasks: options.pendingBackgroundTasks }),
+        ...(options?.previousHead === undefined
+          ? {}
+          : {
+              nativeConversationHeadRef: {
+                driver: OPENCODE_PROVIDER,
+                nativeId: options.previousHead,
+                strength: "weak" as const,
+              },
+            }),
       },
       threadId,
       modelSelection: bigPickle,
@@ -8378,6 +8391,108 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ),
         ],
         ["user: first?", "user: second?", "assistant: Both!"],
+      );
+    }),
+  );
+
+  it.effect.fails("shows a prompt another client sent while T3 was not watching the session", () =>
+    Effect.gen(function* () {
+      const previous = `msg_t3_turn_${SESSION}:attempt:previous`;
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.instructions.entry.put", {
+            sessionID: SESSION,
+            key: "t3-code",
+            value: "<any>",
+          }),
+          reply("session.instructions.entry.put", null),
+          out("message.list", "<any>"),
+          reply("message.list", {
+            data: [
+              {
+                id: "msg_external_idle",
+                time: { created: 1790656601800 },
+                type: "idle",
+                outcome: "succeeded",
+              },
+              {
+                id: "msg_external_reply",
+                time: {
+                  created: 1790656601600,
+                  streamed: 1790656601700,
+                  completed: 1790656601700,
+                },
+                type: "assistant",
+                agent: "build",
+                model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+                content: [{ type: "text", text: "Rayleigh scattering." }],
+                finish: "stop",
+                cost: 0,
+                tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+              },
+              {
+                id: "msg_external_gap",
+                time: { created: 1790656601500 },
+                text: "Why is the sky blue?",
+                type: "user",
+              },
+              { id: previous, time: { created: 1790656601400 }, text: "mine", type: "user" },
+            ],
+            cursor: {},
+          }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.text.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_answer",
+            ordinal: 0,
+            text: "Answer",
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { previousHead: previous, instructions: false },
+      );
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = yield* Fiber.join(collected);
+      assert.deepEqual(
+        seen.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          (event.turnItem.type === "user_message" || event.turnItem.type === "assistant_message")
+            ? [`${event.turnItem.type}: ${event.turnItem.text}`]
+            : [],
+        ),
+        [
+          "user_message: Why is the sky blue?",
+          "assistant_message: Rayleigh scattering.",
+          "assistant_message: Answer",
+        ],
+      );
+      assert.deepEqual(
+        [
+          ...new Set(
+            seen.flatMap((event) =>
+              event.type === "message.updated"
+                ? [`${event.message.role}: ${event.message.text}`]
+                : [],
+            ),
+          ),
+        ],
+        ["user: Why is the sky blue?", "assistant: Rayleigh scattering.", "assistant: Answer"],
+      );
+      assert.deepEqual(
+        seen.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "user_message" &&
+          event.turnItem.createdBy === "user"
+            ? [event.turnItem.creationSource]
+            : [],
+        ),
+        ["provider"],
       );
     }),
   );
