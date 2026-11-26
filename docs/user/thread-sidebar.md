@@ -186,6 +186,8 @@ when the thread settles** enabled in Settings > Projects > Actions. You can also
 `"stopOnSettle": true` on a `t3.json` action and import it there. Start the command through
 that action so T3 can stop its terminal and child processes. Commands started through an
 agent's own shell tools are managed by the provider.
+Settling also releases the devices the thread's agent opened, so another thread can use
+them. The devices stay booted.
 
 You can settle or snooze a thread while its environment is offline. The thread shows
 **Pending** (**Waiting to sync** on mobile), and the change is sent when the environment
