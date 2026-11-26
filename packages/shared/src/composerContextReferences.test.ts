@@ -625,5 +625,30 @@ describe("threadLinkContextReferences", () => {
       () => undefined,
     );
     expect(pasted).toEqual({ text, records: [] });
+    for (const [opening, inside, closing] of [
+      [">>", "> >", ">>"],
+      ["> >", ">>", "> >"],
+      [">>", "> >", "> >"],
+      ["> >", ">>", ">>"],
+    ]) {
+      for (const fence of ["~~~", "```md"]) {
+        const unclosed = `${opening} ${fence}\n${inside} <t3-thread://v2/local/t>`;
+        const quoted = `${unclosed}\n${closing} ${fence.slice(0, 3)}`;
+        expect(threadLinkContextReferences(quoted, [], () => "Task")).toEqual({
+          text: quoted,
+          records: [],
+        });
+        for (const after of ["", "> "]) {
+          const outside = `${after}<t3-thread://v2/local/t>`;
+          expect(threadLinkContextReferences(`${unclosed}\n${outside}`, [], () => "Task")).toEqual({
+            text: `${unclosed}\n${after}${reference("local", "t", "Task")}`,
+            records: [threadContextRecord(thread("local", "t"), "Task")],
+          });
+          const result = threadLinkContextReferences(`${quoted}\n${outside}`, [], () => "Task");
+          expect(result.text).toBe(`${quoted}\n${after}${reference("local", "t", "Task")}`);
+          expect(result.records).toEqual([threadContextRecord(thread("local", "t"), "Task")]);
+        }
+      }
+    }
   });
 });

@@ -14,6 +14,13 @@ const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 // A label stops at any bracket, so a run of unclosed brackets is scanned once, not once per bracket.
 const LABEL = String.raw`[^[\]\n]*`;
 const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
+const QUOTE_PREFIX = new RegExp(String.raw`^([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "gm");
+// Move inter-marker spacing before the quote so fence depth matches and source offsets stay intact.
+const threadLinkSource = (markdown: string) =>
+  markdown.replace(QUOTE_PREFIX, (_source, indent: string, quote: string) => {
+    const markers = quote.replace(/[ \t]/g, "");
+    return indent + " ".repeat(quote.length - markers.length) + markers;
+  });
 // CommonMark fences start on their own line (optional blockquotes, indentation, or list markers)
 // and close on a line with at least as many of the same marker; backtick info strings hold no `.
 // Quote markers are compared from the first `>`, so lines may indent them differently.
@@ -184,7 +191,8 @@ export function threadLinkRefs(
   const refs = new Map<string, ScopedThreadRef>();
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
+  const source = threadLinkSource(markdown);
+  for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
     const href =
       match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
@@ -202,12 +210,19 @@ export function replaceThreadLinks(
   replace: (link: ThreadLink, label: string | undefined) => string | undefined,
 ): string {
   if (!hasThreadLinks(markdown)) return markdown;
-  return markdown.replace(THREAD_LINK_OUTSIDE_CODE, (source, ...args) => {
-    const groups = args.at(-1) as Partial<
+  const source = threadLinkSource(markdown);
+  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
+  const parts: string[] = [];
+  let offset = 0;
+  for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
+    const groups = match.groups as Partial<
       Record<"angleHref" | "href" | "autolink" | "bare" | "label", string>
     >;
     const href = groups.angleHref ?? groups.href ?? groups.autolink ?? groups.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
-    return (link && replace(link, groups.label)) ?? source;
-  });
+    if (link === null) continue;
+    parts.push(markdown.slice(offset, match.index), replace(link, groups.label) ?? match[0]);
+    offset = pattern.lastIndex;
+  }
+  return parts.join("") + markdown.slice(offset);
 }
