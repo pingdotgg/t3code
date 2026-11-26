@@ -1523,6 +1523,45 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live(
+    "a stop while a prompt waits for a late session/load keeps that prompt from being sent",
+    () =>
+      Effect.gen(function* () {
+        const loadSettled = yield* Deferred.make<void>();
+        const promptStatuses: string[] = [];
+        const runtime = yield* AcpSessionRuntime.make({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_EMIT_LOAD_REPLAY: "1", T3_ACP_LOAD_NEVER_REPLIES: "1" },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          sessionLoadReplayIdleGap: "50 millis",
+          sessionLoadTimeout: "2 seconds",
+          sessionLoadReplayIdleReadiness: true,
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            event.method === "session/prompt"
+              ? Effect.sync(() => promptStatuses.push(event.status))
+              : event.method === "session/load" && event.status === "failed"
+                ? Deferred.succeed(loadSettled, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+        });
+        yield* runtime.start();
+        const prompting = yield* runtime
+          .prompt({ prompt: [{ type: "text", text: "hi" }] })
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* runtime.cancel;
+        expect((yield* Fiber.join(prompting)).stopReason).toBe("cancelled");
+        expect(yield* Deferred.isDone(loadSettled)).toBe(false);
+        yield* Deferred.await(loadSettled);
+        expect(promptStatuses).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live("treats replay idle as loaded when the agent opts in", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

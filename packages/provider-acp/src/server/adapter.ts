@@ -5725,13 +5725,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } else {
             if (update.sessionUpdate === "tool_call") return false;
             if (active?.finalized === false && active.tools.has(update.toolCallId)) return false;
-            owner = [...detached.values()].findLast((turn) => {
-              if (turn.nativeThreadId !== notification.sessionId) return false;
-              const owned = turn.tools.get(update.toolCallId);
-              if (owned?.backgroundCommandTaskId === undefined) return false;
-              const status = toolStatus(owned.status);
-              return status === "pending" || status === "running";
-            });
+            const owners = [...detached.values()].filter(
+              (turn) =>
+                turn.nativeThreadId === notification.sessionId &&
+                turn.tools.get(update.toolCallId)?.backgroundCommandTaskId !== undefined,
+            );
+            const announced = (yield* Ref.get(wakeBuffer)).some(
+              ({ update: frame }) =>
+                frame.sessionUpdate === "tool_call" && frame.toolCallId === update.toolCallId,
+            );
+            // The newest running command owns a reused call ID; with none running, a trailing
+            // result belongs to the newest settled one unless new work announced the ID since.
+            owner =
+              owners.findLast((turn) => {
+                const status = toolStatus(turn.tools.get(update.toolCallId)!.status);
+                return status === "pending" || status === "running";
+              }) ?? (announced ? undefined : owners.at(-1));
           }
           if (owner === undefined || owner.nativeThreadId !== notification.sessionId) return false;
           yield* emitTool(owner, event.toolCall);

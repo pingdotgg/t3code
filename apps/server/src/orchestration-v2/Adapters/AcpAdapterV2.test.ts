@@ -10816,13 +10816,19 @@ describe("AcpAdapterV2", () => {
       });
     const promptSettled = yield* Queue.unbounded<void>();
     let promptCount = 0;
+    const continuations: ProviderContinuationRequests.ProviderContinuationRequest[] = [];
     const adapter = yield* makeAcpAdapterV2({
       instanceId,
       selfInvocation: yield* resolveSelfInvocation(),
       testHooks: {
         afterPromptCallback: () => Queue.offer(promptSettled, undefined).pipe(Effect.asVoid),
       },
-      continuationRequests: { offer: () => Effect.void },
+      continuationRequests: {
+        offer: (request) =>
+          Effect.sync(() => {
+            continuations.push(request);
+          }),
+      },
       flavor: {
         driver: ACP_TEST_DRIVER,
         capabilities: AcpProviderCapabilitiesV2,
@@ -10908,7 +10914,7 @@ describe("AcpAdapterV2", () => {
         assert.equal(events.find((e) => e.type === "turn.terminal")?.status, "completed");
         return { input, events };
       });
-    return { run, runtime, send, complete };
+    return { run, runtime, send, complete, continuations };
   });
 
   function toolRows(
@@ -11278,6 +11284,17 @@ describe("AcpAdapterV2", () => {
             ),
             original,
           );
+          // Output that trails the settled command still belongs to its row, not to new work.
+          const late = yield* collectUpdate(
+            session.send({
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              status: "completed",
+              rawOutput: { stdout: "late output" },
+            }),
+          );
+          assert.deepEqual(toolRows(late, toolCallId, first.input.runId, "completed"), original);
+          assert.isEmpty(session.continuations);
         }
         const second = yield* session.run(2);
         const oldEvents = second.events.filter(

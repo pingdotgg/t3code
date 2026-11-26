@@ -1339,6 +1339,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }>
   >(Option.none());
   const lateLoadReplaySessionIdRef = yield* Ref.make<string | null>(null);
+  const waitingPromptStopRef = yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(
+    Option.none(),
+  );
   // Counts mode, config, and model writes sent to the agent and the mode and
   // config notifications it sent back. A late session/load response predates
   // all of them, even a write still pending or a notification that left the
@@ -2070,11 +2073,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   // Replay idle does not prove history is over: a prompt waits for the pending
   // session/load to answer, or for its load timeout, before it goes out.
+  // A stop during that wait has no prompt to cancel yet, so it resolves the wait instead.
   const awaitLateSessionLoad = Effect.gen(function* () {
     const late = yield* Ref.get(lateSessionLoadRef);
-    if (Option.isNone(late)) return undefined;
-    yield* Fiber.await(late.value.response);
-    return late.value.response;
+    if (Option.isNone(late)) return { stopped: false, settledLoad: undefined };
+    const stop = yield* Deferred.make<void>();
+    yield* Ref.set(waitingPromptStopRef, Option.some(stop));
+    const stopped = yield* Effect.raceFirst(
+      Fiber.await(late.value.response).pipe(Effect.as(false)),
+      Deferred.await(stop).pipe(Effect.as(true)),
+    ).pipe(Effect.ensuring(Ref.set(waitingPromptStopRef, Option.none())));
+    return { stopped, settledLoad: late.value.response };
   });
 
   // Adopts the agent's real session/load response after a replay-idle start.
@@ -2648,6 +2657,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   const cancel = Effect.gen(function* () {
     const started = yield* getStartedState;
+    const waitingPromptStop = yield* Ref.get(waitingPromptStopRef);
+    if (Option.isSome(waitingPromptStop)) {
+      yield* Deferred.succeed(waitingPromptStop.value, undefined);
+    }
     const activePrompt = yield* Ref.get(activePromptRef);
     const cancelPayload = {
       sessionId: started.sessionId,
@@ -2910,84 +2923,93 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           // Waited outside acquireUseRelease, whose acquire is uninterruptible: a stop during
           // the wait must not hang until the late session/load answers or times out.
           awaitLateSessionLoad.pipe(
-            Effect.flatMap((settledLoad) =>
-              Effect.acquireUseRelease(
-                promptDispatchSemaphore.withPermit(
-                  Effect.gen(function* () {
-                    const started = yield* getStartedState;
-                    yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
-                    yield* Ref.set(assistantUpdatesOpenRef, true);
-                    if (settledLoad !== undefined) {
-                      const late = yield* Ref.get(lateSessionLoadRef);
-                      if (Option.isNone(late) || late.value.response === settledLoad) {
-                        yield* Ref.set(lateLoadReplaySessionIdRef, null);
-                      }
-                    }
-                    const requestPayload = {
-                      sessionId: started.sessionId,
-                      ...payload,
-                    } satisfies EffectAcpSchema.PromptRequest;
-                    const completed = yield* Deferred.make<void>();
-                    const queued = yield* Deferred.make<void>();
-                    const fiber = yield* runLoggedRequest(
-                      "session/prompt",
-                      requestPayload,
-                      acp.agent
-                        .prompt(requestPayload)
-                        .pipe(
-                          Effect.provideService(EffectAcpProtocol.AcpOutgoingQueued, queued),
-                          Effect.ensuring(Deferred.succeed(queued, undefined)),
-                        ),
-                    ).pipe(Effect.forkIn(runtimeScope));
-                    const active = { fiber, completed, queued } satisfies AcpActivePrompt;
-                    yield* Ref.set(activePromptRef, Option.some(active));
-                    if (promptOptions?.dispatched) {
-                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
-                    }
-                    return active;
-                  }).pipe(notificationSemaphore.withPermit),
-                ),
-                (activePrompt) => {
-                  const settled = joinPrompt(activePrompt.fiber).pipe(
-                    Effect.tap(() =>
-                      closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
+            Effect.flatMap(({ stopped, settledLoad }) =>
+              stopped
+                ? Effect.succeed({
+                    _tag: "Settled" as const,
+                    response: { stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse,
+                  })
+                : Effect.acquireUseRelease(
+                    promptDispatchSemaphore.withPermit(
+                      Effect.gen(function* () {
+                        const started = yield* getStartedState;
+                        yield* closeActiveAssistantSegment({
+                          queue: eventQueue,
+                          assistantSegmentRef,
+                        });
+                        yield* Ref.set(assistantUpdatesOpenRef, true);
+                        if (settledLoad !== undefined) {
+                          const late = yield* Ref.get(lateSessionLoadRef);
+                          if (Option.isNone(late) || late.value.response === settledLoad) {
+                            yield* Ref.set(lateLoadReplaySessionIdRef, null);
+                          }
+                        }
+                        const requestPayload = {
+                          sessionId: started.sessionId,
+                          ...payload,
+                        } satisfies EffectAcpSchema.PromptRequest;
+                        const completed = yield* Deferred.make<void>();
+                        const queued = yield* Deferred.make<void>();
+                        const fiber = yield* runLoggedRequest(
+                          "session/prompt",
+                          requestPayload,
+                          acp.agent
+                            .prompt(requestPayload)
+                            .pipe(
+                              Effect.provideService(EffectAcpProtocol.AcpOutgoingQueued, queued),
+                              Effect.ensuring(Deferred.succeed(queued, undefined)),
+                            ),
+                        ).pipe(Effect.forkIn(runtimeScope));
+                        const active = { fiber, completed, queued } satisfies AcpActivePrompt;
+                        yield* Ref.set(activePromptRef, Option.some(active));
+                        if (promptOptions?.dispatched) {
+                          yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                        }
+                        return active;
+                      }).pipe(notificationSemaphore.withPermit),
                     ),
-                    Effect.map((response) => ({ _tag: "Settled" as const, response })),
-                  );
-                  return promptOptions?.released === undefined
-                    ? settled
-                    : Effect.raceFirst(
-                        settled,
-                        Deferred.await(promptOptions.released).pipe(
-                          Effect.as({ _tag: "Released" as const, fiber: activePrompt.fiber }),
+                    (activePrompt) => {
+                      const settled = joinPrompt(activePrompt.fiber).pipe(
+                        Effect.tap(() =>
+                          closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
                         ),
+                        Effect.map((response) => ({ _tag: "Settled" as const, response })),
                       );
-                },
-                (activePrompt, result) =>
-                  Effect.gen(function* () {
-                    if (Exit.isSuccess(result) && result.value._tag === "Released") {
-                      yield* Ref.set(activePromptRef, Option.none());
-                      yield* Deferred.succeed(activePrompt.completed, undefined);
-                      return;
-                    }
-                    if (
-                      options.cancelBehavior === "wait-for-prompt" &&
-                      Exit.isFailure(result) &&
-                      Cause.hasInterrupts(result.cause)
-                    ) {
-                      yield* retireRuntime(
-                        new EffectAcpErrors.AcpTransportError({
-                          method: "session/prompt",
-                          detail: "The ACP prompt stopped before the agent confirmed completion.",
-                          cause: undefined,
-                        }),
-                      );
-                    }
-                    yield* Fiber.interrupt(activePrompt.fiber).pipe(Effect.ignore);
-                    yield* Ref.set(activePromptRef, Option.none());
-                    yield* Deferred.succeed(activePrompt.completed, undefined);
-                  }),
-              ),
+                      return promptOptions?.released === undefined
+                        ? settled
+                        : Effect.raceFirst(
+                            settled,
+                            Deferred.await(promptOptions.released).pipe(
+                              Effect.as({ _tag: "Released" as const, fiber: activePrompt.fiber }),
+                            ),
+                          );
+                    },
+                    (activePrompt, result) =>
+                      Effect.gen(function* () {
+                        if (Exit.isSuccess(result) && result.value._tag === "Released") {
+                          yield* Ref.set(activePromptRef, Option.none());
+                          yield* Deferred.succeed(activePrompt.completed, undefined);
+                          return;
+                        }
+                        if (
+                          options.cancelBehavior === "wait-for-prompt" &&
+                          Exit.isFailure(result) &&
+                          Cause.hasInterrupts(result.cause)
+                        ) {
+                          yield* retireRuntime(
+                            new EffectAcpErrors.AcpTransportError({
+                              method: "session/prompt",
+                              detail:
+                                "The ACP prompt stopped before the agent confirmed completion.",
+                              cause: undefined,
+                            }),
+                          );
+                        }
+                        yield* Fiber.interrupt(activePrompt.fiber).pipe(Effect.ignore);
+                        yield* Ref.set(activePromptRef, Option.none());
+                        yield* Deferred.succeed(activePrompt.completed, undefined);
+                      }),
+                  ),
             ),
           ),
         )
