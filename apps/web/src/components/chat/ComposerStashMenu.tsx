@@ -30,7 +30,7 @@ export function stashEntrySnippet(entry: PromptStashEntry, resolve: MessageResol
     // Never end on a lone high surrogate, the first half of an emoji.
     const last = trimmed.charCodeAt(SNIPPET_MAX_CHARS - 1);
     const end = last >= 0xd800 && last <= 0xdbff ? SNIPPET_MAX_CHARS - 1 : SNIPPET_MAX_CHARS;
-    return `${trimmed.slice(0, end)}…`;
+    return `${trimmed.slice(0, end).trimEnd()}…`;
   }
   const imageCount = entry.attachments.length + entry.droppedImageNames.length;
   const fileCount = entry.files?.length ?? 0;
@@ -89,6 +89,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   });
 
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.isComposing || event.keyCode === 229) return;
     const drawer = drawerRef.current;
     if (!drawer) return;
     const target = event.target;

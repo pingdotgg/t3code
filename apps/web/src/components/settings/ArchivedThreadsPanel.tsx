@@ -1,4 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import type { ContextMenuSource } from "@t3tools/contracts";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { m as resolveMessage } from "~/i18n/messages";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { Spinner } from "~/components/ui/spinner";
@@ -25,7 +27,7 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { type ReactNode, useRef, useState } from "react";
 import { observeIntersection } from "~/lib/observeIntersection";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const ARCHIVE_ACTIONS = [
   {
@@ -236,7 +238,11 @@ export function ArchivedThreadsPanel() {
     );
   };
 
-  const handleContextMenu = async (thread: ArchivedThread, position: { x: number; y: number }) => {
+  const handleContextMenu = async (
+    thread: ArchivedThread,
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => {
     const pending = pendingActionsRef.current;
     if (pending.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))) return;
     const result = await settlePromise(async () => {
@@ -247,6 +253,7 @@ export function ArchivedThreadsPanel() {
           destructive: action === "delete",
         })),
         position,
+        source,
       );
       if (clicked === "unarchive" || clicked === "delete")
         await handleThreadAction(clicked, thread);
@@ -262,7 +269,11 @@ export function ArchivedThreadsPanel() {
         className="rounded-none"
         onContextMenu={(event) => {
           event.preventDefault();
-          void handleContextMenu(thread, { x: event.clientX, y: event.clientY });
+          void handleContextMenu(
+            thread,
+            { x: event.clientX, y: event.clientY },
+            contextMenuSourceOf(event),
+          );
         }}
         title={thread.title}
         description={
@@ -278,23 +289,22 @@ export function ArchivedThreadsPanel() {
         control={
           <div className="flex shrink-0 items-center gap-2">
             {ARCHIVE_ACTIONS.map(({ action, label, threadLabel, Icon }) => (
-              <Tooltip key={action}>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant={action === "delete" ? "destructive-outline" : "outline"}
-                      size="icon-sm"
-                      aria-label={m(threadLabel, { title: thread.title })}
-                      disabled={pendingKeys.has(threadKey)}
-                      onClick={() => void handleThreadAction(action, thread)}
-                    />
-                  }
-                >
-                  <Icon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup>{m(label)}</TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                key={action}
+                render={
+                  <Button
+                    type="button"
+                    variant={action === "delete" ? "destructive-outline" : "outline"}
+                    size="icon-sm"
+                    aria-label={m(threadLabel, { title: thread.title })}
+                    disabled={pendingKeys.has(threadKey)}
+                    onClick={() => void handleThreadAction(action, thread)}
+                  />
+                }
+                label={m(label)}
+              >
+                <Icon className="size-3.5" />
+              </SharedTooltipTrigger>
             ))}
           </div>
         }
