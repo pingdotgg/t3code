@@ -18,6 +18,7 @@ import {
   AuthSettingsWriteScope,
   CLOUD_SPEECH_LABELS,
   CloudSpeechProvider,
+  DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL,
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
   type EnvironmentId,
   type EnvironmentSpeechModel,
@@ -129,7 +130,7 @@ import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { MicrophoneOrderList } from "./MicrophoneOrderList";
 import { MicrophoneTest } from "./MicrophoneTest";
-import { CloudVoiceConfiguration } from "./CloudVoiceConfiguration";
+import { CloudVoiceConfiguration, OpenRouterDictationModel } from "./CloudVoiceConfiguration";
 import { ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { filterSpeechModels, type SpeechModelSort } from "./speechModelBrowser";
@@ -1406,9 +1407,7 @@ export function VoiceSettingsPanel() {
   const cloudEnvironment = environments.find(
     (env) => env.environmentId === pendingCloud?.environmentId,
   );
-  // OpenRouter users without settings access still manage their own model choice.
-  const manageLabel =
-    destination.cloudProvider === "openrouter" ? gt("Manage OpenRouter") : gt("Manage key");
+  const manageLabel = gt("Manage key");
   const chosenEnvironment = environments.find(
     (environment) => environment.environmentId === destination.environmentId,
   );
@@ -1643,32 +1642,30 @@ export function VoiceSettingsPanel() {
                   ) : null}
                 </SelectPopup>
               </Select>
-              {destination.cloudProvider &&
-                chosenEnvironment &&
-                (canManageKey || destination.cloudProvider === "openrouter") && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          size="icon-sm"
-                          type="button"
-                          variant="ghost"
-                          aria-label={manageLabel}
-                          onClick={() => {
-                            if (destination.cloudProvider)
-                              setPendingCloud({
-                                provider: destination.cloudProvider,
-                                environmentId: chosenEnvironment.environmentId,
-                              });
-                          }}
-                        >
-                          <KeyRoundIcon aria-hidden className="size-4" />
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup>{manageLabel}</TooltipPopup>
-                  </Tooltip>
-                )}
+              {destination.cloudProvider && chosenEnvironment && canManageKey && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        type="button"
+                        variant="ghost"
+                        aria-label={manageLabel}
+                        onClick={() => {
+                          if (destination.cloudProvider)
+                            setPendingCloud({
+                              provider: destination.cloudProvider,
+                              environmentId: chosenEnvironment.environmentId,
+                            });
+                        }}
+                      >
+                        <KeyRoundIcon aria-hidden className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup>{manageLabel}</TooltipPopup>
+                </Tooltip>
+              )}
             </div>
           }
         />
@@ -1682,6 +1679,20 @@ export function VoiceSettingsPanel() {
               destination.cloudProvider === pendingCloud.provider
             }
             close={() => setPendingCloud(null)}
+          />
+        )}
+        {destination.cloudProvider === "openrouter" && destination.environmentId && (
+          <SettingsRow
+            title={gt("Model", { $context: "speech-to-text model setting" })}
+            description={gt("The OpenRouter model that transcribes your dictation.")}
+            control={
+              <div className="w-64 max-w-full">
+                <OpenRouterDictationModel
+                  environmentId={destination.environmentId}
+                  model={destination.cloudModel ?? DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL}
+                />
+              </div>
+            }
           />
         )}
         {(model || destination.cloudProvider || destination.device) && (

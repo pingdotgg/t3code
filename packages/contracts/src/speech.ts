@@ -71,6 +71,8 @@ export const CloudSpeechModelId = Schema.String.check(
   Schema.isPattern(/^(?!openrouter\/)[a-z\d][a-z\d.-]*\/[a-z\d][a-z\d._-]*$/i),
 );
 export type CloudSpeechModelId = typeof CloudSpeechModelId.Type;
+/** The OpenRouter model dictation starts with; it is changed in voice settings afterwards. */
+export const DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL = "openai/whisper-large-v3-turbo";
 export const CloudSpeechModel = Schema.Struct({ id: CloudSpeechModelId, name: Schema.String });
 export type CloudSpeechModel = typeof CloudSpeechModel.Type;
 export const CloudSpeechModels = Schema.Struct({ models: Schema.Array(CloudSpeechModel) });

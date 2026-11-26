@@ -7933,7 +7933,6 @@
   "dad7aceef19f0f5b": "Atualizar a chave mantém o ditado ativado.",
   "015e394f14d5ede0": "Deixe em branco para manter a chave salva.",
   "55803224ee096dc0": "Remover a chave da {company}?",
-  "0a7813c7df04ffe9": "Gerenciar o ditado do OpenRouter",
   "9996968084688efe": "Gerenciar a chave da {company}",
   "bf6a4f30c36e0a87": "Usar {name} para ditado?",
   "710bec893f7881d1": "Todos que usam {name} para ditado em {environment} perderão o acesso.",
@@ -11624,7 +11623,6 @@
   "4b2f68f90eb004f6": "Nenhuma fala reconhecida. Tente novamente.",
   "cc04b357924afb36": "Fechar teste do modelo",
   "25607ff5f39ac0ac": "Apple Speech (indisponível)",
-  "97ce6c61f0039edd": "Gerenciar OpenRouter",
   "ca50ce902d534122": "Gerenciar chave",
   "4993d154ece9c92f": "A entrada de voz usa o primeiro microfone conectado desta lista.",
   "501bce0d4bd2b113": "Atalho de ditado",
@@ -13090,5 +13088,7 @@
   "1ca2facc399b6d4c": "Concluir",
   "2cf284a7b130b411": "Entrar novamente",
   "20a054556a7395b2": "Entrar com o OpenRouter",
-  "98f5e5fa1c6b0c62": "Conclua o login no OpenRouter e depois volte aqui."
+  "98f5e5fa1c6b0c62": "Conclua o login no OpenRouter e depois volte aqui.",
+  "b362d4f1c293a461": "Modelo",
+  "13682ea76b1efa5d": "O modelo do OpenRouter que transcreve seu ditado."
 }

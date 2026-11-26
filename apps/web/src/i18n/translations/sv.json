@@ -7939,7 +7939,6 @@
   "dad7aceef19f0f5b": "Om du uppdaterar nyckeln förblir diktering aktiverad.",
   "015e394f14d5ede0": "Lämna tomt för att behålla den sparade nyckeln.",
   "55803224ee096dc0": "Ta bort nyckeln för {company}?",
-  "0a7813c7df04ffe9": "Hantera diktering med OpenRouter",
   "9996968084688efe": "Hantera nyckel för {company}",
   "bf6a4f30c36e0a87": "Använda {name} för diktering?",
   "710bec893f7881d1": "Alla som använder {name} för diktering på {environment} förlorar åtkomsten.",
@@ -11632,7 +11631,6 @@
   "4b2f68f90eb004f6": "Inget tal kändes igen. Försök igen.",
   "cc04b357924afb36": "Stäng modelltestet",
   "25607ff5f39ac0ac": "Apple Speech (inte tillgängligt)",
-  "97ce6c61f0039edd": "Hantera OpenRouter",
   "ca50ce902d534122": "Hantera nyckel",
   "4993d154ece9c92f": "Röstinmatning använder den första anslutna mikrofonen i listan.",
   "501bce0d4bd2b113": "Kortkommando för diktering",
@@ -13097,5 +13095,7 @@
   "1ca2facc399b6d4c": "Slutför",
   "2cf284a7b130b411": "Logga in igen",
   "20a054556a7395b2": "Logga in med OpenRouter",
-  "98f5e5fa1c6b0c62": "Slutför inloggningen hos OpenRouter och kom sedan tillbaka hit."
+  "98f5e5fa1c6b0c62": "Slutför inloggningen hos OpenRouter och kom sedan tillbaka hit.",
+  "b362d4f1c293a461": "Modell",
+  "13682ea76b1efa5d": "OpenRouter-modellen som transkriberar din diktering."
 }

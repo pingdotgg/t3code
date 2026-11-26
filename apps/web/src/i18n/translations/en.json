@@ -7941,7 +7941,6 @@
   "dad7aceef19f0f5b": "Updating the key keeps dictation enabled.",
   "015e394f14d5ede0": "Leave blank to keep the saved key.",
   "55803224ee096dc0": "Remove the {company} key?",
-  "0a7813c7df04ffe9": "Manage OpenRouter dictation",
   "9996968084688efe": "Manage {company} key",
   "bf6a4f30c36e0a87": "Use {name} for dictation?",
   "710bec893f7881d1": "Everyone using {name} for dictation on {environment} will lose access.",
@@ -11634,7 +11633,6 @@
   "4b2f68f90eb004f6": "No speech recognized. Try again.",
   "cc04b357924afb36": "Close model test",
   "25607ff5f39ac0ac": "Apple Speech (unavailable)",
-  "97ce6c61f0039edd": "Manage OpenRouter",
   "ca50ce902d534122": "Manage key",
   "4993d154ece9c92f": "Voice input uses the first connected microphone in this list.",
   "501bce0d4bd2b113": "Dictation shortcut",
@@ -13102,5 +13100,7 @@
   "1ca2facc399b6d4c": "Finish",
   "2cf284a7b130b411": "Sign in again",
   "20a054556a7395b2": "Sign in with OpenRouter",
-  "98f5e5fa1c6b0c62": "Finish signing in on OpenRouter, then come back here."
+  "98f5e5fa1c6b0c62": "Finish signing in on OpenRouter, then come back here.",
+  "b362d4f1c293a461": "Model",
+  "13682ea76b1efa5d": "The OpenRouter model that transcribes your dictation."
 }

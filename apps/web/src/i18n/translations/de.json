@@ -7934,7 +7934,6 @@
   "dad7aceef19f0f5b": "Beim Aktualisieren des Schlüssels bleibt das Diktat aktiviert.",
   "015e394f14d5ede0": "Leer lassen, um den gespeicherten Schlüssel zu behalten.",
   "55803224ee096dc0": "{company}-Schlüssel entfernen?",
-  "0a7813c7df04ffe9": "OpenRouter-Diktat verwalten",
   "9996968084688efe": "{company}-Schlüssel verwalten",
   "bf6a4f30c36e0a87": "{name} für Diktat verwenden?",
   "710bec893f7881d1": "Alle, die {name} auf {environment} für Diktat nutzen, verlieren den Zugriff.",
@@ -11625,7 +11624,6 @@
   "4b2f68f90eb004f6": "Keine Sprache erkannt. Versuch es erneut.",
   "cc04b357924afb36": "Modelltest schließen",
   "25607ff5f39ac0ac": "Apple Speech (nicht verfügbar)",
-  "97ce6c61f0039edd": "OpenRouter verwalten",
   "ca50ce902d534122": "Schlüssel verwalten",
   "4993d154ece9c92f": "Die Spracheingabe verwendet das erste verbundene Mikrofon in dieser Liste.",
   "501bce0d4bd2b113": "Tastenkürzel zum Diktieren",
@@ -13090,5 +13088,7 @@
   "1ca2facc399b6d4c": "Abschließen",
   "2cf284a7b130b411": "Erneut anmelden",
   "20a054556a7395b2": "Mit OpenRouter anmelden",
-  "98f5e5fa1c6b0c62": "Schließe die Anmeldung bei OpenRouter ab und komm dann hierher zurück."
+  "98f5e5fa1c6b0c62": "Schließe die Anmeldung bei OpenRouter ab und komm dann hierher zurück.",
+  "b362d4f1c293a461": "Modell",
+  "13682ea76b1efa5d": "Das OpenRouter-Modell, das dein Diktat transkribiert."
 }

@@ -15,7 +15,8 @@ import {
   CLOUD_SPEECH_PROVIDER_NAMES,
   CloudSpeechProvider,
   CloudSpeechApiKey,
-  CloudSpeechModelId,
+  DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL,
+  type CloudSpeechModelId,
   isSecretReference,
   type CloudSpeechModel,
   type SecretProviderId,
@@ -48,7 +49,6 @@ import {
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
 type Props = { environment: EnvironmentPresentation; active: CloudDestination | null };
 const isApiKey = Schema.is(CloudSpeechApiKey);
-const isModelId = Schema.is(CloudSpeechModelId);
 const MODEL_ROWS = 6;
 
 /** The cloud method row for one environment; opens the provider sheet. */
@@ -195,11 +195,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     provider: CloudSpeechProvider;
     enable: boolean;
   } | null>(null);
-  const catalogAtom = cloudVoiceModelsAtom(editing?.provider === "openrouter" ? id : null);
+  const catalogAtom = cloudVoiceModelsAtom(active?.provider === "openrouter" ? id : null);
   const models = useAtomValue(catalogAtom);
   const reloadModels = useAtomRefresh(catalogAtom);
   const [draft, setDraft] = useState("");
-  const [model, setModel] = useState("");
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
   const sources =
     canUseReferences &&
@@ -216,6 +215,8 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
         : undefined;
   const [saving, setSaving] = useState(false);
   const activeModel = active?.provider === "openrouter" ? active.model : undefined;
+  // The model is chosen on this page once OpenRouter is set up; it starts at the default.
+  const routedModel = activeModel ?? DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL;
   const enable = (commit: () => void) => {
     try {
       commit();
@@ -234,12 +235,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
         : null;
     setSourceId(ref?.provider ?? null);
     setDraft(ref?.reference ?? "");
-    setModel(provider === "openrouter" ? (activeModel ?? "") : "");
     setEditing({ provider, enable });
   };
   const reset = () => {
     setDraft("");
-    setModel("");
     setEditing(null);
   };
   const changeKey = async (
@@ -289,68 +288,91 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     const saved = keys.value;
     if (!editing)
       return (
-        <ListSection
-          footer={gt("Audio is sent through {environment} using its API key.", {
-            environment: environment.label,
-          })}
-        >
-          {CloudSpeechProvider.literals.map((provider, index) => {
-            const label = CLOUD_SPEECH_LABELS[provider];
-            const routed = provider === "openrouter";
-            const key = saved[provider];
-            const isActive = active?.provider === provider;
-            return (
-              <ListChoiceRow
-                key={provider}
-                label={label}
-                leading={
-                  <ProviderIcon
-                    provider={
-                      provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
-                    }
-                    size={20}
-                  />
-                }
-                selected={isActive}
-                separated={index > 0}
-                disabled={key === undefined || (!key && !canManage) || saving}
-                description={
-                  key === undefined
-                    ? gt("Update the environment to use this provider")
-                    : isActive && routed
-                      ? canManage
-                        ? gt("{model} · Tap to change model or key", { model: activeModel })
-                        : gt("{model} · Tap to change model", { model: activeModel })
+        <>
+          <ListSection
+            footer={gt("Audio is sent through {environment} using its API key.", {
+              environment: environment.label,
+            })}
+          >
+            {CloudSpeechProvider.literals.map((provider, index) => {
+              const label = CLOUD_SPEECH_LABELS[provider];
+              const routed = provider === "openrouter";
+              const key = saved[provider];
+              const isActive = active?.provider === provider;
+              return (
+                <ListChoiceRow
+                  key={provider}
+                  label={label}
+                  leading={
+                    <ProviderIcon
+                      provider={
+                        provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
+                      }
+                      size={20}
+                    />
+                  }
+                  selected={isActive}
+                  separated={index > 0}
+                  disabled={key === undefined || (!key && !canManage) || saving}
+                  description={
+                    key === undefined
+                      ? gt("Update the environment to use this provider")
                       : isActive && key && canManage
                         ? gt("Tap to manage key")
                         : key
-                          ? routed
-                            ? gt("API key saved · choose a model to use it")
-                            : gt("API key saved")
+                          ? gt("API key saved")
                           : canManage
                             ? gt("Add an API key to use this provider")
                             : gt("Ask an environment administrator to add an API key")
-                }
-                onPress={() => {
-                  if (routed) return edit(provider, !isActive);
-                  if (!key) return edit(provider, true);
-                  if (isActive) {
-                    if (canManage) edit(provider, false);
-                    return;
                   }
-                  Dialog.confirm({
-                    title: gt("Use {provider} for dictation?", { provider: label }),
-                    message: gt("{disclosure} Select This device to stop sharing.", {
-                      disclosure: cloudSpeechDisclosure(provider, environment.label, messages),
-                    }),
-                    confirmText: gt("Use {provider}", { provider: label }),
-                    onConfirm: () => enable(pendingCloudVoiceChoice(id, provider)),
-                  });
+                  onPress={() => {
+                    if (!key) return edit(provider, true);
+                    if (isActive) {
+                      if (canManage) edit(provider, false);
+                      return;
+                    }
+                    Dialog.confirm({
+                      title: gt("Use {provider} for dictation?", { provider: label }),
+                      message: gt("{disclosure} Select This device to stop sharing.", {
+                        disclosure: cloudSpeechDisclosure(provider, environment.label, messages),
+                      }),
+                      confirmText: gt("Use {provider}", { provider: label }),
+                      onConfirm: () =>
+                        enable(
+                          pendingCloudVoiceChoice(id, provider, routed ? routedModel : undefined),
+                        ),
+                    });
+                  }}
+                />
+              );
+            })}
+          </ListSection>
+          {active?.provider === "openrouter" &&
+            (catalog ? (
+              <ModelPicker
+                models={catalog}
+                value={routedModel}
+                current={activeModel}
+                disabled={saving}
+                onChange={(next) => {
+                  if (next !== activeModel)
+                    enable(() => chooseVoiceDestination(id, "openrouter", next));
                 }}
               />
-            );
-          })}
-        </ListSection>
+            ) : (
+              <ListSection title={gt("Model")}>
+                <ListActionRow
+                  label={
+                    AsyncResult.isFailure(models)
+                      ? gt("Could not load models · Retry")
+                      : gt("Loading transcription models…")
+                  }
+                  disabled={!AsyncResult.isFailure(models)}
+                  onPress={reloadModels}
+                />
+              </ListSection>
+            ))}
+        </>
       );
 
     const provider = editing.provider;
@@ -360,8 +382,6 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     const disclosure = cloudSpeechDisclosure(provider, environment.label, messages);
     const key = saved[provider];
     const isActive = active?.provider === provider;
-    const modelChosen = isModelId(model) && (catalog?.some((entry) => entry.id === model) ?? false);
-    const modelChanged = model !== (activeModel ?? "");
     const original = environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
     const keyChanged =
       credential !== undefined &&
@@ -372,16 +392,12 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
         original.reference === credential.reference
       );
     const routedReady =
-      modelChosen &&
-      (draft.trim() ? credential !== undefined : Boolean(key)) &&
-      (!isActive || modelChanged || keyChanged);
+      (draft.trim() ? credential !== undefined : Boolean(key)) && (!isActive || keyChanged);
     const saveRouted = () => {
-      if (!routedReady || !isModelId(model)) return;
-      const grantChanges = !isActive || modelChanged;
+      if (!routedReady) return;
       if (credential !== undefined && keyChanged)
-        return void changeKey(provider, credential, model);
-      // Model-only changes never write to the environment.
-      if (grantChanges) enable(() => chooseVoiceDestination(id, provider, model));
+        return void changeKey(provider, credential, routedModel);
+      if (!isActive) enable(() => chooseVoiceDestination(id, provider, routedModel));
       onClose();
     };
     const submit = () => {
@@ -406,35 +422,19 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     return (
       <>
         <Text className="px-2 text-sm text-foreground-muted">{disclosure}</Text>
-        {routed ? (
-          catalog ? (
-            <ModelPicker
-              models={catalog}
-              value={model}
-              current={activeModel}
-              disabled={saving}
-              onChange={setModel}
-            />
-          ) : (
-            <ListSection title={gt("Model")}>
-              <ListActionRow
-                label={
-                  AsyncResult.isFailure(models)
-                    ? gt("Could not load models · Retry")
-                    : gt("Loading transcription models…")
-                }
-                disabled={!AsyncResult.isFailure(models)}
-                onPress={reloadModels}
-              />
-            </ListSection>
-          )
-        ) : null}
         {canManage ? (
           <ListSection title={gt("API key")} footer={keyFooter}>
             <View className="gap-3 px-4 py-3">
               {routed && !key && connection && (
-                // Signing in only saves the key; the model is still chosen above.
-                <OpenRouterSignIn prepared={connection} onSignedIn={reload} />
+                <OpenRouterSignIn
+                  prepared={connection}
+                  onSignedIn={() => {
+                    reload();
+                    if (editing.enable)
+                      enable(pendingCloudVoiceChoice(id, "openrouter", routedModel));
+                    onClose();
+                  }}
+                />
               )}
               {sources.length > 0 && (
                 <View className="flex-row flex-wrap gap-2">

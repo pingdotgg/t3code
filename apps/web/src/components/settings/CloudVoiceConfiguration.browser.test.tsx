@@ -1,5 +1,6 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
+  DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL,
   DEFAULT_READ_ALOUD_SETTINGS,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
   EnvironmentId,
@@ -205,7 +206,7 @@ it("uses a provider's saved key without writing it, and turns dictation off", as
   );
 });
 
-it("OpenRouter needs an exact model, and changing it writes no credential", async () => {
+it("OpenRouter starts on the default model, which voice settings change without writing a credential", async () => {
   chooseAudioDestination(null);
   const writes: unknown[] = [];
   const grantModel = () => {
@@ -238,14 +239,11 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
       await destination.click();
       await page.getByRole("option", { name: "OpenRouter via Laptop" }).click();
       const dialog = page.getByRole("dialog");
+      // The dialog only sets up the key; the model is chosen once OpenRouter is set up.
+      await expect
+        .element(dialog.getByRole("combobox", { name: "OpenRouter model" }))
+        .not.toBeInTheDocument();
       const save = dialog.getByRole("button", { name: "Save and enable" });
-      await expect.element(save).toBeDisabled();
-      const picker = dialog.getByRole("combobox", { name: "OpenRouter model" });
-      await expect.element(picker).toBeVisible();
-      await picker.fill("listen");
-      await expect.element(page.getByRole("option", { name: /Other: Listen 2/ })).toBeVisible();
-      await page.getByRole("option", { name: /Other: Listen 2/ }).click();
-      await expect.element(save).toBeEnabled();
       const key = dialog.getByLabelText("OpenRouter API key", { exact: true });
       await key.fill("op://not-a-literal-key");
       await expect.element(save).toBeDisabled();
@@ -253,17 +251,14 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
       await save.click();
       await expect.element(dialog).not.toBeInTheDocument();
       await expect.element(destination).toHaveTextContent("OpenRouter via Laptop");
-      expect(grantModel()).toBe("other/listen-2");
+      expect(grantModel()).toBe(DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL);
       expect(writes).toEqual([]);
-      await screen.getByRole("button", { name: "Manage OpenRouter" }).click();
-      const current = dialog.getByRole("combobox", { name: "OpenRouter model" });
-      await expect.element(current).toHaveValue("Other: Listen 2");
-      await current.fill("acme");
-      await page.getByRole("option", { name: /Acme: Transcribe 1/ }).click();
-      await dialog.getByRole("button", { name: "Save" }).click();
-      await expect.element(dialog).not.toBeInTheDocument();
+
+      const picker = screen.getByRole("combobox", { name: "OpenRouter model" });
+      await picker.fill("listen");
+      await page.getByRole("option", { name: /Other: Listen 2/ }).click();
+      await expect.poll(grantModel).toBe("other/listen-2");
       await expect.element(destination).toHaveTextContent("OpenRouter via Laptop");
-      expect(grantModel()).toBe("acme/transcribe-1");
       expect(writes).toEqual([]);
     },
   );

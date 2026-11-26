@@ -7933,7 +7933,6 @@
   "dad7aceef19f0f5b": "Actualizar la clave mantiene el dictado activado.",
   "015e394f14d5ede0": "Déjalo en blanco para conservar la clave guardada.",
   "55803224ee096dc0": "¿Quitar la clave de {company}?",
-  "0a7813c7df04ffe9": "Gestionar el dictado con OpenRouter",
   "9996968084688efe": "Gestionar la clave de {company}",
   "bf6a4f30c36e0a87": "¿Usar {name} para el dictado?",
   "710bec893f7881d1": "Todos los que usan {name} para el dictado en {environment} perderán el acceso.",
@@ -11619,7 +11618,6 @@
   "4b2f68f90eb004f6": "No se reconoció voz. Inténtalo de nuevo.",
   "cc04b357924afb36": "Cerrar prueba del modelo",
   "25607ff5f39ac0ac": "Apple Speech (no disponible)",
-  "97ce6c61f0039edd": "Gestionar OpenRouter",
   "ca50ce902d534122": "Gestionar clave",
   "4993d154ece9c92f": "La entrada de voz usa el primer micrófono conectado de esta lista.",
   "501bce0d4bd2b113": "Atajo de dictado",
@@ -13085,5 +13083,7 @@
   "1ca2facc399b6d4c": "Finalizar",
   "2cf284a7b130b411": "Volver a iniciar sesión",
   "20a054556a7395b2": "Iniciar sesión con OpenRouter",
-  "98f5e5fa1c6b0c62": "Termina de iniciar sesión en OpenRouter y luego vuelve aquí."
+  "98f5e5fa1c6b0c62": "Termina de iniciar sesión en OpenRouter y luego vuelve aquí.",
+  "b362d4f1c293a461": "Modelo",
+  "13682ea76b1efa5d": "El modelo de OpenRouter que transcribe tu dictado."
 }
