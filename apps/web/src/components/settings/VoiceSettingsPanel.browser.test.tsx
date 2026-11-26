@@ -580,7 +580,7 @@ it("caps progress while downloading, recovers from a failed poll, and reports a 
       await using screen = await render(panel("first"));
       const progress = screen.getByRole("progressbar", { name: "Tiny download progress" });
       await expect.element(progress).toHaveAttribute("aria-valuenow", "99");
-      await expect.element(progress.locator("div")).toHaveStyle({ width: "99%" });
+      expect(progress.element().querySelector("div")?.style.width).toBe("99%");
       installed.resolve(Response.json({ models: [{ ...model, state: "installed" }] }));
       await expect.element(screen.getByRole("button", { name: "Use model" })).toBeVisible();
       expect(readModels.mock.calls.map(([withBenchmarks]) => withBenchmarks)).toEqual([
