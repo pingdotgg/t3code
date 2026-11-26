@@ -12,10 +12,12 @@ import type {
 import type { ToolCallDiffTarget } from "../diffPanelStore";
 import type { LinkedThreadTarget } from "@t3tools/client-runtime/linked-thread";
 import type { useNavigate } from "@tanstack/react-router";
+import type { MouseEvent } from "react";
 
 import { getClientSettings } from "../hooks/useSettings";
 import { linkedThreadRouteParams } from "../linkedThreadSurface";
 import { rightPanelHostRef, useRightPanelStore } from "../rightPanelStore";
+import { buildThreadRouteParams } from "../threadRoutes";
 
 /** Whether an event started in the side chat pane (`data-side-chat-pane`), which the main chat ignores. */
 export function isInSideChatPane(target: EventTarget | null): boolean {
@@ -47,6 +49,30 @@ export function resolveThreadOpenRoute(
   const parentRef = scopeThreadRef(threadRef.environmentId, parentThreadId);
   useRightPanelStore.getState().openThread(parentRef, threadRef.threadId);
   return parentRef;
+}
+
+/**
+ * Props for a router `Link` that opens `threadRef`. A plain click on a side chat opens it as a tab
+ * beside its parent, not as its own page; modified clicks keep the browser's link behavior.
+ */
+export function threadLinkProps(
+  threadRef: ScopedThreadRef,
+  thread: Pick<OrchestrationV2ThreadShell, "lineage"> | null,
+  navigate: ReturnType<typeof useNavigate>,
+) {
+  return {
+    to: "/$environmentId/$threadId",
+    params: { environmentId: threadRef.environmentId, threadId: threadRef.threadId },
+    onClick: (event: MouseEvent) => {
+      if (thread?.lineage.sideChat !== true || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(resolveThreadOpenRoute(threadRef, thread)),
+      });
+    },
+  } as const;
 }
 
 /**

@@ -3,7 +3,7 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
-import { useNavigate, useRouter } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
   CornerDownRightIcon,
@@ -28,7 +28,7 @@ import {
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { withoutAssistantCitationHash } from "~/lib/assistantCitationNavigation";
-import { openSideThread } from "~/lib/sideChatPane";
+import { openSideThread, threadLinkProps } from "~/lib/sideChatPane";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useAssistantMessageText, useQuietThreadShell } from "~/state/entities";
@@ -41,6 +41,7 @@ import {
   type FleetViewTransform,
   zoomFleetView,
 } from "../settings/environmentsMap.logic";
+import { ThreadContextChip } from "../ThreadContextChip";
 import { Button } from "../ui/button";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { useChatCanvas } from "./ChatCanvasContext";
@@ -711,19 +712,35 @@ function LaneItem({
   icon,
   label,
   detail,
+  link,
 }: {
   readonly rect: FleetRect;
   readonly icon: ReactNode;
   readonly label: string;
   readonly detail: string;
+  readonly link?: ReturnType<typeof threadLinkProps> | undefined;
 }) {
+  const box = {
+    style: rectStyle(rect),
+    className:
+      "absolute flex items-center gap-2 rounded-md border border-border bg-card/80 px-2 text-foreground/90",
+  };
   return (
     <SharedTooltipTrigger
       render={
-        <div
-          style={rectStyle(rect)}
-          className="absolute flex items-center gap-2 rounded-md border border-border bg-card/80 px-2 text-foreground/90"
-        />
+        link === undefined ? (
+          <div {...box} />
+        ) : (
+          // The turn's details list the same thread as a focusable chip, so the card stays out of the tab order.
+          <Link
+            {...link}
+            {...box}
+            data-thread-map-item=""
+            tabIndex={-1}
+            draggable={false}
+            className={cn(box.className, "cursor-pointer hover:border-foreground/45")}
+          />
+        )
       }
       label={detail}
       disabled={detail === ""}
@@ -786,15 +803,16 @@ function SendItem({
   readonly rect: FleetRect;
 }) {
   const gt = useGT();
-  const target = useQuietThreadShell(
-    send.threadId === null ? null : scopeThreadRef(environmentId, send.threadId),
-  );
+  const navigate = useNavigate();
+  const targetRef = send.threadId === null ? null : scopeThreadRef(environmentId, send.threadId);
+  const target = useQuietThreadShell(targetRef);
   return (
     <LaneItem
       rect={rect}
       icon={<SendIcon aria-hidden className="size-3.5" />}
       label={gt("Sent a message")}
       detail={target?.title.trim() ?? ""}
+      link={targetRef === null ? undefined : threadLinkProps(targetRef, target, navigate)}
     />
   );
 }
@@ -1070,7 +1088,22 @@ function SendTargetLine({
   const target = useQuietThreadShell(
     send.threadId === null ? null : scopeThreadRef(environmentId, send.threadId),
   );
-  return <li>{target?.title.trim() || gt("Another thread")}</li>;
+  return (
+    <li>
+      {send.threadId === null ? (
+        gt("Another thread")
+      ) : (
+        <ThreadContextChip
+          record={{
+            environmentId,
+            threadId: send.threadId,
+            title: target?.title.trim() || gt("Another thread"),
+          }}
+          projectId={target?.projectId ?? null}
+        />
+      )}
+    </li>
+  );
 }
 
 function AgentDetails({

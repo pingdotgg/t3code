@@ -20,6 +20,8 @@ vi.mock(import("../../state/entities"), () => ({
   useAssistantMessageText: ((_ref: unknown, itemId: string | undefined) =>
     itemId === undefined ? null : (state.texts[itemId] ?? null)) as never,
   useQuietThreadShell: (() => null) as never,
+  useThreadShell: (() => null) as never,
+  useProject: (() => null) as never,
 }));
 
 import { render } from "../../../test/render";
@@ -95,6 +97,12 @@ function fixture(): OrchestrationV2ThreadProjection {
       createdBy: "user",
       creationSource: "web",
     },
+    {
+      ...item("send-2", 2),
+      type: "dynamic_tool",
+      toolName: "t3_thread_send",
+      input: { threadId: "helper-thread", message: "Can you check the notes?" },
+    },
   ];
   return {
     ...base,
@@ -162,6 +170,26 @@ it("shows the selected turn and agent below the map and returns to the turn's me
     atEnd: false,
   });
   expect(useThreadMapViewStore.getState().mapThreadKeys.size).toBe(0);
+});
+it("opens the thread a turn sent a message to", async () => {
+  setup();
+  await using screen = await render(
+    <div className="flex h-[640px] w-[960px] flex-col">
+      <ThreadMap threadRef={threadRef} projection={fixture()} bottomInset={0} />
+    </div>,
+  );
+  const target = "/environment/helper-thread";
+  const card = screen.getByRole("link", { name: /^Sent a message/ });
+  await expect.element(card).toHaveAttribute("href", target);
+
+  await screen.getByRole("button", { name: /^Turn 2,/ }).click();
+  const details = screen.getByRole("group", { name: "Details" });
+  await expect
+    .element(details.getByRole("link", { name: "Thread, Another thread" }))
+    .toHaveAttribute("href", target);
+
+  await card.click();
+  await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe(target));
 });
 it("lets the turn shown in the conversation take over from a citation already followed", async () => {
   setup();
