@@ -1322,7 +1322,7 @@ it.effect.each(["shutdown", "close"] as const)(
         {
           bind: ({ session }) =>
             Effect.gen(function* () {
-              if (pauseBind) {
+              if (pauseBind && operation === "close") {
                 yield* Deferred.succeed(pauseBind.entered, undefined);
                 yield* Deferred.await(pauseBind.proceed);
               }
@@ -1330,7 +1330,11 @@ it.effect.each(["shutdown", "close"] as const)(
               return session;
             }),
           prune: (live) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              if (pauseBind && operation === "shutdown") {
+                yield* Deferred.succeed(pauseBind.entered, undefined);
+                yield* Deferred.await(pauseBind.proceed);
+              }
               for (const session of launchers) if (!live.has(session)) launchers.delete(session);
             }),
           // Records whether the launcher still existed, since its close runs through it.
@@ -1396,12 +1400,13 @@ it.effect.each(["shutdown", "close"] as const)(
       const binding = yield* Effect.forkChild(
         service.agentLauncher({ ...target(threadId), targetArgs: [] }),
       );
-      yield* Deferred.await(pauseBind.entered);
+      if (operation === "close") yield* Deferred.await(pauseBind.entered);
       const updates = yield* service.subscribe;
       const retiring = yield* Effect.forkChild(
         operation === "shutdown" ? service.shutdown(input) : service.close({ threadId }),
       );
-      expect((yield* PubSub.take(updates)).sessions).toEqual([]);
+      if (operation === "shutdown") yield* Deferred.await(pauseBind.entered);
+      else expect((yield* PubSub.take(updates)).sessions).toEqual([]);
       yield* service.refreshHosts;
       expect((yield* service.state).sessions).toEqual([]);
       yield* Effect.sync(() => retiring.interruptUnsafe());
@@ -1611,6 +1616,27 @@ it.effect.each([
         ).toBe(true);
       }
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
+);
+
+it.effect("keeps an open thread's device session when Stop fails", () =>
+  Effect.gen(function* () {
+    const { service, connection } = yield* fixture();
+    yield* service.configure({ enabled: true });
+    const threadId = ThreadId.make("viewing-emulator");
+    const { hostId, deviceId, platform } = yield* service.open({
+      threadId,
+      deviceId: "Pixel_API_35",
+      platform: "android",
+    });
+
+    connection.failShutdown = true;
+    yield* service.shutdown({ hostId, deviceId, platform }).pipe(
+      Effect.flatMap(() => Effect.die("Expected the running emulator to reject shutdown")),
+      Effect.ignore,
+    );
+
+    expect((yield* service.state).sessions.map((session) => session.threadId)).toEqual([threadId]);
+  }),
 );
 
 describe("Android close with shutdown", () => {
