@@ -38,13 +38,10 @@ const FENCED_CODE = new RegExp(`${fencedCode("`", "bt")}|${fencedCode("~", "tl")
 /** Source ranges of CommonMark fenced code blocks, including quote and list prefixes. */
 export function fencedCodeRanges(markdown: string) {
   if (!markdown.includes("```") && !markdown.includes("~~~")) return [];
-  const pattern = new RegExp(FENCED_CODE);
-  const source = threadLinkSource(markdown);
-  const ranges: Array<{ readonly start: number; readonly end: number }> = [];
-  for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
-    ranges.push({ start: match.index, end: match.index + match[0].length });
-  }
-  return ranges;
+  return Array.from(threadLinkSource(markdown).matchAll(FENCED_CODE), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
 }
 // A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, rule,
 // setext underline, or deeper blockquote.

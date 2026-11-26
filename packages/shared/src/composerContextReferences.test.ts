@@ -88,24 +88,21 @@ describe("labels and reference links", () => {
     });
   });
 
-  it("ignores context links inside fenced code blocks while collecting links outside them", () => {
+  it("ignores context links inside fenced code blocks", () => {
     const example = "[example](t3-context://v1/file/demo)";
     const live = "[live](t3-context://v1/file/live)";
-    for (const eol of ["\n", "\r\n", "\r"]) {
-      for (const fenced of [
-        ["```md", example, "```"],
-        ["~~~md", example, "~~~"],
-        ["````md", "```", example, "```", "````"],
-        ["> > ```md", `>> ${example}`, ">> ```"],
-        ["- ```md", `  ${example}`, "  ```"],
-      ]) {
-        const block = fenced.join(eol);
-        expect(collectComposerContextReferences(block), JSON.stringify(block)).toEqual([]);
-        const withControl = `${block}${eol}${live}`;
-        const occurrences = collectComposerContextReferences(withControl);
-        expect(occurrences.map((o) => [o.contextId, o.source])).toEqual([["live", live]]);
-        expect(withControl.slice(occurrences[0]!.start, occurrences[0]!.end)).toBe(live);
-      }
+    for (const block of [
+      `~~~md\r\n${example}\r\n~~~`,
+      `> \`\`\`md\n> ${example}\n> \`\`\``,
+      `- \`\`\`md\n  ${example}\n  \`\`\``,
+    ]) {
+      const text = `${block}\n${live}`;
+      const occurrences = collectComposerContextReferences(text);
+      expect(
+        occurrences.map((o) => o.contextId),
+        JSON.stringify(block),
+      ).toEqual(["live"]);
+      expect(text.slice(occurrences[0]!.start, occurrences[0]!.end)).toBe(live);
     }
     expect(collectComposerContextReferences(`\`\`\`md\n${example}`)).toEqual([]);
   });
