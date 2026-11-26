@@ -1,5 +1,12 @@
-import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
-import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
+import {
+  managedRuntimeModeDenial,
+  providerRuntimeModeLimitMessage,
+} from "@t3tools/client-runtime/contract-labels";
+import type {
+  ManagedPolicySummary,
+  ProviderRuntimeModeLimit,
+  RuntimeMode,
+} from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 import {
@@ -113,14 +120,21 @@ export function runtimeModeDenial(
   );
 }
 
+/**
+ * `limits` are modes the provider cannot run in the current folder. They stay listed, disabled
+ * with the reason; a thread already in one keeps it and shows that reason as its description.
+ */
 export function resolveRuntimeModeOptions(
   modes: ReadonlyArray<RuntimeMode>,
   managedPolicy: ManagedPolicySummary | undefined,
   resolve: MessageResolver = m,
+  limits?: ReadonlyArray<ProviderRuntimeModeLimit>,
 ) {
   return modes.map((mode) => {
     const option = resolveRuntimeModeOption(mode, resolve);
-    const disabledReason = runtimeModeDenial(managedPolicy, mode, resolve);
+    const disabledReason =
+      runtimeModeDenial(managedPolicy, mode, resolve) ??
+      providerRuntimeModeLimitMessage(limits, mode, resolve);
     return disabledReason === undefined ? option : { ...option, disabledReason };
   });
 }

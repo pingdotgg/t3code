@@ -5313,6 +5313,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    it.effect("names the settings that turn auto mode off, through the real SDK", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sdk = yield* Effect.promise(() =>
+          vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk"),
+        );
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(sdk.resolveSettings);
+        const disabledBy = Effect.fnUntraced(function* (
+          file: "project" | "local" | "home" | "remote" | null,
+        ) {
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-auto-home-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-auto-cwd-" });
+          yield* fileSystem.makeDirectory(path.join(cwd, ".claude"));
+          if (file !== null) {
+            yield* fileSystem.writeFileString(
+              {
+                project: path.join(cwd, ".claude", "settings.json"),
+                local: path.join(cwd, ".claude", "settings.local.json"),
+                home: path.join(home, "settings.json"),
+                remote: path.join(home, "remote-settings.json"),
+              }[file],
+              JSON.stringify(
+                file === "local"
+                  ? { permissions: { disableAutoMode: "disable" } }
+                  : { disableAutoMode: "disable" },
+              ),
+            );
+          }
+          const availability = yield* ClaudeAdapterV2.resolveClaudeModeAvailability({
+            settings: DEFAULT_CLAUDE_SETTINGS,
+            homePath: home,
+            customHome: true,
+            cwd,
+            fileSystem,
+            path,
+          });
+          return [availability.autoDisabled, availability.autoDisabledBy];
+        });
+        assert.deepEqual(yield* disabledBy(null), [false, undefined]);
+        assert.deepEqual(yield* disabledBy("project"), [true, "project-settings"]);
+        assert.deepEqual(yield* disabledBy("local"), [true, "project-settings"]);
+        assert.deepEqual(yield* disabledBy("home"), [true, "user-settings"]);
+        assert.deepEqual(yield* disabledBy("remote"), [true, "managed-settings"]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
     it.effect("asks before restricted Full access tools and follows policy across turns", () =>
       Effect.gen(function* () {
         const resolveSettings = vi
@@ -6152,6 +6201,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         decision: "decline",
       });
       assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+      // A second init, as a resumed process sends, must not repeat the notice.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: reported,
+          uuid: "auto-ask-init-again",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        ),
+        reported === "auto" ? [] : [ClaudeAdapterV2.claudeAutoModeUnavailableNotice(undefined)],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(

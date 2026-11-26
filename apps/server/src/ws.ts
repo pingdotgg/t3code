@@ -2696,6 +2696,15 @@ export const layerWsRpc = (
                 }),
             };
           }),
+        [WS_METHODS.serverGetProviderRuntimeModeLimits]: Effect.fnUntraced(function* (input) {
+          const instance = yield* providerInstances.getInstance(input.instanceId);
+          if (instance?.runtimeModeLimitsForCwd === undefined) return { limits: [] };
+          return {
+            limits: yield* instance.runtimeModeLimitsForCwd(
+              yield* projectService.workspaceScanDirectory(input.cwd),
+            ),
+          };
+        }),
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),

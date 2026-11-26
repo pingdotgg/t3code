@@ -4079,6 +4079,13 @@ export default function ChatView(props: ChatViewProps) {
                                               multipleModelSelections,
                                               providerStatuses,
                                             )}
+                                            instanceId={
+                                              multipleModelSelections === null ||
+                                              multipleModelSelections.length === 0
+                                                ? activeProviderStatus?.instanceId
+                                                : undefined
+                                            }
+                                            cwd={gitCwd}
                                             onRuntimeModeChange={handleRuntimeModeChangeStable}
                                           />
                                         ),
