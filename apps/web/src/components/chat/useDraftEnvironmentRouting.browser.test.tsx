@@ -41,6 +41,7 @@ vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => resources.projects,
+  readThreadShells: () => [],
   readProject: (ref: { environmentId: EnvironmentId; projectId: ProjectId }) =>
     resources.projects.find(
       (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
@@ -363,6 +364,19 @@ it("takes the destination's default workspace when the draft switches machine by
   );
   // The source's own default, never picked by the user.
   store.setDraftThreadContext(draftId, { envMode: "local", startFromOrigin: false });
+  await using screen = await render(
+    <Harness
+      input={{ ...input, automaticEnvironment: false, draftThread: store.getDraftSession(draftId) }}
+    />,
+  );
+  await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+  await expect.element(screen.getByText(b)).toBeInTheDocument();
+  expect(store.getDraftSession(draftId)?.envMode).toBe("worktree");
+});
+
+it("keeps a workspace the user picked when the draft switches machine by hand", async () => {
+  const { b, draftId, input, store } = fanoutSetup();
+  store.setDraftThreadContext(draftId, { envMode: "worktree", startFromOrigin: false });
   await using screen = await render(
     <Harness
       input={{ ...input, automaticEnvironment: false, draftThread: store.getDraftSession(draftId) }}

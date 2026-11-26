@@ -38,6 +38,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
 import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { retargetDraftWorkspace } from "../../lib/retargetDraftWorkspace";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
@@ -201,6 +202,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           environmentSelection: "auto",
           loadBalancedEnvironmentId: target.environmentId,
           branch: originalDraft?.branch ?? null,
+          ...(originalDraft ? retargetDraftWorkspace(originalDraft, projectRef) : {}),
         }),
       );
       return true;
@@ -215,10 +217,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
     if (draft) carryFanoutSelections(draft, target.environmentId);
+    const projectRef = scopeProjectRef(target.environmentId, target.projectId);
     setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
+      projectRef,
       environmentSelection: "auto",
       loadBalancedEnvironmentId: target.environmentId,
+      ...(draft ? retargetDraftWorkspace(draft, projectRef) : {}),
     });
   }, [
     needsLoadBalancing,
@@ -331,18 +335,20 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       }
       carryFanoutSelections(currentDraft, target.environmentId);
       const projectRef = scopeProjectRef(target.environmentId, project.id);
+      const workspace = retargetDraftWorkspace(currentDraft, projectRef);
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(
           deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
           projectRef,
           draftId,
-          { environmentSelection: "manual", loadBalancedEnvironmentId: null },
+          { environmentSelection: "manual", loadBalancedEnvironmentId: null, ...workspace },
         );
       } else {
         setDraftThreadContext(draftId, {
           projectRef,
           environmentSelection: "manual",
           loadBalancedEnvironmentId: null,
+          ...workspace,
         });
       }
       seedDraftModelSelection(draftId, projectRef);
