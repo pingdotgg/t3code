@@ -652,10 +652,11 @@ function* notebook(source: string): Generator<TextPart, void> {
       } else if ("output_type" in output && output.output_type === "error") {
         const name = [...lines("ename" in output ? output.ename : undefined)].join("");
         const value = [...lines("evalue" in output ? output.evalue : undefined)].join("");
-        if (NOTEBOOK_OUTPUT_TEXT.test(NodeUtil.stripVTControlCharacters(name + value))) {
+        const plain = NodeUtil.stripVTControlCharacters(name + value);
+        if (NOTEBOOK_OUTPUT_TEXT.test(plain)) {
           yield name;
           if ("evalue" in output) yield ": " + value;
-        }
+        } else yield plain;
         yield "\n";
         if ("traceback" in output)
           for (const line of lines(output.traceback)) {
