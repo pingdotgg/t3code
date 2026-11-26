@@ -314,31 +314,51 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const usageRead = yield* FiberHandle.make();
   const republish = yield* Deferred.make<Effect.Effect<ServerProvider>>();
   const scope = yield* Effect.scope;
-  const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* () {
+  const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* (
+    expectedAuthRevision?: number,
+  ) {
     if (!options.probeUsage || (yield* PublishingUsage)) return;
+    const isStaleSignOut = (state: AntigravityProviderState) =>
+      expectedAuthRevision !== undefined &&
+      state.authRevision !== expectedAuthRevision &&
+      state.draft.auth.status === "unauthenticated";
+    if (isStaleSignOut(yield* SubscriptionRef.get(metadata))) {
+      return;
+    }
     yield* FiberHandle.run(
       usageRead,
       options.probeUsage.pipe(
         Effect.flatMap((probed) =>
-          SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
-            },
-          })),
+          SubscriptionRef.modify(metadata, (state) => {
+            if (isStaleSignOut(state)) {
+              return [false, state] as const;
+            }
+            return [
+              true,
+              {
+                ...state,
+                draft: {
+                  ...state.draft,
+                  usageLimits: resolveUsageLimitsAfterProbe({
+                    published: state.draft.usageLimits,
+                    probed,
+                  }),
+                },
+              },
+            ] as const;
+          }),
         ),
         // Enrichment cannot change published limits; a health check publishes them.
-        Effect.andThen(
-          Deferred.await(republish).pipe(
-            Effect.flatten,
-            Effect.provideService(PublishingUsage, true),
-            Effect.ignoreCause({ log: true }),
-            Effect.forkIn(scope),
-          ),
+        Effect.flatMap((applied) =>
+          applied
+            ? Deferred.await(republish).pipe(
+                Effect.flatten,
+                Effect.provideService(PublishingUsage, true),
+                Effect.ignoreCause({ log: true }),
+                Effect.forkIn(scope),
+                Effect.asVoid,
+              )
+            : Effect.void,
         ),
       ),
       // Store the fiber before it runs, so a sign-out during the read can interrupt it.
@@ -425,7 +445,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       return [checked, stored === state ? Option.none() : Option.some(stored)];
     });
     if (initialized !== undefined && next.authRevision === before.authRevision) {
-      yield* refreshUsage();
+      yield* refreshUsage(before.authRevision);
     }
     return yield* options.stampIdentity(next.draft);
   });

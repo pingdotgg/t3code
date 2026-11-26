@@ -408,7 +408,7 @@ describe("makeAntigravityUsageProbe", () => {
           versionCalls++;
           return versionCalls === 1
             ? Effect.succeed(makeMockHandle({ exitCode: 1, stderr: "transient error" }))
-            : Effect.succeed(makeMockHandle({ exitCode: 0, stdout: "agy 1.5.14\n" }));
+            : Effect.succeed(makeMockHandle({ exitCode: 0, stdout: "agy v1.5.14\n" }));
         }
         return Effect.succeed(makeMockHandle({ stdout: SAMPLE_USAGE_STDOUT }));
       });

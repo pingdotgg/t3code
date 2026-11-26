@@ -233,7 +233,7 @@ export function antigravityOutputShowsModelTurn(stdout: string): boolean {
 }
 
 function extractSemver(raw: string): string | undefined {
-  const match = raw.match(/\b(\d+\.\d+\.\d+)\b/u);
+  const match = raw.match(/\bv?(\d+\.\d+\.\d+)\b/iu);
   const version = match?.[1];
   return version && parseSemver(version) !== null ? version : undefined;
 }
