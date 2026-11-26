@@ -68,7 +68,10 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { readPendingWorkspaceDefault } from "../../lib/draftWorkspaceDefaults";
+import {
+  readPendingDraftCheckout,
+  readPendingWorkspaceDefault,
+} from "../../lib/draftWorkspaceDefaults";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -328,7 +331,7 @@ export function useComposerSend(input: ComposerSendInput) {
     runtimeMode,
     sendEnvMode: renderedSendEnvMode,
     worktreeRepositories,
-    startFromOrigin,
+    startFromOrigin: renderedStartFromOrigin,
     localCheckoutBranchMismatch,
     logicalProjectEnvironments,
     providerInstanceEntries,
@@ -404,7 +407,7 @@ export function useComposerSend(input: ComposerSendInput) {
     composerRef,
     promptRef,
     runtimeMode,
-    startFromOrigin,
+    startFromOrigin: renderedStartFromOrigin,
     worktreeRepositories,
     resetLocalDispatch,
     setThreadError,
@@ -779,6 +782,7 @@ export function useComposerSend(input: ComposerSendInput) {
     const activeThreadBranch = preparedDraft ? preparedDraft.branch : renderedBranch;
     const worktreePath = preparedDraft ? preparedDraft.worktreePath : activeThread.worktreePath;
     const sendEnvMode = preparedDraft?.envMode ?? renderedSendEnvMode;
+    const startFromOrigin = preparedDraft?.startFromOrigin ?? renderedStartFromOrigin;
     const multipleModelSelections = sendCtx.multipleModelSelections;
     const approvalFeedbackTarget = pendingApprovalsRef.current.find(
       (approval) =>
@@ -1854,19 +1858,26 @@ export function useComposerSend(input: ComposerSendInput) {
   const sendWithEnvironmentRefreshLatest = useStableCallback(sendWithEnvironmentRefresh);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
-    const detached = args[4] !== undefined;
     const workspaceDefault =
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
-    if (workspaceDefault !== null) {
-      const { draftReady, sameRoute } = await waitBeforeSend(workspaceDefault);
-      if (!draftReady || (!detached && !sameRoute)) return;
-    }
-    // Load balancing needs the displayed draft. A detached send keeps its original environment.
-    if (detached) return onSend(...args);
-    return workspaceDefault === null
-      ? sendWithEnvironmentRefresh(...args)
-      : sendWithEnvironmentRefreshLatest(...args);
+    if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
+    const { draftReady, sameRoute } = await waitBeforeSend(workspaceDefault);
+    if (!draftReady || !sameRoute) return;
+    return sendWithEnvironmentRefreshLatest(...args);
   };
-  const captureDetachedSend = useStableCallback(() => onSendWithRouting);
+  const captureDetachedSend = useStableCallback(() => {
+    // Keep the outcome even if checkout finishes while transcription is still running.
+    const checkoutAtSubmit = draftId ? readPendingDraftCheckout(draftId) : null;
+    return async (...args: Parameters<typeof onSend>) => {
+      if (sendInFlightRef.current) return onSend(...args);
+      const checkout = (draftId ? readPendingDraftCheckout(draftId) : null) ?? checkoutAtSubmit;
+      if (checkout !== null) {
+        const { result: applied, draftReady } = await waitBeforeSend(checkout);
+        if (!applied || !draftReady) return;
+      }
+      // Load balancing needs the displayed draft. A detached send keeps its original environment.
+      return onSend(...args);
+    };
+  });
   return { onSend: onSendWithRouting, captureDetachedSend };
 }

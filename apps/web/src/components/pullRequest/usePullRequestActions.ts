@@ -354,7 +354,7 @@ export function prepareDraftCheckout(
   isCancelled: () => boolean = () => false,
 ): Promise<PreparedCheckout> {
   const pointed = checkout.then((prepared) => {
-    if (isCancelled() || prepared._tag === "Failure") return prepared;
+    if (isCancelled() || prepared._tag === "Failure") return { prepared, applied: false };
     const { branch, worktreePath, pullRequest } = prepared.value;
     // A waiting send resumes right after this and must render the checkout first.
     flushSync(() =>
@@ -367,10 +367,13 @@ export function prepareDraftCheckout(
         checkoutPullRequest: { url: pullRequest.url, branch },
       }),
     );
-    return prepared;
+    return { prepared, applied: true };
   });
-  trackPendingDraftCheckout(draftId, pointed);
-  return pointed;
+  trackPendingDraftCheckout(
+    draftId,
+    pointed.then(({ applied }) => applied),
+  );
+  return pointed.then(({ prepared }) => prepared);
 }
 
 export type PullRequestHandoffDetail = Pick<

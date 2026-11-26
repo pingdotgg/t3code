@@ -30,24 +30,25 @@ function acceptsWorkspaceDefault(
   );
 }
 
-const pendingCheckouts = new Map<DraftId, Promise<void>>();
+const pendingCheckouts = new Map<DraftId, Promise<boolean>>();
 
 /** A send waits while a checkout is prepared for its draft, so it starts in that checkout. */
-export function trackPendingDraftCheckout(draftId: DraftId, checkout: Promise<unknown>) {
-  const settled: Promise<void> = checkout
-    .then(
-      () => {},
-      () => {},
-    )
+export function trackPendingDraftCheckout(draftId: DraftId, checkout: Promise<boolean>) {
+  const settled = checkout
+    .catch(() => false)
     .finally(() => {
       if (pendingCheckouts.get(draftId) === settled) pendingCheckouts.delete(draftId);
     });
   pendingCheckouts.set(draftId, settled);
 }
 
+export function readPendingDraftCheckout(draftId: DraftId): Promise<boolean> | null {
+  return pendingCheckouts.get(draftId) ?? null;
+}
+
 export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | null {
-  const checkout = pendingCheckouts.get(draftId);
-  if (checkout) return checkout;
+  const checkout = readPendingDraftCheckout(draftId);
+  if (checkout) return checkout.then(() => {});
   const pending = pendingDefaults.get(draftId);
   if (!pending) return null;
   const draft = useComposerDraftStore.getState().getDraftSession(draftId);
