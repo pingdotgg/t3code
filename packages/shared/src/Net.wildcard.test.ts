@@ -1,4 +1,3 @@
-import * as NodeEvents from "node:events";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
@@ -14,11 +13,14 @@ const hasIpv6Loopback = addresses.some((entry) => entry.address === "::1");
 
 const openServer = (host: string | undefined, port = 0) =>
   Effect.acquireRelease(
-    Effect.promise(async () => {
-      const server = NodeNet.createServer().listen({ port, host });
-      await NodeEvents.once(server, "listening");
-      return server;
-    }),
+    Effect.promise(
+      () =>
+        new Promise<NodeNet.Server>((resolve, reject) => {
+          const server = NodeNet.createServer();
+          server.once("error", reject);
+          server.listen({ port, host }, () => resolve(server));
+        }),
+    ),
     (server) => Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
   ).pipe(
     Effect.map((server) => {
