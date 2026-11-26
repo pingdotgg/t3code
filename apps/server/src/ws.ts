@@ -133,6 +133,7 @@ import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
+import * as UsageLimitCooldownStore from "./orchestration-v2/UsageLimitCooldownStore.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Workflows from "./workflows/Workflows.ts";
@@ -1467,14 +1468,26 @@ export const layerWsRpc = (
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
-      const intakeContext = yield* Effect.context<
+      const baseIntakeContext = yield* Effect.context<
         | ThreadManagementService.ThreadManagementService
         | ThreadLaunchService.ThreadLaunchService
         | FileSystem.FileSystem
         | ServerConfig.ServerConfig
         | ServerSettings.ServerSettingsService
+        | ProviderRegistry.ProviderRegistry
         | DocumentText.DocumentText
       >();
+      const usageLimitCooldowns = Option.getOrUndefined(
+        yield* Effect.serviceOption(UsageLimitCooldownStore.UsageLimitCooldownStore),
+      );
+      const intakeContext =
+        usageLimitCooldowns === undefined
+          ? baseIntakeContext
+          : Context.add(
+              baseIntakeContext,
+              UsageLimitCooldownStore.UsageLimitCooldownStore,
+              usageLimitCooldowns,
+            );
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
       const projectService = yield* ProjectService.ProjectService;

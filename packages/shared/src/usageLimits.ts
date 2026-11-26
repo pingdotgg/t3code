@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type ModelSelection,
+  type OrchestrationV2FallbackOrigin,
   type ServerSettings,
   type ProjectId,
   resolveProjectProviderInstanceEnabled,
@@ -23,6 +24,132 @@ import * as DateTime from "effect/DateTime";
 import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
+
+/** Default cooldown when a provider without a live usage API hits a limit with no `resetAt`. */
+export const DEFAULT_UNKNOWN_RESET_COOLDOWN_MS = 15 * MINUTE;
+
+export interface UsageLimitCooldownEntry {
+  readonly instanceId: ProviderInstanceId;
+  readonly model: string;
+  readonly failedAtMs: number;
+  readonly resetsAtMs: number;
+  readonly resetAt: string | null;
+}
+
+function activeUsageLimitCooldown(
+  cooldowns: readonly UsageLimitCooldownEntry[] | undefined,
+  selection: Pick<ModelSelection, "instanceId" | "model">,
+  now: number,
+): UsageLimitCooldownEntry | null {
+  if (!cooldowns || cooldowns.length === 0) return null;
+  let active: UsageLimitCooldownEntry | null = null;
+  for (const entry of cooldowns) {
+    if (
+      entry.instanceId === selection.instanceId &&
+      entry.model === selection.model &&
+      entry.resetsAtMs > now &&
+      (active === null || entry.resetsAtMs > active.resetsAtMs)
+    ) {
+      active = entry;
+    }
+  }
+  return active;
+}
+
+export function isModelSelectionExhausted(input: {
+  readonly selection: Pick<ModelSelection, "instanceId" | "model">;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly cooldowns?: readonly UsageLimitCooldownEntry[] | undefined;
+}): { readonly provider: ServerProvider; readonly resetAt: string | null } | null {
+  const provider = input.providers.find((entry) => entry.instanceId === input.selection.instanceId);
+  if (!provider) return null;
+  const window = exhaustedUsageWindow(provider, input.now, input.selection.model);
+  if (window) {
+    return { provider, resetAt: window.resetsAt ?? null };
+  }
+  const cooldown = activeUsageLimitCooldown(input.cooldowns, input.selection, input.now);
+  if (cooldown) {
+    return { provider, resetAt: cooldown.resetAt };
+  }
+  return null;
+}
+
+export function isModelSelectionUsable(input: {
+  readonly selection: Pick<ModelSelection, "instanceId" | "model">;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly settings?: ServerSettings | undefined;
+  readonly projectId?: ProjectId | null | undefined;
+  readonly cooldowns?: readonly UsageLimitCooldownEntry[] | undefined;
+}): boolean {
+  const provider = input.providers.find((entry) => entry.instanceId === input.selection.instanceId);
+  if (
+    !provider?.enabled ||
+    !provider.installed ||
+    provider.auth.status === "unauthenticated" ||
+    !isProviderAvailable(provider)
+  ) {
+    return false;
+  }
+  if (
+    input.settings &&
+    !resolveProjectProviderInstanceEnabled(
+      input.settings,
+      input.projectId ?? null,
+      provider.instanceId,
+    )
+  ) {
+    return false;
+  }
+  return isModelSelectionExhausted(input) === null;
+}
+
+export function isFallbackOriginRestorable(input: {
+  readonly fallbackOrigin: OrchestrationV2FallbackOrigin;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly settings?: ServerSettings | undefined;
+  readonly projectId?: ProjectId | null | undefined;
+  readonly cooldowns?: readonly UsageLimitCooldownEntry[] | undefined;
+}): boolean {
+  const { fallbackOrigin, providers, now, settings, projectId, cooldowns } = input;
+  if (fallbackOrigin.resetAt !== null) {
+    const resetMs = Date.parse(fallbackOrigin.resetAt);
+    if (Number.isFinite(resetMs) && now < resetMs) return false;
+  }
+  if (
+    !isModelSelectionUsable({
+      selection: fallbackOrigin.originSelection,
+      providers,
+      now,
+      settings,
+      projectId,
+      cooldowns,
+    })
+  ) {
+    return false;
+  }
+  if (fallbackOrigin.resetAt === null) {
+    const originProvider = providers.find(
+      (entry) => entry.instanceId === fallbackOrigin.originSelection.instanceId,
+    );
+    const switchedAtMs = Date.parse(fallbackOrigin.switchedAt);
+    const hasLiveWindows =
+      (originProvider?.usageLimits?.windows.length ?? 0) > 0 &&
+      originProvider?.usageLimits?.unavailable === undefined;
+    if (hasLiveWindows) {
+      const checkedAtMs = Date.parse(originProvider?.usageLimits?.checkedAt ?? "");
+      if (!Number.isFinite(checkedAtMs) || checkedAtMs <= switchedAtMs) return false;
+    } else if (
+      !Number.isFinite(switchedAtMs) ||
+      now < switchedAtMs + DEFAULT_UNKNOWN_RESET_COOLDOWN_MS
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
@@ -72,34 +199,32 @@ export function resolveNewThreadModelSelection(input: {
   readonly now: number;
   readonly settings?: ServerSettings;
   readonly projectId?: ProjectId | null;
+  readonly cooldowns?: readonly UsageLimitCooldownEntry[] | undefined;
 }) {
   const selection = input.explicitSelection ?? input.defaultSelection;
   const unchanged = { selection, fallback: null };
   if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
-  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-  const window = exhaustedUsageWindow(provider, input.now, selection.model);
-  const fallback = input.providers.find(
-    (entry) => entry.instanceId === input.fallbackSelection?.instanceId,
-  );
+  const exhausted = isModelSelectionExhausted({
+    selection,
+    providers: input.providers,
+    now: input.now,
+    cooldowns: input.cooldowns,
+  });
   if (
-    !provider ||
-    !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
+    !exhausted ||
+    !isModelSelectionUsable({
+      selection: input.fallbackSelection,
+      providers: input.providers,
+      now: input.now,
+      settings: input.settings,
+      projectId: input.projectId,
+      cooldowns: input.cooldowns,
+    })
   )
     return unchanged;
   return {
     selection: input.fallbackSelection,
-    fallback: { provider, resetsAt: window.resetsAt ?? null },
+    fallback: { provider: exhausted.provider, resetsAt: exhausted.resetAt },
   };
 }
 

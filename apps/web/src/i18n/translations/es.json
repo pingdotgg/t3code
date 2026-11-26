@@ -9155,7 +9155,7 @@
   "8ab693ae67cd5e86": "Restablecer el espacio de trabajo predeterminado al valor predeterminado",
   "d1d1342ccb83a14b": "Espacio de trabajo predeterminado",
   "a22721e847136f21": "No disponible",
-  "ce48b34d9403f3f1": "Se usa para los nuevos hilos cuando el proveedor del modelo predeterminado se queda sin uso.",
+  "90c9f80db617eb3e": "Used for new threads, and for active threads when automatic usage-limit switching is enabled, when a provider is out of usage.",
   "fca2f52dd63a3b08": "Restablecer el modelo alternativo al valor predeterminado",
   "d0eb21be71904f84": "Modelo de respaldo",
   "ebcfd96d4b112b4e": "Ninguno",
@@ -13010,5 +13010,9 @@
       "v": "v"
     },
     " más en Elementos vinculados"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Switch to fallback model on usage limits",
+  "fd886d0157729d0e": "Automatically continue limited threads on your fallback model, and switch back once usage resets.",
+  "73d322c7fefc4ff3": "Select a Fallback model above for automatic switching to take effect.",
+  "67da54eaad0ca73b": "usage quota rate limit fallback switch provider agent auto restore reset"
 }

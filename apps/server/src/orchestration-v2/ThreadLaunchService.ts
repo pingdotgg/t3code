@@ -10,6 +10,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
+  type OrchestrationV2FallbackOrigin,
   type OrchestrationV2WorkflowOrigin,
   type OrchestrationV2LinkOrigin,
   type OrchestrationV2ProviderThreadNativeMetadata,
@@ -111,6 +112,7 @@ export interface ThreadLaunchInput {
   /** The caller chose `title`, so a first message keeps it. */
   readonly titleRenamed?: boolean;
   readonly modelSelection: ModelSelection;
+  readonly fallbackOrigin?: OrchestrationV2FallbackOrigin | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -1574,6 +1576,9 @@ const make = Effect.gen(function* () {
                 title: input.title,
                 ...(input.titleRenamed === true ? { titleRenamed: true } : {}),
                 modelSelection: input.modelSelection,
+                ...(input.fallbackOrigin === undefined
+                  ? {}
+                  : { fallbackOrigin: input.fallbackOrigin }),
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
                 branch: initialBranch,

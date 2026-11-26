@@ -9172,7 +9172,7 @@
   "8ab693ae67cd5e86": "重置默认工作区为默认值",
   "d1d1342ccb83a14b": "默认工作区",
   "a22721e847136f21": "不可用",
-  "ce48b34d9403f3f1": "默认模型的提供方额度耗尽时，新会话使用此模型。",
+  "90c9f80db617eb3e": "Used for new threads, and for active threads when automatic usage-limit switching is enabled, when a provider is out of usage.",
   "fca2f52dd63a3b08": "重置备用模型为默认值",
   "d0eb21be71904f84": "备用模型",
   "ebcfd96d4b112b4e": "无",
@@ -13029,5 +13029,9 @@
       "v": "v"
     },
     " 项"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Switch to fallback model on usage limits",
+  "fd886d0157729d0e": "Automatically continue limited threads on your fallback model, and switch back once usage resets.",
+  "73d322c7fefc4ff3": "Select a Fallback model above for automatic switching to take effect.",
+  "67da54eaad0ca73b": "usage quota rate limit fallback switch provider agent auto restore reset"
 }

@@ -9157,7 +9157,7 @@
   "8ab693ae67cd5e86": "Standard-Arbeitsbereich auf Standard zurücksetzen",
   "d1d1342ccb83a14b": "Standard-Arbeitsbereich",
   "a22721e847136f21": "Nicht verfügbar",
-  "ce48b34d9403f3f1": "Wird für neue Threads verwendet, wenn das Nutzungskontingent des Anbieters des Standardmodells aufgebraucht ist.",
+  "90c9f80db617eb3e": "Used for new threads, and for active threads when automatic usage-limit switching is enabled, when a provider is out of usage.",
   "fca2f52dd63a3b08": "Ausweichmodell auf Standard zurücksetzen",
   "d0eb21be71904f84": "Ausweichmodell",
   "ebcfd96d4b112b4e": "Keins",
@@ -13015,5 +13015,9 @@
       "v": "v"
     },
     " weitere unter Verknüpfte Elemente"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Switch to fallback model on usage limits",
+  "fd886d0157729d0e": "Automatically continue limited threads on your fallback model, and switch back once usage resets.",
+  "73d322c7fefc4ff3": "Select a Fallback model above for automatic switching to take effect.",
+  "67da54eaad0ca73b": "usage quota rate limit fallback switch provider agent auto restore reset"
 }

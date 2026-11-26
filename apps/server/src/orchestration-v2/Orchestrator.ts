@@ -109,6 +109,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
@@ -4134,6 +4135,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.titleRenamed === true ? { titleRenamed: true } : {}),
       providerInstanceId: command.modelSelection.instanceId,
       modelSelection: command.modelSelection,
+      ...(command.fallbackOrigin === undefined ? {} : { fallbackOrigin: command.fallbackOrigin }),
       runtimeMode: command.runtimeMode,
       interactionMode: command.interactionMode,
       branch: command.branch,
@@ -5590,6 +5592,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             providerInstanceId: command.modelSelection.instanceId,
             modelSelection: command.modelSelection,
+            fallbackOrigin:
+              command.type === "thread.model-selection.set" && command.fallbackOrigin !== undefined
+                ? command.fallbackOrigin
+                : null,
             updatedAt: now,
           };
       }
@@ -8525,9 +8531,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
     );
     const now = yield* DateTime.now;
+    const currentFallbackOrigin = projection.thread.fallbackOrigin ?? null;
+    const nextFallbackOrigin =
+      command.fallbackOrigin !== undefined
+        ? command.fallbackOrigin
+        : command.modelSelection !== undefined &&
+            currentFallbackOrigin !== null &&
+            !modelSelectionsEqual(command.modelSelection, currentFallbackOrigin.fallbackSelection)
+          ? null
+          : currentFallbackOrigin;
+    const fallbackOriginChanged = !Equal.equals(currentFallbackOrigin, nextFallbackOrigin);
     if (
       !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      projection.thread.providerInstanceId !== modelSelection.instanceId ||
+      fallbackOriginChanged
     ) {
       yield* emit(
         events,
@@ -8544,6 +8561,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           providerInstanceId: modelSelection.instanceId,
           modelSelection,
+          fallbackOrigin: nextFallbackOrigin,
           updatedAt: now,
         },
       });

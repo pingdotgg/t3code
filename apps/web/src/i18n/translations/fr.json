@@ -9157,7 +9157,7 @@
   "8ab693ae67cd5e86": "Réinitialiser l’espace de travail par défaut à la valeur par défaut",
   "d1d1342ccb83a14b": "Espace de travail par défaut",
   "a22721e847136f21": "Indisponible",
-  "ce48b34d9403f3f1": "Utilisé pour les nouveaux fils quand le fournisseur du modèle par défaut a épuisé son utilisation.",
+  "90c9f80db617eb3e": "Used for new threads, and for active threads when automatic usage-limit switching is enabled, when a provider is out of usage.",
   "fca2f52dd63a3b08": "Réinitialiser le modèle de secours à la valeur par défaut",
   "d0eb21be71904f84": "Modèle de secours",
   "ebcfd96d4b112b4e": "Aucun",
@@ -13015,5 +13015,9 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Switch to fallback model on usage limits",
+  "fd886d0157729d0e": "Automatically continue limited threads on your fallback model, and switch back once usage resets.",
+  "73d322c7fefc4ff3": "Select a Fallback model above for automatic switching to take effect.",
+  "67da54eaad0ca73b": "usage quota rate limit fallback switch provider agent auto restore reset"
 }
