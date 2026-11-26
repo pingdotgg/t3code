@@ -461,7 +461,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   // Indented code holds literal `[^x]`; an indented line under a list item continues the item.
   let inIndentedCode = false;
   let inList = false;
-  let openedFence = false;
+  let openedStandaloneBlock = false;
   // The outermost list item's content column; a line indented less is outside every item.
   let listContentIndent = Infinity;
   let listMarker = "";
@@ -545,8 +545,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       }
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
       closes = (next) => {
-        openedFence = FRONTMATTER_CLOSE.test(next);
-        return openedFence;
+        openedStandaloneBlock = FRONTMATTER_CLOSE.test(next);
+        return openedStandaloneBlock;
       };
     } else if (lineIndex > definitionEnd) {
       if (inFootnoteDef) {
@@ -608,7 +608,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             activeFootnoteLines = null;
           }
           pendingFootnoteBlanks = [];
-          openedFence = false;
+          openedStandaloneBlock = false;
           handledAsFootnote = true;
         } else {
           const closer = blockCloser(line);
@@ -652,11 +652,13 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             if (lineIndex === flowStart || htmlStarts?.has(lineIndex)) closes = closesAtBlankLine;
             else if (lineIndex >= parsedThrough) ambiguousHtml = true;
           }
-          const afterFence = afterHeading && openedFence && dedented;
+          const afterStandaloneBlock = afterHeading && openedStandaloneBlock && dedented;
           const fence = FENCE_OPEN.test(line);
           // Fence tracking ignores lists, so it finds the real end of a fence indented two or more
           // spaces only when that fence is outside every list item.
-          openedFence = fence && (dedented || /^ ?[`~]/.test(line));
+          openedStandaloneBlock =
+            (fence && (dedented || /^ ?[`~]/.test(line))) ||
+            (line.startsWith("<") && SPANNING_BLOCKS.some(([open]) => open.test(line)));
           const thematicBreak = THEMATIC_BREAK.test(line);
           const contentColumn = dedented ? 0 : listContentIndent;
           const canStartBlock = indent - contentColumn <= 3;
@@ -688,7 +690,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           } else if (
             dedented &&
             !blank &&
-            (afterBlankLine || afterFence || opensNonParagraph(line))
+            (afterBlankLine || afterStandaloneBlock || opensNonParagraph(line))
           ) {
             // Dedented prose can still be a lazy continuation until a block boundary.
             listContentIndent = Infinity;
@@ -773,7 +775,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     afterHeading =
       !handledAsFootnote &&
       closes === null &&
-      (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
+      (openedStandaloneBlock || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
   if (inFootnoteDef) finishFootnoteDef();
   flush(sourceLines.length);
