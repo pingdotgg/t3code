@@ -43,6 +43,41 @@ describe("filterComposerPullRequestMatches", () => {
     });
     expect(result.map((match) => match.number)).toEqual([499]);
   });
+
+  it("matches a zero-padded numeric query to its exact pull request ahead of substring matches", () => {
+    const result = filterComposerPullRequestMatches({
+      keyOf,
+      entries: [entry(10042, "2026-01-03"), entry(42, "2026-01-01"), entry(420, "2026-01-04")],
+      projectId: "p1",
+      repository: "owner/repo",
+      query: "0042",
+      limit: 10,
+    });
+    expect(result.map((match) => match.number)).toEqual([42, 10042]);
+  });
+
+  it("does not treat unsafe integers or zero as exact numeric matches", () => {
+    expect(
+      filterComposerPullRequestMatches({
+        keyOf,
+        entries: [entry(9007199254740992, "2026-01-01")],
+        projectId: "p1",
+        repository: "owner/repo",
+        query: "9007199254740993",
+        limit: 10,
+      }),
+    ).toEqual([]);
+    expect(
+      filterComposerPullRequestMatches({
+        keyOf,
+        entries: [entry(0, "2026-01-01"), entry(1000, "2026-01-02")],
+        projectId: "p1",
+        repository: "owner/repo",
+        query: "000",
+        limit: 10,
+      }).map((match) => match.number),
+    ).toEqual([1000]);
+  });
 });
 
 describe("linked pull requests", () => {
@@ -83,6 +118,22 @@ describe("linked pull requests", () => {
     expect(result.map((match) => `${match.repository}#${match.number}`)).toEqual([
       "owner/repo-b#4",
       "owner/repo#4",
+    ]);
+  });
+
+  it("matches linked pull requests for zero-padded numeric queries", () => {
+    const result = filterComposerPullRequestMatches({
+      keyOf,
+      entries: [entry(42, "2026-01-03")],
+      linked: composerPullRequestsFromLinks([link("owner/repo-b", 42)], "p1"),
+      projectId: "p1",
+      repository: "owner/repo",
+      query: "0042",
+      limit: 10,
+    });
+    expect(result.map((match) => `${match.repository}#${match.number}`)).toEqual([
+      "owner/repo-b#42",
+      "owner/repo#42",
     ]);
   });
 

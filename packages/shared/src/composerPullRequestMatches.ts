@@ -32,6 +32,12 @@ export function composerPullRequestsFromLinks(
   );
 }
 
+function parseExactPullRequestQueryNumber(query: string): number | null {
+  if (!/^\d+$/u.test(query)) return null;
+  const number = Number(query);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
 export function filterComposerPullRequestMatches<
   Entry extends ComposerPullRequestMatch,
   Linked extends ComposerPullRequestMatch = never,
@@ -46,13 +52,20 @@ export function filterComposerPullRequestMatches<
 }): ReadonlyArray<Entry | Linked> {
   const repository = input.repository.trim().toLowerCase();
   const { keyOf } = input;
-  const linked = (input.linked ?? []).filter((entry) => String(entry.number).includes(input.query));
+  const exactQueryNumber = parseExactPullRequestQueryNumber(input.query);
+  const isExactMatch = (entry: ComposerPullRequestMatch) =>
+    exactQueryNumber !== null
+      ? entry.number === exactQueryNumber
+      : String(entry.number) === input.query;
+  const matchesQuery = (entry: ComposerPullRequestMatch) =>
+    isExactMatch(entry) || String(entry.number).includes(input.query);
+  const linked = (input.linked ?? []).filter(matchesQuery);
   const linkedKeys = new Set(linked.map(keyOf));
   const matchingEntries = input.entries.filter(
     (entry) =>
       entry.projectId === input.projectId &&
       entry.repository.trim().toLowerCase() === repository &&
-      String(entry.number).includes(input.query),
+      matchesQuery(entry),
   );
   const uniqueEntries = new Map<string, Entry | Linked>();
   for (const entry of [...matchingEntries, ...linked]) {
@@ -60,7 +73,6 @@ export function filterComposerPullRequestMatches<
       uniqueEntries.set(keyOf(entry), entry);
     }
   }
-  const isExactMatch = (entry: ComposerPullRequestMatch) => String(entry.number) === input.query;
   const isLinked = (entry: Entry | Linked) => linkedKeys.has(keyOf(entry));
   const updatedAtMs = (entry: ComposerPullRequestMatch) => Date.parse(entry.updatedAt) || 0;
   // Hermes has no ES2023 array methods, so sort a fresh array.
