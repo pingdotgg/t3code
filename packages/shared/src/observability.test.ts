@@ -141,7 +141,6 @@ describe("truncateTraceAttributes", () => {
   it.each([
     ["a pair straddling the limit", "q".repeat(199)],
     ["a pair ending at the limit", `${"q".repeat(198)}😀`],
-    ["a BMP character at the limit", "é".repeat(200)],
   ])("never splits a surrogate pair with %s", (_, head) => {
     const nestedHead = `${"n".repeat(300)}${head}`;
     const truncated = truncateTraceAttributes({

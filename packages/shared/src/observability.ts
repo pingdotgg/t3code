@@ -16,7 +16,6 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Tracer from "effect/Tracer";
 import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/observability";
 
-import { splitsSurrogatePair } from "./assistantCitations.ts";
 import { makeAsyncRotatingFileSink } from "./logging.ts";
 
 export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
@@ -338,7 +337,8 @@ const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
 const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
 
 function truncateTraceString(value: string, length: number): string {
-  const end = splitsSurrogatePair(value, length) ? length - 1 : length;
+  const last = value.charCodeAt(length - 1);
+  const end = length - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
   return `${value.slice(0, end)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
 }
 
