@@ -1,3 +1,5 @@
+import { maskMarkdownFrontmatter } from "./markdownFrontmatter.ts";
+
 // About one screen of rendered Markdown; parsing costs up to ~40 ms per KB with tables and math.
 const CHUNK_TARGET_CHARS = 4 * 1024;
 // A chunk past this (one huge fence or HTML block) is too slow to parse at once; show source.
@@ -24,7 +26,8 @@ const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
 
 // A tag name, not an autolink such as <https://example.com>.
 const HTML_BLOCK_START = /^ {0,3}<\/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)/;
-const closesAtBlankLine = (next: string) => next.trim() === "";
+const BLANK_LINE = /^[ \t]*\r?$/;
+const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
 
 // A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
@@ -57,12 +60,14 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
   const fence = FENCE_OPEN.exec(line)?.[1];
   if (fence) {
     return (next) => {
-      const closer = FENCE_OPEN.exec(next)?.[1];
+      const match = FENCE_OPEN.exec(next);
+      const closer = match?.[1];
       return (
+        match !== null &&
         closer !== undefined &&
         closer[0] === fence[0] &&
         closer.length >= fence.length &&
-        !next.trim().slice(closer.length)
+        BLANK_LINE.test(next.slice(match[0].length))
       );
     };
   }
@@ -82,15 +87,37 @@ export interface MarkdownChunk {
 
 const FRONTMATTER_OPEN = /^\uFEFF?---[ \t]*\r?$/;
 const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
-// An opening rule with no closer is a thematic break, not frontmatter; stop waiting for one.
+// Cap the lookahead for a frontmatter closer; a leading rule with none is a thematic break.
 const FRONTMATTER_MAX_LINES = 1000;
+
+const hasFrontmatterClose = (lines: readonly string[]) =>
+  lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
 
 // A one-line link reference definition; footnotes are left alone so each piece does not grow
 // a footnote section.
 const LINK_DEFINITION =
-  /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|[^\s<]\S*)(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
+  /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
+
+function isLinkDefinition(line: string): boolean {
+  const match = LINK_DEFINITION.exec(line);
+  if (!match) return false;
+  const bareDestination = match[1];
+  if (bareDestination === undefined) return true;
+  let depth = 0;
+  for (let i = 0; i < bareDestination.length; i++) {
+    const ch = bareDestination[i];
+    if (ch === "\\") {
+      i++;
+    } else if (ch === "(") {
+      depth++;
+    } else if (ch === ")" && --depth < 0) {
+      return false;
+    }
+  }
+  return depth === 0;
+}
 
 export interface SplitMarkdown {
   readonly chunks: readonly MarkdownChunk[];
@@ -123,15 +150,14 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     chars = 0;
     heldCut = 0;
   };
-  for (const line of text.split("\n")) {
+  const sourceLines = text.split("\n");
+  for (const line of sourceLines) {
     if (closes !== null) {
       if (closes(line)) closes = null;
-    } else if (first && FRONTMATTER_OPEN.test(line)) {
-      let seen = 0;
+    } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
       closes = (next) => {
-        // Only a real closer lets a definition follow; an opener with none was a thematic break.
         openedFence = FRONTMATTER_CLOSE.test(next);
-        return openedFence || ++seen >= FRONTMATTER_MAX_LINES;
+        return openedFence;
       };
     } else {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
@@ -142,12 +168,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      // An indented fence may sit in a list item, which this does not track.
-      openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
+      // Two or more spaces may put a fence in a list item, which this does not track.
+      openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
-        (first || afterBlankLine || afterDefinition || afterHeading) && LINK_DEFINITION.test(line);
+        (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
       afterDefinition = definition;
       if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
         definitions.push(line.trim());
@@ -167,7 +193,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
       openWrappers = 0;
     }
-    afterBlankLine = line.trim() === "";
+    afterBlankLine = BLANK_LINE.test(line);
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
@@ -175,7 +201,11 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   return { chunks, definitions: definitions.join("\n") };
 }
 
-/** Appends shared link definitions after a piece, leaving its own offsets unchanged. */
+/** Prepends shared definitions in document order; source offsets shift by the prefix length. */
 export function withMarkdownDefinitions(text: string, definitions: string): string {
-  return definitions ? `${text}\n\n${definitions}` : text;
+  if (!definitions) return text;
+  const masked = maskMarkdownFrontmatter(text);
+  return masked.startsWith("\uFEFF")
+    ? `\uFEFF${definitions}\n\n${masked.slice(1)}`
+    : `${definitions}\n\n${masked}`;
 }

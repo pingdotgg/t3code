@@ -127,7 +127,10 @@ export function ChunkedMarkdown(props: {
                   onTaskListChange &&
                   ((input) =>
                     onTaskListChange({
-                      markerOffset: item.start + input.markerOffset,
+                      markerOffset:
+                        item.start +
+                        input.markerOffset -
+                        (props.definitions ? props.definitions.length + 2 : 0),
                       checked: input.checked,
                     }))
                 }
