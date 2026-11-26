@@ -77,6 +77,7 @@ vi.mock("react-native", () => ({
   View: "View",
 }));
 vi.mock("@react-navigation/native", () => ({
+  useRoute: () => state.navigationState?.routes[state.navigationState.index],
   useNavigation: () => ({
     dispatch: state.dispatch,
     getState: () =>
@@ -250,9 +251,10 @@ it.each([
   { name: "Back after two submissions in one render", repeatSubmit: true, unmount: true },
   { name: "Back before the screen unmounts" },
   { name: "a change to the repository route parameters", changeParams: true },
+  { name: "submitting from a render with stale route parameters", replaceBeforeSubmit: true },
 ])(
   "ignores a pending repository reply after $name",
-  async ({ repeatSubmit, unmount, changeParams }) => {
+  async ({ repeatSubmit, unmount, changeParams, replaceBeforeSubmit }) => {
     const repository = AsyncResult.success({
       provider: "github",
       nameWithOwner: "example/slow",
@@ -308,17 +310,20 @@ it.each([
     const submit = findAction(screen, "Lookup repository");
     if (!submit) throw new Error("Repository lookup action missing");
     try {
+      if (replaceBeforeSubmit) flow.setParams({ source: "gitlab" });
       await act(() => {
         if (repeatSubmit) {
           withRepositoryInput(screen, (input) => input.onSubmitEditing());
         }
         void submit();
       });
-      expect(state.lookupRepository).toHaveBeenCalledWith("example/slow");
-      if (changeParams) {
-        flow.setParams({ source: "gitlab" });
-      } else {
-        flow.back();
+      if (!replaceBeforeSubmit) {
+        expect(state.lookupRepository).toHaveBeenCalledWith("example/slow");
+        if (changeParams) {
+          flow.setParams({ source: "gitlab" });
+        } else {
+          flow.back();
+        }
       }
       if (unmount) await act(() => root.render(null));
       await act(async () => {
@@ -327,7 +332,7 @@ it.each([
         await lookup.promise;
       });
       expect(state.dispatch).not.toHaveBeenCalled();
-      expect(state.lookupRepository).toHaveBeenCalledOnce();
+      expect(state.lookupRepository).toHaveBeenCalledTimes(replaceBeforeSubmit ? 0 : 1);
     } finally {
       state.navigationState = undefined;
       state.dispatch.mockReset();
