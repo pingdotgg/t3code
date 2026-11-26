@@ -128,7 +128,8 @@ function isLinkDefinitionDestination(text: string): boolean {
 
 const definitionParser = unified().use(remarkParse);
 
-function readLinkDefinition(lines: readonly string[], start: number, line: string) {
+function readLinkDefinition(lines: readonly string[], start: number) {
+  const line = lines[start]!;
   const label = LINK_DEFINITION_LABEL.exec(line)?.[0];
   if (label === undefined) return;
   const rest = line.slice(label.length);
@@ -214,7 +215,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       if (first || afterBlankLine || lineIndex === definitionEnd + 1 || afterHeading) {
-        const definition = readLinkDefinition(sourceLines, lineIndex, line);
+        const definition = readLinkDefinition(sourceLines, lineIndex);
         if (definition) {
           definitionEnd = definition.end;
           if (definitionChars + definition.text.length < SHARED_DEFINITIONS_MAX_CHARS) {
