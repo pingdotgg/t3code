@@ -1694,6 +1694,11 @@ export const resolveProjectProviderInstanceEnabled = (
   const instanceConfig = Object.hasOwn(settings.providerInstances, instanceId)
     ? settings.providerInstances[instanceId]
     : undefined;
+  if (instanceConfig === undefined && instanceId.startsWith("team:")) {
+    // Virtual team:<teamId>:<providerInstanceId> instances are provisioned by TeamProviderManager
+    // rather than personal serverSettings.providerInstances, so present entries are enabled.
+    return true;
+  }
   return instanceConfig !== undefined
     ? resolveProviderInstanceEnabled(instanceConfig)
     : isUnconfiguredDefaultInstanceEnabled(instanceId);

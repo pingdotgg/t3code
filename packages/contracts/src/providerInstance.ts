@@ -6,6 +6,10 @@ import { SecretReference } from "./secretReference.ts";
 
 const PROVIDER_SLUG_MAX_CHARS = 64;
 const PROVIDER_SLUG_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+// Virtual team-scoped provider instances use `team:<teamId>:<providerInstanceId>` for strict isolation.
+const PROVIDER_INSTANCE_ID_MAX_CHARS = 140;
+const PROVIDER_INSTANCE_ID_PATTERN =
+  /^(?:[a-zA-Z][a-zA-Z0-9_-]{0,63}|team:[a-zA-Z0-9_-]{1,64}:[a-zA-Z][a-zA-Z0-9_-]{0,63})$/;
 const ENVIRONMENT_VARIABLE_NAME_MAX_CHARS = 128;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -14,12 +18,17 @@ const slugSchema = TrimmedNonEmptyString.check(
   Schema.isPattern(PROVIDER_SLUG_PATTERN),
 );
 
+const instanceIdSchema = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROVIDER_INSTANCE_ID_MAX_CHARS),
+  Schema.isPattern(PROVIDER_INSTANCE_ID_PATTERN),
+);
+
 export const ProviderDriverKind = slugSchema.pipe(Schema.brand("ProviderDriverKind"));
 export type ProviderDriverKind = typeof ProviderDriverKind.Type;
 
 export const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
-export const ProviderInstanceId = slugSchema.pipe(Schema.brand("ProviderInstanceId"));
+export const ProviderInstanceId = instanceIdSchema.pipe(Schema.brand("ProviderInstanceId"));
 export type ProviderInstanceId = typeof ProviderInstanceId.Type;
 
 export const ProviderInstanceEnvironmentVariableName = TrimmedNonEmptyString.check(

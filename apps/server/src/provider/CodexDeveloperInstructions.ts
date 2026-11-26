@@ -39,12 +39,55 @@ export interface CodexRuntimeInfo {
   readonly reasoningEffort?: string | undefined;
 }
 
+/** Splits UTF-8 text into chunks whose byte length never exceeds maxBytes without breaking code points. */
+function chunkUtf8ForCodexAdditionalContext(
+  text: string,
+  maxBytes: number = CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+): ReadonlyArray<string> {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return [];
+  if (Buffer.byteLength(trimmed, "utf8") <= maxBytes) return [trimmed];
+  const chunks: Array<string> = [];
+  let current = "";
+  let currentBytes = 0;
+  for (const ch of trimmed) {
+    const chBytes = Buffer.byteLength(ch, "utf8");
+    if (currentBytes + chBytes > maxBytes && current.length > 0) {
+      chunks.push(current);
+      current = ch;
+      currentBytes = chBytes;
+    } else {
+      current += ch;
+      currentBytes += chBytes;
+    }
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+export function buildCodexTeamTurnContext(
+  teamTurnInstructions: string | undefined,
+): Record<string, V2TurnStartParams__AdditionalContextEntry> {
+  if (!teamTurnInstructions || teamTurnInstructions.trim().length === 0) {
+    return {};
+  }
+  const chunks = chunkUtf8ForCodexAdditionalContext(teamTurnInstructions);
+  return Object.fromEntries(
+    chunks.map((chunk, index) => [
+      `t3_team_turn_instructions_${String(index + 1).padStart(2, "0")}`,
+      { kind: "application" as const, value: chunk },
+    ]),
+  );
+}
+
 /** Keep this outside collaboration mode; model-catalog mode text overrides client developer_instructions. */
 export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   toolsAvailable: boolean | T3CodeToolAvailability = true,
+  teamTurnInstructions?: string,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
+  const teamTurnContext = buildCodexTeamTurnContext(teamTurnInstructions);
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
@@ -58,5 +101,6 @@ export function buildCodexAdditionalContext(
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
+    ...teamTurnContext,
   };
 }

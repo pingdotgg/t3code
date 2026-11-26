@@ -307,6 +307,17 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamReleaseAcceptedNotes]: "team",
   [TEAM_WS_METHODS.teamConsumeAcceptedNotes]: "team",
   [TEAM_WS_METHODS.teamListThreadNotes]: "team",
+  [TEAM_WS_METHODS.teamUpsertProvider]: "team",
+  [TEAM_WS_METHODS.teamDeleteProvider]: "team",
+  [TEAM_WS_METHODS.teamListProviderUsage]: "team",
+  [TEAM_WS_METHODS.teamUpsertSkill]: "team",
+  [TEAM_WS_METHODS.teamDeleteSkill]: "team",
+  [TEAM_WS_METHODS.teamUpsertPreprompt]: "team",
+  [TEAM_WS_METHODS.teamDeletePreprompt]: "team",
+  [TEAM_WS_METHODS.teamIssueLocalSyncToken]: "team",
+  [TEAM_WS_METHODS.teamSyncLocalBinding]: "team",
+  [TEAM_WS_METHODS.teamRemoveLocalBinding]: "team",
+  [TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

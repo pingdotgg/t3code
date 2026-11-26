@@ -1528,6 +1528,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("team workspace pseudo invite members colleagues shared server")],
   },
   {
+    id: "teams-providers",
+    title: msg("Team providers"),
+    to: "/settings/teams",
+    targetId: "teams-providers",
+    searchTerms: [msg("team providers api key oauth proxy lease remote-only models")],
+  },
+  {
+    id: "teams-skills-preprompts",
+    title: msg("Team skills & pre-prompts"),
+    to: "/settings/teams",
+    targetId: "teams-skills",
+    searchTerms: [msg("team skills preprompts markdown instructions slash commands")],
+  },
+  {
     id: "archive",
     title: msg("Archived threads"),
     to: "/settings/archived",

@@ -3,6 +3,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isDelegatedAppThread,
   isOrchestrationV2WorkActive,
+  isTeamProviderInstanceId,
   CommandId,
   type EventId,
   type ModelSelection,
@@ -34,6 +35,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -59,6 +61,8 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import { makeInterruptResultTurnItem } from "./runInterruptResult.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
@@ -729,6 +733,12 @@ export const layer: Layer.Layer<
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const teamProviderManagerOption = yield* Effect.serviceOption(
+      TeamProviderManager.TeamProviderManager,
+    );
+    const continuationRequestsOption = yield* Effect.serviceOption(
+      ProviderContinuationRequests.ProviderContinuationRequests,
+    );
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -1369,9 +1379,59 @@ export const layer: Layer.Layer<
           // for it: the run completes, while its native subagents still settle
           // as interrupted. The completed write refuses in the same transaction
           // as a stored Stop request, so a racing Stop stays authoritative.
-          const handedOff = terminal.status === "interrupted" && (yield* workspaceHandedOff);
-          if (!handedOff || !(yield* writeTerminal({ ...terminal, status: "completed" }))) {
-            yield* writeTerminal(terminal);
+          let effectiveTerminal: ProviderTerminalEvent = terminal;
+          if (
+            terminal.status === "failed" &&
+            isTeamProviderInstanceId(input.run.providerInstanceId) &&
+            Option.isSome(teamProviderManagerOption)
+          ) {
+            const recovery = yield* teamProviderManagerOption.value
+              .handleActiveTurnAuthFailure({
+                virtualInstanceId: input.run.providerInstanceId,
+                driver: providerThread.driver,
+                threadId: input.run.threadId,
+                providerThreadId: providerThread.id,
+                runId: input.run.id,
+                error: terminal.failure,
+                recycleSession: () => Effect.void,
+                ...(Option.isSome(continuationRequestsOption)
+                  ? {
+                      requestContinuation: (req) =>
+                        continuationRequestsOption.value.offer(req).pipe(Effect.asVoid),
+                    }
+                  : {}),
+              })
+              .pipe(
+                Effect.orElseSucceed((): TeamProviderManager.TeamActiveTurnAuthRecoveryResult => ({
+                  handled: false,
+                  revoked: false,
+                })),
+              );
+            if (recovery.revoked && recovery.message) {
+              effectiveTerminal = {
+                ...terminal,
+                status: "failed",
+                failure: {
+                  ...(terminal.failure ?? {
+                    code: "team_access_revoked",
+                    class: "auth_error" as const,
+                    retryable: false,
+                    message: recovery.message,
+                  }),
+                  code: "team_access_revoked",
+                  retryable: false,
+                  message: recovery.message,
+                },
+              };
+            }
+          }
+          const handedOff =
+            effectiveTerminal.status === "interrupted" && (yield* workspaceHandedOff);
+          if (
+            !handedOff ||
+            !(yield* writeTerminal({ ...effectiveTerminal, status: "completed", failure: null }))
+          ) {
+            yield* writeTerminal(effectiveTerminal);
           }
           if (isRunOwnedSubagentTerminalStatus(terminal.status) && !childTurnsContinue(terminal)) {
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());

@@ -9,12 +9,13 @@ export const resolveManagedCodexHomeLayout = Effect.fn("resolveManagedCodexHomeL
   config: CodexSettings,
 ) {
   const path = yield* Path.Path;
+  const safeInstanceDir = instanceId.replaceAll(":", "__");
   return yield* resolveCodexHomeLayout({
     ...config,
     shadowHomePath:
       config.shadowHomePath.trim() ||
       (instanceId === "codex"
         ? ""
-        : path.join(stateDir, "providers", "codex", instanceId, "shadow")),
+        : path.join(stateDir, "providers", "codex", safeInstanceDir, "shadow")),
   });
 });

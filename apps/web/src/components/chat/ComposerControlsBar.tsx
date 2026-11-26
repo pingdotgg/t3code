@@ -18,6 +18,7 @@ import {
   type ProviderInstanceId,
   type RuntimeMode,
   type ServerProvider,
+  type TeamProvider,
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
@@ -80,6 +81,7 @@ export function ComposerControlsBar(props: {
   lockedProvider: ChatComposerProps["lockedProvider"];
   lockedContinuationGroupKey: string | null;
   providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  remoteOnlyTeamProviders?: ReadonlyArray<TeamProvider>;
   keybindings: ChatComposerProps["keybindings"];
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
   terminalOpen: boolean;
@@ -124,6 +126,7 @@ export function ComposerControlsBar(props: {
     lockedProvider,
     lockedContinuationGroupKey,
     providerInstanceEntries,
+    remoteOnlyTeamProviders = [],
     keybindings,
     modelOptionsByInstance,
     terminalOpen,
@@ -261,7 +264,16 @@ export function ComposerControlsBar(props: {
       className="shrink-0"
     >
       <CircleAlertIcon className="size-4" />
-      {providerSetupInstanceId ? gt("Open provider settings") : gt("No provider available")}
+      {remoteOnlyTeamProviders.length > 0
+        ? gt("Remote-only team provider ({name}): run on Team Server", {
+            name:
+              remoteOnlyTeamProviders[0]?.displayName ??
+              remoteOnlyTeamProviders[0]?.providerInstanceId ??
+              "",
+          })
+        : providerSetupInstanceId
+          ? gt("Open provider settings")
+          : gt("No provider available")}
     </ComposerControl>
   ) : (
     <>

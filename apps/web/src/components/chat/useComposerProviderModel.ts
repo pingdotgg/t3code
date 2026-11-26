@@ -1,4 +1,9 @@
 import {
+  filterProviderEntriesForTeamProject,
+  listRemoteOnlyTeamProviders,
+  type ResolvedProjectTeamAssignment,
+} from "@t3tools/client-runtime/team";
+import {
   type DraftId,
   deriveEffectiveComposerModelState,
   useComposerDraftModelState,
@@ -37,6 +42,7 @@ export function useComposerProviderModel(
     readonly projectModelSelection: ModelSelection | null | undefined;
     readonly promptInjectionState: ReturnType<typeof getComposerPromptInjectionState>;
     readonly threadStarted: boolean;
+    readonly teamAssignment?: ResolvedProjectTeamAssignment | null;
   },
 ) {
   const {
@@ -51,13 +57,17 @@ export function useComposerProviderModel(
     lockedProvider,
     lockedInstanceId,
     threadStarted,
+    teamAssignment,
   } = input;
   const draftModelState = useComposerDraftModelState(threadRef);
-  const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = providerInstanceEntriesFor(
-    providerStatuses,
-    settings,
-    activeProjectId,
-  );
+  const rawProviderInstanceEntries: ReadonlyArray<ProviderInstanceEntry> =
+    providerInstanceEntriesFor(providerStatuses, settings, activeProjectId);
+  const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> =
+    filterProviderEntriesForTeamProject({
+      entries: rawProviderInstanceEntries,
+      teamAssignment,
+    });
+  const remoteOnlyTeamProviders = listRemoteOnlyTeamProviders(teamAssignment);
   const selection = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
     candidateInstanceIds: [
@@ -94,6 +104,7 @@ export function useComposerProviderModel(
   });
   return {
     providerInstanceEntries,
+    remoteOnlyTeamProviders,
     ...selection,
     selectedInstanceId,
     selectedProvider,

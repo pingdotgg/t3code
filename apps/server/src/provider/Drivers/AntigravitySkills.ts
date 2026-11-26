@@ -239,11 +239,19 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const isTeamProfile = yield* fileSystem
+    .exists(path.join(input.profileDirectory, ".t3-team-profile.json"))
+    .pipe(Effect.orElseSucceed(() => false));
   const [configSkills, cliSkills] = antigravityUserSkillDirectories(
     path,
     path.join(input.userHome, ".gemini"),
   );
+  // Team skills are scanned first so team definitions take precedence on slug/name collision
+  // while teammates' personal ~/.gemini skills remain accessible alongside them.
   const roots = [
+    ...(isTeamProfile
+      ? [{ directory: path.join(input.profileDirectory, "team-skills"), scope: "team" }]
+      : []),
     { directory: configSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
     { directory: cliSkills, scope: "user" },
@@ -391,6 +399,15 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   }
 
   for (const config of [
+    ...(isTeamProfile
+      ? [
+          {
+            configPath: path.join(input.profileDirectory, "config", "skills.json"),
+            baseDir: path.join(input.profileDirectory, "config"),
+            scope: "team",
+          },
+        ]
+      : []),
     {
       configPath: path.resolve(input.cwd, ".agents", "skills.json"),
       baseDir: input.cwd,

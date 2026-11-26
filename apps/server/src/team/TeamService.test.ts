@@ -14,6 +14,7 @@ import {
   MessageId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
@@ -44,6 +45,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { localSyncMirroredMessageId, localSyncMirroredRunId } from "./TeamLocalSyncService.ts";
+import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
 import { recordTeamDispatchEvents, recordTeamThreadLaunch } from "./wsHandlers.ts";
@@ -70,12 +72,15 @@ const makeTestLayer = () => {
   );
   const sessions = SessionStore.layer.pipe(Layer.provideMerge(authDeps), Layer.provide(base));
   const teamRepo = TeamRepository.layer.pipe(Layer.provide(persistence));
+  const assetsRepo = TeamAssetsRepository.layer.pipe(Layer.provide(persistence));
   const teamService = TeamService.layer.pipe(
     Layer.provideMerge(teamRepo),
+    Layer.provideMerge(assetsRepo),
     Layer.provideMerge(sessions),
+    Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(base))),
     Layer.provide(base),
   );
-  return Layer.mergeAll(teamService, teamRepo, sessions, persistence);
+  return Layer.mergeAll(teamService, teamRepo, assetsRepo, sessions, persistence);
 };
 
 describe("TeamService", () => {
@@ -98,6 +103,10 @@ describe("TeamService", () => {
         teamProjects: [],
         environments: [],
         threadNotes: [],
+        providers: [],
+        skills: [],
+        preprompts: [],
+        assetsRevision: 0,
       });
 
       const threadId = ThreadId.make("thread-personal-1");
@@ -2986,6 +2995,133 @@ describe("TeamService", () => {
         expect(demoteEvents[0]).toBe("pair:start");
         expect(demoteEvents[1]).toBe("pair:remote-minted");
         expect(demoteEvents.slice(2).every((e) => e.startsWith("revoke:"))).toBe(true);
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "enforces Milestone 6 RBAC: owner/admin-only team providers, modo+ pure-Markdown skills and pre-prompts, and token revocation on suspension",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-m6" });
+        yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "M6 Org", ownerPseudo: "alice" },
+        });
+        const charlieInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "modo", prefilledPseudo: "charlie" },
+        });
+        const charlieRedeemed = yield* team.redeemInvite({
+          token: charlieInvite.token,
+          pseudo: "charlie",
+          client: testClient,
+        });
+        const charlieSession = yield* sessions.verify(charlieRedeemed.accessToken);
+
+        const bobInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: testClient,
+        });
+        const bobSession = yield* sessions.verify(bobRedeemed.accessToken);
+
+        // Provider management is strictly owner/admin only (modo & regular rejected!).
+        const modoProviderExit = yield* Effect.exit(
+          team.upsertProvider({
+            sessionId: charlieSession.sessionId,
+            payload: {
+              providerInstanceId: ProviderInstanceId.make("company-llm"),
+              driver: ProviderDriverKind.make("acpRegistry"),
+              displayName: "Company LLM",
+              deliveryStrategy: "proxy",
+              upstreamBaseUrl: "https://llm.example",
+              apiKey: "secret",
+            },
+          }),
+        );
+        expect(modoProviderExit._tag).toBe("Failure");
+        expect(
+          (yield* Effect.exit(team.assertCanManageServerProviders(charlieSession.sessionId)))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(team.assertCanManageServerProviders(bobSession.sessionId)))._tag,
+        ).toBe("Failure");
+        yield* team.assertCanManageServerProviders(aliceSession.sessionId);
+
+        const provider = yield* team.upsertProvider({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            providerInstanceId: ProviderInstanceId.make("company-llm"),
+            driver: ProviderDriverKind.make("acpRegistry"),
+            displayName: "Company LLM",
+            deliveryStrategy: "proxy",
+            upstreamBaseUrl: "https://llm.example",
+            apiKey: "secret",
+          },
+        });
+        expect(provider.hasSecret).toBe(true);
+
+        // Modo Charlie CAN create pure-Markdown skills & pre-prompts, but executable scripts are rejected!
+        const badSkillExit = yield* Effect.exit(
+          team.upsertSkill({
+            sessionId: charlieSession.sessionId,
+            payload: {
+              slug: "bad-script",
+              providerDriver: "*",
+              skillMd: "---\nname: bad-script\ndescription: Bad\n---\nBody",
+              references: [{ path: "run.sh", content: "echo pwned" }],
+            },
+          }),
+        );
+        expect(badSkillExit._tag).toBe("Failure");
+
+        const skill = yield* team.upsertSkill({
+          sessionId: charlieSession.sessionId,
+          payload: {
+            slug: "team-review",
+            providerDriver: "*",
+            skillMd: "---\nname: team-review\ndescription: Team review\n---\nCheck tests.",
+            references: [{ path: "checklist.md", content: "- Run tests" }],
+          },
+        });
+        expect(skill.updatedByMemberId).toBe(charlieRedeemed.member.id);
+
+        const preprompt = yield* team.upsertPreprompt({
+          sessionId: charlieSession.sessionId,
+          payload: {
+            name: "Security Guard",
+            providerDriver: "*",
+            injectionScope: "turn",
+            content: "Never commit company keys.",
+          },
+        });
+        expect(preprompt.injectionScope).toBe("turn");
+
+        // Regular Bob CANNOT write skills or pre-prompts, CAN read them in getState!
+        const bobSkillExit = yield* Effect.exit(
+          team.upsertSkill({
+            sessionId: bobSession.sessionId,
+            payload: {
+              slug: "bob-skill",
+              providerDriver: "*",
+              skillMd: "---\nname: bob-skill\ndescription: No\n---\nBody",
+            },
+          }),
+        );
+        expect(bobSkillExit._tag).toBe("Failure");
+
+        const bobState = yield* team.getState(bobSession.sessionId);
+        expect(bobState.providers).toHaveLength(1);
+        expect(bobState.skills).toHaveLength(1);
+        expect(bobState.preprompts).toHaveLength(1);
+        expect(bobState.assetsRevision).toBeGreaterThanOrEqual(2);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

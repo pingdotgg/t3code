@@ -13,7 +13,10 @@ import {
   runtimeModeDenial,
 } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
+import { resolveProjectTeamAssignment } from "@t3tools/client-runtime/team";
+import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useTeamStatesByEnvironment } from "../../state/team";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import {
@@ -969,8 +972,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     supportsAttachmentUploads,
   ]);
 
+  const allProjects = useProjects();
+  const teamStatesByEnvironment = useTeamStatesByEnvironment();
+  const activeProjectEntity =
+    activeProjectId !== null
+      ? (allProjects.find(
+          (project) => project.environmentId === environmentId && project.id === activeProjectId,
+        ) ?? null)
+      : null;
+  const activeProjectTeamAssignment = activeProjectEntity
+    ? resolveProjectTeamAssignment({
+        project: activeProjectEntity,
+        teamStates: teamStatesByEnvironment,
+      })
+    : null;
+
   const {
     providerInstanceEntries,
+    remoteOnlyTeamProviders,
     selectedProviderEntry,
     lockedContinuationGroupKey,
     unavailableProviderInstanceId,
@@ -989,6 +1008,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     promptInjectionState: getComposerPromptInjectionState(prompt),
     threadStarted: threadHasStarted(activeThread),
+    teamAssignment: activeProjectTeamAssignment,
     candidateInstanceIds: [
       activeThread?.runtime?.providerInstanceId,
       activeThreadModelSelection?.instanceId,
@@ -2746,6 +2766,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       lockedProvider={lockedProvider}
       lockedContinuationGroupKey={lockedContinuationGroupKey}
       providerInstanceEntries={providerInstanceEntries}
+      remoteOnlyTeamProviders={remoteOnlyTeamProviders}
       keybindings={keybindings}
       modelOptionsByInstance={modelOptionsByInstance}
       terminalOpen={terminalOpen}

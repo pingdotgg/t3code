@@ -24,14 +24,22 @@ describe("team sidecar migrations", () => {
         SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'team_%' ORDER BY name
       `;
       expect(tables.map((row) => row.name)).toEqual([
+        "team_asset_revisions",
+        "team_asset_tombstones",
         "team_environments",
         "team_invites",
+        "team_local_bindings",
+        "team_local_sync_tokens",
         "team_members",
         "team_pending_remote_revocations",
+        "team_preprompts",
         "team_project_meta",
+        "team_provider_usage",
+        "team_providers",
         "team_relay_binding",
         "team_schema_migrations",
         "team_session_meta",
+        "team_skills",
         "team_thread_env_labels",
         "team_thread_follows",
         "team_thread_meta",
@@ -47,5 +55,17 @@ describe("team sidecar migrations", () => {
       `;
       expect(upstreamAfter[0]?.count).toBe(upstreamBefore[0]?.count);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+  );
+
+  it.effect(
+    "serializes concurrent runTeamMigrations calls without UNIQUE constraint failures",
+    () =>
+      Effect.gen(function* () {
+        const [first, second] = yield* Effect.all([runTeamMigrations(), runTeamMigrations()], {
+          concurrency: "unbounded",
+        });
+        const totalExecuted = first.length + second.length;
+        expect(totalExecuted).toBe(TEAM_MIGRATIONS.length);
+      }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 });

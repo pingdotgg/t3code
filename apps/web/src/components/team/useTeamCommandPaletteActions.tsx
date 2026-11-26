@@ -19,9 +19,12 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useGT } from "gt-react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   BellIcon,
   BellOffIcon,
+  BookOpenIcon,
+  CloudIcon,
   GitForkIcon,
   LayersIcon,
   LockIcon,
@@ -53,6 +56,7 @@ export function useTeamCommandPaletteActions(
   activeThread: { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null | undefined,
 ): ReadonlyArray<CommandPaletteActionItem> {
   const gt = useGT();
+  const navigate = useNavigate();
   const teamStatesByEnvironment = useTeamStatesByEnvironment();
   const showColleaguesThreads = useShowColleaguesThreads();
   const showFollowedThreadsOnly = useShowFollowedThreadsOnly();
@@ -264,6 +268,26 @@ export function useTeamCommandPaletteActions(
       icon: <BellIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         toggleShowFollowedThreadsOnly();
+      },
+    });
+    items.push({
+      kind: "action",
+      value: "action:team-open-providers",
+      searchTerms: ["team", "providers", "models", "api key", "oauth", "proxy", "lease"],
+      title: gt("Open Team Providers settings"),
+      icon: <CloudIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/settings/teams", hash: "teams-providers" });
+      },
+    });
+    items.push({
+      kind: "action",
+      value: "action:team-open-skills",
+      searchTerms: ["team", "skills", "preprompts", "instructions", "markdown"],
+      title: gt("Open Team Skills & Pre-prompts settings"),
+      icon: <BookOpenIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/settings/teams", hash: "teams-skills" });
       },
     });
   }

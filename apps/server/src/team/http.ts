@@ -40,6 +40,7 @@ const mapTeamHttpError = (error: TeamOperationError) => {
     case "note_hash_mismatch":
     case "note_not_pending":
     case "note_already_consumed":
+    case "skill_slug_taken":
       return new TeamHttpConflictError({ code: error.code, message: error.message });
     case "not_found":
     case "not_configured":
@@ -49,6 +50,9 @@ const mapTeamHttpError = (error: TeamOperationError) => {
     case "invalid_input":
     case "forbidden":
     case "environment_unavailable":
+    case "provider_not_allowed":
+    case "team_access_revoked":
+    case "remote_only_provider":
       return new TeamHttpBadRequestError({ code: error.code, message: error.message });
     case "internal":
       return new TeamHttpInternalError({ code: error.code, message: error.message });

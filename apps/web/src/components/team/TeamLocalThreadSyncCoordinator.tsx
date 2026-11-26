@@ -1,10 +1,12 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { resolveProjectTeamAssignment } from "@t3tools/client-runtime/team";
-import type {
-  EnvironmentId,
-  TeamSyncLocalThreadInput,
-  TeamThreadNoteId,
-  ThreadId,
+import {
+  NonNegativeInt,
+  type EnvironmentId,
+  type TeamId,
+  type TeamSyncLocalThreadInput,
+  type TeamThreadNoteId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
@@ -167,6 +169,23 @@ export function TeamLocalThreadSyncCoordinator() {
   const threadShells = useThreadShells();
   const teamStates = useTeamStatesByEnvironment();
   const syncLocalThread = useAtomCommand(teamEnvironment.syncLocalThread, { reportFailure: false });
+  const issueLocalSyncToken = useAtomCommand(teamEnvironment.issueLocalSyncToken, {
+    reportFailure: false,
+  });
+  const syncLocalBinding = useAtomCommand(teamEnvironment.syncLocalBinding, {
+    reportFailure: false,
+  });
+  const removeLocalBinding = useAtomCommand(teamEnvironment.removeLocalBinding, {
+    reportFailure: false,
+  });
+  const notifyLocalAssetsUpdated = useAtomCommand(teamEnvironment.notifyLocalAssetsUpdated, {
+    reportFailure: false,
+  });
+
+  const localSyncTokenByTeamEnvRef = useRef(new Map<EnvironmentId, string>());
+  const syncedBindingFingerprintByTeamIdRef = useRef(new Map<TeamId, string>());
+  const syncedAssetsRevisionByTeamIdRef = useRef(new Map<TeamId, number>());
+  const boundTeamIdsRef = useRef(new Set<TeamId>());
 
   const syncedPayloadFingerprintByKeyRef = useRef(new Map<string, string>());
   const syncedShellFingerprintByKeyRef = useRef(new Map<string, string>());
@@ -597,6 +616,132 @@ export function TeamLocalThreadSyncCoordinator() {
       initializedTeamEnvsRef.current.add(teamEnvId);
     }
   }, [router, teamStates]);
+
+  // 3. Milestone 6: Sync connected Team Servers' providers, project mappings, member token,
+  // and live assetsRevision to the local primary t3server so virtual team:<teamId>:* instances
+  // and isolated team skill/pre-prompt profiles stay automatically provisioned.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes Team Server provider/asset bindings to local t3server as team state updates
+  useEffect(() => {
+    if (!primaryEnvironmentId) return;
+    const activeTeamIds = new Set<TeamId>();
+    const envById = new Map(environments.map((env) => [env.environmentId, env] as const));
+
+    for (const [teamEnvId, state] of teamStates) {
+      if (teamEnvId === primaryEnvironmentId) continue;
+      if (
+        state.team === null ||
+        state.currentMember === null ||
+        state.currentMember.status !== "active"
+      ) {
+        continue;
+      }
+      const env = envById.get(teamEnvId);
+      const teamServerUrl = env?.displayUrl ?? null;
+      if (!teamServerUrl) continue;
+
+      const teamId = state.team.id;
+      const teamName = state.team.name;
+      activeTeamIds.add(teamId);
+
+      const localProjects = projects.filter(
+        (project) => project.environmentId === primaryEnvironmentId,
+      );
+      const projectsPayload = state.teamProjects.map((assignment) => {
+        const matchedLocal =
+          localProjects.find((p) => p.id === assignment.projectId) ??
+          (assignment.repoIdentityKey !== null
+            ? localProjects.find(
+                (p) =>
+                  (p.repositoryIdentity?.origin?.canonicalKey ??
+                    p.repositoryIdentity?.canonicalKey ??
+                    null) === assignment.repoIdentityKey,
+              )
+            : undefined);
+        return {
+          localProjectId: matchedLocal?.id ?? assignment.projectId,
+          teamProjectId: assignment.projectId,
+          repoIdentityKey: assignment.repoIdentityKey,
+        };
+      });
+      const bindingFingerprint = JSON.stringify({
+        teamId,
+        teamName,
+        teamServerUrl,
+        providers: state.providers,
+        projects: projectsPayload,
+      });
+
+      const previousBindingFingerprint = syncedBindingFingerprintByTeamIdRef.current.get(teamId);
+      const previousRevision = syncedAssetsRevisionByTeamIdRef.current.get(teamId) ?? -1;
+
+      if (previousBindingFingerprint !== bindingFingerprint) {
+        syncedBindingFingerprintByTeamIdRef.current.set(teamId, bindingFingerprint);
+        boundTeamIdsRef.current.add(teamId);
+        void (async () => {
+          let memberToken = localSyncTokenByTeamEnvRef.current.get(teamEnvId);
+          if (!memberToken) {
+            const issued = await issueLocalSyncToken({
+              environmentId: teamEnvId,
+              input: {},
+            });
+            if (issued._tag === "Success") {
+              memberToken = issued.value.token;
+              localSyncTokenByTeamEnvRef.current.set(teamEnvId, memberToken);
+            }
+          }
+          const synced = await syncLocalBinding({
+            environmentId: primaryEnvironmentId,
+            input: {
+              teamId,
+              teamName,
+              teamServerUrl,
+              ...(memberToken ? { memberToken } : {}),
+              providers: [...state.providers],
+              projects: projectsPayload,
+              assetsRevision: NonNegativeInt.make(Math.max(0, state.assetsRevision)),
+            },
+          });
+          if (synced._tag === "Success") {
+            syncedAssetsRevisionByTeamIdRef.current.set(teamId, synced.value.assetsRevision);
+          } else {
+            // Allow retry on next state update if local binding failed transiently.
+            syncedBindingFingerprintByTeamIdRef.current.delete(teamId);
+          }
+        })();
+      } else if (state.assetsRevision > previousRevision) {
+        syncedAssetsRevisionByTeamIdRef.current.set(teamId, state.assetsRevision);
+        void notifyLocalAssetsUpdated({
+          environmentId: primaryEnvironmentId,
+          input: {
+            teamId,
+            revision: NonNegativeInt.make(Math.max(0, state.assetsRevision)),
+          },
+        });
+      }
+    }
+
+    // Cleanly purge local bindings and ephemeral tokens if a Team Server was removed or member revoked.
+    for (const previousTeamId of boundTeamIdsRef.current) {
+      if (!activeTeamIds.has(previousTeamId)) {
+        boundTeamIdsRef.current.delete(previousTeamId);
+        syncedBindingFingerprintByTeamIdRef.current.delete(previousTeamId);
+        syncedAssetsRevisionByTeamIdRef.current.delete(previousTeamId);
+        void removeLocalBinding({
+          environmentId: primaryEnvironmentId,
+          input: { teamId: previousTeamId },
+        });
+      }
+    }
+  }, [
+    environments,
+    issueLocalSyncToken,
+    notifyLocalAssetsUpdated,
+    primaryEnvironmentId,
+    projects,
+    removeLocalBinding,
+    syncLocalBinding,
+    teamStates,
+  ]);
 
   return null;
 }

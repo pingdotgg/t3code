@@ -7,7 +7,10 @@ import {
   type TeamInvite,
   type TeamMember,
   type TeamMemberId,
+  type TeamPreprompt,
   type TeamProjectAssignment,
+  type TeamProvider,
+  type TeamSkill,
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
   type TeamThreadAttribution,
@@ -65,6 +68,10 @@ export interface TeamEnvironmentState {
   readonly environments: ReadonlyArray<TeamEnvironment>;
   readonly environmentById: ReadonlyMap<EnvironmentId, TeamEnvironment>;
   readonly threadNotesByThreadId: ReadonlyMap<ThreadId, ReadonlyArray<TeamThreadNote>>;
+  readonly providers: ReadonlyArray<TeamProvider>;
+  readonly skills: ReadonlyArray<TeamSkill>;
+  readonly preprompts: ReadonlyArray<TeamPreprompt>;
+  readonly assetsRevision: number;
 }
 
 export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
@@ -86,6 +93,10 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   environments: [],
   environmentById: new Map(),
   threadNotesByThreadId: new Map(),
+  providers: [],
+  skills: [],
+  preprompts: [],
+  assetsRevision: 0,
 };
 
 function sortTeamEnvironments(
@@ -179,6 +190,10 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     environments,
     environmentById,
     threadNotesByThreadId,
+    providers: snapshot.providers ?? [],
+    skills: snapshot.skills ?? [],
+    preprompts: snapshot.preprompts ?? [],
+    assetsRevision: snapshot.assetsRevision ?? 0,
   };
 }
 
@@ -476,6 +491,82 @@ export function applyTeamStreamEvent(
         threadNotesByThreadId,
       };
     }
+
+    case "providerUpserted": {
+      const provider = event.payload;
+      const providers = [
+        ...current.providers.filter((p) => p.providerInstanceId !== provider.providerInstanceId),
+        provider,
+      ].sort((a, b) =>
+        (a.displayName ?? a.providerInstanceId).localeCompare(
+          b.displayName ?? b.providerInstanceId,
+          undefined,
+          { sensitivity: "base" },
+        ),
+      );
+      return { ...current, providers };
+    }
+
+    case "providerDeleted": {
+      const providers = current.providers.filter(
+        (p) => p.providerInstanceId !== event.payload.providerInstanceId,
+      );
+      return { ...current, providers };
+    }
+
+    case "skillUpserted": {
+      const skill = event.payload;
+      const skills = [...current.skills.filter((s) => s.id !== skill.id), skill].sort((a, b) =>
+        a.slug.localeCompare(b.slug),
+      );
+      return {
+        ...current,
+        skills,
+        assetsRevision: Math.max(current.assetsRevision, skill.revision),
+      };
+    }
+
+    case "skillDeleted": {
+      const skills = current.skills.filter((s) => s.id !== event.payload.skillId);
+      return {
+        ...current,
+        skills,
+        assetsRevision: Math.max(current.assetsRevision, event.payload.revision),
+      };
+    }
+
+    case "prepromptUpserted": {
+      const preprompt = event.payload;
+      const preprompts = [
+        ...current.preprompts.filter((p) => p.id !== preprompt.id),
+        preprompt,
+      ].sort(
+        (a, b) =>
+          a.injectionScope.localeCompare(b.injectionScope) ||
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      );
+      return {
+        ...current,
+        preprompts,
+        assetsRevision: Math.max(current.assetsRevision, preprompt.revision),
+      };
+    }
+
+    case "prepromptDeleted": {
+      const preprompts = current.preprompts.filter((p) => p.id !== event.payload.prepromptId);
+      return {
+        ...current,
+        preprompts,
+        assetsRevision: Math.max(current.assetsRevision, event.payload.revision),
+      };
+    }
+
+    case "assetsUpdated": {
+      return {
+        ...current,
+        assetsRevision: Math.max(current.assetsRevision, event.payload.revision),
+      };
+    }
   }
 }
 
@@ -616,6 +707,50 @@ export function createTeamEnvironmentAtoms<R, E>(
     listThreadNotes: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:list-thread-notes",
       tag: TEAM_WS_METHODS.teamListThreadNotes,
+    }),
+    upsertProvider: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:upsert-provider",
+      tag: TEAM_WS_METHODS.teamUpsertProvider,
+    }),
+    deleteProvider: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:delete-provider",
+      tag: TEAM_WS_METHODS.teamDeleteProvider,
+    }),
+    listProviderUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:list-provider-usage",
+      tag: TEAM_WS_METHODS.teamListProviderUsage,
+    }),
+    upsertSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:upsert-skill",
+      tag: TEAM_WS_METHODS.teamUpsertSkill,
+    }),
+    deleteSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:delete-skill",
+      tag: TEAM_WS_METHODS.teamDeleteSkill,
+    }),
+    upsertPreprompt: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:upsert-preprompt",
+      tag: TEAM_WS_METHODS.teamUpsertPreprompt,
+    }),
+    deletePreprompt: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:delete-preprompt",
+      tag: TEAM_WS_METHODS.teamDeletePreprompt,
+    }),
+    issueLocalSyncToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:issue-local-sync-token",
+      tag: TEAM_WS_METHODS.teamIssueLocalSyncToken,
+    }),
+    syncLocalBinding: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:sync-local-binding",
+      tag: TEAM_WS_METHODS.teamSyncLocalBinding,
+    }),
+    removeLocalBinding: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:remove-local-binding",
+      tag: TEAM_WS_METHODS.teamRemoveLocalBinding,
+    }),
+    notifyLocalAssetsUpdated: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:notify-local-assets-updated",
+      tag: TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated,
     }),
   };
 }

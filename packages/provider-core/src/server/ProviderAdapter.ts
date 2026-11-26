@@ -605,6 +605,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  /** Team `"turn"`-scoped pre-prompt text re-injected on every turn by adapters that support additional context. */
+  readonly teamTurnInstructions?: string;
 }
 
 export type ProviderAdapterV2ResumeTurnInput = Omit<

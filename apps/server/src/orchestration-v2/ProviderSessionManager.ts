@@ -4,6 +4,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
+  isTeamProviderInstanceId,
   ModelSelection,
   type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
@@ -81,6 +82,7 @@ import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
 } from "@t3tools/provider-core/server/subagentProjection";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -585,6 +587,9 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      const teamProviderManagerOption = yield* Effect.serviceOption(
+        TeamProviderManager.TeamProviderManager,
+      );
       const activeSessionIdByThread = yield* Ref.make(new Map<ThreadId, ProviderSessionId>());
       const MEMBER_SESSION_SEPARATOR = "::member:";
       const canonicalBaseSessionId = (id: ProviderSessionId): ProviderSessionId => {
@@ -1700,6 +1705,26 @@ export const layerWithOptions = (
                           : clearMcpSession(threadId, mcpCredentialId);
                       },
                       { discard: true },
+                    ).pipe(
+                      Effect.andThen(() => {
+                        const instanceId = entry.runtime.providerSession.providerInstanceId;
+                        if (
+                          Option.isNone(teamProviderManagerOption) ||
+                          !isTeamProviderInstanceId(instanceId)
+                        ) {
+                          return Effect.void;
+                        }
+                        const stillInUse = Array.from(current.values()).some(
+                          (other) =>
+                            other !== entry &&
+                            other.runtime.providerSession.providerInstanceId === instanceId,
+                        );
+                        return stillInUse
+                          ? Effect.void
+                          : teamProviderManagerOption.value
+                              .purgeEphemeralTokensForInstance(instanceId)
+                              .pipe(Effect.ignore);
+                      }),
                     ),
                   ),
                 ),

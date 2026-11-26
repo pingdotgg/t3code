@@ -269,6 +269,9 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const userGemini = path.join(input.userHome, ".gemini");
+  const isTeamProfile = yield* fs
+    .exists(path.join(input.profileDirectory, ".t3-team-profile.json"))
+    .pipe(Effect.orElseSucceed(() => false));
   const links = antigravityUserSkillDirectories(path, input.profileDirectory);
   const targets = antigravityUserSkillDirectories(path, userGemini);
   const directoryType = input.platform === "win32" ? "junction" : "dir";
@@ -276,7 +279,8 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
     [links[0], targets[0], directoryType],
     [links[1], targets[1], directoryType],
     // File symlinks need elevation or Developer Mode on Windows, so config files are copied there.
-    ...(input.platform === "win32"
+    // Team profiles own their own GEMINI.md and config/skills.json and must never be overwritten.
+    ...(input.platform === "win32" || isTeamProfile
       ? []
       : antigravityUserConfigFiles.map(
           (segments) =>
@@ -345,6 +349,10 @@ const copyAntigravityUserConfigFiles = Effect.fn("copyAntigravityUserConfigFiles
   }): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const isTeamProfile = yield* fs
+      .exists(path.join(input.profileDirectory, ".t3-team-profile.json"))
+      .pipe(Effect.orElseSucceed(() => false));
+    if (isTeamProfile) return;
     const manifestPath = path.join(input.profileDirectory, ".t3-rule-copies.json");
     const readOptional = (file: string) =>
       fs.readFileString(file).pipe(Effect.orElseSucceed((): string | undefined => undefined));

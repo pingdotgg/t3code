@@ -15,6 +15,7 @@ import {
   TrimmedNonEmptyString,
 } from "../baseSchemas.ts";
 import { ModelSelection } from "../modelSelection.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { ProviderInteractionMode, RuntimeMode } from "../providerPolicy.ts";
 
 const makeTeamEntityId = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) =>
@@ -37,6 +38,47 @@ export type TeamEnvironmentRecordId = typeof TeamEnvironmentRecordId.Type;
 
 export const TeamThreadNoteId = makeTeamEntityId("TeamThreadNoteId");
 export type TeamThreadNoteId = typeof TeamThreadNoteId.Type;
+
+export const TeamProviderId = makeTeamEntityId("TeamProviderId");
+export type TeamProviderId = typeof TeamProviderId.Type;
+
+export const TeamSkillId = makeTeamEntityId("TeamSkillId");
+export type TeamSkillId = typeof TeamSkillId.Type;
+
+export const TeamPrepromptId = makeTeamEntityId("TeamPrepromptId");
+export type TeamPrepromptId = typeof TeamPrepromptId.Type;
+
+const TEAM_PROVIDER_INSTANCE_PREFIX = "team:";
+
+const TEAM_VIRTUAL_INSTANCE_PATTERN = /^team:([a-zA-Z0-9_-]{1,64}):([a-zA-Z][a-zA-Z0-9_-]{0,63})$/;
+
+export function makeTeamProviderInstanceId(
+  teamId: TeamId,
+  sourceInstanceId: ProviderInstanceId,
+): ProviderInstanceId {
+  return ProviderInstanceId.make(`${TEAM_PROVIDER_INSTANCE_PREFIX}${teamId}:${sourceInstanceId}`);
+}
+
+export function parseTeamProviderInstanceId(instanceId: string): {
+  readonly teamId: TeamId;
+  readonly sourceInstanceId: ProviderInstanceId;
+} | null {
+  const match = TEAM_VIRTUAL_INSTANCE_PATTERN.exec(instanceId);
+  if (!match) return null;
+  return {
+    teamId: TeamId.make(match[1]!),
+    sourceInstanceId: ProviderInstanceId.make(match[2]!),
+  };
+}
+
+export function isTeamProviderInstanceId(instanceId: string): boolean {
+  return parseTeamProviderInstanceId(instanceId) !== null;
+}
+
+export function isTeamProviderInstanceIdForTeam(instanceId: string, teamId: TeamId): boolean {
+  const parsed = parseTeamProviderInstanceId(instanceId);
+  return parsed !== null && parsed.teamId === teamId;
+}
 
 export const ALL_TEAM_ROLES = ["owner", "admin", "modo", "regular"] as const;
 export const TeamRole = Schema.Literals(ALL_TEAM_ROLES);
@@ -109,6 +151,20 @@ export function canManageTeamEnvironments(role: TeamRole): boolean {
 
 export function canManageTeamProjects(role: TeamRole): boolean {
   return isTeamAdminRole(role);
+}
+
+/** Provider auth and configuration is strictly restricted to owner/admin on the Team Server. */
+export function canManageTeamProviders(role: TeamRole): boolean {
+  return isTeamAdminRole(role);
+}
+
+/** Team skills & pre-prompts can be curated by owner, admin, and modo. */
+export function canManageTeamSkills(role: TeamRole): boolean {
+  return TEAM_ROLE_RANK[role] >= TEAM_ROLE_RANK.modo;
+}
+
+export function canManageTeamPreprompts(role: TeamRole): boolean {
+  return TEAM_ROLE_RANK[role] >= TEAM_ROLE_RANK.modo;
 }
 
 /** Regular authors require an explicit UI confirmation dialog before note approval/edit-approval. */
@@ -603,6 +659,173 @@ export const TeamThreadNoteDeletedPayload = Schema.Struct({
 });
 export type TeamThreadNoteDeletedPayload = typeof TeamThreadNoteDeletedPayload.Type;
 
+export const TeamProviderDeliveryStrategy = Schema.Literals([
+  "proxy",
+  "token-lease",
+  "remote-only",
+]);
+export type TeamProviderDeliveryStrategy = typeof TeamProviderDeliveryStrategy.Type;
+
+const TEAM_TOKEN_LEASE_DRIVERS: ReadonlySet<string> = new Set([
+  "antigravity",
+  "codex",
+  "claudeAgent",
+]);
+
+/**
+ * Classifies the safe default local delivery strategy for a driver. Drivers that cannot be
+ * safely proxied or leased without exposing a refresh token default to `remote-only`.
+ */
+export function defaultTeamProviderDeliveryStrategy(
+  driver: ProviderDriverKind,
+  options?: { readonly hasUpstreamBaseUrl?: boolean },
+): TeamProviderDeliveryStrategy {
+  if (options?.hasUpstreamBaseUrl) {
+    return "proxy";
+  }
+  if (TEAM_TOKEN_LEASE_DRIVERS.has(driver)) {
+    return "token-lease";
+  }
+  return "remote-only";
+}
+
+export const TeamProvider = Schema.Struct({
+  id: TeamProviderId,
+  teamId: TeamId,
+  providerInstanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  displayName: Schema.NullOr(TrimmedNonEmptyString),
+  deliveryStrategy: TeamProviderDeliveryStrategy,
+  hasSecret: Schema.Boolean,
+  upstreamBaseUrl: Schema.NullOr(TrimmedNonEmptyString),
+  apiKeyHeader: Schema.NullOr(TrimmedNonEmptyString),
+  apiKeyPrefix: Schema.NullOr(Schema.String),
+  config: Schema.Record(Schema.String, Schema.Unknown),
+  enabled: Schema.Boolean,
+  updatedByMemberId: TeamMemberId,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type TeamProvider = typeof TeamProvider.Type;
+
+export const TeamProviderDeletedPayload = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+});
+export type TeamProviderDeletedPayload = typeof TeamProviderDeletedPayload.Type;
+
+export const TeamProviderUsageSummary = Schema.Struct({
+  memberId: TeamMemberId,
+  memberPseudo: TeamPseudo,
+  providerInstanceId: ProviderInstanceId,
+  strategy: Schema.Literals(["proxy", "token-lease"]),
+  requestCount: NonNegativeInt,
+  lastUsedAt: IsoDateTime,
+});
+export type TeamProviderUsageSummary = typeof TeamProviderUsageSummary.Type;
+
+export const TeamListProviderUsageResult = Schema.Struct({
+  usage: Schema.Array(TeamProviderUsageSummary),
+});
+export type TeamListProviderUsageResult = typeof TeamListProviderUsageResult.Type;
+
+const TEAM_SKILL_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const TeamSkillSlug = TrimmedNonEmptyString.check(Schema.isPattern(TEAM_SKILL_SLUG_PATTERN));
+export type TeamSkillSlug = typeof TeamSkillSlug.Type;
+
+export const TeamAssetProviderDriver = Schema.Union([Schema.Literal("*"), ProviderDriverKind]);
+export type TeamAssetProviderDriver = typeof TeamAssetProviderDriver.Type;
+
+export const TeamSkillReference = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  content: Schema.String,
+});
+export type TeamSkillReference = typeof TeamSkillReference.Type;
+
+export const TeamSkill = Schema.Struct({
+  id: TeamSkillId,
+  teamId: TeamId,
+  slug: TeamSkillSlug,
+  providerDriver: TeamAssetProviderDriver,
+  skillMd: Schema.String,
+  references: Schema.Array(TeamSkillReference),
+  enabled: Schema.Boolean,
+  revision: NonNegativeInt,
+  contentHash: TrimmedNonEmptyString,
+  updatedByMemberId: TeamMemberId,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type TeamSkill = typeof TeamSkill.Type;
+
+export const TeamSkillDeletedPayload = Schema.Struct({
+  skillId: TeamSkillId,
+  revision: NonNegativeInt,
+});
+export type TeamSkillDeletedPayload = typeof TeamSkillDeletedPayload.Type;
+
+export const TeamPrepromptInjectionScope = Schema.Literals(["thread", "turn"]);
+export type TeamPrepromptInjectionScope = typeof TeamPrepromptInjectionScope.Type;
+
+export const TeamPreprompt = Schema.Struct({
+  id: TeamPrepromptId,
+  teamId: TeamId,
+  name: TrimmedNonEmptyString,
+  providerDriver: TeamAssetProviderDriver,
+  injectionScope: TeamPrepromptInjectionScope,
+  content: Schema.String,
+  enabled: Schema.Boolean,
+  revision: NonNegativeInt,
+  contentHash: TrimmedNonEmptyString,
+  updatedByMemberId: TeamMemberId,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type TeamPreprompt = typeof TeamPreprompt.Type;
+
+export const TeamPrepromptDeletedPayload = Schema.Struct({
+  prepromptId: TeamPrepromptId,
+  revision: NonNegativeInt,
+});
+export type TeamPrepromptDeletedPayload = typeof TeamPrepromptDeletedPayload.Type;
+
+export const TeamAssetsUpdatedPayload = Schema.Struct({
+  teamId: TeamId,
+  revision: NonNegativeInt,
+});
+export type TeamAssetsUpdatedPayload = typeof TeamAssetsUpdatedPayload.Type;
+
+export const TeamAssetsDeltaResponse = Schema.Struct({
+  teamId: TeamId,
+  revision: NonNegativeInt,
+  fullSync: Schema.Boolean,
+  skills: Schema.Array(TeamSkill),
+  preprompts: Schema.Array(TeamPreprompt),
+  deletedSkillIds: Schema.Array(TeamSkillId),
+  deletedPrepromptIds: Schema.Array(TeamPrepromptId),
+});
+export type TeamAssetsDeltaResponse = typeof TeamAssetsDeltaResponse.Type;
+
+export const TeamProviderLeaseRequest = Schema.Struct({
+  forceRefresh: Schema.optionalKey(Schema.Boolean),
+});
+export type TeamProviderLeaseRequest = typeof TeamProviderLeaseRequest.Type;
+
+/**
+ * Ephemeral OAuth access token lease returned by `POST /api/team/provider-lease/:providerInstanceId`.
+ * Explicitly omits `refresh_token` / `refreshToken` so refresh credentials never leave the Team Server.
+ */
+export const TeamProviderLeaseResponse = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  accessToken: TrimmedNonEmptyString,
+  tokenType: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+  expiresInSeconds: NonNegativeInt,
+  email: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  authMethod: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+export type TeamProviderLeaseResponse = typeof TeamProviderLeaseResponse.Type;
+
 export const TeamStateSnapshot = Schema.Struct({
   team: Schema.NullOr(TeamWorkspace),
   currentMember: Schema.NullOr(TeamMember),
@@ -615,6 +838,10 @@ export const TeamStateSnapshot = Schema.Struct({
   teamProjects: Schema.optionalKey(Schema.Array(TeamProjectAssignment)),
   environments: Schema.optionalKey(Schema.Array(TeamEnvironment)),
   threadNotes: Schema.optionalKey(Schema.Array(TeamThreadNote)),
+  providers: Schema.optionalKey(Schema.Array(TeamProvider)),
+  skills: Schema.optionalKey(Schema.Array(TeamSkill)),
+  preprompts: Schema.optionalKey(Schema.Array(TeamPreprompt)),
+  assetsRevision: Schema.optionalKey(NonNegativeInt),
 });
 export type TeamStateSnapshot = typeof TeamStateSnapshot.Type;
 
@@ -698,6 +925,41 @@ export const TeamStateStreamEvent = Schema.Union([
     version: Schema.Literal(1),
     type: Schema.Literal("threadNoteDeleted"),
     payload: TeamThreadNoteDeletedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("providerUpserted"),
+    payload: TeamProvider,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("providerDeleted"),
+    payload: TeamProviderDeletedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("skillUpserted"),
+    payload: TeamSkill,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("skillDeleted"),
+    payload: TeamSkillDeletedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("prepromptUpserted"),
+    payload: TeamPreprompt,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("prepromptDeleted"),
+    payload: TeamPrepromptDeletedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("assetsUpdated"),
+    payload: TeamAssetsUpdatedPayload,
   }),
 ]);
 export type TeamStateStreamEvent = typeof TeamStateStreamEvent.Type;
@@ -1039,6 +1301,137 @@ export const TeamListThreadNotesResult = Schema.Struct({
 });
 export type TeamListThreadNotesResult = typeof TeamListThreadNotesResult.Type;
 
+export const TeamUpsertProviderInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  displayName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  deliveryStrategy: TeamProviderDeliveryStrategy,
+  upstreamBaseUrl: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  apiKeyHeader: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  apiKeyPrefix: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** Write-only company API key stored exclusively in Team Server's ServerSecretStore. */
+  apiKey: Schema.optionalKey(Schema.String),
+  /** Write-only OAuth credentials stored exclusively in Team Server's ServerSecretStore for token-lease. */
+  oauthAccessToken: Schema.optionalKey(Schema.String),
+  oauthRefreshToken: Schema.optionalKey(Schema.String),
+  oauthExpiresAt: Schema.optionalKey(IsoDateTime),
+  oauthTokenEndpoint: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  oauthClientId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  oauthClientSecret: Schema.optionalKey(Schema.String),
+  oauthEmail: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  oauthAuthMethod: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  clearSecret: Schema.optionalKey(Schema.Boolean),
+  config: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+export type TeamUpsertProviderInput = typeof TeamUpsertProviderInput.Type;
+
+export const TeamDeleteProviderInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+});
+export type TeamDeleteProviderInput = typeof TeamDeleteProviderInput.Type;
+
+export const TeamDeleteProviderResult = Schema.Struct({
+  deleted: Schema.Boolean,
+});
+export type TeamDeleteProviderResult = typeof TeamDeleteProviderResult.Type;
+
+export const TeamUpsertSkillInput = Schema.Struct({
+  skillId: Schema.optionalKey(TeamSkillId),
+  slug: TeamSkillSlug,
+  providerDriver: TeamAssetProviderDriver,
+  skillMd: Schema.String,
+  references: Schema.optionalKey(Schema.Array(TeamSkillReference)),
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+export type TeamUpsertSkillInput = typeof TeamUpsertSkillInput.Type;
+
+export const TeamDeleteSkillInput = Schema.Struct({
+  skillId: TeamSkillId,
+});
+export type TeamDeleteSkillInput = typeof TeamDeleteSkillInput.Type;
+
+export const TeamDeleteSkillResult = Schema.Struct({
+  deleted: Schema.Boolean,
+  revision: NonNegativeInt,
+});
+export type TeamDeleteSkillResult = typeof TeamDeleteSkillResult.Type;
+
+export const TeamUpsertPrepromptInput = Schema.Struct({
+  prepromptId: Schema.optionalKey(TeamPrepromptId),
+  name: TrimmedNonEmptyString,
+  providerDriver: TeamAssetProviderDriver,
+  injectionScope: Schema.optionalKey(TeamPrepromptInjectionScope),
+  content: Schema.String,
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+export type TeamUpsertPrepromptInput = typeof TeamUpsertPrepromptInput.Type;
+
+export const TeamDeletePrepromptInput = Schema.Struct({
+  prepromptId: TeamPrepromptId,
+});
+export type TeamDeletePrepromptInput = typeof TeamDeletePrepromptInput.Type;
+
+export const TeamDeletePrepromptResult = Schema.Struct({
+  deleted: Schema.Boolean,
+  revision: NonNegativeInt,
+});
+export type TeamDeletePrepromptResult = typeof TeamDeletePrepromptResult.Type;
+
+export const TeamIssueLocalSyncTokenResult = Schema.Struct({
+  token: TrimmedNonEmptyString,
+  teamId: TeamId,
+  memberId: TeamMemberId,
+  expiresAt: IsoDateTime,
+});
+export type TeamIssueLocalSyncTokenResult = typeof TeamIssueLocalSyncTokenResult.Type;
+
+export const TeamLocalProjectMapping = Schema.Struct({
+  localProjectId: ProjectId,
+  teamProjectId: ProjectId,
+  repoIdentityKey: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type TeamLocalProjectMapping = typeof TeamLocalProjectMapping.Type;
+
+export const TeamSyncLocalBindingInput = Schema.Struct({
+  teamId: TeamId,
+  teamName: TrimmedNonEmptyString,
+  teamServerUrl: TrimmedNonEmptyString,
+  memberToken: Schema.optionalKey(TrimmedNonEmptyString),
+  providers: Schema.Array(TeamProvider),
+  projects: Schema.Array(TeamLocalProjectMapping),
+  assetsRevision: NonNegativeInt,
+});
+export type TeamSyncLocalBindingInput = typeof TeamSyncLocalBindingInput.Type;
+
+export const TeamSyncLocalBindingResult = Schema.Struct({
+  synced: Schema.Boolean,
+  virtualInstanceIds: Schema.Array(ProviderInstanceId),
+  assetsRevision: NonNegativeInt,
+});
+export type TeamSyncLocalBindingResult = typeof TeamSyncLocalBindingResult.Type;
+
+export const TeamRemoveLocalBindingInput = Schema.Struct({
+  teamId: TeamId,
+});
+export type TeamRemoveLocalBindingInput = typeof TeamRemoveLocalBindingInput.Type;
+
+export const TeamRemoveLocalBindingResult = Schema.Struct({
+  removed: Schema.Boolean,
+});
+export type TeamRemoveLocalBindingResult = typeof TeamRemoveLocalBindingResult.Type;
+
+export const TeamNotifyLocalAssetsUpdatedInput = Schema.Struct({
+  teamId: TeamId,
+  revision: NonNegativeInt,
+});
+export type TeamNotifyLocalAssetsUpdatedInput = typeof TeamNotifyLocalAssetsUpdatedInput.Type;
+
+export const TeamNotifyLocalAssetsUpdatedResult = Schema.Struct({
+  syncedRevision: NonNegativeInt,
+});
+export type TeamNotifyLocalAssetsUpdatedResult = typeof TeamNotifyLocalAssetsUpdatedResult.Type;
+
 export const TeamOperationErrorCode = Schema.Literals([
   "not_configured",
   "already_configured",
@@ -1058,6 +1451,10 @@ export const TeamOperationErrorCode = Schema.Literals([
   "note_hash_mismatch",
   "note_not_pending",
   "note_already_consumed",
+  "provider_not_allowed",
+  "team_access_revoked",
+  "skill_slug_taken",
+  "remote_only_provider",
   "invalid_input",
   "not_found",
   "internal",
