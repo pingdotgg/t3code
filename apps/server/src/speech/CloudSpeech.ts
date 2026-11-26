@@ -154,7 +154,7 @@ const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
 
-const OPENROUTER_DEFAULT_SYNTHESIS_MODEL = "speechify/simba-3.5";
+const OPENROUTER_DEFAULT_SYNTHESIS_MODEL = "heygen/heygen-voice-1-turbo";
 
 function openRouterSpeechFormat(model: string) {
   return model.startsWith("google/gemini-") || model.startsWith("heygen/") ? "pcm" : "mp3";

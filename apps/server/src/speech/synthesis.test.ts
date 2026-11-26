@@ -286,9 +286,9 @@ it.effect.each(["xai", "openrouter"] as const)(
       const openRouterModels = [
         { id: "google/gemini-test-tts", name: "Speech", supported_voices: ["reader"] },
         {
-          id: "speechify/simba-3.5",
-          name: "Simba 3.5",
-          supported_voices: ["geffen_32"],
+          id: "heygen/heygen-voice-1-turbo",
+          name: "HeyGen Voice 1 Turbo",
+          supported_voices: ["nadine"],
         },
         { id: "minimax/speech-test:free", supported_voices: null },
       ];
@@ -389,7 +389,7 @@ it.effect.each(["xai", "openrouter"] as const)(
         const catalog = yield* service.synthesisModels(provider);
         expect(catalog).toMatchObject({
           apiKeyProvider: provider,
-          defaultModel: provider === "xai" ? "grok-tts" : "speechify/simba-3.5",
+          defaultModel: provider === "xai" ? "grok-tts" : "heygen/heygen-voice-1-turbo",
           speedAppliedByProvider: provider !== "openrouter",
           supportsModelSelection: true,
           supportsVoiceSelection: true,
@@ -400,9 +400,9 @@ it.effect.each(["xai", "openrouter"] as const)(
             : [
                 { id: "google/gemini-test-tts", name: "Speech", voices: ["reader"] },
                 {
-                  id: "speechify/simba-3.5",
-                  name: "Simba 3.5",
-                  voices: ["geffen_32"],
+                  id: "heygen/heygen-voice-1-turbo",
+                  name: "HeyGen Voice 1 Turbo",
+                  voices: ["nadine"],
                 },
                 { id: "minimax/speech-test:free", name: "minimax/speech-test:free", voices: [] },
               ],
@@ -413,12 +413,14 @@ it.effect.each(["xai", "openrouter"] as const)(
           );
         }
         if (provider === "openrouter") {
-          upstream.mockResolvedValueOnce(new Response(Uint8Array.of(73, 68, 51, 1)));
+          upstream.mockResolvedValueOnce(
+            new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),
+          );
           yield* synthesize(provider, { ...request, model: catalog.defaultModel, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body))).toMatchObject({
-            model: "speechify/simba-3.5",
-            voice: "geffen_32",
-            response_format: "mp3",
+            model: "heygen/heygen-voice-1-turbo",
+            voice: "nadine",
+            response_format: "pcm",
           });
           yield* synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
