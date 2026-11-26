@@ -71,8 +71,34 @@ function openedWrappers(line: string): number {
   return opened;
 }
 
+/** Whether `text` opens a block that ends a paragraph and is not one itself. */
+function opensNonParagraph(text: string): boolean {
+  return (
+    ATX_HEADING.test(text) ||
+    THEMATIC_BREAK.test(text) ||
+    BLOCK_QUOTE.test(text) ||
+    FENCE_OPEN.test(text) ||
+    HTML_BLOCK_TAG.test(text) ||
+    SPANNING_BLOCKS.some(([open]) => open.test(text))
+  );
+}
+
 /** Returns how to recognize the end of a block that `line` opens, or null for none. */
 function blockCloser(line: string): ((line: string) => boolean) | null {
+  const fence = FENCE_OPEN.exec(line)?.[1];
+  if (fence) {
+    return (next) => {
+      const match = FENCE_OPEN.exec(next);
+      const closer = match?.[1];
+      return (
+        match !== null &&
+        closer !== undefined &&
+        closer[0] === fence[0] &&
+        closer.length >= fence.length &&
+        BLANK_LINE.test(next.slice(match[0].length))
+      );
+    };
+  }
   for (const [open, close] of SPANNING_BLOCKS) {
     const opener = open.exec(line)?.[0];
     if (opener === undefined) continue;
@@ -80,29 +106,6 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
   }
   // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
   return HTML_BLOCK_TAG.test(line) || HTML_STANDALONE_TAG.test(line) ? closesAtBlankLine : null;
-}
-
-/** Whether `line`, ignoring its indentation, opens a block instead of continuing a paragraph. */
-function startsBlock(line: string): boolean {
-  const content = line.trimStart();
-  return (
-    FENCE_OPEN.test(content) ||
-    LIST_ITEM.test(content) ||
-    BLOCK_QUOTE.test(content) ||
-    ATX_HEADING.test(content) ||
-    THEMATIC_BREAK.test(content) ||
-    HTML_BLOCK_TAG.test(content) ||
-    SPANNING_BLOCKS.some(([open]) => open.test(content))
-  );
-}
-
-function fenceCloser(fence: string, contentColumn: number): (line: string) => boolean {
-  return (line) => {
-    const match = /^([ \t]*)(`{3,}|~{3,})[ \t]*\r?$/.exec(line);
-    if (!match || match[2]![0] !== fence[0] || match[2]!.length < fence.length) return false;
-    const indent = indentationColumn(match[1]!);
-    return indent >= contentColumn && indent <= contentColumn + 3;
-  };
 }
 
 export interface MarkdownChunk {
@@ -255,9 +258,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let pendingDefinitions: ReturnType<typeof readLinkDefinitions> | undefined;
   let afterHeading = false;
   let openedFence = false;
-  let fenceContentIndent = 0;
+  // The outermost list item's content column; a line indented less is outside every item.
   let listContentIndent = Infinity;
-  const parentListIndents: number[] = [];
   let listMarker = "";
   let emptyListItem = false;
   let paragraphOpen = false;
@@ -277,22 +279,6 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     const indent = indentationColumn(whitespace);
     if (emptyListItem && (blank || indent < listContentIndent)) listContentIndent = Infinity;
     emptyListItem = false;
-    if (closes !== null && openedFence && indent < fenceContentIndent && !blank) {
-      // A dedent ends the list fence before this line, which may open a new fence.
-      closes = null;
-      afterHeading = true;
-    }
-    const leavesItem =
-      closes === null &&
-      lineIndex > definitionEnd &&
-      !blank &&
-      (afterBlankLine || !paragraphOpen || startsBlock(line));
-    if (leavesItem) {
-      // Leaving a nested item returns to its parent's content column.
-      while (parentListIndents.length > 0 && indent < listContentIndent) {
-        listContentIndent = parentListIndents.pop()!;
-      }
-    }
     const dedented = indent < listContentIndent;
     if (closes !== null) {
       if (closes(line)) closes = null;
@@ -309,18 +295,19 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           (afterBlankLine && BLOCK_START.test(line) && !LIST_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
+      closes = blockCloser(line);
       const afterFence = afterHeading && openedFence && dedented;
-      const heading = ATX_HEADING.test(line);
+      const fence = FENCE_OPEN.test(line);
+      // Fence tracking ignores lists, so it finds the real end of a fence indented two or more
+      // spaces only when that fence is outside every list item.
+      openedFence = fence && (dedented || /^ ?[`~]/.test(line));
       const thematicBreak = THEMATIC_BREAK.test(line);
-      const quote = BLOCK_QUOTE.test(line);
-      const htmlOrMath =
-        HTML_BLOCK_TAG.test(line) || SPANNING_BLOCKS.some(([open]) => open.test(line));
-      let contentColumn = dedented ? 0 : listContentIndent;
+      const contentColumn = dedented ? 0 : listContentIndent;
       const canStartBlock = indent - contentColumn <= 3;
       const content = canStartBlock ? line.slice(whitespace.length) : "";
       const item = thematicBreak ? null : LIST_ITEM.exec(content);
       const marker = item?.[1];
-      const itemContent = item ? content.slice(item[0].length) : "";
+      let itemContent = item ? content.slice(item[0].length) : "";
       const itemIsEmpty = BLANK_LINE.test(itemContent);
       const markerKind = marker?.at(-1);
       const continuesList = dedented && listContentIndent !== Infinity && markerKind === listMarker;
@@ -329,7 +316,6 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         (!paragraphOpen ||
           continuesList ||
           (!itemIsEmpty && (!/^\d/.test(marker!) || /^1[.)]$/.test(marker!))));
-      let fenceLine = content;
       let startsIndentedCode = false;
       if (item && opensItem) {
         const markerEnd = indent + item[1]!.length;
@@ -337,28 +323,19 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         emptyListItem = dedented && itemIsEmpty;
         // Empty items and items starting with indented code use one column of padding.
         startsIndentedCode = paddedColumn - markerEnd > 4;
-        contentColumn = itemIsEmpty || startsIndentedCode ? markerEnd + 1 : paddedColumn;
-        fenceLine = startsIndentedCode ? "" : itemContent;
-      }
-      const fence = FENCE_OPEN.exec(fenceLine)?.[1];
-      closes = fence ? fenceCloser(fence, contentColumn) : blockCloser(line);
-      fenceContentIndent = fence ? contentColumn : 0;
-      if (!dedented && opensItem) {
-        parentListIndents.push(listContentIndent);
-        listContentIndent = contentColumn;
-      } else if (dedented) {
-        if (opensItem) {
-          parentListIndents.length = 0;
-          listContentIndent = contentColumn;
+        if (dedented) {
+          listContentIndent = itemIsEmpty || startsIndentedCode ? markerEnd + 1 : paddedColumn;
           listMarker = markerKind!;
-        } else if (
-          !blank &&
-          (afterBlankLine || afterFence || heading || thematicBreak || quote || fence || htmlOrMath)
-        ) {
-          // Dedented prose can still be a lazy continuation until a block boundary.
-          parentListIndents.length = 0;
-          listContentIndent = Infinity;
         }
+        for (
+          let nested;
+          !THEMATIC_BREAK.test(itemContent) && (nested = LIST_ITEM.exec(itemContent));
+        ) {
+          itemContent = itemContent.slice(nested[0].length);
+        }
+      } else if (dedented && !blank && (afterBlankLine || afterFence || opensNonParagraph(line))) {
+        // Dedented prose can still be a lazy continuation until a block boundary.
+        listContentIndent = Infinity;
       }
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
@@ -389,17 +366,14 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           }
         }
       }
-      openedFence = fence !== undefined;
       paragraphOpen =
         !blank &&
         !startsDefinition &&
-        !heading &&
-        !thematicBreak &&
-        !quote &&
-        !htmlOrMath &&
         closes === null &&
         (canStartBlock || paragraphOpen) &&
-        (!opensItem || (!itemIsEmpty && !startsIndentedCode));
+        (item && opensItem
+          ? !BLANK_LINE.test(itemContent) && !startsIndentedCode && !opensNonParagraph(itemContent)
+          : !opensNonParagraph(line));
     }
     if (closes === closesAtBlankLine)
       openWrappers = Math.max(0, openWrappers + openedWrappers(line));

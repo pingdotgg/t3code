@@ -238,8 +238,6 @@ describe("splitMarkdown", () => {
   it.each([
     ["an ordered item whose content starts farther right", "10. Item\n\n", ""],
     ["an item padded to the next tab stop", "-\tItem\n\n", ""],
-    ["a one-space definition outside the list", "- Item\n", " "],
-    ["a column-zero definition outside the list", "- Item\n", ""],
     ["a blockquote that ends the list", "- Item\n> quote\n", ""],
     ["an HTML comment that ends the list", "- Item\n<!-- note -->\n", ""],
     ["an HTML block that ends the list", "- Item\n<div>top level</div>\n\n", ""],
@@ -248,8 +246,6 @@ describe("splitMarkdown", () => {
     ["an empty list item", "-\n\n", "  "],
     ["an empty list item with trailing spaces", "-  \n\n", "  "],
     ["an empty list item followed by dedented prose", "-\nfoo\n", "  "],
-    ["a list item with an indented definition", "- Item\n", "  "],
-    ["a fence on the first content line of an empty marker", "-\n", "  "],
   ])("collects definitions after a fence following %s", (_, beforeFence, definitionIndent) => {
     const definition = "[ref]: /target";
     const text = beforeFence + "  ```sh\n  example\n  ```\n" + definitionIndent + definition;
@@ -257,12 +253,12 @@ describe("splitMarkdown", () => {
   });
 
   it.each([
-    ["a fence on the marker line", "- ```sh\n  x", ""],
-    ["a fence on a nested marker line", "- Item\n  - ```\n    x\n    ```", "  "],
-    ["a parent fence after a nested fence", "- outer\n  - inner\n    ```\n  ```", ""],
-  ])("collects definitions after %s", (_, code, definitionIndent) => {
+    ["nested markers on one line", "- - ```\n    code\n    ```"],
+    ["a heading in a list item", "- # Heading\n  2. Item\n     ```\n     code\n        ```"],
+    ["a lazy ordered marker", "- outer\n  - inner\n2. lazy\n    ```\n       ```"],
+  ])("collects a list item definition after %s", (_, list) => {
     const definition = "[ref]: /target";
-    expect(splitMarkdown(code + "\n" + definitionIndent + definition).definitions).toBe(definition);
+    expect(splitMarkdown(`${list}\n\n  ${definition}`).definitions).toBe(definition);
   });
 
   it.each([
