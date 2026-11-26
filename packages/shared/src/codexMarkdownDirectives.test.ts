@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -118,6 +119,21 @@ describe.each([
 
     expect(link?.type).toBe("link");
     expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
+  });
+
+  it.each([
+    ["reports/~~final~~.txt", "~~final~~.txt", "./reports/~~final~~.txt"],
+    ["reports/~draft~.txt", "~draft~.txt", "./reports/~draft~.txt"],
+  ])("keeps literal tildes in the visible filename: %s", (path, label, url) => {
+    const markdown = render(`:codex-file-citation{path="${path}"}`);
+    const parsed = unified().use(remarkParse).use(remarkGfm).parse(markdown) as TestNode;
+    const link = parsed.children?.[0]?.children?.[0];
+
+    expect(link).toMatchObject({
+      type: "link",
+      url,
+      children: [{ type: "text", value: label }],
+    });
   });
 });
 
