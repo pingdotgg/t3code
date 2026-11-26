@@ -6,6 +6,7 @@ import { create } from "zustand";
 import {
   composerDraftHasUserContent,
   composerTargetKey,
+  type ComposerThreadDraftState,
   type ComposerThreadTarget,
   useComposerDraftStore,
 } from "../../composerDraftStore";
@@ -160,8 +161,26 @@ export function joinPreparedImagesToDraft<T>(insert: () => T): T {
   }
 }
 
-/** Watches for edits while a send waits, including new images that have yet to enter the draft. */
-export function watchComposerSendEdits(draftTarget: ComposerThreadTarget): () => boolean {
+function composerSendSettingsChanged(
+  before: ComposerThreadDraftState | null,
+  after: ComposerThreadDraftState | null,
+): boolean {
+  const modelsChanged =
+    before && after
+      ? before.modelSelectionByProvider !== after.modelSelectionByProvider
+      : Object.keys((before ?? after)?.modelSelectionByProvider ?? {}).length > 0;
+  return (
+    modelsChanged ||
+    (before?.activeProvider ?? null) !== (after?.activeProvider ?? null) ||
+    (before?.runtimeMode ?? null) !== (after?.runtimeMode ?? null) ||
+    (before?.interactionMode ?? null) !== (after?.interactionMode ?? null)
+  );
+}
+
+/** Watches for edits and attachment invalidation while a send waits for routing. */
+export function watchComposerSendEdits(
+  draftTarget: ComposerThreadTarget,
+): () => "ready" | "edited" | "attachments-cancelled" {
   const targetKey = composerTargetKey(draftTarget);
   const submittedImages = new Set(getPreparingComposerImages(targetKey));
   const cancelGeneration = cancelGenerations.get(targetKey);
@@ -171,9 +190,10 @@ export function watchComposerSendEdits(draftTarget: ComposerThreadTarget): () =>
     const next = state.getComposerDraft(draftTarget);
     if (!preparedImagesJoiningDraft) {
       changed ||=
-        draft && next
+        composerSendSettingsChanged(draft, next) ||
+        (draft && next
           ? composerDraftContentChanged(draft, next)
-          : composerDraftHasUserContent(draft ?? next);
+          : composerDraftHasUserContent(draft ?? next));
     }
     draft = next;
   });
@@ -185,7 +205,8 @@ export function watchComposerSendEdits(draftTarget: ComposerThreadTarget): () =>
   return () => {
     stopWatchingDraft();
     stopWatchingImages();
-    return changed || cancelGenerations.get(targetKey) !== cancelGeneration;
+    if (cancelGenerations.get(targetKey) !== cancelGeneration) return "attachments-cancelled";
+    return changed ? "edited" : "ready";
   };
 }
 
@@ -224,11 +245,7 @@ export function holdComposerSend(
       const next = state.getComposerDraft(draftTarget);
       if (
         !preparedImagesJoiningDraft &&
-        (composerDraftContentChanged(draft, next) ||
-          draft?.modelSelectionByProvider !== next?.modelSelectionByProvider ||
-          draft?.activeProvider !== next?.activeProvider ||
-          draft?.runtimeMode !== next?.runtimeMode ||
-          draft?.interactionMode !== next?.interactionMode)
+        (composerDraftContentChanged(draft, next) || composerSendSettingsChanged(draft, next))
       ) {
         settle({ status: "cancelled" });
       }

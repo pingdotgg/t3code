@@ -78,9 +78,6 @@ it("distinguishes draft edits from attachment progress while routing a send", ()
   addPreparingComposerImages(target, [image]);
   const finishUnchangedSend = watchComposerSendEdits(draftTarget);
   drafts.setPrompt(draftTarget, drafts.getComposerDraft(draftTarget)!.prompt);
-  drafts.setProviderModelOptions(draftTarget, ProviderDriverKind.make("codex"), [
-    { id: "reasoningEffort", value: "high" },
-  ]);
   drafts.setFileUpload(draftTarget, "notes", environmentId, "uploaded-notes");
   joinPreparedImagesToDraft(() =>
     drafts.addImages(draftTarget, [
@@ -96,13 +93,23 @@ it("distinguishes draft edits from attachment progress while routing a send", ()
     ]),
   );
   removePreparingComposerImages(target, new Set([image.id]));
-  expect(finishUnchangedSend()).toBe(false);
+  expect(finishUnchangedSend()).toBe("ready");
 
-  const finishEditedSend = watchComposerSendEdits(draftTarget);
-  drafts.setPrompt(draftTarget, "replacement");
-  expect(finishEditedSend()).toBe(true);
+  for (const edit of [
+    () => drafts.setPrompt(draftTarget, "replacement"),
+    () =>
+      drafts.setProviderModelOptions(draftTarget, ProviderDriverKind.make("codex"), [
+        { id: "reasoningEffort", value: "high" },
+      ]),
+    () => addPreparingComposerImages(target, [preparingImage("unsubmitted")]),
+  ]) {
+    const finishEditedSend = watchComposerSendEdits(draftTarget);
+    edit();
+    expect(finishEditedSend()).toBe("edited");
+  }
 
-  const finishSendWithNewImage = watchComposerSendEdits(draftTarget);
-  addPreparingComposerImages(target, [preparingImage("unsubmitted")]);
-  expect(finishSendWithNewImage()).toBe(true);
+  const finishCancelledSend = watchComposerSendEdits(draftTarget);
+  drafts.setPrompt(draftTarget, "another edit");
+  removePreparingComposerImages(target, new Set(["unsubmitted"]), { cancelSubmission: true });
+  expect(finishCancelledSend()).toBe("attachments-cancelled");
 });

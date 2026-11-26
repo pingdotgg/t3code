@@ -1792,20 +1792,20 @@ export function useComposerSend(input: ComposerSendInput) {
   const onSendLatest = useStableCallback(onSend);
   const waitBeforeSend = async <T>(pending: Promise<T>) => {
     const finishWatching = watchComposerSendEdits(composerDraftTarget);
-    let edited = false;
+    let draftStatus: ReturnType<typeof finishWatching> = "ready";
     sendInFlightRef.current = true;
     const result = await pending.finally(() => {
-      edited = finishWatching();
+      draftStatus = finishWatching();
       sendInFlightRef.current = false;
     });
     const sameRoute = currentRouteThreadKeyRef.current === routeThreadKey;
-    if (edited && sameRoute && activeThread) {
+    if (draftStatus === "edited" && sameRoute && activeThread) {
       setThreadError(
         activeThread.id,
         m(msg("Draft changed while preparing this message. Review it and send again.")),
       );
     }
-    return { result, edited, sameRoute };
+    return { result, draftReady: draftStatus === "ready", sameRoute };
   };
   const sendWithEnvironmentRefresh = async (...args: Parameters<typeof onSend>) => {
     const refresh =
@@ -1813,8 +1813,8 @@ export function useComposerSend(input: ComposerSendInput) {
         ? null
         : refreshBeforeSend();
     if (refresh === null) return onSend(...args);
-    const { result: ready, edited } = await waitBeforeSend(refresh);
-    if (ready && !edited) return onSendLatest(...args);
+    const { result: ready, draftReady } = await waitBeforeSend(refresh);
+    if (ready && draftReady) return onSendLatest(...args);
   };
   const sendWithEnvironmentRefreshLatest = useStableCallback(sendWithEnvironmentRefresh);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
@@ -1822,8 +1822,8 @@ export function useComposerSend(input: ComposerSendInput) {
     const workspaceDefault =
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
-    const { edited, sameRoute } = await waitBeforeSend(workspaceDefault);
-    if (edited || !sameRoute) return;
+    const { draftReady, sameRoute } = await waitBeforeSend(workspaceDefault);
+    if (!draftReady || !sameRoute) return;
     return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
