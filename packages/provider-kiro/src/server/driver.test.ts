@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { isProviderTextGenerationCapable, ProviderInstanceId } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -19,7 +19,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { KiroSettings } from "../settings.ts";
 import { buildKiroAcpSpawnInput } from "./acpSupport.ts";
 import { KiroDriver } from "./driver.ts";
-import { kiroAuthFromWhoami } from "./status.ts";
+import { buildInitialKiroProviderSnapshot, kiroAuthFromWhoami } from "./status.ts";
 
 const decodeSettings = Schema.decodeUnknownSync(KiroSettings);
 
@@ -132,6 +132,8 @@ it.layer(layerTest)("KiroDriver binary path", (it) => {
         Effect.provideService(HostProcess.HomeDirectory, "/test-home"),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner(launches)),
       );
+      const initial = yield* buildInitialKiroProviderSnapshot(decodeSettings({}));
+      assert.strictEqual(initial.supportsTextGeneration, false);
       const snapshot = yield* instance.snapshot.refresh;
       assert.isNotEmpty(launches);
       assert.deepEqual(
@@ -139,6 +141,8 @@ it.layer(layerTest)("KiroDriver binary path", (it) => {
         [path.join("/test-home", ".local", "bin", "kiro-cli")],
       );
       assert.isTrue(snapshot.installed);
+      assert.strictEqual(snapshot.supportsTextGeneration, false);
+      assert.isFalse(isProviderTextGenerationCapable(snapshot));
     }),
   );
 });
