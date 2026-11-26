@@ -89,7 +89,7 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
     case "identifier":
       if (node.name === "true") return true;
       if (node.name === "false") return false;
-      return Boolean(context[node.name]);
+      return Object.hasOwn(context, node.name) && Boolean(context[node.name]);
     case "not":
       return !evaluateWhenNode(node.node, context);
     case "and":

@@ -20,6 +20,10 @@
   "2aa1c01bf8014725": "{organization} limita as threads a Aceitar edições automaticamente.",
   "89563a8fff8bb751": "{organization} limita as threads a Auto.",
   "5b7ff1208620c2c2": "{organization} limita as threads a Acesso total.",
+  "069e0382ff2496f5": "As configurações do Claude da sua organização desativam o modo automático.",
+  "8ccf7e0def66d339": "Suas configurações do Claude desativam o modo automático.",
+  "04ac2410d2cc0666": "As configurações do Claude deste projeto desativam o modo automático.",
+  "7e27789f5d58960e": "As configurações do Claude desativam o modo automático.",
   "9bf017edd3847eb1": "A política de {organization} não permite conexões de outros dispositivos.",
   "ef9533bcc048f17b": "A política de {organization} não permite o T3 Connect.",
   "986b0873f913a840": "A política de {organization} não permite tarefas de webhook.",
@@ -4932,8 +4936,6 @@
   "3f5c37167aa5034f": "O armazenamento do navegador rejeitou a gravação, então o editor de mensagens ficou como estava. Libere dados do site e tente novamente.",
   "41ba6c0b5c5e8b22": "O prompt guardado não vai sobreviver a uma recarga",
   "94d7f150b3f7b291": "O armazenamento do navegador não está disponível, então estes guardados ficam só na memória durante esta sessão.",
-  "f421c24666cd8c71": "Prompt guardado mais antigo descartado",
-  "1123f816ea2a6e3e": "Os guardados comportam {max} prompts; o mais antigo foi removido para abrir espaço.",
   "c3a8f9b1b2e7d588": "As imagens guardadas não foram salvas",
   "fc3feba263971bce": "O prompt foi guardado, mas o armazenamento do navegador rejeitou as imagens. Elas vão faltar se você recarregar.",
   "9e36559d0fa0cca8": "As imagens guardadas não foram anexadas",
@@ -11103,7 +11105,7 @@
   "4889f7885396c26b": "Worktrees",
   "2d96fe39105aae8f": "Logs rotacionados",
   "1214c77f4bf1ee81": "Artefatos do navegador",
-  "9831e9c703b3bdd0": "{omitted, plural, one {{environment}: mais {count} resultado.} other {{environment}: mais {count} resultados.}}",
+  "d9e33a2a8d404a96": "{omitted, plural, one {{environment}: mais {count} resultado.} other {{environment}: mais {count} resultados.}}",
   "c8192b219451a0d0": "{removed} removidos, {kept} mantidos, {failed} falharam",
   "cbd8bf91a856906a": "{removed} removidos, {kept} mantidos",
   "754564dc0b82aff7": "{count, plural, one {Última execução {when}. {bytes} recuperados. {count} item não pôde ser removido.} other {Última execução {when}. {bytes} recuperados. {count} itens não puderam ser removidos.}}",
@@ -12522,7 +12524,7 @@
   "7755500a4cde5066": "Fechar o painel",
   "b8dcbc93a2ca1861": "Esta execução não o lista mais.",
   "115c69de3202f664": "Abrir",
-  "644eafa9048b62df": "{count, plural, =1 {1ª tentativa} =2 {2ª tentativa} =3 {3ª tentativa} other {{count}ª tentativa}}",
+  "a2bbf464a3be4882": "{count, plural, =1 {1ª tentativa} =2 {2ª tentativa} =3 {3ª tentativa} other {{count}ª tentativa}}",
   "e39f89c909df4db0": "Não foi possível retomar a execução",
   "865f034346b82f47": "Cancelar {title}? Os agentes param e a execução não pode ser retomada.",
   "6bc75632fd9c9136": "Não foi possível cancelar a execução",
@@ -12986,5 +12988,28 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Verificando quais idiomas o modelo suporta…"
+  "800966eb58181745": "Verificando quais idiomas o modelo suporta…",
+  "410dded6e21c280d": "Os guardados estão cheios",
+  "1af8d12ac21cb183": "Os guardados comportam {max} prompts. Restaure ou exclua um para abrir espaço; o campo de texto ficou como estava.",
+  "381ceed77cb8b2b3": "Parar {name}",
+  "5b9fda36b610d25c": "Parar",
+  "1d372f6d555dde3c": "Parar todos os dispositivos",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " mais"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " mais em Itens vinculados"
+  ]
 }

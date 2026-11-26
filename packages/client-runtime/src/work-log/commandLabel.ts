@@ -193,7 +193,11 @@ const TERMINAL_SHELL_PROGRAMS = new Set([
   "while",
 ]);
 
-function shellCommandArgumentIndex(tokens: ReadonlyArray<string>, start: number): number | null {
+function shellCommandArgumentIndex(
+  shell: string,
+  tokens: ReadonlyArray<string>,
+  start: number,
+): number | null {
   for (let index = start; index < tokens.length; index += 1) {
     const option = tokens[index]!;
     if (option === "--" || !option.startsWith("-")) return null;
@@ -201,7 +205,10 @@ function shellCommandArgumentIndex(tokens: ReadonlyArray<string>, start: number)
       index += 1;
       continue;
     }
-    if (option === "--command" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(option)) return index + 1;
+    if (option === "--command" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(option)) {
+      // fish takes the next token as the script even when it is `--`.
+      return index + (shell !== "fish" && tokens[index + 1] === "--" ? 2 : 1);
+    }
   }
   return null;
 }
@@ -1224,8 +1231,9 @@ function parseCommandProgramName(
       }
       return null;
     }
-    if (tokenProgram && SHELL_PROGRAMS.has(tokenProgram.replace(/\.exe$/i, "").toLowerCase())) {
-      const scriptIndex = shellCommandArgumentIndex(tokens, index + 1);
+    const shellProgram = tokenProgram?.replace(/\.exe$/i, "").toLowerCase();
+    if (shellProgram && SHELL_PROGRAMS.has(shellProgram)) {
+      const scriptIndex = shellCommandArgumentIndex(shellProgram, tokens, index + 1);
       if (scriptIndex !== null) {
         const script = tokens[scriptIndex];
         return script
@@ -1384,7 +1392,7 @@ function withoutShellWrapper(command: string): string {
   const program = executable?.replace(/\.exe$/iu, "");
   if (!tokens || !executable || !program) return trimmed;
   const scriptIndex = SHELL_PROGRAMS.has(program)
-    ? shellCommandArgumentIndex(tokens, 1)
+    ? shellCommandArgumentIndex(program, tokens, 1)
     : WINDOWS_SHELL_PROGRAMS.has(executable.toLowerCase())
       ? windowsShellScriptIndex(program.toLowerCase(), tokens)
       : null;
