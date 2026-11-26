@@ -285,8 +285,10 @@ export const make = Effect.gen(function* () {
     function* (input, hooks) {
       const prepared = yield* repositories.prepareClone(input);
       const startedAt = yield* nowIso;
+      const attemptId = crypto.randomUUID();
       const snapshot: ProjectCloneSnapshot = {
         projectId: input.projectId,
+        attemptId,
         remoteUrl: prepared.remoteUrl,
         destinationPath: prepared.destinationPath,
         repository: prepared.repository,
@@ -366,7 +368,7 @@ export const make = Effect.gen(function* () {
       );
       return {
         projectId,
-        startedAt,
+        attemptId,
         cwd: prepared.destinationPath,
         remoteUrl: prepared.remoteUrl,
         repository: prepared.repository,
@@ -408,10 +410,12 @@ export const make = Effect.gen(function* () {
       }
       yield* repositories.discardClone(tracked.input.destinationPath);
       const startedAt = yield* nowIso;
+      const attemptId = crypto.randomUUID();
       yield* modify(projectId, (entry) => ({
         ...entry,
         snapshot: {
           ...entry.snapshot,
+          attemptId,
           phase: "running",
           stage: "connecting",
           percent: null,

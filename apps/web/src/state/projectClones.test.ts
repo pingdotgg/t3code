@@ -6,8 +6,8 @@ import { isProjectCloneToastSilenced, silenceProjectCloneToasts } from "./projec
 
 it("shows notifications for a new clone attempt on a previously viewed project", () => {
   const ref = scopeProjectRef(EnvironmentId.make("remote"), ProjectId.make("reused-project"));
-  const previous = "2026-01-01T00:00:00.000Z";
-  const current = "2026-01-01T00:01:00.000Z";
+  const previous = "previous-attempt";
+  const current = "current-attempt";
 
   silenceProjectCloneToasts(ref, previous);
   expect(isProjectCloneToastSilenced(ref, previous)).toBe(true);

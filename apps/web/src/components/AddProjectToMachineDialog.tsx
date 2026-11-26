@@ -230,7 +230,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
       scopeProjectRef(target.environmentId, requestedId),
     );
     try {
-      const { projectId, startedAt } = await addProjectToMachine({
+      const { projectId, attemptId } = await addProjectToMachine({
         source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
         subdirectory: projectSubdirectory(
           project.repositoryIdentity?.rootPath,
@@ -245,7 +245,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
       });
       if (useRequest.getState().request === request) {
         const targetRef = scopeProjectRef(target.environmentId, projectId);
-        if (startedAt !== undefined) silenceProjectCloneToasts(targetRef, startedAt);
+        if (attemptId !== undefined) silenceProjectCloneToasts(targetRef, attemptId);
         close();
         openClonedProject(targetRef);
       }

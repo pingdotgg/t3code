@@ -46,7 +46,7 @@ interface TrackedToast {
   readonly toastId: ReturnType<typeof toastManager.add>;
   readonly renderedKey: string;
   readonly phase: ProjectCloneSnapshot["phase"];
-  readonly startedAt: ProjectCloneSnapshot["startedAt"];
+  readonly attemptId: string;
   readonly closed?: true;
 }
 
@@ -102,7 +102,8 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       seen.add(clone.projectId);
       const key = renderKey(clone);
       const tracked = toasts.current.get(clone.projectId);
-      const sameAttempt = tracked?.startedAt === clone.startedAt;
+      const attemptId = clone.attemptId ?? clone.startedAt;
+      const sameAttempt = tracked?.attemptId === attemptId;
       const name = projectCloneDisplayName(clone);
       const closeToast = () => {
         const current = toasts.current.get(clone.projectId);
@@ -112,13 +113,12 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       };
       const ref = { environmentId, projectId: clone.projectId };
       if (isViewingProjectDraft(clone.projectId)) {
-        silenceProjectCloneToasts(ref, clone.startedAt);
+        silenceProjectCloneToasts(ref, attemptId);
         closeToast();
         continue;
       }
       if (
-        (isProjectCloneToastSilenced(ref, clone.startedAt) ||
-          toastHolds.has(scopedProjectKey(ref))) &&
+        (isProjectCloneToastSilenced(ref, attemptId) || toastHolds.has(scopedProjectKey(ref))) &&
         (clone.phase === "running" || clone.phase === "done")
       ) {
         closeToast();
@@ -134,7 +134,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       }
 
       const showToast = (options: ReturnType<typeof stackedThreadToast>) => {
-        const rendered = { renderedKey: key, phase: clone.phase, startedAt: clone.startedAt };
+        const rendered = { renderedKey: key, phase: clone.phase, attemptId };
         if (tracked && !tracked.closed) {
           toastManager.update(tracked.toastId, options);
           toasts.current.set(clone.projectId, { toastId: tracked.toastId, ...rendered });

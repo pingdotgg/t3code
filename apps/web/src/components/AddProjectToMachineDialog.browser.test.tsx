@@ -1,15 +1,20 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type ProjectCloneSnapshot } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 
 const clone = vi.hoisted(() => vi.fn());
+const snapshots = vi.hoisted(() => vi.fn<() => ReadonlyArray<ProjectCloneSnapshot>>());
 
 vi.mock(import("../lib/addProjectToMachine"), async (original) => ({
   ...(await original()),
   addProjectToMachine: clone,
+}));
+vi.mock(import("../state/projectClones"), async (original) => ({
+  ...(await original()),
+  useEnvironmentProjectClones: snapshots,
 }));
 
 const project = vi.hoisted(() => {
@@ -45,7 +50,9 @@ vi.mock(import("../state/entities"), async (original) => {
 });
 vi.mock(import("../state/environments"), async (original) => ({
   ...(await original()),
-  useEnvironments: (() => ({ environments: [] })) as never,
+  useEnvironments: (() => ({
+    environments: [{ environmentId: EnvironmentId.make("environment-2") }],
+  })) as never,
 }));
 vi.mock(import("../hooks/useHandleNewThread"), async (original) => ({
   ...(await original()),
@@ -70,6 +77,8 @@ import {
   AddProjectToMachineDialogHost,
   openAddProjectToMachine,
 } from "./AddProjectToMachineDialog";
+import { ProjectCloneToastCoordinator } from "./ProjectCloneToastCoordinator";
+import { ToastProvider } from "./ui/toast";
 
 const environmentId = EnvironmentId.make("environment-1");
 const projectRef = scopeProjectRef(environmentId, ProjectId.make("project-1"));
@@ -82,18 +91,50 @@ const PROJECT = {
   repositoryIdentity: null,
 };
 
+function CloneDialogWithToasts() {
+  return (
+    <ToastProvider>
+      <ProjectCloneToastCoordinator />
+      <AddProjectToMachineDialogHost />
+    </ToastProvider>
+  );
+}
+
 describe("AddProjectToMachineDialog", () => {
   it("keeps the replacement open after the dismissed clone finishes starting", async () => {
     project.setup(PROJECT);
     const reply = Promise.withResolvers<{ projectId: ProjectId }>();
-    clone.mockReturnValueOnce(reply.promise);
-    await using screen = await render(<AddProjectToMachineDialogHost />);
+    const requested = Promise.withResolvers<ProjectId>();
+    clone.mockImplementationOnce(({ projectId }: { projectId: ProjectId }) => {
+      requested.resolve(projectId);
+      return reply.promise;
+    });
+    snapshots.mockReturnValue([]);
+    await using screen = await render(<CloneDialogWithToasts />);
 
     await act(() => openAddProjectToMachine({ projectRef, targetEnvironmentId: null }));
     const folder = screen.getByRole("textbox", { name: /^Folder on/ });
     await folder.fill("/checkout");
     await userEvent.keyboard("{Enter}");
     await expect.element(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    const projectId = await requested.promise;
+    snapshots.mockReturnValue([
+      {
+        projectId,
+        remoteUrl: "https://example.com/repo.git",
+        destinationPath: "/checkout",
+        repository: null,
+        phase: "running",
+        stage: "connecting",
+        percent: null,
+        detail: null,
+        error: null,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: null,
+        sequence: 1,
+      },
+    ]);
+    await screen.rerender(<CloneDialogWithToasts />);
     await userEvent.keyboard("{Escape}");
 
     await act(() => {
@@ -101,10 +142,10 @@ describe("AddProjectToMachineDialog", () => {
       openAddProjectToMachine({ projectRef: nextProjectRef, targetEnvironmentId: null });
     });
     await expect.element(screen.getByText(/Clone Next repo/)).toBeVisible();
-    await act(async () => {
-      reply.resolve({ projectId: ProjectId.make("new-checkout") });
-      await reply.promise;
-    });
+    const progress = page.getByText("Cloning checkout", { exact: true });
+    await expect.element(progress).not.toBeInTheDocument();
+    reply.resolve({ projectId });
+    await expect.element(progress).toBeVisible();
     await expect.element(screen.getByText(/Clone Next repo/)).toBeVisible();
   });
 
