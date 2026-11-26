@@ -5259,7 +5259,215 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             Effect.die(new Error(`Expected a refusal for the hooks, got ${error.message}`)),
           ),
         );
-      return { repoDir, remoteDir, writeHook, hooksRun, pushed, create, refused };
+      const opening = (input: { readonly private?: boolean; readonly baseBranch?: string } = {}) =>
+        manager.pullRequestOpening({
+          cwd: repoDir,
+          ...(host.privateRemote === undefined ? {} : { private: true }),
+          ...input,
+        });
+      /** A create held to what `approved` names, as a caller that asked a person makes it. */
+      const createApproved = (approved: GitManager.PullRequestOpening) =>
+        manager.createPullRequest({
+          cwd: repoDir,
+          projectId: ProjectId.make("project-1"),
+          title: "Feature",
+          body: "Body",
+          approved,
+          ...(host.privateRemote === undefined ? {} : { private: true }),
+        });
+      const remoteHead = runGit(repoDir, ["ls-remote", "origin", "refs/heads/feature/hooked"]).pipe(
+        Effect.map((result) => result.stdout.split("\t")[0] ?? ""),
+      );
+      const commit = Effect.fn(function* (file: string) {
+        NodeFS.writeFileSync(NodePath.join(repoDir, file), `${file}\n`);
+        yield* runGit(repoDir, ["add", file]);
+        yield* runGit(repoDir, ["commit", "-m", `Add ${file}`]);
+        return (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      });
+      return {
+        repoDir,
+        remoteDir,
+        writeHook,
+        hooksRun,
+        pushed,
+        create,
+        refused,
+        opening,
+        createApproved,
+        remoteHead,
+        commit,
+      };
+    });
+
+    describe("held to what a person approved", () => {
+      const CHANGED =
+        "The branch, its commits, its base or where it is pushed changed after the user was asked. Nothing was pushed. Call again to ask.";
+
+      it.effect("names the commit, where it goes, the base and the hooks, and does that", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          repo.writeHook("pre-push");
+          const head = (yield* runGit(repo.repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+          const approved = yield* repo.opening();
+          expect(approved).toMatchObject({
+            branch: "feature/hooked",
+            head,
+            baseBranch: "main",
+            push: { remoteName: "origin", remoteBranch: "feature/hooked", urls: [repo.remoteDir] },
+          });
+          expect(approved.push?.hooks?.files).toHaveLength(1);
+          expect(repo.hooksRun()).toEqual([]);
+          expect(yield* repo.pushed).toBe(false);
+
+          yield* repo.createApproved(approved);
+          expect(repo.hooksRun()).toContain("pre-push");
+          expect(yield* repo.remoteHead).toBe(head);
+        }),
+      );
+
+      it.effect("a commit made after the approval is not pushed with it", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          const approved = yield* repo.opening();
+          yield* repo.commit("later.txt");
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+          expect(yield* repo.pushed).toBe(false);
+        }),
+      );
+
+      it.effect("an approval to open without a push never pushes", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          const before = yield* repo.remoteHead;
+          const approved = yield* repo.opening();
+          expect(approved.push).toBeNull();
+
+          // The commit makes a push necessary; nobody was asked about one.
+          yield* repo.commit("later.txt");
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+          expect(yield* repo.remoteHead).toBe(before);
+        }),
+      );
+
+      it.effect.each([
+        [
+          "another branch checked out",
+          (repoDir: string) => runGit(repoDir, ["checkout", "-b", "feature/other"]),
+        ],
+        [
+          "the remote pointed somewhere else",
+          (repoDir: string) =>
+            Effect.flatMap(createBareRemote(), (elsewhere) =>
+              runGit(repoDir, ["remote", "set-url", "origin", elsewhere]),
+            ),
+        ],
+        [
+          "a push remote set for the branch",
+          (repoDir: string) =>
+            Effect.gen(function* () {
+              yield* runGit(repoDir, ["remote", "add", "fork", yield* createBareRemote()]);
+              yield* runGit(repoDir, ["config", "branch.feature/hooked.pushRemote", "fork"]);
+            }),
+        ],
+        [
+          "the branch's base changed",
+          (repoDir: string) =>
+            runGit(repoDir, ["config", "branch.feature/hooked.gh-merge-base", "release"]).pipe(
+              Effect.andThen(runGit(repoDir, ["branch", "release", "main"])),
+            ),
+        ],
+      ] as const)("%s after the approval pushes nothing", ([, change]) =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          const approved = yield* repo.opening();
+          yield* change(repo.repoDir);
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+          expect(yield* repo.pushed).toBe(false);
+          const remotes = (yield* runGit(repo.repoDir, ["remote"])).stdout.split("\n");
+          for (const remote of remotes.filter((name) => name !== "")) {
+            const heads = yield* runGit(repo.repoDir, ["ls-remote", "--heads", remote]);
+            expect(heads.stdout).not.toContain("feature/");
+          }
+        }),
+      );
+
+      it.effect("reading what it would do runs none of the repository's hooks", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          // The remote moves on, so the status read's refresh has refs to update.
+          const other = yield* makeTempDir("t3code-git-manager-other-");
+          yield* runGit(other, ["clone", "--branch", "feature/hooked", repo.remoteDir, "."]);
+          yield* runGit(other, ["config", "user.email", "test@example.com"]);
+          yield* runGit(other, ["config", "user.name", "Test"]);
+          NodeFS.writeFileSync(NodePath.join(other, "theirs.txt"), "theirs\n");
+          yield* runGit(other, ["add", "theirs.txt"]);
+          yield* runGit(other, ["commit", "-m", "Theirs"]);
+          yield* runGit(other, ["push", "origin", "feature/hooked"]);
+          repo.writeHook("reference-transaction");
+          repo.writeHook("pre-push");
+
+          yield* repo.opening();
+          expect(repo.hooksRun()).toEqual([]);
+        }),
+      );
+
+      it.effect("hooks that cannot be read do not stop an opening that pushes nothing", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          // Mode bits do not keep an administrator or a Windows user out.
+          if ((yield* HostProcess.Platform) === "win32" || process.getuid?.() === 0) return;
+          repo.writeHook("pre-push");
+          const hooksDir = NodePath.join(repo.repoDir, ".husky");
+          NodeFS.chmodSync(hooksDir, 0o000);
+          yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.chmodSync(hooksDir, 0o755)));
+          const approved = yield* repo.opening();
+          expect(approved.push).toBeNull();
+          yield* repo.createApproved(approved);
+
+          // With a push to make, they have to be readable to be asked about.
+          yield* repo.commit("later.txt");
+          const unreadable = yield* repo.opening().pipe(Effect.flip);
+          expect(unreadable.message).toContain("Could not read the repository's push hooks.");
+        }),
+      );
+
+      it.effect("a private opening is a push to the companion, made only once approved", () =>
+        Effect.gen(function* () {
+          const companionDir = yield* createBareRemote();
+          let asked = 0;
+          const repo = yield* hookedRepo({
+            privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
+            onPrivateRemote: () => void (asked += 1),
+          });
+          // The branch is on the public remote already; a private one is pushed all the same.
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          const approved = yield* repo.opening();
+          expect(approved.push).toMatchObject({ remoteName: null, urls: [] });
+          // The host makes the companion when asked for it, so reading asks for none.
+          expect(asked).toBe(0);
+
+          const head = yield* repo.commit("later.txt");
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+          expect(asked).toBe(0);
+
+          const again = yield* repo.opening();
+          expect(again.head).toBe(head);
+          yield* repo.createApproved(again);
+          const companionHeads = yield* runGit(repo.repoDir, [
+            "ls-remote",
+            "--heads",
+            companionDir,
+          ]);
+          expect(companionHeads.stdout).toContain(`${head}\trefs/heads/feature/hooked`);
+        }),
+      );
     });
 
     it.effect("runs them for a caller that needs no approval", () =>

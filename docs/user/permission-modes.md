@@ -25,10 +25,23 @@ your login: opening a pull request, editing, commenting on, reviewing or merging
 its checks, and creating, commenting on or changing the state of an issue. The request says what
 will be done to what, such as "Merge pull request #5", with the repository and the tool that
 asks, and says so when the repository is not the one your thread's project is a checkout of.
+Names that come from the agent or the repository, such as a branch, are shown in quotation
+marks, with any character a screen would hide written out. Merging a stack lists every pull
+request it would merge and the commit each is at. The request does not show the text of an
+edit, a comment or a review.
 **Approve** lets that one call run; **Decline** does nothing. You are asked each time: there is
 no "always allow" for these requests, and Plan mode asks too. An approval is for the call as it
-was asked: if the agent then asks for something else, you are asked again. In **Full access**
-these tools run without asking, as commands and edits do.
+was asked: if the agent then asks for something else, or what it named has changed by the time
+you answer (a new commit, a pull request added to a stack), nothing is done and you are asked
+again. In **Full access** these tools run without asking, as commands and edits do.
+
+Opening a pull request names the branch and the commit it is at, the base it is opened against
+and, when the branch has to be pushed first, the remote and address the push goes to. A private
+pull request is pushed to the repository's private companion, and the request says so. Approving
+pushes exactly that commit there; a commit made afterwards is not pushed with it.
+
+Below Full access these tools act only in the environment the thread runs in. A call for a
+linked environment is refused, because T3 Code cannot yet show you what it would do there.
 
 When opening a pull request would push the branch and the push would run one of the repository's
 Git hooks (`pre-push` or `reference-transaction`, as a project with husky has), the same request

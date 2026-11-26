@@ -11156,6 +11156,35 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       return { cwd: NodeFS.realpathSync(cwd), driver, ran, push, hooksRun };
     });
 
+    it.effect("a push approved as named sends that commit there, or nothing", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
+        const approved = { branch: "topic", head, remoteName: "origin", remoteBranch: "topic" };
+        const push = (named: typeof approved) =>
+          repo.driver.pushCurrentBranch(repo.cwd, null, { approved: named });
+        const remoteTopic = git(repo.cwd, ["ls-remote", "origin", "refs/heads/topic"]);
+
+        // Somewhere else, or another branch, than was approved: nothing goes anywhere.
+        for (const other of [
+          { ...approved, remoteName: "fork" },
+          { ...approved, remoteBranch: "main" },
+          { ...approved, branch: "other" },
+        ]) {
+          const refused = yield* push(other).pipe(Effect.flip);
+          assert.instanceOf(refused.cause, GitVcsDriver.PushNotAsApprovedError);
+          assert.equal(yield* remoteTopic, "");
+        }
+
+        // A commit made since the approval stays behind.
+        NodeFS.writeFileSync(NodePath.join(repo.cwd, "later.txt"), "later\n");
+        yield* git(repo.cwd, ["add", "later.txt"]);
+        yield* git(repo.cwd, ["commit", "-m", "Later"]);
+        assert.deepInclude(yield* push(approved), { status: "pushed" });
+        assert.equal(yield* remoteTopic, `${head}\trefs/heads/topic`);
+      }),
+    );
+
     it.effect("an approved push runs the approved hook files and no other", () =>
       Effect.gen(function* () {
         const repo = yield* repoToPush();

@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  GitManagerError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -1341,41 +1342,71 @@ describe("source control tools", () => {
       return { writes, pullRequests };
     };
 
-    /** A checkout whose push would run `hooks()`, and each attempt to open a pull request. */
+    interface CheckoutNow {
+      branch: string;
+      head: string;
+      baseBranch: string;
+      needsPush: boolean;
+      remoteName: string | null;
+      urls: Array<string>;
+    }
+    /**
+     * A checkout as `checkout.now` has it, whose push would run `hooks()`, and each attempt to
+     * open a pull request from it. The stand-in holds itself to an approval as GitManager does.
+     */
     const checkout = (
       hooks: () => { readonly digest: string } | null = () => null,
       needsPush = true,
     ) => {
-      type PushHooks = Parameters<
-        GitManager.GitManager["Service"]["createPullRequest"]
-      >[0]["pushHooks"];
-      const attempts: Array<PushHooks> = [];
+      type Create = Parameters<GitManager.GitManager["Service"]["createPullRequest"]>[0];
+      const attempts: Array<Create["approved"]> = [];
       let plans = 0;
+      const now: CheckoutNow = {
+        branch: "tools",
+        head: "1a2b3c4d5e6f7a8b9c0d1a2b3c4d5e6f7a8b9c0d",
+        baseBranch: "main",
+        needsPush,
+        remoteName: "origin",
+        urls: ["https://github.com/T3Tools/T3Code.git"],
+      };
       const named = (digest: string) => ({
         files: ["/workspace/worktree/.husky/pre-push"],
         commands: [],
         digest,
       });
+      const opening = (input: {
+        readonly baseBranch?: string | undefined;
+        readonly private?: boolean | undefined;
+      }): GitManager.PullRequestOpening => {
+        const current = hooks();
+        const isPrivate = input.private === true;
+        const push =
+          now.needsPush || isPrivate
+            ? {
+                remoteName: isPrivate ? null : now.remoteName,
+                remoteBranch: now.branch,
+                urls: isPrivate ? [] : now.urls,
+                hooks: current === null ? null : named(current.digest),
+              }
+            : null;
+        const read = {
+          branch: now.branch,
+          head: now.head,
+          baseBranch: input.baseBranch ?? now.baseBranch,
+          push,
+        };
+        return { ...read, key: JSON.stringify([read, isPrivate]) };
+      };
       const git: Partial<GitManager.GitManager["Service"]> = {
-        pullRequestPush: () =>
+        pullRequestOpening: (input) =>
           Effect.sync(() => {
             plans += 1;
-            const current = hooks();
-            return {
-              branch: "tools",
-              needsPush,
-              hooks: current === null ? null : named(current.digest),
-            };
+            return opening(input);
           }),
         createPullRequest: (input) =>
           Effect.suspend(() => {
-            attempts.push(input.pushHooks);
-            const current = hooks();
-            const approved = input.pushHooks;
-            return approved === undefined ||
-              approved === "off" ||
-              current === null ||
-              approved.approvedDigest === current.digest
+            attempts.push(input.approved);
+            return input.approved === undefined || input.approved.key === opening(input).key
               ? Effect.succeed({
                   status: "created" as const,
                   url: "https://github.com/t3tools/t3code/pull/43",
@@ -1385,14 +1416,15 @@ describe("source control tools", () => {
                   title: input.title,
                 })
               : Effect.fail(
-                  new GitManager.GitPushHooksUnapprovedError({
-                    branch: "tools",
-                    ...named(current.digest),
+                  new GitManagerError({
+                    operation: "createPullRequest",
+                    cwd: input.cwd,
+                    detail: GitManager.PULL_REQUEST_OPENING_CHANGED,
                   }),
                 );
           }),
       };
-      return { attempts, git, plans: () => plans };
+      return { attempts, git, now, plans: () => plans };
     };
 
     /** A sessionless client: it is asked by the call's answer and calls again with the reply. */
@@ -1713,6 +1745,9 @@ describe("source control tools", () => {
         }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
 
+      const PUSH =
+        'Push "tools" at "1a2b3c4d5e" to "origin" \\("https://github.com/T3Tools/T3Code.git"\\) and open a pull request into "main" in T3Tools/T3Code';
+
       it.effect.each(BELOW_FULL_ACCESS)(
         "%s asks once, for the push and the hooks it runs",
         ([, options]) =>
@@ -1723,14 +1758,17 @@ describe("source control tools", () => {
             const asked = yield* ask(harness, sessions, "pull_request_create", args);
             expect(hooked.attempts).toEqual([]);
             expect(asked.message).toMatch(
-              /^Push tools and open a pull request in T3Tools\/T3Code, running this repository's hook file \.husky\/pre-push \(contents digest-1\)\? \(request [0-9a-f]{8}\)$/,
+              new RegExp(
+                `^${PUSH}, running this repository's hook file "\\.husky/pre-push" \\(contents digest-1\\)\\? \\(request [0-9a-f]{8}\\)$`,
+              ),
             );
-            // One request carries both: what is pushed where, and what the push runs.
+            // One request carries all of it: what is pushed where, and what the push runs.
             expect(asked.kept).toMatchObject({
               toolAction: {
                 tool: "pull_request_create",
-                action: "Push tools and open",
-                target: "a pull request",
+                action:
+                  'Push "tools" at "1a2b3c4d5e" to "origin" ("https://github.com/T3Tools/T3Code.git") and open',
+                target: 'a pull request into "main"',
                 repository: "T3Tools/T3Code",
               },
               pushHooks: { branch: "tools", files: [".husky/pre-push"], commands: [] },
@@ -1741,8 +1779,15 @@ describe("source control tools", () => {
               .call("pull_request_create", args)
               .pipe(asked.accept.provide(sessions));
             expect(result).toMatchObject({ number: 43, created: true });
-            // The push runs the hooks the person read, and no others.
-            expect(hooked.attempts).toEqual([{ approvedDigest: "digest-1" }]);
+            // It opens as the person read it: that commit, to that remote, with those hooks.
+            expect(hooked.attempts).toMatchObject([
+              {
+                branch: "tools",
+                head: hooked.now.head,
+                baseBranch: "main",
+                push: { remoteName: "origin", hooks: { digest: "digest-1" } },
+              },
+            ]);
           }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
 
@@ -1765,32 +1810,93 @@ describe("source control tools", () => {
         }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
 
-      it.effect("hooks edited after the last read push nothing", () =>
+      // What the person was asked about, and each way the checkout can stop being that.
+      it.effect.each([
+        [
+          "a commit made on the branch",
+          (now: CheckoutNow): void => {
+            now.head = "f".repeat(40);
+          },
+        ],
+        [
+          "another branch checked out",
+          (now: CheckoutNow): void => {
+            now.branch = "other";
+          },
+        ],
+        [
+          "the branch's remote changed",
+          (now: CheckoutNow): void => {
+            now.remoteName = "fork";
+          },
+        ],
+        [
+          "the remote pointed somewhere else",
+          (now: CheckoutNow): void => {
+            now.urls = ["https://github.com/someone/else.git"];
+          },
+        ],
+        [
+          "the branch's base changed",
+          (now: CheckoutNow): void => {
+            now.baseBranch = "release";
+          },
+        ],
+      ] as const)("%s while the person reads is asked about again", ([, change]) =>
         Effect.gen(function* () {
           const sessions = yield* shown;
-          let digest = "digest-1";
-          const hooked = checkout(() => ({ digest }));
+          const moving = checkout();
+          const harness = yield* makeHarness({ thread: lowerThread(), git: moving.git });
+          const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          change(moving.now);
+          const client = asClient({ action: "accept", state: asked.state });
+          yield* harness
+            .call("pull_request_create", args)
+            .pipe(client.provide(sessions), Effect.flip);
+          expect(moving.attempts).toEqual([]);
+          const next = Ref.getUnsafe(client.request);
+          expect(next?.requestState).toBeDefined();
+          expect(next?.requestState).not.toBe(asked.state);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect("a commit that lands after the last read pushes nothing", () =>
+        Effect.gen(function* () {
+          const sessions = yield* shown;
+          // The branch is on its remote: the person is asked about the pull request alone.
+          const pushed = checkout(() => null, false);
+          let landsAfter = Number.POSITIVE_INFINITY;
           const git: Partial<GitManager.GitManager["Service"]> = {
-            ...hooked.git,
-            // The edit lands between this call's read and its push.
-            pullRequestPush: (cwd) =>
-              hooked.git.pullRequestPush!(cwd).pipe(
-                Effect.tap(() => Effect.sync(() => void (digest = "digest-2"))),
+            ...pushed.git,
+            // The commit lands after this call's last read, and makes a push necessary.
+            pullRequestOpening: (input) =>
+              pushed.git.pullRequestOpening!(input).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    if (pushed.plans() < landsAfter) return;
+                    pushed.now.head = "f".repeat(40);
+                    pushed.now.needsPush = true;
+                  }),
+                ),
               ),
           };
           const harness = yield* makeHarness({ thread: lowerThread(), git });
           const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          expect(asked.message).toMatch(/^Open a pull request for "tools" at "1a2b3c4d5e" /);
           yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
-          digest = "digest-1";
+          // The answering call reads twice: for the answer, and again before it acts.
+          landsAfter = pushed.plans() + 2;
           const error = yield* harness
             .call("pull_request_create", args)
             .pipe(asked.accept.provide(sessions), Effect.flip);
           expect(error).toMatchObject({
             _tag: "PullRequestForgeError",
             message:
-              "This repository's push hooks changed while the user was asked. Nothing was pushed. Call again to ask.",
+              "The branch, its commits, its base or where it is pushed changed after the user was asked. Nothing was pushed. Call again to ask.",
           });
-          expect(hooked.attempts).toEqual([{ approvedDigest: "digest-1" }]);
+          // The approval it was given went with the attempt, and names no push.
+          expect(pushed.attempts).toMatchObject([{ push: null }]);
         }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
 
@@ -1800,13 +1906,11 @@ describe("source control tools", () => {
           const plain = checkout();
           const harness = yield* makeHarness({ thread: lowerThread(), git: plain.git });
           const asked = yield* ask(harness, sessions, "pull_request_create", args);
-          expect(asked.message).toMatch(
-            /^Push tools and open a pull request in T3Tools\/T3Code\? \(request [0-9a-f]{8}\)$/,
-          );
+          expect(asked.message).toMatch(new RegExp(`^${PUSH}\\? \\(request [0-9a-f]{8}\\)$`));
           expect(asked.kept?.pushHooks).toBeUndefined();
           yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
           yield* harness.call("pull_request_create", args).pipe(asked.accept.provide(sessions));
-          expect(plain.attempts).toEqual([{ approvedDigest: null }]);
+          expect(plain.attempts).toMatchObject([{ push: { remoteName: "origin", hooks: null } }]);
         }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
 
@@ -1817,12 +1921,157 @@ describe("source control tools", () => {
           const harness = yield* makeHarness({ thread: lowerThread(), git: pushed.git });
           const asked = yield* ask(harness, sessions, "pull_request_create", args);
           expect(asked.message).toMatch(
-            /^Open a pull request for tools in T3Tools\/T3Code\? \(request [0-9a-f]{8}\)$/,
+            /^Open a pull request for "tools" at "1a2b3c4d5e" into "main" in T3Tools\/T3Code\? \(request [0-9a-f]{8}\)$/,
           );
           expect(asked.kept?.pushHooks).toBeUndefined();
         }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
+
+      it.effect("a private pull request is asked about as a push to the companion repository", () =>
+        Effect.gen(function* () {
+          const sessions = yield* shown;
+          // Its branch is on the project's remote already; a private one is pushed all the same.
+          const pushed = checkout(() => ({ digest: "digest-1" }), false);
+          const harness = yield* makeHarness({ thread: lowerThread(), git: pushed.git });
+          const asked = yield* ask(harness, sessions, "pull_request_create", {
+            ...args,
+            private: true,
+          });
+          expect(asked.message).toMatch(
+            /^Push "tools" at "1a2b3c4d5e" to this repository's private companion, a separate repository on its host and open a private pull request into "main" in T3Tools\/T3Code, running this repository's hook file "\.husky\/pre-push" \(contents digest-1\)\? \(request [0-9a-f]{8}\)$/,
+          );
+          // An approval of the private one is not one for the same call made public.
+          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          const client = asClient({ action: "accept", state: asked.state });
+          yield* harness
+            .call("pull_request_create", args)
+            .pipe(client.provide(sessions), Effect.flip);
+          expect(pushed.attempts).toEqual([]);
+          expect(Ref.getUnsafe(client.request)?.requestState).not.toBe(asked.state);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect("a branch name reaches the person as data", () =>
+        Effect.gen(function* () {
+          const sessions = yield* shown;
+          const odd = checkout();
+          odd.now.branch = 'main"-and-merge\u202eit';
+          const harness = yield* makeHarness({ thread: lowerThread(), git: odd.git });
+          const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          expect(asked.message).toContain('Push "main\\"-and-merge\\u{202e}it" at ');
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
     });
+
+    describe("a stack merge", () => {
+      const LAYERS = [
+        { number: 3, state: "open", headSha: "3".repeat(40) },
+        { number: 5, state: "open", headSha: "5".repeat(40) },
+      ];
+      const params = { number: 5, expectedHeadSha: "5".repeat(40), stack: true } as const;
+      /** A forge whose stack is `layers` now. */
+      const stackedForge = (layers: Array<(typeof LAYERS)[number]>) => {
+        const forge = recordingForge();
+        const merged: Array<unknown> = [];
+        const pullRequests: Partial<PullRequestService.PullRequestService["Service"]> = {
+          ...forge.pullRequests,
+          stack: () => Effect.succeed({ number: 9, layers } as never),
+          runAction: (input) => Effect.sync(() => void merged.push(input.expectedStackHeads)),
+        };
+        return { merged, pullRequests };
+      };
+
+      it.effect("names every layer it merges, each at its head", () =>
+        Effect.gen(function* () {
+          const sessions = yield* shown;
+          const forge = stackedForge([...LAYERS]);
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            pullRequests: forge.pullRequests,
+          });
+          const asked = yield* ask(harness, sessions, "pull_request_merge", params);
+          expect(asked.message).toMatch(
+            /^Merge the stack of #3 at "3333333333", #5 at "5555555555", up to pull request #5 in t3tools\/t3code\? \(request [0-9a-f]{8}\)$/,
+          );
+          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          yield* harness.call("pull_request_merge", params).pipe(asked.accept.provide(sessions));
+          expect(forge.merged).toEqual([
+            [
+              { number: 3, headSha: "3".repeat(40) },
+              { number: 5, headSha: "5".repeat(40) },
+            ],
+          ]);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect.each([
+        [
+          "a pull request added below the target",
+          (layers: Array<(typeof LAYERS)[number]>): void => {
+            layers.unshift({ number: 2, state: "open", headSha: "2".repeat(40) });
+          },
+        ],
+        [
+          "a lower layer's head moved",
+          (layers: Array<(typeof LAYERS)[number]>): void => {
+            layers[0] = { ...layers[0]!, headSha: "4".repeat(40) };
+          },
+        ],
+      ] as const)("%s while the person reads is asked about again", ([, change]) =>
+        Effect.gen(function* () {
+          const sessions = yield* shown;
+          const layers = [...LAYERS];
+          const forge = stackedForge(layers);
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            pullRequests: forge.pullRequests,
+          });
+          const asked = yield* ask(harness, sessions, "pull_request_merge", params);
+          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          change(layers);
+          const client = asClient({ action: "accept", state: asked.state });
+          yield* harness
+            .call("pull_request_merge", params)
+            .pipe(client.provide(sessions), Effect.flip);
+          expect(forge.merged).toEqual([]);
+          const next = Ref.getUnsafe(client.request);
+          expect(next?.requestState).toBeDefined();
+          expect(next?.requestState).not.toBe(asked.state);
+          expect(questionOf(next)).not.toBe(asked.message);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+    });
+
+    it.effect("a call bound for a linked environment is not sent below Full access", () =>
+      Effect.gen(function* () {
+        const sessions = yield* shown;
+        const forge = recordingForge();
+        const hooked = checkout(() => ({ digest: "digest-1" }));
+        const harness = yield* makeHarness({
+          thread: lowerThread(),
+          pullRequests: forge.pullRequests,
+          git: hooked.git,
+        });
+        const environmentId = EnvironmentId.make("environment-box");
+        for (const [name, params] of [
+          ...WRITES,
+          ["pull_request_create", { title: "Add tools", body: "Adds tools." }],
+        ] as const) {
+          const client = asClient();
+          const refused = yield* harness
+            .call(name, { ...params, environmentId } as never)
+            .pipe(client.provide(sessions), Effect.flip);
+          expect(refused).toMatchObject({ code: "capability_denied" });
+          expect((refused as { readonly message: string }).message).toMatch(
+            /^Not done: below Full access the user approves this action first, and T3 Code cannot yet show them what it would do in a linked environment\./,
+          );
+          expect(Ref.getUnsafe(client.request)).toBeUndefined();
+        }
+        expect(forge.writes).toEqual([]);
+        expect(hooked.attempts).toEqual([]);
+        expect(hooked.plans()).toBe(0);
+      }).pipe(Effect.provide(McpProviderSessions.layer)),
+    );
   });
 
   it.effect("replies to and resolves a review thread, and refuses resolving without one", () =>
