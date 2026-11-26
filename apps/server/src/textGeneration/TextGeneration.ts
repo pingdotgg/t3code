@@ -47,7 +47,8 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle"
   | "generateReviewGuide"
-  | "generateTranscriptionPostProcessing";
+  | "generateTranscriptionPostProcessing"
+  | "generatePromptSuggestion";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -240,6 +241,17 @@ export const make = Effect.gen(function* () {
           }),
       );
     }),
+    generatePromptSuggestion: Effect.fn("TextGeneration.generatePromptSuggestion")(
+      function (input) {
+        return generate(
+          "generatePromptSuggestion",
+          input.modelSelection,
+          input.projectId,
+          (service, modelSelection) =>
+            service.generatePromptSuggestion({ ...input, modelSelection }),
+        );
+      },
+    ),
   });
 });
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { limitSection, sanitizeCommitSubject, sanitizeThreadTitle } from "./textGenerationUtils.ts";
+import {
+  limitSection,
+  sanitizeCommitSubject,
+  sanitizePromptSuggestion,
+  sanitizeThreadTitle,
+} from "./textGenerationUtils.ts";
 
 describe("limitSection", () => {
   it("cuts a long section without splitting an emoji", () => {
@@ -43,4 +48,20 @@ describe("sanitizeThreadTitle", () => {
 
     expect(sanitizeThreadTitle(title)).toBe(`${prefix}${retained}...`);
   });
+});
+
+describe("sanitizePromptSuggestion", () => {
+  it("normalizes single-line suggestions and unwraps matching quotes", () => {
+    expect(sanitizePromptSuggestion('  "Run the unit tests next"\nsecond line  ')).toBe(
+      "Run the unit tests next",
+    );
+    expect(sanitizePromptSuggestion("帮我  跑一下   测试")).toBe("帮我 跑一下 测试");
+  });
+
+  it.each(["", "   ", "NONE", "none.", "N/A", "null", "No suggestion!", "a".repeat(201)])(
+    "returns null for empty, sentinel, or overly long output: %j",
+    (raw) => {
+      expect(sanitizePromptSuggestion(raw)).toBeNull();
+    },
+  );
 });

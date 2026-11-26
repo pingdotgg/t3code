@@ -222,6 +222,7 @@ function layerSessions(
       releaseUnlessBusy: () => Effect.succeed(true),
       forgetLoadedProviderThread: () => Effect.void,
       subscribePromptSuggestion: () => Stream.empty,
+      setPromptSuggestion: () => Effect.void,
     }),
   );
 }

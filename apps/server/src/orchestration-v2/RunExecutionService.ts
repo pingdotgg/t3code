@@ -34,6 +34,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -50,6 +51,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { PROVIDER_STOP_REASON_SIGNAL } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as PromptSuggestionService from "./PromptSuggestionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import {
@@ -740,6 +742,9 @@ export const layer: Layer.Layer<
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const promptSuggestionService = yield* Effect.serviceOption(
+      PromptSuggestionService.PromptSuggestionService,
+    );
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -1382,14 +1387,28 @@ export const layer: Layer.Layer<
           // as interrupted. The completed write refuses in the same transaction
           // as a stored Stop request, so a racing Stop stays authoritative.
           const handedOff = terminal.status === "interrupted" && (yield* workspaceHandedOff);
-          if (!handedOff || !(yield* writeTerminal({ ...terminal, status: "completed" }))) {
-            yield* writeTerminal(terminal);
-          }
+          const completedWithHandoff =
+            handedOff && (yield* writeTerminal({ ...terminal, status: "completed" }));
+          const completedNormally =
+            !completedWithHandoff &&
+            (yield* writeTerminal(terminal)) &&
+            terminal.status === "completed";
           if (isRunOwnedSubagentTerminalStatus(terminal.status) && !childTurnsContinue(terminal)) {
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
             idleFlushClosed = true;
           }
           yield* Ref.set(rootRunFinalized, true);
+          if (
+            (completedWithHandoff || completedNormally) &&
+            Option.isSome(promptSuggestionService) &&
+            !isDelegatedAppThread(input.appThread)
+          ) {
+            yield* promptSuggestionService.value.scheduleForRun({
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              driver: providerThread.driver,
+            });
+          }
         });
         // The stored rows of the work this run still tracks as open on the given threads.
         const loadTrackedWork = Effect.fn("RunExecutionService.loadTrackedWork")(function* (

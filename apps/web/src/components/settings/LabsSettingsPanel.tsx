@@ -300,7 +300,7 @@ function PromptSuggestionsRow() {
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
       description={gt(
-        "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+        "Show a predicted next message in the empty composer after a completed turn. Tab uses it. Claude and Codex use native suggestions (Codex 0.165+; Claude threads update on restart); other providers use your text generation model.",
       )}
       control={
         <ScopedSwitch

@@ -85,6 +85,25 @@ export function sanitizeThreadTitle(raw: string): string {
   return `${normalized.slice(0, end).trimEnd()}...`;
 }
 
+const MAX_PROMPT_SUGGESTION_CHARS = 200;
+const EMPTY_PROMPT_SUGGESTION_SENTINELS = new Set(["none", "n/a", "null", "no suggestion"]);
+
+export function sanitizePromptSuggestion(raw: string): string | null {
+  const firstLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  const normalized = firstLine
+    .replace(/^(['"`])((?:(?!\1).)*)\1$/, "$2")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (normalized.length === 0 || normalized.length > MAX_PROMPT_SUGGESTION_CHARS) {
+    return null;
+  }
+  const sentinelKey = normalized.replace(/[.!]+$/g, "").toLowerCase();
+  if (EMPTY_PROMPT_SUGGESTION_SENTINELS.has(sentinelKey)) {
+    return null;
+  }
+  return normalized;
+}
+
 function cliLabel(cliName: string): string {
   const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);
   return `${capitalized} CLI (\`${cliName}\`)`;

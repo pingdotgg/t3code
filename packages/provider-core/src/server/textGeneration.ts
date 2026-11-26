@@ -118,6 +118,17 @@ export interface TranscriptionPostProcessingResult {
   transcription: string;
 }
 
+export interface PromptSuggestionGenerationInput {
+  cwd: string;
+  transcript: string;
+  modelSelection: ModelSelection;
+  projectId?: ProjectId | null | undefined;
+}
+
+export interface PromptSuggestionGenerationResult {
+  suggestion: string | null;
+}
+
 export interface ProviderTextGeneration {
   readonly generateTranscriptionPostProcessing: (
     input: TranscriptionPostProcessingInput,
@@ -142,4 +153,8 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  readonly generatePromptSuggestion: (
+    input: PromptSuggestionGenerationInput,
+  ) => Effect.Effect<PromptSuggestionGenerationResult, TextGenerationError>;
 }

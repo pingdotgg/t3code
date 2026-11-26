@@ -543,3 +543,43 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+export interface PromptSuggestionPromptInput {
+  readonly transcript: string;
+}
+
+const MAX_PROMPT_SUGGESTION_TRANSCRIPT_CHARS = 8_000;
+
+function limitTranscriptTail(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  let start = value.length - maxChars;
+  // Avoid starting on a trailing surrogate when slicing from the end.
+  const first = value.charCodeAt(start);
+  if (first >= 0xdc00 && first <= 0xdfff) {
+    start += 1;
+  }
+  return `${EARLIER_CONTENT_TRUNCATION_MARKER}${value.slice(start)}`;
+}
+
+export function buildPromptSuggestionPrompt(input: PromptSuggestionPromptInput) {
+  const prompt = [
+    "You predict the single most likely next message the user would type in this coding session.",
+    "Return a JSON object with one key: suggestion (string).",
+    "Rules:",
+    "- Write from the user's perspective as a direct, actionable follow-up prompt (not an assistant offer).",
+    "- Keep it concise: one single line, ideally under 100 characters, never a multi-sentence paragraph.",
+    "- Match the language used in the user's recent messages.",
+    "- Do not wrap the suggestion in quotes or markdown.",
+    '- If the task is clearly finished with no obvious next step, return an empty string "" for suggestion.',
+    "",
+    "Recent conversation:",
+    limitTranscriptTail(input.transcript.trim(), MAX_PROMPT_SUGGESTION_TRANSCRIPT_CHARS),
+  ].join("\n");
+
+  return {
+    prompt,
+    outputSchema: Schema.Struct({
+      suggestion: Schema.String,
+    }),
+  };
+}
