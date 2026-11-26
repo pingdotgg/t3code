@@ -2,12 +2,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as ByteSize from "effect/ByteSize";
+import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,6 +20,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
+import { vi } from "vite-plus/test";
 
 import {
   checkPortAvailabilityOnHosts,
@@ -30,6 +33,7 @@ import {
 const emptyConfigLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }));
 const netServiceLayer = Layer.succeed(NetService.NetService, {
   canListenOnHost: () => Effect.succeed(true),
+  probeListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
   hasListenerOnHost: () => Effect.succeed(false),
   reserveLoopbackPort: () => Effect.succeed(49_152),
@@ -285,6 +289,34 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
         assert.equal(offset, 833);
       }),
+    );
+
+    it.effect.each(["EPERM", "EACCES"])(
+      "stops at the first port when binding is denied with %s",
+      (code) =>
+        Effect.gen(function* () {
+          let listenCalls = 0;
+          const spy = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
+            this: NodeNet.Server,
+          ) {
+            listenCalls += 1;
+            process.nextTick(() => this.emit("error", Object.assign(new Error(code), { code })));
+            return this;
+          });
+          const exit = yield* findFirstAvailableOffset({
+            startOffset: 0,
+            requireServerPort: true,
+            requireWebPort: true,
+          }).pipe(Effect.provide(NetService.layer), Effect.exit);
+          spy.mockRestore();
+
+          assert.isTrue(exit._tag === "Failure");
+          const cause = exit._tag === "Failure" ? Cause.pretty(exit.cause) : "";
+          assert.notInclude(cause, "DevRunnerPortExhaustedError");
+          assert.include(cause, code);
+          assert.include(cause, "13773");
+          assert.isBelow(listenCalls, 10);
+        }),
     );
   });
 
