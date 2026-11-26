@@ -1112,6 +1112,7 @@ export interface AcpSessionRuntimeStartResult {
     | EffectAcpSchema.NewSessionResponse
     | EffectAcpSchema.ResumeSessionResponse;
   readonly modelConfigId: string | undefined;
+  readonly sessionStartMethod?: "new" | "load" | "resume" | "fork";
 }
 
 export interface AcpSessionActivationOptions {
@@ -2456,6 +2457,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
     const setupSession = Effect.gen(function* () {
       let sessionId: string;
+      let sessionStartMethod: "new" | "load" | "resume";
       let sessionSetupResult:
         | EffectAcpSchema.LoadSessionResponse
         | EffectAcpSchema.NewSessionResponse
@@ -2463,9 +2465,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       const additionalDirectories = sessionSetupFields(initializeResult);
       if (options.resumeSessionId) {
         sessionId = options.resumeSessionId;
+        const canResume = initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
         if (
           initializeResult.agentCapabilities?.loadSession === true &&
-          options.resumeMethod !== "resume"
+          (options.resumeMethod !== "resume" || !canResume)
         ) {
           const loadPayload = {
             sessionId,
@@ -2474,7 +2477,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             mcpServers: sessionMcpServers(initializeResult),
           } satisfies EffectAcpSchema.LoadSessionRequest;
           sessionSetupResult = yield* runLoadSessionWithReplayIdle(loadPayload, initializeResult);
-        } else if (initializeResult.agentCapabilities?.sessionCapabilities?.resume != null) {
+          sessionStartMethod = "load";
+        } else if (canResume) {
           const resumePayload = {
             sessionId,
             cwd: options.cwd,
@@ -2486,6 +2490,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             resumePayload,
             withStartupTimeout("session/resume", acp.agent.resumeSession(resumePayload)),
           );
+          sessionStartMethod = "resume";
         } else {
           return yield* new EffectAcpErrors.AcpRequestError({
             code: -32601,
@@ -2505,9 +2510,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         );
         sessionId = created.sessionId;
         sessionSetupResult = created;
+        sessionStartMethod = "new";
       }
 
-      return { sessionId, sessionSetupResult };
+      return { sessionId, sessionSetupResult, sessionStartMethod };
     });
 
     if (options.authenticateEagerly === true) {
@@ -2522,7 +2528,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         acp.agent.authenticate(authenticatePayload),
       );
     }
-    const { sessionId, sessionSetupResult } = yield* setupSession.pipe(
+    const { sessionId, sessionSetupResult, sessionStartMethod } = yield* setupSession.pipe(
       Effect.catchIf(
         (error) =>
           !(!isAcpAuthenticationRequired(error) || options.authenticateOnAuthRequired === false),
@@ -2538,6 +2544,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       initializeResult,
       sessionSetupResult,
       modelConfigId: extractModelConfigId(sessionSetupResult),
+      sessionStartMethod,
     } satisfies AcpStartedState;
     return nextState;
   });

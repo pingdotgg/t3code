@@ -433,7 +433,11 @@ interface CachedDatabase {
 export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>();
 
 export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* (
-  conversationsDirectories: string | readonly string[],
+  conversationsDirectories:
+    | string
+    | ReadonlyArray<
+        string | { readonly root: string; readonly directories: ReadonlyArray<string> }
+      >,
   sinceMs: number,
   cache?: Map<string, CachedDatabase>,
 ) {
@@ -578,7 +582,15 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
       }
     }
   });
-  for (const root of roots) yield* walk(root, root);
+  for (const source of roots) {
+    if (typeof source === "string") {
+      yield* walk(source, source);
+    } else {
+      for (const directory of source.directories) {
+        yield* walk(directory, source.root);
+      }
+    }
+  }
   if (cache !== undefined) {
     for (const key of cache.keys()) if (!visited.has(key)) cache.delete(key);
   }
