@@ -345,7 +345,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       if (level) yield `${"#".repeat(Math.min(6, level))} `;
       yield* text(child);
       yield "\n";
-    } else if (child.name === "blockquote" && child.hasText) {
+    } else if (["blockquote", "figcaption"].includes(child.name) && child.hasText) {
       yield LINE_START;
       yield* paragraphs(child);
       yield LINE_START;
