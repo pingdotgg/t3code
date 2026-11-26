@@ -4,17 +4,25 @@ Drive T3 Code from your phone, browser (`app.t3.codes`), or another desktop app 
 
 ## Serve the web client under a reverse-proxy path
 
-For a self-hosted web build, set Vite's base when building the web package:
+From a T3 Code repository checkout, build the web package with a Vite base:
 
 ```sh
 pnpm --filter @t3tools/web build --base=/t3/team/
 ```
 
-Serve this build from `t3 serve`. Configure the proxy to redirect `/t3/team` to
+Run `node apps/server/src/bin.ts serve` from the checkout to serve `apps/web/dist`.
+An installed CLI uses its bundled `client/`; package the CLI with the prefixed
+web build to deploy it that way.
+
+Configure the proxy to redirect `/t3/team` to
 `/t3/team/` and forward requests under `/t3/team/` to T3 with the prefix
 removed. Forward WebSocket upgrades on the same path. Open
 `https://code.example.com/t3/team/pair` in the browser to enter a pairing code.
-CLI-generated links still use the server's advertised address.
+CLI-generated links still use the server's advertised address. If clients send
+DPoP proofs to the public URL, set
+`T3CODE_DPOP_PUBLIC_BASE_URL=https://code.example.com/t3/team/` on the server
+and have the proxy forward the public host and HTTPS scheme. The configured
+path is used for proofs sent to that origin.
 
 If you publish multiple instances on one origin, scope each server's session
 cookies to its proxy path. Browser storage is shared by an origin, so use
