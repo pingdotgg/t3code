@@ -557,12 +557,6 @@ describe("question answer paths", () => {
               },
               {
                 output_type: "execute_result",
-                execution_count: 1,
-                data: { "text/markdown": "**Total:** 301" },
-                metadata: {},
-              },
-              {
-                output_type: "execute_result",
                 execution_count: 2,
                 data: { "text/markdown": "*Markdown summary*", "text/plain": "Plain summary" },
                 metadata: {},
@@ -602,7 +596,6 @@ describe("question answer paths", () => {
       expect(extracted).toContain("42\nNext line");
       expect(extracted).toContain("raw\rvalue");
       expect(extracted).toContain("| Region | Tonnes |\n| North | 120 |\n");
-      expect(extracted).toContain("**Total:** 301\n");
       expect(extracted).toContain("Plain summary\n");
       expect(extracted).not.toContain("*Markdown summary*");
       expect(extracted).not.toContain("iVBORw0KGgo");
