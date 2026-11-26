@@ -1612,9 +1612,11 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
       <div
         className={cn(
           "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 ps-2",
-          props.mode === "inline" && !props.layoutControls
-            ? "pe-28 rtl:pe-(--workspace-panel-controls-end)"
-            : "pe-3 rtl:pe-(--workspace-controls-left)",
+          props.mode === "inline"
+            ? props.layoutControls
+              ? "pe-3 rtl:pe-(--workspace-controls-left)"
+              : "pe-28 rtl:pe-(--workspace-panel-controls-end)"
+            : "pe-3 rtl:pe-(--workspace-controls-left) rtl:wco:pe-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "ltr:wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
