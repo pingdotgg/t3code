@@ -1463,10 +1463,9 @@ export function createDeviceStreamClient(
       controller?.abort();
       controller = null;
       closePeer();
-      if (mjpegIfWebRtcStalls) {
-        mjpegIfWebRtcStalls = false;
-        clearFrameTimer();
-      }
+      // The main feed it replaces must not time out, or fall back, under the new owner.
+      mjpegIfWebRtcStalls = false;
+      clearFrameTimer();
       closeDecoder();
       const retry = retryTimers.get("video");
       if (retry) clearTimeout(retry);

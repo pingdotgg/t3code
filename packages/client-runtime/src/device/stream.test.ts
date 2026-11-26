@@ -887,56 +887,71 @@ describe("WebRTC device streams", () => {
     client.stop();
   });
 
-  it("restarts the iOS WebRTC feed when Duo panels are cleared without WebCodecs", async () => {
-    const { client, events, fetch, sockets, peers, videos, present } = setup("ios", {
-      transport: "http",
-    });
-    client.start();
-    await vi.advanceTimersByTimeAsync(0);
-    // A screen config (tag 0x82) with a hinge lets the viewer enter Duo.
-    const config = new TextEncoder().encode(
-      JSON.stringify({
-        width: 400,
-        height: 800,
-        orientation: "portrait",
-        supportsHingeAngle: true,
-      }),
-    );
-    const message = new Uint8Array(1 + config.length);
-    message[0] = 0x82;
-    message.set(config, 1);
-    sockets[0]!.onmessage?.({ data: message.buffer } as unknown as { data: string });
-    const panel = { present: vi.fn(() => true) };
-    const panels = { cover: panel, inner: panel } as unknown as Parameters<
-      typeof client.setDuoPanels
-    >[0];
-    client.setDuoPanels(panels);
-    const mainOffer = `${serveSim}/helper/session-1/webrtc/offer?hostId=eas`;
-    const offers = () => fetch.mock.calls.filter(([url]) => url === mainOffer).length;
-    const before = offers();
-    client.setDuoPanels(null);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(offers()).toBe(before + 1);
-    present.mockClear();
-    peers.at(-1)!.ontrack?.({ streams: [{}], track: {} });
-    videos.at(-1)!.callback?.();
-    expect(present).toHaveBeenCalledWith(videos.at(-1), 400, 800);
+  it.each(["http", "webrtc"])(
+    "restarts the iOS WebRTC feed when Duo panels are cleared without WebCodecs (%s host)",
+    async (transport) => {
+      const { client, events, fetch, sockets, peers, videos, present } = setup("ios", {
+        transport,
+      });
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      // A screen config (tag 0x82) with a hinge lets the viewer enter Duo.
+      const sendScreen = (supportsPhysicalOrientation: boolean) => {
+        const config = new TextEncoder().encode(
+          JSON.stringify({
+            width: 400,
+            height: 800,
+            orientation: "portrait",
+            supportsHingeAngle: true,
+            supportsPhysicalOrientation,
+          }),
+        );
+        const message = new Uint8Array(1 + config.length);
+        message[0] = 0x82;
+        message.set(config, 1);
+        sockets[0]!.onmessage?.({ data: message.buffer } as unknown as { data: string });
+      };
+      sendScreen(false);
+      const panel = { present: vi.fn(() => true) };
+      const panels = { cover: panel, inner: panel } as unknown as Parameters<
+        typeof client.setDuoPanels
+      >[0];
+      client.setDuoPanels(panels);
+      const mainOffer = `${serveSim}/helper/session-1/webrtc/offer?hostId=eas`;
+      const offers = () => fetch.mock.calls.filter(([url]) => url === mainOffer).length;
+      const before = offers();
+      client.setDuoPanels(null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(offers()).toBe(before + 1);
+      present.mockClear();
+      peers.at(-1)!.ontrack?.({ streams: [{}], track: {} });
+      videos.at(-1)!.callback?.();
+      expect(present).toHaveBeenCalledWith(videos.at(-1), 400, 800);
 
-    // Panels installed again while the restart probes /api keep the main feed closed.
-    client.setDuoPanels(panels);
-    client.setDuoPanels(null);
-    client.setDuoPanels(panels);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(offers()).toBe(before + 1);
+      // Panels installed again while the restart probes /api keep the main feed closed.
+      client.setDuoPanels(panels);
+      client.setDuoPanels(null);
+      client.setDuoPanels(panels);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(offers()).toBe(before + 1);
 
-    // Panels installed again before the restarted feed's first frame keep Duo on screen.
-    client.setDuoPanels(null);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(offers()).toBe(before + 2);
-    client.setDuoPanels(panels);
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(events.onMjpegFallback).not.toHaveBeenCalled();
-    expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.anything());
-    client.stop();
-  });
+      // Panels installed again before the restarted feed's first frame keep the Duo feed streaming.
+      client.setDuoPanels(null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(offers()).toBe(before + 2);
+      sendScreen(true);
+      client.setDuoPanels(panels);
+      await vi.advanceTimersByTimeAsync(0);
+      peers.at(-1)!.ontrack?.({ streams: [{}], track: {} });
+      for (let i = 0; i < 4; i++) {
+        present.mockClear();
+        videos.at(-1)!.callback?.();
+        expect(present).toHaveBeenCalledWith(videos.at(-1), 400, 800);
+        await vi.advanceTimersByTimeAsync(5_000);
+      }
+      expect(events.onMjpegFallback).not.toHaveBeenCalled();
+      expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.anything());
+      client.stop();
+    },
+  );
 });
