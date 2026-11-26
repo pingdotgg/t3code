@@ -641,9 +641,11 @@ function* notebook(source: string): Generator<string, void> {
           "data" in output &&
           output.data &&
           typeof output.data === "object" &&
-          "text/plain" in output.data
+          ("text/plain" in output.data || "text/markdown" in output.data)
         )
-          yield outputText(output.data["text/plain"]);
+          yield outputText(
+            "text/plain" in output.data ? output.data["text/plain"] : output.data["text/markdown"],
+          );
         else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {
