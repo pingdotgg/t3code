@@ -556,6 +556,16 @@ describe("question answer paths", () => {
                 metadata: {},
               },
               {
+                output_type: "display_data",
+                data: { "text/plain": "", "text/markdown": "**No missing readings**" },
+                metadata: {},
+              },
+              {
+                output_type: "display_data",
+                data: { "text/plain": "\0", "text/markdown": "**Complete**" },
+                metadata: {},
+              },
+              {
                 output_type: "execute_result",
                 execution_count: 2,
                 data: { "text/markdown": "*Markdown summary*", "text/plain": "Plain summary" },
@@ -579,6 +589,7 @@ describe("question answer paths", () => {
             ],
           },
           { cell_type: "raw", source: [rawSource] },
+          { cell_type: "code", source: "total = 42", execution_count: null, outputs: [] },
         ],
       });
       NodeFS.writeFileSync(path, notebook);
@@ -596,11 +607,14 @@ describe("question answer paths", () => {
       expect(extracted).toContain("42\nNext line");
       expect(extracted).toContain("raw\rvalue");
       expect(extracted).toContain("| Region | Tonnes |\n| North | 120 |\n");
+      expect(extracted).toContain("**No missing readings**");
+      expect(extracted).toContain("**Complete**");
       expect(extracted).toContain("Plain summary\n");
       expect(extracted).not.toContain("*Markdown summary*");
       expect(extracted).not.toContain("iVBORw0KGgo");
       expect(extracted).not.toContain("<script>");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
+      expect(extracted).toMatch(/## Cell 4 \(code\)\ntotal = 42$/u);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
       );
@@ -670,6 +684,32 @@ describe("question answer paths", () => {
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const cases = [
+        {
+          ext: "epub",
+          bounded: true,
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="a" href="a.xhtml"/></manifest><spine><itemref idref="a"/></spine></package>',
+            "a.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table></body></html>',
+          },
+          expected: [
+            "## Chapter 1\nIntro\nBody paragraph",
+            "Summary\nDetails",
+            "Intro\n## Section Title",
+            "First Second\tNeighbor",
+          ],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Before</w:t></w:r><w:r><w:drawing><w:txbxContent><w:p><w:r><w:t>Box text</w:t></w:r></w:p></w:txbxContent></w:drawing></w:r><w:r><w:t>After</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Before\nBox text\nAfter"],
+        },
         {
           ext: "epub",
           bounded: true,
@@ -750,12 +790,20 @@ describe("question answer paths", () => {
             "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
-            "chapter.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Departure information.<aside>Check local time.</aside>Board promptly.</div><div>Keep <aside></aside>walking.</div><div>Contact the duty editor.<address><strong>Harbor Office</strong><br/>Pier 7</address>Include your reference.</div></body></html>',
+            "chapter.xhtml": [
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body>',
+              "<div>Departure information.<aside>Check local time.</aside>Board promptly.</div>",
+              "<div>Keep <aside></aside>walking.</div>",
+              "<div>Contact the duty editor.<address><strong>Harbor Office</strong><br/>Pier 7</address>Include your reference.</div>",
+              "<section>Updated timetable.<header><strong>Harbor departures</strong></header>Confirm your berth.<footer>Source: Harbor Office</footer>Keep this guide.</section>",
+              "<section>Keep <header></header><footer></footer>reading.</section>",
+              "</body></html>",
+            ].join(""),
           },
           expected: [
             "Departure information.\nCheck local time.\nBoard promptly.\nKeep walking.",
             "Contact the duty editor.\nHarbor Office\nPier 7\nInclude your reference.",
+            "Updated timetable.\nHarbor departures\nConfirm your berth.\nSource: Harbor Office\nKeep this guide.\nKeep reading.",
           ],
         },
         {
@@ -1148,7 +1196,7 @@ describe("question answer paths", () => {
             "## Report & totals",
             "North\t12 34",
             "Annual report\tDraft",
-            "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. # Box title",
+            "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. \n# Box title",
           ],
         },
         {

@@ -435,6 +435,46 @@ describe("IssueService", () => {
     }),
   );
 
+  it.effect("shares one tracker read of an issue until a write or an explicit refresh", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "web", repository: "acme/web" }),
+          project({ id: "worktree", repository: "acme/web" }),
+        ],
+        trackers: [
+          fakeTracker({
+            getIssue: (input) => Effect.sync(() => (reads++, issue(input.key))),
+          }),
+        ],
+      });
+      const ref = { projectId: "web" as ProjectId, tracker: GITHUB, scope: "acme/web", key: "42" };
+      // Every client and project polling one issue costs the tracker one read.
+      yield* Effect.all(
+        [
+          service.detail(ref),
+          service.detail(ref),
+          service.detail({ ...ref, projectId: "worktree" as ProjectId }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect((yield* service.detail(ref)).projectId).toBe("web");
+      expect(reads).toBe(1);
+      yield* service.detail({ ...ref, key: "43" });
+      expect(reads).toBe(2);
+
+      yield* service.comment({ ...ref, body: "Repro attached." });
+      yield* service.detail(ref);
+      expect(reads).toBe(3);
+
+      // An explicit refresh sees what changed on the tracker itself.
+      yield* service.detail({ ...ref, refresh: true });
+      yield* service.detail(ref);
+      expect(reads).toBe(4);
+    }),
+  );
+
   it.effect("refuses what the tracker did not declare before calling it", () =>
     Effect.gen(function* () {
       let calls = 0;

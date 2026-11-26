@@ -334,6 +334,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield LINE_START;
     } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
+      yield THEMATIC_BREAK;
       const style =
         all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =
@@ -346,7 +347,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else if (
-      ["blockquote", "figcaption", "aside", "address"].includes(child.name) &&
+      ["blockquote", "figcaption", "aside", "address", "header", "footer"].includes(child.name) &&
       child.hasText
     ) {
       yield LINE_START;
@@ -634,7 +635,7 @@ function* notebook(source: string): Generator<string, void> {
     const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
-    if ("outputs" in cell && Array.isArray(cell.outputs)) {
+    if ("outputs" in cell && Array.isArray(cell.outputs) && cell.outputs.length > 0) {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
@@ -645,11 +646,14 @@ function* notebook(source: string): Generator<string, void> {
           output.data &&
           typeof output.data === "object" &&
           ("text/plain" in output.data || "text/markdown" in output.data)
-        )
-          yield outputText(
-            "text/plain" in output.data ? output.data["text/plain"] : output.data["text/markdown"],
+        ) {
+          const plain = outputText(
+            "text/plain" in output.data ? output.data["text/plain"] : undefined,
           );
-        else if ("output_type" in output && output.output_type === "error") {
+          yield "text/markdown" in output.data && !plain.replaceAll("\0", "").trim()
+            ? outputText(output.data["text/markdown"])
+            : plain;
+        } else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {
             yield ": ";

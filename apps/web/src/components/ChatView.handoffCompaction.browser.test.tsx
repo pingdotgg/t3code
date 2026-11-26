@@ -22,11 +22,12 @@ import {
   CODEX_PROVIDER,
   ENVIRONMENT_ID,
   dispatchedCommands,
+  emitThreadEvent,
   installFakeEnvironment,
   threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 
 // The socket is the only fake layer.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -164,4 +165,31 @@ it("drops the compact offer on a cold Claude thread while /clear is armed", asyn
   await page.getByRole("button", { name: "Keep the current session" }).click();
   await expect.element(chip).toBeVisible();
   await expect.element(compactAndSend).toBeVisible();
+});
+
+it("/compact stays in the slash menu while a turn runs, since a typed command queues", async () => {
+  const history = threadWithHistory("compact-mid-turn", 2, {
+    instanceId: CLAUDE,
+    model: "claude-opus-4-6",
+  });
+  using _environment = installFakeEnvironment([history], { providers: [CLAUDE_PROVIDER] });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${history.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await expect.element(page.getByText(`Answer 1 for ${history.id}.`)).toBeVisible();
+  const compact = page.getByRole("option", { name: /^\/compact/ });
+
+  await userEvent.type(page.getByTestId("composer-editor"), "/compact");
+  await expect.element(compact).toBeVisible();
+
+  const running = { ...history.runs[1]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(history.id, { type: "run.updated", payload: running }));
+  await expect.element(page.getByRole("button", { name: "Steer message" })).toBeVisible();
+  await expect.element(compact).toBeVisible();
 });

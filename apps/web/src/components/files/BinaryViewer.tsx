@@ -21,6 +21,8 @@ import {
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
 import {
+  compareArchiveRows,
+  formatArchiveModifiedDate,
   SQLITE_PAGE_SIZE,
   type BinaryWorkerRequest,
   type BinaryWorkerResult,
@@ -341,45 +343,40 @@ export default function BinaryViewer(props: {
               </tr>
             </thead>
             <tbody>
-              {[...children.values()]
-                .sort(
-                  (a, b) =>
-                    Number(b.directory) - Number(a.directory) || a.path.localeCompare(b.path),
-                )
-                .map((item) => (
-                  <tr
-                    key={item.directory ? `d:${item.path}` : `f:${item.entryPath}`}
-                    className="hover:bg-muted/40"
-                  >
-                    <td className="max-w-0 border-b border-border/60">
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:text-primary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                        onClick={() => {
-                          if (item.directory) setFolder(`${item.path}/`);
-                          else {
-                            setSelectedPath(item.path);
-                            setEntry(null);
-                            send({ type: "entry", path: item.entryPath });
-                          }
-                        }}
-                      >
-                        {item.directory ? (
-                          <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
-                        ) : (
-                          <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-                        )}
-                        <span className="truncate">{item.path.slice(folder.length)}</span>
-                      </button>
-                    </td>
-                    <td className="w-20 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
-                      {formatAttachmentSize(item.size, messages)}
-                    </td>
-                    <td className="w-28 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground">
-                      {item.modified ? new Date(item.modified).toLocaleDateString() : "-"}
-                    </td>
-                  </tr>
-                ))}
+              {[...children.values()].sort(compareArchiveRows).map((item) => (
+                <tr
+                  key={item.directory ? `d:${item.path}` : `f:${item.entryPath}`}
+                  className="hover:bg-muted/40"
+                >
+                  <td className="max-w-0 border-b border-border/60">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left hover:text-primary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      onClick={() => {
+                        if (item.directory) setFolder(`${item.path}/`);
+                        else {
+                          setSelectedPath(item.path);
+                          setEntry(null);
+                          send({ type: "entry", path: item.entryPath });
+                        }
+                      }}
+                    >
+                      {item.directory ? (
+                        <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <FileIcon className="size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="truncate">{item.path.slice(folder.length)}</span>
+                    </button>
+                  </td>
+                  <td className="w-20 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
+                    {formatAttachmentSize(item.size, messages)}
+                  </td>
+                  <td className="w-28 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground">
+                    {formatArchiveModifiedDate(item.modified)}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
           {children.size === 0 ? (
