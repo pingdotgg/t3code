@@ -364,37 +364,36 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       (project) =>
         project.environmentId === target.environmentId && project.id === target.projectId,
     );
-    // The playbook and context files exist only on the machine that prepared them.
-    const followsTriage = isTriagePrompt(getComposerDraft(draftId)?.prompt ?? "");
-    if (target.projectId !== null && !(knownProject && followsTriage)) {
+    const destinationDefaults = (project: (typeof allProjects)[number]) => {
       const environment = environmentById.get(target.environmentId);
       const config = environment?.serverConfig;
       if (
-        knownProject &&
-        !activeProjectIsScratch &&
-        originalDraft.workspaceUsesDefaults &&
-        target.environmentId !== originalDraft.environmentId &&
-        environment?.connection.phase === "connected" &&
-        config
-      ) {
-        const projectRef = scopeProjectRef(target.environmentId, knownProject.id);
-        const defaults = resolveDraftWorkspaceDefaults(
-          projectRef,
-          knownProject,
-          config.settings,
-          config.newProjectsRoot,
-        );
-        if (defaults.pending) {
-          setBusyEnvironmentChange(request);
-          void defaults.pending
-            .then((workspace) => retarget(knownProject, undefined, workspace))
-            .finally(finish);
-          return;
-        }
-        retarget(knownProject, undefined, defaults.workspace);
-      } else if (knownProject) {
-        retarget(knownProject);
+        activeProjectIsScratch ||
+        !originalDraft.workspaceUsesDefaults ||
+        target.environmentId === originalDraft.environmentId ||
+        environment?.connection.phase !== "connected" ||
+        !config
+      )
+        return null;
+      return resolveDraftWorkspaceDefaults(
+        scopeProjectRef(target.environmentId, project.id),
+        project,
+        config.settings,
+        config.newProjectsRoot,
+      );
+    };
+    // The playbook and context files exist only on the machine that prepared them.
+    const followsTriage = isTriagePrompt(getComposerDraft(draftId)?.prompt ?? "");
+    if (target.projectId !== null && !(knownProject && followsTriage)) {
+      const defaults = knownProject ? destinationDefaults(knownProject) : null;
+      if (knownProject && defaults?.pending) {
+        setBusyEnvironmentChange(request);
+        void defaults.pending
+          .then((workspace) => retarget(knownProject, undefined, workspace))
+          .finally(finish);
+        return;
       }
+      if (knownProject) retarget(knownProject, undefined, defaults?.workspace);
       finish();
       return;
     }
@@ -422,7 +421,13 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const project =
         knownProject ??
         (await openScratchProject(target.environmentId, m(msg("Could not switch machine"))));
-      if (project) retarget(project, triagePrompt);
+      if (!project) return;
+      const defaults = knownProject ? destinationDefaults(knownProject) : null;
+      retarget(
+        project,
+        triagePrompt,
+        defaults?.pending ? await defaults.pending : defaults?.workspace,
+      );
     };
     setBusyEnvironmentChange(request);
     void switchMachine().finally(finish);
