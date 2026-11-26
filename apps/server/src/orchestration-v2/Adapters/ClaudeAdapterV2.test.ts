@@ -19411,6 +19411,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     { name: "its own run", answeredRunId: "run-owed-task", retired: true },
     { name: "another run", answeredRunId: "run-other-task", retired: false },
+    // Scheduled triggers and peer deliveries share the task-notification origin.
+    { name: "no run named", answeredRunId: undefined, retired: false },
   ] as const)(
     "retires an owed task only when a user turn that started first receives its answer ($name)",
     ({ answeredRunId, retired }) =>
@@ -19476,7 +19478,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.offerAndWait(
           claudeSdkFrame({
             ...wakeResult,
-            origin: { kind: "task-notification", runId: answeredRunId },
+            origin:
+              answeredRunId === undefined
+                ? { kind: "task-notification" }
+                : { kind: "task-notification", runId: answeredRunId },
           }),
         );
         yield* harness.offerAndWait(
@@ -19504,6 +19509,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           retired ? [] : [WAKE_TASK_ID],
         );
         assert.lengthOf(harness.continuationRequests, 0);
+        if (retired) return;
+
+        // The task's own wake still reports the command by name.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000345" }),
+        );
+        assert.lengthOf(harness.continuationRequests, 1);
+        assert.deepEqual(harness.continuationRequests[0]?.notification, {
+          source: { kind: "command" },
+          outcome: "completed",
+          summary: `Command "${WAKE_TASK_DESCRIPTION}" finished`,
+        });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

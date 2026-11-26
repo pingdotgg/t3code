@@ -11450,15 +11450,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         // A wake turn whose output streamed into a user turn answered the notification buffered
-        // for it (matched by run id when the CLI reports one); with no root frame buffered, no
-        // continuation would ever retire it.
+        // for it, matched by run id (a result without one answers only unkeyed notifications);
+        // with no root frame buffered, no continuation would ever retire it. The rest keep their
+        // reports for their own wakes.
         const retireAnsweredBufferedNotifications = Effect.fnUntraced(function* (
           nativeThreadId: string,
           activeContext: ActiveClaudeTurnContext,
           result: SDKResultMessage,
         ) {
           const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages;
-          if (buffered === undefined || buffered.some(isClaudeRootTurnFrame)) return;
+          if (buffered === undefined || buffered.some(isClaudeRootTurnFrame)) {
+            yield* clearWakeReports(nativeThreadId);
+            return;
+          }
           const tombstones = taskIdSetForNativeThread(
             yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
             nativeThreadId,
@@ -11468,16 +11472,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             origin !== null && typeof origin === "object"
               ? Reflect.get(origin, "runId")
               : undefined;
-          const answered = new Set(
-            buffered.flatMap((entry) =>
+          const owed = buffered.filter(
+            (entry): entry is Extract<SDKMessage, { readonly subtype: "task_notification" }> =>
               entry.type === "system" &&
               entry.subtype === "task_notification" &&
-              tombstones.has(entry.task_id) &&
-              (typeof runId !== "string" || Reflect.get(entry, "run_id") === runId)
-                ? [entry.task_id]
-                : [],
-            ),
+              tombstones.has(entry.task_id),
           );
+          const answered = new Set(
+            owed.flatMap((entry) => {
+              const entryRunId: unknown = Reflect.get(entry, "run_id");
+              return (typeof runId === "string" ? entryRunId === runId : entryRunId === undefined)
+                ? [entry.task_id]
+                : [];
+            }),
+          );
+          const stillOwed = new Set(
+            owed.flatMap((entry) => (answered.has(entry.task_id) ? [] : [entry.task_id])),
+          );
+          yield* Ref.update(wakeReportsByNativeThread, (current) => {
+            const threadReports = current.reports.get(nativeThreadId);
+            if (threadReports === undefined) return current;
+            const kept = new Map([...threadReports].filter(([taskId]) => stillOwed.has(taskId)));
+            const reports = new Map(current.reports);
+            if (kept.size === 0) reports.delete(nativeThreadId);
+            else reports.set(nativeThreadId, kept);
+            return { userTurns: current.userTurns, reports };
+          });
           if (answered.size === 0) return;
           const kept = buffered.filter(
             (entry) =>
@@ -13469,7 +13489,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             // Foreign output already streamed; exclude its result so only the prompt's own echoing result settles the turn.
             if (isClaudeTaskNotificationOriginResult(message)) {
-              yield* clearWakeReports(liveQuery.nativeThreadId);
               yield* retireAnsweredBufferedNotifications(
                 liveQuery.nativeThreadId,
                 context,
