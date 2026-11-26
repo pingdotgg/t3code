@@ -8395,63 +8395,134 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect.fails("shows a prompt another client sent while T3 was not watching the session", () =>
-    Effect.gen(function* () {
-      const previous = `msg_t3_turn_${SESSION}:attempt:previous`;
-      const { runtime, thread } = yield* resumed(
-        [
-          out("session.instructions.entry.put", {
-            sessionID: SESSION,
-            key: "t3-code",
-            value: "<any>",
-          }),
-          reply("session.instructions.entry.put", null),
-          out("message.list", "<any>"),
-          reply("message.list", {
-            data: [
-              {
-                id: "msg_external_idle",
-                time: { created: 1790656601800 },
-                type: "idle",
-                outcome: "succeeded",
-              },
-              {
-                id: "msg_external_reply",
-                time: {
-                  created: 1790656601600,
-                  streamed: 1790656601700,
-                  completed: 1790656601700,
+  it.effect.each([undefined, "recorded"] as const)(
+    "shows a prompt another client sent while T3 was not watching the session (head: %s)",
+    (head) =>
+      Effect.gen(function* () {
+        const previous = `msg_t3_turn_${SESSION}:attempt:previous`;
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.instructions.entry.put", {
+              sessionID: SESSION,
+              key: "t3-code",
+              value: "<any>",
+            }),
+            reply("session.instructions.entry.put", null),
+            out("message.list", "<any>"),
+            reply("message.list", {
+              data: [
+                {
+                  id: "msg_external_idle",
+                  time: { created: 1790656601800 },
+                  type: "idle",
+                  outcome: "succeeded",
                 },
-                type: "assistant",
-                agent: "build",
-                model: { id: "big-pickle", providerID: "opencode", variant: "default" },
-                content: [{ type: "text", text: "Rayleigh scattering." }],
-                finish: "stop",
-                cost: 0,
-                tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
-              },
-              {
-                id: "msg_external_gap",
-                time: { created: 1790656601500 },
-                text: "Why is the sky blue?",
-                type: "user",
-              },
-              { id: previous, time: { created: 1790656601400 }, text: "mine", type: "user" },
-            ],
-            cursor: {},
-          }),
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
-          event("session.text.ended", {
-            sessionID: SESSION,
-            assistantMessageID: "msg_answer",
-            ordinal: 0,
-            text: "Answer",
-          }),
-          event("session.execution.succeeded", { sessionID: SESSION }),
-        ],
-        { previousHead: previous, instructions: false },
-      );
+                {
+                  id: "msg_external_reply",
+                  time: {
+                    created: 1790656601600,
+                    streamed: 1790656601700,
+                    completed: 1790656601700,
+                  },
+                  type: "assistant",
+                  agent: "build",
+                  model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+                  content: [{ type: "text", text: "Rayleigh scattering." }],
+                  finish: "stop",
+                  cost: 0,
+                  tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+                },
+                {
+                  id: "msg_external_gap",
+                  time: { created: 1790656601500 },
+                  text: "Why is the sky blue?",
+                  type: "user",
+                },
+                { id: previous, time: { created: 1790656601400 }, text: "mine", type: "user" },
+              ],
+              cursor: {},
+            }),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.text.ended", {
+              sessionID: SESSION,
+              assistantMessageID: "msg_answer",
+              ordinal: 0,
+              text: "Answer",
+            }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          { ...(head === undefined ? {} : { previousHead: previous }), instructions: false },
+        );
+        const collected = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn({ ...turnInput(thread), nativeThreadHasTurns: true });
+        const seen = yield* Fiber.join(collected);
+        assert.deepEqual(
+          seen.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "user_message" || event.turnItem.type === "assistant_message")
+              ? [`${event.turnItem.type}: ${event.turnItem.text}`]
+              : [],
+          ),
+          [
+            "user_message: Why is the sky blue?",
+            "assistant_message: Rayleigh scattering.",
+            "assistant_message: Answer",
+          ],
+        );
+        assert.deepEqual(
+          [
+            ...new Set(
+              seen.flatMap((event) =>
+                event.type === "message.updated"
+                  ? [`${event.message.role}: ${event.message.text}`]
+                  : [],
+              ),
+            ),
+          ],
+          ["user: Why is the sky blue?", "assistant: Rayleigh scattering.", "assistant: Answer"],
+        );
+        assert.deepEqual(
+          seen.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "user_message" &&
+            event.turnItem.createdBy === "user"
+              ? [event.turnItem.creationSource]
+              : [],
+          ),
+          ["provider"],
+        );
+      }),
+  );
+
+  it.effect("shows a prompt another client steers into an active T3 turn", () =>
+    Effect.gen(function* () {
+      const inboxID = "msg_other_client_steer";
+      const text = "Could you say more?";
+      const own = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: own }),
+        event("session.inbox.enqueued", {
+          sessionID: SESSION,
+          inboxID,
+          item: { type: "user", payload: { text, files: [] }, delivery: "steer" },
+        }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_answer",
+          ordinal: 0,
+          text: "Answer",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
       const collected = yield* runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
@@ -8463,36 +8534,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         seen.flatMap((event) =>
           event.type === "turn_item.updated" &&
           (event.turnItem.type === "user_message" || event.turnItem.type === "assistant_message")
-            ? [`${event.turnItem.type}: ${event.turnItem.text}`]
+            ? [
+                event.turnItem.type === "user_message"
+                  ? [
+                      event.turnItem.type,
+                      event.turnItem.createdBy,
+                      event.turnItem.creationSource,
+                      event.turnItem.text,
+                    ]
+                  : [event.turnItem.type, event.turnItem.text],
+              ]
             : [],
         ),
         [
-          "user_message: Why is the sky blue?",
-          "assistant_message: Rayleigh scattering.",
-          "assistant_message: Answer",
+          ["user_message", "user", "provider", text],
+          ["assistant_message", "Answer"],
         ],
-      );
-      assert.deepEqual(
-        [
-          ...new Set(
-            seen.flatMap((event) =>
-              event.type === "message.updated"
-                ? [`${event.message.role}: ${event.message.text}`]
-                : [],
-            ),
-          ),
-        ],
-        ["user: Why is the sky blue?", "assistant: Rayleigh scattering.", "assistant: Answer"],
-      );
-      assert.deepEqual(
-        seen.flatMap((event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "user_message" &&
-          event.turnItem.createdBy === "user"
-            ? [event.turnItem.creationSource]
-            : [],
-        ),
-        ["provider"],
       );
     }),
   );
