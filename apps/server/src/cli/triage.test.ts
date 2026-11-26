@@ -125,6 +125,8 @@ it.each([
 it.effect.each([
   { label: "Ctrl+C", key: "\x03" },
   { label: "Ctrl+D", key: "\x04" },
+  { label: "an invalid choice and Ctrl+C", key: "9\r\x03" },
+  { label: "an invalid choice and Ctrl+D", key: "9\r\x04" },
 ])("returns undefined when the agent picker is cancelled with $label", ({ key }) =>
   Effect.gen(function* () {
     const input = new NodeStream.PassThrough();
@@ -141,6 +143,27 @@ it.effect.each([
     );
 
     assert.isUndefined(picked);
+  }),
+);
+
+it.effect.each([
+  { label: "no answer", lines: [], picked: undefined },
+  { label: "an invalid answer", lines: ["99\n"], picked: undefined },
+  { label: "an invalid answer and then a valid one", lines: ["9\n", "2\n"], picked: "codex" },
+])("the agent picker returns $picked when input ends after $label", ({ lines, picked }) =>
+  Effect.gen(function* () {
+    const input = NodeStream.Readable.from(lines.map((line) => Promise.resolve(line)));
+
+    const agent = yield* pickAgent(
+      [
+        { id: "claude", label: "Claude Code" },
+        { id: "codex", label: "Codex" },
+      ],
+      input,
+      new NodeStream.PassThrough(),
+    );
+
+    assert.strictEqual(agent?.id, picked);
   }),
 );
 
