@@ -450,12 +450,29 @@ const layerBase: Layer.Layer<
     const applyStoredEvents =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) {
-        yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
-          concurrency: 1,
-        });
+        const batch = yield* CurrentProviderBatch;
+        const apply = Effect.forEach(
+          storedEvents,
+          (stored) => projectionStore.apply(stored.event),
+          {
+            concurrency: 1,
+            discard: true,
+          },
+        );
+        if (batch === undefined && storedEvents.length > 1) {
+          // Commands can append several events in one transaction too. Flush before outcome reads.
+          const projection: ProjectionStore.ProviderBatchProjection = {
+            threadTouches: new Map(),
+          };
+          yield* apply.pipe(
+            Effect.provideService(ProjectionStore.ProviderBatchProjectionState, projection),
+          );
+          yield* ProjectionStore.writeThreadTouches(sql, projection.threadTouches);
+        } else {
+          yield* apply;
+        }
         const sequence = storedEvents.at(-1)?.sequence;
         if (sequence !== undefined) {
-          const batch = yield* CurrentProviderBatch;
           if (batch !== undefined) batch.projectedSequence = sequence;
           else yield* recordProjectedSequence(sequence);
         }
@@ -1164,7 +1181,7 @@ const layerBase: Layer.Layer<
                 batch.publish.length = publicationCount;
                 batch.eventCount = eventCount;
                 batch.projectedSequence = projectedSequence;
-                batch.projection.nodeReads.clear();
+                batch.projection.nodeReads?.clear();
                 batch.projection.threadTouches.clear();
                 for (const [threadId, updatedAt] of threadTouches)
                   batch.projection.threadTouches.set(threadId, updatedAt);

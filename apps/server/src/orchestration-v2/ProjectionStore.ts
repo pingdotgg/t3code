@@ -911,7 +911,7 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
 
 // The provider batch owns the writer, so no other write can change these rows before it commits.
 export interface ProviderBatchProjection {
-  readonly nodeReads: Map<NodeId, string | undefined>;
+  readonly nodeReads?: Map<NodeId, string | undefined>;
   /** Thread `updated_at` bumps, written once by `writeThreadTouches` before the batch commits. */
   readonly threadTouches: Map<ThreadId, string>;
 }
@@ -933,6 +933,7 @@ export const writeThreadTouches = Effect.fnUntraced(function* (
         updated_at = ${updatedAt},
         payload_json = json_set(payload_json, '$.updatedAt', ${updatedAt})
       WHERE thread_id = ${threadId}
+        AND (updated_at IS NOT ${updatedAt} OR json_extract(payload_json, '$.updatedAt') IS NOT ${updatedAt})
     `;
   }
 });
@@ -2791,7 +2792,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 completed_at = excluded.completed_at,
                 payload_json = excluded.payload_json
             `;
-              batch?.nodeReads.set(event.payload.id, payloadJson);
+              batch?.nodeReads?.set(event.payload.id, payloadJson);
               break;
             }
             case "subagent.updated": {

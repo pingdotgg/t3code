@@ -557,6 +557,29 @@ it.effect("commits other threads' writes ahead of a thread's queued provider sna
   }).pipe(Effect.scoped, Effect.provide(Layer.fresh(layerTest))),
 );
 
+it.effect("coalesces command touches in event order and skips unchanged timestamps", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const thread = makeThread(ThreadId.make("command-touches"), now);
+    yield* sink.write({ events: [threadCreatedEvent({ id: "command-created", thread, now })] });
+    yield* sql`CREATE TEMP TABLE touches (stamp TEXT, payload TEXT)`;
+    yield* sql`CREATE TEMP TRIGGER observe_touches AFTER UPDATE ON orchestration_v2_projection_threads
+      BEGIN INSERT INTO touches VALUES (NEW.updated_at, json_extract(NEW.payload_json, '$.updatedAt')); END`;
+    const node = nodeComparisonEvent(thread, now);
+    const events = [2, 1, 1].map((minutes, index) => ({
+      ...node,
+      id: EventId.make(`command-touch:${index}`),
+      occurredAt: DateTime.add(now, { minutes }),
+    }));
+    yield* sink.write({ events: events.slice(0, 2) });
+    yield* sink.write({ events: events.slice(2) });
+    const stamp = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+    assert.deepEqual(yield* sql`SELECT * FROM touches`, [{ stamp, payload: stamp }]);
+  }).pipe(Effect.scoped, Effect.provide(Layer.fresh(layerTest))),
+);
+
 it.effect(
   "reuses node comparisons and writes thread bookkeeping once per provider transaction",
   () =>
