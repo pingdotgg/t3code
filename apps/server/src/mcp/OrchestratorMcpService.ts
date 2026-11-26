@@ -3143,6 +3143,10 @@ const make = Effect.gen(function* () {
       ) {
         return yield* failure("invalid_request", `Unknown delegation profile ${input.profile}.`);
       }
+      const mainProfiles =
+        parent?.thread.delegationProfile === undefined
+          ? settings.delegation.mainProfiles
+          : undefined;
       const cwd = parent === undefined ? undefined : yield* parentWorkspaceCwd(parent);
       const machineProviders = yield* loadProviders;
       const unscanned =
@@ -3169,7 +3173,11 @@ const make = Effect.gen(function* () {
           ? undefined
           : yield* Effect.forEach(
               Object.entries(settings.delegation.profiles)
-                .filter(([name]) => input.profile === undefined || name === input.profile)
+                .filter(
+                  ([name]) =>
+                    (input.profile === undefined || name === input.profile) &&
+                    (mainProfiles === undefined || mainProfiles.includes(name)),
+                )
                 .toSorted(([left], [right]) => left.localeCompare(right)),
               ([name, profile]) =>
                 Effect.gen(function* () {
@@ -3314,9 +3322,28 @@ const make = Effect.gen(function* () {
       const environmentId = PeerForwarding.remoteTarget(callerScope, input.target?.environmentId);
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({ scope, requestKey: key, operation: "delegate-task" });
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const mainProfiles =
+        settings.delegation.mainProfiles !== undefined &&
+        (yield* loadCallerRecords(scope.thread.threadId, [])).thread.delegationProfile === undefined
+          ? settings.delegation.mainProfiles
+          : undefined;
+      const profileName =
+        mainProfiles === undefined ? input.profile : (input.profile ?? mainProfiles[0]);
+      if (
+        mainProfiles !== undefined &&
+        (profileName === undefined || !mainProfiles.includes(profileName))
+      ) {
+        return yield* failure(
+          "invalid_request",
+          `A main thread delegates only with the profiles ${mainProfiles.join(", ")}; omit profile to use ${mainProfiles[0]}.`,
+        );
+      }
       if (
         input.clientRequestId !== undefined &&
-        (input.profile !== undefined || environmentId === undefined)
+        (profileName !== undefined || environmentId === undefined)
       ) {
         const receipt = yield* threadManagement
           .replayDelegatedTask({ commandId, parentThreadId: scope.thread.threadId })
@@ -3324,10 +3351,8 @@ const make = Effect.gen(function* () {
         if (Option.isSome(receipt))
           return yield* finishDelegation(scope, input, key, commandId, receipt.value);
       }
-      let profiled:
-        | { readonly settings: Settings; readonly profile: DelegationSettings["profiles"][string] }
-        | undefined;
-      if (input.profile !== undefined) {
+      let profiled: { readonly profile: DelegationSettings["profiles"][string] } | undefined;
+      if (profileName !== undefined) {
         if (
           input.isolation !== undefined ||
           Object.keys(input.target ?? {}).some((member) => member !== "model")
@@ -3337,16 +3362,13 @@ const make = Effect.gen(function* () {
             "With a delegation profile, omit isolation and set only target.model if you need an override.",
           );
         }
-        const settings = yield* serverSettings.getSettings.pipe(
-          Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
-        );
-        const profile = Object.hasOwn(settings.delegation.profiles, input.profile)
-          ? settings.delegation.profiles[input.profile]
+        const profile = Object.hasOwn(settings.delegation.profiles, profileName)
+          ? settings.delegation.profiles[profileName]
           : undefined;
         if (profile === undefined) {
-          return yield* failure("invalid_request", `Unknown delegation profile ${input.profile}.`);
+          return yield* failure("invalid_request", `Unknown delegation profile ${profileName}.`);
         }
-        profiled = { settings, profile };
+        profiled = { profile };
       }
       const isolation = profiled?.profile.checkout ?? input.isolation;
       if (requestedCwd !== undefined) {
@@ -3428,14 +3450,14 @@ const make = Effect.gen(function* () {
           })
         : preflightProfile({
             route: yield* resolveDelegationRoute(
-              profiled.settings.delegation.providerByVendor,
+              settings.delegation.providerByVendor,
               input.target?.model ?? profiled.profile.model,
               profiled.profile.providerInstanceId,
             ),
             profile: profiled.profile,
             providers,
             adapters: yield* loadOrchestrationCapableInstanceIds(),
-            settings: profiled.settings,
+            settings,
             projectId: parent.thread.projectId,
             parentMode: parent.thread.runtimeMode,
             requestedMode: input.runtimeMode,
@@ -3569,7 +3591,7 @@ const make = Effect.gen(function* () {
               ...(profiled === undefined
                 ? {}
                 : {
-                    delegationProfile: input.profile,
+                    delegationProfile: profileName,
                     deniedSkills: profiled.profile.deniedSkills,
                   }),
               modelSelection,

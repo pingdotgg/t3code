@@ -1458,7 +1458,17 @@ export const DelegationSettings = Schema.Struct({
         Object.keys(profiles).every(isDelegationProfileName) || "Invalid delegation profile name.",
     ),
   ),
-});
+  /** The only profiles a thread outside any profile may delegate with; a call without one uses the first. */
+  mainProfiles: Schema.optionalKey(
+    Schema.NonEmptyArray(DelegationProfileName).check(Schema.isUnique()),
+  ),
+}).check(
+  Schema.makeFilter(
+    ({ profiles, mainProfiles = [] }) =>
+      mainProfiles.every((name) => Object.hasOwn(profiles, name)) ||
+      "Unknown main delegation profile.",
+  ),
+);
 export type DelegationSettings = typeof DelegationSettings.Type;
 
 export const ServerSettings = Schema.Struct({

@@ -3584,6 +3584,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       const caller = { ...scope, thread: { ...scope.thread!, providerInstanceId: pi } };
       type Delegation = Extract<OrchestrationV2ServerCommand, { type: "delegated_task.request" }>;
       const dispatched: Delegation[] = [];
+      let callerProfile: string | undefined;
       const refreshed: ProviderInstanceId[] = [];
       const task = (command: Delegation) => ({
         id: taskId,
@@ -3635,6 +3636,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                       ...parent.thread,
                       worktreePath: cwd,
                       runtimeMode: "approval-required",
+                      ...(callerProfile === undefined ? {} : { delegationProfile: callerProfile }),
                     },
                     runs: parent.runs.map((run) => ({ ...run, providerInstanceId: pi })),
                   };
@@ -3770,6 +3772,26 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(dispatched.at(-1)?.delegationProfile, "restricted");
           assert.deepEqual(dispatched.at(-1)?.deniedSkills, ["private:skill"]);
         }
+
+        yield* settings.updateSettings({
+          delegation: { ...delegation, mainProfiles: ["reviewer", "restricted"] },
+        });
+        assert.deepEqual(
+          (yield* service.capabilities(caller, {})).profiles?.map(({ name }) => name),
+          ["restricted", "reviewer"],
+        );
+        yield* service.delegateTask(caller, { task: "Review the changes." });
+        assert.equal(dispatched.at(-1)?.delegationProfile, "reviewer");
+        const mainWorker = yield* start({}).pipe(Effect.flip);
+        assert.equal(mainWorker.code, "invalid_request");
+        assert.include(mainWorker.message, "reviewer, restricted");
+        callerProfile = "restricted";
+        assert.lengthOf((yield* service.capabilities(caller, {})).profiles ?? [], 4);
+        yield* start({});
+        assert.equal(dispatched.at(-1)?.delegationProfile, "worker");
+        callerProfile = undefined;
+        yield* settings.updateSettings({ delegation });
+
         const wrongModel = yield* start({ target: { model: "openai:review-model" } }).pipe(
           Effect.flip,
         );
@@ -3851,7 +3873,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             constraints: [invalidReviewer.message],
           });
         }
-        assert.lengthOf(dispatched, 7);
+        assert.lengthOf(dispatched, 9);
       }).pipe(Effect.provide(serviceLayer));
     }),
   );

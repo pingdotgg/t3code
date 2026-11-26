@@ -59,6 +59,20 @@ describe("delegation profiles", () => {
     });
   });
 
+  it("keeps main profiles that name configured profiles", () => {
+    const delegation = {
+      providerByVendor: {},
+      profiles: { advisor: profile, reviewer: profile },
+      mainProfiles: ["advisor", "reviewer"],
+    };
+    expect(decodeServerSettings({ delegation }).delegation).toEqual(delegation);
+    for (const mainProfiles of [[], ["advisor", "advisor"], ["worker"]]) {
+      const input = { delegation: { ...delegation, mainProfiles } };
+      expect(() => decodeServerSettings(input)).toThrow();
+      expect(() => decodeServerSettingsPatch(input)).toThrow();
+    }
+  });
+
   it.each(["", "not an instance ID", "a".repeat(65), null])(
     "rejects an invalid provider instance ID (%s)",
     (providerInstanceId) => {
