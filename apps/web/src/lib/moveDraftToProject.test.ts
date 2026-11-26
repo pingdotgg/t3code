@@ -1,10 +1,18 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { readPendingWorkspaceDefault } from "./draftWorkspaceDefaults";
 import { moveDraftToProject } from "./moveDraftToProject";
+
+const destinationWorkspace = vi.hoisted(() => ({
+  read: null as Promise<{ envMode?: "local" | "worktree" }> | null,
+}));
+vi.mock("./retargetDraftWorkspace", () => ({
+  retargetDraftWorkspace: () => destinationWorkspace.read ?? Promise.resolve({}),
+}));
 
 const environmentId = EnvironmentId.make("environment-local");
 const draftId = DraftId.make("draft-1");
@@ -29,6 +37,7 @@ const currentRef = scopeProjectRef(environmentId, current.id);
 const addedRef = scopeProjectRef(environmentId, added.id);
 
 beforeEach(() => {
+  destinationWorkspace.read = null;
   useComposerDraftStore.setState({
     draftsByThreadKey: {},
     draftThreadsByThreadKey: {},
@@ -55,5 +64,21 @@ describe("moveDraftToProject", () => {
     const store = useComposerDraftStore.getState();
     expect(store.getDraftSessionByProjectRef(currentRef)?.draftId).toBe(draftId);
     expect(store.getDraftSessionByProjectRef(addedRef)).toBeNull();
+  });
+
+  it("applies the destination's workspace default, which a send waits for", async () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(draftId, "Plan the next project");
+    store.setDraftThreadContext(draftId, { envMode: "local" });
+    const read = Promise.withResolvers<{ envMode?: "local" | "worktree" }>();
+    destinationWorkspace.read = read.promise;
+
+    moveDraftToProject(draftId, added);
+    const sendWaits = readPendingWorkspaceDefault(draftId);
+    expect(sendWaits).not.toBeNull();
+
+    read.resolve({ envMode: "worktree" });
+    await sendWaits;
+    expect(store.getDraftSession(draftId)?.envMode).toBe("worktree");
   });
 });

@@ -288,7 +288,6 @@ import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/com
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { suggestAppAccessForRemote } from "./sourceControlAppAccessToast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import {
@@ -302,6 +301,7 @@ import { readIssueListPreferences } from "~/components/issue/issueListPreference
 import { IssueGlyph } from "~/components/issue/issuePresentation";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
@@ -1033,8 +1033,10 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   });
 
-  function popView(): void {
+  const popView = useStableCallback((): void => {
     browseNavigation.invalidate();
+    cloneLookupGeneration.current += 1;
+    setIsRemoteProjectLookingUp(false);
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     if (viewStack.length <= 1) {
@@ -1044,7 +1046,7 @@ function OpenCommandPaletteDialog(props: {
     }
     dispatchSearch({ type: "back" });
     setHighlightedItemValue(null);
-  }
+  });
 
   function handleQueryChange(nextQuery: string, source: EventTarget | null): void {
     browseNavigation.invalidate();
@@ -1188,25 +1190,25 @@ function OpenCommandPaletteDialog(props: {
 
       const titleTrailingContent = readiness.ready ? undefined : (
         <span className="ml-auto">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="warning-outline"
-                  size="micro"
-                  onClick={() => {
-                    openSourceControlSettings();
-                  }}
-                >
-                  <T>Setup Required</T>
-                </Button>
-              }
-            />
-            <TooltipPopup align="end" side="left">
-              {disabledHint ??
-                gt("Open Settings -> Source control & issues to configure this provider.")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant="warning-outline"
+                size="micro"
+                onClick={() => {
+                  openSourceControlSettings();
+                }}
+              >
+                <T>Setup Required</T>
+              </Button>
+            }
+            label={
+              disabledHint ??
+              gt("Open Settings -> Source control & issues to configure this provider.")
+            }
+            side="left"
+            align="end"
+          />
         </span>
       );
 

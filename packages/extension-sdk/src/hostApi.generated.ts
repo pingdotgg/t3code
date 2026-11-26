@@ -1970,6 +1970,7 @@ export type ThreadSnapshot = {
       readonly status: Wire31;
       readonly queuePosition?: number | null | undefined;
       readonly queueHeld?: Wire6;
+      readonly explicitQueue?: true | undefined;
       readonly steerWhenReadyRunId?: Wire8;
       readonly requestedAt: string;
       readonly startedAt: string | null;
@@ -1993,6 +1994,7 @@ export type ThreadSnapshot = {
       readonly delegatedCompletion?:
         | {
             readonly disposition: "open" | "stopped" | "disposed";
+            readonly reopenedAfterStop?: true;
             readonly nextGeneration: number;
             readonly delivery: {
               readonly generation: number;
@@ -2917,6 +2919,7 @@ export type OrchestrationCommand =
       readonly steerFollowUpAfterRunOrdinal?: Wire19;
       readonly usageLimitRecoveryRequestId?: Wire8;
       readonly deliveryIntent?: "auto" | "steer" | "restart" | undefined;
+      readonly explicitQueue?: true | undefined;
       readonly delegatedCompletion?:
         | {
             readonly parentRunId: string;

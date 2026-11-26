@@ -21,6 +21,7 @@ import {
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
 import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
+import { acpChangedPathsOfToolCall } from "@t3tools/provider-acp/server/clientPolicy";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -673,6 +674,69 @@ describe("Antigravity tool results", () => {
       "/workspace/brain/result image.png",
     );
   });
+
+  const changesBeyondSizeLimits: ReadonlyArray<{
+    readonly part: string;
+    readonly update: Pick<EffectAcpSchema.ToolCallUpdate, "content" | "rawInput">;
+  }> = [
+    {
+      part: "a diff after others whose text uses up the size limit",
+      update: {
+        content: [
+          ...Array.from({ length: 5 }, (_, index) => ({
+            type: "diff" as const,
+            path: `/workspace/a${index}.ts`,
+            newText: "a".repeat(9_000),
+          })),
+          { type: "diff", path: "/elsewhere/b.ts", newText: "b" },
+        ],
+      },
+    },
+    {
+      part: "a diff whose path is longer than the size limit",
+      update: {
+        content: [{ type: "diff", path: `/elsewhere/${"d".repeat(9_000)}/b.ts`, newText: "b" }],
+      },
+    },
+    {
+      part: "a raw input path after text that uses up the size limit",
+      update: {
+        rawInput: {
+          first: "a".repeat(8_000),
+          parts: Array.from({ length: 8 }, () => "a".repeat(8_000)),
+          file_path: "/elsewhere/b.ts",
+        },
+      },
+    },
+    {
+      part: "a raw input path longer than the size limit",
+      update: { rawInput: { path: `/elsewhere/${"d".repeat(9_000)}/b.ts` } },
+    },
+  ];
+  it.each(changesBeyondSizeLimits)(
+    "keeps every path a file change names, or none: $part",
+    ({ update }) => {
+      const notification: EffectAcpSchema.SessionNotification = {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "edit-1",
+          title: "Edit files",
+          kind: "edit",
+          status: "pending",
+          ...update,
+        },
+      };
+      const sent = acpChangedPathsOfToolCall(update);
+      const normalized = normalizeAntigravitySessionUpdate(notification).update;
+      if (normalized.sessionUpdate !== "tool_call_update") {
+        return expect.unreachable("a tool call update stays one");
+      }
+      const kept = acpChangedPathsOfToolCall(normalized);
+      expect(sent).not.toBe("unknown");
+      if (kept !== "unknown") expect(kept).toEqual(sent);
+    },
+  );
 
   it.each([
     ["/workspace/result.png", "/workspace/result.png"],

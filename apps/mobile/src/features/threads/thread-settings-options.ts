@@ -1,5 +1,12 @@
-import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
-import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
+import {
+  managedRuntimeModeDenial,
+  providerRuntimeModeLimitMessage,
+} from "@t3tools/client-runtime/contract-labels";
+import type {
+  ManagedPolicySummary,
+  ProviderRuntimeModeLimit,
+  RuntimeMode,
+} from "@t3tools/contracts";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -40,7 +47,7 @@ export function runtimeModeChoicesForSupportedModes(
 }
 
 export type RuntimeModeChoice = (typeof RUNTIME_MODE_CHOICES)[number] & {
-  /** Set when a target environment's managed policy caps runtime modes below this one. */
+  /** Set when a managed policy caps modes below this one, or the provider cannot run it here. */
   readonly disabledReason?: string;
 };
 
@@ -57,6 +64,23 @@ export function withManagedRuntimeModeLimits(
     const reason = policies
       .map((policy) => managedRuntimeModeDenial(policy, choice.mode, resolve))
       .find((denial) => denial !== undefined);
+    return reason === undefined ? choice : { ...choice, disabledReason: reason };
+  });
+}
+
+/**
+ * Marks modes the provider cannot run in the thread's folder. They stay listed, and a thread
+ * already in one keeps it, with the reason in place of the description.
+ */
+export function withProviderRuntimeModeLimits(
+  choices: ReadonlyArray<RuntimeModeChoice>,
+  limits: ReadonlyArray<ProviderRuntimeModeLimit> | undefined,
+  resolve: MessageResolver = m,
+): ReadonlyArray<RuntimeModeChoice> {
+  if (limits === undefined || limits.length === 0) return choices;
+  return choices.map((choice) => {
+    if (choice.disabledReason !== undefined) return choice;
+    const reason = providerRuntimeModeLimitMessage(limits, choice.mode, resolve);
     return reason === undefined ? choice : { ...choice, disabledReason: reason };
   });
 }
