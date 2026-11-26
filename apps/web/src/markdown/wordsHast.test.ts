@@ -439,6 +439,16 @@ describe("wordsHast", () => {
     expect(markdownReferenceDefinitions(markdown)).toEqual(definitions);
   });
 
+  it.each([
+    ["https://example.com/?x=1&amp;copy;", "a &amp;copy; &amp;quot; &amp;#65;"],
+    ["https://example.com/?x=1&amp;#65;", "a &amp;amp; b"],
+  ])("preserves the reference destination and title when reserializing %s", (url, title) => {
+    const content = "Read [ref] and ![alt][ref].";
+    const markdown = `${content}\n\n[ref]: ${url} "${title}"`;
+    const definitions = markdownReferenceDefinitions(markdown);
+    expect(wordsHtml(`${content}\n\n${definitions.join("\n")}`)).toBe(wordsHtml(markdown));
+  });
+
   it("keeps authored SVG and ids out of the math it restores", () => {
     const html = wordsHtml(
       '<svg width="99999" viewBox="0 0 1 1"><rect x="0" y="0" width="1" height="1"/></svg> <svg data-sourcepos="0-3" height="99999"></svg> <span id="t3-math-0">kept</span> $x$',
