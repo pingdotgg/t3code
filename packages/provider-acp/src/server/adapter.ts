@@ -205,25 +205,29 @@ function mergeAcpAppContext(
   return merged;
 }
 
-function sendPromptWhenIdle<A>(
+function sendPromptWhenIdle(
   turn: { readonly interrupted: boolean; readonly finalized: boolean },
-  prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
+  prompt: () => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>,
   superseded: () => boolean = () => false,
-): Effect.Effect<A, EffectAcpErrors.AcpError> {
-  // A Stop or a prompt-steer can land during the wait, so both are rechecked before each resend.
+): Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> {
+  // A Stop or a prompt-steer can land before dispatch or during a busy wait, so recheck before each send.
   const stopped = () => turn.interrupted || turn.finalized || superseded();
-  return prompt().pipe(
-    Effect.catchIf(
-      (error) => isAgentBusyPromptError(error) && !stopped(),
-      (error) =>
-        Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
-          Effect.andThen(
-            Effect.suspend(() =>
-              stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt, superseded),
-            ),
+  return Effect.suspend(() =>
+    stopped()
+      ? Effect.succeed({ stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse)
+      : prompt().pipe(
+          Effect.catchIf(
+            (error) => isAgentBusyPromptError(error) && !stopped(),
+            (error) =>
+              Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt, superseded),
+                  ),
+                ),
+              ),
           ),
         ),
-    ),
   );
 }
 
@@ -9692,7 +9696,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       return;
                     }
                   }
-                  if (hiddenFailure !== undefined) {
+                  if (
+                    hiddenFailure !== undefined ||
+                    (context.interrupted && context.outcomeResumed)
+                  ) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
                   const failure =
@@ -10209,7 +10216,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       context,
                       () => runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
                       superseded,
-                    )
+                    ).pipe(Effect.ensuring(Deferred.succeed(context.promptDispatched, undefined)))
                   : Deferred.succeed(context.promptDispatched, undefined).pipe(
                       Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
                       Effect.as({
@@ -10361,7 +10368,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             { dispatched, released: releasedForSteer },
                           ),
                         superseded,
-                      ),
+                      ).pipe(Effect.ensuring(Deferred.succeed(dispatched, undefined))),
                     {
                       generation,
                       checkPromptOutcome,
@@ -11056,15 +11063,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           resumePending !== null) &&
                         !context.finalized
                       ) {
-                        if (resumePending !== null) {
-                          context.outcomeResumePending = null;
-                          yield* Ref.set(runtimeRestartRequired, true);
-                        }
-                        yield* finalizeTurn(
-                          context,
-                          "interrupted",
-                          undefined,
-                          resumePending === null ? undefined : { threadDisposition: resumePending },
+                        yield* Effect.uninterruptible(
+                          Effect.gen(function* () {
+                            if (resumePending !== null) {
+                              context.outcomeResumePending = null;
+                              yield* Ref.set(runtimeRestartRequired, true);
+                            }
+                            yield* finalizeTurn(
+                              context,
+                              "interrupted",
+                              undefined,
+                              resumePending === null
+                                ? undefined
+                                : { threadDisposition: resumePending },
+                            );
+                          }),
                         );
                       }
                       if (hardRestart) {
