@@ -5,7 +5,7 @@ import type { DraftComposerAttachment } from "./composerImages";
 import { composerImageGallery } from "./composerImageGallery";
 import { contextImageGallery } from "./contextImageGallery";
 import { messageImageGallery } from "../features/threads/messageImageGallery";
-import { filePreviewGallery, filePreviewKey } from "./filePreviewGallery";
+import { filePreviewGallery, filePreviewKey, filePreviewName } from "./filePreviewGallery";
 
 vi.mock("./uuid", () => ({}));
 
@@ -147,5 +147,15 @@ describe("image preview groups", () => {
     };
     expect(filePreviewKey(a)).toBe(filePreviewKey(b));
     expect(filePreviewGallery(b, [a])).toEqual([b]);
+  });
+});
+
+describe("filePreviewName", () => {
+  it.each([
+    ["https://drop.example.com/My%20Screenshot.png", "My Screenshot.png"],
+    ["https://drop.example.com/caf%C3%A9.png?size=2", "café.png"],
+    ["https://drop.example.com/100%.png", "100%.png"],
+  ])("titles %s with its decoded file name", (uri, name) => {
+    expect(filePreviewName({ kind: "image", uri })).toBe(name);
   });
 });
