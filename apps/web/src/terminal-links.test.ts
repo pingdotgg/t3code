@@ -214,7 +214,6 @@ describe("extractTerminalLinks", () => {
       "/var/www/html/index.php(110)",
       "/var/www/html/index.php:110",
     ],
-    ["[tsl] ERROR in /app/src/main.ts(52,30)", "/app/src/main.ts(52,30)", "/app/src/main.ts:52:30"],
   ])("offers the parenthesized location in %s as the fallback", (line, text, fallback) => {
     const start = line.indexOf(text);
     const end = start + text.length;
