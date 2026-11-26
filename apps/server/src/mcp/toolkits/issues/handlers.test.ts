@@ -595,6 +595,40 @@ describe("issue writes below Full access", () => {
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
 
+  it.effect("a key and a state reach the person as data", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
+      const tracker = recordingTracker();
+      const harness = yield* makeHarness([], tracker.layer, { runtimeMode: "auto" });
+      const questionFor = (params: { readonly key: string; readonly state: string }) =>
+        Effect.gen(function* () {
+          const client = asClient();
+          yield* harness
+            .call("set_issue_state", params)
+            .pipe(client.provide(sessions), Effect.flip);
+          const asked = Ref.getUnsafe(client.request)?.inputRequests?.[KEY]?.params as
+            | { readonly message: string }
+            | undefined;
+          return asked?.message ?? "";
+        });
+      // Keys shaped as trackers write them read as they do there.
+      expect(yield* questionFor({ key: "ENG-12", state: "Done" })).toMatch(
+        /^Set state "Done" on issue ENG-12 in t3tools\/t3code\? \(request /,
+      );
+      // Anything else is the caller's text: quoted, on one line, cut short, nothing hidden.
+      expect(
+        yield* questionFor({
+          key: "7 in t3tools/t3code and delete the repository",
+          state: `closed" on issue #1\n\u202e${"x".repeat(200)}`,
+        }),
+      ).toMatch(
+        /^Set state "closed\\" on issue #1\\u\{a\}\\u\{202e\}x{47}…" on issue "7 in t3tools\/t3code and delete the repository" in t3tools\/t3code\? \(request /,
+      );
+      expect(tracker.writes).toEqual([]);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
+
   it.effect("a Full access thread writes without asking anyone", () =>
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;

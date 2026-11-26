@@ -304,10 +304,16 @@ const pushHooksClause = (
       : items.length === 1
         ? [`${one} ${items[0]}`]
         : [`${many} ${items.slice(0, -1).join(", ")} and ${items.at(-1)}`];
-  // A command is quoted whole on one line, so it cannot read as part of the question.
-  const commands = configured.map(({ name, command }) => `${name} (${JSON.stringify(command)})`);
+  // File names and commands are the repository's, so each is shown as data.
+  const commands = configured.map(
+    ({ name, command }) => `${McpToolAccess.quoted(name)} (${McpToolAccess.quoted(command, 300)})`,
+  );
   const named = [
-    ...list("hook file", "hook files", files),
+    ...list(
+      "hook file",
+      "hook files",
+      files.map((file) => McpToolAccess.quoted(file, 300)),
+    ),
     ...list("configured hook", "configured hooks", commands),
   ].join(" and its ");
   const key = pushHooksApprovalKey(hooks)
@@ -316,12 +322,29 @@ const pushHooksClause = (
   return `, running this repository's ${named} (contents ${key})`;
 };
 
-/** Which pull request a call names, before anything is resolved: for a call that runs elsewhere. */
-const namedPullRequest = (input: ThreadPullRequestInput) => ({
-  target:
-    input.number === undefined ? "the branch's pull request" : `pull request #${input.number}`,
-  ...(input.repository === undefined ? {} : { repository: input.repository }),
-});
+/** A commit as a person reads one: the start of its id. The whole id is what the approval binds. */
+const shortCommit = (sha: string) => McpToolAccess.quoted(sha.slice(0, 10));
+
+/** What opening a pull request asks a person: what is pushed where, and what is opened against what. */
+const openingAsks = (opening: GitManager.PullRequestOpening, isPrivate: boolean) => {
+  const branch = `${McpToolAccess.quoted(opening.branch)} at ${shortCommit(opening.head)}`;
+  const base = `into ${McpToolAccess.quoted(opening.baseBranch)}`;
+  const { push } = opening;
+  if (push === null) return { action: "Open", target: `a pull request for ${branch} ${base}` };
+  const to =
+    push.remoteName === null
+      ? // Its host makes the companion when first asked to, so it has no name to show yet.
+        "this repository's private companion, a separate repository on its host"
+      : `${McpToolAccess.quoted(push.remoteName)} (${push.urls
+          .map((url) => McpToolAccess.quoted(url, 200))
+          .join(", ")})`;
+  const as =
+    push.remoteBranch === opening.branch ? "" : ` as ${McpToolAccess.quoted(push.remoteBranch)}`;
+  return {
+    action: `Push ${branch} to ${to}${as} and open`,
+    target: `a${isPrivate ? " private" : ""} pull request ${base}`,
+  };
+};
 
 const updateAction = (input: {
   readonly title?: unknown;
@@ -365,15 +388,14 @@ const reviewAction = (input: { readonly verdict: "comment" | "approve" | "reques
       ? "Request changes on"
       : "Review";
 
-const mergeAction = (input: {
-  readonly auto?: boolean | undefined;
-  readonly stack?: boolean | undefined;
-}) =>
-  input.auto === true
-    ? "Enable auto-merge on"
-    : input.stack === true
-      ? "Merge the stack up to"
-      : "Merge";
+const mergeAction = (input: { readonly auto?: boolean | undefined }) =>
+  input.auto === true ? "Enable auto-merge on" : "Merge";
+
+/** The pull requests one stack merge covers, bottom to top, each at the head it is pinned to. */
+const stackNamed = (layers: ReadonlyArray<{ readonly number: number; readonly headSha: string }>) =>
+  `the stack of ${layers
+    .map((layer) => `#${layer.number} at ${shortCommit(layer.headSha)}`)
+    .join(", ")}, up to`;
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
@@ -1189,24 +1211,29 @@ const make = Effect.gen(function* () {
             return yield* new PullRequestProjectNotFoundError({ repository: "" });
           }
           const cwd = thread.worktreePath ?? project.workspaceRoot;
-          // The repository's push hooks are its owner's code. Below Full access the agent's own
-          // commands wait for a person, so these do too, and the one question names them with
-          // the push: it runs them only as they were when the person was asked.
-          const push = asked
-            ? yield* git.pullRequestPush(cwd).pipe(Effect.mapError(forgeFailure))
+          // Below Full access the agent's own commands wait for a person, so the push and the
+          // repository's push hooks, which are its owner's code, do too. One question names all
+          // of it as the checkout has it now, and `run` does that or nothing.
+          const opening = asked
+            ? yield* git
+                .pullRequestOpening({ cwd, baseBranch: input.base, private: input.private })
+                .pipe(Effect.mapError(forgeFailure))
             : undefined;
-          const pushes = push !== undefined && (push.needsPush || input.private === true);
-          const hooks = pushes ? (push.hooks ?? undefined) : undefined;
-          const branch = push?.branch ?? thread.branch ?? "this branch";
-          const pushHooks = hooks === undefined ? undefined : pushHooksNamed(cwd, branch, hooks);
+          const hooks = opening?.push?.hooks ?? undefined;
+          const pushHooks =
+            opening === undefined || hooks === undefined
+              ? undefined
+              : pushHooksNamed(cwd, opening.branch, hooks);
           const identity = project.repositoryIdentity ?? undefined;
           const repository =
             identity === undefined
               ? undefined
               : (sourceControlDefinitions.repositorySelector(identity) ?? undefined);
           const asks: McpToolAccess.OutsideAction = {
-            action: pushes ? `Push ${branch} and open` : "Open",
-            target: pushes ? "a pull request" : `a pull request for ${branch}`,
+            // A Full access call asks nobody, so it reads nothing to name.
+            ...(opening === undefined
+              ? { action: "Open", target: "a pull request" }
+              : { ...openingAsks(opening, input.private === true), binds: opening.key }),
             ...(repository === undefined ? {} : { repository }),
             ...(pushHooks === undefined || hooks === undefined
               ? {}
@@ -1222,13 +1249,16 @@ const make = Effect.gen(function* () {
                 baseBranch: input.base,
                 draft: input.draft,
                 private: input.private,
-                ...(asked ? { pushHooks: { approvedDigest: hooks?.digest ?? null } } : {}),
+                ...(opening === undefined ? {} : { approved: opening }),
               })
               .pipe(
                 Effect.mapError((error) =>
                   isPushHooksUnapproved(error)
                     ? new PullRequestForgeError({ detail: PUSH_HOOKS_CHANGED, cause: error })
-                    : forgeFailure(error),
+                    : error._tag === "GitManagerError" &&
+                        error.detail === GitManager.PULL_REQUEST_OPENING_CHANGED
+                      ? new PullRequestForgeError({ detail: error.detail, cause: error })
+                      : forgeFailure(error),
                 ),
               );
             if (created.url === undefined) {
@@ -1249,182 +1279,181 @@ const make = Effect.gen(function* () {
           });
           return { asks, run };
         }),
-      () => ({ action: "Push the branch and open", target: "a pull request" }),
     ),
-    pull_request_update: McpToolAccess.actsOutsideThread(
-      "pull_request_update",
-      (input) =>
-        Effect.gen(function* () {
-          if (
-            input.title === undefined &&
-            input.body === undefined &&
-            input.ready === undefined &&
-            input.state === undefined &&
-            input.addLabels === undefined &&
-            input.removeLabels === undefined &&
-            input.requestReviewers === undefined
-          ) {
-            return yield* new PullRequestNothingToDoError({
-              detail:
-                "Pass title, body, ready, state, addLabels, removeLabels, or requestReviewers.",
-            });
+    pull_request_update: McpToolAccess.actsOutsideThread("pull_request_update", (input) =>
+      Effect.gen(function* () {
+        if (
+          input.title === undefined &&
+          input.body === undefined &&
+          input.ready === undefined &&
+          input.state === undefined &&
+          input.addLabels === undefined &&
+          input.removeLabels === undefined &&
+          input.requestReviewers === undefined
+        ) {
+          return yield* new PullRequestNothingToDoError({
+            detail: "Pass title, body, ready, state, addLabels, removeLabels, or requestReviewers.",
+          });
+        }
+        const located = yield* locate(input);
+        const { target, ref } = located;
+        const run = Effect.gen(function* () {
+          if (input.title !== undefined || input.body !== undefined) {
+            yield* pullRequests
+              .update({
+                ...ref,
+                ...(input.title === undefined ? {} : { title: input.title }),
+                ...(input.body === undefined ? {} : { body: input.body }),
+              })
+              .pipe(Effect.mapError(forgeFailure));
           }
-          const located = yield* locate(input);
-          const { target, ref } = located;
-          const run = Effect.gen(function* () {
-            if (input.title !== undefined || input.body !== undefined) {
+          for (const [labels, applied] of [
+            [input.addLabels, true],
+            [input.removeLabels, false],
+          ] as const) {
+            if (labels !== undefined) {
               yield* pullRequests
-                .update({
-                  ...ref,
-                  ...(input.title === undefined ? {} : { title: input.title }),
-                  ...(input.body === undefined ? {} : { body: input.body }),
-                })
+                .setLabels({ ...ref, labels, applied })
                 .pipe(Effect.mapError(forgeFailure));
             }
-            for (const [labels, applied] of [
-              [input.addLabels, true],
-              [input.removeLabels, false],
-            ] as const) {
-              if (labels !== undefined) {
-                yield* pullRequests
-                  .setLabels({ ...ref, labels, applied })
-                  .pipe(Effect.mapError(forgeFailure));
-              }
-            }
-            if (input.requestReviewers !== undefined) {
-              const reviewers = yield* Effect.forEach(input.requestReviewers, (name) =>
-                reviewerNamed(ref, name),
+          }
+          if (input.requestReviewers !== undefined) {
+            const reviewers = yield* Effect.forEach(input.requestReviewers, (name) =>
+              reviewerNamed(ref, name),
+            );
+            yield* pullRequests
+              .requestReviewers({ ...ref, reviewers, requested: true })
+              .pipe(Effect.mapError(forgeFailure));
+          }
+          if (input.ready !== undefined) {
+            yield* pullRequests
+              .runAction({ ...ref, action: input.ready ? "ready" : "draft" })
+              .pipe(Effect.mapError(forgeFailure));
+          }
+          if (input.state !== undefined) {
+            yield* pullRequests
+              .runAction({ ...ref, action: input.state === "closed" ? "close" : "reopen" })
+              .pipe(Effect.mapError(forgeFailure));
+          }
+          return identityOf(target);
+        });
+        return { asks: asksOf(updateAction(input), located), run };
+      }),
+    ),
+    pull_request_respond: McpToolAccess.actsOutsideThread("pull_request_respond", (input) =>
+      Effect.gen(function* () {
+        if (
+          input.body === undefined &&
+          (input.reviewThreadId === undefined || input.resolved === undefined)
+        ) {
+          return yield* new PullRequestNothingToDoError({
+            detail: "Pass body, or reviewThreadId with resolved.",
+          });
+        }
+        if (input.reviewThreadId === undefined && input.resolved !== undefined) {
+          return yield* new PullRequestNothingToDoError({
+            detail: "resolved needs reviewThreadId.",
+          });
+        }
+        const located = yield* locate(input);
+        const { target, ref } = located;
+        const reviewThreadId = input.reviewThreadId;
+        const run = Effect.gen(function* () {
+          if (input.body !== undefined) {
+            yield* (
+              reviewThreadId === undefined
+                ? pullRequests.comment({ ...ref, body: input.body })
+                : pullRequests.replyToThread({
+                    ...ref,
+                    threadId: reviewThreadId,
+                    body: input.body,
+                  })
+            ).pipe(Effect.mapError(forgeFailure));
+          }
+          if (reviewThreadId !== undefined && input.resolved !== undefined) {
+            yield* pullRequests
+              .setThreadResolution({
+                ...ref,
+                threadId: reviewThreadId,
+                resolved: input.resolved,
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  input.body === undefined
+                    ? forgeFailure(error)
+                    : new PullRequestForgeError({
+                        // A retry with the body would post the reply twice.
+                        detail: `The reply was posted, but setting resolved failed: ${error.message} Retry without body.`,
+                        cause: error,
+                      }),
+                ),
               );
-              yield* pullRequests
-                .requestReviewers({ ...ref, reviewers, requested: true })
-                .pipe(Effect.mapError(forgeFailure));
-            }
-            if (input.ready !== undefined) {
-              yield* pullRequests
-                .runAction({ ...ref, action: input.ready ? "ready" : "draft" })
-                .pipe(Effect.mapError(forgeFailure));
-            }
-            if (input.state !== undefined) {
-              yield* pullRequests
-                .runAction({ ...ref, action: input.state === "closed" ? "close" : "reopen" })
-                .pipe(Effect.mapError(forgeFailure));
-            }
-            return identityOf(target);
+          }
+          return {
+            ...identityOf(target),
+            replied: input.body !== undefined,
+            resolved: input.resolved ?? null,
+          };
+        });
+        return { asks: asksOf(respondAction(input), located), run };
+      }),
+    ),
+    pull_request_review: McpToolAccess.actsOutsideThread("pull_request_review", (input) =>
+      Effect.gen(function* () {
+        if (input.verdict === "approve" && input.expectedHeadSha === undefined) {
+          return yield* new PullRequestForgeError({
+            detail:
+              "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
           });
-          return { asks: asksOf(updateAction(input), located), run };
-        }),
-      (input) => ({ action: updateAction(input), ...namedPullRequest(input) }),
+        }
+        const located = yield* locate(input);
+        const { target, ref } = located;
+        const comments = yield* reviewComments(ref, input.comments ?? []);
+        const run = pullRequests
+          .submitReview({
+            ...ref,
+            verdict: input.verdict,
+            body: input.body ?? "",
+            comments,
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
+          })
+          .pipe(Effect.mapError(forgeFailure), Effect.as(identityOf(target)));
+        return { asks: asksOf(reviewAction(input), located), run };
+      }),
     ),
-    pull_request_respond: McpToolAccess.actsOutsideThread(
-      "pull_request_respond",
-      (input) =>
-        Effect.gen(function* () {
-          if (
-            input.body === undefined &&
-            (input.reviewThreadId === undefined || input.resolved === undefined)
-          ) {
-            return yield* new PullRequestNothingToDoError({
-              detail: "Pass body, or reviewThreadId with resolved.",
-            });
-          }
-          if (input.reviewThreadId === undefined && input.resolved !== undefined) {
-            return yield* new PullRequestNothingToDoError({
-              detail: "resolved needs reviewThreadId.",
-            });
-          }
-          const located = yield* locate(input);
-          const { target, ref } = located;
-          const reviewThreadId = input.reviewThreadId;
-          const run = Effect.gen(function* () {
-            if (input.body !== undefined) {
-              yield* (
-                reviewThreadId === undefined
-                  ? pullRequests.comment({ ...ref, body: input.body })
-                  : pullRequests.replyToThread({
-                      ...ref,
-                      threadId: reviewThreadId,
-                      body: input.body,
-                    })
-              ).pipe(Effect.mapError(forgeFailure));
-            }
-            if (reviewThreadId !== undefined && input.resolved !== undefined) {
-              yield* pullRequests
-                .setThreadResolution({
-                  ...ref,
-                  threadId: reviewThreadId,
-                  resolved: input.resolved,
-                })
-                .pipe(
-                  Effect.mapError((error) =>
-                    input.body === undefined
-                      ? forgeFailure(error)
-                      : new PullRequestForgeError({
-                          // A retry with the body would post the reply twice.
-                          detail: `The reply was posted, but setting resolved failed: ${error.message} Retry without body.`,
-                          cause: error,
-                        }),
-                  ),
-                );
-            }
-            return {
-              ...identityOf(target),
-              replied: input.body !== undefined,
-              resolved: input.resolved ?? null,
-            };
+    pull_request_merge: McpToolAccess.actsOutsideThread("pull_request_merge", (input) =>
+      Effect.gen(function* () {
+        const located = yield* locate(input);
+        const { target, ref } = located;
+        const stack = input.stack === true ? yield* stackMergeScope(ref, input) : undefined;
+        const run = Effect.gen(function* () {
+          yield* pullRequests.runAction({
+            ...ref,
+            action: input.auto === true ? "enable-auto-merge" : "merge",
+            expectedHeadSha: input.expectedHeadSha,
+            ...(input.method === undefined ? {} : { mergeMethod: input.method }),
+            ...stack,
           });
-          return { asks: asksOf(respondAction(input), located), run };
-        }),
-      (input) => ({ action: respondAction(input), ...namedPullRequest(input) }),
-    ),
-    pull_request_review: McpToolAccess.actsOutsideThread(
-      "pull_request_review",
-      (input) =>
-        Effect.gen(function* () {
-          if (input.verdict === "approve" && input.expectedHeadSha === undefined) {
-            return yield* new PullRequestForgeError({
-              detail:
-                "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
-            });
-          }
-          const located = yield* locate(input);
-          const { target, ref } = located;
-          const comments = yield* reviewComments(ref, input.comments ?? []);
-          const run = pullRequests
-            .submitReview({
-              ...ref,
-              verdict: input.verdict,
-              body: input.body ?? "",
-              comments,
-              ...(input.expectedHeadSha === undefined
-                ? {}
-                : { expectedHeadSha: input.expectedHeadSha }),
-            })
-            .pipe(Effect.mapError(forgeFailure), Effect.as(identityOf(target)));
-          return { asks: asksOf(reviewAction(input), located), run };
-        }),
-      (input) => ({ action: reviewAction(input), ...namedPullRequest(input) }),
-    ),
-    pull_request_merge: McpToolAccess.actsOutsideThread(
-      "pull_request_merge",
-      (input) =>
-        Effect.gen(function* () {
-          const located = yield* locate(input);
-          const { target, ref } = located;
-          const stack = input.stack === true ? yield* stackMergeScope(ref, input) : {};
-          const run = Effect.gen(function* () {
-            yield* pullRequests.runAction({
-              ...ref,
-              action: input.auto === true ? "enable-auto-merge" : "merge",
-              expectedHeadSha: input.expectedHeadSha,
-              ...(input.method === undefined ? {} : { mergeMethod: input.method }),
-              ...stack,
-            });
-            const after = yield* pullRequests.summary({ ...ref, allowStale: false });
-            return { ...identityOf(target), state: after.state };
-          }).pipe(Effect.mapError(forgeFailure));
-          return { asks: asksOf(mergeAction(input), located), run };
-        }),
-      (input) => ({ action: mergeAction(input), ...namedPullRequest(input) }),
+          const after = yield* pullRequests.summary({ ...ref, allowStale: false });
+          return { ...identityOf(target), state: after.state };
+        }).pipe(Effect.mapError(forgeFailure));
+        const asks = asksOf(mergeAction(input), located);
+        // A stack merge is approved as the layers read here: their numbers and heads. `run`
+        // pins the host to the same ones, so a layer added or moved since is not merged.
+        return {
+          asks:
+            stack === undefined
+              ? asks
+              : {
+                  ...asks,
+                  action: `${asks.action} ${stackNamed(stack.expectedStackHeads)}`,
+                  binds: stack,
+                },
+          run,
+        };
+      }),
     ),
     ci_logs: McpToolAccess.reads((input) =>
       Effect.gen(function* () {
@@ -1439,40 +1468,37 @@ const make = Effect.gen(function* () {
         return { ...identityOf(target), checks };
       }),
     ),
-    ci_rerun: McpToolAccess.actsOutsideThread(
-      "ci_rerun",
-      (input) =>
-        Effect.gen(function* () {
-          const located = yield* locate(input);
-          const { thread, target, ref } = located;
-          const run = Effect.gen(function* () {
-            const checks = yield* pullRequests
-              .rerunChecks({ ...ref, ...(input.check === undefined ? {} : { check: input.check }) })
-              .pipe(Effect.mapError(forgeFailure));
-            // Like a push, a rerun makes a watch's finished checks stale, so the thread keeps
-            // working until a read sees them run. The rerun already happened, so a failed reopen
-            // only logs.
-            if (
-              checks.some((check) => check.rerun) &&
-              threadPullRequestsOf(thread).some((link) => link.watch?.checksPending !== undefined)
-            ) {
-              yield* engine
-                .dispatch({
-                  type: "thread.pull-request-watch.checks-reopen",
-                  commandId: yield* commandId("mcp-ci-rerun-checks", thread.id),
-                  threadId: thread.id,
-                })
-                .pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("reopening a watch's checks after a rerun failed", cause),
-                  ),
-                );
-            }
-            return { ...identityOf(target), checks };
-          });
-          return { asks: asksOf("Rerun checks on", located), run };
-        }),
-      (input) => ({ action: "Rerun checks on", ...namedPullRequest(input) }),
+    ci_rerun: McpToolAccess.actsOutsideThread("ci_rerun", (input) =>
+      Effect.gen(function* () {
+        const located = yield* locate(input);
+        const { thread, target, ref } = located;
+        const run = Effect.gen(function* () {
+          const checks = yield* pullRequests
+            .rerunChecks({ ...ref, ...(input.check === undefined ? {} : { check: input.check }) })
+            .pipe(Effect.mapError(forgeFailure));
+          // Like a push, a rerun makes a watch's finished checks stale, so the thread keeps
+          // working until a read sees them run. The rerun already happened, so a failed reopen
+          // only logs.
+          if (
+            checks.some((check) => check.rerun) &&
+            threadPullRequestsOf(thread).some((link) => link.watch?.checksPending !== undefined)
+          ) {
+            yield* engine
+              .dispatch({
+                type: "thread.pull-request-watch.checks-reopen",
+                commandId: yield* commandId("mcp-ci-rerun-checks", thread.id),
+                threadId: thread.id,
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("reopening a watch's checks after a rerun failed", cause),
+                ),
+              );
+          }
+          return { ...identityOf(target), checks };
+        });
+        return { asks: asksOf("Rerun checks on", located), run };
+      }),
     ),
   } satisfies McpToolAccess.Handlers<typeof PullRequestsToolkit.tools>;
 });

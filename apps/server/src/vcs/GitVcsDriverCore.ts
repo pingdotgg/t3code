@@ -4476,13 +4476,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
+    // An approved push names its commit, so one made since is not sent with it, and is checked
+    // against where this push goes as the last step before Git is started.
+    const approved = options?.approved;
+    const source = approved?.head ?? "HEAD";
+    const notAsApproved = new GitCommandError({
+      ...gitCommandContext({ operation: "GitVcsDriver.pushCurrentBranch", cwd, args: ["push"] }),
+      detail: "The branch or where it is pushed changed after the push was approved.",
+      cause: new GitVcsDriver.PushNotAsApprovedError(),
+    });
+    const asApproved = (to: { readonly remoteName: string; readonly branchName: string } | null) =>
+      approved === undefined ||
+      (to !== null &&
+        branch === approved.branch &&
+        to.remoteName === approved.remoteName &&
+        to.branchName === approved.remoteBranch)
+        ? Effect.void
+        : Effect.fail(notAsApproved);
+
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = resolvePublishBranchName(branch, requestedRemoteName);
+      yield* asApproved({ remoteName: requestedRemoteName, branchName: publishBranch });
       yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
-        ["push", "--", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        ["push", "--", requestedRemoteName, `${source}:refs/heads/${publishBranch}`],
         { timeoutMs: null, pushes: true },
       );
       return {
@@ -4574,6 +4593,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
+    yield* asApproved(destination);
     if (destination?.publishes) {
       const { remoteName, branchName: publishBranch, upstream } = destination;
       // Publishing retargets the upstream, so preserve its comparison base first.
@@ -4599,7 +4619,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? "GitVcsDriver.pushCurrentBranch.pushOwnBranch"
           : "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
-        ["push", "--", remoteName, `HEAD:refs/heads/${publishBranch}`],
+        ["push", "--", remoteName, `${source}:refs/heads/${publishBranch}`],
         { timeoutMs: null, pushes: true },
       );
       return {
@@ -4614,7 +4634,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
-        ["push", "--", destination.remoteName, `HEAD:refs/heads/${destination.branchName}`],
+        ["push", "--", destination.remoteName, `${source}:refs/heads/${destination.branchName}`],
         { timeoutMs: null, pushes: true },
       );
       return {

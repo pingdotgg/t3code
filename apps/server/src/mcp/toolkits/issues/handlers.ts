@@ -55,11 +55,22 @@ function listThreadIssues(
   };
 }
 
-/** An issue as its tracker writes it: `#12` on a forge, `ENG-12` where keys carry a prefix. */
-const issueNamed = (key: string) => `issue ${/^\d+$/.test(key) ? "#" : ""}${key}`;
+/**
+ * An issue as its tracker writes it: `#12` on a forge, `ENG-12` where keys carry a prefix. A key
+ * is the caller's own text until the tracker reads it, so one that is not shaped like a key is
+ * shown as data.
+ */
+const issueNamed = (key: string) =>
+  `issue ${
+    /^\d{1,12}$/.test(key)
+      ? `#${key}`
+      : /^[A-Za-z][A-Za-z0-9]{0,15}-\d{1,12}$/.test(key)
+        ? key
+        : McpToolAccess.quoted(key, 80)
+  }`;
 
-// The state is quoted whole on one line, so it cannot read as part of the question.
-const setStateAction = (state: string) => `Set state ${JSON.stringify(state)} on`;
+// The state is the caller's own text until the tracker reads it, so it is shown as data.
+const setStateAction = (state: string) => `Set state ${McpToolAccess.quoted(state, 80)} on`;
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;

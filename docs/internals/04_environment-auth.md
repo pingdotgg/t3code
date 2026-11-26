@@ -112,13 +112,45 @@ model.
   [`McpToolAccess.actsOutsideThread`](../../apps/server/src/mcp/McpToolAccess.ts) (the forge
   writes of the pull-request and issue toolkits) first checks its arguments and resolves what
   they name, doing nothing yet; then, for a caller not in Full access by the rule above, the
-  wrapper asks the person what will be done to what, in words the server builds from the
-  resolved target and never from text the agent wrote. It asks by MCP elicitation
+  wrapper asks the person what will be done to what. The server writes the sentence. A name in
+  it that the server did not write (a branch, a remote and its URL, a hook file or command, an
+  issue key that is not shaped like one, the state `set_issue_state` was given) goes in with
+  `McpToolAccess.quoted`: in quotation marks, on one line, cut to a fixed length, with any
+  character a screen would hide (controls, format characters such as direction overrides and
+  zero-width spaces, every space but U+0020) written out as its code point. Numbers, commit ids
+  and the repository and host a target resolved to go in as they are. Every field then passes
+  through the same hidden-character and length check on its way out, whatever the handler did
+  with it, so a value shown is always data inside the sentence and never more of the sentence.
+  What an update, a comment or a review says is not shown: the request names the action and
+  its target. It asks by MCP elicitation
   ([`McpClientInput`](../../apps/server/src/mcp/McpClientInput.ts)): a sessionless client is
   answered with the request and calls the tool again with the reply, so everything before the
   approval must be safe to run from the start twice. The request's state is the tool and a
-  digest of its arguments and of what they resolved to (for a push, the hooks' digest too), and
-  an answer counts only for that state, so a call that differs in any of it asks again.
+  digest of its arguments and of everything they resolved to, shown or not
+  (`OutsideAction.binds` carries what the words do not hold whole), and an answer counts only
+  for that state, so a call that differs in any of it asks again. Once the answer is read the
+  wrapper resolves everything a second time and runs that second reading, and only if its
+  state is the approved one: however long the person took, and whichever call brought their
+  answer, what runs was read after they answered. The rule for a handler: what
+  the action depends on is resolved before the question and is part of that state, and the
+  action then uses what was resolved. Where it has to read something again, it compares with
+  what was asked and does nothing when they differ.
+  `pull_request_create` is the case with the most to read. `GitManager.pullRequestOpening`
+  reads the branch, the commit at its tip, the base, whether a push is needed, the remote and
+  branch it goes to with the remote's push URLs, and the hooks it would run, all with
+  repository hooks off, and reads the hooks only when there is a push. The question names
+  these (a private pull request's push is named as going to the repository's private
+  companion, which the host makes only when the push is under way). `createPullRequest` given
+  that reading back reads the checkout again and fails without pushing if any of it differs;
+  it then pushes that commit by its id to that branch of that remote (the driver checks the
+  destination once more as its last step, and refuses a push Git would have to pick the
+  destination of), never pushes when no push was approved, and opens against the approved
+  base. A remote's URL changed in the moment between that last look and Git starting is not
+  caught. Which repository the host's own tool opens the pull request in is the host's
+  configuration and is not read beforehand; the question names the project's repository.
+  A stack merge names each layer it would merge with the head it is pinned to, and those
+  numbers and heads are part of the state; the host is given the same list and refuses if the
+  stack is not exactly that.
   The approval is the person's answer in the app, not the client's reply. The Claude and Codex
   adapters never answer a request T3 Code's own tool made, whatever the turn's runtime mode and
   whatever was allowed for the session. The request is kept with the thread's MCP session under
@@ -132,11 +164,11 @@ model.
   Where no such record can exist, nothing is asked and the call is refused: a thread whose
   adapter does not pass on the person's answer, whatever its client replies, and an MCP client
   from outside, which has no thread to show a request in and so needs full access.
-  A call bound for a linked environment is asked about here, where the person is, from its
-  arguments alone, since what they resolve to is there. Once approved it is forwarded with the
-  person's access for that one call (`PeerForwarding.ForwardOptions`) in place of the agent's
-  modes: the other environment has no one to ask and refuses a call that arrives below full
-  access.
+  A call bound for a linked environment is not sent below Full access. What it would do
+  (the pull request "the branch" has there, the checkout's push and hooks) can only be
+  resolved there, and that environment has no one to ask, so there is nothing concrete to
+  show the person here. The agent is told so. From a Full access thread the call is forwarded
+  with the agent's own modes like any other.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather
