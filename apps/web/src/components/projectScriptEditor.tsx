@@ -321,8 +321,20 @@ function ProjectScriptEditorForm({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (!readEnvironmentScope(environmentId, editScope)) return;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "Tab") return;
+    // Leave bare Escape unhandled so it keeps dismissing the dialog.
+    if (
+      event.key === "Escape" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
+      return;
+    }
     event.preventDefault();
+    event.stopPropagation();
     if (event.key === "Backspace" || event.key === "Delete") {
       setKeybinding("");
       return;
@@ -486,6 +498,7 @@ function ProjectScriptEditorForm({
                 <T>Keybinding</T>
               </Label>
               <Input
+                data-keybinding-capture=""
                 disabled={!canWriteSettings}
                 id="script-keybinding"
                 placeholder={gt("Press shortcut")}

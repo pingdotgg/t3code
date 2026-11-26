@@ -39,6 +39,8 @@ describe("unifiedPushWatch", () => {
       t3_kind: "agent_activity",
       device_id: "phone",
       user_id: "unifiedpush",
+      // AgentNotifications.userHash: SHA-256 of "<userId>:<deviceId>".
+      user_hash: "b2a24f5ea88cad2c8a969be5869fdad74a5f2693561d8b9bdb86fc8dbb2ab17d",
       updated_at: String(now),
       active: "true",
       activity_active_count: "2",

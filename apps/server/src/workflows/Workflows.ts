@@ -3,7 +3,10 @@ import {
   type WorkflowHook,
   WorkflowQuestion,
   type WorkflowRunReference,
+  type WorkflowRunsAboutInput,
+  applyWorkflowRunsUpdate,
   type WorkflowRunsSnapshot,
+  type WorkflowRunsUpdate,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
@@ -85,6 +88,8 @@ export class Workflows extends Context.Service<
         readonly parent?: WorkflowStore.RunParent;
         /** The version to run, when the caller holds a definition. Without it, the newest. */
         readonly version?: number;
+        /** What a new run is about. A start that finds its run already there leaves it be. */
+        readonly subject?: WorkflowStore.ReferenceInput;
       },
     ) => Effect.Effect<{ readonly runId: string }, WorkflowError>;
     /**
@@ -94,7 +99,14 @@ export class Workflows extends Context.Service<
     readonly signal: (
       address: WorkflowStore.SignalAddress,
       value: Schema.Json,
-      options: { readonly id: string; readonly ttl?: Duration.Input },
+      options: {
+        readonly id: string;
+        readonly ttl?: Duration.Input;
+        /** Who sent it, kept with an answer to a question. */
+        readonly answeredBy?: string | undefined;
+        /** The client session that sent it, where one did. A name is shared; this is not. */
+        readonly answeredBySession?: string | undefined;
+      },
     ) => Effect.Effect<"delivered" | "buffered", WorkflowInputError>;
     /**
      * Answer the question a run asks a person. One answer per time it is asked: a second, a
@@ -104,10 +116,21 @@ export class Workflows extends Context.Service<
       runId: string,
       name: string,
       value: Schema.Json,
+      /** Who answered, as the server knows them; kept with the answer. */
+      answeredBy?: { readonly label: string; readonly sessionId?: string | undefined },
     ) => Effect.Effect<void, WorkflowInputError>;
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;
     readonly cancel: (runId: string, reason?: string) => Effect.Effect<void, WorkflowError>;
+    /**
+     * End a run's open question unanswered, as its timeout would: its `ask` returns `None` and the
+     * run goes on. `not_open` when the question was answered, timed out or never asked.
+     */
+    readonly withdraw: (
+      runId: string,
+      name: string,
+      options: { readonly by: string; readonly reason?: string | undefined },
+    ) => Effect.Effect<"withdrawn" | "not_open", WorkflowError>;
     readonly get: (runId: string) => Effect.Effect<
       {
         readonly run: WorkflowStore.WorkflowRun;
@@ -118,7 +141,23 @@ export class Workflows extends Context.Service<
     >;
     readonly list: (filter?: {
       readonly status?: WorkflowStore.WorkflowRunStatus;
+      /** Only runs their workflow tagged with this. */
+      readonly tag?: string;
+      /** Only runs about this: their subject's web address, or its key, such as a thread id. */
+      readonly subject?: string;
     }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>, WorkflowInputError>;
+    /**
+     * The runs about an item, by its web address (as `list` reads `subject`) or by the issue or
+     * pull request it is, and the questions they have open, for the item's own view: the runs
+     * list is the newest runs of every subject.
+     */
+    readonly about: (item: WorkflowRunsAboutInput) => Effect.Effect<
+      {
+        readonly runs: ReadonlyArray<WorkflowStore.WorkflowRun>;
+        readonly questions: ReadonlyArray<WorkflowQuestion>;
+      },
+      WorkflowInputError
+    >;
     /** The run once `done` holds for it. Looks now, then on every change to the run. */
     readonly waitFor: (
       runId: string,
@@ -153,8 +192,8 @@ export class Workflows extends Context.Service<
     /** Set a key of the store from outside a run, as a person flipping a switch does. */
     readonly storeSet: (key: string, value: Schema.Json) => Effect.Effect<void, WorkflowInputError>;
     readonly storeDelete: (key: string) => Effect.Effect<void, WorkflowInputError>;
-    /** Recent runs and open questions, now and again after every change. */
-    readonly watch: Stream.Stream<WorkflowRunsSnapshot>;
+    /** Recent runs and open questions now, then what changed of them after every change. */
+    readonly watch: Stream.Stream<WorkflowRunsUpdate>;
     /** How much is going on, now and again whenever a count changes. */
     readonly counts: Stream.Stream<WorkflowCounts>;
     /**
@@ -179,11 +218,15 @@ export const disabled = Workflows.of({
   answer: refuse,
   resume: refuse,
   cancel: refuse,
+  withdraw: refuse,
   get: Effect.fn("Workflows.get")(function* (runId) {
     return yield* new WorkflowRunNotFoundError({ runId });
   }),
   list: Effect.fn("Workflows.list")(function* () {
     return yield* Effect.succeed<ReadonlyArray<WorkflowStore.WorkflowRun>>([]);
+  }),
+  about: Effect.fn("Workflows.about")(function* () {
+    return yield* Effect.succeed({ runs: [], questions: [] });
   }),
   waitFor: Effect.fn("Workflows.waitFor")(function* () {
     return yield* Effect.never;
@@ -205,6 +248,18 @@ export const disabled = Workflows.of({
 });
 export const layerDisabled = Layer.succeed(Workflows, disabled);
 
+/** What `watch` sends, as the whole list every time: for a client that did not ask for changes. */
+export const wholeLists = (updates: Stream.Stream<WorkflowRunsUpdate>) =>
+  updates.pipe(
+    Stream.mapAccum(
+      (): WorkflowRunsSnapshot | undefined => undefined,
+      (list, update) => {
+        const next = applyWorkflowRunsUpdate(list, update);
+        return [next, [next]] as const;
+      },
+    ),
+  );
+
 export const OFF =
   'Workflows are off on this server. Turn them on in its Settings → Labs → Workflows, or without a desktop, set "workflowsEnabled": true in userdata/settings.json in its T3 home (~/.t3 by default).';
 
@@ -223,8 +278,10 @@ export const off = Workflows.of({
   answer: refuseOff,
   resume: refuseOff,
   cancel: refuseOff,
+  withdraw: refuseOff,
   get: refuseOff,
   list: refuseOff,
+  about: refuseOff,
   questions: refuseOff(),
   hooks: refuseOff(),
   stored: refuseOff,

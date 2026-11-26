@@ -15,7 +15,7 @@ import org.unifiedpush.android.connector.data.PublicKeySet
 @Config(sdk = [26, 36], manifest = Config.NONE)
 class AgentUnifiedPushTest : AgentNotificationsFixture() {
   private fun body(alertId: String, kind: String = "agent_activity") =
-    JSONObject(update(alertId, false) + ("t3_kind" to kind)).toString().toByteArray()
+    JSONObject(update(alertId, false) + ("t3_kind" to kind) + ("user_id" to "user")).toString().toByteArray()
 
   @Test
   fun deliversTheWatcherPayloadThroughTheSharedPresentation() {
@@ -72,6 +72,7 @@ class AgentUnifiedPushTest : AgentNotificationsFixture() {
       "t3_kind" to "agent_activity",
       "device_id" to "device",
       "user_id" to "user",
+      "user_hash" to "60a4ea94a99303630c40fff23f4de5c06a8f978289a3889f31edfac3b89f85d7",
       "updated_at" to System.currentTimeMillis().toString(),
       "source" to source,
       "active" to (active > 0).toString(),

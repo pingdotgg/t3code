@@ -749,6 +749,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           "core.quotePath=false",
           "-c",
           "core.fsmonitor=false",
+          "-c",
+          "grep.column=false",
+          "-c",
+          "grep.fullName=false",
+          "-c",
+          "submodule.recurse=false",
           "grep",
           "--untracked",
           "--no-color",
@@ -956,8 +962,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     repository: string,
     entries: ReadonlyArray<ProjectEntry>,
   ) {
-    const relativePaths = entries.map((entry) =>
-      repository ? entry.path.slice(repository.length + 1) : entry.path,
+    const relativePaths = entries.map(
+      (entry) => `./${repository ? entry.path.slice(repository.length + 1) : entry.path}`,
     );
     const repositoryCwd = path.join(cwd, repository);
     const result = yield* vcsProcess
@@ -965,6 +971,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         operation: "WorkspaceSearchIndex.listGitIgnored",
         command: "git",
         // fff applies ignore rules to tracked paths too, so the index is not consulted.
+        // ./ avoids leading : pathspec magic; check-ignore rejects --literal-pathspecs.
         args: ["-c", "core.fsmonitor=false", "check-ignore", "--no-index", "-z", "--stdin"],
         cwd: repositoryCwd,
         stdin: `${relativePaths.join("\0")}\0`,
@@ -995,7 +1002,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return result.stdout
       .split("\0")
       .filter(Boolean)
-      .map((relativePath) => (repository ? `${repository}/${relativePath}` : relativePath));
+      .map((ignoredPath) => {
+        const relativePath = ignoredPath.replace(/^\.\//, "");
+        return repository ? `${repository}/${relativePath}` : relativePath;
+      });
   });
 
   const scanSymlinkEntries = Effect.fn("WorkspaceSearchIndex.scanSymlinkEntries")(function* () {

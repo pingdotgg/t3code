@@ -28,6 +28,7 @@ import * as RelayConfiguration from "../src/Config.ts";
 import {
   androidActivityData,
   androidAlertForState,
+  androidRecipientData,
   fitFcmData,
 } from "../src/agentActivity/fcmPayloads.ts";
 import * as WebCrypto from "../src/WebCrypto.ts";
@@ -206,8 +207,7 @@ const main = Effect.gen(function* () {
             alert: alert !== null,
             data: fitFcmData({
               t3_kind: "agent_activity",
-              device_id: device.deviceId,
-              user_id: device.userId,
+              ...androidRecipientData(device.userId, device.deviceId, null),
               updated_at: String(now),
               ...androidActivityData(aggregate),
               ...alert,

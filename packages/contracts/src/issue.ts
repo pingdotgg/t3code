@@ -256,6 +256,13 @@ export const IssueDetail = Schema.Struct({
 });
 export type IssueDetail = typeof IssueDetail.Type;
 
+export const IssueDetailInput = Schema.Struct({
+  ...IssueRef.fields,
+  /** An explicit refresh reads the tracker instead of a recently shared read. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type IssueDetailInput = typeof IssueDetailInput.Type;
+
 /** Older comments, one page past a cursor the detail or a previous page handed over. */
 export const IssueCommentsPageInput = Schema.Struct({
   ...IssueRef.fields,
@@ -503,10 +510,11 @@ export class IssueOperationError extends Schema.TaggedError<IssueOperationError>
     retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(IssueOperationError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(IssueOperationError)(this, { status: 503 });
   }
 
   override get message(): string {
@@ -692,10 +700,11 @@ export class IssueTrackerConnectionError extends Schema.TaggedError<IssueTracker
     detail: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 503 });
   }
 
   override get message(): string {
