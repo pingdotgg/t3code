@@ -556,6 +556,16 @@ describe("question answer paths", () => {
                 metadata: {},
               },
               {
+                output_type: "display_data",
+                data: { "text/plain": "", "text/markdown": "**No missing readings**" },
+                metadata: {},
+              },
+              {
+                output_type: "display_data",
+                data: { "text/plain": "\0", "text/markdown": "**Complete**" },
+                metadata: {},
+              },
+              {
                 output_type: "execute_result",
                 execution_count: 2,
                 data: { "text/markdown": "*Markdown summary*", "text/plain": "Plain summary" },
@@ -579,6 +589,7 @@ describe("question answer paths", () => {
             ],
           },
           { cell_type: "raw", source: [rawSource] },
+          { cell_type: "code", source: "total = 42", execution_count: null, outputs: [] },
         ],
       });
       NodeFS.writeFileSync(path, notebook);
@@ -596,11 +607,14 @@ describe("question answer paths", () => {
       expect(extracted).toContain("42\nNext line");
       expect(extracted).toContain("raw\rvalue");
       expect(extracted).toContain("| Region | Tonnes |\n| North | 120 |\n");
+      expect(extracted).toContain("**No missing readings**");
+      expect(extracted).toContain("**Complete**");
       expect(extracted).toContain("Plain summary\n");
       expect(extracted).not.toContain("*Markdown summary*");
       expect(extracted).not.toContain("iVBORw0KGgo");
       expect(extracted).not.toContain("<script>");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
+      expect(extracted).toMatch(/## Cell 4 \(code\)\ntotal = 42$/u);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
       );
