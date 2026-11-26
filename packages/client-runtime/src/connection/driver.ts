@@ -138,13 +138,15 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const stillSilent = silent.filter((_, position) => late[position] === "silent");
   for (const { route } of [...answeredLate, ...stillSilent]) {
     // A route still silent after its whole check can hold the attempt open far
-    // longer than the check did, and its network error would hide why an
-    // answered route failed. A retry reaches it sooner than waiting here would.
-    if ((transient ?? blocked) !== undefined && stillSilent.some((entry) => entry.route === route))
-      break;
+    // longer than the check did. Once another route failed in a way that
+    // retries, the retry reaches it sooner than waiting here would.
+    const neverAnswered = stillSilent.some((entry) => entry.route === route);
+    if (transient !== undefined && neverAnswered) break;
     const result = yield* attempt(route);
     if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
+    // A route that never answered cannot explain why a host that answered refused.
+    if (neverAnswered && blocked !== undefined) transient = undefined;
   }
   return yield* (
     transient ??
