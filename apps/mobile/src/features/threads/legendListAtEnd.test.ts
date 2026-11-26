@@ -16,7 +16,7 @@ interface ListInternals {
   readonly checkAtBottom: (ctx: unknown) => void;
   readonly settleUserScroll: (ctx: unknown) => void;
   readonly createSelectorFunctionsArr: (
-    ctx: { values: Map<string, unknown>; listeners: Map<string, Set<() => void>> },
+    ctx: { values: Map<string, unknown>; listeners: Map<string, Set<(v: unknown) => void>> },
     signalNames: string[],
   ) => { get: () => unknown[]; subscribe: (cb: () => void) => () => void };
   readonly set$: (
