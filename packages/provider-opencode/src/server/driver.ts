@@ -578,7 +578,7 @@ export const OpenCodeDriver: ProviderDriver<
       if (runtime.generation === "v1" || runtime.version === unsupportedUsageVersion)
         return yield* legacyUsageLimits;
       const limits = yield* openCode2Server.withConnection((connection) =>
-        connection.usageLimits(host.paths.cwd),
+        connection.usageLimits(machineDirectory(connection)),
       );
       if (limits === undefined) unsupportedUsageVersion = runtime.version;
       if (limits !== undefined && limits.unavailable?.reason !== "unsupported") return limits;
