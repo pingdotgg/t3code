@@ -4,6 +4,7 @@ import {
   markdownForNativeRendering,
   markdownHtmlContent,
   markdownWithHtml,
+  markdownWithLiteralHtml,
   markdownWithFileEmbeds,
   parseMarkdownDocument,
   type MarkdownNode,
@@ -16,6 +17,14 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 
 describe("HTML in native Markdown", () => {
+  it("keeps tags in a question preview as typed text", async () => {
+    const preview = "| <Nav> |\n\n`<b>` <div>x</div>";
+    const native = await parseMarkdown(markdownForNativeParsing(markdownWithLiteralHtml(preview)));
+    expect(JSON.stringify(native)).toContain("<Nav>");
+    expect(JSON.stringify(native)).toContain("<div>x</div>");
+    expect(JSON.stringify(native)).toContain('"content":"<b>"');
+  });
+
   it("preserves screenshot URLs and captions from GitHub HTML image embeds", () => {
     expect(
       markdownHtmlContent(

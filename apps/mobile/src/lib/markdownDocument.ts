@@ -289,6 +289,24 @@ export function markdownWithHtml(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+/** Raw HTML shown as typed, like `<Nav>` in an ASCII mockup, instead of read as tags. */
+export function markdownWithLiteralHtml(markdown: string): string {
+  if (!markdown.includes("<")) return markdown;
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode) => {
+    if (node.type === "html") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined)
+        edits.push({ start, end, content: markdown.slice(start, end).replaceAll("<", "\\<") });
+      return;
+    }
+    if ("children" in node) for (const child of node.children) visit(child);
+  };
+  visit(parser.parse(markdown));
+  return applyMarkdownEdits(markdown, edits);
+}
+
 /** Reference definitions as authored, one line each, so a Windows destination keeps its backslashes. */
 export function markdownReferenceDefinitions(markdown: string): string[] {
   if (!markdown.includes("]:")) return [];

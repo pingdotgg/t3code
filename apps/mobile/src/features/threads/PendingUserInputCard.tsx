@@ -23,6 +23,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
+import { markdownWithLiteralHtml } from "../../lib/markdownDocument";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
@@ -348,7 +349,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                       {option.preview ? (
                         <View className="px-3.5">
                           <QuestionText
-                            markdown={option.preview}
+                            markdown={markdownWithLiteralHtml(option.preview)}
                             environmentId={props.environmentId}
                             threadId={props.threadId}
                             workspaceRoot={props.workspaceRoot}
