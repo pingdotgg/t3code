@@ -20,7 +20,7 @@ export function WorkspaceSidebarColumn(props: {
     <View
       testID="thread-navigation-sidebar"
       className="flex-1 border-border bg-drawer"
-      style={{ borderRightWidth: StyleSheet.hairlineWidth, width: props.width }}
+      style={{ borderEndWidth: StyleSheet.hairlineWidth, width: props.width }}
     >
       <StandaloneStack surface="sidebar" options={options}>
         {props.children}

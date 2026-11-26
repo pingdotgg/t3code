@@ -26,7 +26,7 @@ export function SettingsWorkspaceLayout(props: { readonly children: ReactNode })
     <View className="flex-1 flex-row">
       {visited ? (
         <Activity mode={split ? "visible" : "hidden"}>
-          <View style={{ width: layout.listPaneWidth ?? 0, marginRight: layout.listPaneGap ?? 0 }}>
+          <View style={{ width: layout.listPaneWidth ?? 0, marginEnd: layout.listPaneGap ?? 0 }}>
             <PaneContext value="sidebar">
               <NavigationRouteContext value={route}>
                 <SettingsListScreen sidebar selected={root?.settingsPage ?? null} />

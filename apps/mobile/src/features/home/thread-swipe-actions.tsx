@@ -43,6 +43,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { useInterfaceDirection } from "../../i18n/direction";
 import type { MessageResolver } from "../../i18n/messages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
@@ -473,6 +474,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     props.compactActions === true ||
     (measuredRowHeight > 0 && measuredRowHeight < fullActionsHeight);
   const { secondaryAction, threadTitle } = props;
+  const interfaceDirection = useInterfaceDirection();
   // Swipeable calls this on every render; returning the previous element while nothing it shows
   // changed keeps a selection change from re-rendering the hidden actions.
   const rightActions = useRef<{ deps: readonly unknown[]; element: ReactNode } | null>(null);
@@ -531,9 +533,14 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     rightActions.current = { deps, element };
     return element;
   };
-  const childrenContainerStyle = useMemo(() => ({ backgroundColor }), [backgroundColor]);
+  const childrenContainerStyle = useMemo(
+    () => ({ backgroundColor, direction: interfaceDirection }),
+    [backgroundColor, interfaceDirection],
+  );
+  // RNGH places right actions by I18nManager.isRTL, which a `direction` style leaves false,
+  // so the swipeable itself stays LTR and only the row content follows the interface.
   const swipeableContainerStyle = useMemo(
-    () => [{ backgroundColor }, containerStyle],
+    () => [{ backgroundColor, direction: "ltr" as const }, containerStyle],
     [backgroundColor, containerStyle],
   );
 

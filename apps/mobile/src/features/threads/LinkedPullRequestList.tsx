@@ -141,10 +141,10 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
             );
         });
       }}
-      style={{ paddingLeft: 16 + Math.min(depth, 3) * 16 }}
-      className="flex-row gap-3 rounded-xl pr-4 active:bg-row-hover"
+      style={{ paddingStart: 16 + Math.min(depth, 3) * 16 }}
+      className="flex-row gap-3 rounded-xl pe-4 active:bg-row-hover"
     >
-      {depth > 0 ? <View className="-ml-2 w-px self-stretch bg-border" /> : null}
+      {depth > 0 ? <View className="-ms-2 w-px self-stretch bg-border" /> : null}
       <View className="self-start pt-2.5">
         <SymbolView
           name={status?.icon ?? PullRequestGlyph.pullRequest}

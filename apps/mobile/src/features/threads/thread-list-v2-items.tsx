@@ -618,7 +618,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         ) : null}
       </View>
       {!isDraft ? (
-        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
+        <View className="mt-1" style={{ paddingStart: titleTextInset }}>
           <Text
             className={cn(
               "text-xs",
@@ -632,7 +632,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         </View>
       ) : null}
       {branch || props.environmentLabel ? (
-        <View className="mt-1 flex-row items-center gap-1" style={{ paddingLeft: titleTextInset }}>
+        <View className="mt-1 flex-row items-center gap-1" style={{ paddingStart: titleTextInset }}>
           {props.environmentLabel && props.environmentMachine ? (
             <EnvironmentMachineSymbol
               kind={props.environmentMachine}
@@ -1527,7 +1527,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </View>
       </View>
       {props.searchMatch ? (
-        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
+        <View className="mt-1" style={{ paddingStart: titleTextInset }}>
           <ThreadSearchMatchExcerpt
             sidebar={sidebarPane}
             match={props.searchMatch}
@@ -1536,7 +1536,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           />
         </View>
       ) : null}
-      <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
+      <View className="mt-1 flex-row items-center gap-2" style={{ paddingStart: titleTextInset }}>
         {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
           <Text
             className={cn(

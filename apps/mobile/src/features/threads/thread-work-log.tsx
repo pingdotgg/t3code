@@ -593,7 +593,7 @@ function ThreadReasoningGroup(props: {
   }));
 
   return (
-    <View className="ml-7">
+    <View className="ms-7">
       <Animated.ScrollView
         nestedScrollEnabled
         className="max-h-96"
@@ -806,7 +806,7 @@ function WorkspacePreparationRetryButton(props: {
   const [busy, setBusy] = useState(false);
   if (!retryable) return null;
   return (
-    <View className="ml-7 mt-2">
+    <View className="ms-7 mt-2">
       <Button
         label={gt("Retry")}
         tone="secondary"
@@ -995,7 +995,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             </Text>
           </View>
           {!warning ? (
-            <Text selectable className="ml-7 text-sm text-foreground">
+            <Text selectable className="ms-7 text-sm text-foreground">
               {failureItem.failure.message}
             </Text>
           ) : null}
@@ -1016,7 +1016,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     ) : (
       <View>
         {errorRow}
-        <View className="ml-7 mt-1.5 pb-1">
+        <View className="ms-7 mt-1.5 pb-1">
           <Button
             label={gt("Verify Google account")}
             size="compact"
@@ -1283,7 +1283,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
+          className={reasoning ? "ms-7 py-1" : "pb-1 pt-0.5"}
         >
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
