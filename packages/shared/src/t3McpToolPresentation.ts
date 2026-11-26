@@ -462,6 +462,19 @@ export const T3_MCP_TOOLS_ASKED_BY_T3: ReadonlyArray<string> = [
   "set_issue_state",
 ];
 
+/**
+ * The `_meta` key under which T3 Code's MCP server names its own approval request in the
+ * elicitation it sends for one, and under which a provider adapter reads it back.
+ */
+export const T3_APPROVAL_REQUEST_META = "t3.codes/approval-request";
+
+/** The approval request an elicitation's `_meta` names, if it names one. */
+export const t3ApprovalRequestId = (meta: unknown): string | undefined => {
+  if (typeof meta !== "object" || meta === null) return undefined;
+  const id = (meta as Readonly<Record<string, unknown>>)[T3_APPROVAL_REQUEST_META];
+  return typeof id === "string" ? id : undefined;
+};
+
 function normalizeT3McpToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }

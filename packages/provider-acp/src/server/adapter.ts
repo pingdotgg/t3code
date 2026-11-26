@@ -40,7 +40,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
-import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
+import { resolveT3McpToolId, t3ApprovalRequestId } from "@t3tools/shared/t3McpToolPresentation";
 import {
   compactDynamicToolOutput,
   compactT3McpToolOutput,
@@ -2111,6 +2111,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  // The elicitation handler holds T3 Code's own requests open until each has ended in the thread.
+  yield* mcpSessions.holdsApprovalRequests(options.instanceId);
   const { flavor, selfInvocation: self } = options;
   const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
@@ -7828,6 +7830,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* targetRuntime.handleElicitation((params, requestContext) =>
             Effect.gen(function* () {
               const transportRequestId = requestContext.requestId;
+              // T3 Code shows its own request in the thread and records the answer itself, so
+              // one the agent passes on is held until that request ends and answered as it
+              // ended. It comes first: no policy below answers it, whatever else it carries.
+              const ownThreadId =
+                params.mode === "form" ? (yield* Ref.get(activeTurn))?.input.threadId : undefined;
+              const ownRequest =
+                ownThreadId === undefined
+                  ? undefined
+                  : yield* mcpSessions.ownApprovalRequest(ownThreadId, {
+                      id: t3ApprovalRequestId(params._meta),
+                      message: params.message,
+                    });
+              if (ownThreadId !== undefined && ownRequest !== undefined) {
+                const answer = yield* mcpSessions.awaitApprovalAnswer(ownThreadId, ownRequest.id);
+                return answer === "accepted"
+                  ? ({ action: "accept", content: {} } as const)
+                  : ({ action: answer === "declined" ? "decline" : "cancel" } as const);
+              }
               if (
                 params.mode === "form" &&
                 (unknownRecord(params._meta)?.codex_approval_kind === "mcp_tool_call" ||

@@ -9682,6 +9682,90 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live.each([
+    { names: "its id", answer: "declined", reply: { action: "decline" } },
+    { names: "its id", answer: "cancelled", reply: { action: "cancel" } },
+    // An agent that passes on no `_meta` of T3 Code's is matched by the question's words.
+    { names: "its words", answer: "declined", reply: { action: "decline" } },
+  ] as const)(
+    "holds T3 Code's own request, named by $names, for the person in a Full access turn: $answer",
+    ({ names, answer, reply }) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const suffix = `${names.replaceAll(" ", "-")}-${answer}`;
+        const instanceId = ProviderInstanceId.make(`acp-test-own-approval-${suffix}`);
+        const threadId = ThreadId.make(`thread-acp-own-approval-${suffix}`);
+        const responseLog = `${yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-own-approval-",
+        })}/responses.log`;
+        const asked = yield* sessions.recordApprovalRequest(threadId, {
+          message: "Approve this request?",
+          state: "state",
+        });
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: {
+                // Tagged as the agent's own tool approval, which this turn's mode would allow.
+                T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION: "1",
+                T3_ACP_ELICITATION_SCHEMA: '{"type":"object","properties":{}}',
+                T3_ACP_ELICITATION_RESPONSE_LOG_PATH: responseLog,
+                ...(names === "its id" ? { T3_ACP_ELICITATION_T3_APPROVAL_REQUEST: asked } : {}),
+              },
+            }),
+          },
+          selfInvocation,
+        });
+        assert.isTrue(yield* sessions.areApprovalRequestsHeld(instanceId));
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`provider-session-acp-own-approval-${suffix}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const collected = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        // Answered by this turn's mode, the agent would be told "accept" whatever is settled.
+        yield* sessions.settleApprovalRequest(threadId, asked, answer);
+        const events = Array.from(yield* Fiber.join(collected));
+        // The server shows the request; the adapter raises none of its own for it.
+        assert.isFalse(events.some((event) => event.type === "runtime_request.updated"));
+        assert.deepEqual(JSON.parse((yield* fileSystem.readFileString(responseLog)).trim()), reply);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.live("fails a held native response acknowledgement before normal session close", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

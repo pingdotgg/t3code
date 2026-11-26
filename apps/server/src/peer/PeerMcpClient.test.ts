@@ -447,3 +447,122 @@ it.effect("bounds the session handshake, not a tool call that waits longer", () 
     expect(yield* Fiber.join(waiting)).toEqual({ modes: "approval-required/plan" });
   }),
 );
+
+const outsideActionToolkit = Toolkit.make(
+  Tool.make("asked", {
+    description: "Returns what this request asks of a call that acts outside a thread.",
+    success: Schema.Struct({ outsideAction: Schema.String }),
+    dependencies: [McpInvocationContext.McpInvocationContext],
+  }),
+);
+
+it.effect("tells a peer that describes outside actions which step of asking a call is", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const handlers = McpToolAccess.toLayer(outsideActionToolkit, {
+        asked: McpToolAccess.reads(() =>
+          McpInvocationContext.McpInvocationContext.pipe(
+            Effect.map((scope) => ({ outsideAction: JSON.stringify(scope.outsideAction ?? null) })),
+          ),
+        ),
+      });
+      const box = descriptorOf("environment-box", "Box");
+      const b = yield* servePeer(
+        box,
+        McpHttpServer.toolkitRegistration(outsideActionToolkit, handlers),
+      );
+      const context = yield* Layer.build(
+        layerLinkingEnvironment(descriptorOf("environment-a", "A")),
+      );
+      const client = Context.get(context, PeerMcpClient.PeerMcpClient);
+      yield* linkTo(Context.get(context, PeerLinks.PeerLinks), b);
+      const call = (outsideAction?: "describe" | { readonly approved: string }) =>
+        client
+          .call({
+            environmentId: box.environmentId,
+            tool: "asked",
+            arguments: {},
+            limits: { runtimeMode: "approval-required", interactionMode: "default" },
+            ...(outsideAction === undefined ? {} : { outsideAction }),
+            success: Schema.Struct({ outsideAction: Schema.String }),
+          })
+          .pipe(Effect.map((result) => JSON.parse(result.outsideAction) as unknown));
+      const request = "a".repeat(64);
+      expect(yield* call()).toBeNull();
+      expect(yield* call("describe")).toBe("describe");
+      expect(yield* call({ approved: request })).toEqual({ approved: request });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("sends no call that asks first to a peer that does not say it describes them", () =>
+  Effect.gen(function* () {
+    const posted: Array<string> = [];
+    const http = HttpClient.make((request) =>
+      Effect.sync(() => {
+        const body =
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+        const method = (JSON.parse(body) as { readonly method: string }).method;
+        posted.push(method);
+        // As a peer from before it could describe a call answers: no header saying it does.
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(method === "tools/call" ? probeResult : "", {
+            status: method === "notifications/initialized" ? 202 : 200,
+            headers: { "mcp-session-id": "session" },
+          }),
+        );
+      }),
+    );
+    const box = descriptorOf("environment-box", "Box");
+    const context = yield* Layer.build(
+      PeerMcpClient.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(HttpClient.HttpClient, http),
+            Layer.mock(PeerLinks.PeerLinks)({
+              resolve: () =>
+                Effect.succeed({
+                  link: {
+                    environmentId: box.environmentId,
+                    label: box.label,
+                    urls: ["https://peer.example"],
+                    access: "full-access",
+                    linkedAt: DateTime.makeUnsafe(0),
+                    expiresAt: DateTime.makeUnsafe(1),
+                    lastReachedAt: null,
+                    lastError: null,
+                  },
+                  url: "https://peer.example",
+                  token: "fixture",
+                  capabilities: box.capabilities,
+                }),
+              recordOutcome: () => Effect.void,
+            }),
+          ),
+        ),
+      ),
+    );
+    const call = (outsideAction?: "describe" | { readonly approved: string }) =>
+      Context.get(context, PeerMcpClient.PeerMcpClient).call({
+        environmentId: box.environmentId,
+        tool: "probe",
+        arguments: {},
+        limits: { runtimeMode: "approval-required", interactionMode: "default" },
+        ...(outsideAction === undefined ? {} : { outsideAction }),
+        success: Result,
+      });
+    for (const outsideAction of ["describe", { approved: "a".repeat(64) }] as const) {
+      expect(yield* call(outsideAction).pipe(Effect.flip)).toMatchObject({
+        code: "capability_denied",
+        message: expect.stringMatching(
+          /^Not done: below Full access the user approves this action first, and the linked environment runs a version of T3 Code that cannot say what it would do\. Nothing was sent there\./,
+        ),
+      });
+    }
+    // The handshake alone reached it. An ordinary call still goes.
+    expect(posted).toEqual(["initialize", "notifications/initialized"]);
+    expect(yield* call()).toEqual({ modes: "approval-required/plan" });
+    expect(posted.at(-1)).toBe("tools/call");
+  }).pipe(Effect.scoped),
+);

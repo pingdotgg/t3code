@@ -49,6 +49,11 @@ export class PeerMcpClient extends Context.Service<
       readonly limits: PeerCallLimits;
       /** The thread here the call is made for, sent as `T3-Sender-Thread`. */
       readonly sender?: OrchestrationV2LinkedSender;
+      /**
+       * Sent as `T3-Outside-Action`, and only to a peer that says it describes such calls:
+       * any other would act on the call as if nobody had to be asked.
+       */
+      readonly outsideAction?: "describe" | { readonly approved: string } | undefined;
       readonly success: S;
     }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
   }
@@ -92,6 +97,12 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
     "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
 });
 
+const cannotDescribe = new OrchestratorMcpFailure({
+  code: "capability_denied",
+  message:
+    "Not done: below Full access the user approves this action first, and the linked environment runs a version of T3 Code that cannot say what it would do. Nothing was sent there. Tell the user; they can update it, do it themselves, or do it from a thread in that environment.",
+});
+
 const stoppedAnswering = new OrchestratorMcpFailure({
   code: "orchestration_error",
   message: "The linked environment stopped answering.",
@@ -107,12 +118,18 @@ const responseJson = (contentType: string | undefined, text: string) =>
         .join("")
     : text;
 
+interface PeerSession {
+  readonly id: string;
+  /** Whether the peer said it describes a call that acts outside a thread before acting on it. */
+  readonly describesOutsideActions: boolean;
+}
+
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
   const httpClient = yield* HttpClient.HttpClient;
   // One MCP session per peer and address, reused across calls. The peer keeps
   // sessions in memory, so a restart there answers 404 and we start a new one.
-  const sessions = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+  const sessions = yield* Ref.make<ReadonlyMap<string, PeerSession>>(new Map());
 
   const post = (url: string, token: string, body: unknown, headers: Record<string, string>) =>
     httpClient.execute(
@@ -183,7 +200,11 @@ const make = Effect.gen(function* () {
         { jsonrpc: "2.0", method: "notifications/initialized" },
         { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
       );
-      return sessionId;
+      return {
+        id: sessionId,
+        describesOutsideActions:
+          initialized.headers[McpInvocationContext.DESCRIBES_OUTSIDE_ACTIONS_HEADER] === "describe",
+      } satisfies PeerSession;
     },
     // Only the handshake is bounded: a forwarded tool call may wait for minutes.
     (effect, { url }) => Effect.timeout(effect, PeerLinks.probeTimeout(url)),
@@ -212,7 +233,20 @@ const make = Effect.gen(function* () {
                 .join("/"),
             };
       const sessionKey = `${input.environmentId} ${resolved.url}`;
-      const callOnce = (sessionId: string) =>
+      const outsideActionHeader =
+        input.outsideAction === undefined
+          ? {}
+          : {
+              [McpInvocationContext.OUTSIDE_ACTION_HEADER]:
+                input.outsideAction === "describe"
+                  ? "describe"
+                  : `approved ${input.outsideAction.approved}`,
+            };
+      const callOnce = (session: PeerSession) =>
+        input.outsideAction !== undefined && !session.describesOutsideActions
+          ? Effect.fail(cannotDescribe)
+          : callWith(session.id);
+      const callWith = (sessionId: string) =>
         post(
           resolved.url,
           resolved.token,
@@ -225,17 +259,18 @@ const make = Effect.gen(function* () {
           {
             ...limitHeader,
             ...senderHeader,
+            ...outsideActionHeader,
             "mcp-session-id": sessionId,
             "mcp-protocol-version": PROTOCOL_VERSION,
           },
         );
       const existing = (yield* Ref.get(sessions)).get(sessionKey);
-      const sessionId = existing ?? (yield* openSession(resolved, limitHeader));
+      const session = existing ?? (yield* openSession(resolved, limitHeader));
       // The initialized session outlives a tool request, including a long wait or cancellation.
       if (existing === undefined) {
-        yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, sessionId));
+        yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, session));
       }
-      let response = yield* callOnce(sessionId);
+      let response = yield* callOnce(session);
       if (response.status === 404) {
         const renewed = yield* openSession(resolved, limitHeader);
         yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, renewed));

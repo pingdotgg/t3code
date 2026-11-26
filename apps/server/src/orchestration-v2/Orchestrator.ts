@@ -11782,7 +11782,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
       const providerSession = context.session;
-      if (providerSessionId !== null && providerSession === undefined) {
+      // The server's own request is answered in its record, whatever became of the session.
+      const recordOnly =
+        runtimeRequest.responseCapability.type === "live" &&
+        runtimeRequest.responseCapability.recordOnly === true;
+      if (providerSessionId !== null && providerSession === undefined && !recordOnly) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -12079,11 +12083,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (providerSessionId === null) return;
       // The tool that asked reads the answer from the request itself.
-      if (
-        runtimeRequest.responseCapability.type === "live" &&
-        runtimeRequest.responseCapability.recordOnly === true
-      )
-        return;
+      if (recordOnly) return;
       if (runtimeRequest.kind === "user_input" && resolvedNodeStatus === "completed") {
         const thread = yield* projectionStore
           .getThread(command.threadId)

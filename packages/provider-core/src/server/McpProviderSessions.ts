@@ -1,17 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Pure synchronous hashing keeps page matching bounded without a runtime dependency.
 import * as NodeCrypto from "node:crypto";
-import type {
-  ProviderApprovalPushHooks,
-  ProviderApprovalToolAction,
-  ProviderInstanceId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 
@@ -47,18 +44,25 @@ interface KeptToolResult {
 
 /** What one of T3's own MCP tools is asking the person behind a thread to approve. */
 export interface T3ApprovalRequest {
-  /** The whole question, as the provider's client hands it on. */
+  /** The whole question, as the thread shows it and as a provider's client hands it on. */
   readonly message: string;
-  readonly pushHooks?: ProviderApprovalPushHooks | undefined;
-  readonly toolAction?: ProviderApprovalToolAction | undefined;
-  /** What an answer is given for; an answer to another state does not count for this request. */
-  readonly state?: string | undefined;
+  /** What an answer is given for: a call asking for the same state again finds this request. */
+  readonly state: string;
 }
 
-/** A request T3 is waiting on, and what the person answered once an adapter has shown it. */
+/**
+ * How a request ended. "cancelled": without the person's answer, as when its turn ends or is
+ * interrupted, or they dismiss it.
+ */
+export type T3ApprovalAnswer = "accepted" | "declined" | "cancelled";
+
+/** A request T3 is waiting on. `id` names it in the thread and to the provider's client. */
 export interface KeptApprovalRequest extends T3ApprovalRequest {
   readonly id: string;
-  readonly approved?: boolean | undefined;
+}
+
+interface WaitingApprovalRequest extends KeptApprovalRequest {
+  readonly answer: Deferred.Deferred<T3ApprovalAnswer>;
 }
 
 interface ToolResultState {
@@ -116,36 +120,44 @@ export class McpProviderSessions extends Context.Service<
       reported?: Record<string, unknown>,
     ) => Effect.Effect<Record<string, unknown> | undefined>;
     readonly clearToolResults: (threadId: ThreadId) => Effect.Effect<void>;
-    // The provider's client hands an adapter a server name and the message. This is how the
-    // adapter learns a request is T3's own, and what it names, from T3 itself: kept from when
-    // T3 asks until it has the answer. Recording returns the request's own id, and only that id
-    // forgets it: two calls may ask the same thing at once, and one may outlive its session.
+    // T3's own tools ask the person in the thread itself and keep the request here until it
+    // has ended. The server alone settles it, from its record of what the person answered.
     readonly recordApprovalRequest: (
       threadId: ThreadId,
       request: T3ApprovalRequest,
     ) => Effect.Effect<string>;
+    /** The request of the thread still waiting for `state`, which the same call made again joins. */
     readonly findApprovalRequest: (
       threadId: ThreadId,
-      message: string,
+      state: string,
     ) => Effect.Effect<KeptApprovalRequest | undefined>;
-    readonly forgetApprovalRequest: (threadId: ThreadId, id: string) => Effect.Effect<void>;
-    // An adapter that shows T3's own requests says so for its provider instance and passes on
-    // each answer the person gave in the app. It is handed the message and no id, so the answer
-    // counts for every request of the thread asking `message` that has none yet. For those
-    // instances that answer, not the client's reply, is what T3 goes by.
-    readonly showsApprovalRequests: (providerInstanceId: ProviderInstanceId) => Effect.Effect<void>;
-    readonly areApprovalRequestsShown: (
-      providerInstanceId: ProviderInstanceId,
-    ) => Effect.Effect<boolean>;
-    readonly answerApprovalRequests: (
-      threadId: ThreadId,
-      message: string,
-      approved: boolean,
-    ) => Effect.Effect<void>;
-    // Ends the request and returns it as it was, with the person's answer if one was given.
-    readonly takeApprovalRequest: (
+    readonly settleApprovalRequest: (
       threadId: ThreadId,
       id: string,
+      answer: T3ApprovalAnswer,
+    ) => Effect.Effect<void>;
+    /** Waits until the request is settled. One that is gone, as after a restart, was cancelled. */
+    readonly awaitApprovalAnswer: (
+      threadId: ThreadId,
+      id: string,
+    ) => Effect.Effect<T3ApprovalAnswer>;
+    /** The answer the request has so far, without waiting for one. */
+    readonly approvalAnswer: (
+      threadId: ThreadId,
+      id: string,
+    ) => Effect.Effect<Option.Option<T3ApprovalAnswer>>;
+    readonly forgetApprovalRequest: (threadId: ThreadId, id: string) => Effect.Effect<void>;
+    // A waiting request is also sent to the thread's client as an MCP elicitation. An adapter
+    // that is handed those says so for its provider instance and holds each until the request
+    // is settled, never answering one itself. It knows one by the id the client passes on, or
+    // else by the question's words.
+    readonly holdsApprovalRequests: (providerInstanceId: ProviderInstanceId) => Effect.Effect<void>;
+    readonly areApprovalRequestsHeld: (
+      providerInstanceId: ProviderInstanceId,
+    ) => Effect.Effect<boolean>;
+    readonly ownApprovalRequest: (
+      threadId: ThreadId,
+      elicited: { readonly id: string | undefined; readonly message: string },
     ) => Effect.Effect<KeptApprovalRequest | undefined>;
   }
 >()("@t3tools/provider-core/server/McpProviderSessions") {}
@@ -241,24 +253,29 @@ const make = Effect.gen(function* () {
     entries: new Map(),
     epochs: new Map(),
   });
-  const approvalRequests = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptApprovalRequest>>());
-  const approvalRequestsShownBy = yield* Ref.make<ReadonlySet<ProviderInstanceId>>(new Set());
+  const approvalRequests = yield* Ref.make(
+    new Map<ThreadId, ReadonlyArray<WaitingApprovalRequest>>(),
+  );
+  const approvalRequestsHeldBy = yield* Ref.make<ReadonlySet<ProviderInstanceId>>(new Set());
   const withoutThread = <A>(kept: ReadonlyMap<ThreadId, A>, threadId: ThreadId) => {
     const next = new Map(kept);
     next.delete(threadId);
     return next;
   };
-  const takeApprovalRequest = (threadId: ThreadId, id: string) =>
-    Ref.modify(approvalRequests, (current) => {
-      const kept = current.get(threadId);
-      const taken = kept?.find((candidate) => candidate.id === id);
-      if (kept === undefined || taken === undefined) return [undefined, current];
-      const rest = kept.filter((candidate) => candidate !== taken);
-      return [
-        taken,
-        rest.length === 0 ? withoutThread(current, threadId) : new Map(current).set(threadId, rest),
-      ];
+  const cancelAll = (requests: ReadonlyArray<WaitingApprovalRequest> | undefined) =>
+    Effect.forEach(requests ?? [], (request) => Deferred.succeed(request.answer, "cancelled"), {
+      discard: true,
     });
+  // A request dropped with its session ends as cancelled, so nothing waits on it for ever.
+  const dropApprovalRequests = (threadId: ThreadId) =>
+    Ref.modify(approvalRequests, (current) => [
+      current.get(threadId),
+      withoutThread(current, threadId),
+    ]).pipe(Effect.flatMap(cancelAll));
+  const waitingApprovalRequest = (threadId: ThreadId, id: string) =>
+    Ref.get(approvalRequests).pipe(
+      Effect.map((current) => current.get(threadId)?.find((kept) => kept.id === id)),
+    );
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
       const current = yield* Ref.get(sessions);
@@ -271,7 +288,7 @@ const make = Effect.gen(function* () {
         yield* Ref.update(toolResultState, (state) =>
           clearThreadToolResults(state, config.threadId),
         );
-        yield* Ref.update(approvalRequests, (kept) => withoutThread(kept, config.threadId));
+        yield* dropApprovalRequests(config.threadId);
       }
       yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
     }),
@@ -294,7 +311,7 @@ const make = Effect.gen(function* () {
         Effect.andThen(
           Ref.update(toolResultState, (state) => clearThreadToolResults(state, threadId)),
         ),
-        Effect.andThen(Ref.update(approvalRequests, (kept) => withoutThread(kept, threadId))),
+        Effect.andThen(dropApprovalRequests(threadId)),
       );
     }),
     recordHtmlRender: Effect.fn("McpProviderSessions.recordHtmlRender")(
@@ -405,63 +422,97 @@ const make = Effect.gen(function* () {
       return Ref.update(toolResultState, (state) => clearThreadToolResults(state, threadId));
     }),
     recordApprovalRequest: Effect.fn("McpProviderSessions.recordApprovalRequest")(
-      function (threadId, request) {
-        return randomUuidV4.pipe(
-          Effect.tap((id) =>
-            Ref.update(approvalRequests, (current) =>
-              new Map(current).set(
-                threadId,
-                [...(current.get(threadId) ?? []), { ...request, id }].slice(
-                  -MAX_KEPT_APPROVAL_REQUESTS,
-                ),
-              ),
-            ),
-          ),
-        );
+      function* (threadId, request) {
+        const id = yield* randomUuidV4;
+        const answer = yield* Deferred.make<T3ApprovalAnswer>();
+        const dropped = yield* Ref.modify(approvalRequests, (current) => {
+          const kept = [...(current.get(threadId) ?? []), { ...request, id, answer }];
+          return [
+            kept.slice(0, -MAX_KEPT_APPROVAL_REQUESTS),
+            new Map(current).set(threadId, kept.slice(-MAX_KEPT_APPROVAL_REQUESTS)),
+          ];
+        });
+        yield* cancelAll(dropped);
+        return id;
       },
     ),
     findApprovalRequest: Effect.fn("McpProviderSessions.findApprovalRequest")(
-      function (threadId, message) {
+      function (threadId, state) {
         return Ref.get(approvalRequests).pipe(
-          Effect.map((current) => current.get(threadId)?.find((kept) => kept.message === message)),
+          Effect.map((current) => current.get(threadId)?.find((kept) => kept.state === state)),
         );
       },
     ),
-    forgetApprovalRequest: Effect.fn("McpProviderSessions.forgetApprovalRequest")(
-      function (threadId, id) {
-        return Effect.asVoid(takeApprovalRequest(threadId, id));
+    settleApprovalRequest: Effect.fn("McpProviderSessions.settleApprovalRequest")(
+      function* (threadId, id, answer) {
+        const request = yield* waitingApprovalRequest(threadId, id);
+        // A request's first answer stands.
+        if (request !== undefined) yield* Deferred.succeed(request.answer, answer);
       },
     ),
-    showsApprovalRequests: Effect.fn("McpProviderSessions.showsApprovalRequests")(
+    awaitApprovalAnswer: Effect.fn("McpProviderSessions.awaitApprovalAnswer")(
+      function* (threadId, id) {
+        const request = yield* waitingApprovalRequest(threadId, id);
+        return request === undefined ? "cancelled" : yield* Deferred.await(request.answer);
+      },
+    ),
+    approvalAnswer: Effect.fn("McpProviderSessions.approvalAnswer")(function* (threadId, id) {
+      const request = yield* waitingApprovalRequest(threadId, id);
+      if (request === undefined) return Option.some("cancelled" as const);
+      const answer = yield* Deferred.poll(request.answer);
+      return Option.isNone(answer) ? Option.none() : Option.some(yield* answer.value);
+    }),
+    forgetApprovalRequest: Effect.fn("McpProviderSessions.forgetApprovalRequest")(
+      function* (threadId, id) {
+        const forgotten = yield* Ref.modify(approvalRequests, (current) => {
+          const kept = current.get(threadId);
+          const taken = kept?.find((candidate) => candidate.id === id);
+          if (kept === undefined || taken === undefined) return [undefined, current];
+          const rest = kept.filter((candidate) => candidate !== taken);
+          return [
+            taken,
+            rest.length === 0
+              ? withoutThread(current, threadId)
+              : new Map(current).set(threadId, rest),
+          ];
+        });
+        if (forgotten !== undefined) yield* Deferred.succeed(forgotten.answer, "cancelled");
+      },
+    ),
+    holdsApprovalRequests: Effect.fn("McpProviderSessions.holdsApprovalRequests")(
       function (providerInstanceId) {
-        return Ref.update(approvalRequestsShownBy, (current) =>
+        return Ref.update(approvalRequestsHeldBy, (current) =>
           new Set(current).add(providerInstanceId),
         );
       },
     ),
-    areApprovalRequestsShown: Effect.fn("McpProviderSessions.areApprovalRequestsShown")(
+    areApprovalRequestsHeld: Effect.fn("McpProviderSessions.areApprovalRequestsHeld")(
       function (providerInstanceId) {
-        return Ref.get(approvalRequestsShownBy).pipe(
+        return Ref.get(approvalRequestsHeldBy).pipe(
           Effect.map((current) => current.has(providerInstanceId)),
         );
       },
     ),
-    answerApprovalRequests: Effect.fn("McpProviderSessions.answerApprovalRequests")(
-      function (threadId, message, approved) {
-        return Ref.update(approvalRequests, (current) => {
-          const kept = current.get(threadId);
-          // A request's first answer stands.
-          const waits = (request: KeptApprovalRequest) =>
-            request.message === message && request.approved === undefined;
-          if (kept === undefined || !kept.some(waits)) return current;
-          return new Map(current).set(
-            threadId,
-            kept.map((request) => (waits(request) ? { ...request, approved } : request)),
-          );
-        });
+    ownApprovalRequest: Effect.fn("McpProviderSessions.ownApprovalRequest")(
+      function (threadId, elicited) {
+        return Ref.get(approvalRequests).pipe(
+          Effect.map((current) =>
+            current
+              .get(threadId)
+              ?.find((kept) =>
+                elicited.id === undefined
+                  ? kept.message === elicited.message
+                  : kept.id === elicited.id,
+              ),
+          ),
+          Effect.map((kept) =>
+            kept === undefined
+              ? undefined
+              : { id: kept.id, message: kept.message, state: kept.state },
+          ),
+        );
       },
     ),
-    takeApprovalRequest: Effect.fn("McpProviderSessions.takeApprovalRequest")(takeApprovalRequest),
   });
 });
 

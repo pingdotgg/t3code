@@ -287,9 +287,19 @@ export class PullRequestService extends Context.Service<
     readonly checkLogs: (
       input: PullRequestRef & { readonly check?: string; readonly tailLines: number },
     ) => Effect.Effect<ReadonlyArray<ProviderCheckLog>, PullRequestError>;
-    /** Re-runs the failing checks, or only the named check. */
-    readonly rerunChecks: (
+    /** The checks a rerun would act on now: the failing and cancelled ones, or the named check. */
+    readonly rerunnableChecks: (
       input: PullRequestRef & { readonly check?: string },
+    ) => Effect.Effect<ReadonlyArray<RerunnableCheck>, PullRequestError>;
+    /**
+     * Re-runs the failing checks, or only the named check. With `approved`, re-runs exactly
+     * those, and nothing when the checks it would act on now are not those.
+     */
+    readonly rerunChecks: (
+      input: PullRequestRef & {
+        readonly check?: string;
+        readonly approved?: ReadonlyArray<RerunnableCheck>;
+      },
     ) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
@@ -761,6 +771,21 @@ function httpRemoteHost(remoteUrl: string): string | null {
 }
 
 /** Whether `expected` names `head`: the full SHA, or a hex prefix of at least 7 characters. */
+/** A check a rerun acts on, as the host is told it. */
+export interface RerunnableCheck {
+  readonly name: string;
+  readonly url: string | null;
+}
+
+/** Said when the checks to rerun are no longer the ones the person approved. */
+export const RERUN_CHECKS_CHANGED =
+  "The checks that would be rerun changed after the user was asked. Nothing was rerun. Call again to ask.";
+
+const checkKey = ({ name, url }: RerunnableCheck) => JSON.stringify([name, url ?? null]);
+const sameChecks = (left: ReadonlyArray<RerunnableCheck>, right: ReadonlyArray<RerunnableCheck>) =>
+  left.length === right.length &&
+  left.map(checkKey).toSorted().join("\n") === right.map(checkKey).toSorted().join("\n");
+
 export const isHeadSha = (head: string, expected: string) => {
   const wanted = expected.toLowerCase();
   return /^[0-9a-f]{7,}$/.test(wanted) ? head.toLowerCase().startsWith(wanted) : head === expected;
@@ -3996,6 +4021,12 @@ export const make = Effect.gen(function* () {
     ];
   });
 
+  const rerunnableChecks: PullRequestService["Service"]["rerunnableChecks"] = Effect.fn(
+    "PullRequestService.rerunnableChecks",
+  )(function* (input) {
+    return yield* selectChecks(yield* requireProject(input), input, "rerunChecks");
+  });
+
   const rerunChecks: PullRequestService["Service"]["rerunChecks"] = Effect.fn(
     "PullRequestService.rerunChecks",
   )(function* (input) {
@@ -4008,6 +4039,12 @@ export const make = Effect.gen(function* () {
       });
     }
     const checks = yield* selectChecks(project, input, "rerunChecks");
+    if (input.approved !== undefined && !sameChecks(checks, input.approved)) {
+      return yield* new PullRequestOperationError({
+        operation: "rerunChecks",
+        detail: RERUN_CHECKS_CHANGED,
+      });
+    }
     if (checks.length === 0) return [];
     const ref = yield* canonicalRef(input);
     // A failure can follow a run that already restarted, so readers refresh either way.
@@ -4250,6 +4287,7 @@ export const make = Effect.gen(function* () {
     ),
     runAction: runActionAndInvalidate,
     checkLogs,
+    rerunnableChecks,
     rerunChecks,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),

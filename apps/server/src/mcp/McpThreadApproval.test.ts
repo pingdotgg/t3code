@@ -53,8 +53,6 @@ const attemptId = RunAttemptId.make("attempt:thread-approval");
 const rootNodeId = NodeId.make("node:thread-approval:root");
 
 const QUESTION = /^Merge pull request #5 in org\/repo\? \(request [0-9a-f]{8}\)$/;
-const WAITING =
-  /^Not done yet: T3 Code is asking the user to approve "Merge pull request #5 in org\/repo" in this thread, and they have not answered\. Call again with the same arguments to wait for their answer\.$/;
 
 /**
  * A thread of `driver` in the middle of a turn, on the real orchestrator, and a tool that acts
@@ -89,12 +87,16 @@ const withThread = <A, E>(
       }>
     >;
     readonly answer: (requestId: string, decision: "accept" | "decline") => Effect.Effect<void>;
-    readonly endRun: Effect.Effect<void>;
+    readonly archive: Effect.Effect<void>;
     /** What answering `requestId` left for the provider's adapter to deliver. */
     readonly deliveries: (requestId: string) => Effect.Effect<number>;
-    readonly asksByElicitation: Effect.Effect<void>;
-    readonly elicited: Effect.Effect<McpSchema.InputRequired | undefined>;
+    /** The server loses what it kept in memory for the thread, as on a restart. */
+    readonly forgetSession: Effect.Effect<void>;
+    /** The ids the client was sent as elicitations, which it holds open. */
+    readonly elicited: Effect.Effect<ReadonlyArray<unknown>>;
   }) => Effect.Effect<A, E, never>,
+  /** Whether the thread's adapter holds what the server sends its client for a request. */
+  held = true,
 ) => {
   const instanceId = ProviderInstanceId.make(driver);
   const modelSelection = { instanceId, model: "model" };
@@ -264,15 +266,41 @@ const withThread = <A, E>(
       capabilities: new Set(["orchestration"]),
       issuedAt: 0,
     };
-    const elicited = Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined);
+    // The thread's adapter holds what the server sends its client until the request ends.
+    if (held) yield* sessions.holdsApprovalRequests(instanceId);
+    const elicited = Ref.makeUnsafe<ReadonlyArray<unknown>>([]);
+    const client = McpSchema.McpServerClient.of({
+      clientId: 1,
+      protocolVersion: "2025-06-18",
+      clientCapabilities: {},
+      clientInfo: { name: "thread-approval", version: "1" },
+      initializePayload: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "thread-approval", version: "1" },
+      },
+      getClient: Effect.succeed({
+        listRoots: () => Effect.die("unused"),
+        createMessage: () => Effect.die("unused"),
+        elicit: (request) =>
+          Ref.update(elicited, (current) => [...current, request._meta]).pipe(
+            Effect.andThen(Effect.never),
+          ),
+      } as McpSchema.McpReverseClient),
+    });
     const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
-        Effect.succeed({
-          ...liveThreadShell(id, { runtimeMode, activeRunId: runId }),
-          providerInstanceId: instanceId,
-          modelSelection,
-        }),
+        orchestrator.getThreadShell(id).pipe(
+          Effect.map((stored) => ({
+            ...liveThreadShell(id, { runtimeMode, activeRunId: runId }),
+            providerInstanceId: instanceId,
+            modelSelection,
+            archivedAt: stored?.archivedAt ?? null,
+          })),
+        ),
       getThreadRecords: orchestrator.getThreadRecords,
+      getThreadEventSequence: orchestrator.getThreadEventSequence,
+      streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
       dispatch: orchestrator.dispatch,
     });
     const call = (number = 5) =>
@@ -291,12 +319,13 @@ const withThread = <A, E>(
             },
         ),
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(McpClientInput.McpClientInput, { request: elicited, sessions }),
+        Effect.provideService(McpClientInput.McpClientInput, { sessions }),
+        Effect.provideService(McpSchema.McpServerClient, client),
         Effect.provideService(
           McpSchema.McpRequestContext,
           McpSchema.McpRequestContext.of({
             clientId: 1,
-            protocolVersion: "2026-07-28",
+            protocolVersion: "2025-06-18",
             clientCapabilities: new McpSchema.ClientCapabilities({ elicitation: {} }),
           }),
         ),
@@ -338,43 +367,35 @@ const withThread = <A, E>(
             decision,
           })
           .pipe(Effect.asVoid, Effect.orDie),
-      endRun: projections
-        .apply({
-          id: EventId.make("thread-approval:run-ended"),
-          type: "run.updated",
+      archive: orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("thread-approval:archive"),
           threadId,
-          occurredAt: now,
-          payload: { ...run, status: "completed", completedAt: now },
         })
-        .pipe(Effect.orDie),
+        .pipe(Effect.asVoid, Effect.orDie),
       deliveries: (requestId) =>
         outbox.listByCommandId(CommandId.make(`thread-approval:answer:${requestId}`)).pipe(
           Effect.map((effects) => effects.length),
           Effect.orDie,
         ),
-      asksByElicitation: sessions.showsApprovalRequests(instanceId),
+      forgetSession: sessions.clear(threadId),
       elicited: Ref.get(elicited),
     });
   }).pipe(Effect.provide(layerTest), Effect.orDie);
 };
 
-// One thread per provider family that keeps no record of an answer given through its client.
-it.effect.each(["acpRegistry", "cursor", "opencode", "pi"] as const)(
-  "a %s thread below Full access is asked in the thread, and one approval lets one call through",
-  (driver) =>
-    withThread(driver, "approval-required", (thread) =>
-      Effect.gen(function* () {
-        // The call waits for the person, then says it is still waiting. Nothing has run.
-        const first = yield* Effect.forkChild(thread.call());
-        yield* TestClock.adjust(McpThreadApproval.ANSWER_WAIT);
-        // That is an answer, not a failure: the call ended, and what it asks is still open.
-        const waiting = yield* Fiber.join(first);
-        assert.equal(waiting.code, undefined);
-        assert.equal(waiting.status, "awaiting_approval");
-        assert.match(waiting.next ?? "", WAITING);
-        assert.deepEqual(thread.ran, []);
+/** Lets the fibers that follow a request read what just changed. */
+const settle = Effect.yieldNow.pipe(Effect.repeat({ times: 50 }));
 
-        // The request is the same card the Claude and Codex adapters raise for this question.
+it.effect(
+  "a thread below Full access is asked by a request the server raises, and one approval lets one call through",
+  () =>
+    withThread("codex", "approval-required", (thread) =>
+      Effect.gen(function* () {
+        const first = yield* Effect.forkChild(thread.call());
+        yield* settle;
+        // The request is the server's own: answering it sends the provider nothing.
         const [request] = yield* thread.requests;
         assert.deepInclude(request, { status: "pending", recordOnly: true });
         const [card] = yield* thread.cards;
@@ -390,31 +411,34 @@ it.effect.each(["acpRegistry", "cursor", "opencode", "pi"] as const)(
           card?.options?.map((option) => option.decision),
           ["cancel", "decline", "accept"],
         );
+        // The client is sent that request by its id, and holds it.
+        assert.deepEqual(
+          (yield* thread.elicited).map(
+            (meta) =>
+              `runtime-request:t3-tool:${(meta as Record<string, string>)["t3.codes/approval-request"]}`,
+          ),
+          [request!.id],
+        );
 
-        // The same call again waits on that request, and shows no second one.
-        const second = yield* Effect.forkChild(thread.call());
-        yield* TestClock.adjust("2 seconds");
-        assert.equal((yield* thread.requests).length, 1);
+        // Nothing is timed: hours later the call is still waiting, with nothing done.
+        yield* TestClock.adjust("6 hours");
+        yield* settle;
+        assert.deepInclude((yield* thread.requests)[0], { status: "pending" });
         assert.deepEqual(thread.ran, []);
 
-        // The person approves in the app. The server records it and sends the provider nothing.
         yield* thread.answer(request!.id, "accept");
         assert.equal(yield* thread.deliveries(request!.id), 0);
-        yield* TestClock.adjust("1 second");
-        assert.deepEqual(yield* Fiber.join(second), { ran: "merged #5" });
+        assert.deepEqual(yield* Fiber.join(first), { ran: "merged #5" });
         assert.deepEqual(thread.ran, ["merged #5"]);
         assert.equal((yield* thread.cards)[0]?.status, "completed");
 
         // That approval is spent: the same call asks again.
-        const third = yield* Effect.forkChild(thread.call());
-        yield* TestClock.adjust("1 second");
+        const second = yield* Effect.forkChild(thread.call());
+        yield* settle;
         const requests = yield* thread.requests;
         assert.equal(requests.length, 2);
-        assert.deepInclude(requests[1], { status: "pending" });
-        assert.deepEqual(thread.ran, ["merged #5"]);
         yield* thread.answer(requests[1]!.id, "decline");
-        yield* TestClock.adjust("1 second");
-        assert.deepInclude(yield* Fiber.join(third), {
+        assert.deepInclude(yield* Fiber.join(second), {
           code: "capability_denied",
           message: 'Not done: the user declined "Merge pull request #5 in org/repo".',
         });
@@ -423,55 +447,72 @@ it.effect.each(["acpRegistry", "cursor", "opencode", "pi"] as const)(
     ),
 );
 
-it.effect("an approval answered between two calls is found by the second", () =>
-  withThread("cursor", "auto-accept-edits", (thread) =>
-    Effect.gen(function* () {
-      const first = yield* Effect.forkChild(thread.call());
-      yield* TestClock.adjust(McpThreadApproval.ANSWER_WAIT);
-      assert.match((yield* Fiber.join(first)).next ?? "", WAITING);
-      const [request] = yield* thread.requests;
-      yield* thread.answer(request!.id, "accept");
+it.effect(
+  "a call cut off while it waits leaves the request, and the same call finds its answer",
+  () =>
+    withThread("claudeAgent", "auto-accept-edits", (thread) =>
+      Effect.gen(function* () {
+        const cut = yield* Effect.forkChild(thread.call());
+        yield* settle;
+        yield* Fiber.interrupt(cut);
+        const [request] = yield* thread.requests;
+        assert.deepInclude(request, { status: "pending" });
+        yield* thread.answer(request!.id, "accept");
+        yield* settle;
 
-      // Arguments that differ are another request, which the approval does not cover.
-      const other = yield* Effect.forkChild(thread.call(6));
-      yield* TestClock.adjust("1 second");
+        // Arguments that differ are another request, which the approval does not cover.
+        const other = yield* Effect.forkChild(thread.call(6));
+        yield* settle;
+        assert.equal((yield* thread.requests).length, 2);
+        assert.deepEqual(thread.ran, []);
+
+        assert.deepEqual(yield* thread.call(), { ran: "merged #5" });
+        yield* Fiber.interrupt(other);
+      }),
+    ),
+);
+
+it.effect("archiving the thread declines what it was asked", () =>
+  withThread("codex", "approval-required", (thread) =>
+    Effect.gen(function* () {
+      const call = yield* Effect.forkChild(thread.call());
+      yield* settle;
+      yield* thread.archive;
+      assert.deepInclude(yield* Fiber.join(call), {
+        code: "capability_denied",
+        message: 'Not done: the user declined "Merge pull request #5 in org/repo".',
+      });
+      assert.deepInclude((yield* thread.requests)[0], { status: "resolved", decision: "decline" });
+      assert.deepEqual(thread.ran, []);
+    }),
+  ),
+);
+
+it.effect("an answer to a request the server no longer keeps lets nothing through", () =>
+  withThread("codex", "approval-required", (thread) =>
+    Effect.gen(function* () {
+      const waiting = yield* Effect.forkChild(thread.call());
+      yield* settle;
+      // What a restart loses. The call that waited hears it was cancelled.
+      yield* thread.forgetSession;
+      assert.match(
+        (yield* Fiber.join(waiting)).message ?? "",
+        /^Cancelled, nothing was done: the request to approve "Merge pull request #5 in org\/repo" ended without the user's answer\./,
+      );
+      const [request] = yield* thread.requests;
+      // Even if the old request is then approved, the same call is asked afresh.
+      if (request!.status === "pending") yield* thread.answer(request!.id, "accept");
+      const again = yield* Effect.forkChild(thread.call());
+      yield* settle;
       assert.equal((yield* thread.requests).length, 2);
       assert.deepEqual(thread.ran, []);
-
-      assert.deepEqual(yield* thread.call(), { ran: "merged #5" });
-      yield* Fiber.interrupt(other);
+      yield* Fiber.interrupt(again);
     }),
   ),
 );
 
-it.effect("a request the agent stops asking about ends with its turn", () =>
-  withThread("opencode", "approval-required", (thread) =>
-    Effect.gen(function* () {
-      const first = yield* Effect.forkChild(thread.call());
-      yield* TestClock.adjust(McpThreadApproval.ANSWER_WAIT);
-      yield* Fiber.join(first);
-      assert.deepInclude((yield* thread.requests)[0], { status: "pending" });
-
-      yield* thread.endRun;
-      yield* TestClock.adjust("1 second");
-      assert.deepInclude((yield* thread.requests)[0], { status: "resolved", decision: "cancel" });
-      assert.equal((yield* thread.cards)[0]?.status, "cancelled");
-
-      // With no turn to show a request in, the thread is told exactly that, and nothing runs.
-      const refused = yield* thread.call();
-      assert.equal(refused.code, "capability_denied");
-      assert.equal(
-        refused.message,
-        'Not done: "Merge pull request #5 in org/repo" needs the user\'s approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.',
-      );
-      assert.equal((yield* thread.requests).length, 1);
-      assert.deepEqual(thread.ran, []);
-    }),
-  ),
-);
-
-it.effect("a Full access thread of any provider runs unasked", () =>
-  withThread("cursor", "full-access", (thread) =>
+it.effect("a Full access thread runs unasked", () =>
+  withThread("codex", "full-access", (thread) =>
     Effect.gen(function* () {
       assert.deepEqual(yield* thread.call(), { ran: "merged #5" });
       assert.deepEqual(yield* thread.requests, []);
@@ -479,23 +520,48 @@ it.effect("a Full access thread of any provider runs unasked", () =>
   ),
 );
 
-it.effect(
-  "a thread whose adapter passes on the person's answer is still asked by elicitation",
-  () =>
-    withThread("codex", "approval-required", (thread) =>
-      Effect.gen(function* () {
-        yield* thread.asksByElicitation;
-        yield* thread.call();
-        assert.match(
-          (
-            (yield* thread.elicited)?.inputRequests?.["outside-action"] as
-              | { readonly params: { readonly message: string } }
-              | undefined
-          )?.params.message ?? "",
-          QUESTION,
-        );
-        assert.deepEqual(yield* thread.requests, []);
-        assert.deepEqual(thread.ran, []);
-      }),
+// One thread per provider family whose client holds nothing open for a request.
+it.effect.each(["cursor", "opencode", "pi"] as const)(
+  "a %s thread is asked by the same request, and its call is told the person has not answered yet",
+  (driver) =>
+    withThread(
+      driver,
+      "approval-required",
+      (thread) =>
+        Effect.gen(function* () {
+          const first = yield* Effect.forkChild(thread.call());
+          yield* settle;
+          yield* TestClock.adjust(McpThreadApproval.UNHELD_WAIT);
+          // That is an answer, not a failure: the call ended, and what it asks is still open.
+          const waiting = yield* Fiber.join(first);
+          assert.equal(waiting.code, undefined);
+          assert.equal(waiting.status, "awaiting_approval");
+          assert.match(
+            waiting.next ?? "",
+            /^Not done yet: T3 Code is asking the user to approve "Merge pull request #5 in org\/repo" in this thread, and they have not answered\. The request stays open until they answer or this turn ends\. Call again with the same arguments to wait for their answer\.$/,
+          );
+          assert.deepEqual(thread.ran, []);
+          // Nothing is sent to a client that would show or answer it for itself.
+          assert.deepEqual(yield* thread.elicited, []);
+          const [request] = yield* thread.requests;
+          assert.deepInclude(request, { status: "pending", recordOnly: true });
+
+          // The same call again waits on that request, and shows no second one.
+          const second = yield* Effect.forkChild(thread.call());
+          yield* settle;
+          assert.equal((yield* thread.requests).length, 1);
+
+          // Hours later it is still theirs to answer, and their answer lets that one call through.
+          yield* TestClock.adjust(McpThreadApproval.UNHELD_WAIT);
+          assert.equal((yield* Fiber.join(second)).status, "awaiting_approval");
+          yield* TestClock.adjust("4 hours");
+          assert.deepInclude((yield* thread.requests)[0], { status: "pending" });
+          yield* thread.answer(request!.id, "accept");
+          yield* settle;
+          assert.deepEqual(yield* thread.call(), { ran: "merged #5" });
+          assert.deepEqual(thread.ran, ["merged #5"]);
+          assert.equal((yield* thread.requests).length, 1);
+        }),
+      false,
     ),
 );

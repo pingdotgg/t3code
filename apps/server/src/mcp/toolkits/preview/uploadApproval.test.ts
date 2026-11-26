@@ -9,30 +9,27 @@ import {
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { McpSchema } from "effect/ai";
 
 import { toSafeThreadAttachmentSegment } from "../../../attachmentStore.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as WorkspaceFolders from "../../../workspace/WorkspaceFolders.ts";
-import * as McpClientInput from "../../McpClientInput.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
+import { liveThreadShell, makeAskedThread } from "../../McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewHandlers from "./handlers.ts";
 import { PreviewStandardToolkit } from "./tools.ts";
 import { filesOutsideThread } from "./uploadPlacement.ts";
 
 const threadId = ThreadId.make("thread:upload");
-const KEY = "outside-action";
 
 /**
  * A thread whose project folder, one tracked folder and attachments are real directories, with
@@ -57,16 +54,16 @@ const withThread = <A, E>(
     readonly uploaded: ReadonlyArray<ReadonlyArray<string>>;
     /** The page the tab shows, and how many times it has been read. */
     readonly page: { url: string; reads: number; onRead: () => void };
+    /** One call; a refusal is its result too. */
     readonly act: (
       input: Record<string, unknown>,
-      reply?: { readonly action: string; readonly state: string },
     ) => Effect.Effect<
-      { readonly result: unknown; readonly asked: McpSchema.InputRequired | undefined },
+      unknown,
       never,
       FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
     >;
-    /** The person's answer in the app, for the request asking `message`. */
-    readonly answer: (message: string, approved: boolean) => Effect.Effect<void>;
+    /** The person behind the thread: what they are asked, and their answers. */
+    readonly person: Effect.Success<ReturnType<typeof makeAskedThread>>;
   }) => Effect.Effect<
     A,
     E,
@@ -81,7 +78,7 @@ const withThread = <A, E>(
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const config = yield* ServerConfig.ServerConfig;
-    const sessions = yield* McpProviderSessions.McpProviderSessions;
+    const person = yield* makeAskedThread();
     const root = yield* fileSystem
       .makeTempDirectoryScoped({ prefix: "t3-preview-upload-" })
       .pipe(Effect.flatMap(fileSystem.realPath));
@@ -116,6 +113,7 @@ const withThread = <A, E>(
     const page = { url: "https://forms.example/apply?step=2", reads: 0, onRead: () => {} };
     const services = Layer.mergeAll(
       Layer.mock(ThreadManagement.ThreadManagementService)({
+        ...person.threads,
         getThreadShell: () => Effect.succeed(shell),
       }),
       Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({
@@ -164,46 +162,25 @@ const withThread = <A, E>(
       capabilities: new Set(["orchestration", "preview"]),
       issuedAt: 0,
     };
-    // The thread's adapter passes on what the person answers, so the question is observable
-    // as the request the call is answered with.
-    yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
-
     return yield* body({
       shell,
       paths,
       operations,
       uploaded,
       page,
-      act: (input, reply) =>
-        Effect.gen(function* () {
-          const request = Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined);
-          const { result } = yield* toolkit.handle("preview_act", input as never).pipe(
-            Stream.unwrap,
-            Stream.run(Sink.last()),
-            Effect.flatMap(Effect.fromOption),
-            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-            Effect.provideService(McpClientInput.McpClientInput, { request, sessions }),
-            Effect.provideService(
-              McpSchema.McpRequestContext,
-              McpSchema.McpRequestContext.of({
-                clientId: 1,
-                protocolVersion: "2026-07-28",
-                clientCapabilities: new McpSchema.ClientCapabilities({ elicitation: {} }),
-                ...(reply === undefined
-                  ? {}
-                  : {
-                      inputResponses: { [KEY]: { action: reply.action } },
-                      requestState: reply.state,
-                    }),
-              }),
-            ),
-            Effect.provide(services),
-            // A refusal is the call's answer too.
-            Effect.catch((refused) => Effect.succeed({ result: refused as unknown })),
-          );
-          return { result, asked: Ref.getUnsafe(request) };
-        }),
-      answer: (message, approved) => sessions.answerApprovalRequests(threadId, message, approved),
+      person,
+      act: (input) =>
+        toolkit.handle("preview_act", input as never).pipe(
+          Stream.unwrap,
+          Stream.run(Sink.last()),
+          Effect.flatMap(Effect.fromOption),
+          Effect.map(({ result }) => result as unknown),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          person.provide,
+          Effect.provide(services),
+          // A refusal is the call's answer too.
+          Effect.catch((refused) => Effect.succeed(refused as unknown)),
+        ),
     }).pipe(Effect.provide(services));
   }).pipe(
     Effect.scoped,
@@ -214,10 +191,6 @@ const withThread = <A, E>(
       ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
   );
-
-const messageOf = (asked: McpSchema.InputRequired | undefined) =>
-  (asked?.inputRequests?.[KEY] as { readonly params: { readonly message: string } } | undefined)
-    ?.params.message;
 
 it.effect("places a file by what it resolves to, and outside when it cannot be placed", () =>
   withThread("approval-required", ({ shell, paths }) =>
@@ -281,53 +254,42 @@ it.effect("a thread whose folders cannot be read has every file outside", () =>
 it.effect.each(["approval-required", "auto-accept-edits", "auto"] as const)(
   "an upload from outside a %s thread waits for the person, naming the file and the page",
   (runtimeMode) =>
-    withThread(runtimeMode, ({ paths, operations, uploaded, act, answer }) =>
+    withThread(runtimeMode, ({ paths, operations, uploaded, act, person }) =>
       Effect.gen(function* () {
         const upload = { action: "upload", paths: [paths.inProject, paths.linkToElsewhere] };
-        const first = yield* act(upload);
-        const message = messageOf(first.asked)!;
-        expect(message).toMatch(
+        const call = yield* Effect.forkChild(act(upload));
+        const asked = yield* person.asked;
+        expect(asked.message).toMatch(
           new RegExp(
             `^Upload "${paths.elsewhere.replaceAll(".", "\\.")}" to https://forms\\.example\\? \\(request [0-9a-f]{8}\\)$`,
           ),
         );
         expect(operations).toEqual([]);
 
-        // The client's own "accept" uploads nothing.
-        const state = first.asked!.requestState!;
-        const unconfirmed = yield* act(upload, { action: "accept", state });
-        expect(unconfirmed.result).toMatchObject({ code: "capability_denied" });
-        expect(operations).toEqual([]);
-
-        const again = yield* act(upload);
-        yield* answer(messageOf(again.asked)!, true);
-        yield* act(upload, { action: "accept", state: again.asked!.requestState! });
+        yield* person.answer(asked, "accept");
+        yield* Fiber.join(call);
         expect(operations).toEqual(["upload"]);
         // The link goes as the file the person was asked about.
         expect(uploaded).toEqual([[paths.inProject, paths.elsewhere]]);
 
-        // Other files are another request.
-        const other = yield* act(
-          { action: "upload", paths: [paths.otherThreadsAttachment] },
-          { action: "accept", state: again.asked!.requestState! },
+        // Other files are another request, and the same ones are asked about again.
+        yield* Effect.forkChild(act({ action: "upload", paths: [paths.otherThreadsAttachment] }));
+        expect((yield* person.asked).message).toContain(
+          `Upload "${paths.otherThreadsAttachment}" to `,
         );
-        expect(messageOf(other.asked)).toContain(`Upload "${paths.otherThreadsAttachment}" to `);
+        yield* Effect.forkChild(act(upload));
+        expect((yield* person.asked).id).not.toBe(asked.id);
         expect(operations).toEqual(["upload"]);
       }),
     ),
 );
 
 it.effect("a declined upload sends nothing", () =>
-  withThread("approval-required", ({ paths, operations, act, answer }) =>
+  withThread("approval-required", ({ paths, operations, act, person }) =>
     Effect.gen(function* () {
-      const upload = { action: "upload", paths: [paths.elsewhere] };
-      const first = yield* act(upload);
-      yield* answer(messageOf(first.asked)!, false);
-      const declined = yield* act(upload, {
-        action: "decline",
-        state: first.asked!.requestState!,
-      });
-      expect(declined.result).toMatchObject({
+      const call = yield* Effect.forkChild(act({ action: "upload", paths: [paths.elsewhere] }));
+      yield* person.answer(yield* person.asked, "decline");
+      expect(yield* Fiber.join(call)).toMatchObject({
         code: "capability_denied",
         message: `Not done: the user declined "Upload "${paths.elsewhere}" to https://forms.example".`,
       });
@@ -337,69 +299,75 @@ it.effect("a declined upload sends nothing", () =>
 );
 
 it.effect("uploads of the thread's own files, and other page actions, run unasked", () =>
-  withThread("approval-required", ({ paths, operations, act }) =>
+  withThread("approval-required", ({ paths, operations, act, person }) =>
     Effect.gen(function* () {
-      const own = yield* act({
+      yield* act({
         action: "upload",
         paths: [paths.inProject, paths.inTrackedFolder, paths.ownAttachment],
       });
-      expect(own.asked).toBeUndefined();
-      const click = yield* act({ action: "click", locator: "text=Send" });
-      expect(click.asked).toBeUndefined();
+      yield* act({ action: "click", locator: "text=Send" });
+      expect(yield* person.raised).toEqual([]);
       expect(operations).toEqual(["upload", "click"]);
     }),
   ),
 );
 
 it.effect("a Full access thread uploads any file unasked", () =>
-  withThread("full-access", ({ paths, operations, act }) =>
+  withThread("full-access", ({ paths, operations, act, person }) =>
     Effect.gen(function* () {
-      const sent = yield* act({ action: "upload", paths: [paths.elsewhere] });
-      expect(sent.asked).toBeUndefined();
+      yield* act({ action: "upload", paths: [paths.elsewhere] });
+      expect(yield* person.raised).toEqual([]);
       expect(operations).toEqual(["upload"]);
     }),
   ),
 );
 
-it.effect.each([
-  ["while the person reads", "before"],
-  ["after their answer is read", "between"],
-] as const)("a page that moves on %s gets no file", ([, when]) =>
-  withThread("auto", ({ paths, operations, page, act, answer }) =>
+it.effect("a page that moves on while the person reads gets no file", () =>
+  withThread("auto", ({ paths, operations, page, act, person }) =>
     Effect.gen(function* () {
       const upload = { action: "upload", paths: [paths.elsewhere] };
-      const first = yield* act(upload);
-      yield* answer(messageOf(first.asked)!, true);
-      const moveOn = () => void (page.url = "https://elsewhere.example/drop");
-      // The answering call reads the page twice: for the answer, and again before it sends.
-      const from = page.reads;
-      if (when === "before") moveOn();
-      else page.onRead = () => (page.reads === from + 1 ? moveOn() : undefined);
-      const moved = yield* act(upload, { action: "accept", state: first.asked!.requestState! });
+      const call = yield* Effect.forkChild(act(upload));
+      const asked = yield* person.asked;
+      page.url = "https://elsewhere.example/drop";
+      yield* person.answer(asked, "accept");
+      expect(yield* Fiber.join(call)).toMatchObject({
+        code: "capability_denied",
+        message: `Not done: what "Upload "${paths.elsewhere}" to https://forms.example" would do changed while the user was asked. Call again to ask.`,
+      });
       expect(operations).toEqual([]);
-      if (when === "before") {
-        // Another page is another request.
-        expect(messageOf(moved.asked)).toContain(" to https://elsewhere.example? (request ");
-      } else {
-        expect(moved.result).toMatchObject({
-          code: "capability_denied",
-          message: `Not done: what "Upload "${paths.elsewhere}" to https://forms.example" would do changed while the user was asked. Call again to ask.`,
-        });
-      }
+      // Called again, it asks about the page that is there now.
+      yield* Effect.forkChild(act(upload));
+      expect((yield* person.asked).message).toContain(" to https://elsewhere.example? (request ");
+      expect(operations).toEqual([]);
+    }),
+  ),
+);
+
+it.effect("an upload left unanswered ends with the turn, and sends nothing", () =>
+  withThread("auto", ({ paths, operations, act, person }) =>
+    Effect.gen(function* () {
+      const call = yield* Effect.forkChild(act({ action: "upload", paths: [paths.elsewhere] }));
+      yield* person.asked;
+      yield* person.endTurn("interrupted");
+      expect(yield* Fiber.join(call)).toMatchObject({
+        code: "capability_denied",
+        message: expect.stringMatching(/^Cancelled, nothing was done: /),
+      });
+      expect(operations).toEqual([]);
     }),
   ),
 );
 
 it.effect("a link pointed elsewhere after it was placed sends the file that was placed", () =>
-  withThread("auto", ({ paths, uploaded, act }) =>
+  withThread("auto", ({ paths, uploaded, act, person }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       // A link in the project to one of its own files: placed inside, so nobody is asked.
       const link = path.join(path.dirname(paths.inProject), "latest.pdf");
       yield* fileSystem.symlink(paths.inProject, link);
-      const sent = yield* act({ action: "upload", paths: [link] });
-      expect(sent.asked).toBeUndefined();
+      yield* act({ action: "upload", paths: [link] });
+      expect(yield* person.raised).toEqual([]);
       // What is sent is named by where the link led when it was placed, not by the link.
       expect(uploaded).toEqual([[paths.inProject]]);
     }),
@@ -407,11 +375,11 @@ it.effect("a link pointed elsewhere after it was placed sends the file that was 
 );
 
 it.effect("a page with no origin of its own is named by its address, as data", () =>
-  withThread("auto", ({ paths, page, act }) =>
+  withThread("auto", ({ paths, page, act, person }) =>
     Effect.gen(function* () {
-      page.url = "data:text/html,<p>forms.example\u202e</p>";
-      const asked = yield* act({ action: "upload", paths: [paths.elsewhere] });
-      expect(messageOf(asked.asked)).toContain(
+      page.url = "data:text/html,<p>forms.example‮</p>";
+      yield* Effect.forkChild(act({ action: "upload", paths: [paths.elsewhere] }));
+      expect((yield* person.asked).message).toContain(
         ' to "data:text/html,<p>forms.example\\u{202e}</p>"? (request ',
       );
     }),

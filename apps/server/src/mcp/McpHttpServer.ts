@@ -11,7 +11,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -278,6 +277,19 @@ const withSenderThread = (
     : { ...invocation, client: { ...invocation.client, senderThread: decoded.value } };
 };
 
+/** Reads what a linked environment asks of a call it makes for a thread below Full access. */
+const withOutsideAction = (
+  invocation: McpInvocationContext.McpInvocationScope,
+  request: HttpServerRequest.HttpServerRequest,
+): McpInvocationContext.McpInvocationScope => {
+  const header = request.headers[McpInvocationContext.OUTSIDE_ACTION_HEADER]?.trim();
+  if (header === undefined || invocation.client?.linked !== true) return invocation;
+  if (header === "describe") return { ...invocation, outsideAction: "describe" };
+  const approved = /^approved ([0-9a-f]{64})$/.exec(header)?.[1];
+  // A header that says neither is read as asking to be told, which acts on nothing.
+  return { ...invocation, outsideAction: approved === undefined ? "describe" : { approved } };
+};
+
 // The Linked environments beta is off here: links wait until it is on again.
 const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
   {
@@ -373,7 +385,10 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
-    const asked = withModeLimit(withSenderThread(invocation, request), request);
+    const asked = withModeLimit(
+      withOutsideAction(withSenderThread(invocation, request), request),
+      request,
+    );
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
     const { linkedEnvironments, agentFeedback, workflows } = yield* settingsFlags;
@@ -413,6 +428,15 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
               McpInvocationContext.LINK_EXPIRES_AT_HEADER,
               DateTime.formatIso(linkExpiresAt),
             ),
+      ),
+      Effect.map((response) =>
+        admitted.client?.linked === true
+          ? HttpServerResponse.setHeader(
+              response,
+              McpInvocationContext.DESCRIBES_OUTSIDE_ACTIONS_HEADER,
+              "describe",
+            )
+          : response,
       ),
     );
   }) satisfies McpAuthMiddleware;
@@ -1204,7 +1228,6 @@ const withToolAnalytics =
               return yield* options.handle(payload).pipe(
                 Effect.onExit((exit) => {
                   const result = exit._tag === "Success" ? exit.value : undefined;
-                  // A call that asks for input is retried with it, and that call is the one counted.
                   if (result instanceof McpSchema.InputRequired) return Effect.void;
                   // Handoff tools look up threads to record; the response must not wait on them.
                   return Clock.currentTimeMillis.pipe(
@@ -1259,9 +1282,6 @@ const withToolResultCapture = Effect.fn("McpHttpServer.withToolResultCapture")(f
           return yield* options.handle(payload).pipe(
             Effect.onExit((exit) => {
               if (thread === undefined) return Effect.void;
-              if (exit._tag === "Success" && exit.value instanceof McpSchema.InputRequired) {
-                return Effect.void;
-              }
               if (exit._tag === "Failure" && Cause.hasInterruptsOnly(exit.cause)) {
                 return Effect.void;
               }
@@ -1314,10 +1334,7 @@ const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, 
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, tracingServer));
 });
 
-/**
- * A toolkit handler returns its tool's result type, so it cannot answer with a request for the
- * client's input. It leaves one in `McpClientInput` and ends, and that request is the answer.
- */
+/** Gives every tool call what it needs to ask the person behind its client. */
 const withClientInput = Effect.fn("McpHttpServer.withClientInput")(function* <A, E, R>(
   registration: Effect.Effect<A, E, R>,
 ) {
@@ -1330,16 +1347,10 @@ const withClientInput = Effect.fn("McpHttpServer.withClientInput")(function* <A,
     addTool: Effect.fn("McpServer.addTool")(function (options) {
       return server.addTool({
         ...options,
-        handle: Effect.fnUntraced(function* (payload) {
-          const request = yield* Ref.make<McpSchema.InputRequired | undefined>(undefined);
-          const exit = yield* options
+        handle: (payload) =>
+          options
             .handle(payload)
-            .pipe(
-              Effect.provideService(McpClientInput.McpClientInput, { request, sessions }),
-              Effect.exit,
-            );
-          return (yield* Ref.get(request)) ?? (yield* exit);
-        }),
+            .pipe(Effect.provideService(McpClientInput.McpClientInput, { sessions })),
       });
     }),
   });
