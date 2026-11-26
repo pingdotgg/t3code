@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Runs local HTTP servers to verify manual redirect handling with FetchHttpClient.
+import * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
+
 import { SecretProviderId, SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -14,7 +18,13 @@ import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -1039,6 +1049,131 @@ it.effect("pauses background reads after a 429 until Bitbucket's retry-after pas
     yield* lookup;
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("rejects a malformed redirect Location header as an untrusted URL", () =>
+  Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+
+    const requestError = yield* Effect.flip(
+      bitbucket.request({ method: "GET", url: "/repositories/acme/web/pullrequests/1/diff" }),
+    );
+    assert.strictEqual(requestError._tag, "BitbucketUntrustedUrlError");
+
+    const jsonError = yield* Effect.flip(
+      bitbucket.getPullRequest({ cwd: "/repo", reference: "#42" }),
+    );
+    assert.strictEqual(jsonError._tag, "BitbucketUntrustedUrlError");
+  }).pipe(
+    Effect.provide(
+      makeLayer({
+        response: () =>
+          new Response(null, {
+            status: 302,
+            headers: { location: "http://[::1" },
+          }),
+      }).layer,
+    ),
+  ),
+);
+
+it.live("does not follow off-origin redirects with real FetchHttpClient", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let secretHits = 0;
+      const startServer = (handler: NodeHttp.RequestListener) =>
+        Effect.acquireRelease(
+          Effect.promise(
+            () =>
+              new Promise<{ readonly server: NodeHttp.Server; readonly port: number }>(
+                (resolve, reject) => {
+                  const server = NodeHttp.createServer(handler);
+                  server.once("error", reject);
+                  server.listen(0, "127.0.0.1", () => {
+                    const address = server.address() as NodeNet.AddressInfo;
+                    resolve({ server, port: address.port });
+                  });
+                },
+              ),
+          ),
+          ({ server }) =>
+            Effect.promise(
+              () =>
+                new Promise<void>((resolve) => {
+                  server.close(() => resolve());
+                }),
+            ),
+        );
+
+      const secretServer = yield* startServer((_req, res) => {
+        secretHits += 1;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ secret: "leaked" }));
+      });
+      const bitbucketServer = yield* startServer((_req, res) => {
+        res.writeHead(302, {
+          location: `http://127.0.0.1:${secretServer.port}/secret`,
+        });
+        res.end();
+      });
+
+      const liveLayer = BitbucketApi.layer.pipe(
+        Layer.provide(SourceControlRateLimit.layer),
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                T3CODE_BITBUCKET_API_BASE_URL: `http://127.0.0.1:${bitbucketServer.port}/2.0`,
+                T3CODE_BITBUCKET_ACCESS_TOKEN: "secret-token",
+              },
+            }),
+          ),
+        ),
+        Layer.provideMerge(
+          TestSourceControlHost.layer({
+            git: {
+              remotes: () =>
+                Effect.succeed(
+                  Effect.succeed({
+                    remotes: [
+                      {
+                        name: "origin",
+                        url: "git@bitbucket.org:pingdotgg/t3code.git",
+                        pushUrl: Option.none(),
+                        isPrimary: true,
+                      },
+                    ],
+                    freshness: {
+                      source: "live-local" as const,
+                      observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
+                      expiresAt: Option.none(),
+                    },
+                  }),
+                ),
+            },
+          }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const bitbucket = yield* BitbucketApi.BitbucketApi;
+
+        const requestError = yield* Effect.flip(
+          bitbucket.request({ method: "GET", url: "/repositories/pingdotgg/t3code/diff" }),
+        );
+        assert.strictEqual(requestError._tag, "BitbucketUntrustedUrlError");
+
+        const jsonError = yield* Effect.flip(
+          bitbucket.getPullRequest({ cwd: "/repo", reference: "#42" }),
+        );
+        assert.strictEqual(jsonError._tag, "BitbucketUntrustedUrlError");
+      }).pipe(Effect.provide(liveLayer));
+
+      assert.strictEqual(secretHits, 0);
+    }),
+  ),
+);
 
 it.effect("keeps a sweep over many branches to a few Bitbucket requests at a time", () =>
   Effect.gen(function* () {

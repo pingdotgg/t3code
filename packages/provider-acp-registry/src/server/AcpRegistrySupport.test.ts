@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Builds gzipped tar test archives.
+import * as NodeZlib from "node:zlib";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodePath from "@effect/platform-node/NodePath";
@@ -1218,6 +1221,182 @@ describe("AcpRegistrySupport", () => {
       );
     },
   );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "rejects a tar archive whose directory symlink would write outside the install root",
+    () => {
+      const downloadUrl = "https://registry.test/escape.tar.gz";
+      const agent = makeAgent({
+        binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
+      });
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-dir-symlink-",
+        });
+        const outsideDir = `${cacheDir}/outside`;
+        const stageLink = `${cacheDir}/stage-link`;
+        const stagePayload = `${cacheDir}/stage-payload`;
+        yield* fileSystem.makeDirectory(outsideDir, { recursive: true });
+        yield* fileSystem.makeDirectory(stageLink, { recursive: true });
+        yield* fileSystem.makeDirectory(`${stagePayload}/sub`, { recursive: true });
+        yield* fileSystem.symlink(outsideDir, `${stageLink}/sub`);
+        yield* fileSystem.writeFileString(`${stagePayload}/sub/escape.txt`, "escaped\n");
+        yield* fileSystem.writeFileString(`${stagePayload}/agent`, "#!/bin/sh\necho ok\n");
+
+        const tarPath = `${cacheDir}/escape.tar`;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const createTar = yield* spawner.spawn(
+          ChildProcess.make("tar", ["-cf", tarPath, "-C", stageLink, "sub"]),
+        );
+        expect(yield* createTar.exitCode).toBe(0);
+        const appendTar = yield* spawner.spawn(
+          ChildProcess.make("tar", ["-rf", tarPath, "-C", stagePayload, "sub/escape.txt", "agent"]),
+        );
+        expect(yield* appendTar.exitCode).toBe(0);
+        const archive = new Uint8Array(NodeZlib.gzipSync(yield* fileSystem.readFile(tarPath)));
+
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  request.url === registryUrl
+                    ? new Response(makeRegistry(agent))
+                    : new Response(archive),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const error = yield* resolver.prepare({ agentId: agent.id }).pipe(Effect.flip);
+
+        expect(error.reason).toBe("archive_invalid");
+        expect(yield* fileSystem.exists(`${outsideDir}/escape.txt`)).toBe(false);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            TestProviderHost.layer().pipe(
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+            ),
+          ),
+        ),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Architecture, "x64"),
+      );
+    },
+  );
+
+  it.effect("rejects HTTP redirect downgrades when fetching the registry or binary archive", () => {
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./bin/example-agent" } },
+    });
+    const registryRequests: Array<string> = [];
+    const binaryRequests: Array<string> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-redirect-downgrade-",
+      });
+
+      const registryResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: `${cacheDir}/registry`,
+        toolsDir: `${cacheDir}/registry/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            registryRequests.push(request.url);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(null, {
+                  status: 302,
+                  headers: { location: "http://insecure.registry.test/registry.json" },
+                }),
+              ),
+            );
+          }),
+        ),
+      );
+      const registryError = yield* registryResolver.search({ query: "" }).pipe(Effect.flip);
+      expect(registryError.reason).toBe("registry_unavailable");
+      expect(registryRequests).toEqual([registryUrl]);
+
+      const binaryResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: `${cacheDir}/binary`,
+        toolsDir: `${cacheDir}/binary/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            binaryRequests.push(request.url);
+            const response =
+              request.url === registryUrl
+                ? new Response(makeRegistry(agent))
+                : new Response(null, {
+                    status: 302,
+                    headers: { location: "http://insecure.registry.test/example-agent.bin" },
+                  });
+            return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+          }),
+        ),
+      );
+      const binaryError = yield* binaryResolver.prepare({ agentId: agent.id }).pipe(Effect.flip);
+      expect(binaryError.reason).toBe("download_failed");
+      expect(binaryRequests).toEqual([registryUrl, archiveUrl]);
+
+      const redirectedRequests: Array<string> = [];
+      const redirectedArchiveUrl = "https://cdn.registry.test/files/example-agent.bin";
+      const httpsRedirectResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: `${cacheDir}/https-redirect`,
+        toolsDir: `${cacheDir}/https-redirect/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            redirectedRequests.push(request.url);
+            const response =
+              request.url === registryUrl
+                ? new Response(null, { status: 302, headers: { location: "/v2/registry.json" } })
+                : request.url === "https://registry.test/v2/registry.json"
+                  ? new Response(makeRegistry(agent))
+                  : request.url === archiveUrl
+                    ? new Response(null, {
+                        status: 302,
+                        headers: { location: redirectedArchiveUrl },
+                      })
+                    : new Response("#!/bin/sh\necho redirected\n");
+            return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+          }),
+        ),
+      );
+      const prepared = yield* httpsRedirectResolver.prepare({ agentId: agent.id });
+      expect(prepared.prepared).toBe(true);
+      expect(redirectedRequests).toEqual([
+        registryUrl,
+        "https://registry.test/v2/registry.json",
+        archiveUrl,
+        redirectedArchiveUrl,
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerResolver(() => Effect.die("unexpected fallback HTTP request"))),
+    );
+  });
 
   it.effect("searches compatible agents with deterministic ranking and bounded metadata", () => {
     const exact = {

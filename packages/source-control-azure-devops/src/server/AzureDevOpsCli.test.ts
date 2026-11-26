@@ -401,6 +401,81 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(layer)),
   );
+
+  it.effect("rejects non-numeric PR references before spawning az", () =>
+    Effect.gen(function* () {
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      for (const reference of ["@/etc/passwd", "--help", "-1", "abc"]) {
+        const error = yield* az.getPullRequest({ cwd: "/repo", reference }).pipe(Effect.flip);
+        assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsInvalidArgumentError);
+      }
+      assert.strictEqual(mockRun.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "rejects leading `-` or `@` in branch, repository, and project arguments before spawning az",
+    () =>
+      Effect.gen(function* () {
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+
+        for (const branch of ["-feature", "--help", "@/etc/passwd"]) {
+          const listError = yield* az
+            .listPullRequests({ cwd: "/repo", headSelector: branch, state: "open" })
+            .pipe(Effect.flip);
+          assert.instanceOf(listError, AzureDevOpsCli.AzureDevOpsInvalidArgumentError);
+
+          const createSourceError = yield* az
+            .createPullRequest({
+              cwd: "/repo",
+              baseBranch: "main",
+              headSelector: branch,
+              title: "Test PR",
+              bodyFile: "/tmp/body.md",
+            })
+            .pipe(Effect.flip);
+          assert.instanceOf(createSourceError, AzureDevOpsCli.AzureDevOpsInvalidArgumentError);
+
+          const createTargetError = yield* az
+            .createPullRequest({
+              cwd: "/repo",
+              baseBranch: branch,
+              headSelector: "feature",
+              title: "Test PR",
+              bodyFile: "/tmp/body.md",
+            })
+            .pipe(Effect.flip);
+          assert.instanceOf(createTargetError, AzureDevOpsCli.AzureDevOpsInvalidArgumentError);
+        }
+
+        for (const repository of [
+          "@/etc/passwd",
+          "@repo",
+          "-repo",
+          "project/@repo",
+          "project/-repo",
+          "@project/repo",
+          "-project/repo",
+        ]) {
+          const cloneError = yield* az
+            .getRepositoryCloneUrls({ cwd: "/repo", repository })
+            .pipe(Effect.flip);
+          assert.instanceOf(cloneError, AzureDevOpsCli.AzureDevOpsInvalidArgumentError);
+
+          const createError = yield* az
+            .createRepository({ cwd: "/repo", repository, visibility: "private" })
+            .pipe(Effect.flip);
+          assert.instanceOf(createError, AzureDevOpsCli.AzureDevOpsInvalidArgumentError);
+
+          const defaultBranchError = yield* az
+            .getDefaultBranch({ cwd: "/repo", repository })
+            .pipe(Effect.flip);
+          assert.instanceOf(defaultBranchError, AzureDevOpsCli.AzureDevOpsInvalidArgumentError);
+        }
+
+        assert.strictEqual(mockRun.mock.calls.length, 0);
+      }).pipe(Effect.provide(layer)),
+  );
 });
 
 describe("azureCliInvocation", () => {

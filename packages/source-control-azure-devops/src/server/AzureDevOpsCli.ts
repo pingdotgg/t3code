@@ -195,6 +195,24 @@ export class AzureDevOpsRepositoryDecodeError extends Schema.TaggedError<AzureDe
   }
 }
 
+export class AzureDevOpsInvalidArgumentError extends Schema.TaggedError<AzureDevOpsInvalidArgumentError>()(
+  "AzureDevOpsInvalidArgumentError",
+  {
+    operation: Schema.String,
+    command: Schema.Literal("az"),
+    cwd: Schema.String,
+    option: Schema.String,
+  },
+) {
+  get detail(): string {
+    return `Invalid Azure DevOps CLI value for ${this.option}.`;
+  }
+
+  override get message(): string {
+    return `Azure DevOps CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export const AzureDevOpsCliError = Schema.Union([
   AzureDevOpsCliUnavailableError,
   AzureDevOpsCliAuthenticationError,
@@ -204,6 +222,7 @@ export const AzureDevOpsCliError = Schema.Union([
   AzureDevOpsPullRequestListDecodeError,
   AzureDevOpsPullRequestDecodeError,
   AzureDevOpsRepositoryDecodeError,
+  AzureDevOpsInvalidArgumentError,
 ]);
 export type AzureDevOpsCliError = typeof AzureDevOpsCliError.Type;
 
@@ -519,6 +538,77 @@ export const textOption = (option: string, value: string) =>
     ? { arg: `${option}=@-`, stdin: value }
     : { arg: `${option}=${value}`, stdin: undefined };
 
+/** Reject empty values, control chars, leading `-` (flag injection), and leading `@` (`az` file expansion). */
+export function isSafeAzureOptionValue(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.length > 0 &&
+    !trimmed.startsWith("@") &&
+    !trimmed.startsWith("-") &&
+    !/[\p{Cc}]/u.test(trimmed)
+  );
+}
+
+export function requireSafeAzureOption(input: {
+  readonly operation: string;
+  readonly cwd: string;
+  readonly option: string;
+  readonly value: string;
+}): Effect.Effect<string, AzureDevOpsInvalidArgumentError> {
+  const trimmed = input.value.trim();
+  return isSafeAzureOptionValue(trimmed)
+    ? Effect.succeed(trimmed)
+    : Effect.fail(
+        new AzureDevOpsInvalidArgumentError({
+          operation: input.operation,
+          command: "az",
+          cwd: input.cwd,
+          option: input.option,
+        }),
+      );
+}
+
+function requireSafeRepositorySpecifier(input: {
+  readonly operation: string;
+  readonly cwd: string;
+  readonly repository: string;
+  readonly nameOption: "--repository" | "--name";
+}): Effect.Effect<
+  { readonly project: string | null; readonly name: string },
+  AzureDevOpsInvalidArgumentError
+> {
+  const raw = input.repository.trim();
+  if (!isSafeAzureOptionValue(raw)) {
+    return Effect.fail(
+      new AzureDevOpsInvalidArgumentError({
+        operation: input.operation,
+        command: "az",
+        cwd: input.cwd,
+        option: input.nameOption,
+      }),
+    );
+  }
+  const parsed = parseRepositorySpecifier(raw);
+  return Effect.gen(function* () {
+    const name = yield* requireSafeAzureOption({
+      operation: input.operation,
+      cwd: input.cwd,
+      option: input.nameOption,
+      value: parsed.name,
+    });
+    const project =
+      parsed.project === null
+        ? null
+        : yield* requireSafeAzureOption({
+            operation: input.operation,
+            cwd: input.cwd,
+            option: "--project",
+            value: parsed.project,
+          });
+    return { project, name };
+  });
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -596,13 +686,18 @@ export const make = Effect.gen(function* () {
 
   return AzureDevOpsCli.of({
     execute,
-    listPullRequests: Effect.fn("AzureDevOpsCli.listPullRequests")(function (input) {
-      const branch = SourceControlProvider.sourceBranch(input);
+    listPullRequests: Effect.fn("AzureDevOpsCli.listPullRequests")(function* (input) {
+      const branch = yield* requireSafeAzureOption({
+        operation: "listPullRequests",
+        cwd: input.cwd,
+        option: "--source-branch",
+        value: SourceControlProvider.sourceBranch(input),
+      });
       // az checks literal ref prefixes before constructing the request URL.
       const refPrefix =
         ["refs/heads/", "refs/pull/", "refs/tags/"].find((prefix) => branch.startsWith(prefix)) ??
         "";
-      return executeJson({
+      const result = yield* executeJson({
         cwd: input.cwd,
         ...remoteOf(input),
         args: [
@@ -619,70 +714,57 @@ export const make = Effect.gen(function* () {
           "--top",
           String(input.limit ?? 20),
         ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          raw.length === 0
-            ? Effect.succeed([])
-            : Effect.sync(() => decodeAzureDevOpsPullRequestListJson(raw)).pipe(
-                Effect.flatMap((decoded) => {
-                  if (!Result.isSuccess(decoded)) {
-                    return Effect.fail(
-                      new AzureDevOpsPullRequestListDecodeError({
-                        operation: "listPullRequests",
-                        command: "az",
-                        cwd: input.cwd,
-                        outputLength: raw.length,
-                        cause: decoded.failure,
-                      }),
-                    );
-                  }
-
-                  return Effect.succeed(decoded.success);
-                }),
-              ),
-        ),
-      );
+      });
+      const raw = result.stdout.trim();
+      if (raw.length === 0) return [];
+      const decoded = decodeAzureDevOpsPullRequestListJson(raw);
+      if (!Result.isSuccess(decoded)) {
+        return yield* new AzureDevOpsPullRequestListDecodeError({
+          operation: "listPullRequests",
+          command: "az",
+          cwd: input.cwd,
+          outputLength: raw.length,
+          cause: decoded.failure,
+        });
+      }
+      return decoded.success;
     }),
-    getPullRequest: Effect.fn("AzureDevOpsCli.getPullRequest")(function (input) {
-      return executeJson({
+    getPullRequest: Effect.fn("AzureDevOpsCli.getPullRequest")(function* (input) {
+      const id = normalizeChangeRequestId(input.reference);
+      if (!/^\d+$/u.test(id)) {
+        return yield* new AzureDevOpsInvalidArgumentError({
+          operation: "getPullRequest",
+          command: "az",
+          cwd: input.cwd,
+          option: "--id",
+        });
+      }
+      const result = yield* executeJson({
         cwd: input.cwd,
         ...remoteOf(input),
-        args: [
-          "repos",
-          "pr",
-          "show",
-          "--detect",
-          "true",
-          "--id",
-          normalizeChangeRequestId(input.reference),
-        ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          Effect.sync(() => decodeAzureDevOpsPullRequestJson(raw)).pipe(
-            Effect.flatMap((decoded) => {
-              if (!Result.isSuccess(decoded)) {
-                return Effect.fail(
-                  new AzureDevOpsPullRequestDecodeError({
-                    operation: "getPullRequest",
-                    command: "az",
-                    cwd: input.cwd,
-                    outputLength: raw.length,
-                    cause: decoded.failure,
-                  }),
-                );
-              }
-
-              return Effect.succeed(decoded.success);
-            }),
-          ),
-        ),
-      );
+        args: ["repos", "pr", "show", "--detect", "true", "--id", id],
+      });
+      const raw = result.stdout.trim();
+      const decoded = decodeAzureDevOpsPullRequestJson(raw);
+      if (!Result.isSuccess(decoded)) {
+        return yield* new AzureDevOpsPullRequestDecodeError({
+          operation: "getPullRequest",
+          command: "az",
+          cwd: input.cwd,
+          outputLength: raw.length,
+          cause: decoded.failure,
+        });
+      }
+      return decoded.success;
     }),
-    getRepositoryCloneUrls: Effect.fn("AzureDevOpsCli.getRepositoryCloneUrls")(function (input) {
-      const repository = parseRepositorySpecifier(input.repository);
-      return executeJson({
+    getRepositoryCloneUrls: Effect.fn("AzureDevOpsCli.getRepositoryCloneUrls")(function* (input) {
+      const repository = yield* requireSafeRepositorySpecifier({
+        operation: "getRepositoryCloneUrls",
+        cwd: input.cwd,
+        repository: input.repository,
+        nameOption: "--repository",
+      });
+      const result = yield* executeJson({
         cwd: input.cwd,
         ...remoteOf(input),
         args: [
@@ -694,23 +776,24 @@ export const make = Effect.gen(function* () {
           repository.name,
           ...(repository.project ? ["--project", repository.project] : []),
         ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          decodeAzureDevOpsJson(
-            raw,
-            RawAzureDevOpsRepositorySchema,
-            "getRepositoryCloneUrls",
-            input.cwd,
-          ),
-        ),
-        Effect.map(normalizeRepositoryCloneUrls),
+      });
+      const decoded = yield* decodeAzureDevOpsJson(
+        result.stdout.trim(),
+        RawAzureDevOpsRepositorySchema,
+        "getRepositoryCloneUrls",
+        input.cwd,
       );
+      return normalizeRepositoryCloneUrls(decoded);
     }),
-    createRepository: Effect.fn("AzureDevOpsCli.createRepository")(function (input) {
-      const repository = parseRepositorySpecifier(input.repository);
+    createRepository: Effect.fn("AzureDevOpsCli.createRepository")(function* (input) {
+      const repository = yield* requireSafeRepositorySpecifier({
+        operation: "createRepository",
+        cwd: input.cwd,
+        repository: input.repository,
+        nameOption: "--name",
+      });
       // Project/organization permissions control visibility; `az repos create` has no flag.
-      return executeJson({
+      const result = yield* executeJson({
         cwd: input.cwd,
         args: [
           "repos",
@@ -721,19 +804,30 @@ export const make = Effect.gen(function* () {
           repository.name,
           ...(repository.project ? ["--project", repository.project] : []),
         ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          decodeAzureDevOpsJson(raw, RawAzureDevOpsRepositorySchema, "createRepository", input.cwd),
-        ),
-        Effect.map(normalizeRepositoryCloneUrls),
+      });
+      const decoded = yield* decodeAzureDevOpsJson(
+        result.stdout.trim(),
+        RawAzureDevOpsRepositorySchema,
+        "createRepository",
+        input.cwd,
       );
+      return normalizeRepositoryCloneUrls(decoded);
     }),
-    createPullRequest: Effect.fn("AzureDevOpsCli.createPullRequest")(function (input) {
-      // A full ref keeps a branch named `@...` from reading as a file; az accepts either form.
-      const branch = (name: string) => (name.startsWith("@") ? `refs/heads/${name}` : name);
+    createPullRequest: Effect.fn("AzureDevOpsCli.createPullRequest")(function* (input) {
+      const targetBranch = yield* requireSafeAzureOption({
+        operation: "createPullRequest",
+        cwd: input.cwd,
+        option: "--target-branch",
+        value: input.target?.refName ?? input.baseBranch,
+      });
+      const sourceBranch = yield* requireSafeAzureOption({
+        operation: "createPullRequest",
+        cwd: input.cwd,
+        option: "--source-branch",
+        value: SourceControlProvider.sourceBranch(input),
+      });
       const title = textOption("--title", input.title);
-      return execute({
+      yield* execute({
         cwd: input.cwd,
         ...remoteOf(input),
         args: [
@@ -743,19 +837,24 @@ export const make = Effect.gen(function* () {
           "--only-show-errors",
           "--detect",
           "true",
-          `--target-branch=${branch(input.target?.refName ?? input.baseBranch)}`,
-          `--source-branch=${branch(SourceControlProvider.sourceBranch(input))}`,
+          `--target-branch=${targetBranch}`,
+          `--source-branch=${sourceBranch}`,
           title.arg,
           // Joined: az expands a separate `@file` value again, so a body of `@path` read that file.
           `--description=@${input.bodyFile}`,
           ...(input.draft === true ? ["--draft", "true"] : []),
         ],
         ...(title.stdin === undefined ? {} : { stdin: title.stdin }),
-      }).pipe(Effect.asVoid);
+      });
     }),
-    getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
-      const repository = parseRepositorySpecifier(input.repository);
-      return executeJson({
+    getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function* (input) {
+      const repository = yield* requireSafeRepositorySpecifier({
+        operation: "getDefaultBranch",
+        cwd: input.cwd,
+        repository: input.repository,
+        nameOption: "--repository",
+      });
+      const result = yield* executeJson({
         cwd: input.cwd,
         ...remoteOf(input),
         args: [
@@ -763,17 +862,17 @@ export const make = Effect.gen(function* () {
           "show",
           "--detect",
           "true",
-          // Joined so a name starting with `-` stays the option's value.
           `--repository=${repository.name}`,
           ...(repository.project ? ["--project", repository.project] : []),
         ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          decodeAzureDevOpsJson(raw, RawAzureDevOpsRepositorySchema, "getDefaultBranch", input.cwd),
-        ),
-        Effect.map((repo) => normalizeDefaultBranch(repo.defaultBranch)),
+      });
+      const repo = yield* decodeAzureDevOpsJson(
+        result.stdout.trim(),
+        RawAzureDevOpsRepositorySchema,
+        "getDefaultBranch",
+        input.cwd,
       );
+      return normalizeDefaultBranch(repo.defaultBranch);
     }),
   });
 });

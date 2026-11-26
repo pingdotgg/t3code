@@ -314,8 +314,7 @@ function actionArgs(
 }
 
 function isReviewerName(value: string): boolean {
-  const name = value.trim();
-  return name.length > 0 && !name.startsWith("-");
+  return AzureDevOpsCli.isSafeAzureOptionValue(value);
 }
 
 /** @public */
@@ -336,6 +335,26 @@ export const make = Effect.gen(function* () {
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
     });
 
+  const requirePullRequestNumber = (operation: string, cwd: string, value: number) =>
+    Number.isSafeInteger(value) && value >= 0
+      ? Effect.succeed(String(value))
+      : Effect.fail(
+          new AzureDevOpsCli.AzureDevOpsInvalidArgumentError({
+            operation,
+            command: "az",
+            cwd,
+            option: "--id",
+          }),
+        );
+
+  const isSafeKeyValueArg = (arg: string): boolean => {
+    if (arg.startsWith("-") || arg.startsWith("@") || /[\p{Cc}]/u.test(arg)) return false;
+    const eq = arg.indexOf("=");
+    if (eq === -1) return true;
+    const value = arg.slice(eq + 1);
+    return !value.startsWith("@");
+  };
+
   /** Use the extension's credentials; `az rest` uses the default tenant. */
   const invoke = <A>(input: {
     readonly cwd: string;
@@ -345,8 +364,28 @@ export const make = Effect.gen(function* () {
     readonly queryParameters?: ReadonlyArray<string>;
     readonly maxOutputBytes?: number;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, AzureDevOpsPullRequestCliError> =>
-    executeJson({
+  }): Effect.Effect<A, AzureDevOpsPullRequestCliError> => {
+    if (input.routeParameters.some((param) => !isSafeKeyValueArg(param))) {
+      return Effect.fail(
+        new AzureDevOpsCli.AzureDevOpsInvalidArgumentError({
+          operation: input.operation,
+          command: "az",
+          cwd: input.cwd,
+          option: "--route-parameters",
+        }),
+      );
+    }
+    if (input.queryParameters?.some((param) => !isSafeKeyValueArg(param))) {
+      return Effect.fail(
+        new AzureDevOpsCli.AzureDevOpsInvalidArgumentError({
+          operation: input.operation,
+          command: "az",
+          cwd: input.cwd,
+          option: "--query-parameters",
+        }),
+      );
+    }
+    return executeJson({
       cwd: input.cwd,
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       args: [
@@ -380,6 +419,7 @@ export const make = Effect.gen(function* () {
             );
       }),
     );
+  };
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
@@ -543,14 +583,38 @@ export const make = Effect.gen(function* () {
       );
     }),
 
-    listPullRequests: Effect.fn("AzureDevOpsPullRequestCli.listPullRequests")(function (input) {
-      return listPullRequestPage({
+    listPullRequests: Effect.fn("AzureDevOpsPullRequestCli.listPullRequests")(function* (input) {
+      const repository = yield* AzureDevOpsCli.requireSafeAzureOption({
+        operation: "listPullRequests",
         cwd: input.cwd,
-        repository: input.repository,
+        option: "--repository",
+        value: input.repository,
+      });
+      const viewer =
+        input.involvement === "all"
+          ? input.viewer
+          : yield* AzureDevOpsCli.requireSafeAzureOption({
+              operation: "listPullRequests",
+              cwd: input.cwd,
+              option: input.involvement === "authored" ? "--creator" : "--reviewer",
+              value: input.viewer,
+            });
+      const author =
+        input.author === undefined
+          ? undefined
+          : yield* AzureDevOpsCli.requireSafeAzureOption({
+              operation: "listPullRequests",
+              cwd: input.cwd,
+              option: "--creator",
+              value: input.author,
+            });
+      return yield* listPullRequestPage({
+        cwd: input.cwd,
+        repository,
         state: input.state,
         involvement: input.involvement,
-        viewer: input.viewer,
-        author: input.author,
+        viewer,
+        author,
         limit: input.limit,
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,
@@ -558,39 +622,32 @@ export const make = Effect.gen(function* () {
       });
     }),
 
-    getPullRequest: Effect.fn("AzureDevOpsPullRequestCli.getPullRequest")(function (input) {
-      return executeJson({
+    getPullRequest: Effect.fn("AzureDevOpsPullRequestCli.getPullRequest")(function* (input) {
+      const id = yield* requirePullRequestNumber("getPullRequest", input.cwd, input.number);
+      const result = yield* executeJson({
         cwd: input.cwd,
-        args: ["repos", "pr", "show", ...detectArgs, "--id", String(input.number)],
-      }).pipe(
-        Effect.flatMap(
-          (result): Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError> => {
-            const decoded = decodePullRequestJson(result.stdout.trim());
-            if (!Result.isSuccess(decoded)) {
-              return Effect.fail(
-                new AzureDevOpsPullRequestReadError({
-                  command: "az",
-                  cwd: input.cwd,
-                  operation: "getPullRequest",
-                  cause: decoded.failure,
-                }),
-              );
-            }
-            return decoded.success === null
-              ? Effect.fail(
-                  new AzureDevOpsPullRequestIncompleteError({
-                    command: "az",
-                    cwd: input.cwd,
-                    number: input.number,
-                  }),
-                )
-              : Effect.succeed(decoded.success);
-          },
-        ),
-      );
+        args: ["repos", "pr", "show", ...detectArgs, "--id", id],
+      });
+      const decoded = decodePullRequestJson(result.stdout.trim());
+      if (!Result.isSuccess(decoded)) {
+        return yield* new AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: input.cwd,
+          operation: "getPullRequest",
+          cause: decoded.failure,
+        });
+      }
+      return decoded.success === null
+        ? yield* new AzureDevOpsPullRequestIncompleteError({
+            command: "az",
+            cwd: input.cwd,
+            number: input.number,
+          })
+        : decoded.success;
     }),
 
     listPolicyChecks: Effect.fn("AzureDevOpsPullRequestCli.listPolicyChecks")(function* (input) {
+      const id = yield* requirePullRequestNumber("listPolicyChecks", input.cwd, input.number);
       const unreadable = (cause: unknown) =>
         new AzureDevOpsPullRequestReadError({
           command: "az",
@@ -609,7 +666,7 @@ export const make = Effect.gen(function* () {
             "list",
             ...detectArgs,
             "--id",
-            String(input.number),
+            id,
             "--top",
             String(POLICY_EVALUATIONS_PER_PAGE),
             "--skip",
@@ -687,6 +744,15 @@ export const make = Effect.gen(function* () {
     ),
 
     readBlobs: Effect.fn("AzureDevOpsPullRequestCli.readBlobs")(function* (input) {
+      const routeParameters = repositoryRoute(input.location);
+      if (routeParameters.some((param) => !isSafeKeyValueArg(param))) {
+        return yield* new AzureDevOpsCli.AzureDevOpsInvalidArgumentError({
+          operation: "readBlobs",
+          command: "az",
+          cwd: input.cwd,
+          option: "--route-parameters",
+        });
+      }
       const requested = new Map<string, string>();
       // Azure states ids in uppercase and names entries in lowercase.
       for (const id of input.objectIds) {
@@ -728,7 +794,7 @@ export const make = Effect.gen(function* () {
               "--api-version",
               REST_API_VERSION,
               "--route-parameters",
-              ...repositoryRoute(input.location),
+              ...routeParameters,
               "--http-method",
               "POST",
               "--in-file",
@@ -785,6 +851,11 @@ export const make = Effect.gen(function* () {
         if (input.reviewers.some((reviewer) => !isReviewerName(reviewer))) {
           return yield* new AzureDevOpsReviewerNameError({ command: "az", cwd: input.cwd });
         }
+        const id = yield* requirePullRequestNumber(
+          "setPullRequestReviewers",
+          input.cwd,
+          input.number,
+        );
         return yield* azure
           .execute({
             cwd: input.cwd,
@@ -795,10 +866,10 @@ export const make = Effect.gen(function* () {
               input.requested ? "add" : "remove",
               ...detectArgs,
               "--id",
-              String(input.number),
+              id,
               // Repeating `--reviewers` replaces the earlier list.
               "--reviewers",
-              ...input.reviewers,
+              ...input.reviewers.map((reviewer) => reviewer.trim()),
               "--only-show-errors",
               "--output",
               "json",
@@ -809,34 +880,31 @@ export const make = Effect.gen(function* () {
     ),
 
     runPullRequestAction: Effect.fn("AzureDevOpsPullRequestCli.runPullRequestAction")(
-      function (input) {
-        return azure
-          .execute({
-            cwd: input.cwd,
-            args: [
-              "repos",
-              "pr",
-              "update",
-              ...detectArgs,
-              "--id",
-              String(input.number),
-              ...actionArgs(input.action, input.mergeMethod),
-              "--only-show-errors",
-              "--output",
-              "json",
-            ],
-          })
-          .pipe(
-            // `pr update` prints the pull request it left, in the shape `pr show` prints.
-            Effect.map((result) => {
-              const decoded = decodePullRequestJson(result.stdout.trim());
-              return Result.isSuccess(decoded) ? (decoded.success ?? undefined) : undefined;
-            }),
-          );
+      function* (input) {
+        const id = yield* requirePullRequestNumber("runPullRequestAction", input.cwd, input.number);
+        const result = yield* azure.execute({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "update",
+            ...detectArgs,
+            "--id",
+            id,
+            ...actionArgs(input.action, input.mergeMethod),
+            "--only-show-errors",
+            "--output",
+            "json",
+          ],
+        });
+        // `pr update` prints the pull request it left, in the shape `pr show` prints.
+        const decoded = decodePullRequestJson(result.stdout.trim());
+        return Result.isSuccess(decoded) ? (decoded.success ?? undefined) : undefined;
       },
     ),
 
-    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
+    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function* (input) {
+      const id = yield* requirePullRequestNumber("updatePullRequest", input.cwd, input.number);
       // One argv entry preserves leading dashes and multi-string descriptions.
       const fields = [
         ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
@@ -849,7 +917,7 @@ export const make = Effect.gen(function* () {
         fields.filter((field) => field.stdin !== undefined).length > 1
           ? fields.map((field) => [field])
           : [fields];
-      return Effect.forEach(
+      yield* Effect.forEach(
         batches,
         (batch) => {
           const stdin = batch.find((field) => field.stdin !== undefined)?.stdin;
@@ -861,7 +929,7 @@ export const make = Effect.gen(function* () {
               "update",
               ...detectArgs,
               "--id",
-              String(input.number),
+              id,
               ...batch.map((field) => field.arg),
               "--only-show-errors",
               "--output",

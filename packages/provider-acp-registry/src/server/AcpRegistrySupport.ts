@@ -40,6 +40,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { sha256 } from "@noble/hashes/sha2";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -68,6 +69,9 @@ const REGISTRY_SEARCH_MAX_AGE_MS = 5 * 60 * 1_000;
 const ARCHIVE_REQUEST_TIMEOUT = "20 minutes";
 const PACKAGE_INSTALL_TIMEOUT = "20 minutes";
 const PACKAGE_QUERY_TIMEOUT = "30 seconds";
+const NO_REDIRECT: RequestInit = { redirect: "manual" };
+const MAX_HTTP_REDIRECTS = 5;
+const HTTP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 const BoundedAgentId = Schema.String.check(
   Schema.isMaxLength(128),
@@ -625,12 +629,35 @@ function normalizeRegistryCommandPath(command: string): ReadonlyArray<string> | 
   return segments;
 }
 
-function validateArchiveEntries(output: string): boolean {
-  return output
+function isSafeArchiveEntryName(entry: string): boolean {
+  return entry === "./" || normalizeRegistryCommandPath(entry) !== undefined;
+}
+
+function validateTarVerboseListing(namesOutput: string, verboseOutput: string): boolean {
+  const names = namesOutput
     .split(/\r?\n/u)
     .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .every((entry) => entry === "./" || normalizeRegistryCommandPath(entry) !== undefined);
+    .filter((entry) => entry.length > 0);
+  if (names.length === 0 || !names.every(isSafeArchiveEntryName)) return false;
+  const verboseLines = verboseOutput.split(/\r?\n/u).filter((line) => line.trim().length > 0);
+  if (verboseLines.length !== names.length) return false;
+  return verboseLines.every((line) => line.startsWith("-") || line.startsWith("d"));
+}
+
+function validateZipVerboseListing(namesOutput: string, verboseOutput: string): boolean {
+  const names = namesOutput
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (names.length === 0 || !names.every(isSafeArchiveEntryName)) return false;
+  const lines = verboseOutput.split(/\r?\n/u).filter((line) => line.length > 0);
+  if (lines.length < names.length + 2) return false;
+  if (!lines[0]?.startsWith("Archive:")) return false;
+  if (!/^\d+\s+files?,/u.test(lines.at(-1) ?? "")) return false;
+  const headerCount = lines[1]?.startsWith("Zip file size:") ? 2 : 1;
+  const entryLines = lines.slice(headerCount, -1);
+  if (entryLines.length !== names.length) return false;
+  return entryLines.every((line) => line.startsWith("-") || line.startsWith("d"));
 }
 
 type ArchiveKind = "raw" | "tar_bz2" | "tar_gz" | "zip";
@@ -874,12 +901,92 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const assertHttpsUrl = Effect.fn("AcpRegistryCatalog.assertHttpsUrl")(function* (
     value: string,
     detail: string,
+    reason: AcpRegistryErrorReason = "registry_unavailable",
   ) {
     const valid = yield* decodeHttpsUrl(value).pipe(Effect.option);
     if (Option.isNone(valid)) {
-      return yield* new AcpRegistryError({ reason: "registry_unavailable", detail });
+      return yield* new AcpRegistryError({ reason, detail });
     }
     return value;
+  });
+
+  const executeHttpsGet = Effect.fn("AcpRegistryCatalog.executeHttpsGet")(function* (input: {
+    readonly initialUrl: string;
+    readonly urlErrorDetail: string;
+    readonly failureReason: AcpRegistryErrorReason;
+    readonly failureDetail: string;
+    readonly timeout: Duration.Input;
+    readonly timeoutDetail: string;
+  }) {
+    let currentUrl = yield* assertHttpsUrl(
+      input.initialUrl,
+      input.urlErrorDetail,
+      input.failureReason,
+    );
+    return yield* Effect.gen(function* () {
+      for (let hop = 0; hop <= MAX_HTTP_REDIRECTS; hop += 1) {
+        const response = yield* httpClient.execute(HttpClientRequest.get(currentUrl)).pipe(
+          // fetch follows redirects automatically and would silently downgrade HTTPS to HTTP.
+          Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
+          Effect.mapError(
+            (cause) =>
+              new AcpRegistryError({
+                reason: input.failureReason,
+                detail: input.failureDetail,
+                cause,
+              }),
+          ),
+        );
+        const location = response.headers.location;
+        if (HTTP_REDIRECT_STATUSES.has(response.status) && location !== undefined) {
+          if (hop === MAX_HTTP_REDIRECTS) {
+            return yield* new AcpRegistryError({
+              reason: input.failureReason,
+              detail: `${input.failureDetail} Too many redirects.`,
+            });
+          }
+          const resolved = yield* Effect.try({
+            try: () => new URL(location, currentUrl),
+            catch: () =>
+              new AcpRegistryError({
+                reason: input.failureReason,
+                detail: input.urlErrorDetail,
+              }),
+          });
+          currentUrl = yield* assertHttpsUrl(
+            resolved.toString(),
+            input.urlErrorDetail,
+            input.failureReason,
+          );
+          continue;
+        }
+        return yield* HttpClientResponse.filterStatusOk(response).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AcpRegistryError({
+                reason: input.failureReason,
+                detail: input.failureDetail,
+                cause,
+              }),
+          ),
+        );
+      }
+      return yield* new AcpRegistryError({
+        reason: input.failureReason,
+        detail: `${input.failureDetail} Too many redirects.`,
+      });
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: input.timeout,
+        orElse: () =>
+          Effect.fail(
+            new AcpRegistryError({
+              reason: input.failureReason,
+              detail: input.timeoutDetail,
+            }),
+          ),
+      }),
+    );
   });
 
   const decodeRegistryText = Effect.fn("AcpRegistryCatalog.decodeRegistryText")(function* (
@@ -936,28 +1043,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     );
 
   const fetchRegistry = Effect.fn("AcpRegistryCatalog.fetchRegistry")(function* () {
-    yield* assertHttpsUrl(registryUrl, "ACP Registry index URL must use HTTPS.");
-    const response = yield* httpClient.execute(HttpClientRequest.get(registryUrl)).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.mapError(
-        (cause) =>
-          new AcpRegistryError({
-            reason: "registry_unavailable",
-            detail: `Could not fetch ACP Registry index from ${registryUrl}.`,
-            cause,
-          }),
-      ),
-      Effect.timeoutOrElse({
-        duration: REGISTRY_REQUEST_TIMEOUT,
-        orElse: () =>
-          Effect.fail(
-            new AcpRegistryError({
-              reason: "registry_unavailable",
-              detail: "Timed out fetching ACP Registry index.",
-            }),
-          ),
-      }),
-    );
+    const response = yield* executeHttpsGet({
+      initialUrl: registryUrl,
+      urlErrorDetail: "ACP Registry index URL must use HTTPS.",
+      failureReason: "registry_unavailable",
+      failureDetail: `Could not fetch ACP Registry index from ${registryUrl}.`,
+      timeout: REGISTRY_REQUEST_TIMEOUT,
+      timeoutDetail: "Timed out fetching ACP Registry index.",
+    });
     const collected = yield* collectUint8StreamText({
       stream: response.stream,
       maxBytes: MAX_REGISTRY_BYTES + 1,
@@ -1754,27 +1847,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       yield* fileSystem.makeDirectory(extractionRoot, { recursive: true });
       const kind = archiveKind(target.archive);
       const archivePath = path.join(temporaryRoot, archiveFileName(kind));
-      const response = yield* httpClient.execute(HttpClientRequest.get(target.archive)).pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.mapError(
-          (cause) =>
-            new AcpRegistryError({
-              reason: "download_failed",
-              detail: `Could not download ACP Registry agent ${agent.id} ${agent.version}.`,
-              cause,
-            }),
-        ),
-        Effect.timeoutOrElse({
-          duration: ARCHIVE_REQUEST_TIMEOUT,
-          orElse: () =>
-            Effect.fail(
-              new AcpRegistryError({
-                reason: "download_failed",
-                detail: `Timed out downloading ACP Registry agent ${agent.id} ${agent.version}.`,
-              }),
-            ),
-        }),
-      );
+      const response = yield* executeHttpsGet({
+        initialUrl: target.archive,
+        urlErrorDetail: "ACP Registry archive URL must use HTTPS.",
+        failureReason: "download_failed",
+        failureDetail: `Could not download ACP Registry agent ${agent.id} ${agent.version}.`,
+        timeout: ARCHIVE_REQUEST_TIMEOUT,
+        timeoutDetail: `Timed out downloading ACP Registry agent ${agent.id} ${agent.version}.`,
+      });
       // Stream hashes to avoid buffering large archives; Effect Crypto requires a whole buffer.
       const hash = sha256.create();
       let downloadedBytes = 0;
@@ -1842,15 +1922,29 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               : platform === "win32"
                 ? ["-tf", archivePath]
                 : undefined;
+        const verboseListArgs =
+          kind === "tar_gz"
+            ? ["-tvzf", archivePath]
+            : kind === "tar_bz2"
+              ? ["-tvjf", archivePath]
+              : platform === "win32"
+                ? ["-tvf", archivePath]
+                : undefined;
         const listingOptions = { maxStdoutBytes: MAX_ARCHIVE_LISTING_BYTES };
-        const entries =
-          listArgs === undefined
-            ? yield* runCommand("unzip", ["-Z1", archivePath], listingOptions)
-            : yield* runCommand(tarCommand, listArgs, listingOptions);
-        if (!validateArchiveEntries(entries)) {
+        const entriesValid =
+          listArgs === undefined || verboseListArgs === undefined
+            ? validateZipVerboseListing(
+                yield* runCommand("unzip", ["-Z1", archivePath], listingOptions),
+                yield* runCommand("unzip", ["-Z", archivePath], listingOptions),
+              )
+            : validateTarVerboseListing(
+                yield* runCommand(tarCommand, listArgs, listingOptions),
+                yield* runCommand(tarCommand, verboseListArgs, listingOptions),
+              );
+        if (!entriesValid) {
           return yield* new AcpRegistryError({
             reason: "archive_invalid",
-            detail: `ACP Registry agent ${agent.id} archive contains an unsafe path.`,
+            detail: `ACP Registry agent ${agent.id} archive contains an unsafe entry.`,
           });
         }
         if (kind === "zip" && platform !== "win32") {

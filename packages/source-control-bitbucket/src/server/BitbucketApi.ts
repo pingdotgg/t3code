@@ -19,7 +19,7 @@ import {
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
@@ -41,6 +41,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const NO_REDIRECT: RequestInit = { redirect: "manual" };
 const MAX_REDIRECTS = 3;
 const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
 /** A sweep over many branches would otherwise reach Bitbucket as one burst of lookups. */
@@ -617,7 +618,8 @@ function authFromCredential(credential: BitbucketCredential | null): SourceContr
 
 function originOf(value: string): string | null {
   try {
-    return new URL(value).origin;
+    const origin = new URL(value).origin;
+    return origin === "null" ? null : origin;
   } catch {
     return null;
   }
@@ -755,6 +757,82 @@ export const make = Effect.gen(function* () {
       orElse: (failed) => responseError(operation, failed),
     })(response);
 
+  const apiOrigin = originOf(config.baseUrl);
+
+  const trustedUrl = (value: string): string | null => {
+    if (value.startsWith("/") && !value.startsWith("//")) return apiUrl(value);
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      return null;
+    }
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.origin !== apiOrigin ||
+      parsed.username !== "" ||
+      parsed.password !== ""
+    ) {
+      return null;
+    }
+    return parsed.toString();
+  };
+
+  const resolveRedirectUrl = (
+    location: string,
+    currentUrl: string,
+  ): Effect.Effect<string, BitbucketUntrustedUrlError> => {
+    let next: URL;
+    try {
+      next = new URL(location, currentUrl);
+    } catch {
+      return Effect.fail(new BitbucketUntrustedUrlError({ host: "an unreadable url" }));
+    }
+    if (
+      (next.protocol !== "http:" && next.protocol !== "https:") ||
+      next.origin !== apiOrigin ||
+      next.username !== "" ||
+      next.password !== ""
+    ) {
+      return Effect.fail(
+        new BitbucketUntrustedUrlError({
+          host: next.origin !== "null" ? next.origin : "an unreadable url",
+        }),
+      );
+    }
+    return Effect.succeed(next.toString());
+  };
+
+  const executeJsonRequest = (
+    operation: BitbucketApiOperation,
+    request: HttpClientRequest.HttpClientRequest,
+    redirects: number,
+  ): Effect.Effect<HttpClientResponse.HttpClientResponse, BitbucketApiError> =>
+    withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
+      Effect.flatMap((authed) =>
+        httpClient.execute(authed).pipe(
+          // fetch follows redirects by default and would send credentials off-origin.
+          Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
+          Effect.mapError(
+            (cause): BitbucketApiError => new BitbucketRequestError({ operation, cause }),
+          ),
+        ),
+      ),
+      Effect.flatMap((response) => {
+        const location = response.headers.location;
+        if (response.status >= 300 && response.status < 400 && location !== undefined) {
+          return resolveRedirectUrl(location, request.url).pipe(
+            Effect.flatMap((nextUrl) =>
+              redirects < MAX_REDIRECTS && request.method === "GET"
+                ? executeJsonRequest(operation, HttpClientRequest.get(nextUrl), redirects + 1)
+                : Effect.succeed(response),
+            ),
+          );
+        }
+        return Effect.succeed(response);
+      }),
+    );
+
   const executeJson = <S extends Schema.Top>(
     operation: BitbucketApiOperation,
     request: HttpClientRequest.HttpClientRequest,
@@ -762,12 +840,7 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<S["Type"], BitbucketApiError, S["DecodingServices"]> =>
     throttled(
       request.method,
-      withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
-        Effect.flatMap((authed) =>
-          httpClient
-            .execute(authed)
-            .pipe(Effect.mapError((cause) => new BitbucketRequestError({ operation, cause }))),
-        ),
+      executeJsonRequest(operation, request, 0).pipe(
         Effect.flatMap((response) => decodeResponse(operation, schema, response)),
         Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
         Effect.catchTags({
@@ -940,14 +1013,6 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const apiOrigin = originOf(config.baseUrl);
-
-  const trustedUrl = (value: string): string | null => {
-    if (!/^https?:\/\//u.test(value)) return apiUrl(value);
-    const origin = originOf(value);
-    return origin !== null && origin === apiOrigin ? value : null;
-  };
-
   /** Redirects forward auth headers; restrict them to the configured Bitbucket. */
   const send = (input: {
     readonly method: "GET" | "POST" | "PUT" | "DELETE";
@@ -976,28 +1041,30 @@ export const make = Effect.gen(function* () {
         : base.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
     return withAuth(withBody).pipe(
       Effect.flatMap((request) =>
-        httpClient
-          .execute(request)
-          .pipe(
-            Effect.mapError(
-              (cause): BitbucketApiError =>
-                new BitbucketRequestError({ operation: "request", cause }),
-            ),
+        httpClient.execute(request).pipe(
+          // fetch follows redirects by default and would bypass the origin check below.
+          Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
+          Effect.mapError(
+            (cause): BitbucketApiError =>
+              new BitbucketRequestError({ operation: "request", cause }),
           ),
+        ),
       ),
       Effect.flatMap((response) => {
         const location = response.headers.location;
-        if (
-          response.status >= 300 &&
-          response.status < 400 &&
-          location !== undefined &&
-          input.redirects < MAX_REDIRECTS
-        ) {
-          return send({
-            ...input,
-            url: new URL(location, url).toString(),
-            redirects: input.redirects + 1,
-          });
+        if (response.status >= 300 && response.status < 400 && location !== undefined) {
+          return resolveRedirectUrl(location, url).pipe(
+            Effect.flatMap((nextUrl) =>
+              input.redirects < MAX_REDIRECTS &&
+              (input.method === "GET" || response.status === 307 || response.status === 308)
+                ? send({
+                    ...input,
+                    url: nextUrl,
+                    redirects: input.redirects + 1,
+                  })
+                : Effect.succeed(response),
+            ),
+          );
         }
         return Effect.succeed(response);
       }),
