@@ -750,28 +750,14 @@ export function appendTerminalOutput(
 export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
-  // Moves are relative to the last line, and a viewer only holds the lines in `text`.
-  let reachable = 0;
-  let cursor = state.text.length;
-  while (reachable < lastRow && cursor > 0) {
-    const newline = state.text.lastIndexOf("\n", cursor - 1);
-    if (newline === -1) break;
-    reachable += 1;
-    cursor = newline;
+  // A full live window can hide retained scrollback from the display tail until the next redraw.
+  let replay = screen.settled.join("");
+  if (replay !== "" && lastRow < LIVE_LINES - 1) {
+    // Scroll the history out with blank rows, then clear them before replaying the live window.
+    replay += "\n".repeat(LIVE_LINES - 1) + `${ESC}[2J`;
   }
-  let replay = state.text;
-  if (lastRow < LIVE_LINES - 1 && reachable === lastRow && cursor > 0) {
-    const boundary = state.text.lastIndexOf("\n", cursor - 1) + 1;
-    if (boundary > 0) {
-      // Scroll the history out with blank rows, then clear them before replaying the live window.
-      replay =
-        state.text.slice(0, boundary) +
-        "\n".repeat(LIVE_LINES - 1) +
-        `${ESC}[2J` +
-        state.text.slice(boundary);
-    }
-  }
-  const up = (row: number) => Math.min(lastRow - row, reachable);
+  replay += screen.lines.map(serializeLine).join("\n");
+  const up = (row: number) => lastRow - row;
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
