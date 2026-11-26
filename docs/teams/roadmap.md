@@ -14,7 +14,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 | **Milestone 6** | Zero-Config Team Providers, Team Skills & Pre-Prompts                    | **In Progress** |
 | **Milestone 7** | Per-Turn GitHub Identity Forwarding                                      | Planned         |
 | **Milestone 8** | Team Scheduled Tasks (`(team, env)` Scoping & Team Automation Ownership) | Planned         |
-| **Milestone 9** | Mobile Parity, Translations & Hardening                                  | Planned         |
+| **Milestone 9** | Upstream Mobile Compatibility, Translations & Hardening                  | Planned         |
 
 ---
 
@@ -266,17 +266,25 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ---
 
-## Milestone 9 — Mobile Parity, Translations & Hardening
+## Milestone 9 — Upstream Mobile Compatibility, Translations & Hardening
 
-**Goal:** Bring full team support to every T3 Code surface, lock down host-level multi-tenant edges, and complete security verification.
+**Goal:** Make the unmodified official upstream mobile app work seamlessly against our forked Desktop and Team Server (zero changes to `apps/mobile`), finish translations, lock down host-level multi-tenant edges, and complete security verification.
 
 ### Scope
 
-- **Mobile (`apps/mobile`):**
-  - Team switcher, deep-link join, pseudo & team `displayName` prefixes, "My threads" default filter + colleagues toggle, follow/unfollow, View/Lock badges, Thread Notes / inaccessible-environment UX, creator-only `Send now` / `owner`-`admin` `Interrupt`, Team Scheduled Tasks UI (`SettingsScheduledTasksRouteScreen`), and per-member push notification filtering.
+- **Server-Side Upstream Mobile Compatibility Layer (`apps/server/src/team/`, zero changes in `apps/mobile`):**
+  - **Member-bound standard pairing (`team_pairing_meta`):** When an authenticated team member creates a standard pairing QR/code (`Settings → Teams → Connect mobile` or `authCreatePairingLink`), bind `memberId = caller.memberId` to the pairing link so the official upstream iOS/Android app inherits the member's identity, role, Views, Follows, filtered push notifications, and GitHub identity automatically on redeem.
+  - **Non-team-aware client detection:** Forked web/desktop clients send an explicit marker (`X-T3-Teams-Client: 1` / WS handshake flag); sessions connecting without it automatically receive server-side upstream compatibility adaptations.
+  - **On-the-fly title prefixing & rename hygiene:** Dynamically prefix `thread.title` with `${creatorPseudo}: ${title}` (or `${team.displayName}: ${title}` for team-owned scheduled-task threads) in `subscribeShell`, `subscribeThread`, `getThreadProjection`, `searchThreads`, `getThreadTitles`, and push notifications without altering the database; strip matching leading prefixes on rename requests from non-team-aware clients to prevent double-prefixing.
+  - **Per-member mobile visibility preference:** Add a Desktop/Web setting in **Settings → Teams** (**"Visible threads on upstream mobile"**: `My threads + followed` by default vs. `All accessible team threads`), enforced server-side in `subscribeShell` for non-team-aware mobile sessions.
+  - **Clear server-side error messages:** Return clear, actionable errors when a non-team-aware mobile client attempts an operation disallowed on a locked thread, read-only View, or colleague's local environment (guiding the user to Desktop/Web for Notes or Forking).
 - **Translations (`i18n`):**
-  - Ensure 100% of `team.*` UI strings across web, desktop, and mobile are generated and verified via `vp run i18n:generate` and `vp run i18n:check`.
+  - Ensure 100% of `team.*` UI strings across web and desktop are generated and verified via `vp run i18n:generate` and `vp run i18n:check`.
 - **Host Sandboxing, Testing & Security Audit:**
   - Optional Linux per-turn **`bwrap` (bubblewrap)** worktree sandboxing on shared `t3runner` hosts (bind-mounting only the thread's worktree + `/tmp` + turn broker socket) + `/proc` `hidepid=2` hardening runbook.
-  - Full multi-member E2E scenario suite (`vp run scenarios:team`) covering Milestones 1–8 end-to-end.
+  - Full multi-member E2E scenario suite (`vp run scenarios:team`) covering Milestones 1–9 end-to-end (including simulated non-team-aware mobile sessions).
   - Security audit of WebSocket subscription filtering, member-bound & `team-automation` MCP containment, `t3hub`/`t3runner` OS boundary, Team Provider token-lease isolation, Thread Notes anti-prompt-injection / TOCTOU guarantees, asset access, and GitHub credential lease revocation.
+
+### Definition of Done
+
+- Pairing an unmodified upstream mobile client (simulated without the fork marker) via a standard QR/pairing code created by Bob binds its session to Bob's `memberId`, displays team threads prefixed with `alice: <title>` / `acme: <title>`, strips prefixes cleanly on rename, hides colleagues' unfollowed threads by default (and reveals them when Bob flips his Desktop/Web mobile visibility preference), and enforces all RBAC/View/Lock/push-notification rules server-side with zero modifications to `apps/mobile`.
