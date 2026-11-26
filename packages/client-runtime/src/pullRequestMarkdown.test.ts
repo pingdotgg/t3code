@@ -332,8 +332,20 @@ describe("media on custom hosts", () => {
     ["https://drop.example.com/capture.PNG?token=abc#preview", "image"],
     ["[Recording](https://drop.example.com/recording.mov)", "video"],
     ["<https://drop.example.com/shot.webp>", "image"],
+    ["https://example.com/demo.mp4?download=1", "video"],
+    ["[Screenshot](https://example.com/shot.png#full)", "image"],
   ])("recognizes %s without a request", (body, media) => {
     expect(split(body)).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+  });
+
+  it.each([
+    "[Open report](https://example.com/report?file=demo.mp4)",
+    "[View docs](https://example.com/report#demo.png)",
+    "https://example.com/report?file=demo.mp4",
+  ])("keeps %s a link when only its query or fragment names media", (body) => {
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
   });
 
   it("keeps inline links and media examples in code as prose", () => {
