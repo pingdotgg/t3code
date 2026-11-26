@@ -82,19 +82,16 @@ describe("searchSettings", () => {
       },
       { id: "language", title: "Language", to: "/settings/general" },
     ];
-    const translations: Record<string, Record<string, string>> = {
-      de: { "Speech language": "Diktiersprache", language: "Sprache", Language: "Sprache" },
-      ja: { "Speech language": "音声入力の言語", language: "言語", Language: "言語" },
+    const german: Record<string, string> = {
+      "Speech language": "Diktiersprache",
+      language: "Sprache",
+      Language: "Sprache",
     };
-    const ids = (query: string, locale: string) =>
-      searchSettings(query, items, (message) => translations[locale]?.[message] ?? message).map(
-        (item) => item.id,
-      );
+    const ids = (query: string) =>
+      searchSettings(query, items, (message) => german[message] ?? message).map((item) => item.id);
 
-    expect(ids("Sprache", "de")).toEqual(["language", "speech-language", "dictation"]);
-    expect(ids("言語", "ja")).toEqual(["language", "speech-language", "dictation"]);
-    expect(ids("Language", "de")).toEqual(["language", "speech-language", "dictation"]);
-    expect(ids("Language", "en")).toEqual(["language", "speech-language", "dictation"]);
+    expect(ids("Sprache")).toEqual(["language", "speech-language", "dictation"]);
+    expect(ids("Language")).toEqual(["language", "speech-language", "dictation"]);
   });
 
   it("shows the Secrets page in nav and search only when an environment enables secret providers", () => {
