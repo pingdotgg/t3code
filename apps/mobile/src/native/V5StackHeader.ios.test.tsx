@@ -43,7 +43,7 @@ vi.mock("react-native-screens", () => ({
 import { InterfaceDirectionContext } from "../i18n/direction";
 import { V5StackHeader } from "./V5StackHeader.ios";
 
-it("updates native header direction and the visible Back title when switching language", () => {
+it("updates native header direction and keeps the back button chevron-only when switching language", () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const root = createRoot(document.createElement("div"));
   const render = (direction: "ltr" | "rtl") =>
@@ -60,7 +60,7 @@ it("updates native header direction and the visible Back title when switching la
   try {
     render("rtl");
     expect(bridge.rightToLeft).toBe(true);
-    expect(bridge.ios).toMatchObject({ backButtonTitle: "Back", backButtonDisplayMode: "default" });
+    expect(bridge.ios).toMatchObject({ backButtonTitle: "", backButtonDisplayMode: "minimal" });
 
     render("ltr");
     expect(bridge.rightToLeft).toBe(false);
