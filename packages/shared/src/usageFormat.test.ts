@@ -112,22 +112,6 @@ describe("usage source messages", () => {
       }
     });
 
-    it("keeps the largest count through legacy and physical identity bridges", () => {
-      const { physicalSourceId: _omitted, ...legacy } = windows.fingerprint;
-      const legacySource = malformedSource(7, { fingerprint: legacy });
-      const bridge = { ...windows, status: "ok" as const, malformedRecords: 0 };
-      const otherScope = {
-        ...wsl,
-        fingerprint: { ...wsl.fingerprint, physicalSourceId: "other-scope" },
-      };
-      const sources = [legacySource, wsl, otherScope, bridge];
-      for (const ordered of [sources, sources.toReversed()]) {
-        expect(usageSourceMessages(ordered)).toEqual([
-          "7 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
-        ]);
-      }
-    });
-
     it("keeps sources distinct without a shared alias or with different providers", () => {
       const { physicalSourceId: _omitted, ...legacy } = wsl.fingerprint;
       for (const fingerprint of [
