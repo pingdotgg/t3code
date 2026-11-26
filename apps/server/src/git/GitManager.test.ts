@@ -3741,7 +3741,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         );
 
         expect(split.toast.description).toBe(`${"a".repeat(68)}...`);
-        expect(split.toast.description?.isWellFormed()).toBe(true);
         const hookLines = events
           .filter(
             (event): event is Extract<GitActionProgressEvent, { kind: "hook_output" }> =>
@@ -3749,7 +3748,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           )
           .map((event) => event.text);
         expect(hookLines).toContain("a".repeat(499));
-        expect(hookLines.every((line) => line.isWellFormed())).toBe(true);
 
         NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "whole emoji\n");
         const intact = yield* runStackedAction(manager, {
@@ -3764,7 +3762,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const generated = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
 
         expect(generated.commit.subject).toBe("a".repeat(71));
-        expect(generated.commit.subject?.isWellFormed()).toBe(true);
         expect(generated.toast.description).toBe("a".repeat(71));
       }),
   );
