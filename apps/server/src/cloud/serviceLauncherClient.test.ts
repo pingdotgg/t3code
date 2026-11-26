@@ -359,8 +359,13 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
   );
 
   it.effect.each([
-    { name: "leading", searchPath: (missing: string) => `:${missing}`, moved: true },
-    { name: "trailing", searchPath: (missing: string) => `${missing}:`, moved: true },
+    // The working-directory t3 is checked by its execute bits, which Windows hosts do not set.
+    ...(HostProcess.Platform.defaultValue() === "win32"
+      ? []
+      : [
+          { name: "leading", searchPath: (missing: string) => `:${missing}`, moved: true },
+          { name: "trailing", searchPath: (missing: string) => `${missing}:`, moved: true },
+        ]),
     { name: "whole", searchPath: () => "", moved: false },
   ])("treats a $name empty PATH entry like the shell does", ({ searchPath, moved }) =>
     Effect.gen(function* () {

@@ -23,9 +23,9 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SecretInput } from "./SecretInput";
 import { classifySecretProvider } from "./SecretProviderDialog.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface SecretSource {
   readonly id: SecretProviderId;
@@ -174,39 +174,37 @@ function SecretCheckButton(props: {
           ? gt("Secret resolved")
           : state.detail;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex">
-            <Button
-              type="button"
-              size="icon-micro"
-              variant="ghost-muted"
-              disabled={props.disabled === true || !canCheck || state?.status === "checking"}
-              onClick={() => void run()}
-              aria-label={
-                state?.status === "failed"
-                  ? gt("{label} failed: {detail}", { label: props.label, detail: state.detail })
-                  : state?.status === "resolved"
-                    ? gt("{label} resolved", { label: props.label })
-                    : props.label
-              }
-            >
-              {state?.status === "checking" ? (
-                <Spinner />
-              ) : state?.status === "resolved" ? (
-                <CheckIcon className="text-success-foreground" />
-              ) : state?.status === "failed" ? (
-                <AlertTriangleIcon className="text-destructive" />
-              ) : (
-                <RefreshCwIcon />
-              )}
-            </Button>
-          </span>
-        }
-      />
-      <TooltipPopup side="top">{description}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span className="inline-flex">
+          <Button
+            type="button"
+            size="icon-micro"
+            variant="ghost-muted"
+            disabled={props.disabled === true || !canCheck || state?.status === "checking"}
+            onClick={() => void run()}
+            aria-label={
+              state?.status === "failed"
+                ? gt("{label} failed: {detail}", { label: props.label, detail: state.detail })
+                : state?.status === "resolved"
+                  ? gt("{label} resolved", { label: props.label })
+                  : props.label
+            }
+          >
+            {state?.status === "checking" ? (
+              <Spinner />
+            ) : state?.status === "resolved" ? (
+              <CheckIcon className="text-success-foreground" />
+            ) : state?.status === "failed" ? (
+              <AlertTriangleIcon className="text-destructive" />
+            ) : (
+              <RefreshCwIcon />
+            )}
+          </Button>
+        </span>
+      }
+      label={description}
+    />
   );
 }
 

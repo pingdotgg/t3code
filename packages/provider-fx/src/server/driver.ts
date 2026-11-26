@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { type FxAdapterV2DriverEnv, makeFxAdapterV2Driver } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -92,6 +92,7 @@ export const FxDriver: ProviderDriver<FxSettings, FxDriverEnv> = {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const host = yield* ProviderHost.ProviderHost;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const processEnv = yield* mergeProviderInstanceEnvironment(
@@ -119,7 +120,11 @@ export const FxDriver: ProviderDriver<FxSettings, FxDriverEnv> = {
         makeFxMaintenance(
           fetchLatestFxVersion().pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
         ),
-        { binaryPath: effectiveConfig.binaryPath, env: processEnv },
+        {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnv,
+          npmCacheDir: path.join(host.paths.providerStatusCacheDir, "npm"),
+        },
       ).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),

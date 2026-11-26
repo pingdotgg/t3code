@@ -51,6 +51,7 @@ export interface AcpClientOptions {
   readonly onTermination?: AcpProtocol.AcpPatchedProtocolOptions["onTermination"];
   readonly onOutgoingResponseFailure?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponse"];
+  readonly onUndecodableNotification?: AcpProtocol.AcpPatchedProtocolOptions["onUndecodableNotification"];
   readonly transformStdout?: (
     stdout: ChildProcessSpawner.ChildProcessHandle["stdout"],
   ) => AcpProtocol.AcpStdio["stdin"];
@@ -920,6 +921,9 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
       ? { onOutgoingResponseFailure: options.onOutgoingResponseFailure }
       : {}),
     ...(options.onOutgoingResponse ? { onOutgoingResponse: options.onOutgoingResponse } : {}),
+    ...(options.onUndecodableNotification
+      ? { onUndecodableNotification: options.onUndecodableNotification }
+      : {}),
     transformSessionUpdate: (notification) => {
       const normalized =
         negotiatedProtocolGeneration === 1
