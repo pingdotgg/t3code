@@ -6,7 +6,10 @@ import {
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { decodeHTMLAttribute, decodeHTMLStrict as decodeEntities } from "entities";
 import type JSZip from "jszip";
-import { terminalOutputPlainText } from "@t3tools/shared/terminalOutput";
+import {
+  terminalOutputCollapseRedraws,
+  terminalOutputPlainText,
+} from "@t3tools/shared/terminalOutput";
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 import { PreviewError } from "./previewFailure";
@@ -385,13 +388,15 @@ export async function openDocument(
             ["table:table-cell", "table:covered-table-cell"].includes(child.name),
           )) {
             const value =
-              find(cell, "text:p", "office:annotation").map(text).join("\n") ||
-              cell.attrs["office:value"] ||
-              cell.attrs["office:date-value"] ||
-              cell.attrs["office:time-value"] ||
-              cell.attrs["office:boolean-value"] ||
-              cell.attrs["office:string-value"] ||
-              "";
+              cell.name === "table:covered-table-cell"
+                ? ""
+                : find(cell, "text:p", "office:annotation").map(text).join("\n") ||
+                  cell.attrs["office:value"] ||
+                  cell.attrs["office:date-value"] ||
+                  cell.attrs["office:time-value"] ||
+                  cell.attrs["office:boolean-value"] ||
+                  cell.attrs["office:string-value"] ||
+                  "";
             const count = repeat(
               cell.attrs["table:number-columns-repeated"],
               TABLE_PREVIEW_MAX_COLUMNS + 1,
@@ -425,7 +430,7 @@ export async function openDocument(
           name: table.attrs["table:name"] || undefined,
           rows,
           rowCount: rows.length,
-          columns: rows.reduce((columns, row) => Math.max(columns, row.length), 1),
+          columns: rows.length && rows.reduce((columns, row) => Math.max(columns, row.length), 1),
           truncated,
         };
       }),
@@ -460,11 +465,10 @@ export async function openEpub(archive: JSZip): Promise<OfficeWorkerResult> {
     const entry = path ? archive.file(path) : null;
     if (!entry || !path) continue;
     const chapter = parseXml(await entry.async("string"));
+    const title = text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter).trim();
+    const last = title.charCodeAt(119);
     pages.push({
-      title:
-        text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter)
-          .trim()
-          .slice(0, 120) || undefined,
+      title: title.slice(0, last >= 0xd800 && last <= 0xdbff ? 119 : 120) || undefined,
       html: await epubHtml(chapter, archive, path),
     });
   }
@@ -501,9 +505,10 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
-  const language = String(record(record(notebook.metadata).language_info).name ?? "text")
-    .replaceAll(/[^a-z\d+#-]/gi, "")
-    .slice(0, 40);
+  const language =
+    String(record(record(notebook.metadata).language_info).name ?? "")
+      .replaceAll(/[^a-z\d+#-]/gi, "")
+      .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
     const cell = record(value);
     const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
@@ -524,9 +529,11 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           }
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          const text = terminalOutputPlainText(
+          const plain = terminalOutputPlainText(
             notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
           );
+          const text =
+            output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
           if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
           const summary = [output.ename, output.evalue]
             .filter((part) => typeof part === "string")
@@ -577,6 +584,7 @@ const rtfCodePageLabel = (codePage: number) =>
       950: "big5",
       874: "windows-874",
       10000: "macintosh",
+      54936: "gb18030",
     } as Record<number, string>
   )[codePage] ?? `windows-${codePage}`;
 

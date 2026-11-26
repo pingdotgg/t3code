@@ -1,4 +1,5 @@
 import type { EnvironmentId, OrchestrationV2ThreadTranscript } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import * as DateTime from "effect/DateTime";
@@ -12,7 +13,8 @@ export function threadContextAttachment(
     "thread",
     `${environmentId}:${transcript.threadId}:${updatedAt}`,
   );
-  const title = transcript.title.replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 64) || "Thread";
+  const sanitized = transcript.title.replace(/[^\p{L}\p{N}._ -]/gu, "_");
+  const title = sanitized.slice(0, splitsSurrogatePair(sanitized, 64) ? 63 : 64) || "Thread";
   return new File(
     [
       threadTranscriptHeader(environmentId, transcript),
