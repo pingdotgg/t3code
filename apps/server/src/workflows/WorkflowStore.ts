@@ -5,6 +5,7 @@ import {
   WorkflowRun,
   type WorkflowRunReference,
   WorkflowRunStatus,
+  type WorkflowRunSubject,
   WorkflowStep,
 } from "@t3tools/contracts";
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
@@ -53,6 +54,8 @@ export interface RunSummaryRow {
   readonly title: string;
   /** The run's tags, as a JSON list of text. */
   readonly tags_json: string;
+  /** What the run is about, as a `WorkflowRunSubject` in JSON; null when it declared nothing. */
+  readonly subject_json: string | null;
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
   readonly result_json: string | null;
@@ -120,6 +123,8 @@ interface ReferenceRow {
 // Rows keep JSON as text. Everything stored was a JSON value when it was written.
 export const jsonText = (value: Schema.Json): string => JSON.stringify(value);
 export const jsonValue = (text: string): Schema.Json => JSON.parse(text) as Schema.Json;
+/** A `subject_json` as this store wrote it. */
+export const subjectOf = (text: string) => JSON.parse(text) as WorkflowRunSubject;
 
 const now = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -159,6 +164,12 @@ export const detailCut = (text: string) =>
     : text.slice(0, splitsSurrogatePair(text, DETAIL_KEPT) ? DETAIL_KEPT - 1 : DETAIL_KEPT);
 const SIGNAL_IDS_KEPT = Duration.days(7);
 const REFERENCE_TITLE_KEPT = 300;
+const SUBJECT_TITLE_KEPT = 200;
+const subjectTitle = (title: string) =>
+  title.slice(
+    0,
+    splitsSurrogatePair(title, SUBJECT_TITLE_KEPT) ? SUBJECT_TITLE_KEPT - 1 : SUBJECT_TITLE_KEPT,
+  );
 const idsKeptUntil = Effect.map(DateTime.now, (at) =>
   DateTime.formatIso(DateTime.addDuration(at, SIGNAL_IDS_KEPT)),
 );
@@ -223,6 +234,8 @@ export class WorkflowStore extends Context.Service<
     readonly runTitle: (runId: string, title: string) => Effect.Effect<void>;
     /** The run's tags from now on, in place of any it had. */
     readonly runTags: (runId: string, tags: ReadonlyArray<string>) => Effect.Effect<void>;
+    /** What the run is about from now on, in place of anything it said before. */
+    readonly runSubject: (runId: string, subject: ReferenceInput) => Effect.Effect<void>;
     /** Marks the step running and returns how many times it has now been started. */
     readonly stepStarted: (
       runId: string,
@@ -268,7 +281,7 @@ export class WorkflowStore extends Context.Service<
     readonly waitsClaimed: (runId: string) => Effect.Effect<ReadonlyArray<WaitRow>>;
     /**
      * Hands one buffered signal to one wait, or to none: the claim and the removal happen
-     * together. `gone` when another wait took the signal, `claimed` when the wait was already woken.
+     * together. `gone` when the signal is expired or absent, `claimed` when the wait was already woken.
      */
     readonly mailDeliver: (
       signalId: string,
@@ -402,6 +415,8 @@ export class WorkflowStore extends Context.Service<
       readonly kind?: string | undefined;
       /** Runs tagged with this. */
       readonly tag?: string | undefined;
+      /** Runs about this: the subject's kind and key, or text that is its web address or key. */
+      readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
     }) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
@@ -466,7 +481,37 @@ export const make = Effect.gen(function* () {
   const write = <A, E>(runId: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.orDie, Effect.andThen(PubSub.publish(changes, runId)), Effect.asVoid);
   const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at, woke_json`;
-  const summaryColumns = sql`run_id, workflow, idempotency_key, version, engine_tag, title, status, detail, result_json, parent_run_id, parent_wait, pauses, held, tags_json, started_at, updated_at, ended_at`;
+  const summaryColumns = sql`run_id, workflow, idempotency_key, version, engine_tag, title, status, detail, result_json, parent_run_id, parent_wait, pauses, held, tags_json, subject_json, started_at, updated_at, ended_at`;
+
+  /**
+   * A run's subject is also among what it touched: when a touch learns that thing's title or web
+   * address, the subject the lists show learns it too. A title it has is replaced only by another.
+   */
+  const subjectLearned = Effect.fn("WorkflowStore.subjectLearned")(function* (
+    runId: string,
+    reference: { readonly kind: string; readonly key: string },
+    title: string,
+    url: string | null,
+  ) {
+    const rows = yield* sql<{ readonly subject_json: string }>`
+      SELECT subject_json FROM workflow_runs
+      WHERE run_id = ${runId} AND subject_kind = ${reference.kind}
+        AND subject_key = ${reference.key}
+    `;
+    const row = rows[0];
+    if (row === undefined) return;
+    const held = subjectOf(row.subject_json);
+    const next = {
+      ...held,
+      title: title === "" ? held.title : subjectTitle(title),
+      url: held.url ?? url,
+    };
+    if (next.title === held.title && next.url === held.url) return;
+    yield* sql`
+      UPDATE workflow_runs SET subject_url = ${next.url}, subject_json = ${jsonText(next)}
+      WHERE run_id = ${runId}
+    `;
+  });
 
   const hub = yield* Effect.serviceOption(MilestoneHub.MilestoneHub);
   /** Tells the milestone hub of a transition this store just wrote, under an id stable for it. */
@@ -846,6 +891,29 @@ export const make = Effect.gen(function* () {
         sql`UPDATE workflow_runs SET tags_json = ${jsonText([...tags])} WHERE run_id = ${runId}`,
       );
     }),
+    runSubject: Effect.fn("WorkflowStore.runSubject")(function* (runId, subject) {
+      // What a step already learned of it stands in for what the workflow did not say.
+      const known = (yield* sql<{ readonly title: string; readonly url: string | null }>`
+        SELECT title, url FROM workflow_run_references
+        WHERE run_id = ${runId} AND kind = ${subject.kind} AND key = ${subject.key}
+      `.pipe(Effect.orDie))[0];
+      const kept = {
+        kind: subject.kind,
+        key: subject.key,
+        address: subject.address,
+        title: subjectTitle(subject.title === "" ? (known?.title ?? "") : subject.title),
+        url: subject.url ?? known?.url ?? null,
+      } satisfies WorkflowRunSubject;
+      yield* write(
+        runId,
+        sql`
+          UPDATE workflow_runs
+          SET subject_kind = ${kept.kind}, subject_key = ${kept.key}, subject_url = ${kept.url},
+            subject_json = ${jsonText(kept)}
+          WHERE run_id = ${runId}
+        `,
+      );
+    }),
     stepStarted: Effect.fn("WorkflowStore.stepStarted")(function* (runId, name, kind) {
       const at = yield* now;
       const rows = yield* sql<{ attempts: number | bigint }>`
@@ -972,10 +1040,11 @@ export const make = Effect.gen(function* () {
       `.pipe(Effect.orDie);
     }),
     mailDeliver: Effect.fn("WorkflowStore.mailDeliver")(function* (signalId, runId, name, woke) {
-      const at = yield* now;
+      let at = "";
       const outcome = yield* sql
         .withTransaction(
           Effect.gen(function* () {
+            at = yield* now;
             // A kept copy of an id that already woke a wait straight is spent: it is dropped, so
             // it wakes no second wait and is not offered again.
             const seen = yield* sql`SELECT 1 FROM workflow_signals WHERE signal_id = ${signalId}`;
@@ -990,7 +1059,8 @@ export const make = Effect.gen(function* () {
             `;
             if (claimed.length === 0) return "claimed" as const;
             const taken = yield* sql<{ expires_at: string }>`
-              DELETE FROM workflow_mail WHERE signal_id = ${signalId} RETURNING expires_at
+              DELETE FROM workflow_mail
+              WHERE signal_id = ${signalId} AND expires_at > ${at} RETURNING expires_at
             `;
             // Failing undoes the claim: the wait stays open for a signal that is still there.
             const copy = taken[0];
@@ -1288,6 +1358,7 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.orDie);
     }),
     mailNext: Effect.fn("WorkflowStore.mailNext")(function* (addresses, passed = new Set()) {
+      const at = yield* now;
       for (const address of addresses) {
         const rows = yield* sql<{
           signal_id: string;
@@ -1295,7 +1366,7 @@ export const make = Effect.gen(function* () {
           sender_json: string | null;
         }>`
           SELECT signal_id, value_json, sender_json FROM workflow_mail
-          WHERE address = ${mailAddress(address)} ORDER BY rowid
+          WHERE address = ${mailAddress(address)} AND expires_at > ${at} ORDER BY rowid
         `.pipe(Effect.orDie);
         const mail = rows.find((row) => !passed.has(row.signal_id));
         if (mail !== undefined) {
@@ -1352,6 +1423,11 @@ export const make = Effect.gen(function* () {
           : [
               sql`EXISTS (SELECT 1 FROM json_each(r.tags_json) WHERE json_each.value = ${filter.tag})`,
             ]),
+        ...(filter.subject === undefined
+          ? []
+          : typeof filter.subject === "string"
+            ? [sql`(subject_url = ${filter.subject} OR subject_key = ${filter.subject})`]
+            : [sql`subject_kind = ${filter.subject.kind} AND subject_key = ${filter.subject.key}`]),
         ...(filter.kind === undefined
           ? []
           : [
@@ -1374,17 +1450,18 @@ export const make = Effect.gen(function* () {
           ? // Skipped runs are counted apart, so a trigger that skips most of what it brings does
             // not push the runs that did something out of the list. A paused run or one with a
             // question open is listed however old, since what waits on a person is built from it.
+            // rowid breaks ties: of a burst of runs sharing one started_at, the newest are kept.
             sql<RunSummaryRow>`
               SELECT ${summaryColumns} FROM (
                 SELECT ${summaryColumns} FROM workflow_runs
                 WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
-                ORDER BY started_at DESC LIMIT 500
+                ORDER BY started_at DESC, rowid DESC LIMIT 500
               )
               UNION ALL
               SELECT ${summaryColumns} FROM (
                 SELECT ${summaryColumns} FROM workflow_runs
                 WHERE status = 'skipped' AND parent_run_id IS NULL
-                ORDER BY started_at DESC LIMIT 500
+                ORDER BY started_at DESC, rowid DESC LIMIT 500
               )
               UNION
               SELECT ${summaryColumns} FROM workflow_runs
@@ -1396,7 +1473,7 @@ export const make = Effect.gen(function* () {
             `
           : sql<RunSummaryRow>`
               SELECT ${summaryColumns} FROM workflow_runs WHERE status = ${status}
-              ORDER BY started_at DESC LIMIT 500
+              ORDER BY started_at DESC, rowid DESC LIMIT 500
             `
       ).pipe(Effect.orDie);
     }),
@@ -1483,6 +1560,7 @@ export const make = Effect.gen(function* () {
                   ${at}
                 )
               `;
+              yield* subjectLearned(runId, reference, title, reference.url ?? null);
               return true;
             }
             const steps = jsonValue(row.steps_json) as ReadonlyArray<string>;
@@ -1510,6 +1588,7 @@ export const make = Effect.gen(function* () {
                   state = ${next.state}, steps_json = ${next.steps_json}
               WHERE run_id = ${runId} AND kind = ${reference.kind} AND key = ${reference.key}
             `;
+            yield* subjectLearned(runId, reference, next.title, next.url);
             return true;
           }),
         )

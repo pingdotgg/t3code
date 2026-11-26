@@ -1,5 +1,6 @@
 import {
   cloneElement,
+  isValidElement,
   createContext,
   use,
   useEffect,
@@ -12,6 +13,8 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
+
+import { cn } from "~/lib/utils";
 
 import { Tooltip, TooltipPopup, TooltipTrigger, useTooltipScrollTracker } from "./tooltip";
 
@@ -26,7 +29,10 @@ interface SharedTooltipContent {
   /** Comparable key that changes whenever `render()` output changes while open. */
   readonly contentKey?: unknown;
   readonly side?: "top" | "bottom" | "left" | "right";
+  readonly align?: "start" | "center" | "end";
+  readonly sideOffset?: number;
   readonly variant?: "default" | "glass" | "code";
+  readonly className?: string;
 }
 
 interface SharedTooltipState extends SharedTooltipContent {
@@ -106,7 +112,10 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
       if (
         active.contentKey === content.contentKey &&
         active.side === content.side &&
-        active.variant === content.variant
+        active.align === content.align &&
+        active.sideOffset === content.sideOffset &&
+        active.variant === content.variant &&
+        active.className === content.className
       ) {
         return;
       }
@@ -162,8 +171,10 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
             id={popupId}
             anchor={state.anchor}
             side={state.side ?? "top"}
+            align={state.align ?? "center"}
+            sideOffset={state.sideOffset ?? 4}
             variant={state.variant ?? "default"}
-            className="pointer-events-auto"
+            className={cn("pointer-events-auto", state.className)}
             onMouseEnter={() => api.holdOpen()}
             onMouseLeave={() => api.hide(state.anchor)}
           >
@@ -183,15 +194,24 @@ export interface SharedTooltipTriggerProps {
   onPointerDown: (event: PointerEvent<HTMLElement>) => void;
 }
 
-/** Props that show `content` on the shared tooltip, or null outside a SharedTooltipProvider. */
-export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTriggerProps | null {
+/**
+ * Props that show `content` on the shared tooltip, or null outside a SharedTooltipProvider.
+ * A disabled trigger opens nothing, and closes the tooltip if it was showing.
+ */
+export function useSharedTooltip(
+  content: SharedTooltipContent,
+  enabled = true,
+): SharedTooltipTriggerProps | null {
   const api = use(SharedTooltipContext);
   const scrollTracker = useTooltipScrollTracker();
   const anchorRef = useRef<HTMLElement | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes an open shared tooltip when its trigger's label changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes an open shared tooltip when its trigger's label changes, and closes it when the trigger is disabled
   useEffect(() => {
-    if (api && anchorRef.current) api.refresh(anchorRef.current, content);
-  }, [api, content]);
+    if (!api || !anchorRef.current) return;
+    if (enabled) api.refresh(anchorRef.current, content);
+    // Only this trigger's own pending open or popup; another trigger's must survive.
+    else api.release(anchorRef.current);
+  }, [api, content, enabled]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a removed trigger fires no pointerleave, so it must close the popup anchored to it
   useEffect(
     () => () => {
@@ -203,7 +223,7 @@ export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTr
   return {
     // Touch never opens it, as Base UI's mouseOnly trigger; taps also send compatibility mouse events.
     onPointerEnter: (event) => {
-      if (event.pointerType === "touch") return;
+      if (event.pointerType === "touch" || !enabled) return;
       const trigger = event.currentTarget;
       anchorRef.current = trigger;
       api.show(trigger, content, false);
@@ -213,7 +233,9 @@ export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTr
     onPointerLeave: (event) => api.hide(event.currentTarget),
     // Keyboard focus shows it at once, as Base UI does.
     onFocus: (event) => {
-      if (event.currentTarget.matches(":focus-visible")) {
+      // A wrapper's handler sees focus bubble from the control inside it, so check the focused element.
+      const focused = event.target instanceof Element ? event.target : event.currentTarget;
+      if (enabled && focused.matches(":focus-visible")) {
         anchorRef.current = event.currentTarget;
         api.show(event.currentTarget, content, true);
       }
@@ -248,31 +270,60 @@ export function withSharedTooltip<Props>(
     : cloneElement(element, merged as Partial<Props>, children);
 }
 
+// A disabled control gets no pointer events, so its tooltip is unreachable anyway; treating it as a
+// disabled trigger also closes a tooltip that was open when the control became disabled.
+function renderedDisabled(element: ReactElement): boolean {
+  const props = element.props as { disabled?: unknown; render?: unknown };
+  if (props.disabled === true) return true;
+  return isValidElement(props.render) && renderedDisabled(props.render);
+}
+
 /** A tooltip on `render`: the shared one inside a SharedTooltipProvider, Base UI's otherwise. */
 export function SharedTooltipTrigger({
   render,
   children,
   label,
   side = "top",
+  align,
+  sideOffset,
   variant,
+  className,
+  disabled = false,
 }: {
   render: ReactElement;
   children?: ReactNode;
   label: ReactNode;
   side?: SharedTooltipContent["side"];
+  align?: SharedTooltipContent["align"];
+  sideOffset?: SharedTooltipContent["sideOffset"];
   variant?: SharedTooltipContent["variant"];
+  className?: SharedTooltipContent["className"];
+  disabled?: boolean | undefined;
 }) {
-  const tooltip = useSharedTooltip({
-    render: () => label,
-    contentKey: label,
-    side,
-    ...(variant ? { variant } : {}),
-  });
+  const inactive = disabled === true || renderedDisabled(render);
+  const tooltip = useSharedTooltip(
+    {
+      render: () => label,
+      contentKey: label,
+      side,
+      ...(align ? { align } : {}),
+      ...(sideOffset === undefined ? {} : { sideOffset }),
+      ...(variant ? { variant } : {}),
+      ...(className ? { className } : {}),
+    },
+    !inactive,
+  );
   if (tooltip) return withSharedTooltip(render, tooltip, children);
   return (
-    <Tooltip>
+    <Tooltip disabled={inactive}>
       <TooltipTrigger render={render}>{children}</TooltipTrigger>
-      <TooltipPopup side={side} {...(variant ? { variant } : {})}>
+      <TooltipPopup
+        side={side}
+        {...(align ? { align } : {})}
+        {...(sideOffset === undefined ? {} : { sideOffset })}
+        {...(variant ? { variant } : {})}
+        {...(className ? { className } : {})}
+      >
         {label}
       </TooltipPopup>
     </Tooltip>
