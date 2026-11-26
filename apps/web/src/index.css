@@ -2038,9 +2038,22 @@ code {
 /* Spaces a user typed at the start of a line, which Markdown would otherwise drop. pre-wrap, not
    pre, so an indent wider than the bubble wraps instead of pushing the line's text out of view.
    Not selectable, so a selection, a drag or a copy carries the text as it did before. */
-.chat-markdown.user-message-markdown [data-leading-whitespace] {
+.chat-markdown:is(.user-message-markdown, .question-option-preview) [data-leading-whitespace] {
   white-space: pre-wrap;
   user-select: none;
+}
+
+/* A Claude option preview is a small monospace box, so a `# comment` line in a code sketch reads
+   as a bold line, not a page heading. */
+.chat-markdown.question-option-preview :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* Each line, and runs of spaces inside it such as aligned `=` signs, stay as typed. */
+.chat-markdown.question-option-preview p {
+  white-space: pre-wrap;
 }
 
 .chat-markdown li + li {

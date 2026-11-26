@@ -14,6 +14,11 @@ import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
+import type { MarkdownExtensions } from "~/markdown/wordsHast";
+
+// Claude writes option previews for a monospace box (mockups, code, config): lines keep their
+// indent and alignment, and tags such as <button> in a mockup read as typed.
+const OPTION_PREVIEW_MARKDOWN: MarkdownExtensions = { leadingWhitespace: true };
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -339,8 +344,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         text={option.preview}
                         cwd={cwd}
                         threadRef={threadRef}
-                        lineBreaks
-                        className="ps-9 pe-2 pb-1.5 text-xs text-foreground/70 sm:ps-8"
+                        parseRawHtml={false}
+                        extensions={OPTION_PREVIEW_MARKDOWN}
+                        className="question-option-preview w-auto ms-9 me-2 mb-1.5 rounded-md border border-border/60 bg-muted/30 px-2.5 py-2 font-mono text-xs text-foreground/70 sm:ms-8"
                       />
                     ) : null}
                   </div>
