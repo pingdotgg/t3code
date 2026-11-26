@@ -192,26 +192,45 @@ describe("thread links", () => {
       ["Stray ` tick", "", after, "and `code`"],
       ["Stray ` tick", `# ${after}`, "and `code`"],
       ["Stray ` tick", `- ${after}`, "and `code`"],
+      ["Stray ` tick", `> ${after} and \`code\``],
+      ["> Stray ` tick", `> > ${after} and \`code\``],
+      ["- Stray ` tick", `  > ${after} and \`code\``],
+      ["> Use `example", `> ${hidden} end\``, `> ${after}`],
+      ["> > Use `example", `> > ${hidden} end\``, `> > ${after}`],
+      ["> Use `example", `${hidden} end\``, after],
+      ["Use `example", `    > ${hidden} end\``, after],
+      ["> Use `example", `>     > ${hidden} end\``, `> ${after}`],
+      ["> Intro", "Use `example", `> ${hidden} end\``, `> ${after}`],
+      ["> > Intro", "> Use `example", `> > ${hidden} end\``, `> > ${after}`],
+      ["1. Stray ` tick", `    > ${after} and \`code\``],
+      ["1. Intro", "", "    Stray ` tick", `    > ${after} and \`code\``],
+      ["- Intro", "", "Use `example", `    > ${hidden} end\``, after],
       ...["- - -", "* \t* *", "___", "===", "-"].flatMap((boundary) => [
         ["Stray ` tick", boundary, `${after} and \`code\``],
         ["> Stray ` tick", `> ${boundary}`, `> ${after} and \`code\``],
       ]),
       ["Stray ` tick\r", "  ---\r", `${after} and \`code\``],
+      ["> Stray ` tick", "---", `${after} and \`code\``],
       ["Use `example", "```" + hidden + "`", after],
       ["\\\\``" + after + "`"],
     ]) {
-      expect(threadLinkRefs(markdown.join("\n"), local)).toEqual([ref("env-1", "t1")]);
-      expect(relabelThreadLinks(markdown.join("\n"), local, () => "New")).toBe(
-        markdown.join("\n").replace("<t3-thread://v2/env-1/t1>", "[New](t3-thread://v2/env-1/t1)"),
+      const joined = markdown.join("\n");
+      expect(threadLinkRefs(joined, local)).toEqual([ref("env-1", "t1")]);
+      expect(relabelThreadLinks(joined, local, () => "New")).toBe(
+        joined.replace("<t3-thread://v2/env-1/t1>", "[New](t3-thread://v2/env-1/t1)"),
       );
     }
   });
 
   it("keeps multiline code literal when a line only resembles a block boundary", () => {
-    for (const line of ["--- text", "== =", "-_*", "    ===", ">     ---"]) {
-      const markdown = ["Use `example", line, "<t3-thread://v2/local/t1> end`"].join("\n");
-      expect(threadLinkRefs(markdown, local)).toEqual([]);
-      expect(relabelThreadLinks(markdown, local, () => "New")).toBe(markdown);
+    for (const markdown of [
+      ...["--- text", "== =", "-_*", "    ==="].map((line) => ["Use `example", line]),
+      ["> Use `example", ">     ---"],
+      ["> Use `example", "==="],
+    ]) {
+      const source = [...markdown, "<t3-thread://v2/local/t1> end`"].join("\n");
+      expect(threadLinkRefs(source, local)).toEqual([]);
+      expect(relabelThreadLinks(source, local, () => "New")).toBe(source);
     }
   });
 
