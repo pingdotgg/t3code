@@ -1,11 +1,17 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, type KeybindingRule, type ServerConfig } from "@t3tools/contracts";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
-import { Atom, AtomRegistry } from "effect/reactivity";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { resolveShortcutCommand } from "../keybindings";
-import { createShortcutKeybindingsAtom } from "./server";
+import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
+import {
+  createShortcutKeybindingsAtom,
+  primaryRelayTracingAllowedAtom,
+  serverEnvironment,
+} from "./server";
+import { environmentSession } from "./session";
 
 const PRIMARY = EnvironmentId.make("primary");
 const A = EnvironmentId.make("a");
@@ -15,10 +21,11 @@ const B = EnvironmentId.make("b");
 const SWAPPED: KeybindingRule[] = [{ key: "mod+n", command: "chat.newLocal" }];
 const STALE: KeybindingRule[] = [{ key: "mod+n", command: "chat.newWithoutProject" }];
 
-function config(rules: readonly KeybindingRule[]) {
+function config(rules: readonly KeybindingRule[], relayTracingAllowed?: boolean) {
   return {
     keybindings: compileResolvedKeybindingsConfig(rules),
     providers: [],
+    observability: { relayTracingAllowed },
   } as unknown as ServerConfig;
 }
 
@@ -123,4 +130,37 @@ describe("createShortcutKeybindingsAtom", () => {
     harness.registry.set(harness.primaryEnvironmentIdAtom, null);
     expect(harness.cmdN()).toBe("chat.newLocal");
   });
+});
+
+it("clears relay tracing permission when the primary session ends", () => {
+  const allowed = config([], true);
+  const sessionConfig = Atom.make<ServerConfig | null>(allowed);
+  using _session = vi
+    .spyOn(environmentSession, "initialConfigValueAtom")
+    .mockReturnValue(sessionConfig);
+  // The previous session's config stream can retain its last live value across disconnect.
+  const lastProjection = serverEnvironment.configProjection({ environmentId: PRIMARY, input: {} });
+  const registry = AtomRegistry.make({
+    initialValues: [
+      [primaryEnvironmentIdAtom, PRIMARY],
+      [
+        lastProjection,
+        AsyncResult.success({
+          config: allowed,
+          latestEvent: { type: "snapshot", config: allowed },
+          source: "live",
+        }),
+      ],
+    ],
+  });
+  registries.push(registry);
+  const answers: Array<boolean | null> = [];
+  registry.subscribe(primaryRelayTracingAllowedAtom, (answer) => answers.push(answer), {
+    immediate: true,
+  });
+
+  registry.set(sessionConfig, null);
+  registry.set(sessionConfig, config([], false));
+
+  expect(answers).toEqual([true, null, false]);
 });

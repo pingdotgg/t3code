@@ -197,9 +197,21 @@ const LOCAL_IMAGE_PATTERN = new RegExp(
     String.raw`|url\(\s*(${ABSOLUTE_PATH}[^\s"'\x60()]{0,2048}?\.(?:${IMAGE_EXTENSIONS}))\s*\)`,
   "gid",
 );
+const HTML_TAG_END = String.raw`(?:[^"'<>]|"[^"]*(?:"|$)|'[^']*(?:'|$))*(?:>|$)`;
+const HTML_COMMENT_CONTEXT = new RegExp(
+  String.raw`<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)(?=[\s/>])${HTML_TAG_END}[\s\S]*?(?:</\1(?=[\s/>])${HTML_TAG_END}|$)|<plaintext(?=[\s/>])[\s\S]*$|<[a-z!/]${HTML_TAG_END}`,
+  "gi",
+);
 
 const findLocalImages = (html: string) =>
-  Array.from(html.matchAll(LOCAL_IMAGE_PATTERN)).flatMap((match) => {
+  Array.from(
+    // Preserve raw text and quoted attributes; blank only comments without shifting offsets.
+    html
+      .replace(HTML_COMMENT_CONTEXT, (source) =>
+        source.startsWith("<!--") ? source.replace(/[^\r\n]/g, " ") : source,
+      )
+      .matchAll(LOCAL_IMAGE_PATTERN),
+  ).flatMap((match) => {
     const span = match.indices?.[2] ?? match.indices?.[3];
     return span ? [{ start: span[0], end: span[1], path: html.slice(span[0], span[1]) }] : [];
   });

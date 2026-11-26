@@ -5,8 +5,19 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
-import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
+import {
+  injectMcpAppCookieBootstrap,
+  injectMcpAppDocumentBootstrap,
+  injectMcpAppThemeBootstrap,
+} from "@t3tools/shared/mcpApp";
 import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
+import { hostPreviewMimeTypeFromExtension } from "@t3tools/shared/filePreview";
+import {
+  DESKTOP_READINESS_CHALLENGE_MAX_LENGTH,
+  DESKTOP_READINESS_CHALLENGE_PARAM,
+  DESKTOP_READINESS_PROOF_PATH,
+  desktopReadinessProof,
+} from "@t3tools/shared/desktopReadinessProof";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
@@ -22,12 +33,14 @@ import { cast, pipe } from "effect/Function";
 import {
   HttpClient,
   HttpClientResponse,
+  HttpEffect,
   HttpMiddleware,
   HttpRouter,
   HttpServerResponse,
   HttpServerRequest,
   HttpServerRespondable,
 } from "effect/http";
+import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
@@ -66,15 +79,23 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 const HTML_CONTENT_SECURITY_POLICY =
   "sandbox allow-scripts allow-forms allow-popups allow-downloads";
 
+const XML_DOCUMENT_MIME_TYPE_PATTERN = /(?:\/xml(?:$|-)|\+xml$)/i;
 // Proxies may strip disposition; force document-capable downloads to octet-stream.
 const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
 const isSafeDownloadMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) &&
-  !/(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i.test(mimeType.trim().toLowerCase());
-const isSafeInlineMediaMimeType = (mimeType: string): boolean =>
-  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && /^(?:audio|video)\//i.test(mimeType);
-const isSafeInlineDocumentMimeType = (mimeType: string): boolean =>
-  mimeType.toLowerCase() === "application/pdf" || mimeType.toLowerCase() === "text/html";
+  !/^text\/html$/i.test(mimeType.trim()) &&
+  !XML_DOCUMENT_MIME_TYPE_PATTERN.test(mimeType.trim());
+
+// The served type and its sandbox policy come from this one answer, so they cannot disagree.
+const inlineAssetMimeType = (filePath: string, claimed: string | undefined): string => {
+  const claimedType = claimed?.split(";", 1)[0]?.trim().toLowerCase();
+  if (claimedType !== undefined && DOWNLOAD_MIME_TYPE_PATTERN.test(claimedType)) return claimedType;
+  return (
+    hostPreviewMimeTypeFromExtension(/\.[^./\\]+$/.exec(filePath)?.[0] ?? "") ??
+    Option.getOrElse(Mime.getType(filePath), () => "application/octet-stream")
+  );
+};
 
 export function downloadContentDisposition(fileName?: string): string {
   if (fileName === undefined) {
@@ -101,39 +122,31 @@ export function assetResponseHeaders(
     readonly mimeType?: string;
   },
 ): Record<string, string> {
-  const lowerPath = filePath.toLowerCase();
-  const inlineMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
+  const base = { "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff" };
+  if (options?.download) {
+    return {
+      ...base,
+      "Content-Disposition": downloadContentDisposition(options.fileName),
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Content-Type":
+        options.mimeType !== undefined && isSafeDownloadMimeType(options.mimeType)
+          ? options.mimeType
+          : "application/octet-stream",
+    };
+  }
+  const mimeType = inlineAssetMimeType(filePath, options?.mimeType);
+  if (mimeType === "text/html") {
+    return {
+      ...base,
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+    };
+  }
   return {
-    "Cache-Control": "private, max-age=3600",
-    "X-Content-Type-Options": "nosniff",
-    ...(options?.download
-      ? {
-          "Content-Disposition": downloadContentDisposition(options.fileName),
-          "Content-Security-Policy": "default-src 'none'; sandbox",
-          "Content-Type":
-            options.mimeType !== undefined && isSafeDownloadMimeType(options.mimeType)
-              ? options.mimeType
-              : "application/octet-stream",
-        }
-      : inlineMimeType !== undefined && isSafeInlineMediaMimeType(inlineMimeType)
-        ? { "Content-Type": inlineMimeType }
-        : inlineMimeType !== undefined && isSafeInlineDocumentMimeType(inlineMimeType)
-          ? {
-              "Content-Type":
-                inlineMimeType.toLowerCase() === "text/html"
-                  ? "text/html; charset=utf-8"
-                  : "application/pdf",
-              ...(inlineMimeType.toLowerCase() === "text/html"
-                ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
-                : {}),
-            }
-          : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
-            ? {
-                "Content-Type": "text/html; charset=utf-8",
-                "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
-              }
-            : {}),
-    ...(!options?.download && lowerPath.endsWith(".svg")
+    ...base,
+    "Content-Type": mimeType,
+    // XML types render as documents, so they get the same policy as SVG.
+    ...(XML_DOCUMENT_MIME_TYPE_PATTERN.test(mimeType)
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
@@ -188,6 +201,8 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       new TextDecoder().decode(bytes),
       injectMcpAppThemeBootstrap,
       injectMcpAppCookieBootstrap,
+      // Applied last so it is the document's first script.
+      injectMcpAppDocumentBootstrap,
       (html) => new TextEncoder().encode(html),
     );
     headers["Content-Length"] = String(body.byteLength);
@@ -215,7 +230,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   }
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
-  const isMedia = /^(?:audio|video)\//i.test(headers["Content-Type"] ?? "");
+  const isMedia = /^(?:audio|video)\//i.test(asset.mimeType ?? "");
   if (isMedia) {
     // Without file identity, validators cannot guarantee byte equality; attachments must also expire with their URL.
     headers["Cache-Control"] = "private, no-store";
@@ -246,10 +261,6 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   }
   if (mediaFile && mediaInfo) {
     const size = bytesToRead ?? mediaInfo.size;
-    headers["Content-Type"] ??= Option.getOrElse(
-      Mime.getType(asset.path),
-      () => "application/octet-stream",
-    );
     headers["Content-Length"] = String(size);
     if (!isMedia) {
       headers["Last-Modified"] = mediaInfo.mtime.toUTCString();
@@ -270,32 +281,68 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
 });
 
+// The default body limit for API routes. Routes that take more set their own limit.
+export const API_MAX_BODY_BYTES = 1024 * 1024;
+export const layerApiBodyLimit = HttpRouter.middleware(
+  Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(API_MAX_BODY_BYTES)),
+).layer;
+
 export const layerHttpCompression = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
 });
+
+function withVaryOrigin(
+  response: HttpServerResponse.HttpServerResponse,
+): HttpServerResponse.HttpServerResponse {
+  const existing = response.headers.vary;
+  if (
+    existing !== undefined &&
+    existing.split(",").some((token) => token.trim().toLowerCase() === "origin")
+  ) {
+    return response;
+  }
+  return HttpServerResponse.setHeader(
+    response,
+    "vary",
+    existing ? `${existing}, Origin` : "Origin",
+  );
+}
 
 export const layerBrowserApiCors = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
-    // Credentialed dev requests need explicit Vite/Electron origins; packaged desktop uses the default wildcard.
-    const cors = HttpMiddleware.cors({
-      ...(devOrigin
-        ? {
-            allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
-            credentials: true,
-          }
-        : {}),
+    // Credentialed dev requests need explicit Vite/Electron origins; originless desktop/native
+    // requests and packaged servers use the non-credentialed wildcard.
+    const wildcardCors = HttpMiddleware.cors({
       allowedMethods: browserApiCorsAllowedMethods,
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,
     });
+    const devCors = devOrigin
+      ? HttpMiddleware.cors({
+          allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
+          credentials: true,
+          allowedMethods: browserApiCorsAllowedMethods,
+          allowedHeaders: browserApiCorsAllowedHeaders,
+          maxAge: 600,
+        })
+      : undefined;
     return HttpRouter.middleware(
       (httpEffect) => {
-        const withCors = cors(httpEffect);
-        return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-          request.url.split("?", 1)[0] === MCP_HTTP_PATH ? httpEffect : withCors,
-        );
+        const withWildcardCors = wildcardCors(httpEffect);
+        const withDevCors = devCors ? devCors(httpEffect) : undefined;
+        return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+          if (request.url.split("?", 1)[0] === MCP_HTTP_PATH) return httpEffect;
+          if (!withDevCors) return withWildcardCors;
+          if (request.headers.origin !== undefined) return withDevCors;
+          if (request.method === "OPTIONS") {
+            return Effect.map(withWildcardCors, withVaryOrigin);
+          }
+          return HttpEffect.appendPreResponseHandler((_request, response) =>
+            Effect.succeed(withVaryOrigin(response)),
+          ).pipe(Effect.andThen(withWildcardCors));
+        });
       },
       { global: true },
     );
@@ -353,6 +400,29 @@ export const layerServerEnvironmentHttpApi = HttpApiBuilder.group(
         return yield* serverEnvironment.getDescriptor;
       }, traceRelayRequest),
     );
+  }),
+);
+
+// Answers only for a launch that was handed a readiness secret, so the desktop app can tell the
+// backend it started from any other listener at the same address.
+export const layerDesktopReadinessProofRoute = HttpRouter.add(
+  "GET",
+  DESKTOP_READINESS_PROOF_PATH,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const secret = config.desktopReadinessSecret;
+    const challenge = Option.getOrUndefined(requestUrl(request))?.searchParams.get(
+      DESKTOP_READINESS_CHALLENGE_PARAM,
+    );
+    if (
+      secret === undefined ||
+      !challenge ||
+      challenge.length > DESKTOP_READINESS_CHALLENGE_MAX_LENGTH
+    ) {
+      return HttpServerResponse.empty({ status: 404 });
+    }
+    return HttpServerResponse.text(yield* desktopReadinessProof(secret, challenge));
   }),
 );
 

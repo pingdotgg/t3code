@@ -17,7 +17,9 @@ not expose yet.
 
 Custom Cursor MCP servers and plugins are not configured in T3 Code. They load from the environment
 machine's Cursor config when the agent opens: project `.cursor/mcp.json`, user `~/.cursor/mcp.json`,
-and installed plugins under `~/.cursor/plugins`. Plugin tools
+and installed plugins under `~/.cursor/plugins`. A project's own Cursor config, including its
+`.cursor/mcp.json`, loads only in **Full access**; in the other
+[permission modes](./permission-modes.md) a checkout cannot start MCP servers. Plugin tools
 can appear without a login; OAuth MCP servers still need credentials. Run `agent mcp login <server>`
 with the cwd set to the T3 project root (tokens land in
 `~/.cursor/projects/<folder-slug>/mcp-auth.json`). Cursor desktop Connections auth does not write
