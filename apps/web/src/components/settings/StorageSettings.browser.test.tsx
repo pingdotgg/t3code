@@ -191,8 +191,11 @@ it.each([
       </GTProvider>,
     );
 
-    await expect.element(screen.getByText(one, { exact: true })).toBeVisible();
-    await expect.element(screen.getByText(other, { exact: true })).toBeVisible();
+    const unitBesideAge = (age: string) =>
+      Array.from(screen.container.querySelectorAll("input")).find((input) => input.value === age)
+        ?.nextElementSibling?.textContent;
+    await expect.poll(() => unitBesideAge("1")).toBe(one);
+    expect(unitBesideAge("8")).toBe(other);
   },
 );
 
