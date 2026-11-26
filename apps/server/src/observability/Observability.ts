@@ -71,7 +71,9 @@ export const layer = Layer.unwrap(
           maxFiles: config.traceMaxFiles,
           batchWindowMs: config.traceBatchWindowMs,
           sink,
-          sampleFastSqliteSpans: LogLevel.isGreaterThanOrEqualTo(config.traceMinLevel, "Info"),
+          sampleFastSqliteSpans:
+            config.traceTimingEnabled &&
+            LogLevel.isGreaterThanOrEqualTo(config.traceMinLevel, "Info"),
           ...(delegate ? { delegate } : {}),
         });
 
