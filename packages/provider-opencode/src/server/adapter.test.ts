@@ -4420,7 +4420,7 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
-  it.effect.each([false, true])("stops a pending initial prompt (saved: %s)", (saved) =>
+  it.effect.each(["missing", "saved", "unknown"])("stops a pending prompt (%s)", (history) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const promptStarted = promiseGate<void>();
@@ -4460,8 +4460,24 @@ describe("OpenCodeAdapterV2", () => {
           status: async () => ({
             data: { "native-opencode-initial-stop": { type: "idle" as const } },
           }),
+          message: async (input: { readonly sessionID: string; readonly messageID: string }) => {
+            assert.deepEqual(input, {
+              sessionID: "native-opencode-initial-stop",
+              messageID: promptId,
+            });
+            if (history === "saved") {
+              return {
+                response: { status: 200 },
+                data: { info: { role: "user", id: promptId }, parts: [] },
+              };
+            }
+            return {
+              response: { status: 404 },
+              error: history === "missing" ? { name: "NotFoundError" } : "Not Found",
+            };
+          },
           messages: async () => ({
-            data: saved ? [{ info: { role: "user", id: promptId }, parts: [] }] : [],
+            data: [{ info: { role: "user", id: "later-native-message" }, parts: [] }],
           }),
           children: async () => ({ data: [] }),
           abort: async () => {
@@ -4582,11 +4598,11 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(abortCalls, 1);
       assert.lengthOf(terminals, 1);
       assert.equal(terminals[0]?.status, "interrupted");
-      assert.equal(terminals[0]?.promptDropped, saved ? undefined : true);
+      assert.equal(terminals[0]?.promptDropped, history === "missing" ? true : undefined);
       const finalTurn = events
         .filter((event) => event.type === "provider_turn.updated")
         .findLast((event) => event.providerTurn.status === "interrupted");
-      assert.equal(finalTurn?.providerTurn.promptDropped, saved ? undefined : true);
+      assert.equal(finalTurn?.providerTurn.promptDropped, history === "missing" ? true : undefined);
       assert.isNull(terminals[0]?.failure ?? null);
       assert.isFalse(
         events.some(

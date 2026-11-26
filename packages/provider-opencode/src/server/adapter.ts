@@ -2326,25 +2326,22 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 turn.nativeUserMessageId === null &&
                 (yield* restore(
                   sdkCall(
-                    "session.messages",
-                    { sessionID: state.nativeSessionId, limit: 2 },
-                    (signal) =>
-                      client.session.messages(
-                        { sessionID: state.nativeSessionId, limit: 2 },
-                        { signal },
-                      ),
+                    "session.message",
+                    { sessionID: state.nativeSessionId, messageID: promptId },
+                    async (signal) => {
+                      const response = await client.session.message(
+                        { sessionID: state.nativeSessionId, messageID: promptId },
+                        { signal, throwOnError: false },
+                      );
+                      return (
+                        response.response.status === 404 &&
+                        recordString(response.error, "name") === "NotFoundError"
+                      );
+                    },
                   ).pipe(Effect.timeout("2 seconds")),
                 ).pipe(
                   Effect.exit,
-                  Effect.map(
-                    (result) =>
-                      Exit.isSuccess(result) &&
-                      result.value.data?.every(
-                        ({ info }) =>
-                          info.id !== promptId &&
-                          (info.role !== "assistant" || info.parentID !== promptId),
-                      ) === true,
-                  ),
+                  Effect.map((result) => Exit.isSuccess(result) && result.value),
                 ));
               yield* emitProviderTurn(state, turn, status, completedAt, promptDropped);
               const threadDisposition = terminal?.threadDisposition ?? "reusable";
