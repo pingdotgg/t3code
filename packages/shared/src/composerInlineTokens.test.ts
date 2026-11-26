@@ -160,6 +160,22 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it.each([
+    [String.raw`@"C:\My Files\notes.md"`, String.raw`C:\My Files\notes.md`],
+    [String.raw`@"C:\\My Files\\notes.md"`, String.raw`C:\My Files\notes.md`],
+    [String.raw`@"docs/My \"draft\".md"`, 'docs/My "draft".md'],
+  ])("decodes quoted file mention %s without losing path characters", (source, value) => {
+    expect(collectComposerInlineTokens(`${source} `)).toEqual([
+      {
+        type: "mention",
+        value,
+        source,
+        start: 0,
+        end: source.length,
+      },
+    ]);
+  });
+
   it("still collects a file link whose label is at the length cap", () => {
     const label = `${"a".repeat(508)}.tsx`;
     const tokens = collectComposerInlineTokens(`see [${label}](src/${label}) ok`);
