@@ -734,9 +734,13 @@ describe("Expo Simulators host", () => {
         expect(final.sessions).toEqual([]);
       }).pipe(
         Effect.scoped,
-        Effect.provide(layer),
-        Effect.provide(NodeCrypto.layer),
-        Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })),
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            NodeCrypto.layer,
+            ServerSettings.layerTest({ enableDeviceSupport: true }),
+          ),
+        ),
       ),
   );
 
