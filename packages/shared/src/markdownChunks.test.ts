@@ -245,10 +245,17 @@ describe("splitMarkdown", () => {
     ["an HTML block that ends the list", "- Item\n<div>top level</div>\n\n", ""],
     ["a math block that ends the list", "- Item\n$$\nx\n$$\n", ""],
     ["an indented thematic break", "  - - -\n", ""],
+    ["an empty list item", "-\n\n", "  "],
+    ["an empty list item with trailing spaces", "-  \n\n", "  "],
   ])("collects definitions after a fence following %s", (_, beforeFence, definitionIndent) => {
     const definition = "[ref]: /target";
     const text = beforeFence + "  ```sh\n  example\n  ```\n" + definitionIndent + definition;
     expect(splitMarkdown(text).definitions).toBe(definition);
+  });
+
+  it("keeps definitions inside a top-level fence opened by dedenting from a list fence", () => {
+    const text = ["- Item", "  ```", "  code", "```", "[ref]: /fake", "```"].join("\n");
+    expect(splitMarkdown(text).definitions).toBe("");
   });
 
   it.each(["", " ", "  ", "   "])(
