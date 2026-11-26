@@ -4494,3 +4494,66 @@ it.effect("a side chat that opens with /goal gets its context on the next questi
     }).pipe(Effect.provide(layer));
   }),
 );
+
+it.effect.each([{ queueFirst: false }, { queueFirst: true }])(
+  "agent auto send steers while queueFirst=$queueFirst",
+  ({ queueFirst }) =>
+    Effect.gen(function* () {
+      const name = "agent-auto-after-explicit-queue";
+      const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(name);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const manager = yield* ThreadManagementService.ThreadManagementService;
+        const threadId = yield* startFirstTurn;
+        const send = (text: string, mode: "auto" | "queue") =>
+          manager.sendToThread({
+            projectId: ProjectId.make(`project:${name}`),
+            threadId,
+            commandId: CommandId.make(text),
+            messageId: MessageId.make(text),
+            text,
+            attachments: [],
+            mode,
+            createdBy: "agent",
+            creationSource: "mcp",
+            senderThreadId: ThreadId.make("thread:sender"),
+          });
+        const later = queueFirst ? yield* send("later", "queue") : null;
+        const now = yield* send("now", "auto");
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const queuedRunIds = projection.runs
+          .filter((run) => run.status === "queued")
+          .map((run) => run.id);
+        assert.deepEqual(
+          {
+            receipt: now.delivery,
+            targetsRunningTurn: now.run.id === started[0]?.runId,
+            adapterReceived: steered.map((text) => text.split("\n").at(-1)),
+            laterStillQueued: later === null ? null : queuedRunIds.includes(later.run.id),
+            queuedCount: queuedRunIds.length,
+          },
+          {
+            receipt: "steered",
+            targetsRunningTurn: true,
+            adapterReceived: ["now"],
+            laterStillQueued: later === null ? null : true,
+            queuedCount: later === null ? 0 : 1,
+          },
+        );
+        if (later !== null) assert.equal(later.delivery, "queued");
+      }).pipe(
+        Effect.provide(
+          ThreadManagementService.layer.pipe(
+            Layer.provideMerge(layer),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+          ),
+        ),
+      );
+    }),
+);

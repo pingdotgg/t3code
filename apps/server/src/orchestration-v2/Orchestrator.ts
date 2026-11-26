@@ -7695,10 +7695,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .pipe(mapDispatchError(command));
         if (
-          [...queuedMessages.values()].some(
-            (message) =>
-              message.createdBy === "agent" && message.senderThreadId === command.senderThreadId,
-          )
+          queuedRuns.some((run) => {
+            const message = queuedMessages.get(run.userMessageId);
+            return (
+              message !== undefined &&
+              message.createdBy === "agent" &&
+              message.senderThreadId === command.senderThreadId &&
+              run.explicitQueue !== true
+            );
+          })
         ) {
           dispatchMode = { type: "queue_after_active" };
         }
@@ -8292,6 +8297,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId,
         activeAttemptId: attemptId,
         status: "queued",
+        ...(command.explicitQueue === true ? { explicitQueue: true as const } : {}),
         ...(steerWhenReadyRunId === undefined ? {} : { steerWhenReadyRunId }),
         // A restart cancels its run; nobody knows whether the provider read the steer, so a person decides.
         ...(worktreeMissingRun !== undefined ||
