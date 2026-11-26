@@ -3220,7 +3220,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "på datorn som öppnade den här sidan"]
+      "c": [
+        " ",
+        "på datorn som öppnade den här sidan"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3232,7 +3235,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· den som kör den får den här åtkomsten"]
+      "c": [
+        " ",
+        "· den som kör den får den här åtkomsten"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
@@ -13001,6 +13007,24 @@
   "381ceed77cb8b2b3": "Stoppa {name}",
   "5b9fda36b610d25c": "Stoppa",
   "1d372f6d555dde3c": "Stoppa alla enheter",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " till"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " till i Länkade objekt"
+  ],
   "b5d5b2963c028498": "Telemetri är avstängt på den här datorn, så den här rapporten kan inte skickas till T3-teamet.",
   "3c14af8e2e9dce12": "Återkopplingsrapporten kan inte skickas",
   "d5028ee02ce433cc": "Telemetri är avstängt på den här datorn, så rapporter stannar lokalt och kan inte skickas till T3-teamet.",

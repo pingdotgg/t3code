@@ -3220,7 +3220,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
+      "c": [
+        " ",
+        "sur l’ordinateur qui a ouvert cette page"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3232,7 +3235,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· quiconque l’exécute obtient cet accès"]
+      "c": [
+        " ",
+        "· quiconque l’exécute obtient cet accès"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -12994,6 +13000,24 @@
   "381ceed77cb8b2b3": "Arrêter {name}",
   "5b9fda36b610d25c": "Arrêter",
   "1d372f6d555dde3c": "Arrêter tous les appareils",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " de plus"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " de plus dans Éléments associés"
+  ],
   "b5d5b2963c028498": "La télémétrie est désactivée sur cette machine, ce rapport ne peut donc pas être envoyé à l'équipe T3.",
   "3c14af8e2e9dce12": "Impossible d'envoyer le rapport de retour",
   "d5028ee02ce433cc": "La télémétrie est désactivée sur cette machine, les rapports restent donc locaux et ne peuvent pas être envoyés à l'équipe T3.",
