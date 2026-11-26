@@ -16200,6 +16200,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
     const deadStreamEnded = yield* Deferred.make<void>();
     let opened = 0;
+    const openedResumes: Array<boolean> = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CLAUDE_SETTINGS,
@@ -16222,9 +16223,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       continuationRequests: { offer: () => Effect.void },
       queryRunner: {
         allocateSessionId: Effect.succeed(`native-${name}`),
-        open: () =>
+        open: (input) =>
           Effect.gen(function* () {
             opened += 1;
+            openedResumes.push(input.options.resume !== undefined);
             const sdkMessages = yield* Queue.unbounded<SDKMessage>();
             return {
               // The first CLI exits without writing a frame.
@@ -16280,9 +16282,47 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         text: "Continue with the plan.",
         attachments: [],
         providerTurnOrdinal,
+        nativeThreadHasTurns: false,
       });
-    return { runtime, turnInput };
+    return { runtime, turnInput, openedResumes };
   });
+
+  it.effect("opens a fresh session after Claude Code refuses to start a new one", () =>
+    Effect.gen(function* () {
+      const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+        "claude-query-startup-refused",
+        Stream.fail(
+          new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+            method: "fromAsyncIterable",
+            cause: new ClaudeAdapterV2.ClaudeStartupRefusedError({
+              reason: "org_config_required_unavailable",
+              cause: new Error("Claude Code returned an error result"),
+            }),
+          }),
+        ),
+      );
+      const started = yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(started));
+      if (Exit.isFailure(started)) {
+        assert.include(
+          makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
+          "settings your organization requires",
+        );
+      }
+      // The refused start wrote no session, so resuming it fails "No conversation found".
+      yield* harness.runtime.startTurn(harness.turnInput("b", 2));
+      assert.deepStrictEqual(harness.openedResumes, [false, false]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect("shows Claude's root refusal when its query exits before the turn starts", () =>
     Effect.scoped(

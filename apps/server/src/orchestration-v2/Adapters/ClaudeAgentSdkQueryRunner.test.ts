@@ -1055,10 +1055,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }).pipe(Effect.provide(realQueryRunner)),
   );
 
-  // What Claude Code writes when the session store behind --resume is gone.
-  it.effect("names a resumed conversation Claude Code cannot find", () =>
+  const errorResultFailureMessage = (
+    errors: ReadonlyArray<string>,
+    extra: Record<string, unknown> = {},
+  ) =>
     Effect.gen(function* () {
-      const missing = "No conversation found with session ID: native-session-fake-cli";
       const result = JSON.stringify({
         type: "result",
         subtype: "error_during_execution",
@@ -1070,12 +1071,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         usage: {},
         modelUsage: {},
         permission_denials: [],
-        errors: [missing],
+        errors,
         session_id: "native-session-fake-cli",
         uuid: "00000000-0000-4000-8000-000000000000",
+        ...extra,
       });
       const cli = fakeClaudeCli(
-        `printf '%s\\n' '${result}'\nprintf '%s\\n' '${missing}' >&2\nexit 1`,
+        `printf '%s\\n' '${result}'\nprintf '%s\\n' '${errors.join(" ")}' >&2\nexit 1`,
       );
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => NodeFS.rmSync(NodePath.dirname(cli), { recursive: true, force: true })),
@@ -1083,12 +1085,30 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       const session = yield* openFakeCli(cli);
       const exit = yield* Stream.runDrain(session.messages).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(exit));
-      if (Exit.isFailure(exit)) {
-        assert.include(
-          makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message,
-          "could not find this conversation",
-        );
-      }
+      return Exit.isFailure(exit)
+        ? makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message
+        : "";
+    });
+
+  // What Claude Code writes when the session store behind --resume is gone.
+  it.effect("names a resumed conversation Claude Code cannot find", () =>
+    Effect.gen(function* () {
+      const message = yield* errorResultFailureMessage([
+        "No conversation found with session ID: native-session-fake-cli",
+      ]);
+      assert.include(message, "could not find this conversation");
+    }).pipe(Effect.provide(realQueryRunner)),
+  );
+
+  // What Claude Code writes when the org requires settings it has not loaded yet.
+  it.effect("names a start Claude Code refused, without its own text", () =>
+    Effect.gen(function* () {
+      const message = yield* errorResultFailureMessage(
+        ["Claude Code is still loading your organization settings. Acme Private requires them."],
+        { startup_failure_reason: "org_config_required_unavailable" },
+      );
+      assert.include(message, "settings your organization requires");
+      assert.notInclude(message, "Acme Private");
     }).pipe(Effect.provide(realQueryRunner)),
   );
 

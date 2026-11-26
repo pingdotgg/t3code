@@ -872,6 +872,20 @@ export class ClaudeConversationNotFoundError extends Schema.TaggedError<ClaudeCo
   }
 }
 
+export class ClaudeStartupRefusedError extends Schema.TaggedError<ClaudeStartupRefusedError>()(
+  "ClaudeStartupRefusedError",
+  {
+    reason: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return this.reason === "org_config_required_unavailable"
+      ? "Claude Code could not load the settings your organization requires before a session starts. This usually clears in a few seconds; send the message again."
+      : `Claude Code refused to start (${this.reason}). Check the server logs for its message, then send the message again.`;
+  }
+}
+
 export class ClaudeCodeStartupExitError extends Schema.TaggedError<ClaudeCodeStartupExitError>()(
   "ClaudeCodeStartupExitError",
   {
@@ -982,12 +996,12 @@ export interface ClaudeAgentSdkSubagentLookupInput {
 
 const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
 
-const isClaudeConversationNotFound = (cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>) => {
+const queryExitedWith = (
+  cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
+  tag: "ClaudeConversationNotFoundError" | "ClaudeStartupRefusedError",
+) => {
   const error = Cause.squash(cause);
-  return (
-    isClaudeAgentSdkQueryRunnerError(error) &&
-    Predicate.isTagged(error.cause, "ClaudeConversationNotFoundError")
-  );
+  return isClaudeAgentSdkQueryRunnerError(error) && Predicate.isTagged(error.cause, tag);
 };
 const isClaudeMcpRegistrationTimeoutError = Schema.is(ClaudeMcpRegistrationTimeoutError);
 const isProviderAdapterRuntimeRequestResponseError = Schema.is(
@@ -1771,6 +1785,7 @@ export const layerQueryRunner: Layer.Layer<
       let stderrClosed: Promise<void> = Promise.resolve();
       let answered = false;
       let conversationMissing = false;
+      let startupFailureReason: string | undefined;
       const appendStderr = (text: string) => {
         if (answered) return;
         stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
@@ -1951,16 +1966,18 @@ export const layerQueryRunner: Layer.Layer<
                 return yield* queryRunnerError(
                   refusedRoot
                     ? new ClaudeCodeRootRefusalError({ cause })
-                    : conversationMissing ||
-                        (!answered && stderrTail.includes(CLAUDE_CONVERSATION_NOT_FOUND))
-                      ? new ClaudeConversationNotFoundError({ cause })
-                      : startupExit !== undefined
-                        ? new ClaudeCodeStartupExitError({
-                            status: startupExit.status,
-                            guidance: providerProcessExitGuidance(stderrTail),
-                            cause,
-                          })
-                        : cause,
+                    : startupFailureReason !== undefined
+                      ? new ClaudeStartupRefusedError({ reason: startupFailureReason, cause })
+                      : conversationMissing ||
+                          (!answered && stderrTail.includes(CLAUDE_CONVERSATION_NOT_FOUND))
+                        ? new ClaudeConversationNotFoundError({ cause })
+                        : startupExit !== undefined
+                          ? new ClaudeCodeStartupExitError({
+                              status: startupExit.status,
+                              guidance: providerProcessExitGuidance(stderrTail),
+                              cause,
+                            })
+                          : cause,
                   "fromAsyncIterable",
                 );
               }),
@@ -1969,12 +1986,13 @@ export const layerQueryRunner: Layer.Layer<
           Stream.tap((message) =>
             Effect.sync(() => {
               answered = true;
-              if (
-                message.type === "result" &&
-                message.subtype !== "success" &&
-                message.errors.some((error) => error.startsWith(CLAUDE_CONVERSATION_NOT_FOUND))
-              ) {
-                conversationMissing = true;
+              if (message.type === "result" && message.subtype !== "success") {
+                if (
+                  message.errors.some((error) => error.startsWith(CLAUDE_CONVERSATION_NOT_FOUND))
+                ) {
+                  conversationMissing = true;
+                }
+                startupFailureReason = message.startup_failure_reason;
               }
             }),
           ),
@@ -14194,8 +14212,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
                 if (exit._tag === "Failure") {
                   context.exitCause = exit.cause;
-                  if (isClaudeConversationNotFound(exit.cause)) {
+                  if (queryExitedWith(exit.cause, "ClaudeConversationNotFoundError")) {
                     missingNativeThreads.add(context.nativeThreadId);
+                  }
+                  // A refused start creates no session, so the next open must not resume one.
+                  if (!shouldResume && queryExitedWith(exit.cause, "ClaudeStartupRefusedError")) {
+                    yield* Ref.update(openedNativeThreads, (current) => {
+                      const updated = new Set(current);
+                      updated.delete(context.nativeThreadId);
+                      return updated;
+                    });
                   }
                 }
                 const heldContext = yield* Ref.get(activeTurn);
