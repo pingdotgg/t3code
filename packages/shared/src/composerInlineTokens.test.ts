@@ -222,10 +222,21 @@ describe("collectComposerInlineTokens", () => {
     "src/routes/_chat.$environmentId.$threadId.tsx",
     "pages/posts/[id].tsx",
     "app/blog/[...slug].tsx",
+    "notes/[TODO].md",
+    "notes/~~draft~~.md",
+    "notes/&#91;TODO&#93;.md",
+    `notes/${"[".repeat(120)}].md`,
   ])("keeps a file link whose name looks like TeX as one mention: %s", (path) => {
     const link = serializeComposerFileLink(path);
     expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
       { type: "mention", value: path, source: link },
+    ]);
+  });
+
+  it("still reads legacy backslash-escaped bracket file links as mentions", () => {
+    const link = String.raw`[\[TODO\].md](notes/%5BTODO%5D.md)`;
+    expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
+      { type: "mention", value: "notes/[TODO].md", source: link },
     ]);
   });
 
@@ -344,11 +355,19 @@ describe("collectComposerInlineTokens", () => {
 
 describe("composerFileLinksToPlainText", () => {
   it("shows file mentions by name and leaves other links as written", () => {
-    const mentions = ["src/foo.ts", ".gitignore", "pkg/__init__.py", "docs/My File (draft).md"]
+    const mentions = [
+      "src/foo.ts",
+      ".gitignore",
+      "pkg/__init__.py",
+      "docs/My File (draft).md",
+      "notes/[TODO].md",
+      "notes/~~draft~~.md",
+      "notes/&#91;TODO&#93;.md",
+    ]
       .map(serializeComposerFileLink)
       .join(" ");
     expect(composerFileLinksToPlainText(`Review ${mentions}`)).toBe(
-      "Review foo.ts .gitignore __init__.py My File (draft).md",
+      "Review foo.ts .gitignore __init__.py My File (draft).md [TODO].md ~~draft~~.md &#91;TODO&#93;.md",
     );
     const links = "See [docs](https://example.com) and [the config](src/config.ts)";
     expect(composerFileLinksToPlainText(links)).toBe(links);
