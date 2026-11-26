@@ -6,12 +6,30 @@ it("takes the plan title from headings outside code", () => {
     ["```bash", "~~~", "```"],
     ["~~~bash", "```", "~~~"],
     ["````bash", "```", "````"],
+    ["```html", "<!--", "```"],
   ]) {
     const code = `${open}\n# Back up database\n${inner}\n# Still code\n${close}\n`;
     expect(proposedPlanTitle(`${code}\n## Real Plan Title\n`)).toBe("Real Plan Title");
   }
   expect(proposedPlanTitle("```bash\n# Back up database\n")).toBeNull();
   expect(proposedPlanTitle("\t# Back up database\n\n## Real Plan Title")).toBe("Real Plan Title");
+});
+
+it("takes the plan title after an HTML comment containing a code fence", () => {
+  const markdown = "<!--\n```ts\n-->\n# Release plan";
+  expect(proposedPlanTitle(markdown)).toBe("Release plan");
+});
+
+it("ignores headings in HTML comment blocks", () => {
+  for (const comment of [
+    "<!--\n# Hidden title\n-->",
+    "   <!-- # Hidden title -->",
+    "<!--\n# Hidden title",
+  ]) {
+    expect(proposedPlanTitle(`${comment}\n# Release plan`)).toBe(
+      comment.includes("-->") ? "Release plan" : null,
+    );
+  }
 });
 
 it("skips empty plan headings without reading into the next line", () => {
