@@ -26,7 +26,7 @@ const fencedCode = (char: "`" | "~", name: string) => {
   return String.raw`^[ \t]*${LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]*${LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:\r?\n(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:\r?\n${closer})?`;
 };
 // Code spans may wrap lines but cannot cross paragraph boundaries, including rules and setext headings.
-const SPAN_LINE_BREAK = String.raw`\n(?![ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-+|=+)[ \t]*)\r?$|\`{3,}[^\`\r\n]*\r?$|~{3,}))`;
+const SPAN_LINE_BREAK = String.raw`\n(?![ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|\`{3,}[^\`\r\n]*\r?$|~{3,})|(?: {0,3}>[ \t]?)* {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$|(?: {0,3}(?=>))?\k<spanBq>(?:(?<=>)[ \t]?)? {0,3}(?:-+|=+)[ \t]*\r?$)`;
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
@@ -34,7 +34,9 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
     String.raw`\\[!-/:-@[-\`{-~]`,
     fencedCode("`", "bt"),
     fencedCode("~", "tl"),
-    String.raw`(?<span>(?<!\`)(?<spanTicks>\`+)(?!\`)(?:[^\n]|${SPAN_LINE_BREAK})*?(?<!\`)\k<spanTicks>(?!\`))`,
+    String.raw`(?<!\`)(?<inlineTicks>\`+)(?!\`)[^\n]*?(?<!\`)\k<inlineTicks>(?!\`)`,
+    // Lazy quote continuations cannot be setext underlines. Only multiline spans need the container.
+    String.raw`(?<span>(?<!\`)(?<spanTicks>\`+)(?!\`)(?<=^[ \t]*(?<spanBq>(?:>(?:[ \t]*>)*)?)[^\r\n]*?)(?:[^\n]|${SPAN_LINE_BREAK})*?(?<!\`)\k<spanTicks>(?!\`))`,
     // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
     String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
     String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
