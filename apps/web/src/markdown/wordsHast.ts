@@ -639,8 +639,11 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
     if (child.type !== "element") continue;
     // Words gives what it generates a source position; raw HTML that copies its attributes has none.
     if (child.properties.dataDirective !== undefined && child.position) {
-      children[index] = codexDirective(child, walk, inLink);
-      index--;
+      const isFollowUp = child.properties.dataDirective === "codex-followup";
+      if (isFollowUp) transform(child, walk, inLink, inCode);
+      const rendered = codexDirective(child, walk, inLink);
+      children[index] = rendered;
+      if (!isFollowUp || rendered.type === "text") index--;
       continue;
     }
     const { tagName, properties: props } = child;

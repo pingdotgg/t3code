@@ -132,6 +132,10 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
     '<p dir="ltr">Read <a href="src/a.ts#L3">a.ts</a> and <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="u">x :codex-file-citation[b]{path="b.ts"}</a>.</span></p>',
   ],
   [
+    ':codex-followup[:codex-file-citation{path="src/app.ts"}]{prompt="Review app.ts"}',
+    '<p dir="ltr"><span><a href="src/app.ts">app.ts</a></span></p>',
+  ],
+  [
     ':codex-followup[Ask]{prompt="go"} and :codex-followup[No prompt]{label="x"} stay apart.',
     '<p dir="ltr"><span>Ask</span> and :codex-followup[No prompt]{label="x"} stay apart.</p>',
   ],
