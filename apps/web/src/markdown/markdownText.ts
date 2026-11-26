@@ -19,17 +19,19 @@ function replaceDirectives(
   replacement: (directive: CodexDirectiveSource) => string | undefined,
 ): string {
   if (!CODEX_DIRECTIVE.test(markdown)) return markdown;
-  let rendered = markdown;
+  let rendered = "";
+  let cursor = 0;
   const directives = codexDirectiveSources(markdown).sort(
-    (left, right) => right.start - left.start,
+    (left, right) => left.start - right.start,
   );
   for (const directive of directives) {
+    if (directive.start < cursor) continue;
     const value = replacement(directive);
-    if (value !== undefined) {
-      rendered = rendered.slice(0, directive.start) + value + rendered.slice(directive.end);
-    }
+    rendered += markdown.slice(cursor, directive.start);
+    rendered += value ?? markdown.slice(directive.start, directive.end);
+    cursor = directive.end;
   }
-  return rendered;
+  return rendered + markdown.slice(cursor);
 }
 
 /** A file citation as the Markdown link it shows as, and a follow-up as its label. */
@@ -40,7 +42,9 @@ function inlineDirectiveMarkdown(directive: CodexDirectiveSource): string | unde
   }
   if (directive.name === "codex-followup") {
     return directive.attributes.prompt?.trim() && directive.label.trim()
-      ? directive.label
+      ? replaceDirectives(directive.label, (nested) =>
+          inlineDirectiveMarkdown({ ...nested, inLink: directive.inLink || nested.inLink }),
+        )
       : undefined;
   }
   return undefined;

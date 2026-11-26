@@ -2,6 +2,7 @@ import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
+import { renderCodexDirectivesForCopy } from "./markdownText";
 import {
   codexDirectiveSources,
   markdownReferenceDefinitions,
@@ -382,6 +383,23 @@ describe("wordsHast", () => {
         (directive) => directive.label,
       ),
     ).toEqual(["pick {a} or [b]"]);
+  });
+
+  it.each([
+    [
+      ':codex-followup[try :codex-followup[inner]{prompt="i"} then]{prompt="o"} end',
+      "try inner then end",
+    ],
+    [
+      '😀 :codex-followup[try :codex-followup[inner]{prompt="i"} then]{prompt="o"} and :codex-followup[again]{prompt="a"} end',
+      "😀 try inner then and again end",
+    ],
+    [
+      ':codex-followup[read :codex-file-citation[a]{path="a.ts"} then]{prompt="o"} end',
+      "read [a.ts](<a.ts>) then end",
+    ],
+  ])("copies nested directives without losing surrounding text: %s", (markdown, expected) => {
+    expect(renderCodexDirectivesForCopy(markdown)).toBe(expected);
   });
 
   it.each([
