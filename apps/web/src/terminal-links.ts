@@ -9,9 +9,9 @@ export interface TerminalLinkMatch {
   start: number;
   end: number;
   /**
-   * `text` cut after its `:line:col`, or with its closing `(line,col)` read as one. Only the
-   * filesystem can tell grep's `./a.js:1:function` or MSBuild's `/a.cs(1,2)` from a name that
-   * holds those characters, so this stands in when `text` as a whole is not a file.
+   * `text` cut after its `:line:col`, or with its closing `(line,col)` or `:[line,col]` read as
+   * one. Only the filesystem can tell grep's `./a.js:1:function` or MSBuild's `/a.cs(1,2)` from a
+   * name that holds those characters, so this stands in when `text` as a whole is not a file.
    */
   fallback?: { text: string; end: number };
 }
@@ -49,6 +49,8 @@ const POSITION_BEFORE_TEXT_PATTERN = /^.+?(?::\d+){1,2}(?=:)/u;
 const POSITIONS_ONLY_PATTERN = /^(?::\d+)+$/u;
 // The `(line)` or `(line,col)` that MSBuild, MSVC and PHP stack frames put right after a file name.
 const PARENTHESIZED_POSITION_PATTERN = /(?<![\\/])\((\d+)(?:,(\d+))?\)$/u;
+// The `:[line]` or `:[line,col]` that Maven's compiler plugin puts there instead.
+const BRACKETED_POSITION_PATTERN = /(?<![\\/]):\[(\d+)(?:,(\d+))?\]$/u;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
@@ -83,6 +85,10 @@ function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   trimUnbalanced("[", "]");
   trimUnbalanced("{", "}");
   return output.slice(0, end);
+}
+
+function toPosition(_: string, row: string, column?: string): string {
+  return column === undefined ? `:${row}` : `:${row}:${column}`;
 }
 
 function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
@@ -124,9 +130,9 @@ function collectMatches(
         : trimmed;
     const located =
       kind === "path" && quotedPath === undefined
-        ? text.replace(PARENTHESIZED_POSITION_PATTERN, (_, row: string, column?: string) =>
-            column === undefined ? `:${row}` : `:${row}:${column}`,
-          )
+        ? text
+            .replace(PARENTHESIZED_POSITION_PATTERN, toPosition)
+            .replace(BRACKETED_POSITION_PATTERN, toPosition)
         : text;
     const candidate: TerminalLinkMatch = {
       kind,
