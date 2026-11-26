@@ -277,6 +277,11 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     const indent = indentationColumn(whitespace);
     if (emptyListItem && (blank || indent < listContentIndent)) listContentIndent = Infinity;
     emptyListItem = false;
+    if (closes !== null && openedFence && indent < fenceContentIndent && !blank) {
+      // A dedent ends the list fence before this line, which may open a new fence.
+      closes = null;
+      afterHeading = true;
+    }
     const leavesItem =
       closes === null &&
       lineIndex > definitionEnd &&
@@ -289,11 +294,6 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       }
     }
     const dedented = indent < listContentIndent;
-    if (closes !== null && openedFence && indent < fenceContentIndent && !blank) {
-      // A dedent ends the list fence before this line, which may open a new fence.
-      closes = null;
-      afterHeading = true;
-    }
     if (closes !== null) {
       if (closes(line)) closes = null;
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {

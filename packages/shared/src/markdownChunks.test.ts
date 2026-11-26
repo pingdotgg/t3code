@@ -259,6 +259,7 @@ describe("splitMarkdown", () => {
   it.each([
     ["a fence on the marker line", "- ```sh\n  x", ""],
     ["a fence on a nested marker line", "- Item\n  - ```\n    x\n    ```", "  "],
+    ["a parent fence after a nested fence", "- outer\n  - inner\n    ```\n  ```", ""],
   ])("collects definitions after %s", (_, code, definitionIndent) => {
     const definition = "[ref]: /target";
     expect(splitMarkdown(code + "\n" + definitionIndent + definition).definitions).toBe(definition);
