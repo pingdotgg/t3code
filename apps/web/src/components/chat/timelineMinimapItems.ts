@@ -3,12 +3,11 @@ import {
   splitsSurrogatePair,
 } from "@t3tools/shared/assistantCitations";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
-import {
-  isAttachmentOnlyBootstrapPrompt,
-  replaceComposerContextReferences,
-} from "@t3tools/shared/composerContextReferences";
+import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { Nodes } from "hast";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import { markdownTree } from "~/markdown/wordsHast";
 
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
@@ -22,6 +21,7 @@ export interface TimelineMinimapItem {
 
 export function deriveTimelineMinimapItems(
   rows: ReadonlyArray<MessagesTimelineRow>,
+  resolve: MessageResolver = m,
 ): TimelineMinimapItem[] {
   const items: TimelineMinimapItem[] = [];
   for (let index = 0; index < rows.length; index += 1) {
@@ -33,7 +33,7 @@ export function deriveTimelineMinimapItems(
     items.push({
       id: row.id,
       rowIndex: index,
-      userText: isAttachmentOnlyBootstrapPrompt(row.message.text) ? "" : row.message.text,
+      userText: resolveUserMessagePresentation(row.message, resolve).text,
       assistantText: resolveFinalAssistantTextForTurn(rows, index),
     });
   }

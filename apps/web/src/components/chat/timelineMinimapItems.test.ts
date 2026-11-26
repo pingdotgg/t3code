@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, USAGE_LIMIT_RESUME_TEXT } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   formatComposerContextReference,
   toComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { deriveTimelineMinimapItems, resolveTimelineMinimapPreview } from "./timelineMinimapItems";
 
@@ -37,6 +39,41 @@ describe("deriveTimelineMinimapItems", () => {
       expect(resolveTimelineMinimapPreview(items[0]!)?.userText).toBeNull();
     },
   );
+
+  it("shows T3 Code's usage-limit resume prompt in the reader's language", () => {
+    const at = "2026-10-01T00:00:00Z";
+    const german = ((message, options) => {
+      const english = m(message, options);
+      return english === USAGE_LIMIT_RESUME_TEXT
+        ? "Mach da weiter, wo du aufgehört hast."
+        : english;
+    }) as MessageResolver;
+    const items = deriveTimelineMinimapItems(
+      [
+        {
+          kind: "message",
+          id: "resume",
+          createdAt: at,
+          showAssistantMeta: false,
+          showAssistantCopyButton: false,
+          assistantCopyStreaming: false,
+          message: {
+            id: MessageId.make("resume"),
+            role: "user",
+            text: USAGE_LIMIT_RESUME_TEXT,
+            createdBy: "agent",
+            creationSource: "server",
+            runId: null,
+            streaming: false,
+            createdAt: at,
+            updatedAt: at,
+          },
+        },
+      ],
+      german,
+    );
+    expect(items[0]?.userText).toBe("Mach da weiter, wo du aufgehört hast.");
+  });
 });
 
 describe("resolveTimelineMinimapPreview", () => {

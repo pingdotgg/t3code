@@ -229,12 +229,18 @@ describe("resolveUserMessagePresentation", () => {
       text: "Mach da weiter, wo du aufgehört hast.",
       attribution: "t3code",
     });
-    expect(
-      resolveUserMessagePresentation(
-        { role: "user", createdBy: "user", text: USAGE_LIMIT_RESUME_TEXT },
-        german,
-      ),
-    ).toMatchObject({ text: USAGE_LIMIT_RESUME_TEXT, attribution: null });
+    for (const sender of [
+      { createdBy: "user" as const },
+      { createdBy: "user" as const, creationSource: "server" as const },
+      { createdBy: "agent" as const, creationSource: "mcp" as const },
+    ]) {
+      expect(
+        resolveUserMessagePresentation(
+          { role: "user", ...sender, text: USAGE_LIMIT_RESUME_TEXT },
+          german,
+        ).text,
+      ).toBe(USAGE_LIMIT_RESUME_TEXT);
+    }
   });
 
   it("attributes older server-sent restart continuations to T3 Code, not another agent", () => {
