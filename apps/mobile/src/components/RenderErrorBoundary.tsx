@@ -6,6 +6,7 @@ import { ScrollView, View } from "react-native";
 import { AppText as Text } from "./ui/AppText";
 import { Button } from "./ui/Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { errorDetailsPreview } from "./RenderErrorBoundary.logic";
 
 interface RenderErrorBoundaryProps {
   readonly children: ReactNode;
@@ -112,7 +113,7 @@ export function RenderFailureView(
         <T>Try again. If it keeps happening, copy the details for a bug report.</T>
       </Text>
       <Text selectable className="text-center font-mono text-xs text-danger-foreground">
-        {props.details.split("\n", 1)[0]?.slice(0, 300)}
+        {errorDetailsPreview(props.details)}
       </Text>
       <View className="w-full max-w-xs gap-2">
         <Button label={gt("Try again")} onPress={props.retry} tone="primary" fullWidth />
