@@ -39,6 +39,7 @@ import {
 } from "./WorkflowForge.ts";
 import { subjectSet } from "./runReferences.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
+import { withoutRoutineSpans } from "@t3tools/shared/observability";
 
 /** A step that could not be completed. Its run is paused until someone resumes it. */
 export class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
@@ -330,7 +331,8 @@ const stepAs = <A, I, X, E>(
     // Made per try, so a retry numbers its signals from the start again and counts as an attempt.
     const execute = Effect.andThen(
       run.store.stepStarted(run.runId, name, "step"),
-      Effect.suspend(() => Effect.provideContext(code, run.forStep(name))),
+      // A step is the workflow author's own work, so it is never sampled like engine bookkeeping.
+      Effect.suspend(() => withoutRoutineSpans(Effect.provideContext(code, run.forStep(name)))),
     );
     return journaled(
       run,

@@ -5,14 +5,14 @@ import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Hex from "effect/encoding/Hex";
 import * as Result from "effect/Result";
-import { routineSpan } from "@t3tools/shared/observability";
 
 const utf8 = (value: string) => new TextEncoder().encode(value);
 
 /** Compares hashes so the comparison does not leak either string's length. */
-export const constantTimeEquals = Effect.fn("webhookVerification.constantTimeEquals", {
-  attributes: routineSpan,
-})(function* (a: string, b: string) {
+export const constantTimeEquals = Effect.fn("webhookVerification.constantTimeEquals")(function* (
+  a: string,
+  b: string,
+) {
   const digest = yield* Digest.Digest;
   const [left, right] = yield* Effect.all([
     digest.digest(Digest.sha256, utf8(a)),

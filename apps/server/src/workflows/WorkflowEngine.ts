@@ -73,7 +73,7 @@ import {
   Workflows,
 } from "./Workflows.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
-import { routineSpan } from "@t3tools/shared/observability";
+import { routineSpan, withoutRoutineSpans } from "@t3tools/shared/observability";
 
 const SWEEP_EVERY = Duration.seconds(15);
 const LOOK_EVERY = Duration.minutes(1);
@@ -743,11 +743,13 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     const decode = Schema.decodeEffect(payloadCodec);
     yield* decode(row.input_json === null ? null : WorkflowStore.jsonValue(row.input_json)).pipe(
       Effect.flatMap((input) =>
-        onEnd(input as never, {
-          id: row.run_id,
-          outcome: "cancelled",
-          reason: row.detail ?? undefined,
-        }),
+        withoutRoutineSpans(
+          onEnd(input as never, {
+            id: row.run_id,
+            outcome: "cancelled",
+            reason: row.detail ?? undefined,
+          }),
+        ),
       ),
       Effect.provideContext(forStep(store, keyValues, link, forge, row.run_id, END_STEP)),
       // The sweep that runs it reads the engine's BigInts; the cleanup's own code must not.
