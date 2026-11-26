@@ -1545,7 +1545,12 @@ export const make = Effect.gen(function* () {
     referenceNoted: Effect.fn("WorkflowStore.referenceNoted")(function* (runId, step, reference) {
       const at = yield* now;
       const addressJson = jsonText(reference.address);
-      const title = reference.title.slice(0, REFERENCE_TITLE_KEPT);
+      const title = reference.title.slice(
+        0,
+        splitsSurrogatePair(reference.title, REFERENCE_TITLE_KEPT)
+          ? REFERENCE_TITLE_KEPT - 1
+          : REFERENCE_TITLE_KEPT,
+      );
       const changed = yield* sql
         .withTransaction(
           Effect.gen(function* () {

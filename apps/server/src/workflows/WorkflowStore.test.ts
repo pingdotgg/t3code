@@ -386,6 +386,33 @@ it.effect("a long run title is cut without leaving half an emoji", () =>
   ),
 );
 
+it.effect("a long reference title is cut without leaving half an emoji", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const issue = { kind: "issue", address: { scope: "me/app", key: "1" } };
+      const split = { ...issue, key: "split", title: `${"a".repeat(299)}\u{1F680}tail` };
+      yield* store.referenceNoted("r1", "read", split);
+      yield* store.referenceNoted("r1", "read", {
+        ...issue,
+        key: "whole",
+        title: `${"a".repeat(298)}\u{1F680}tail`,
+      });
+      assert.deepStrictEqual(
+        (yield* store.references("r1")).map((reference) => reference.title),
+        ["a".repeat(299), `${"a".repeat(298)}\u{1F680}`],
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          yield* store.referenceNoted("r1", "read", split);
+          assert.equal(yield* PubSub.remaining(told), 0);
+        }),
+      );
+    }),
+  ),
+);
+
 it.effect("one buffered signal goes to one wait, and a claimed wait keeps what woke it", () =>
   withStore(
     Effect.gen(function* () {
