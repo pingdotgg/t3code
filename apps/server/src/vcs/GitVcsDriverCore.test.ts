@@ -8882,7 +8882,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("force-removes a worktree without deleting what its junctions point to", () =>
+    it.effect.each([
+      ["native", ""],
+      ["Windows with trailing NBSP in metadata paths", "\u00a0"],
+    ] as const)("force-removes a worktree without deleting junction targets: %s", ([, suffix]) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -8891,9 +8894,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-m", "ignore node_modules"]);
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
+        const commonDir = pathService.join(cwd, suffix ? "metadata" + suffix : ".git");
+        if (suffix) yield* git(cwd, ["init", "--separate-git-dir", commonDir]);
         const outside = yield* makeTmpDir("git-worktree-link-target-");
         yield* writeTextFile(outside, "keep.txt", "keep\n");
-        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+        const worktreeName = "linked" + suffix;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), worktreeName);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* driver.createWorktree({
           cwd,
@@ -8910,9 +8916,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         NodeFS.symlinkSync(outside, pathService.join(worktreePath, "shared"), "junction");
 
-        yield* driver.removeWorktree({ cwd, path: worktreePath, force: true });
+        const platform = yield* HostProcess.Platform;
+        yield* driver
+          .removeWorktree({ cwd, path: worktreePath, force: true })
+          .pipe(Effect.provideService(HostProcess.Platform, suffix ? "win32" : platform));
 
         assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), []);
+        assert.isFalse(
+          yield* fileSystem.exists(pathService.join(commonDir, "worktrees", worktreeName)),
+        );
         assert.equal(
           yield* fileSystem.readFileString(pathService.join(outside, "keep.txt")),
           "keep\n",

@@ -1,7 +1,11 @@
 import { workspaceRelativeFilePath } from "./path.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
-import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
+import {
+  extractInlineCodeSpans,
+  extractMarkdownLinkHrefs,
+  resolveMarkdownFileLinkTarget,
+} from "./markdownLinks.ts";
 
 import {
   inlineCodeFilePathCandidate,
@@ -138,8 +142,24 @@ describe("parseMarkdownFileLink", () => {
     "/tmp/claude-1000/....:12",
     "/tmp/claude-1000/%2E%2E%2E",
     "\\foo.ts",
+    "sandbox://server/share/notes.txt",
+    "sandbox:/%2Fserver/share/notes.txt",
+    "sandbox:/%5Cserver/share/notes.txt",
+    "sandbox:/tmp/bad%00name.txt",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
+  });
+
+  it("resolves a sandbox link as an absolute host path, even outside the workspace", () => {
+    const href = "Sandbox:/Users/me/agent-output/example/brief%20%23final.txt#L3C2";
+    expect(parseMarkdownFileLink(href)).toEqual({
+      path: "/Users/me/agent-output/example/brief #final.txt",
+      line: 3,
+      column: 2,
+    });
+    expect(resolveMarkdownFileLinkTarget(href, "/Users/me/repo")).toBe(
+      "/Users/me/agent-output/example/brief #final.txt:3:2",
+    );
   });
 
   it("recognizes a relative folder that ends in a slash", () => {
@@ -197,6 +217,19 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project/a.ts", undefined, null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
+  });
+});
+
+describe("extractInlineCodeSpans", () => {
+  it.each([
+    ["``./a/shared.ts`` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["``a ` b`` and `./b/shared.ts`", ["a ` b", "./b/shared.ts"]],
+    ["``unclosed and `./b/shared.ts`", ["./b/shared.ts"]],
+    ["\\``./a/shared.ts` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["`a\\` and `./b/shared.ts`", ["a\\", "./b/shared.ts"]],
+    ["`unclosed\n`./b/shared.ts`", ["./b/shared.ts"]],
+  ])("matches complete backtick delimiter runs in %s", (markdown, spans) => {
+    expect(extractInlineCodeSpans(markdown)).toEqual(spans);
   });
 });
 

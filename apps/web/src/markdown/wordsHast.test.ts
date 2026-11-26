@@ -1,7 +1,8 @@
 import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
-import { extractMarkdownLinkHrefs } from "@t3tools/shared/markdownLinks";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { extractMarkdownLinkHrefs, isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 
 import {
   decodeMarkdownLinkEscapes,
@@ -93,6 +94,10 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
   [
     "-      wide\n-      [x](./x.ts) items\n\ntext\n\n-      loose\n\n-      items",
     '<ul dir="ltr">\n<li>wide</li>\n<li><a href="./x.ts">x</a> items</li>\n</ul>\n<p dir="ltr">text</p>\n<ul dir="ltr">\n<li>\n<p>loose</p>\n</li>\n<li>\n<p>items</p>\n</li>\n</ul>',
+  ],
+  [
+    '-       :codex-file-citation{path="src/a.ts"}\n-       :codex-followup[Run tests]{prompt="Run tests"}',
+    '<ul dir="ltr">\n<li><a href="src/a.ts">a.ts</a></li>\n<li><span>Run tests</span></li>\n</ul>',
   ],
   [
     "> [!TIP]**joined**",
@@ -219,6 +224,15 @@ describe("wordsHast", () => {
       }),
     ).toBe(
       '<ul dir="ltr">\n<li>wide<br>\n<span data-leading-whitespace="">  </span>continued</li>\n</ul>',
+    );
+    // The tab after five spaces only reaches column 8, so `bar` sits two columns past `foo`.
+    expect(
+      wordsHtml("-     \tfoo\n          bar", {
+        breaks: true,
+        extensions: { userMessage: true, leadingWhitespace: true },
+      }),
+    ).toBe(
+      '<ul dir="ltr">\n<li>foo<br>\n<span data-leading-whitespace="">  </span>bar</li>\n</ul>',
     );
   });
 
@@ -461,6 +475,8 @@ describe("wordsHast", () => {
 
   it.each([
     ["# Title\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
+    ["\uFEFF[docs]: https://example.com/guide", ["[docs]: <https://example.com/guide>"]],
+    ["intro\n\n\uFEFF[docs]: https://example.com/guide", []],
     ['> [a]:\n> https://x.dev "The\n> guide"', ['[a]: <https://x.dev> "The guide"']],
     ["- [a]: https://x.dev\n\n[A]: https://second.dev", ["[a]: <https://x.dev>"]],
     ["<div>\n[a]: https://x.dev\n</div>", []],
@@ -502,5 +518,22 @@ describe("wordsHast", () => {
     );
     expect(html).not.toMatch(/onload|javascript|position|<a |<script/);
     expect(html).toContain('aria-label="y"');
+  });
+
+  it.each([
+    ["notes/[TODO].md", "[TODO].md"],
+    ["notes/~~draft~~.md", "~~draft~~.md"],
+    ["notes/&#91;TODO&#93;.md", "&#91;TODO&#93;.md"],
+  ])("renders sent composer file mention %s with literal basename %s", (path, basename) => {
+    const tree = wordsHast(serializeComposerFileLink(path), {
+      ...ASSISTANT,
+      math: true,
+      extensions: { userMessage: true },
+    });
+    const paragraph = tree.children[0] as Element;
+    const anchor = paragraph.children[0] as Element;
+    expect(anchor.tagName).toBe("a");
+    expect(anchor.children).toEqual([{ type: "text", value: basename }]);
+    expect(isMarkdownFileLinkLabel(basename, String(anchor.properties.href))).toBe(true);
   });
 });

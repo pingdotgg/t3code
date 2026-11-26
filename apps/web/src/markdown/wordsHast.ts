@@ -12,10 +12,11 @@ import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
+import { expandIndentedCodeTabs } from "@t3tools/shared/markdownListIndentation";
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
-  rehypeNormalizeLocalEditorLinks,
+  rehypeNormalizeLocalFileLinks,
   rehypePreserveImageSourceMeta,
   sanitizeChatHast,
 } from "@t3tools/shared/markdownHast";
@@ -480,7 +481,7 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
   };
 }
 
-const INLINE_PREFIX = "t3-markdown-inline-prefix:";
+const INLINE_PREFIX = "t3-markdown-inline-prefix ";
 
 function stripPositions(node: ElementContent) {
   delete node.position;
@@ -503,11 +504,12 @@ function recoverIndentedCode(
   const start = code?.position?.start.offset;
   const itemStart = item.position?.start.offset;
   if (!isElement(code, "pre") || start === undefined || itemStart === undefined) return false;
-  const value = textOf(code);
+  let value = textOf(code);
   if (!/^[\t ]/.test(value)) return false;
   if (walk.source.slice(itemStart, start).includes("\n") || /[`~]/.test(walk.source[start]!)) {
     return false;
   }
+  value = expandIndentedCodeTabs(value, walk.source, itemStart);
   // The trimmed first line sets where the item's content starts.
   const indent = [.../^[\t ]*/.exec(value)![0]].reduce(
     (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
@@ -922,7 +924,7 @@ function restoreMath(node: Root | Element, math: Map<string, Element>) {
 const addHeadingIds = rehypeHeadingIds();
 const addTextDirection = rehypeTextDirection();
 const preserveImageSourceMeta = rehypePreserveImageSourceMeta();
-const normalizeLocalEditorLinks = rehypeNormalizeLocalEditorLinks();
+const normalizeLocalFileLinks = rehypeNormalizeLocalFileLinks();
 const groupChipPunctuation = rehypeChipPunctuation();
 
 const INSIGHT_OPENING = /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u;
@@ -1201,7 +1203,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   };
   transform(tree, walk, false, false);
   preserveImageSourceMeta(tree as never);
-  normalizeLocalEditorLinks(tree as never);
+  normalizeLocalFileLinks(tree as never);
   const hast = sanitizeChatHast(tree);
   if (walk.math.size > 0) restoreMath(hast, walk.math);
   if (insights) restorePositions(hast, insights.toOriginal);
@@ -1348,7 +1350,7 @@ export function markdownReferenceDefinitions(markdown: string): string[] {
     lookups.set(probe.length, label);
     probe += `[${label}]\n\n`;
   }
-  probe += markdown;
+  probe += markdown.replace(/^\uFEFF/, "");
   const definitions: string[] = [];
   const visit = (node: Root | Element) => {
     for (const child of node.children) {
