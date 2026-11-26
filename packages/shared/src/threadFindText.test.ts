@@ -97,6 +97,7 @@ const assistantSegments = (text: string, cwd?: string) =>
   searchableMessageSegments({ role: "assistant", text, streaming: false }, cwd);
 
 it("searches displayed prose and file-chip labels without hidden paths", () => {
+  expect(assistantSegments("-       /Users/me/app.ts:42")).toEqual(["app.ts · L42"]);
   expect(
     assistantSegments("[important description](/tmp/actual.ts). `/tmp/inline-example.ts:42`"),
   ).toEqual(["important description actual.ts. inline-example.ts · L42"]);
