@@ -173,6 +173,18 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
   });
 
+  it("collects a file link after an unclosed bracket", () => {
+    expect(collectComposerInlineTokens("See [WIP and [app.ts](src/app.ts) please")).toEqual([
+      {
+        type: "mention",
+        value: "src/app.ts",
+        source: "[app.ts](src/app.ts)",
+        start: 13,
+        end: 33,
+      },
+    ]);
+  });
+
   it("leaves a context reference link alone", () => {
     expect(
       collectComposerInlineTokens("see [checkout.png](t3-context://v1/image/ctx_abc) ok"),
@@ -269,5 +281,8 @@ describe("composerFileLinksToPlainText", () => {
     );
     const links = "See [docs](https://example.com) and [the config](src/config.ts)";
     expect(composerFileLinksToPlainText(links)).toBe(links);
+    expect(composerFileLinksToPlainText("See [WIP and [app.ts](src/app.ts) please")).toBe(
+      "See [WIP and app.ts please",
+    );
   });
 });
