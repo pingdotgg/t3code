@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import {
   MAX_THEME_FILE_BYTES,
@@ -39,6 +40,7 @@ const decodeThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
 );
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
+const THEME_JSON_SUFFIX = /\.json$/i;
 
 export class ThemeSettingsUnreadableError extends Schema.TaggedError<ThemeSettingsUnreadableError>()(
   "ThemeSettingsUnreadableError",
@@ -310,7 +312,7 @@ const publishThemeFile = Effect.fn(function* (input: {
     return yield* new ThemeFileColorlessError({ filePath: input.filePath });
   }
 
-  const fileBasename = path.basename(input.filePath, ".json");
+  const fileBasename = path.basename(input.filePath).replace(THEME_JSON_SUFFIX, "");
   const themeId = Option.getOrElse(input.explicitId, () => fileBasename);
   // Match watcher validation so published files will not be skipped.
   if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
@@ -455,7 +457,7 @@ const themeSetCommand = Command.make("set", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const target = yield* expandHomePath(flags.theme.trim());
+      let target = yield* expandHomePath(flags.theme.trim());
       if (target.length === 0) {
         return yield* new ThemeTargetMissingError();
       }
@@ -463,10 +465,21 @@ const themeSetCommand = Command.make("set", {
 
       // A bare theme id must not publish a same-named file that happens to exist in cwd.
       const looksLikePath =
-        target.endsWith(".json") ||
+        THEME_JSON_SUFFIX.test(target) ||
         target.includes("/") ||
         target.includes("\\") ||
         target.startsWith("~");
+      if (looksLikePath) {
+        // Spaces stay part of the path when the argument names a file as typed. Win32 drops
+        // trailing spaces from ordinary paths, so only leading ones can name another file there.
+        const expanded = yield* expandHomePath(flags.theme);
+        const asTyped =
+          (yield* HostProcess.Platform) === "win32" && !expanded.startsWith("\\\\?\\")
+            ? expanded.replace(/ +$/, "")
+            : expanded;
+        const info = yield* fs.stat(asTyped).pipe(Effect.option);
+        if (Option.isSome(info) && info.value.type === "File") target = asTyped;
+      }
       const targetIsFile =
         looksLikePath && (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false)));
       let themeId: string;

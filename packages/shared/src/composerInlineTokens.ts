@@ -1,3 +1,6 @@
+import { composerFileLinkPath } from "./composerTrigger.ts";
+import { fileBasename } from "./path.ts";
+
 /** The formulas a Markdown parser finds in text, as source offsets. */
 export type FindMathRanges = (
   text: string,
@@ -55,6 +58,7 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     try {
       path = decodeURIComponent(encodedPath);
     } catch {}
+    path = composerFileLinkPath(encodedPath, path);
     const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
     const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
     const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
@@ -172,4 +176,17 @@ export function collectComposerInlineTokens(
       (match) => !math.some((formula) => match.start < formula.end && match.end > formula.start),
     )
     .sort((left, right) => left.start - right.start);
+}
+
+/** Shows each `@`-file link by its file name, as its composer chip does, for one-line previews. */
+export function composerFileLinksToPlainText(text: string): string {
+  let result = "";
+  let cursor = 0;
+  // The composer reads a link as a mention only before whitespace, so one may end the text.
+  for (const token of collectMentionTokens(`${text} `)) {
+    if (!token.source.startsWith("[")) continue;
+    result += text.slice(cursor, token.start) + fileBasename(token.value);
+    cursor = token.end;
+  }
+  return result + text.slice(cursor);
 }
