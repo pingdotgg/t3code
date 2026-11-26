@@ -2613,9 +2613,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         // Client terminals run with server privileges; apply turn policy and prior user approvals.
         const clientPolicyGrants = makeAcpClientPolicyGrants();
+        const runtimeWorkspaceKey = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+          JSON.stringify([policy.cwd ?? null, policy.workspace?.extraRoots ?? []]);
         let latestRuntimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy =
           input.runtimePolicy;
-        let runtimeSpawnedCwd = input.runtimePolicy.cwd;
+        let runtimeSpawnedWorkspaceKey = runtimeWorkspaceKey(input.runtimePolicy);
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         // Keyed by the agent's steer id; an injection can arrive before its send returns.
@@ -8718,7 +8720,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               Effect.provideService(AgentScope, agentScope),
               Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
             );
-          runtimeSpawnedCwd = policy.cwd;
+          runtimeSpawnedWorkspaceKey = runtimeWorkspaceKey(policy);
         });
 
         const discardFailedRuntime = Effect.gen(function* () {
@@ -8887,7 +8889,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   runtimeMcpBridge = replacementMcpBridge;
                   openAgentRequests = replacementAgentRequests;
                   latestRuntimePolicy = candidatePolicy;
-                  runtimeSpawnedCwd = candidatePolicy.cwd;
+                  runtimeSpawnedWorkspaceKey = runtimeWorkspaceKey(candidatePolicy);
                   yield* Ref.set(runtimeCallbackGeneration, replacementGeneration);
                   prepareTerminalEnvironment(
                     yield* readMcpContext(threadId),
@@ -10200,7 +10202,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const currentSession = yield* Ref.get(activeSessionId);
             const candidatePolicy = input.runtimePolicy ?? latestRuntimePolicy;
             const workspaceChanged =
-              input.runtimePolicy !== undefined && input.runtimePolicy.cwd !== runtimeSpawnedCwd;
+              input.runtimePolicy !== undefined &&
+              runtimeWorkspaceKey(input.runtimePolicy) !== runtimeSpawnedWorkspaceKey;
             if (!needsRestart && !workspaceChanged && currentSession === sessionId) {
               return undefined;
             }
@@ -10245,7 +10248,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         const activeNow = yield* Ref.get(activeTurn);
                         const bufferedNow = yield* Ref.get(wakeBuffer);
                         const continuationNow = yield* Ref.get(continuationRequested);
-                        if (activeNow !== null || bufferedNow.length > 0 || continuationNow) {
+                        const runningNow = yield* Ref.get(runningBackgroundTaskIds);
+                        const unreportedNow = yield* Ref.get(midTurnUnreportedCompletedTaskIds);
+                        if (
+                          activeNow !== null ||
+                          bufferedNow.length > 0 ||
+                          continuationNow ||
+                          runningNow.size > 0 ||
+                          unreportedNow.size > 0
+                        ) {
                           return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                             driver,
                             detail:
