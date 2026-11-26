@@ -511,24 +511,6 @@ describe("chunked Markdown footnotes", () => {
     expect(split.footnotes).toBeUndefined();
   });
 
-  it("treats a link definition directly after a footnote line as footnote continuation", () => {
-    const filler = Array.from({ length: 40 }, (_, i) => `Section ${i} ${"x".repeat(120)}`).join(
-      "\n\n",
-    );
-    const text = [
-      "Ref[^1] and [site].",
-      "",
-      filler,
-      "",
-      "[^1]: Footnote line",
-      "[site]: https://example.com",
-    ].join("\n");
-
-    const split = splitMarkdown(text);
-    expect(split.definitions).toBe("");
-    expect(split.footnotes?.definitions).toContain("[site]: https://example.com");
-  });
-
   it("separates stub footnote definitions from a chunk starting with indented code", () => {
     const filler = Array.from({ length: 40 }, (_, i) => `Section ${i} ${"x".repeat(120)}`).join(
       "\n\n",

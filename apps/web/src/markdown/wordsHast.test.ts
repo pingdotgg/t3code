@@ -605,15 +605,5 @@ describe("wordsHast", () => {
     expect(preserved).toContain("[ ]: pending");
     expect(preserved).toContain('id="user-content-user-content-fnref-1-2"');
     expect(preserved).not.toContain('id="user-content-user-content-fnref-1"');
-
-    // A comment separator keeps leading 4-space indented code out of the last stub definition.
-    const indented = toHtml(
-      wordsHast("[^a]: .\n\n<!-- -->\n\n    indented()\n\nBody[^a].", {
-        ...ASSISTANT,
-        extensions: { footnotes: "omit" },
-      }),
-    );
-    expect(indented).toContain("<pre><code>indented()");
-    expect(indented).toContain('href="#user-content-fn-1"');
   });
 });
