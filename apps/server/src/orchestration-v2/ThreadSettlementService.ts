@@ -391,9 +391,9 @@ export const make = Effect.gen(function* () {
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
         if (isDelegatedAppThread(thread)) {
           if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return null;
-          // The store returns a subagent only once its parent is done, so it settles with the
-          // parent. A task delegated from a linked environment has no parent here, so it settles
-          // once its own work is done. Neither runs its own lookup.
+          // The store returns a subagent once its parent is done, or once its own run ended and
+          // the parent holds its result. A task delegated from a linked environment has no parent
+          // here, so it settles once its own work is done. Neither runs its own lookup.
           const uuid = yield* random.uuidV4();
           yield* orchestrator.dispatch({
             type: "thread.auto-settle",
