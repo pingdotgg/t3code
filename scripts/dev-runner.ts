@@ -21,6 +21,7 @@ import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess } from "effect/process";
 
 import { defaultDevMemoryLimitBytes, enforceDevMemoryLimit } from "./lib/dev-memory-limit.ts";
+import { acquireDevRunnerLock } from "./lib/dev-runner-lock.ts";
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
@@ -818,6 +819,15 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
   // surprising side effect from a command documented as inert.
   if (input.dryRun) {
     return;
+  }
+
+  // Same state directory as the server's deriveServerPaths, so `dev:web` (no server) skips it.
+  if (input.mode !== "dev:web") {
+    const path = yield* Path.Path;
+    yield* acquireDevRunnerLock(
+      env.T3CODE_HOME ? path.join(env.T3CODE_HOME, "userdata") : path.join(baseDir, "dev"),
+      `pid ${String(process.pid)}, ${input.mode}, server port ${String(env.T3CODE_PORT)}, web port ${String(env.PORT)}`,
+    );
   }
 
   const sharedWebPort = BASE_WEB_PORT + webOffset;
