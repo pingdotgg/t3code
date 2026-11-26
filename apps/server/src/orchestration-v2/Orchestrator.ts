@@ -3280,9 +3280,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const detachReason = freshContext
         ? FRESH_CONTEXT_DETACH_REASON
         : "Provider or model selection changed.";
+      const currentFallbackOrigin = projection.thread.fallbackOrigin ?? null;
+      const nextFallbackOrigin =
+        queuedRun.pendingFallbackOrigin !== undefined
+          ? queuedRun.pendingFallbackOrigin
+          : selectionChanged &&
+              currentFallbackOrigin !== null &&
+              !modelSelectionsEqual(
+                queuedRun.modelSelection,
+                currentFallbackOrigin.fallbackSelection,
+              )
+            ? null
+            : currentFallbackOrigin;
+      const fallbackOriginChanged = !Equal.equals(currentFallbackOrigin, nextFallbackOrigin);
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
+          ...(selectionChanged || fallbackOriginChanged
             ? [
                 {
                   type:
@@ -3296,6 +3309,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...projection.thread,
                     providerInstanceId: queuedRun.providerInstanceId,
                     modelSelection: queuedRun.modelSelection,
+                    fallbackOrigin: nextFallbackOrigin,
                     updatedAt: now,
                   },
                 },
@@ -4837,6 +4851,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
         ? yield* Effect.gen(function* () {
+            if (
+              command.type === "thread.model-selection.set" &&
+              command.expectedFallbackSelection !== undefined
+            ) {
+              const currentProjection = yield* loadProjectionForCommand(
+                command,
+                ["runs", "runtimeRequests"],
+                { turnItemTypes: [] },
+              );
+              const hasBusyWork =
+                currentProjection.runs.some((run) => isActiveRun(run) || run.status === "queued") ||
+                currentProjection.runtimeRequests.some((request) => request.status === "pending");
+              if (hasBusyWork) {
+                return yield* new OrchestratorProviderSelectionBusyError({
+                  commandId: command.commandId,
+                  threadId: command.threadId,
+                });
+              }
+              const activeFallback = currentProjection.thread.fallbackOrigin ?? null;
+              if (
+                activeFallback === null ||
+                !modelSelectionsEqual(
+                  currentProjection.thread.modelSelection,
+                  command.expectedFallbackSelection,
+                ) ||
+                !modelSelectionsEqual(
+                  activeFallback.fallbackSelection,
+                  command.expectedFallbackSelection,
+                )
+              ) {
+                return yield* new OrchestratorCommandRejectedError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause:
+                    "Thread model selection changed before automatic fallback restore could apply.",
+                });
+              }
+            }
             yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
               Effect.mapError(
                 (cause) =>
@@ -8335,6 +8387,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.usageLimitContinuationOfRunId === undefined
           ? {}
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+        ...(command.fallbackOrigin === undefined
+          ? {}
+          : { pendingFallbackOrigin: command.fallbackOrigin }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...(freshContext ? { freshContext: true } : {}),
         ...output,

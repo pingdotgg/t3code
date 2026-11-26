@@ -213,7 +213,10 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "snoozedUntil"
 > & {
   readonly projectId?: ProjectId | undefined;
+  /** The model selection of the failed run (not a later manual thread selection). */
   readonly modelSelection?: ModelSelection | undefined;
+  /** The thread's current model selection, so recovery avoids overriding manual switches. */
+  readonly currentModelSelection?: ModelSelection | undefined;
   readonly fallbackOrigin?: OrchestrationV2FallbackOrigin | null | undefined;
 };
 
@@ -5042,11 +5045,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const rows = yield* sql<{
           readonly payload_json: string;
           readonly run_id: string;
+          readonly run_payload_json: string;
           readonly completed_at: string | null;
           readonly failure_payload_json: string;
           readonly last_error: string | null;
         }>`
-          SELECT t.payload_json, r.run_id, r.completed_at,
+          SELECT t.payload_json, r.run_id, r.payload_json AS run_payload_json, r.completed_at,
             item.payload_json AS failure_payload_json,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
@@ -5158,6 +5162,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const candidates: Array<ProjectionLimitRecoveryCandidate> = [];
         for (const row of rows) {
           const thread = yield* decodeThreadPayload(row.payload_json);
+          const failedRun = yield* decodeRunPayload(row.run_payload_json);
           const item = yield* decodeTurnItemPayload(row.failure_payload_json);
           const summary = threadErrorSummary(
             item.type === "error" ? item.failure : null,
@@ -5167,7 +5172,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           candidates.push({
             id: thread.id,
             projectId: thread.projectId,
-            modelSelection: thread.modelSelection,
+            modelSelection: failedRun.modelSelection,
+            currentModelSelection: thread.modelSelection,
             fallbackOrigin: thread.fallbackOrigin ?? null,
             status: "failed",
             lastErrorClass: summary.lastErrorClass,

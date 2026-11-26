@@ -275,6 +275,22 @@ describe("fallbackSwitchCommand and fallbackRestoreCommand", () => {
         nowMs,
       }),
     );
+    // Skips if the user already manually switched the thread away from the failed run's model.
+    assert.isNull(
+      fallbackSwitchCommand({
+        thread: {
+          ...recentAgyFailure(resetFuture),
+          currentModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-6.1-sol",
+          },
+        },
+        settings,
+        providers: [agyProvider, claudeProvider],
+        cooldowns: [],
+        nowMs,
+      }),
+    );
   });
 
   it("restores idle switched thread back to Antigravity Neon once resetAt passes", () => {
@@ -311,6 +327,7 @@ describe("fallbackSwitchCommand and fallbackRestoreCommand", () => {
     if (restore?.type === "thread.model-selection.set") {
       assert.deepEqual(restore.modelSelection, agySelection);
       assert.isNull(restore.fallbackOrigin);
+      assert.deepEqual(restore.expectedFallbackSelection, claudeSelection);
     }
     // Manual model override by the user is never reverted.
     assert.isNull(
@@ -423,8 +440,95 @@ describe("fallbackSwitchCommand and fallbackRestoreCommand", () => {
         if (second.type === "thread.model-selection.set") {
           assert.deepEqual(second.modelSelection, agySelection);
           assert.isNull(second.fallbackOrigin);
+          assert.deepEqual(second.expectedFallbackSelection, claudeSelection);
         }
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect(
+    "records all candidate cooldowns before deciding so an exhausted fallback is not picked in the same sweep",
+    () =>
+      Effect.gen(function* () {
+        const startMs = Date.parse("2026-10-19T12:00:00.000Z");
+        const resetIso = DateTime.formatIso(DateTime.makeUnsafe(startMs + 60_000));
+        yield* TestClock.setTime(startMs);
+        const dispatched: Array<OrchestrationV2ServerCommand> = [];
+        const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const layer = UsageLimitRecoveryWorker.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Scheduler.layer,
+              UsageLimitCooldownStore.layer,
+              Layer.mock(ProviderRegistry.ProviderRegistry)({
+                getProviders: Effect.succeed([agyProvider, claudeProvider]),
+                streamChanges: Stream.never,
+              }),
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getLimitRecoveryCandidates: () =>
+                  Effect.succeed([
+                    // Thread X failed on Antigravity Neon first in candidate order.
+                    {
+                      id: ThreadId.make("thread:agy-x"),
+                      projectId: ProjectId.make("project:1"),
+                      modelSelection: agySelection,
+                      currentModelSelection: agySelection,
+                      fallbackOrigin: null,
+                      status: "failed",
+                      lastErrorClass: "usage_limit",
+                      usageLimitResetAt: resetIso,
+                      latestRunId: RunId.make("run:agy-x"),
+                      latestRunCompletedAt: DateTime.makeUnsafe(startMs - 5_000),
+                      updatedAt: DateTime.makeUnsafe(startMs - 5_000),
+                      archivedAt: null,
+                      settledOverride: null,
+                      pendingRuntimeRequest: null,
+                      limitRecovery: null,
+                      snoozedUntil: null,
+                    },
+                    // Thread Y failed on the configured fallback model (Claude Opus 5.5) later in the same sweep.
+                    {
+                      id: ThreadId.make("thread:claude-y"),
+                      projectId: ProjectId.make("project:1"),
+                      modelSelection: claudeSelection,
+                      currentModelSelection: claudeSelection,
+                      fallbackOrigin: null,
+                      status: "failed",
+                      lastErrorClass: "usage_limit",
+                      usageLimitResetAt: resetIso,
+                      latestRunId: RunId.make("run:claude-y"),
+                      latestRunCompletedAt: DateTime.makeUnsafe(startMs - 4_000),
+                      updatedAt: DateTime.makeUnsafe(startMs - 4_000),
+                      archivedAt: null,
+                      settledOverride: null,
+                      pendingRuntimeRequest: null,
+                      limitRecovery: null,
+                      snoozedUntil: null,
+                    },
+                  ]),
+                getFallbackRestoreCandidates: Effect.succeed([]),
+                getLimitRecoveryWakeAt: () => Effect.succeed(null),
+              }),
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                dispatch: (command) => {
+                  dispatched.push(command);
+                  return Effect.succeed({ storedEvents: [] } as never);
+                },
+              }),
+              Layer.mock(Orchestrator.OrchestratorV2)({
+                streamDomainEvents: Stream.fromQueue(events),
+              }),
+              Layer.mock(ServerSettings.ServerSettingsService)({
+                getSettings: Effect.succeed(settings),
+                streamChanges: Stream.never,
+              }),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          yield* TestClock.adjust("5 seconds");
+          assert.deepEqual(dispatched, []);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 });

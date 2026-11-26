@@ -57,6 +57,13 @@ export function fallbackSwitchCommand(input: {
   ) {
     return null;
   }
+  // Respect a manual model change made after the run failed.
+  if (
+    thread.currentModelSelection !== undefined &&
+    !modelSelectionsEqual(thread.currentModelSelection, thread.modelSelection)
+  ) {
+    return null;
+  }
   // Never loop back onto the same provider instance + model that just hit a limit.
   if (
     thread.modelSelection.instanceId === fallback.instanceId &&
@@ -143,6 +150,7 @@ export function fallbackRestoreCommand(input: {
     threadId: thread.id,
     modelSelection: thread.fallbackOrigin.originSelection,
     fallbackOrigin: null,
+    expectedFallbackSelection: thread.fallbackOrigin.fallbackSelection,
   };
 }
 
@@ -255,23 +263,52 @@ const makeSweep = Effect.gen(function* () {
       ...(fallbackEnabled ? { fallbackOnUsageLimit: true } : {}),
     });
     const providers = providerRegistry === undefined ? null : yield* providerRegistry.getProviders;
+    const restoreCandidates =
+      providers === null
+        ? []
+        : yield* projections.getFallbackRestoreCandidates.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.limit-recovery.restore-query-failed", {
+                cause,
+              }).pipe(
+                Effect.as([] as ReadonlyArray<ProjectionStore.ProjectionFallbackRestoreCandidate>),
+              ),
+            ),
+          );
+    // Record all candidate cooldowns before reading active cooldowns for switch/restore decisions.
+    if (cooldownStore !== undefined) {
+      for (const thread of candidates) {
+        if (
+          thread.modelSelection !== undefined &&
+          thread.usageLimitResetAt != null &&
+          Date.parse(thread.usageLimitResetAt) > nowMs
+        ) {
+          yield* cooldownStore.record({
+            instanceId: thread.modelSelection.instanceId,
+            model: thread.modelSelection.model,
+            failedAtMs: DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt),
+            resetAt: thread.usageLimitResetAt ?? null,
+          });
+        }
+      }
+      for (const thread of restoreCandidates) {
+        if (
+          thread.fallbackOrigin.resetAt !== null &&
+          Date.parse(thread.fallbackOrigin.resetAt) > nowMs
+        ) {
+          yield* cooldownStore.record({
+            instanceId: thread.fallbackOrigin.originSelection.instanceId,
+            model: thread.fallbackOrigin.originSelection.model,
+            failedAtMs: Date.parse(thread.fallbackOrigin.switchedAt) || nowMs,
+            resetAt: thread.fallbackOrigin.resetAt,
+          });
+        }
+      }
+    }
     const activeCooldowns =
       cooldownStore === undefined ? [] : yield* cooldownStore.getActive(nowMs);
     let acted = false;
     for (const thread of candidates) {
-      if (
-        cooldownStore !== undefined &&
-        thread.modelSelection !== undefined &&
-        thread.usageLimitResetAt != null &&
-        Date.parse(thread.usageLimitResetAt) > nowMs
-      ) {
-        yield* cooldownStore.record({
-          instanceId: thread.modelSelection.instanceId,
-          model: thread.modelSelection.model,
-          failedAtMs: DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt),
-          resetAt: thread.usageLimitResetAt ?? null,
-        });
-      }
       const command =
         (providers !== null
           ? fallbackSwitchCommand({
@@ -310,28 +347,7 @@ const makeSweep = Effect.gen(function* () {
       );
     }
     if (providers !== null) {
-      const restoreCandidates = yield* projections.getFallbackRestoreCandidates.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("orchestration-v2.limit-recovery.restore-query-failed", {
-            cause,
-          }).pipe(
-            Effect.as([] as ReadonlyArray<ProjectionStore.ProjectionFallbackRestoreCandidate>),
-          ),
-        ),
-      );
       for (const thread of restoreCandidates) {
-        if (
-          cooldownStore !== undefined &&
-          thread.fallbackOrigin.resetAt !== null &&
-          Date.parse(thread.fallbackOrigin.resetAt) > nowMs
-        ) {
-          yield* cooldownStore.record({
-            instanceId: thread.fallbackOrigin.originSelection.instanceId,
-            model: thread.fallbackOrigin.originSelection.model,
-            failedAtMs: Date.parse(thread.fallbackOrigin.switchedAt) || nowMs,
-            resetAt: thread.fallbackOrigin.resetAt,
-          });
-        }
         const command = fallbackRestoreCommand({
           thread,
           settings: preferences,

@@ -14820,3 +14820,205 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+it.layer(layerTest)("fallback origin queued dispatch and atomic restore", (it) => {
+  it.effect("preserves fallbackOrigin across a queued dispatch and applies it on start", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("fallback-origin-queued-thread");
+      const projectId = ProjectId.make("fallback-origin-queued-project");
+      const fallbackSelection = {
+        instanceId: alternateInstanceId,
+        model: "gpt-5.5",
+      } satisfies ModelSelection;
+      const now = yield* DateTime.now;
+      const fallbackOrigin = {
+        originSelection: modelSelection,
+        fallbackSelection,
+        switchedFromRunId: null,
+        switchedAt: DateTime.formatIso(now),
+        resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 10 })),
+      };
+
+      yield* seedProject({
+        projectId,
+        title: "Fallback queued project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId,
+        title: "Fallback queued",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:active`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:active`),
+        text: "Active turn",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:queued`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:queued`),
+        text: "Queued fallback turn",
+        attachments: [],
+        modelSelection: fallbackSelection,
+        fallbackOrigin,
+        dispatchMode: { type: "queue_after_active" },
+      });
+
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = before.runs.find((run) => run.status !== "queued")!;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:active-done`),
+            type: "run.updated",
+            threadId,
+            runId: activeRun.id,
+            occurredAt: now,
+            payload: { ...activeRun, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${threadId}:resume`),
+        threadId,
+      });
+
+      const started = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(started.thread.modelSelection, fallbackSelection);
+      assert.deepEqual(started.thread.fallbackOrigin, fallbackOrigin);
+    }),
+  );
+
+  it.effect(
+    "rejects automatic restore when a run is active or model changed manually, and applies when idle",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("fallback-origin-atomic-restore-thread");
+        const projectId = ProjectId.make("fallback-origin-atomic-restore-project");
+        const fallbackSelection = {
+          instanceId: modelSelection.instanceId,
+          model: "gpt-5.4-mini",
+        } satisfies ModelSelection;
+        const now = yield* DateTime.now;
+        const fallbackOrigin = {
+          originSelection: modelSelection,
+          fallbackSelection,
+          switchedFromRunId: null,
+          switchedAt: DateTime.formatIso(now),
+          resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
+        };
+
+        yield* seedProject({
+          projectId,
+          title: "Atomic restore project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId,
+          title: "Atomic restore",
+          modelSelection: fallbackSelection,
+          fallbackOrigin,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+
+        // Start a run on the same provider instance; restore must refuse while busy.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:active`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:active`),
+          text: "Running",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+        });
+        const busyError = yield* orchestrator
+          .dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${threadId}:restore-busy`),
+            threadId,
+            modelSelection,
+            fallbackOrigin: null,
+            expectedFallbackSelection: fallbackSelection,
+          })
+          .pipe(Effect.flip);
+        assert.equal(busyError._tag, "OrchestratorProviderSelectionBusyError");
+
+        // Complete the active run; restore now succeeds atomically.
+        const running = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:done`),
+              type: "run.updated",
+              threadId,
+              runId: running.id,
+              occurredAt: now,
+              payload: { ...running, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:restore-idle`),
+          threadId,
+          modelSelection,
+          fallbackOrigin: null,
+          expectedFallbackSelection: fallbackSelection,
+        });
+        const restored = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(restored.thread.modelSelection, modelSelection);
+        assert.isNull(restored.thread.fallbackOrigin ?? null);
+
+        // A stale restore against a thread that already restored (or manually changed) is rejected.
+        const staleError = yield* orchestrator
+          .dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${threadId}:restore-stale`),
+            threadId,
+            modelSelection,
+            fallbackOrigin: null,
+            expectedFallbackSelection: fallbackSelection,
+          })
+          .pipe(Effect.flip);
+        assert.equal(staleError._tag, "OrchestratorCommandRejectedError");
+      }),
+  );
+});

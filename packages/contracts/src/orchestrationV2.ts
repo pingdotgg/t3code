@@ -851,6 +851,7 @@ export const OrchestrationV2Run = Schema.Struct({
   restartContinuationOfRunId: Schema.optional(RunId),
   manualContinuationOfRunId: Schema.optional(RunId),
   usageLimitContinuationOfRunId: Schema.optional(RunId),
+  pendingFallbackOrigin: Schema.optional(Schema.NullOr(OrchestrationV2FallbackOrigin)),
   delegatedTaskId: Schema.optional(NodeId),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
@@ -3614,6 +3615,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     modelSelection: ModelSelection,
     fallbackOrigin: Schema.optional(Schema.NullOr(OrchestrationV2FallbackOrigin)),
+    expectedFallbackSelection: Schema.optional(ModelSelection),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
