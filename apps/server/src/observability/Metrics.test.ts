@@ -8,21 +8,9 @@ import { describe } from "vite-plus/test";
 
 import * as Metrics from "./Metrics.ts";
 
-const TOTAL_COUNTERS = [
-  Metrics.rpcRequestsTotal,
-  Metrics.orchestrationCommandsTotal,
-  Metrics.orchestrationEffectClaimsTotal,
-  Metrics.otlpExportAttemptFailuresTotal,
-  Metrics.providerSessionsTotal,
-  Metrics.providerTurnsTotal,
-  Metrics.runsTotal,
-  Metrics.gitCommandsTotal,
-  Metrics.terminalSessionsTotal,
-  Metrics.webhookDeliveriesTotal,
-  Metrics.webhookRunsTotal,
-  Metrics.secretRequestsTotal,
-  Metrics.secretRefsConsumedTotal,
-] as const;
+const TOTAL_COUNTERS = Object.values(Metrics).filter(
+  (value): value is Metric.Counter<number> => Metric.isMetric(value) && value.type === "Counter",
+);
 
 interface OtlpMetricsPayload {
   readonly resourceMetrics?: ReadonlyArray<{
@@ -81,6 +69,7 @@ describe("Metrics", () => {
           ),
       );
 
+      assert.isAbove(TOTAL_COUNTERS.length, 0);
       assert.strictEqual(sumsByName.size, TOTAL_COUNTERS.length);
       for (const [name, isMonotonic] of sumsByName) {
         assert.isTrue(isMonotonic, `${name} should export with sum.isMonotonic = true`);
