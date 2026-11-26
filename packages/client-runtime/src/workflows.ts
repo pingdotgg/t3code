@@ -988,9 +988,9 @@ export function workflowOneLine(text: string): string {
     .replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, inner: string) => `\0${code.push(inner) - 1}\0`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/(?<![\p{L}\p{M}\p{N}_/])(__|_)(\S(?:.*?\S)?)\1(?![\p{L}\p{M}\p{N}_/])/gu, "$2")
-    // An opener is not inside a `*` run and is left-flanking as CommonMark defines it, so `src/**/*.ts` and `a*.ts` stay literal.
+    // Globs like `src/**/*.ts` and `a*.ts` stay literal: an opener follows a space or bracket, or is glued to a word.
     .replace(
-      /(?<!\*)(?:(?<=^|[\s\p{P}])|(?=(?:\*\*|\*)[^\s\p{P}]))(\*\*|\*)(?!\*)(\S(?:.*?\S)?)\1/gu,
+      /(?<!\*)(?:(?<=^|[\s([{"'])|(?=(?:\*\*\*|\*\*|\*)[^\s\p{P}]))(\*\*\*|\*\*|\*)(?!\*)(\S(?:.*?\S)?)\1/gu,
       "$2",
     )
     .replace(/\0(\d+)\0/g, (match, index: string) => code[Number(index)] ?? match);
