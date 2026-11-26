@@ -103,7 +103,7 @@ function CloneDialogWithToasts() {
 describe("AddProjectToMachineDialog", () => {
   it("keeps the replacement open after the dismissed clone finishes starting", async () => {
     project.setup(PROJECT);
-    const reply = Promise.withResolvers<{ projectId: ProjectId }>();
+    const reply = Promise.withResolvers<ProjectId>();
     const requested = Promise.withResolvers<ProjectId>();
     clone.mockImplementationOnce(({ projectId }: { projectId: ProjectId }) => {
       requested.resolve(projectId);
@@ -144,7 +144,7 @@ describe("AddProjectToMachineDialog", () => {
     await expect.element(screen.getByText(/Clone Next repo/)).toBeVisible();
     const progress = page.getByText("Cloning checkout", { exact: true });
     await expect.element(progress).not.toBeInTheDocument();
-    reply.resolve({ projectId });
+    reply.resolve(projectId);
     await expect.element(progress).toBeVisible();
     await expect.element(screen.getByText(/Clone Next repo/)).toBeVisible();
   });

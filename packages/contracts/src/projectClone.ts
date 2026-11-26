@@ -24,7 +24,6 @@ export type ProjectClonePhase = typeof ProjectClonePhase.Type;
 
 export const ProjectCloneSnapshot = Schema.Struct({
   projectId: ProjectId,
-  attemptId: Schema.optionalKey(TrimmedNonEmptyString),
   remoteUrl: TrimmedNonEmptyString,
   destinationPath: TrimmedNonEmptyString,
   repository: Schema.NullOr(SourceControlRepositoryInfo),
@@ -61,7 +60,6 @@ export type ProjectCloneStartInput = typeof ProjectCloneStartInput.Type;
 
 export const ProjectCloneStartResult = Schema.Struct({
   projectId: ProjectId,
-  attemptId: Schema.optionalKey(TrimmedNonEmptyString),
   cwd: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
   repository: Schema.NullOr(SourceControlRepositoryInfo),

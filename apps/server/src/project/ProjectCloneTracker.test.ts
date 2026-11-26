@@ -178,9 +178,7 @@ describe("ProjectCloneTracker", () => {
       expect(yield* tracker.retry(projectId)).toBe(true);
       expect(harness.discarded).toEqual(["/workspace/t3code"]);
       yield* Effect.yieldNow;
-      const retried = yield* tracker.get(projectId);
-      expect(retried).toMatchObject({ phase: "done", attemptId: expect.any(String) });
-      expect(retried?.attemptId).not.toBe(failed?.attemptId);
+      expect((yield* tracker.get(projectId))?.phase).toBe("done");
       expect(protocols).toEqual(["ssh", "ssh"]);
     }).pipe(Effect.provide(harness.layer));
   });
@@ -325,11 +323,9 @@ describe("ProjectCloneTracker", () => {
       yield* Effect.yieldNow;
       expect(yield* tracker.get(owner)).toMatchObject({
         projectId: owner,
-        attemptId: expect.any(String),
         destinationPath: "/workspace/t3code",
         phase: "done",
       });
-      expect(result.attemptId).toBe((yield* tracker.get(owner))?.attemptId);
       expect(harness.cloned).toEqual([owner]);
       expect(yield* tracker.get(projectId)).toBeNull();
     }).pipe(Effect.provide(harness.layer));

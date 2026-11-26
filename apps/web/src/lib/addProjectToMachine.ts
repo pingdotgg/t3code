@@ -112,7 +112,7 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
  * two servers never talk. Resolves with the cloning project once it starts; the
  * caller decides whether to open it and show progress in the composer.
  */
-export async function addProjectToMachine(input: AddProjectToMachineInput) {
+export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<ProjectId> {
   // Read first, so the copy reflects the files as they were when the user asked.
   const reads = await Promise.all(
     input.files.map(async (relativePath) => {
@@ -163,7 +163,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput) {
     }
   }
   void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
-  if (reads.length === 0) return started.value;
+  if (reads.length === 0) return projectId;
 
   void (async () => {
     const clone = await waitForClone(input.target.environmentId, projectId);
@@ -209,5 +209,5 @@ export async function addProjectToMachine(input: AddProjectToMachineInput) {
           },
     );
   })();
-  return started.value;
+  return projectId;
 }

@@ -30,7 +30,6 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import type { ProjectConflictError } from "./ProjectService.ts";
@@ -99,7 +98,6 @@ interface TrackedClone {
 /** @public */
 export const make = Effect.gen(function* () {
   const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-  const random = yield* SecureRandom.SecureRandom;
   const clones = yield* Ref.make(new Map<ProjectId, TrackedClone>());
   const changes = yield* PubSub.unbounded<ReadonlyArray<ProjectCloneSnapshot>>();
   const retentionFibers = new Map<ProjectId, Fiber.Fiber<unknown, never>>();
@@ -287,10 +285,8 @@ export const make = Effect.gen(function* () {
     function* (input, hooks) {
       const prepared = yield* repositories.prepareClone(input);
       const startedAt = yield* nowIso;
-      const attemptId = yield* random.uuidV4();
       const snapshot: ProjectCloneSnapshot = {
         projectId: input.projectId,
-        attemptId,
         remoteUrl: prepared.remoteUrl,
         destinationPath: prepared.destinationPath,
         repository: prepared.repository,
@@ -370,7 +366,6 @@ export const make = Effect.gen(function* () {
       );
       return {
         projectId,
-        attemptId,
         cwd: prepared.destinationPath,
         remoteUrl: prepared.remoteUrl,
         repository: prepared.repository,
@@ -412,12 +407,10 @@ export const make = Effect.gen(function* () {
       }
       yield* repositories.discardClone(tracked.input.destinationPath);
       const startedAt = yield* nowIso;
-      const attemptId = yield* random.uuidV4();
       yield* modify(projectId, (entry) => ({
         ...entry,
         snapshot: {
           ...entry.snapshot,
-          attemptId,
           phase: "running",
           stage: "connecting",
           percent: null,
@@ -534,6 +527,4 @@ function describeCloneFailure(cause: Cause.Cause<unknown>): string {
     : "The repository could not be cloned.";
 }
 
-export const layer = Layer.effect(ProjectCloneTracker, make).pipe(
-  Layer.provide(SecureRandom.layerWebCrypto),
-);
+export const layer = Layer.effect(ProjectCloneTracker, make);

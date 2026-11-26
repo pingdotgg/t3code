@@ -58,10 +58,10 @@ export function holdProjectCloneToasts(ref: ScopedProjectRef) {
  * project, whose composer shows the same progress. Failures still toast
  * whenever the project is not on screen.
  */
-export function silenceProjectCloneToasts(ref: ScopedProjectRef, attemptId: string) {
-  silencedCloneToasts.add(JSON.stringify([scopedProjectKey(ref), attemptId]));
+export function silenceProjectCloneToasts(ref: ScopedProjectRef) {
+  silencedCloneToasts.add(scopedProjectKey(ref));
 }
 
-export function isProjectCloneToastSilenced(ref: ScopedProjectRef, attemptId: string): boolean {
-  return silencedCloneToasts.has(JSON.stringify([scopedProjectKey(ref), attemptId]));
+export function isProjectCloneToastSilenced(ref: ScopedProjectRef): boolean {
+  return silencedCloneToasts.has(scopedProjectKey(ref));
 }

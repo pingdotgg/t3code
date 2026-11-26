@@ -46,7 +46,7 @@ interface TrackedToast {
   readonly toastId: ReturnType<typeof toastManager.add>;
   readonly renderedKey: string;
   readonly phase: ProjectCloneSnapshot["phase"];
-  readonly attemptId: string;
+  readonly startedAt: ProjectCloneSnapshot["startedAt"];
   readonly closed?: true;
 }
 
@@ -102,8 +102,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       seen.add(clone.projectId);
       const key = renderKey(clone);
       const tracked = toasts.current.get(clone.projectId);
-      const attemptId = clone.attemptId ?? clone.startedAt;
-      const sameAttempt = tracked?.attemptId === attemptId;
+      const sameAttempt = tracked?.startedAt === clone.startedAt;
       const name = projectCloneDisplayName(clone);
       const closeToast = () => {
         const current = toasts.current.get(clone.projectId);
@@ -113,12 +112,12 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       };
       const ref = { environmentId, projectId: clone.projectId };
       if (isViewingProjectDraft(clone.projectId)) {
-        silenceProjectCloneToasts(ref, attemptId);
+        silenceProjectCloneToasts(ref);
         closeToast();
         continue;
       }
       if (
-        (isProjectCloneToastSilenced(ref, attemptId) || toastHolds.has(scopedProjectKey(ref))) &&
+        (isProjectCloneToastSilenced(ref) || toastHolds.has(scopedProjectKey(ref))) &&
         (clone.phase === "running" || clone.phase === "done")
       ) {
         closeToast();
@@ -134,7 +133,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       }
 
       const showToast = (options: ReturnType<typeof stackedThreadToast>) => {
-        const rendered = { renderedKey: key, phase: clone.phase, attemptId };
+        const rendered = { renderedKey: key, phase: clone.phase, startedAt: clone.startedAt };
         if (tracked && !tracked.closed) {
           toastManager.update(tracked.toastId, options);
           toasts.current.set(clone.projectId, { toastId: tracked.toastId, ...rendered });
