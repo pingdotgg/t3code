@@ -450,7 +450,6 @@ describe("AgentScope service", () => {
     memory.swapKb = 2 * 1024 ** 2;
     return withFakeSystemd(({ scope, calls, units, cgroupRoot }) =>
       Effect.gen(function* () {
-        // Boat VMs have swap but set MemorySwapMax=0 on user.slice.
         const slice =
           "/user.slice/user-1.slice/user@1.service/app.slice/app-t3code.slice/app-t3code-agents.slice";
         NodeFS.mkdirSync(NodePath.join(cgroupRoot, slice), { recursive: true });

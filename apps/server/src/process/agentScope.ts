@@ -206,8 +206,8 @@ export const make = Effect.gen(function* () {
         });
         return false;
       });
-      // Swap that a cgroup above the agents forbids (memory.swap.max 0, as Boat sets
-      // on user.slice) stalls them at MemoryHigh like no swap at all.
+      // Swap that a cgroup above the agents forbids (memory.swap.max 0, as some VM
+      // images set on user.slice) stalls them at MemoryHigh like no swap at all.
       let agentsControlGroup = "";
       const swapForbidden = Effect.gen(function* () {
         if (agentsControlGroup === "") {
