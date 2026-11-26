@@ -1,9 +1,13 @@
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import {
+  togglePendingUserInputOptionSelection,
+  type PendingUserInputDraftAnswer,
+} from "@t3tools/client-runtime/state/pending-user-input";
+import { useState, type ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { fakeTimers, render } from "../../../test/render";
 import type { PendingUserInput } from "../../session-logic";
 import { Select, SelectTrigger } from "../ui/select";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -153,3 +157,55 @@ it.each<{ focus: string; html: string; nested?: boolean; typed: string; toggles:
     expect("value" in focused ? focused.value : focused.textContent).toBe(typed);
   },
 );
+
+it("a second tap that clears a single pick on a question that takes notes does not advance", async () => {
+  const question = {
+    id: "database",
+    header: "Database",
+    question: "Use Postgres?",
+    options: [{ label: "Yes", description: "Yes" }],
+    multiSelect: false,
+    supportsNote: true,
+  };
+  const onAdvance = vi.fn();
+  function Harness() {
+    const [answers, setAnswers] = useState<Record<string, PendingUserInputDraftAnswer>>({
+      database: { customAnswer: "on a new host" },
+    });
+    return (
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[{ ...prompt, questions: [question] }]}
+        cwd={undefined}
+        threadRef={threadRef}
+        respondingRequestIds={[]}
+        answers={answers}
+        questionIndex={0}
+        onToggleOption={(questionId, optionValue) =>
+          setAnswers((current) => ({
+            ...current,
+            [questionId]: togglePendingUserInputOptionSelection(
+              question,
+              current[questionId],
+              optionValue,
+            ),
+          }))
+        }
+        onAdvance={onAdvance}
+        onDismiss={vi.fn()}
+      />
+    );
+  }
+  await using screen = await render(<Harness />);
+  const option = screen.getByRole("button", { name: /^Yes/ });
+  await expect.element(option).toBeVisible();
+  const button = option.element();
+  if (!(button instanceof HTMLButtonElement)) throw new Error("Expected the option button");
+  using _timers = fakeTimers();
+  button.click();
+  await expect.element(option).toHaveAttribute("aria-pressed", "true");
+  button.click();
+  await expect.element(option).toHaveAttribute("aria-pressed", "false");
+  vi.advanceTimersByTime(1_000);
+
+  expect(onAdvance).not.toHaveBeenCalled();
+});

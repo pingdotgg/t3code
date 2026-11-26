@@ -136,15 +136,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     if (disabled || isResponding) return;
     const clearsPick =
       activeQuestion?.supportsNote === true && progress.selectedOptionValues.includes(optionValue);
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
     if (activeQuestion?.multiSelect || clearsPick) {
       onToggleOption(questionId, optionValue);
       return;
     }
     setOptimisticSingleSelect({ questionId, optionValue });
     onToggleOption(questionId, optionValue);
-    if (autoAdvanceTimerRef.current !== null) {
-      window.clearTimeout(autoAdvanceTimerRef.current);
-    }
     autoAdvanceTimerRef.current = window.setTimeout(() => {
       autoAdvanceTimerRef.current = null;
       advance();
