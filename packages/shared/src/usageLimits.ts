@@ -48,6 +48,18 @@ export function exhaustedUsageWindow(
       const auto = exhausted.find((window) => window.id === "autoPercentUsed");
       return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
     }
+    case "antigravity": {
+      const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
+      return exhausted.find((window) => {
+        const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
+        return (
+          pool === undefined ||
+          family === undefined ||
+          pool === family ||
+          (pool === "3p" && (family === "claude" || family === "gpt"))
+        );
+      });
+    }
     case "codex": {
       // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
       const hasPlanWindows = windows.some(
@@ -542,6 +554,16 @@ function hasDuplicateCursorTotal(pool: LimitPool): boolean {
 }
 
 export function displayLimitWindows(pool: LimitPool) {
+  if (pool.driver === "antigravity") {
+    return [...pool.windows].sort(
+      (left, right) =>
+        Number(!left.id.startsWith("gemini-")) - Number(!right.id.startsWith("gemini-")) ||
+        left.id
+          .replace(/-(5h|weekly|quota)$/, "")
+          .localeCompare(right.id.replace(/-(5h|weekly|quota)$/, "")) ||
+        WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
+    );
+  }
   if (pool.driver !== "cursor") return pool.windows;
   const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
   const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
