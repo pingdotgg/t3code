@@ -867,6 +867,32 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     lan: Option.none<boolean>(),
   });
 
+  it.effect("uses the same unbracketed IPv6 wildcard for port selection and startup", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-ipv6-host-" })),
+      );
+      const config = yield* resolveServerConfig(
+        { ...minimalWebFlags(baseDir), port: Option.none() },
+        Option.none(),
+        {
+          selectAutomaticPort: (_preferred, host) =>
+            Effect.succeed(host === "::" ? 50_123 : 50_124),
+        },
+      ).pipe(
+        Effect.provide(
+          Layer.merge(
+            NetService.layer,
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOST: "[::]" } })),
+          ),
+        ),
+      );
+
+      expect(config.host).toBe("::");
+      expect(config.port).toBe(50_123);
+    }),
+  );
+
   it.effect("uses the automatic port selector only when no port is configured", () =>
     Effect.gen(function* () {
       const baseDir = yield* FileSystem.FileSystem.pipe(

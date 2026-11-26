@@ -83,6 +83,12 @@ const PARAGRAPH_SCOPE = new Set([
   "template",
   "button",
 ]);
+// HTML special elements stop implicit </li> closing, except address, div, and p.
+const LIST_ITEM_SCOPE = new Set(
+  "applet area article aside base basefont bgsound blockquote body br button caption center col colgroup dd details dir dl dt embed fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hgroup hr html iframe img input li link listing main marquee menu meta nav noembed noframes noscript object ol param plaintext pre script search section select source style summary table tbody td template textarea tfoot th thead title tr track ul wbr xmp".split(
+    " ",
+  ),
+);
 
 type RenderOptions = Omit<WordsRenderOptions, "frontmatter">;
 
@@ -182,6 +188,16 @@ function tokenize(html: string, offsetOf: (byte: number) => number): Tokenized {
       continue;
     }
     const inSvg = svgDepth > 0 || tagName === "svg";
+    if (!inSvg && tagName === "li") {
+      for (let index = stack.length - 1; index > 0; index--) {
+        const openTag = (stack[index] as Element).tagName;
+        if (openTag === "li") {
+          stack.length = index;
+          break;
+        }
+        if (LIST_ITEM_SCOPE.has(openTag)) break;
+      }
+    }
     if (!inSvg && CLOSES_PARAGRAPH.has(tagName)) {
       const paragraph = openParagraph(stack);
       if (paragraph > 0) stack.length = paragraph;
@@ -941,7 +957,7 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
   const nonce = Math.random().toString(36).slice(2);
   const marker = new RegExp(String.raw`^\[!T3-INSIGHT-${nonce}-(\d+)\](?:\r?\n)?`);
   const anywhere = new RegExp(String.raw`\[!T3-INSIGHT-${nonce}-(\d+)\]`, "g");
-  const lines = text.split(/(?<=\n)/u);
+  const lines = text.split(/(?<=\n)|(?<=\r)(?!\n)/u);
   const skipped = new Set<number>();
   for (;;) {
     // Each line's offset in the message and in the source, and how much longer it got.
@@ -1332,10 +1348,12 @@ export function markdownReferenceDefinitions(markdown: string): string[] {
       if (child.type !== "element") continue;
       const label = lookups.get(child.position?.start.offset ?? -1);
       if (child.tagName === "a" && label !== undefined) {
-        const href = String(child.properties.href ?? "").replace(/[<>\\\n]/g, encodeURIComponent);
+        const href = String(child.properties.href ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/[<>\\\n]/g, encodeURIComponent);
         const title = child.properties.title;
         definitions.push(
-          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&")}"` : ""}`,
+          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&").replace(/&/g, "&amp;")}"` : ""}`,
         );
       } else visit(child);
     }
