@@ -7,6 +7,7 @@ import type * as Exit from "effect/Exit";
 import * as ExitRuntime from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
@@ -181,6 +182,7 @@ export interface TraceSink {
 }
 
 export interface LocalFileTracerOptions extends TraceSinkOptions {
+  readonly sampleRoutineSpans?: boolean;
   readonly delegate?: Tracer.Tracer;
   readonly sink?: TraceSink;
 }
@@ -581,6 +583,19 @@ function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unk
   return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
 }
 
+const ROUTINE_ATTRIBUTE = "t3.trace.routine";
+/** Marks high-volume bookkeeping spans the local trace file may sample. SQLite spans count without it. */
+export const routineSpan = { [ROUTINE_ATTRIBUTE]: true } as const;
+
+/** Runs real work that a routine context (such as the workflow engine) calls without the routine marker. */
+export const withoutRoutineSpans = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.updateService(effect, References.TracerSpanAnnotations, (annotations) => {
+    const { [ROUTINE_ATTRIBUTE]: _, ...rest } = annotations;
+    return rest;
+  });
+
+const SLOW_ROUTINE_SPAN_NANOS = 10_000_000n;
+
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
   readonly name: string;
@@ -596,14 +611,17 @@ class LocalFileSpan implements Tracer.Span {
   attributes: Map<string, unknown>;
   events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]>;
   private readonly delegate: Tracer.Span;
+  private readonly sampleRoutineSpans: boolean;
   private readonly push: (record: EffectTraceRecord) => void;
 
   constructor(
     options: Parameters<Tracer.Tracer["span"]>[0],
     delegate: Tracer.Span,
     push: (record: EffectTraceRecord) => void,
+    sampleRoutineSpans: boolean,
   ) {
     this.delegate = delegate;
+    this.sampleRoutineSpans = sampleRoutineSpans;
     this.push = push;
     this.name = delegate.name;
     this.spanId = delegate.spanId;
@@ -632,9 +650,21 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (this.sampled) {
+    if (this.sampled && !(this.sampleRoutineSpans && this.isDroppableRoutine(endTime, traceExit))) {
       this.push(spanToTraceRecord(this));
     }
+  }
+
+  // Keyed per span: background fibers share the boot trace, and recurring ticks reuse one parent span.
+  private isDroppableRoutine(endTime: bigint, exit: Exit.Exit<unknown, unknown>): boolean {
+    return (
+      (this.attributes.get("db.system.name") === "sqlite" ||
+        this.attributes.get(ROUTINE_ATTRIBUTE) === true) &&
+      ExitRuntime.isSuccess(exit) &&
+      this.events.length === 0 &&
+      endTime - this.status.startTime < SLOW_ROUTINE_SPAN_NANOS &&
+      !this.spanId.endsWith("00")
+    );
   }
 
   attribute(key: string, value: unknown): void {
@@ -683,7 +713,12 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
 
   return Tracer.make({
     span(spanOptions) {
-      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), sink.push);
+      return new LocalFileSpan(
+        spanOptions,
+        delegate.span(spanOptions),
+        sink.push,
+        options.sampleRoutineSpans === true,
+      );
     },
     ...(delegate.context ? { context: delegate.context } : {}),
   });

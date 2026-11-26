@@ -77,6 +77,7 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import { checkOutput, outputRequestProblem, resolveOwedOutputRun } from "./runOutput.ts";
+import { routineSpan } from "@t3tools/shared/observability";
 
 const isRunOutputDispatchRejectionError = Schema.is(Orchestrator.RunOutputDispatchRejectionError);
 
@@ -694,6 +695,7 @@ const make = Effect.gen(function* () {
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
+    { attributes: routineSpan },
   )(function* (threadId: ThreadId) {
     yield* legacyImporter.ensureTranscript(threadId).pipe(
       Effect.tapError((cause) =>
