@@ -1,3 +1,5 @@
+import { EXACT_PHRASE_GAP } from "./paletteSearch.ts";
+
 // A typed straight apostrophe finds a curly one: iOS keyboards type "’".
 const foldCharacters = (text: string) => text.replace(/ς/g, "σ").replace(/[‘’]/g, "'");
 
@@ -14,20 +16,28 @@ function foldThreadSearchCase(text: string): string {
   return folded;
 }
 
-function scanThreadSearchOccurrences(text: string, query: string, offsets?: number[]): number {
+interface ThreadSearchRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+function scanThreadSearchOccurrences(
+  text: string,
+  query: string,
+  ranges?: ThreadSearchRange[],
+): number {
   if (text.length === 0 || query.length === 0) return 0;
 
-  const foldedText = foldThreadSearchCase(text);
-  const foldedQuery = foldThreadSearchCase(query);
+  // Search snippets collapse whitespace. Use the same gap limit as quoted
+  // search so a wider gap in the message cannot take the selected occurrence.
+  const phrase = foldThreadSearchCase(query)
+    .split(/(?<=\S) (?=\S)/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(`\\s{1,${EXACT_PHRASE_GAP}}`);
   let count = 0;
-  let cursor = 0;
-
-  while (cursor <= foldedText.length - foldedQuery.length) {
-    const offset = foldedText.indexOf(foldedQuery, cursor);
-    if (offset === -1) break;
-    offsets?.push(offset);
+  for (const match of foldThreadSearchCase(text).matchAll(new RegExp(phrase, "g"))) {
+    ranges?.push({ start: match.index, end: match.index + match[0].length });
     count += 1;
-    cursor = offset + foldedQuery.length;
   }
   return count;
 }
@@ -36,8 +46,8 @@ export function countThreadSearchOccurrences(text: string, query: string): numbe
   return scanThreadSearchOccurrences(text, query);
 }
 
-export function findThreadSearchOccurrences(text: string, query: string): number[] {
-  const offsets: number[] = [];
-  scanThreadSearchOccurrences(text, query, offsets);
-  return offsets;
+export function findThreadSearchRanges(text: string, query: string): ThreadSearchRange[] {
+  const ranges: ThreadSearchRange[] = [];
+  scanThreadSearchOccurrences(text, query, ranges);
+  return ranges;
 }

@@ -3,7 +3,6 @@ export const THREAD_FIND_BLOCK_TAGS = new Set([
   "article",
   "aside",
   "blockquote",
-  "br",
   "dd",
   "details",
   "div",
@@ -36,3 +35,8 @@ export const THREAD_FIND_BLOCK_TAGS = new Set([
   "tr",
   "ul",
 ]);
+
+export function threadFindLineBreakText(nextText: string | null | undefined): string {
+  // Markdown renderers often emit a newline text node after the break.
+  return /^\r?\n/.test(nextText ?? "") ? "" : " ";
+}

@@ -1,6 +1,9 @@
-import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import { findThreadSearchRanges } from "@t3tools/shared/threadSearch";
 import { useEffect, useEffectEvent, useRef } from "react";
-import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindBlockTags";
+import {
+  THREAD_FIND_BLOCK_TAGS,
+  threadFindLineBreakText,
+} from "@t3tools/shared/threadFindBlockTags";
 
 import { observeResize } from "~/lib/observeResize";
 
@@ -32,16 +35,24 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     const flush = () => {
       let startIndex = 0;
       let endIndex = 0;
-      for (const offset of findThreadSearchOccurrences(text, query)) {
-        while (startIndex < nodes.length && nodes[startIndex]!.end <= offset) startIndex++;
+      for (const match of findThreadSearchRanges(text, query)) {
+        while (startIndex < nodes.length && nodes[startIndex]!.end <= match.start) startIndex++;
         if (endIndex < startIndex) endIndex = startIndex;
-        while (endIndex < nodes.length && nodes[endIndex]!.end < offset + query.length) endIndex++;
+        while (endIndex < nodes.length && nodes[endIndex]!.end < match.end) endIndex++;
         const start = nodes[startIndex];
         const end = nodes[endIndex];
         if (!start || !end) continue;
         const range = container.ownerDocument.createRange();
-        range.setStart(start.node, offset - start.start);
-        range.setEnd(end.node, offset + query.length - end.start);
+        if (start.node.nodeType === 3) {
+          range.setStart(start.node, match.start - start.start);
+        } else {
+          range.setStartBefore(start.node);
+        }
+        if (end.node.nodeType === 3) {
+          range.setEnd(end.node, match.end - end.start);
+        } else {
+          range.setEndAfter(end.node);
+        }
         const occurrence = occurrenceByRowId.get(rowId) ?? 0;
         ranges.push({ rowId, occurrence, range });
         occurrenceByRowId.set(rowId, occurrence + 1);
@@ -57,6 +68,16 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
         return;
       }
       const tag = element?.tagName.toLowerCase() ?? "";
+      if (tag === "br") {
+        const next = node.nextSibling;
+        const separator = threadFindLineBreakText(next?.nodeType === 3 ? next.nodeValue : null);
+        if (separator) {
+          const start = text.length;
+          text += separator;
+          nodes.push({ node, start, end: text.length });
+        }
+        return;
+      }
       const block = THREAD_FIND_BLOCK_TAGS.has(tag);
       if (block) flush();
       if (node.nodeType === 3) {

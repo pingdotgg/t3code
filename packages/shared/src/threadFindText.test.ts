@@ -16,7 +16,7 @@ it("excludes review attachments rendered as context chips", () => {
     "After review",
   ].join("\n");
   expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
-    "Before review",
+    "Before review ",
     " After review",
   ]);
 });
@@ -33,17 +33,15 @@ it("indexes the spaces typed at the start of a user's lines, as the bubble shows
   const text = "Plan\n   Step one\n\tDetail";
   // Each line ending reads as one space, as the text after a rendered line break does.
   expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
-    "Plan",
-    "    Step one",
-    " \tDetail",
+    "Plan    Step one \tDetail",
   ]);
   const indexed = (text: string) =>
     searchableMessageSegments({ role: "user", text, streaming: false });
   // A task's checkbox does not move where its continuation lines start.
-  expect(indexed("- [ ] task\n    detail")).toEqual([" task", "   detail"]);
+  expect(indexed("- [ ] task\n    detail")).toEqual([" task   detail"]);
   // A space or tab written as a character reference is dropped there, as without the indentation.
-  expect(indexed("a\n &#32;b")).toEqual(["a", "  b"]);
-  expect(indexed("a  \n\t&Tab;b")).toEqual(["a", " \tb"]);
+  expect(indexed("a\n &#32;b")).toEqual(["a  b"]);
+  expect(indexed("a  \n\t&Tab;b")).toEqual(["a \tb"]);
 });
 
 it("excludes structured context chips without joining text across them", () => {
@@ -241,8 +239,7 @@ it("indexes insight bodies without hidden fences and keeps user and plan text li
 
 it("keeps insight line breaks for backticked openers on their own line, not in prose", () => {
   expect(assistantSegments("`★ Insight ─────`\nfirst line\nsecond line\n`─────`")).toEqual([
-    "first line",
-    " second line",
+    "first line second line",
   ]);
   expect(assistantSegments("`★ Insight ─────` opens a callout.\nfirst line\nsecond line")).toEqual([
     "★ Insight ───── opens a callout. first line second line",
