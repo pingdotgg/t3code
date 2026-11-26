@@ -172,15 +172,18 @@ export function decodeFilePreviewText(bytes: Uint8Array, truncated = false) {
   const bounded = bytes.subarray(0, FILE_TEXT_PREVIEW_MAX_BYTES);
   if (bounded.some((byte) => byte === 0))
     throw new Error("This file contains binary data and cannot be shown as text.");
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  try {
-    return {
-      text: decoder.decode(bounded, { stream: truncated || bytes.length > bounded.length }),
-      truncated: truncated || bytes.length > bounded.length,
-    };
-  } catch {
-    throw new Error("This file is not UTF-8 text. Open it in another app to view its contents.");
+  const isTruncated = truncated || bytes.length > bounded.length;
+  // GBK/GB18030 is common in Chinese Windows projects; Git diffs fall back the same way.
+  // Some runtimes (Hermes) only ship UTF-8, so constructing the decoder may throw too.
+  for (const encoding of ["utf-8", "gb18030"]) {
+    try {
+      const text = new TextDecoder(encoding, { fatal: true }).decode(bounded, {
+        stream: isTruncated,
+      });
+      return { text, truncated: isTruncated };
+    } catch {}
   }
+  throw new Error("This file is not UTF-8 text. Open it in another app to view its contents.");
 }
 
 export const WORKSPACE_BROWSER_PREVIEW_EXTENSIONS = [".htm", ".html", ".pdf"] as const;
