@@ -96,6 +96,12 @@ it("excludes repeated legacy attachments containing literal context tags", () =>
 const assistantSegments = (text: string, cwd?: string) =>
   searchableMessageSegments({ role: "assistant", text, streaming: false }, cwd);
 
+it("indexes a sandbox file link by its visible label", () => {
+  expect(assistantSegments("See [the checklist](Sandbox:/tmp/generated.txt).")).toEqual([
+    "See the checklist.",
+  ]);
+});
+
 it("searches displayed prose and file-chip labels without hidden paths", () => {
   expect(
     assistantSegments("[important description](/tmp/actual.ts). `/tmp/inline-example.ts:42`"),

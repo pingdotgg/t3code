@@ -12,6 +12,7 @@ import {
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
+  parseMarkdownSandboxFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskEdits";
 import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
@@ -446,6 +447,7 @@ function markdownUrlTransform(href: string) {
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   if (isLocalEditorFileHref(href)) return href;
+  if (parseMarkdownSandboxFileLink(href)) return href;
   return rewriteMarkdownFileUriHref(href) ?? safeUrl(href);
 }
 
@@ -989,6 +991,7 @@ function useChatMarkdownState(
     fileLinkMeta: MarkdownFileLinkMeta,
     copyMarkdown: string,
     mediaSource?: string,
+    authoredLabel?: string,
   ) => {
     const resolveHostPath = () =>
       resolveMarkdownFileHostPath({
@@ -1026,15 +1029,18 @@ function useChatMarkdownState(
         workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
         panelPath={isAppBundle ? null : panelPath}
         line={fileLinkMeta.line}
-        label={fileLinkLabel(
-          {
-            path: fileLinkMeta.filePath,
-            ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
-            ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
-            ...(fileLinkMeta.endLine !== undefined ? { endLine: fileLinkMeta.endLine } : {}),
-          },
-          fileLinkParentSuffixByPath,
-        )}
+        label={
+          authoredLabel ??
+          fileLinkLabel(
+            {
+              path: fileLinkMeta.filePath,
+              ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
+              ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+              ...(fileLinkMeta.endLine !== undefined ? { endLine: fileLinkMeta.endLine } : {}),
+            },
+            fileLinkParentSuffixByPath,
+          )
+        }
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}
         threadRef={threadRef}
@@ -1600,6 +1606,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
       source.startsWith("[") && source.includes("](")
         ? source
         : `[${(label || fileLinkMeta.basename).replace(/[\\[\]]/g, "\\$&")}](${normalizedHref})`;
+    if (parseMarkdownSandboxFileLink(normalizedHref)) {
+      return fileLinkChip(fileLinkMeta, copyMarkdown, undefined, label || undefined);
+    }
     const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref);
     return isMarkdownFileLinkLabel(label, normalizedHref) ? (
       chip

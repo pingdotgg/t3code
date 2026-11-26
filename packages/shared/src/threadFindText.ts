@@ -17,6 +17,7 @@ import {
   extractMarkdownLinkHrefs,
   extractInlineCodeSpans,
   inlineCodeFilePathCandidate,
+  parseMarkdownSandboxFileLink,
   resolveMarkdownFileLink,
   shouldRenderMarkdownImageAsFileLink,
 } from "./markdownLinks.ts";
@@ -164,6 +165,10 @@ function markdownThreadFindText(
         const labelText = (node: TextTree): string =>
           node.value ?? (node.children ?? []).map(labelText).join("");
         const label = labelText(node);
+        if (node.tagName === "a" && label && parseMarkdownSandboxFileLink(candidate)) {
+          text += label;
+          return;
+        }
         if (node.tagName === "a" && !isMarkdownFileLinkLabel(label, candidate)) text += `${label} `;
         text += fileLinkLabel(resolved.position, parentSuffixes);
         return;

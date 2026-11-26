@@ -4,6 +4,7 @@ import {
   assistantCitationLabel,
   parseAssistantCitationHref,
 } from "@t3tools/shared/assistantCitations";
+import { parseMarkdownSandboxFileLink } from "@t3tools/shared/markdownLinks";
 import { Image } from "react-native";
 import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
@@ -100,7 +101,7 @@ function presentation(
   const link = resolveMarkdownLinkPresentation(url);
   if (link.kind === "file")
     return {
-      label: link.label,
+      ...(parseMarkdownSandboxFileLink(url) ? {} : { label: link.label }),
       icon: markdownFileIconSource(link.icon),
       chip: { accent: contextChipPresentation("mention").accent, tintsIcon: false },
     };
