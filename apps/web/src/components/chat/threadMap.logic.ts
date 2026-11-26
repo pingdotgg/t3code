@@ -186,10 +186,16 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
   const itemsByRun = new Map<RunId, Item[]>();
   const userItemByMessageId = new Map<MessageId, UserMessageItem>();
   const subagentItemRun = new Map<NodeId, RunId>();
+  // The wake that delivered a task's result names the task; its run received it. Clients get
+  // the wake as a notification row, and only sometimes its message.
+  const deliveryRunByTask = new Map<NodeId, RunId>();
   for (const { item } of projection.visibleTurnItems) {
     if (item.type === "user_message") userItemByMessageId.set(item.messageId, item);
     if (item.runId === null) continue;
     if (item.type === "subagent") subagentItemRun.set(item.subagentId, item.runId);
+    if (item.type === "notification" && item.source.kind === "delegated_task") {
+      for (const taskId of item.source.taskIds) deliveryRunByTask.set(taskId, item.runId);
+    }
     const items = itemsByRun.get(item.runId);
     if (items === undefined) itemsByRun.set(item.runId, [item]);
     else items.push(item);
@@ -210,8 +216,6 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
 
   const messageById = new Map(projection.messages.map((message) => [message.id, message]));
 
-  // The wake message that delivered a task's result names the task; its run received it.
-  const deliveryRunByTask = new Map<NodeId, RunId>();
   for (const message of projection.messages) {
     if (message.delegatedCompletion === undefined || message.runId === null) continue;
     for (const taskId of message.delegatedCompletion.taskIds) {
