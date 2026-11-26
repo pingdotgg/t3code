@@ -971,6 +971,13 @@ it.effect.each([
       fs.remove(path.join(cwd, "nested/.git"), { recursive: true }),
   },
   {
+    name: "an untracked repository switched to an unborn branch",
+    reuses: false,
+    setup: makeNestedRepository,
+    change: ({ git }: CaptureIndexChange) =>
+      git(["-C", "nested", "symbolic-ref", "HEAD", "refs/heads/unborn"]),
+  },
+  {
     name: "an untracked file was edited under core.ignorestat",
     reuses: true,
     setup: ({ git }: CaptureIndexChange) => git(["config", "core.ignorestat", "true"]),
@@ -1297,6 +1304,76 @@ it.effect("a capture through a kept index skips the index rebuild and its scan",
       ...end,
     ]);
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each([
+  { name: "a linked worktree", args: ["worktree", "add", "--detach"] },
+  { name: "a clone", args: ["clone", "."] },
+])(
+  "a capture through a kept index runs no git status inside $name and sees racy edits",
+  ({ args }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-capture-index-nested-" });
+      const data = path.join(cwd, "data.txt");
+      // 2000-01-01, in seconds.
+      const past = 946_684_800;
+      let trace: string | undefined;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            if (trace === undefined) return liveProcess.run(input);
+            const traced = { ...input, env: { ...input.env, GIT_TRACE2_EVENT: trace } };
+            if (!input.args.includes("add")) return liveProcess.run(traced);
+            // Same size and mtime, after the claim: only Git's racy check can see this edit.
+            return fs
+              .writeFileString(data, "after!\n")
+              .pipe(
+                Effect.andThen(fs.utimes(data, past, past)),
+                Effect.orDie,
+                Effect.andThen(liveProcess.run(traced)),
+              );
+          },
+        }),
+      );
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* git(["config", "core.trustctime", "false"]);
+      yield* fs.writeFileString(data, "before\n");
+      yield* fs.utimes(data, past, past);
+      yield* git([...args, "worktrees/nested"]);
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      // In the file's second, the kept index leaves the file's entry racy.
+      const keptIndexes = path.join(cwd, ".git", "t3-checkpoint-indexes");
+      const keptIndex = yield* fs.glob("*/index.*", { root: keptIndexes });
+      assert.strictEqual(keptIndex.length, 1);
+      yield* fs.utimes(path.join(keptIndexes, keptIndex[0]!), past, past);
+      trace = path.join(cwd, ".git", "trace2.json");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      const events = (yield* fs.readFileString(trace)).split("\n");
+      const starts = events.filter((line) => line.includes('"event":"start"'));
+      assert.isTrue(starts.some((line) => line.includes('"add"')));
+      assert.isFalse(starts.some((line) => line.includes('"read-tree"')));
+      assert.deepEqual(
+        events.filter(
+          (line) => line.includes('"event":"child_start"') && line.includes('"status"'),
+        ),
+        [],
+      );
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:data.txt`])).stdout, "after!\n");
+      const nestedHead = (yield* git([
+        "-C",
+        "worktrees/nested",
+        "rev-parse",
+        "HEAD",
+      ])).stdout.trim();
+      assert.strictEqual(
+        (yield* git(["ls-tree", "-r", checkpointRef, "--", "worktrees"])).stdout,
+        `160000 commit ${nestedHead}\tworktrees/nested\n`,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.each(["sha1", "sha256"] as const)(
@@ -3015,6 +3092,18 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
     const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/submodules");
     yield* fileSystem.writeFileString(files[1]!, "captured\n");
     yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+    // The root ref alone would not carry the submodules' own refs.
+    const copyRef = CheckpointRef.make("refs/t3/checkpoints/submodules-copy");
+    assert.isFalse(
+      yield* driver.checkpoints.copyCheckpointRef({
+        cwd: root,
+        fromCheckpointRef: checkpointRef,
+        toCheckpointRef: copyRef,
+      }),
+    );
+    assert.isFalse(
+      yield* driver.checkpoints.hasCheckpointRef({ cwd: root, checkpointRef: copyRef }),
+    );
 
     for (const file of files) {
       yield* fileSystem.writeFileString(file, "changed\n");
@@ -3039,6 +3128,35 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
       const ref = yield* git(cwd, ["for-each-ref", "refs/t3"]);
       assert.strictEqual(ref.stdout, "");
     }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("copies a checkpoint under another name without making a commit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-copy-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const ref = (ordinal: number) => CheckpointRef.make(`${checkpointRef}/${ordinal}`);
+    const commitOf = (ordinal: number) =>
+      git(["rev-parse", ref(ordinal)]).pipe(Effect.map((result) => result.stdout));
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: ref(2) });
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: ref(5) });
+    const existing = yield* commitOf(5);
+    const copy = (from: number, to: number) =>
+      driver.checkpoints.copyCheckpointRef({
+        cwd,
+        fromCheckpointRef: ref(from),
+        toCheckpointRef: ref(to),
+      });
+
+    assert.isTrue(yield* copy(2, 4));
+    assert.strictEqual(yield* commitOf(4), yield* commitOf(2));
+    // An existing checkpoint is kept, and a missing source copies nothing.
+    assert.isTrue(yield* copy(2, 5));
+    assert.strictEqual(yield* commitOf(5), existing);
+    assert.isFalse(yield* copy(1, 6));
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: ref(6) }));
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
