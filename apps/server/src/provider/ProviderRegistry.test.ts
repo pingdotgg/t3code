@@ -3367,6 +3367,7 @@ it.layer(
           slashCommandsPending: false,
           workspaceModelsPending: true,
         });
+        const scanFreshness: Array<boolean> = [];
         const instance: ProviderInstance = {
           instanceId,
           driverKind: driver,
@@ -3389,7 +3390,10 @@ it.layer(
             streamChanges: Stream.empty,
             applyUsageLimits: () => Effect.void,
           },
-          snapshotForCwd: () => Ref.get(scanResult),
+          snapshotForCwd: (_cwd, options) =>
+            Effect.sync(() => scanFreshness.push(options?.fresh === true)).pipe(
+              Effect.andThen(Ref.get(scanResult)),
+            ),
           orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
           textGeneration: {} as ProviderInstance["textGeneration"],
         };
@@ -3450,6 +3454,8 @@ it.layer(
           const rescanned = yield* workspaceOf;
           assert.deepStrictEqual(rescanned?.models, nextWorkspaceModels);
           assert.strictEqual(rescanned?.modelsPending, undefined);
+          // Only the explicit refresh may let a driver run a heavier probe.
+          assert.deepStrictEqual(scanFreshness, [false, false, true]);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

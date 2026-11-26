@@ -1039,6 +1039,40 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
+// Advertises one command per file in `<session cwd>/.commands`, like agents with project commands.
+const cwdCommandsAgentSource = `
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+const commandsIn = (cwd) => {
+  try {
+    return readdirSync(join(cwd, ".commands")).map((name) => ({ name, description: "" }));
+  } catch {
+    return [];
+  }
+};
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method, params } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  } else if (method === "session/new") {
+    send({ id, result: { sessionId: "probe-session" } });
+    const availableCommands = [{ name: "builtin", description: "" }, ...commandsIn(params.cwd)];
+    send({
+      method: "session/update",
+      params: {
+        sessionId: "probe-session",
+        update: { sessionUpdate: "available_commands_update", availableCommands },
+      },
+    });
+  } else {
+    send({ id, result: {} });
+  }
+});
+`;
+
 const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
   Layer.provideMerge(IdAllocator.layer),
@@ -1760,6 +1794,60 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(workspace.slashCommands.map((command) => command.name)).toEqual(["builtin", "demo"]);
       expect(workspace.skills.map((skill) => skill.name)).toEqual(["project-skill"]);
     }),
+  );
+
+  it.effect(
+    "lists a project's commands after an explicit refresh, and never probes otherwise",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+        const agentPath = path.join(directory, "agent.mjs");
+        const projectDirectory = path.join(directory, "project");
+        yield* fileSystem.writeFileString(agentPath, cwdCommandsAgentSource);
+        yield* fileSystem.makeDirectory(path.join(projectDirectory, ".commands", "demo"), {
+          recursive: true,
+        });
+        let spawns = 0;
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ source: "local", commandPath: "agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "ready",
+              agentId: "agent",
+              version: null,
+              distribution: "local",
+            }),
+            resolve: () =>
+              Effect.sync(() => {
+                spawns += 1;
+                return {
+                  distribution: "local" as const,
+                  spawn: { command: process.execPath, args: [agentPath] },
+                };
+              }),
+          }),
+        );
+        const names = (snapshot: {
+          readonly slashCommands: ReadonlyArray<{ readonly name: string }>;
+        }) => snapshot.slashCommands.map((command) => command.name);
+
+        expect(names(yield* instance.snapshotForCwd!(projectDirectory))).not.toContain("demo");
+        expect(spawns).toBe(0);
+        expect(names(yield* instance.snapshotForCwd!(projectDirectory, { fresh: true }))).toContain(
+          "demo",
+        );
+        const spawnsAfterRefresh = spawns;
+        expect(names(yield* instance.snapshotForCwd!(projectDirectory))).toContain("demo");
+        expect(spawns).toBe(spawnsAfterRefresh);
+      }),
   );
 
   it("invalidates cached enrichment when launchIdentity changes at the same version", () => {

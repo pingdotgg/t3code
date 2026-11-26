@@ -1221,17 +1221,60 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // Retain reports until the registry subscribes; end its listener on teardown.
     const workspaceRescans = yield* Queue.unbounded<string, Cause.Done>();
     yield* Effect.addFinalizer(() => Queue.end(workspaceRescans));
-    // Agents advertise project commands only to a session in that project; probing there would run its hooks and MCP servers.
+    // Agents advertise project commands only to a session in that project. Opening one runs the
+    // project's hooks and MCP servers, so only an explicit refresh probes; otherwise sessions report.
+    const probeWorkspaceCommands = Effect.fn("AcpRegistryDriver.probeWorkspaceCommands")(function* (
+      coordinator: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"],
+      cwd: string,
+    ) {
+      const probed = yield* probeAcpRegistryConfiguration({
+        instanceId,
+        settings: effectiveConfig,
+        cwd,
+        environment: providerProbeEnvironment(processEnvironment),
+        commandsOnly: true,
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(SecureRandom.SecureRandom, random),
+        Effect.provideService(
+          AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+          coordinator,
+        ),
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: `Failed to list ACP Registry commands for '${cwd}'`,
+              cause,
+            }),
+        ),
+      );
+      yield* coordinator.publishAvailableCommands(
+        instanceId,
+        { slashCommands: probed.slashCommands, skills: probed.skills },
+        cwd,
+      );
+    });
     const workspaceCommands = Option.map(runtimeCoordinator, (coordinator) => {
       return {
         rescans: coordinator
           .availableCommandsCwds(instanceId)
           .pipe(Stream.runForEach((cwd) => Queue.offer(workspaceRescans, cwd))),
-        snapshotForCwd: (cwd: string) =>
-          Effect.all([
-            snapshot.getSnapshot,
-            coordinator.getWorkspaceAvailableCommands(instanceId, cwd),
-          ]).pipe(
+        snapshotForCwd: (cwd: string, options?: { readonly fresh?: boolean }) =>
+          (options?.fresh === true && effectiveConfig.enabled
+            ? probeWorkspaceCommands(coordinator, cwd)
+            : Effect.void
+          ).pipe(
+            Effect.andThen(
+              Effect.all([
+                snapshot.getSnapshot,
+                coordinator.getWorkspaceAvailableCommands(instanceId, cwd),
+              ]),
+            ),
             Effect.map(([machineSnapshot, commands]) =>
               applyAcpRegistryAvailableCommands(machineSnapshot, commands),
             ),

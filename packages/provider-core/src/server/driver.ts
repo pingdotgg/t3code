@@ -49,8 +49,10 @@ export interface ProviderInstance {
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
   readonly snapshot: ManagedServerProvider;
+  /** `fresh` is set only by an explicit user refresh, the one time a heavier probe may run. */
   readonly snapshotForCwd?: (
     cwd: string,
+    options?: { readonly fresh?: boolean },
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   /**
    * Modes this instance offers that cannot run in `cwd`. Must stay cheap: clients ask whenever a
