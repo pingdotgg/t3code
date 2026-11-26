@@ -161,6 +161,7 @@ function statusError(text: string) {
 function invalidStreamChunk(text: string): string | undefined {
   const raw = INVALID_STREAM_CHUNK.exec(text)?.[1];
   if (raw === undefined) return undefined;
+  // The executor error repeats its wrapped error ("X: X"), so the chunk follows the last prefix.
   const repeated = raw.lastIndexOf(INVALID_STREAM_CHUNK_PREFIX);
   const chunk = (
     repeated === -1 ? raw : raw.slice(repeated + INVALID_STREAM_CHUNK_PREFIX.length)
