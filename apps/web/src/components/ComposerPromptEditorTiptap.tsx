@@ -546,7 +546,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       return;
     }
     // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
-    // Mid-text, skipping the space would glue them to the next word instead.
+    // Mid-text, keep the existing separator on the far side of any inserted word.
     const end = pos + current.nodeSize;
     const { doc } = editor.state;
     const trailingSpace =
@@ -1552,9 +1552,23 @@ function ComposerPromptEditorTiptapInner(
           return handled;
         },
         handleTextInput: (view, from, to, text) => {
-          if (literalText || view.composing || text.length !== 1) return false;
+          if (literalText || view.composing) return false;
+          const { doc, selection } = view.state;
+          const cursor = selection instanceof TextSelection ? selection.$cursor : null;
+          if (
+            from === to &&
+            cursor?.pos === from &&
+            cursor.textOffset === 0 &&
+            cursor.nodeBefore?.type.name === "composer-citation" &&
+            from + 1 < cursor.end() &&
+            doc.textBetween(from, from + 1) === " " &&
+            /^\S/.test(text)
+          ) {
+            view.dispatch(view.state.tr.insertText(` ${text}`, from, to).scrollIntoView());
+            return true;
+          }
+          if (text.length !== 1) return false;
           const closer = SURROUND_CLOSE[text];
-          const { selection } = view.state;
           // Compose preedit updates replace a range even without a user selection.
           if (
             !closer ||
