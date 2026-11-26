@@ -1890,6 +1890,13 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
+/* Keep the thumb off the Settings dialog border without changing the app-wide scrollbar look (#29293). */
+[data-settings-page-scroll]::-webkit-scrollbar-thumb,
+[data-settings-page-scroll] ::-webkit-scrollbar-thumb {
+  border-right: 3px solid transparent;
+  background-clip: padding-box;
+}
+
 /* Chat markdown rendering */
 
 .chat-markdown > :first-child {
