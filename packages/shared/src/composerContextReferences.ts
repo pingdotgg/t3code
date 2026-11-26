@@ -160,10 +160,12 @@ export interface ComposerContextReferenceOccurrence {
 }
 
 const markdownParser = unified().use(remarkParse);
-const FENCE_MARKER = /^(?:`{3}|~{3})/;
+const FENCE_OPENER = /^(?:`{3,}|~{3,})/;
+const FENCE_CLOSER = /^[ \t>]*(`{3,}|~{3,})[ \t]*$/;
 
 // Parsed rather than matched: a fence ends with its list item or blockquote, and a four-space
-// indent is not one. Overreaching here would silently drop context from the prompt.
+// indent is not one. Only closed fences count: chips are appended at the end of the prompt, and
+// an unclosed fence above them would run to the end and silently drop their context.
 function fencedCodeRanges(markdown: string) {
   const ranges: Array<{ start: number; end: number }> = [];
   if (!markdown.includes("```") && !markdown.includes("~~~")) return ranges;
@@ -171,10 +173,17 @@ function fencedCodeRanges(markdown: string) {
     if (node.type === "code") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
+      if (start === undefined || end === undefined) return;
+      const source = markdown.slice(start, end);
+      const opener = FENCE_OPENER.exec(source)?.[0];
+      const lastLineStart = Math.max(source.lastIndexOf("\n"), source.lastIndexOf("\r")) + 1;
+      const closer = FENCE_CLOSER.exec(source.slice(lastLineStart))?.[1];
       if (
-        start !== undefined &&
-        end !== undefined &&
-        FENCE_MARKER.test(markdown.slice(start, start + 3))
+        opener !== undefined &&
+        lastLineStart > 0 &&
+        closer !== undefined &&
+        closer[0] === opener[0] &&
+        closer.length >= opener.length
       ) {
         ranges.push({ start, end });
       }

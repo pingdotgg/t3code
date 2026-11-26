@@ -104,7 +104,10 @@ describe("labels and reference links", () => {
       ).toEqual(["live"]);
       expect(text.slice(occurrences[0]!.start, occurrences[0]!.end)).toBe(live);
     }
-    expect(collectComposerContextReferences(`\`\`\`md\n${example}`)).toEqual([]);
+    // An unclosed fence runs to the end, where a newly attached chip lands.
+    expect(
+      collectComposerContextReferences(`\`\`\`md\nfoo() ${live}`).map((o) => o.contextId),
+    ).toEqual(["live"]);
   });
 
   it("recognizes a prompt made only of image references", () => {
