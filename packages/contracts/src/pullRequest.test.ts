@@ -50,10 +50,10 @@ const LIST_RESULT: PullRequestListResult = {
       host: "github.com",
       projectId: "project-1" as PullRequestListResult["entries"][number]["projectId"],
       projectTitle: "t3code",
-      repository: "neur0map/hyakki",
+      repository: "Ryoku-dev/hyakki",
       number: 1,
       title: "Add a pull requests page",
-      url: "https://github.com/neur0map/hyakki/pull/1",
+      url: "https://github.com/Ryoku-dev/hyakki/pull/1",
       author: { login: "octocat", name: null, avatarUrl: null },
       headBranch: "feat/page",
       baseBranch: "main",
@@ -70,7 +70,7 @@ const LIST_RESULT: PullRequestListResult = {
   ],
   errors: [],
   truncated: false,
-  nextCursors: { "github.com neur0map/hyakki": "2026-07-02T00:00:00Z|1|1" },
+  nextCursors: { "github.com Ryoku-dev/hyakki": "2026-07-02T00:00:00Z|1|1" },
 };
 
 describe("PullRequestListResult", () => {

@@ -1,8 +1,8 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 
 const FALLBACK_TRIAGE_COMMAND = "npx t3 triage";
-const DOWNLOAD_URL = "https://github.com/neur0map/hyakki/releases";
-const ISSUE_URL = "https://github.com/neur0map/hyakki/issues/new";
+const DOWNLOAD_URL = "https://github.com/Ryoku-dev/hyakki/releases";
+const ISSUE_URL = "https://github.com/Ryoku-dev/hyakki/issues/new";
 const LAST_FAILURE_KEY = "t3code:boot-failed-at";
 const REPEAT_FAILURE_MS = 5 * 60_000;
 const MAX_CAUSES = 3;

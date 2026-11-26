@@ -876,7 +876,7 @@ const buildOnBlacksmith = Effect.fn("nativeClient.buildOnBlacksmith")(
     if (environment.GITHUB_ACTIONS === "true" || environment.T3_NATIVE_CLIENT_BUILD === "local")
       return false;
     if (!(yield* isCommandAvailable("gh"))) return false;
-    const repository = environment.T3_NATIVE_CLIENT_REPOSITORY ?? "neur0map/hyakki";
+    const repository = environment.T3_NATIVE_CLIENT_REPOSITORY ?? "Ryoku-dev/hyakki";
     const { repo } = yield* roots;
     const sha = yield* command("git", ["rev-parse", "HEAD"], false, repo);
     const pushed = yield* command(

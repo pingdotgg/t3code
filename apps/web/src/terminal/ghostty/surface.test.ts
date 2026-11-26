@@ -980,7 +980,7 @@ describe("terminalLinkAtPositionWithRange", () => {
     const cells = [
       cell("🙂"),
       cell(""),
-      ...Array.from("https://github.com/neur0map/hyakki", (character) => cell(character)),
+      ...Array.from("https://github.com/Ryoku-dev/hyakki", (character) => cell(character)),
     ];
     const row: GhosttyRow = {
       cells,
@@ -993,10 +993,10 @@ describe("terminalLinkAtPositionWithRange", () => {
     };
 
     expect(terminalLinkAtPositionWithRange([row], 0, 2)?.text).toBe(
-      "https://github.com/neur0map/hyakki",
+      "https://github.com/Ryoku-dev/hyakki",
     );
     expect(terminalLinkAtPositionWithRange([row], 0, cells.length - 1)?.text).toBe(
-      "https://github.com/neur0map/hyakki",
+      "https://github.com/Ryoku-dev/hyakki",
     );
     expect(terminalLinkAtPositionWithRange([row], 0, 0)).toBeNull();
     expect(terminalLinkAtPositionWithRange([row], 0, 8)?.range).toEqual({
@@ -1049,11 +1049,11 @@ describe("terminalLinkAtPositionWithRange", () => {
     });
     const headCut = [row("ple.com/missing", true), row("head", true)];
     expect(terminalLinkAtPositionWithRange(headCut, 0, 4)).toBeNull();
-    const tailCut = [row("https://github.com/neur0map/hyakki", false, true)];
+    const tailCut = [row("https://github.com/Ryoku-dev/hyakki", false, true)];
     expect(terminalLinkAtPositionWithRange(tailCut, 0, 8)).toBeNull();
-    const complete = [row("https://github.com/neur0map/hyakki", false), row("", false)];
+    const complete = [row("https://github.com/Ryoku-dev/hyakki", false), row("", false)];
     expect(terminalLinkAtPositionWithRange(complete, 0, 8)?.text).toBe(
-      "https://github.com/neur0map/hyakki",
+      "https://github.com/Ryoku-dev/hyakki",
     );
     const wideFull: GhosttyRow = {
       cells: [
@@ -1068,16 +1068,16 @@ describe("terminalLinkAtPositionWithRange", () => {
     expect(terminalLinkAtPositionWithRange([wideFull], 0, 8)).toBeNull();
     const unwrittenTail: GhosttyRow = {
       cells: [
-        ...Array.from("https://github.com/neur0map/hyakki", (character) => cell(character)),
+        ...Array.from("https://github.com/Ryoku-dev/hyakki", (character) => cell(character)),
         cell(""),
         cell(""),
       ],
-      text: "https://github.com/neur0map/hyakki",
+      text: "https://github.com/Ryoku-dev/hyakki",
       isWrapContinuation: false,
       wrapsToNext: false,
     };
     expect(terminalLinkAtPositionWithRange([unwrittenTail], 0, 8)?.text).toBe(
-      "https://github.com/neur0map/hyakki",
+      "https://github.com/Ryoku-dev/hyakki",
     );
   });
 });

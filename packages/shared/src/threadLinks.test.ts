@@ -78,7 +78,7 @@ describe("thread links", () => {
   });
 
   it("rejects other links and an empty id", () => {
-    expect(parseThreadLinkHref("https://github.com/neur0map/hyakki")).toBeNull();
+    expect(parseThreadLinkHref("https://github.com/Ryoku-dev/hyakki")).toBeNull();
     expect(parseThreadLinkHref("t3-thread://v1/")).toBeNull();
     expect(parseThreadLinkHref("t3-thread://v1/ ")).toBeNull();
     expect(parseThreadLinkHref("t3-thread://v2/env-1")).toBeNull();

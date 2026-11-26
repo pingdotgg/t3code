@@ -1,4 +1,4 @@
-const DEFAULT_MARKETING_SITE_URL = "https://github.com/neur0map/hyakki";
+const DEFAULT_MARKETING_SITE_URL = "https://github.com/Ryoku-dev/hyakki";
 
 function resolveMarketingSiteUrl(override: string | undefined): URL {
   try {

@@ -223,7 +223,7 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
         Ref.update(seen, (current) => ({ ...current, clones: [...current.clones, input] })).pipe(
           Effect.as({
             cwd: input.destinationPath,
-            remoteUrl: "https://github.com/neur0map/hyakki.git",
+            remoteUrl: "https://github.com/Ryoku-dev/hyakki.git",
             repository: null,
           }),
         ),
@@ -587,7 +587,7 @@ it.effect("brings a repository to a linked environment, only through full access
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const b = yield* serveBox(seen, yield* Ref.make(""));
       const a = yield* makeLaptop;
-      const clone = { repository: "neur0map/hyakki", destinationPath: "/home/box/t3code" };
+      const clone = { repository: "Ryoku-dev/hyakki", destinationPath: "/home/box/t3code" };
       const register = { title: "t3code", workspaceRoot: "/home/box/t3code" };
 
       yield* linkTo(a.links, b, "full-access");

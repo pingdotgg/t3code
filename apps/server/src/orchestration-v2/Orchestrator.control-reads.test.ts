@@ -1218,9 +1218,9 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const projectId = ProjectId.make("project:parent-pr");
     const parentPullRequest = {
       projectId,
-      repository: "neur0map/hyakki",
+      repository: "Ryoku-dev/hyakki",
       number: 123,
-      url: "https://github.com/neur0map/hyakki/pull/123",
+      url: "https://github.com/Ryoku-dev/hyakki/pull/123",
     };
     yield* orchestrator.dispatch({
       type: "thread.create",
@@ -1297,7 +1297,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const childPullRequest = {
       ...parentPullRequest,
       number: 456,
-      url: "https://github.com/neur0map/hyakki/pull/456",
+      url: "https://github.com/Ryoku-dev/hyakki/pull/456",
     };
     yield* orchestrator.dispatch({
       type: "thread.metadata.update",

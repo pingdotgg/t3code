@@ -34,7 +34,7 @@ Hyakki needs one agent that is installed and signed in. For example, install [Cl
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Report bugs and ideas in [issues](https://github.com/neur0map/hyakki/issues).
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Report bugs and ideas in [issues](https://github.com/Ryoku-dev/hyakki/issues).
 
 ## Credits
 

@@ -412,7 +412,7 @@ describe("pullRequestProjectChoices", () => {
     environmentId,
     title: "t3code",
     workspaceRoot: `/work/${id}`,
-    repositoryIdentity: { canonicalKey: "github.com/neur0map/hyakki" },
+    repositoryIdentity: { canonicalKey: "github.com/Ryoku-dev/hyakki" },
   });
   const projects = [project("main", laptop), project("worktree", laptop), project("main", desktop)];
   const choices = (

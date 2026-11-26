@@ -13,11 +13,11 @@ Settings that `t3.json` can declare resolve in this order (first non-inherited v
 
 ## Schema reference
 
-Add `"$schema": "https://raw.githubusercontent.com/neur0map/hyakki/main/schemas/t3.json"` for editor autocomplete and validation:
+Add `"$schema": "https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/schemas/t3.json"` for editor autocomplete and validation:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/neur0map/hyakki/main/schemas/t3.json",
+  "$schema": "https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/schemas/t3.json",
   "iconPath": "assets/logo.svg",
   "defaultThreadEnvMode": "worktree",
   "worktreeSubmodules": "top-level",

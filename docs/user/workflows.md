@@ -12,7 +12,7 @@ Turn on **Settings → Labs → Workflows** on the server that will run them (or
 
 Place `.ts` files in `~/.t3/workflows/` (or the path in `T3CODE_WORKFLOWS`). The server watches the folder and hot-reloads valid edits.
 
-- **With an agent (recommended)**: Copy the [`t3-workflows` skill](https://github.com/neur0map/hyakki/blob/main/skills/t3-workflows/SKILL.md) into your agent's skills folder (e.g. `~/.claude/skills/` or `~/.agents/skills/`) and describe what you want.
+- **With an agent (recommended)**: Copy the [`t3-workflows` skill](https://github.com/Ryoku-dev/hyakki/blob/main/skills/t3-workflows/SKILL.md) into your agent's skills folder (e.g. `~/.claude/skills/` or `~/.agents/skills/`) and describe what you want.
 - **Directly**: Edit files in `~/.t3/workflows/` or use **Definitions** on the Workflows page (**Open workflows** in the command palette; saving/deleting in the app requires terminal access).
 
 Example (`~/.t3/workflows/release.ts`):

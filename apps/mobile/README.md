@@ -37,7 +37,7 @@ and reuses a matching client. Otherwise it installs the build for that fingerpri
 `~/.cache/t3code/native-clients/artifacts`, then the shared task cache, and builds only when
 neither has it. A build runs in the `Mobile Dev Client` workflow (Blacksmith runners with warm
 Gradle and ccache state, and a macOS runner for iOS) when `gh` may dispatch workflows on
-`neur0map/hyakki` and HEAD is pushed; the helper waits for the client in the shared cache.
+`Ryoku-dev/hyakki` and HEAD is pushed; the helper waits for the client in the shared cache.
 Otherwise, or when HEAD lacks your native edits or `T3_NATIVE_CLIENT_BUILD=local` is set, it builds
 on this machine. Main's client is built there on every native change, so most checkouts hit. One iOS simulator build serves every iPhone and iPad simulator, and one APK per
 ABI (x86_64 or arm64-v8a) serves every emulator and phone of that ABI. Build output goes to the

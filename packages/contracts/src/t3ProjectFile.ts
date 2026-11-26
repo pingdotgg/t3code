@@ -8,7 +8,7 @@ import type { ProjectScopedServerSettingKey, ServerSettings } from "./settings.t
 export const T3_PROJECT_FILE_NAME = "t3.json";
 
 const T3_PROJECT_FILE_SCHEMA_URL =
-  "https://raw.githubusercontent.com/neur0map/hyakki/main/schemas/t3.json";
+  "https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/schemas/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_COMMAND_MAX_LENGTH = 4096;
@@ -152,7 +152,7 @@ export const T3ProjectFile = Schema.Struct({
 }).annotate({
   title: "Hyakki project file",
   description:
-    "Checked-in project configuration for Hyakki (t3.json at the repository root). See https://github.com/neur0map/hyakki for documentation.",
+    "Checked-in project configuration for Hyakki (t3.json at the repository root). See https://github.com/Ryoku-dev/hyakki for documentation.",
 });
 export type T3ProjectFile = typeof T3ProjectFile.Type;
 

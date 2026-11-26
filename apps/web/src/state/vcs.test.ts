@@ -51,7 +51,7 @@ describe("chatGitStatusAtom", () => {
     const pr = () => ({
       number: 42,
       title: "Feature PR",
-      url: "https://github.com/neur0map/hyakki/pull/42",
+      url: "https://github.com/Ryoku-dev/hyakki/pull/42",
       baseRef: "main",
       headRef: "feature",
       state: "open" as const,

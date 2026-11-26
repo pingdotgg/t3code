@@ -5397,7 +5397,7 @@ describe("AcpAdapterV2", () => {
         patterns: ["t3 code"],
         results: [
           { url: "https://hyakki.ryoku.dev" },
-          { url: "https://github.com/neur0map/hyakki" },
+          { url: "https://github.com/Ryoku-dev/hyakki" },
         ],
       });
       assert.deepEqual(webItem("antigravity-web-search", "completed"), {

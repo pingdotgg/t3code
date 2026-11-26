@@ -272,7 +272,7 @@ describe("findAccessibleWindow", () => {
   };
 
   const chromeCapture = {
-    title: "Issues · neur0map/hyakki",
+    title: "Issues · Ryoku-dev/hyakki",
     bounds: captured.bounds,
     platform: "darwin" as const,
     bundleId: "com.google.Chrome",

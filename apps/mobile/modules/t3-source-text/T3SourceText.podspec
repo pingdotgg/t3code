@@ -8,7 +8,7 @@ Pod::Spec.new do |s|
   s.version = package["version"]
   s.summary = "Native selectable source text for Hyakki mobile."
   s.description = "Fabric-backed styled source text with whole-document selection."
-  s.homepage = "https://github.com/neur0map/hyakki"
+  s.homepage = "https://github.com/Ryoku-dev/hyakki"
   s.license = { :type => "MIT", :file => "LICENSE" }
   s.author = { "Hyakki" => "hyakki@ryoku.dev" }
   s.platforms = { :ios => min_ios_version_supported }

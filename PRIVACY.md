@@ -17,4 +17,4 @@ What does leave your machine is what you set up:
 
 Your threads, settings and history stay in Hyakki's data folder on your computer.
 
-Questions or concerns: open an issue at https://github.com/neur0map/hyakki/issues.
+Questions or concerns: open an issue at https://github.com/Ryoku-dev/hyakki/issues.

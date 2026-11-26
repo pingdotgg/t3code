@@ -78,7 +78,7 @@ const encodeEffectRequest = Schema.encodeSync(Schema.fromJsonString(Orchestratio
 
 const pullRequest = (number: number) => ({
   host: "github.com",
-  repository: "neur0map/hyakki",
+  repository: "Ryoku-dev/hyakki",
   number,
 });
 
@@ -111,7 +111,7 @@ const watch = (threadId: ThreadId, number: number) =>
       threadId,
       ...pullRequest(number),
       watching: true,
-      link: { url: `https://github.com/neur0map/hyakki/pull/${number}`, source: "agent" },
+      link: { url: `https://github.com/Ryoku-dev/hyakki/pull/${number}`, source: "agent" },
     });
   });
 

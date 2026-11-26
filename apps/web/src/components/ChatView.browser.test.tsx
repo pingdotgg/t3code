@@ -171,9 +171,9 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
       pullRequests: [
         {
           host: "github.com",
-          repository: "neur0map/hyakki",
+          repository: "Ryoku-dev/hyakki",
           number: 124,
-          url: "https://github.com/neur0map/hyakki/pull/124",
+          url: "https://github.com/Ryoku-dev/hyakki/pull/124",
           source: "manual",
           linkedAt: "2026-01-01T00:00:00.000Z",
           snapshot: null,

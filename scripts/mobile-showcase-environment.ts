@@ -107,7 +107,7 @@ export const SHOWCASE_PROJECTS = [
     id: "t3code",
     title: "Hyakki",
     directory: "t3code",
-    repositoryUrl: "https://github.com/neur0map/hyakki.git",
+    repositoryUrl: "https://github.com/Ryoku-dev/hyakki.git",
     favicon: PROJECT_FAVICONS.t3code,
   },
   {
@@ -291,7 +291,7 @@ async function seedT3CodeWorkspace(workspaceRoot: string): Promise<void> {
   );
   await initializeRepository({
     workspaceRoot,
-    repositoryUrl: "https://github.com/neur0map/hyakki.git",
+    repositoryUrl: "https://github.com/Ryoku-dev/hyakki.git",
     commitMessage: "Show connected environments",
   });
   await runGit(workspaceRoot, ["checkout", "-b", "feat/remote-command-center"]);

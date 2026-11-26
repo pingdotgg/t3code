@@ -74,7 +74,7 @@ describe("markdownProseDirection", () => {
       "שלום, הנה השגיאה:\n```\nError: cannot find module react dom client",
       "rtl",
     ],
-    ["Hebrew around a URL", "ראה https://github.com/neur0map/hyakki/pull/24050 לפני", "rtl"],
+    ["Hebrew around a URL", "ראה https://github.com/Ryoku-dev/hyakki/pull/24050 לפני", "rtl"],
     ["English around inline code", "Should I edit `useMemo` or keep it?", "ltr"],
     ["English quoting one Hebrew word", "Please check the שלום label before the release", "ltr"],
   ])("reads %s", (_, markdown, direction) => {

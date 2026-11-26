@@ -290,9 +290,9 @@ describe("applyShellStreamEvent", () => {
 describe("reuseUnchangedThreadShells", () => {
   const link: ThreadPullRequestLink = {
     host: "github.com",
-    repository: "neur0map/hyakki",
+    repository: "Ryoku-dev/hyakki",
     number: 3,
-    url: "https://github.com/neur0map/hyakki/pull/3",
+    url: "https://github.com/Ryoku-dev/hyakki/pull/3",
     source: "agent",
     linkedAt: "2026-06-20T00:00:00.000Z",
     snapshot: null,

@@ -212,7 +212,7 @@ const seedV1Database = (fixturePath: string, workspace: string) =>
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-05T00:00:00.000Z",
         linkedPullRequestJson:
-          '{"projectId":"project:cutover","repository":"neur0map/hyakki","number":9100,"url":"https://github.com/neur0map/hyakki/pull/9100"}',
+          '{"projectId":"project:cutover","repository":"Ryoku-dev/hyakki","number":9100,"url":"https://github.com/Ryoku-dev/hyakki/pull/9100"}',
       });
       yield* insertMessage({
         messageId: "message:cutover:active:1",

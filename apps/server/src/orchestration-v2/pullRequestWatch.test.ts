@@ -1329,7 +1329,7 @@ Review triggered.
 });
 
 describe("pullRequestWatchEndMessage", () => {
-  const url = "https://git.cafe/neur0map/hyakki/pull/7";
+  const url = "https://git.cafe/Ryoku-dev/hyakki/pull/7";
   const end = (overrides: Partial<Parameters<typeof pullRequestWatchEndMessage>[0]["detail"]>) =>
     pullRequestWatchEndMessage({
       number: 7,

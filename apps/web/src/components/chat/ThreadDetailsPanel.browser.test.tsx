@@ -137,9 +137,9 @@ const container = { width: 1200, height: 800 };
 const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
 const linkedPullRequest: ThreadPullRequestLink = {
   host: "github.com",
-  repository: "neur0map/hyakki",
+  repository: "Ryoku-dev/hyakki",
   number: 27513,
-  url: "https://github.com/neur0map/hyakki/pull/27513",
+  url: "https://github.com/Ryoku-dev/hyakki/pull/27513",
   source: "manual",
   linkedAt: "2026-10-30T00:00:00.000Z",
   snapshot: null,

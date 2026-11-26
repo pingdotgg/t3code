@@ -189,7 +189,7 @@ const layerTools = Layer.mergeAll(
       cloneRepository: (input) =>
         Effect.succeed({
           cwd: input.destinationPath,
-          remoteUrl: "https://github.com/neur0map/hyakki.git",
+          remoteUrl: "https://github.com/Ryoku-dev/hyakki.git",
           repository: null,
         }),
     }),

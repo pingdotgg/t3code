@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
 
 const RUNBOOK_URL =
-  "https://github.com/neur0map/hyakki/blob/main/docs/operations/05_relay-observability.md#alerts";
+  "https://github.com/Ryoku-dev/hyakki/blob/main/docs/operations/05_relay-observability.md#alerts";
 
 const LINK_ROUTE = `"/v1/client/environment-links"`;
 const TUNNEL_ROUTES = `"/v1/environments/:environmentId/tunnel", "/v1/environments/:environmentId/tunnel/recovery"`;

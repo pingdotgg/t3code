@@ -1540,7 +1540,7 @@ it.each([
   ["com.google.Chrome", "Google Chrome – Profile"],
   ["org.chromium.Chromium", "Chromium"],
 ])("reads macOS %s page context with an accessibility title suffix", async (bundleId, suffix) => {
-  const title = "Issues · neur0map/hyakki";
+  const title = "Issues · Ryoku-dev/hyakki";
   const bounds = { x: 0, y: 33, width: 1470, height: 857 };
   const window = {
     role: "window",
@@ -1570,7 +1570,7 @@ it.each([
 });
 
 it("does not borrow another Chrome process context when the captured PID has no windows", async () => {
-  const title = "Issues · neur0map/hyakki";
+  const title = "Issues · Ryoku-dev/hyakki";
   const bounds = { x: 0, y: 33, width: 1470, height: 857 };
   const otherWindow = {
     role: "window",

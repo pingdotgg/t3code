@@ -1,7 +1,7 @@
 # Security
 
 Report vulnerabilities through a
-[private security advisory](https://github.com/neur0map/hyakki/security/advisories/new). The
+[private security advisory](https://github.com/Ryoku-dev/hyakki/security/advisories/new). The
 [security policy](.github/SECURITY.md) covers disclosure.
 
 The rest of this file is for agents and maintainers auditing Hyakki or triaging

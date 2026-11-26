@@ -827,8 +827,8 @@ describe("filterPinnedBrowseEntries", () => {
 it.each([
   "#10839",
   "10839",
-  "neur0map/hyakki#10839",
-  "https://github.com/neur0map/hyakki/pull/10839",
+  "Ryoku-dev/hyakki#10839",
+  "https://github.com/Ryoku-dev/hyakki/pull/10839",
 ])("finds linked threads from PR query %s", (query) => {
   const items = buildThreadActionItems({
     threads: [
@@ -837,9 +837,9 @@ it.each([
         pullRequests: [
           {
             host: "github.com",
-            repository: "neur0map/hyakki",
+            repository: "Ryoku-dev/hyakki",
             number: 10839,
-            url: "https://github.com/neur0map/hyakki/pull/10839",
+            url: "https://github.com/Ryoku-dev/hyakki/pull/10839",
             source: "manual",
             linkedAt: "2026-09-08T00:00:00Z",
             snapshot: null,

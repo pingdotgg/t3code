@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/neur0map/hyakki/main/schemas/t3.json",
+  "$id": "https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/schemas/t3.json",
   "type": "object",
   "properties": {
     "$schema": {
       "type": "string",
-      "description": "URL of the JSON Schema for this file, typically \"https://raw.githubusercontent.com/neur0map/hyakki/main/schemas/t3.json\"."
+      "description": "URL of the JSON Schema for this file, typically \"https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/schemas/t3.json\"."
     },
     "iconPath": {
       "type": "string",
@@ -112,5 +112,5 @@
   },
   "additionalProperties": false,
   "title": "Hyakki project file",
-  "description": "Checked-in project configuration for Hyakki (t3.json at the repository root). See https://github.com/neur0map/hyakki for documentation."
+  "description": "Checked-in project configuration for Hyakki (t3.json at the repository root). See https://github.com/Ryoku-dev/hyakki for documentation."
 }

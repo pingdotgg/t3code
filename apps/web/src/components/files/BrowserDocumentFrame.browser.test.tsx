@@ -76,7 +76,7 @@ describe("HtmlRenderDocument", () => {
   });
 
   it("opens a clicked issue link beside the thread, as chat Markdown does", async () => {
-    const issueUrl = "https://github.com/neur0map/hyakki/issues/41939";
+    const issueUrl = "https://github.com/Ryoku-dev/hyakki/issues/41939";
     const html = injectHtmlRenderBootstrap(
       `<!doctype html><html><body><a href="${issueUrl}">Issue #41939</a></body></html>`,
     );

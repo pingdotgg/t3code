@@ -169,12 +169,12 @@ describe("parseOriginUrlFromGitConfig", () => {
       '[remote "upstream"]',
       "\turl = https://github.com/other/repo.git",
       '[remote "origin"]',
-      "\turl = git@github.com:neur0map/hyakki.git",
+      "\turl = git@github.com:Ryoku-dev/hyakki.git",
       "\tfetch = +refs/heads/*:refs/remotes/origin/*",
       '[branch "main"]',
       "\tremote = origin",
     ].join("\n");
-    expect(parseOriginUrlFromGitConfig(config)).toBe("git@github.com:neur0map/hyakki.git");
+    expect(parseOriginUrlFromGitConfig(config)).toBe("git@github.com:Ryoku-dev/hyakki.git");
   });
 
   it("strips inline comments and quotes from the url value", () => {

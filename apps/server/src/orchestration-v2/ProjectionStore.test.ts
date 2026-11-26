@@ -12016,9 +12016,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       const link = {
         host: "github.com",
-        repository: "neur0map/hyakki",
+        repository: "Ryoku-dev/hyakki",
         number: 7,
-        url: "https://github.com/neur0map/hyakki/pull/7",
+        url: "https://github.com/Ryoku-dev/hyakki/pull/7",
         source: "agent" as const,
         linkedAt: DateTime.formatIso(at),
         snapshot: null,
@@ -12062,7 +12062,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]);
       assert.deepEqual((yield* store.getThreadShell(threadId))?.pendingBackgroundTasks, [
         {
-          taskId: "pull-request-watch:github.com/neur0map/hyakki#7",
+          taskId: "pull-request-watch:github.com/Ryoku-dev/hyakki#7",
           description: "Watching pull request #7",
           kind: "monitor",
           awaited: true,

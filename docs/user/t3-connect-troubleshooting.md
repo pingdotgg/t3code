@@ -77,7 +77,7 @@ After fixing a permanent error, restart the host (`t3 service restart` or restar
 
 ## Report a problem
 
-Open an issue on [GitHub](https://github.com/neur0map/hyakki/issues) with:
+Open an issue on [GitHub](https://github.com/Ryoku-dev/hyakki/issues) with:
 
 - **Copy diagnostics** from the environment's **Details**
 - Output of `t3 connect status` on the host

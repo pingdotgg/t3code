@@ -48,7 +48,7 @@ const releaseFeed = (...versions: ReadonlyArray<string>) =>
     `<feed xmlns="http://www.w3.org/2005/Atom">${versions
       .map(
         (version) =>
-          `<entry><link rel="alternate" type="text/html" href="https://github.com/neur0map/hyakki/releases/tag/v${version}"/><title>${releaseTitle(version)}</title><content type="html">&lt;ul&gt;&lt;li&gt;${version} change&lt;/li&gt;&lt;/ul&gt;</content></entry>`,
+          `<entry><link rel="alternate" type="text/html" href="https://github.com/Ryoku-dev/hyakki/releases/tag/v${version}"/><title>${releaseTitle(version)}</title><content type="html">&lt;ul&gt;&lt;li&gt;${version} change&lt;/li&gt;&lt;/ul&gt;</content></entry>`,
       )
       .join("")}</feed>`,
   );

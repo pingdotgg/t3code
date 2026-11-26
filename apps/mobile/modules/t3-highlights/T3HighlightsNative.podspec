@@ -7,7 +7,7 @@ Pod::Spec.new do |s|
   s.version = package['version']
   s.summary = 'Native @pierre/highlights syntax highlighter for Hyakki mobile.'
   s.description = 'Runs the @pierre/highlights lexers, compiled from WebAssembly to C with wasm2c.'
-  s.homepage = 'https://github.com/neur0map/hyakki'
+  s.homepage = 'https://github.com/Ryoku-dev/hyakki'
   s.license = { :type => 'UNLICENSED' }
   s.author = { 'Hyakki' => 'hyakki@ryoku.dev' }
   s.platforms = { :ios => min_ios_version_supported }

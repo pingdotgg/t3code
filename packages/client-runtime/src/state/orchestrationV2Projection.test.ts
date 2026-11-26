@@ -110,9 +110,9 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
   it("applies a compact PR sync without replacing other links or thread metadata", () => {
     const link = (number: number): ThreadPullRequestLink => ({
       host: "github.com",
-      repository: "neur0map/hyakki",
+      repository: "Ryoku-dev/hyakki",
       number,
-      url: `https://github.com/neur0map/hyakki/pull/${number}`,
+      url: `https://github.com/Ryoku-dev/hyakki/pull/${number}`,
       source: "manual",
       linkedAt: DateTime.formatIso(now),
       snapshot: null,

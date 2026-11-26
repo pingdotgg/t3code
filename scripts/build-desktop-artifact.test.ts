@@ -541,7 +541,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
-          owner: "neur0map",
+          owner: "Ryoku-dev",
           repo: "hyakki",
           releaseType: "release",
         },
@@ -549,7 +549,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "neur0map/hyakki" } }),
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "Ryoku-dev/hyakki" } }),
         ),
       ),
     ),
@@ -615,7 +615,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "neur0map/hyakki" } }),
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "Ryoku-dev/hyakki" } }),
         ),
       ),
     ),

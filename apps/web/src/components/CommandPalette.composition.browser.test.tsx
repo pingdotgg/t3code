@@ -219,7 +219,7 @@ it("keeps the caret in place when an edit briefly makes the folder path not a pa
 });
 
 it.each([
-  { flow: "Git URL", value: "https://github.com/neur0map/hyakki.git", submit: "Continue (Enter)" },
+  { flow: "Git URL", value: "https://github.com/Ryoku-dev/hyakki.git", submit: "Continue (Enter)" },
   { flow: "New project", value: "demo-tab-order", submit: /^Create \(/ },
 ])("moves focus from the $flow input to its enabled submit button on Tab", async (step) => {
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);

@@ -12,7 +12,7 @@ curl -fsSL https://vite.plus | bash
 On Windows, clone with long paths enabled so `.repos/` checks out cleanly:
 
 ```powershell
-git clone -c core.longpaths=true https://github.com/neur0map/hyakki.git
+git clone -c core.longpaths=true https://github.com/Ryoku-dev/hyakki.git
 ```
 
 From the repository root:
@@ -26,11 +26,11 @@ Open the pairing URL printed by the dev runner (the bare origin does not authent
 
 ## Forge mirror (optional)
 
-GitHub is the source of truth; [source.tanstack.com/@neur0map/hyakki](https://source.tanstack.com/@neur0map/hyakki) is a two-way mirror for parallel agent work:
+GitHub is the source of truth; [source.tanstack.com/@Ryoku-dev/hyakki](https://source.tanstack.com/@Ryoku-dev/hyakki) is a two-way mirror for parallel agent work:
 
 ```sh
-git remote set-url origin https://source.tanstack.com/@neur0map/hyakki.git
-git remote add github https://github.com/neur0map/hyakki.git
+git remote set-url origin https://source.tanstack.com/@Ryoku-dev/hyakki.git
+git remote add github https://github.com/Ryoku-dev/hyakki.git
 src auth login --web && src auth setup-git
 ```
 

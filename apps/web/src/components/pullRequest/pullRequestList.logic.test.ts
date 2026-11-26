@@ -56,9 +56,9 @@ function entry(
     host: "github.com",
     projectId: "project-1",
     projectTitle: "t3code",
-    repository: "neur0map/hyakki",
+    repository: "Ryoku-dev/hyakki",
     title: "Add the pull requests page",
-    url: `https://github.com/neur0map/hyakki/pull/${overrides.number}`,
+    url: `https://github.com/Ryoku-dev/hyakki/pull/${overrides.number}`,
     author: { login: "octocat", name: null, avatarUrl: null },
     headBranch: `feat/branch-${overrides.number}`,
     baseBranch: "main",
@@ -102,7 +102,7 @@ describe("visible pull request line-count targets", () => {
     );
     expect([...keys]).toEqual([secondKey]);
     expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
-      { projectId: "project-1", repository: "neur0map/hyakki", number: 2 },
+      { projectId: "project-1", repository: "Ryoku-dev/hyakki", number: 2 },
     ]);
   });
 
@@ -701,7 +701,7 @@ describe("pull request list overrides", () => {
   const entry = (number: number, state: "open" | "closed" | "merged") =>
     ({
       host: "github.com",
-      repository: "neur0map/hyakki",
+      repository: "Ryoku-dev/hyakki",
       number,
       state,
       isDraft: false,

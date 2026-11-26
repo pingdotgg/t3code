@@ -12,12 +12,12 @@ Install the `t3` command to `~/.local/bin`:
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/neur0map/hyakki/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/scripts/install.sh | sh
 ```
 
 ```powershell
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/neur0map/hyakki/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/scripts/install.ps1 | iex
 ```
 
 Set `T3CODE_CHANNEL=nightly` for nightly builds or `T3CODE_VERSION=<ver>` to pin a version. To try once without installing, run `npx t3@latest` (requires Node.js; always runs the latest stable release).
@@ -39,14 +39,14 @@ If `t3` reports a server is already running, connect with `t3 pair` or pass a se
 There is no standalone `t3` binary for Intel Macs—use the desktop app, or build a server from source with `vp` ([development runbook](../operations/00_development.md#first-checkout)):
 
 ```bash
-git clone https://github.com/neur0map/hyakki
+git clone https://github.com/Ryoku-dev/hyakki
 cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
 
 ## Desktop app
 
-Download from [GitHub Releases](https://github.com/neur0map/hyakki/releases) or install via a package manager:
+Download from [GitHub Releases](https://github.com/Ryoku-dev/hyakki/releases) or install via a package manager:
 
 | Platform                | Command                                                        |
 | ----------------------- | -------------------------------------------------------------- |
@@ -73,7 +73,7 @@ Select a WSL distro in **Settings → Sharing & access** to run agents and proje
 
 Install from the [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or [Google Play](https://play.google.com/store/apps/details?id=dev.ryoku.hyakki) (QR codes are also in **Settings → About → Mobile app**). The mobile app connects to a server on another machine via [remote access](./remote-access.md).
 
-- Store builds work with both Stable and Nightly servers. Optional Android beta APKs are under [Android beta releases](https://github.com/neur0map/hyakki/releases?q=android-beta-).
+- Store builds work with both Stable and Nightly servers. Optional Android beta APKs are under [Android beta releases](https://github.com/Ryoku-dev/hyakki/releases?q=android-beta-).
 - If the mobile app crashes on launch, open **Settings → Diagnostics** on the next launch to copy recent startup crash reports.
 
 ## Providers

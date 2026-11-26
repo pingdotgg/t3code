@@ -28,7 +28,7 @@ it.each([1])("blocks legacy launcher protocol %i with exact recovery steps", (la
   expect(reason).toMatch(new RegExp(`\\b${launcherProtocol}\\b`));
   expect(reason).toMatch(new RegExp(`\\b${SERVICE_LAUNCHER_PROTOCOL}\\b`));
   expect(reason).toContain(
-    "curl -fsSL https://raw.githubusercontent.com/neur0map/hyakki/main/scripts/install.sh | T3CODE_VERSION=9.8.7 sh",
+    "curl -fsSL https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/scripts/install.sh | T3CODE_VERSION=9.8.7 sh",
   );
   expect(reason).toContain("~/.local/bin/t3 service install");
   expect(reason).toContain("t3 --version");

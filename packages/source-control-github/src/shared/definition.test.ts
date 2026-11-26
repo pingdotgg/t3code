@@ -85,13 +85,13 @@ describe("GitHub change request URLs", () => {
   it("turns GitHub's shared issue route into a pull request candidate", () => {
     const candidate = (url: string) =>
       definition.changeRequestUrlFromReferenceAutolink(new URL(url));
-    expect(candidate("https://github.com/neur0map/hyakki/issues/8600#issuecomment-1")).toBe(
-      "https://github.com/neur0map/hyakki/pull/8600#issuecomment-1",
+    expect(candidate("https://github.com/Ryoku-dev/hyakki/issues/8600#issuecomment-1")).toBe(
+      "https://github.com/Ryoku-dev/hyakki/pull/8600#issuecomment-1",
     );
     expect(candidate("https://code.github.example.com/acme/web/issues/42")).toBe(
       "https://code.github.example.com/acme/web/pull/42",
     );
-    expect(candidate("https://github.com/neur0map/hyakki/issues/not-a-number")).toBeNull();
+    expect(candidate("https://github.com/Ryoku-dev/hyakki/issues/not-a-number")).toBeNull();
     expect(candidate("https://code.example.test/acme/web/issues/42")).toBeNull();
   });
 });

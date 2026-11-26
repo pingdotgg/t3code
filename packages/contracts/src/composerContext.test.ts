@@ -95,7 +95,7 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     pullRequest: {
       number: 42,
       title: "Improve context chips",
-      url: "https://github.com/neur0map/hyakki/pull/42",
+      url: "https://github.com/Ryoku-dev/hyakki/pull/42",
       headBranch: "feat/context-chips",
       baseBranch: "main",
       state: "open",

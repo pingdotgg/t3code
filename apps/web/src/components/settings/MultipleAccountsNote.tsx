@@ -7,7 +7,7 @@ import { serverEnvironment } from "../../state/server";
 import { Alert, AlertDescription } from "../ui/alert";
 
 const MULTIPLE_ACCOUNTS_FAQ_URL =
-  "https://github.com/neur0map/hyakki/blob/main/docs/user/faq.md#can-i-add-a-bunch-of-accounts-for-one-provider";
+  "https://github.com/Ryoku-dev/hyakki/blob/main/docs/user/faq.md#can-i-add-a-bunch-of-accounts-for-one-provider";
 
 const PROVIDER_NAMES = new Map<string, string>([
   ["codex", "Codex"],

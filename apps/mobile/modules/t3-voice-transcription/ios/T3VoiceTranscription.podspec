@@ -3,7 +3,7 @@ Pod::Spec.new do |s|
   s.version = '1.0.0'
   s.summary = 'Local recording conversion for Hyakki dictation.'
   s.author = 'T3 Tools'
-  s.homepage = 'https://github.com/neur0map/hyakki'
+  s.homepage = 'https://github.com/Ryoku-dev/hyakki'
   s.platform = :ios, '18.0'
   s.source = { :path => '.' }
   s.static_framework = true

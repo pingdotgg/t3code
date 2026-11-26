@@ -367,13 +367,13 @@ describe("root reopen shortcut", () => {
   it("includes the reopened issue selection in the /issues URL", async () => {
     setup();
     const issueSurface = {
-      id: "issue:remote:project-1:github:github.com:neur0map/hyakki:42" as const,
+      id: "issue:remote:project-1:github:github.com:Ryoku-dev/hyakki:42" as const,
       kind: "issue" as const,
       environmentId: "remote",
       projectId: "project-1",
       tracker: "github",
       host: "github.com",
-      scope: "neur0map/hyakki",
+      scope: "Ryoku-dev/hyakki",
       key: "42",
     };
     useClosedViewStore.getState().remember({
@@ -395,7 +395,7 @@ describe("root reopen shortcut", () => {
           selectedProjectId: "project-1",
           selectedHost: "github.com",
           tracker: "github",
-          scope: "neur0map/hyakki",
+          scope: "Ryoku-dev/hyakki",
           key: "42",
         }),
       }),
@@ -413,12 +413,12 @@ describe("root reopen shortcut", () => {
       kind: "panel-tab",
       threadRef: PULL_REQUESTS_PANEL_REF,
       surface: {
-        id: "pull-request:remote:project-1:github.com:neur0map/hyakki#42",
+        id: "pull-request:remote:project-1:github.com:Ryoku-dev/hyakki#42",
         kind: "pull-request",
         environmentId: "remote",
         projectId: "project-1",
         host: "github.com",
-        repository: "neur0map/hyakki",
+        repository: "Ryoku-dev/hyakki",
         number: 42,
       },
     });
@@ -455,7 +455,7 @@ describe("root reopen shortcut", () => {
     expect(router.state.location.search).toEqual({
       involvement: "reviewing",
       state: "merged",
-      repository: "neur0map/hyakki",
+      repository: "Ryoku-dev/hyakki",
       number: 42,
       selectedProjectId: "project-1",
       selectedHost: "github.com",

@@ -1444,7 +1444,7 @@ const program = Effect.gen(function* () {
                 sources: [
                   { type: "url", url: "https://hyakki.ryoku.dev" },
                   { type: "url", url: "https://hyakki.ryoku.dev" },
-                  { type: "url", url: "https://github.com/neur0map/hyakki" },
+                  { type: "url", url: "https://github.com/Ryoku-dev/hyakki" },
                 ],
               },
               id: "grok-web-search",

@@ -407,7 +407,7 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
           '2026-01-04T00:00:00.000Z',
           '2026-01-02T00:00:00.000Z',
           'm',
-          '{"projectId":"project:legacy-import","repository":"neur0map/hyakki","number":9000,"url":"https://github.com/neur0map/hyakki/pull/9000"}',
+          '{"projectId":"project:legacy-import","repository":"Ryoku-dev/hyakki","number":9000,"url":"https://github.com/Ryoku-dev/hyakki/pull/9000"}',
           NULL
         )
       `;
@@ -498,12 +498,12 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
         INSERT INTO projection_thread_pull_requests (
           thread_id, host, repository, number, url, source, linked_at, snapshot_json
         ) VALUES
-          (${threadId}, 'github.com', 'neur0map/hyakki', 9002,
-            'https://github.com/neur0map/hyakki/pull/9002', 'created',
+          (${threadId}, 'github.com', 'Ryoku-dev/hyakki', 9002,
+            'https://github.com/Ryoku-dev/hyakki/pull/9002', 'created',
             '2026-01-03T00:00:00.000Z',
             '{"state":"open","title":"Second PR","headBranch":"feature-two","baseBranch":"main","isDraft":false,"updatedAt":"2026-01-03T00:00:00.000Z","syncedAt":"2026-01-03T00:00:00.000Z"}'),
-          (${threadId}, 'github.com', 'neur0map/hyakki', 9003,
-            'https://github.com/neur0map/hyakki/pull/9003', 'manual',
+          (${threadId}, 'github.com', 'Ryoku-dev/hyakki', 9003,
+            'https://github.com/Ryoku-dev/hyakki/pull/9003', 'manual',
             '2026-01-04T00:00:00.000Z', NULL)
       `;
 
@@ -550,7 +550,7 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
       assert.deepStrictEqual(
         (yield* listLinkedPullRequestThreads({
           host: "github.com",
-          repository: "neur0map/hyakki",
+          repository: "Ryoku-dev/hyakki",
           number: 9002,
         })).threads.map((thread) => thread.id),
         [threadId],
@@ -757,8 +757,8 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
           '2026-01-01T00:00:00.000Z',
           '2026-01-02T00:00:00.000Z',
           'm',
-          '{"projectId":"project:legacy-metadata-upgrade","repository":"neur0map/hyakki","number":9000,"url":"https://github.com/neur0map/hyakki/pull/9000"}',
-          '{"projectId":"project:legacy-metadata-upgrade","repository":"neur0map/hyakki","number":9001,"url":"https://github.com/neur0map/hyakki/pull/9001"}',
+          '{"projectId":"project:legacy-metadata-upgrade","repository":"Ryoku-dev/hyakki","number":9000,"url":"https://github.com/Ryoku-dev/hyakki/pull/9000"}',
+          '{"projectId":"project:legacy-metadata-upgrade","repository":"Ryoku-dev/hyakki","number":9001,"url":"https://github.com/Ryoku-dev/hyakki/pull/9001"}',
           'az'
         )
       `;

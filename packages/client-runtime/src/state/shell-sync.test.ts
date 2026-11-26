@@ -954,9 +954,9 @@ describe("environment shell synchronization", () => {
     Effect.gen(function* () {
       const link = (number: number): ThreadPullRequestLink => ({
         host: "github.com",
-        repository: "neur0map/hyakki",
+        repository: "Ryoku-dev/hyakki",
         number,
-        url: `https://github.com/neur0map/hyakki/pull/${number}`,
+        url: `https://github.com/Ryoku-dev/hyakki/pull/${number}`,
         source: "agent",
         linkedAt: "2026-06-20T00:00:00.000Z",
         snapshot: null,
@@ -1049,9 +1049,9 @@ describe("environment shell synchronization", () => {
     Effect.gen(function* () {
       const link = (number: number): ThreadPullRequestLink => ({
         host: "github.com",
-        repository: "neur0map/hyakki",
+        repository: "Ryoku-dev/hyakki",
         number,
-        url: `https://github.com/neur0map/hyakki/pull/${number}`,
+        url: `https://github.com/Ryoku-dev/hyakki/pull/${number}`,
         source: "agent",
         linkedAt: "2026-06-20T00:00:00.000Z",
         snapshot: null,

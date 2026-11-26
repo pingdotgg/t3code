@@ -122,11 +122,11 @@ describe("home project scopes", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
     const repositoryIdentity = {
-      canonicalKey: "github.com/neur0map/hyakki",
+      canonicalKey: "github.com/Ryoku-dev/hyakki",
       locator: {
         source: "git-remote" as const,
         remoteName: "origin",
-        remoteUrl: "git@github.com:neur0map/hyakki.git",
+        remoteUrl: "git@github.com:Ryoku-dev/hyakki.git",
       },
     };
     const projects = [

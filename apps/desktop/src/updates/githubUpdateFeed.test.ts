@@ -10,7 +10,7 @@ const semver = NodeModule.createRequire(
   NodeModule.createRequire(import.meta.url).resolve("electron-updater"),
 )("semver") as { parse: (version: string) => ProviderArgs[1]["currentVersion"] };
 
-const REPO = "/neur0map/hyakki";
+const REPO = "/Ryoku-dev/hyakki";
 const nightly = (build: number) => `v0.1.10-nightly.20261112.${build}`;
 
 const atomFeed = (tags: ReadonlyArray<string>) =>
@@ -44,7 +44,7 @@ const offeredRelease = async (
     return JSON.stringify(listedTag ? [{ tag_name: listedTag, body: "API notes" }] : []);
   };
   const provider = new GitHubProvider(
-    { provider: "github", owner: "neur0map", repo: "hyakki" },
+    { provider: "github", owner: "Ryoku-dev", repo: "hyakki" },
     // Only the four fields the provider reads; a real AppUpdater needs Electron.
     {
       allowPrerelease: true,

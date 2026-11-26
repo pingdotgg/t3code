@@ -24,7 +24,7 @@ describe("parseT3ProjectFile", () => {
   it("reads project defaults from JSONC with a URL in a block comment", () => {
     expect(
       parseT3ProjectFile(`{
-        /* See https://raw.githubusercontent.com/neur0map/hyakki/main/schemas/t3.json */
+        /* See https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/schemas/t3.json */
         "defaultThreadEnvMode": "worktree"
       }`),
     ).toEqual({ defaultThreadEnvMode: "worktree" });
