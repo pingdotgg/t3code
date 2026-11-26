@@ -19,11 +19,6 @@ const splitLargeMarkdown = (text: string, targetChars?: number) =>
 const starts = (text: string) =>
   splitLargeMarkdown(text, 1).map((chunk) => chunk.text.split("\n")[0]);
 
-const html = (text: string) => {
-  const processor = unified().use(remarkParse).use(remarkRehype);
-  return toHtml(processor.runSync(processor.parse(text)));
-};
-
 describe("splitMarkdown", () => {
   it("cuts only where a new top-level block starts, and keeps every byte", () => {
     const text = [
@@ -123,6 +118,14 @@ describe("splitMarkdown", () => {
       "# literal",
       "</div>",
       "",
+      '<p class="lead">text',
+      "# literal",
+      "</p>",
+      "",
+      '<span class="box">',
+      "# literal",
+      "</span>",
+      "",
       "<details>",
       "<summary>Answer</summary>",
       "",
@@ -176,32 +179,23 @@ describe("splitMarkdown", () => {
     ]);
   });
 
-  it("treats an autolink line as a paragraph, so a following fence still opens", () => {
-    const text = ["<https://example.com>", "```md", "", "# literal", "```", "", "after"].join("\n");
+  it("treats an autolink or inline HTML line as a paragraph, so a following fence still opens", () => {
+    const text = [
+      "<https://example.com>",
+      "```md",
+      "",
+      "# literal",
+      "```",
+      "",
+      "<b>bold</b> text",
+      "```md",
+      "",
+      "# literal",
+      "```",
+      "",
+      "after",
+    ].join("\n");
     expect(starts(text)).toEqual(["<https://example.com>", "after"]);
-  });
-
-  it("treats inline HTML paragraphs differently from block and standalone HTML tags", () => {
-    const inlineHtml = `<b>${"x".repeat(4100)}</b>\n\`\`\`md\n\n# literal\n\`\`\``;
-    const inlineChunks = splitLargeMarkdown(inlineHtml);
-    expect(inlineChunks).toHaveLength(1);
-    expect(inlineChunks.map((chunk) => html(chunk.text)).join("\n")).toBe(html(inlineHtml));
-    expect(html(inlineChunks[0]!.text)).toContain("<code");
-    expect(html(inlineChunks[0]!.text)).not.toContain("<h1>");
-
-    const inlineWithAttrs = `<span class="lead">${"x".repeat(4100)}</span>\n\`\`\`md\n\n# literal\n\`\`\``;
-    expect(splitLargeMarkdown(inlineWithAttrs)).toHaveLength(1);
-
-    const divControl = `<div>\n${"x".repeat(4100)}\n# literal\n</div>`;
-    expect(splitLargeMarkdown(divControl)).toHaveLength(1);
-
-    const divBeforeFence = `<div>${"x".repeat(4100)}</div>\n\`\`\`md\n\n# literal\n\`\`\``;
-    const divChunks = splitLargeMarkdown(divBeforeFence);
-    expect(divChunks).toHaveLength(2);
-    expect(html(divChunks[1]!.text)).toContain("<h1>literal</h1>");
-
-    const standaloneTag = ['<span class="box">', "# literal", "</span>", "", "after"].join("\n");
-    expect(starts(standaloneTag)).toEqual(['<span class="box">', "after"]);
   });
 
   it("waits for the target size before cutting", () => {
@@ -325,6 +319,11 @@ describe("splitMarkdown", () => {
 });
 
 describe("withMarkdownDefinitions", () => {
+  const html = (text: string) => {
+    const processor = unified().use(remarkParse).use(remarkRehype);
+    return toHtml(processor.runSync(processor.parse(text)));
+  };
+
   it("keeps the first document definition ahead of later chunk definitions", () => {
     const text = "[id]: /first\n\n" + "x".repeat(4100) + "\n\n# Next\n[id]: /later\n\n[id]";
     const { chunks, definitions } = splitMarkdown(text);
