@@ -4995,7 +4995,7 @@
   "55b562c00e37321b": "No se pudo forzar la detención del agente",
   "ede15a83eedec569": "Turno detenido; el agente aún se está cerrando",
   "f360accf1ccac178": "Turno detenido; el proceso del agente siguió ejecutándose",
-  "5b660a378c56cc91": "{others, plural, =0 {Se comparte con otros hilos en curso. Detenlos para liberarlo.} one {Se comparte con {others} hilo en curso. Detenlo para liberarlo.} other {Se comparte con {others} hilos en curso. Detenlos para liberarlo.}}",
+  "46f927ee332c1065": "{others, plural, =0 {Se comparte con otros hilos en curso. Detenlos para liberarlo.} one {Se comparte con {others} hilo en curso. Detenlo para liberarlo.} other {Se comparte con {others} hilos en curso. Detenlos para liberarlo.}}",
   "f5948facf9a10261": "{count, plural, one {Se inició {count} hilo en segundo plano} other {Se iniciaron {count} hilos en segundo plano}}",
   "d2a83704191622a6": "No se pudieron enviar los mensajes.",
   "c11072d4a6072902": "No se pudo enviar un prompt en segundo plano",

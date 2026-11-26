@@ -4997,7 +4997,7 @@
   "55b562c00e37321b": "Could not force stop the agent",
   "ede15a83eedec569": "Turn stopped; the agent is still shutting down",
   "f360accf1ccac178": "Turn stopped; the agent process kept running",
-  "5b660a378c56cc91": "{others, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {others} working thread. Stop those to free it.} other {It is shared with {others} working threads. Stop those to free it.}}",
+  "46f927ee332c1065": "{others, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {others} working thread. Stop that thread to free it.} other {It is shared with {others} working threads. Stop those to free it.}}",
   "f5948facf9a10261": "{count, plural, one {Started {count} thread in background} other {Started {count} threads in background}}",
   "d2a83704191622a6": "Failed to send messages.",
   "c11072d4a6072902": "A background prompt could not be sent",

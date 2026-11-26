@@ -4996,7 +4996,7 @@
   "55b562c00e37321b": "Kunde inte tvångsstoppa agenten",
   "ede15a83eedec569": "Omgången stoppades; agenten håller fortfarande på att stängas av",
   "f360accf1ccac178": "Omgången stoppades; agentprocessen fortsatte att köras",
-  "5b660a378c56cc91": "{others, plural, =0 {Den delas med andra arbetande trådar. Stoppa dem för att frigöra den.} one {Den delas med {others} arbetande tråd. Stoppa den för att frigöra den.} other {Den delas med {others} arbetande trådar. Stoppa dem för att frigöra den.}}",
+  "46f927ee332c1065": "{others, plural, =0 {Den delas med andra arbetande trådar. Stoppa dem för att frigöra den.} one {Den delas med {others} arbetande tråd. Stoppa den för att frigöra den.} other {Den delas med {others} arbetande trådar. Stoppa dem för att frigöra den.}}",
   "f5948facf9a10261": "{count, plural, one {Startade {count} tråd i bakgrunden} other {Startade {count} trådar i bakgrunden}}",
   "d2a83704191622a6": "Det gick inte att skicka meddelandena.",
   "c11072d4a6072902": "En bakgrundsprompt kunde inte skickas",

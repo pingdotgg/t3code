@@ -4996,7 +4996,7 @@
   "55b562c00e37321b": "Impossible de forcer l’arrêt de l’agent",
   "ede15a83eedec569": "Tour arrêté ; l’agent est encore en train de s’arrêter",
   "f360accf1ccac178": "Tour arrêté ; le processus de l’agent continue de tourner",
-  "5b660a378c56cc91": "{others, plural, =0 {Il est partagé avec d’autres fils en cours. Arrêtez-les pour le libérer.} one {Il est partagé avec {others} fil en cours. Arrêtez-le pour le libérer.} other {Il est partagé avec {others} fils en cours. Arrêtez-les pour le libérer.}}",
+  "46f927ee332c1065": "{others, plural, =0 {Il est partagé avec d’autres fils en cours. Arrêtez-les pour le libérer.} one {Il est partagé avec {others} fil en cours. Arrêtez-le pour le libérer.} other {Il est partagé avec {others} fils en cours. Arrêtez-les pour le libérer.}}",
   "f5948facf9a10261": "{count, plural, one {{count} fil démarré en arrière-plan} other {{count} fils démarrés en arrière-plan}}",
   "d2a83704191622a6": "Échec de l’envoi des messages.",
   "c11072d4a6072902": "Un prompt en arrière-plan n’a pas pu être envoyé",

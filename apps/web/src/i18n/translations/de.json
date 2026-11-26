@@ -4998,7 +4998,7 @@
   "55b562c00e37321b": "Der Agent konnte nicht zwangsweise gestoppt werden",
   "ede15a83eedec569": "Runde gestoppt; der Agent wird noch beendet",
   "f360accf1ccac178": "Runde gestoppt; der Agentenprozess läuft weiter",
-  "5b660a378c56cc91": "{others, plural, =0 {Er wird mit anderen arbeitenden Threads geteilt. Stoppe diese, um ihn freizugeben.} one {Er wird mit {others} arbeitenden Thread geteilt. Stoppe diesen, um ihn freizugeben.} other {Er wird mit {others} arbeitenden Threads geteilt. Stoppe diese, um ihn freizugeben.}}",
+  "46f927ee332c1065": "{others, plural, =0 {Er wird mit anderen arbeitenden Threads geteilt. Stoppe diese, um ihn freizugeben.} one {Er wird mit {others} arbeitenden Thread geteilt. Stoppe diesen, um ihn freizugeben.} other {Er wird mit {others} arbeitenden Threads geteilt. Stoppe diese, um ihn freizugeben.}}",
   "f5948facf9a10261": "{count, plural, one {{count} Thread im Hintergrund gestartet} other {{count} Threads im Hintergrund gestartet}}",
   "d2a83704191622a6": "Nachrichten konnten nicht gesendet werden.",
   "c11072d4a6072902": "Ein Prompt im Hintergrund konnte nicht gesendet werden",
