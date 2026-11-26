@@ -39,7 +39,10 @@ test(
     await laterFile.getByText("Excluded", { exact: true }).waitFor();
     await screen.getByPlaceholder("Leave empty to auto-generate").fill("Commit the first change");
     await screen.getByRole("button", "Commit", { exact: true }).tap();
-    await screen.getByText("Action failed", { exact: true }).waitFor();
+    const failure = screen.getByText("Action failed", { exact: true });
+    await failure.waitFor();
+    await screen.getByRole("button", "Dismiss notification", { exact: true }).tap();
+    await failure.waitFor({ state: "detached" });
 
     await openCommit();
     await app.screenshot("file-selection-after-failed-commit");
