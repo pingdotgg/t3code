@@ -37,6 +37,7 @@ const state = vi.hoisted(() => ({
   newProjectsRoot: null as string | null,
   waitForProject: vi.fn(),
   retargetSavedNewTaskDraft: vi.fn(async () => true),
+  draftsLoaded: async () => {},
   dispatch: vi.fn(),
   alert: vi.fn(),
   navigationState: undefined as NavigationState | undefined,
@@ -194,7 +195,7 @@ vi.mock("../../state/projects", () => ({
 }));
 
 vi.mock("../../state/use-composer-drafts", () => ({
-  waitForComposerDraftsLoaded: async () => {},
+  waitForComposerDraftsLoaded: () => state.draftsLoaded(),
   createNewTaskDraft: () => "prompt-draft",
   retargetSavedNewTaskDraft: state.retargetSavedNewTaskDraft,
   setComposerDraftText: () => {},
@@ -452,6 +453,41 @@ describe("clone project permissions", () => {
       });
     } finally {
       state.existingProjects = [];
+    }
+  });
+
+  it("leaves the draft where it was when the person goes Back first", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.retargetSavedNewTaskDraft.mockClear();
+    state.dispatch.mockReset();
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "repo",
+        workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
+        repositoryIdentity: { canonicalKey: "example.com/owner/repo" },
+      },
+    ];
+    // Back lands while the saved drafts are still loading.
+    state.draftsLoaded = async () => {
+      state.navigationState = {
+        index: 1,
+        routes: [
+          { key: "home", name: "Home" },
+          { key: "draft", name: "Thread", params: { draft: {} } },
+        ],
+      } as unknown as NavigationState;
+    };
+    try {
+      await cloneAction({ draftId: "new-task:source" })();
+
+      expect(state.retargetSavedNewTaskDraft).not.toHaveBeenCalled();
+      expect(state.dispatch).not.toHaveBeenCalled();
+    } finally {
+      state.existingProjects = [];
+      state.navigationState = undefined;
+      state.draftsLoaded = async () => {};
     }
   });
 });

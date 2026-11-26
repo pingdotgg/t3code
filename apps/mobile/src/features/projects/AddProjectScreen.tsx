@@ -813,13 +813,20 @@ function useOpenNewTaskDraft() {
 
 type CarriedDraft = { readonly prompt: string | null; readonly draftId: string | null };
 
-/** Moves the draft being added from onto the project, or starts one with the prompt. */
+/**
+ * Moves the draft being added from onto the project, or starts one with the prompt. Null when the
+ * person left the screen meanwhile: their draft stays where it was.
+ */
 async function carryDraftTo(
   environmentId: EnvironmentId,
   projectId: ProjectId,
   carried: CarriedDraft,
-): Promise<{ readonly draftId?: string }> {
+  isOriginActive: () => boolean,
+): Promise<{ readonly draftId?: string } | null> {
   try {
+    await waitForComposerDraftsLoaded();
+    // Checked once drafts are loaded, right before either write.
+    if (!isOriginActive()) return null;
     if (
       carried.draftId &&
       (await retargetSavedNewTaskDraft(carried.draftId, { environmentId, projectId }))
@@ -827,7 +834,6 @@ async function carryDraftTo(
       return { draftId: carried.draftId };
     }
     if (!carried.prompt) return {};
-    await waitForComposerDraftsLoaded();
     const draftId = createNewTaskDraft({ environmentId, projectId });
     setComposerDraftText(draftId, carried.prompt);
     return { draftId };
@@ -837,6 +843,7 @@ async function carryDraftTo(
 }
 
 function useOpenExistingProject(environment: EnvironmentOption | null) {
+  const navigation = useNavigation();
   const openNewTaskDraft = useOpenNewTaskDraft();
   const updateProject = useAtomCommand(projectEnvironment.update, {
     label: "project unarchive",
@@ -878,12 +885,18 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
         ? existing.title
         : m(msg("{title} is still archived. Try again later.", { title: existing.title })),
     );
+    const draft = clone
+      ? await carryDraftTo(existing.environmentId, existing.id, clone, () =>
+          isActiveRoute(navigation, originRoute),
+        )
+      : {};
+    if (draft === null) return true;
     void openNewTaskDraft(
       {
         environmentId: existing.environmentId,
         projectId: existing.id,
         title: existing.title,
-        ...(clone ? await carryDraftTo(existing.environmentId, existing.id, clone) : {}),
+        ...draft,
       },
       originRoute,
     );
@@ -1696,16 +1709,21 @@ export function AddProjectDestinationScreen(props: {
           ),
         );
       } else {
-        void openNewTaskDraft(
-          {
-            environmentId: environment.environmentId,
-            projectId,
-            title,
-            cloning: "1",
-            ...(await carryDraftTo(environment.environmentId, projectId, carried)),
-          },
-          originRoute,
+        const draft = await carryDraftTo(environment.environmentId, projectId, carried, () =>
+          isActiveRoute(navigation, originRoute),
         );
+        if (draft !== null) {
+          void openNewTaskDraft(
+            {
+              environmentId: environment.environmentId,
+              projectId,
+              title,
+              cloning: "1",
+              ...draft,
+            },
+            originRoute,
+          );
+        }
       }
     }
     setIsSubmitting(false);

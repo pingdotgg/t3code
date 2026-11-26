@@ -742,6 +742,42 @@ it.effect("reuses only a matching checked-out repository at an occupied clone de
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("reuses a checkout from another port only over another scheme", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-port-" });
+    const destinationPath = path.join(parent, "repo");
+    yield* fs.makeDirectory(destinationPath);
+    yield* fs.writeFileString(path.join(destinationPath, "notes.txt"), "keep my edits");
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const reuse = (remoteUrl: string) =>
+        service.prepareClone({ remoteUrl, destinationPath }, { reuseCheckout: true });
+      assert.isTrue((yield* reuse("https://git.example.com:8443/team/repo")).existingCheckout);
+      // SSH and HTTPS reach the same server on different ports.
+      assert.isTrue((yield* reuse("ssh://git@git.example.com:2222/team/repo")).existingCheckout);
+      const otherServer = yield* Effect.flip(reuse("https://git.example.com:9443/team/repo"));
+      assert.include(otherServer.detail, "not empty");
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: ({ args }) =>
+              Effect.succeed({
+                ...processOutput(),
+                stdout: args.includes("--show-toplevel") ? destinationPath : "",
+              }),
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            readConfigValue: () => Effect.succeed("https://git.example.com:8443/team/repo.git"),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("discards only a directory git wrote to", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

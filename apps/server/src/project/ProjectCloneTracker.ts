@@ -517,9 +517,38 @@ export const make = Effect.gen(function* () {
         return false;
       }
       const { destinationPath } = tracked.snapshot;
-      // After a restart we cannot know which files were created by the interrupted clone.
       if (tracked.recovered) {
-        yield* repositories.prepareClone({ remoteUrl: tracked.cloneUrl, destinationPath });
+        // After a restart we cannot know which files the interrupted clone created, so none are
+        // deleted. A complete checkout of this repository finishes the clone as `start` would.
+        const prepared = yield* repositories
+          .prepareClone({ remoteUrl: tracked.cloneUrl, destinationPath }, { reuseCheckout: true })
+          .pipe(
+            Effect.mapError((error) =>
+              error.detail === "Destination path already exists and is not empty."
+                ? new SourceControlRepositoryError({
+                    operation: error.operation,
+                    provider: error.provider,
+                    detail: `${destinationPath} still holds files from the interrupted clone. Remove the folder, then retry.`,
+                  })
+                : error,
+            ),
+          );
+        if (prepared.existingCheckout) {
+          const hook = onCloned ?? tracked.onCloned;
+          yield* modify(projectId, (entry) => ({
+            ...entry,
+            recovered: false,
+            ...(onCloned ? { onCloned } : {}),
+          }));
+          yield* finish(projectId, "done", null);
+          if (hook) {
+            yield* hook({ projectId, workspaceRoot: destinationPath }).pipe(
+              Effect.ignoreCause({ log: true }),
+              Effect.forkIn(cloneScope),
+            );
+          }
+          return true;
+        }
       } else {
         yield* repositories.discardClone(destinationPath);
       }

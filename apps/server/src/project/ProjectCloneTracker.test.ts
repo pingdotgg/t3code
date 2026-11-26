@@ -49,6 +49,7 @@ function clonePersistence() {
 
 function makeHarness(options?: {
   readonly clone?: SourceControlRepositoryService.SourceControlRepositoryService["Service"]["cloneRepository"];
+  readonly prepare?: SourceControlRepositoryService.SourceControlRepositoryService["Service"]["prepareClone"];
   readonly persistence?: ReturnType<typeof clonePersistence>;
 }) {
   const created: Array<{ projectId: ProjectId; workspaceRoot: string }> = [];
@@ -65,13 +66,15 @@ function makeHarness(options?: {
     Layer.provide(options?.persistence ?? clonePersistence()),
     Layer.provide(
       Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
-        prepareClone: (input) =>
-          Effect.succeed({
-            destinationPath: input.destinationPath,
-            remoteUrl: input.remoteUrl ?? "",
-            cloneUrl: input.remoteUrl ?? "",
-            repository: null,
-          }),
+        prepareClone:
+          options?.prepare ??
+          ((input) =>
+            Effect.succeed({
+              destinationPath: input.destinationPath,
+              remoteUrl: input.remoteUrl ?? "",
+              cloneUrl: input.remoteUrl ?? "",
+              repository: null,
+            })),
         cloneRepository:
           options?.clone ??
           ((input) =>
@@ -140,6 +143,67 @@ describe("ProjectCloneTracker", () => {
       });
     },
   );
+
+  it.effect.each([
+    { name: "finishes a clone whose checkout completed", leftovers: false },
+    { name: "keeps leftover files and says to remove them", leftovers: true },
+  ])("a retry after a restart $name", ({ leftovers }) => {
+    let attempts = 0;
+    let restarted = false;
+    const cloning = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      clone: () =>
+        Effect.suspend(() => {
+          attempts += 1;
+          return Deferred.succeed(cloning, undefined).pipe(Effect.andThen(Effect.never));
+        }),
+      prepare: (input, options) =>
+        Effect.suspend(() => {
+          if (restarted && options?.reuseCheckout !== true)
+            return Effect.die("A restored retry must allow reusing the checkout");
+          if (restarted && leftovers)
+            return Effect.fail(
+              new SourceControlRepositoryError({
+                operation: "cloneRepository",
+                provider: SourceControlProviderKind.make("unknown"),
+                detail: "Destination path already exists and is not empty.",
+              }),
+            );
+          return Effect.succeed({
+            destinationPath: input.destinationPath,
+            remoteUrl: input.remoteUrl ?? "",
+            cloneUrl: input.remoteUrl ?? "",
+            repository: null,
+            ...(restarted ? { existingCheckout: true as const } : {}),
+          });
+        }),
+    });
+    return Effect.gen(function* () {
+      yield* Effect.gen(function* () {
+        const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+        yield* tracker.start(startInput, harness.hooks);
+        yield* Deferred.await(cloning);
+      }).pipe(Effect.provide(harness.layer));
+      restarted = true;
+
+      yield* Effect.gen(function* () {
+        const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+        if (leftovers) {
+          const refused = yield* Effect.flip(tracker.retry(projectId, harness.hooks.onCloned));
+          expect(refused.detail).toContain("Remove the folder, then retry.");
+          expect(yield* tracker.get(projectId)).toMatchObject({ phase: "failed" });
+        } else {
+          expect(yield* tracker.retry(projectId, harness.hooks.onCloned)).toBe(true);
+          expect(yield* tracker.get(projectId)).toMatchObject({ phase: "done" });
+          yield* Effect.yieldNow;
+          expect(harness.cloned).toEqual([projectId]);
+        }
+        // Nothing is deleted, and the clone isn't started again.
+        expect(harness.discarded).toEqual([]);
+        expect(attempts).toBe(1);
+      }).pipe(Effect.provide(harness.layer));
+    });
+  });
 
   it.effect("creates the project first and reports the clone through the stream", () => {
     const release = Deferred.makeUnsafe<void>();

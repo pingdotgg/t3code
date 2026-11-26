@@ -121,6 +121,24 @@ function toRepositoryInfo(
 }
 
 // Redact credentials from client clone snapshots; git still receives the credentials.
+/**
+ * Repository keys drop the port so SSH and HTTPS spellings match, but two URLs with the same
+ * scheme and different ports reach different servers.
+ */
+function sameServerPort(left: string, right: string): boolean {
+  const url = (value: string) => {
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim())) return null;
+    try {
+      return new URL(value.trim());
+    } catch {
+      return null;
+    }
+  };
+  const a = url(left);
+  const b = url(right);
+  return a === null || b === null || a.protocol !== b.protocol || a.port === b.port;
+}
+
 function redactRemoteUrl(remoteUrl: string): string {
   try {
     const url = new URL(remoteUrl);
@@ -280,7 +298,8 @@ export const make = Effect.gen(function* () {
         (parseGitRemoteRepository(existingUrl) !== null &&
           parseGitRemoteRepository(remoteUrl) !== null &&
           sourceControlDefinitions.repositoryKeyFromRemote(existingUrl) ===
-            sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl));
+            sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) &&
+          sameServerPort(existingUrl, remoteUrl));
       if (!matching) return false;
       yield* git.execute({
         operation: "SourceControlRepositoryService.isMatchingCheckout",
