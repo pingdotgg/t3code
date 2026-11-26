@@ -172,136 +172,23 @@ describe("thread links", () => {
     );
   });
 
-  it("keeps thread links live after fenced code blocks containing inline triple backticks", () => {
-    const markdown = [
-      "```ts",
-      'const fence = "```";',
-      "<t3-thread://v2/local/in-code>",
-      "```",
-      "",
-      "See <t3-thread://v2/env-1/t1>",
-    ].join("\n");
-    expect(threadLinkRefs(markdown, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(markdown, local, () => "My Thread")).toBe(
-      [
-        "```ts",
-        'const fence = "```";',
-        "<t3-thread://v2/local/in-code>",
-        "```",
-        "",
-        "See [My Thread](t3-thread://v2/env-1/t1)",
-      ].join("\n"),
-    );
-
-    const quoted = [
-      "> ```ts",
-      '> const fence = "```";',
-      "> <t3-thread://v2/local/in-code>",
-      "> ```",
-      "> See <t3-thread://v2/env-1/t1>",
-    ].join("\n");
-    expect(threadLinkRefs(quoted, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(quoted, local, () => "My Thread")).toBe(
-      [
-        "> ```ts",
-        '> const fence = "```";',
-        "> <t3-thread://v2/local/in-code>",
-        "> ```",
-        "> See [My Thread](t3-thread://v2/env-1/t1)",
-      ].join("\n"),
-    );
-
-    const reindentedQuote = [
-      "> ```",
-      " > <t3-thread://v2/local/in-code>",
-      "> ```",
-      "After <t3-thread://v2/env-1/t1>",
-    ].join("\n");
-    expect(threadLinkRefs(reindentedQuote, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(reindentedQuote, local, () => "My Thread")).toBe(
-      reindentedQuote.replace(
-        "After <t3-thread://v2/env-1/t1>",
-        "After [My Thread](t3-thread://v2/env-1/t1)",
-      ),
-    );
-
-    const listMarkerFence = [
-      "- ```bash",
-      "  echo hi",
-      "  ```",
-      "",
-      "See <t3-thread://v2/env-1/t1>",
-    ].join("\n");
-    expect(threadLinkRefs(listMarkerFence, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(listMarkerFence, local, () => "My Thread")).toContain(
-      "See [My Thread](t3-thread://v2/env-1/t1)",
-    );
-
-    const indentedListFence = [
-      "1. Run:",
-      "",
-      "    ```bash",
-      '    echo "```"',
-      "    <t3-thread://v2/local/in-code>",
-      "    ```",
-      "",
-      "See <t3-thread://v2/env-1/t1>",
-    ].join("\n");
-    expect(threadLinkRefs(indentedListFence, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(indentedListFence, local, () => "My Thread")).toBe(
-      indentedListFence.replace(
-        "See <t3-thread://v2/env-1/t1>",
-        "See [My Thread](t3-thread://v2/env-1/t1)",
-      ),
-    );
-  });
-
-  it("does not treat mid-line triple markers or inline triple-backtick spans as unclosed fences", () => {
-    const strayTildes = "Use ~~~ to mark it. See https://app.t3.codes/threads/env-1/t1";
-    expect(threadLinkRefs(strayTildes, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(strayTildes, local, () => "My Thread")).toBe(
-      "Use ~~~ to mark it. See [My Thread](t3-thread://v2/env-1/t1)",
-    );
-
-    const inlineTripleSpan = "```<t3-thread://v2/local/in-span>``` then <t3-thread://v2/env-1/t1>";
-    expect(threadLinkRefs(inlineTripleSpan, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(inlineTripleSpan, local, () => "My Thread")).toBe(
-      "```<t3-thread://v2/local/in-span>``` then [My Thread](t3-thread://v2/env-1/t1)",
-    );
-
-    const multilineSpan = [
-      "Use ```example",
-      "<t3-thread://v2/local/in-span>",
-      "end``` then <t3-thread://v2/env-1/t1>",
-    ].join("\n");
-    expect(threadLinkRefs(multilineSpan, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(multilineSpan, local, () => "My Thread")).toBe(
-      multilineSpan.replace(
-        "then <t3-thread://v2/env-1/t1>",
-        "then [My Thread](t3-thread://v2/env-1/t1)",
-      ),
-    );
-
-    const spanStopsAtBlankLine = "Stray ` tick\n\nSee <t3-thread://v2/env-1/t1> and `code`";
-    expect(threadLinkRefs(spanStopsAtBlankLine, local)).toEqual([ref("env-1", "t1")]);
-
-    const longerFence = [
-      "````md",
-      "```",
-      "<t3-thread://v2/local/in-code>",
-      "````",
-      "After <t3-thread://v2/env-1/t1>",
-    ].join("\n");
-    expect(threadLinkRefs(longerFence, local)).toEqual([ref("env-1", "t1")]);
-    expect(relabelThreadLinks(longerFence, local, () => "My Thread")).toBe(
-      [
-        "````md",
-        "```",
-        "<t3-thread://v2/local/in-code>",
-        "````",
-        "After [My Thread](t3-thread://v2/env-1/t1)",
-      ].join("\n"),
-    );
+  it("ends code where CommonMark does, so a link after it stays live", () => {
+    const after = "See <t3-thread://v2/env-1/t1>";
+    const hidden = "<t3-thread://v2/local/in-code>";
+    for (const markdown of [
+      ["```ts", 'const fence = "```";', hidden, "```", after],
+      ["> ```ts", '> const fence = "```";', `> ${hidden}`, "> ```", `> ${after}`],
+      ["> ```", ` > ${hidden}`, "> ```", after],
+      ["- ```bash", "  echo hi", "  ```", "", after],
+      ["1. Run:", "", "    ```bash", '    echo "```"', `    ${hidden}`, "    ```", "", after],
+      ["````md", "```", hidden, "````", after],
+      ["Use ~~~ to mark it.", after],
+      ["```" + hidden + "``` then", after],
+      ["Use ```example", hidden, "end``` then", after],
+      ["Stray ` tick", "", after, "and `code`"],
+    ]) {
+      expect(threadLinkRefs(markdown.join("\n"), local)).toEqual([ref("env-1", "t1")]);
+    }
   });
 
   it("lists the threads a message's links can name, outside code", () => {
