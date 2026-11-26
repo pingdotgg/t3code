@@ -86,7 +86,9 @@ jobs:
           git push --force origin "$BRANCH"
           # A fork's gh defaults to the parent repository; name ours explicitly.
           title="Upstream fixes ($(date -u +%Y-%m-%d))"
-          if pr=$(gh pr view "$BRANCH" --repo "$GITHUB_REPOSITORY" --json number --jq .number 2>/dev/null) && [ -n "$pr" ]; then
+          # Only an open pull request is reused; a merged one opens a new one.
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
             gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
           else
             gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
