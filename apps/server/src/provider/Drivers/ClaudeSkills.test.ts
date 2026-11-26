@@ -796,9 +796,10 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         path.join(configDir, "skills"),
         "codex-review",
         [
-          "---",
+          "---  ",
           "name: codex-review",
           "description: Ask Codex for a review.",
+          "user-invocable: false",
           "---",
           "",
           "# Body",
@@ -807,7 +808,9 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* writeSkill(
         path.join(workspace, ".claude", "skills"),
         "deploy",
-        ["---", "name: deploy", "description: Deploy the app.", "---", "", "# Deploy"].join("\n"),
+        ["---", "name: deploy", "description: Deploy the app.", "---\t ", "# Deploy", "---"].join(
+          "\r\n",
+        ),
       );
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
@@ -819,6 +822,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           enabled: true,
           scope: "user",
           description: "Ask Codex for a review.",
+          userInvocable: false,
         },
         {
           name: "deploy",
@@ -1039,6 +1043,18 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const skillsDir = path.join(configDir, "skills");
 
       yield* writeSkill(skillsDir, "no-frontmatter", "# Just a heading\n");
+      for (const [directoryName, header] of [
+        ["blank-padded-frontmatter", ["---  ", ""]],
+        ["comment-frontmatter", ["---", "# draft"]],
+        ["empty-frontmatter", ["---"]],
+        ["empty-padded-frontmatter", ["---  "]],
+      ] as const) {
+        yield* writeSkill(
+          skillsDir,
+          directoryName,
+          [...header, "---", "user-invocable: false", "---", "# Body"].join("\n"),
+        );
+      }
       for (const [directoryName, field] of [
         ["broken-yaml", "name: [unclosed"],
         ["broken-tools", "allowed-tools: [Read, Write"],
@@ -1057,10 +1073,19 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       // Claude falls back to directory names without frontmatter, but skips malformed frontmatter.
       assert.deepEqual(
-        skills.map((skill) => skill.name),
-        ["no-frontmatter"],
+        skills.map(({ name, description, userInvocable }) => ({
+          name,
+          description,
+          userInvocable,
+        })),
+        [
+          "blank-padded-frontmatter",
+          "comment-frontmatter",
+          "empty-frontmatter",
+          "empty-padded-frontmatter",
+          "no-frontmatter",
+        ].map((name) => ({ name, description: undefined, userInvocable: undefined })),
       );
-      assert.equal(skills[0]?.description, undefined);
     }),
   );
 

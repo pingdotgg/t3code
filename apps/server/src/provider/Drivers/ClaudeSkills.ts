@@ -22,7 +22,7 @@ type ClaudeSkillRoot = {
   readonly prefix?: string;
 };
 
-const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+const FRONTMATTER_PATTERN = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??---[ \t]*(?:\r?\n|$)/;
 
 type SkillFrontmatter =
   | { readonly kind: "missing" }
@@ -86,7 +86,11 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
       return { kind: "malformed" };
     }
   }
-  if (typeof parsed !== "object" || parsed === null) {
+  // Claude loads an empty, blank, or comment-only block as empty frontmatter.
+  if (parsed === null) {
+    return { kind: "missing" };
+  }
+  if (typeof parsed !== "object") {
     return { kind: "malformed" };
   }
 
