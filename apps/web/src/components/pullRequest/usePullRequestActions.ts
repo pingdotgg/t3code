@@ -343,6 +343,7 @@ export function writeHandoffToComposer(
 type PreparedCheckout = Awaited<
   ReturnType<ReturnType<typeof usePreparePullRequestThreadAction>["run"]>
 >;
+type DraftCheckoutResult = PreparedCheckout | { readonly _tag: "Cancelled" };
 
 /**
  * Moves the draft opened for a checkout onto it once it is ready, keeping whatever the user
@@ -352,9 +353,10 @@ export function prepareDraftCheckout(
   draftId: DraftId,
   checkout: Promise<PreparedCheckout>,
   isCancelled: () => boolean = () => false,
-): Promise<PreparedCheckout> {
-  const checkoutReady = checkout.then((prepared): boolean => {
-    if (!isCurrent() || isCancelled() || prepared._tag === "Failure") return false;
+): Promise<DraftCheckoutResult> {
+  const result = checkout.then((prepared): DraftCheckoutResult => {
+    if (!isCurrent() || isCancelled()) return { _tag: "Cancelled" };
+    if (prepared._tag === "Failure") return prepared;
     const { branch, worktreePath, pullRequest } = prepared.value;
     // A waiting send resumes right after this and must render the checkout first.
     flushSync(() =>
@@ -367,10 +369,13 @@ export function prepareDraftCheckout(
         checkoutPullRequest: { url: pullRequest.url, branch },
       }),
     );
-    return true;
+    return prepared;
   });
-  const isCurrent = trackPendingDraftCheckout(draftId, checkoutReady);
-  return checkoutReady.then(() => checkout);
+  const isCurrent = trackPendingDraftCheckout(
+    draftId,
+    result.then((prepared) => prepared._tag === "Success"),
+  );
+  return result;
 }
 
 export type PullRequestHandoffDetail = Pick<
@@ -499,12 +504,12 @@ export function usePullRequestHandoffs({
       }),
       () => cancelled,
     );
-    if (cancelled) {
-      setHandoff(null);
+    setHandoff(null);
+    if (cancelled || prepared._tag === "Cancelled") {
+      if (!cancelled) toastManager.close(toastId);
       return;
     }
     if (prepared._tag === "Failure") {
-      setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
         title: m(
@@ -519,7 +524,6 @@ export function usePullRequestHandoffs({
       });
       return;
     }
-    setHandoff(null);
     if (task === null) {
       toastManager.update(
         toastId,
