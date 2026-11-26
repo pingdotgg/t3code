@@ -1281,7 +1281,10 @@ describe("composer context undo lifetime", () => {
       const retained = composer.retained();
       expect(retained.files.get(fileContextReference(file).contextId)?.file).toBe(file.file);
 
+      const editorBeforeSwitch = composer.editor();
       await composer.show("b");
+      // Thread switches swap the draft into the same editor rather than rebuilding it.
+      expect(composer.editor()).toBe(editorBeforeSwitch);
       expect(retained.files.size).toBe(0);
       await composer.undo();
       expect(serializeEditorDoc(composer.editor().state.doc).value).toBe(destinationValue);
