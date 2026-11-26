@@ -1794,7 +1794,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const epoch = ++hostEpoch;
         const mcpSession = yield* mcpSessions.read(input.threadId);
         const environment = McpProviderSession.withAgentDeviceEnvironment(
-          options.environment,
+          input.sessionEnvironmentOverride !== undefined &&
+            Object.keys(input.sessionEnvironmentOverride).length > 0
+            ? { ...options.environment, ...input.sessionEnvironmentOverride }
+            : options.environment,
           mcpSession,
         );
         const launch = yield* agentScope.wrap({

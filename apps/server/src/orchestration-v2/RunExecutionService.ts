@@ -24,6 +24,7 @@ import {
   type ProviderThreadId,
   type ProviderTurnId,
   type RunAttemptId,
+  type TeamMemberId,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -683,6 +684,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  /** Authoring team member for Team Server usage attribution on mid-turn token-lease refresh. */
+  readonly actingMemberId?: TeamMemberId | null;
   /** Recycles the warm provider session after a mid-turn team OAuth lease refresh. */
   readonly recycleSession?: () => Effect.Effect<void>;
 }
@@ -1394,6 +1397,9 @@ export const layer: Layer.Layer<
                 threadId: input.run.threadId,
                 providerThreadId: providerThread.id,
                 runId: input.run.id,
+                ...(input.actingMemberId === undefined
+                  ? {}
+                  : { actingMemberId: input.actingMemberId }),
                 error: terminal.failure,
                 recycleSession: input.recycleSession ?? (() => Effect.void),
                 ...(Option.isSome(continuationRequestsOption)

@@ -6259,6 +6259,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
         const sessionScope = yield* Effect.scope;
         const now = yield* DateTime.now;
+        const sessionEnvironment: NodeJS.ProcessEnv =
+          input.sessionEnvironmentOverride !== undefined &&
+          Object.keys(input.sessionEnvironmentOverride).length > 0
+            ? { ...adapterOptions.environment, ...input.sessionEnvironmentOverride }
+            : adapterOptions.environment;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
           providerInstanceId: adapterOptions.instanceId,
@@ -6268,7 +6273,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         const readProgram = yield* claudeProgramReader(
           adapterOptions.settings.binaryPath,
-          adapterOptions.environment,
+          sessionEnvironment,
         );
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
@@ -12321,7 +12326,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   Array.isArray(claudeTaskField(outputValue, "tasks"))
                 )
                   ? yield* readClaudeTaskList({
-                      environment: adapterOptions.environment,
+                      environment: sessionEnvironment,
                       cwd: context.input.runtimePolicy.cwd,
                       nativeThreadId: liveQuery.nativeThreadId,
                     }).pipe(
@@ -12570,11 +12575,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     (yield* readClaudeSettingsEnv(
                       adapterOptions.settings,
                       context.input.runtimePolicy.cwd ?? undefined,
-                      adapterOptions.environment,
+                      sessionEnvironment,
                     ).pipe(
                       Effect.provideService(FileSystem.FileSystem, fileSystem),
                       Effect.provideService(Path.Path, path),
-                    )).ANTHROPIC_BASE_URL ?? adapterOptions.environment.ANTHROPIC_BASE_URL,
+                    )).ANTHROPIC_BASE_URL ?? sessionEnvironment.ANTHROPIC_BASE_URL,
                   );
             const rewrittenVersionError =
               endpointHost === undefined
@@ -13719,7 +13724,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
             environment: claudeQueryEnvironment(
-              adapterOptions.environment,
+              sessionEnvironment,
               turnInput.appThread,
               turnInput.appThread.lineage.relationshipToParent === "subagent"
                 ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
@@ -13832,7 +13837,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
             modelLedger: new Map(),
             taskOutputRoot: claudeTaskOutputRoot(
-              adapterOptions.environment,
+              sessionEnvironment,
               path,
               resolvedTurnCwd,
               hostPlatform,
@@ -15480,7 +15485,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const forked = yield* queryRunner.forkSession({
                 sessionId: sourceNativeThreadId,
                 options: forkOptions,
-                environment: adapterOptions.environment,
+                environment: sessionEnvironment,
                 threadId: forkInput.targetThreadId,
                 providerSessionId: input.providerSessionId,
               });

@@ -16,6 +16,16 @@ export const ProviderSessionEnvironmentOverride = Context.Reference<
   defaultValue: () => ({}),
 });
 
+export function applyProviderSessionEnvironmentOverride(
+  base: NodeJS.ProcessEnv,
+  override?: Readonly<Record<string, string>>,
+): NodeJS.ProcessEnv {
+  if (!override) return base;
+  const entries = Object.entries(override);
+  if (entries.length === 0) return base;
+  return { ...base, ...override };
+}
+
 export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,

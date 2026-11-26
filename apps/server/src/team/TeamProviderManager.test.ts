@@ -307,6 +307,9 @@ describe("TeamProviderManager", () => {
             providerSessionId: sessionA,
           });
           expect(continuationPrep.recycleWarmSession).toBe(true);
+          // Simulate sessionA recycle -> reopen stamping its new lease generation.
+          yield* manager.revokeInternalProxySessionToken(sessionA);
+          yield* manager.recordSessionLeaseGeneration(agyVirtualId, sessionA);
 
           // Register sessionB at the same lease generation (no recycle needed yet).
           const sessionBInit = yield* manager.prepareForTurn({
@@ -318,7 +321,7 @@ describe("TeamProviderManager", () => {
           });
           expect(sessionBInit.recycleWarmSession).toBe(false);
 
-          // Simulate a background lease rotation (forceRefresh outside prepareForTurn):
+          // Simulate background lease rotation #1 (forceRefresh outside prepareForTurn):
           // BOTH warm sessions A and B MUST see recycleWarmSession === true on their next turn!
           yield* manager.getLeasedAccessToken(agyVirtualId, { forceRefresh: true });
           const afterRotateA = yield* manager.prepareForTurn({
@@ -337,6 +340,31 @@ describe("TeamProviderManager", () => {
           });
           expect(afterRotateA.recycleWarmSession).toBe(true);
           expect(afterRotateB.recycleWarmSession).toBe(true);
+
+          // Simulate full release + reopen for both sessions, then a SECOND background rotation:
+          // BOTH warm sessions MUST still retain generation tracking and recycle again!
+          yield* manager.revokeInternalProxySessionToken(sessionA);
+          yield* manager.recordSessionLeaseGeneration(agyVirtualId, sessionA);
+          yield* manager.revokeInternalProxySessionToken(sessionB);
+          yield* manager.recordSessionLeaseGeneration(agyVirtualId, sessionB);
+
+          yield* manager.getLeasedAccessToken(agyVirtualId, { forceRefresh: true });
+          const afterSecondRotateA = yield* manager.prepareForTurn({
+            projectId,
+            instanceId: agyVirtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            nativeThreadHasTurns: true,
+            providerSessionId: sessionA,
+          });
+          const afterSecondRotateB = yield* manager.prepareForTurn({
+            projectId,
+            instanceId: agyVirtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            nativeThreadHasTurns: true,
+            providerSessionId: sessionB,
+          });
+          expect(afterSecondRotateA.recycleWarmSession).toBe(true);
+          expect(afterSecondRotateB.recycleWarmSession).toBe(true);
 
           // Now revoke member -> 403 immediately purges ephemeral token file and refuses auto-resume!
           revoked = true;

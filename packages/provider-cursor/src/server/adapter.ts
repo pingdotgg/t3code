@@ -1088,6 +1088,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
         const createdAt = yield* DateTime.now;
+        const sessionEnvironment: NodeJS.ProcessEnv =
+          input.sessionEnvironmentOverride !== undefined &&
+          Object.keys(input.sessionEnvironmentOverride).length > 0
+            ? { ...adapterOptions.environment, ...input.sessionEnvironmentOverride }
+            : adapterOptions.environment;
+        const sessionApiKey = sessionEnvironment.CURSOR_API_KEY?.trim() || apiKey;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
           providerInstanceId: adapterOptions.instanceId,
@@ -2750,7 +2756,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const { cwd } = runtimePolicy;
           return cwd === null
             ? Effect.succeed({})
-            : cursorWorkspaceMcpServers(cwd, adapterOptions.environment, {
+            : cursorWorkspaceMcpServers(cwd, sessionEnvironment, {
                 includeProject: cursorLoadsProjectConfig(runtimePolicy, platform),
               }).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -2797,7 +2803,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* Ref.set(liveAgent, null);
           }
           const options = makeCursorAgentOptions({
-            ...(apiKey === undefined ? {} : { apiKey }),
+            ...(sessionApiKey === undefined ? {} : { apiKey: sessionApiKey }),
             modelSelection: openInput.modelSelection,
             models: adapterOptions.getModels?.() ?? [],
             sdkModels: adapterOptions.getSdkModels?.() ?? [],

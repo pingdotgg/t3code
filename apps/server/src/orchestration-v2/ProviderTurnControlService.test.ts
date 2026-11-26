@@ -214,6 +214,8 @@ function layerSessions(
       get: (providerSessionId) =>
         Effect.succeed(providerSessionId === liveSessionId ? Option.some(runtime) : Option.none()),
       isLive: (providerSessionId) => Effect.succeed(providerSessionId === liveSessionId),
+      resolveActiveSessionId: ({ providerSessionId }) =>
+        Effect.succeed(providerSessionId === liveSessionId ? liveSessionId : null),
       close: () => Effect.void,
       closeInstance: () => Effect.void,
       release: () => Effect.void,

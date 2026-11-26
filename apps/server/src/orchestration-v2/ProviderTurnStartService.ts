@@ -1118,6 +1118,11 @@ export const layer: Layer.Layer<
           const turnRun = projection.runs.find((candidate) => candidate.rootNodeId === turn.nodeId);
           return turnRun === undefined || !slashMessageIds.has(turnRun.userMessageId);
         });
+        const activeWarmSessionId = yield* providerSessions.resolveActiveSessionId({
+          providerSessionId,
+          threadId: projection.thread.id,
+          ...(actingMemberId === undefined ? {} : { actingMemberId }),
+        });
         const prepResult = yield* Effect.result(
           teamProviderManagerOption.value.prepareForTurn({
             projectId: projection.thread.projectId,
@@ -1125,7 +1130,7 @@ export const layer: Layer.Layer<
             instanceId: run.providerInstanceId,
             driver: providerThread.driver,
             nativeThreadHasTurns: hasPriorTurnsOnProviderThread,
-            providerSessionId,
+            ...(activeWarmSessionId === null ? {} : { providerSessionId: activeWarmSessionId }),
             ...(actingMemberId === undefined ? {} : { actingMemberId }),
           }),
         );
@@ -1142,10 +1147,12 @@ export const layer: Layer.Layer<
           return;
         }
         teamPrep = prepResult.success;
-        if (teamPrep.recycleWarmSession) {
+        if (teamPrep.recycleWarmSession && activeWarmSessionId !== null) {
           yield* providerSessions
             .release({
-              providerSessionId,
+              providerSessionId: activeWarmSessionId,
+              threadId: projection.thread.id,
+              ...(actingMemberId === undefined ? {} : { actingMemberId }),
               reason: "manual_shutdown",
               detail: "Team OAuth lease rotated; recycling warm provider session.",
               preserveTeamEphemeralTokens: true,
@@ -2527,10 +2534,13 @@ export const layer: Layer.Layer<
         },
         modelSelection: run.modelSelection,
         runtimePolicy: resolvedRuntimePolicy,
+        ...(actingMemberId === undefined ? {} : { actingMemberId }),
         recycleSession: () =>
           providerSessions
             .release({
               providerSessionId: activeProviderSessionId,
+              threadId: projection.thread.id,
+              ...(actingMemberId === undefined ? {} : { actingMemberId }),
               reason: "manual_shutdown",
               detail:
                 "Team OAuth lease rotated during active turn; recycling warm provider session.",

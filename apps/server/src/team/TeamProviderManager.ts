@@ -299,6 +299,11 @@ export class TeamProviderManager extends Context.Service<
     readonly purgeEphemeralTokensForInstance: (
       virtualInstanceId: ProviderInstanceId,
     ) => Effect.Effect<void>;
+    /** Records the current lease generation for a newly opened provider session so subsequent rotations recycle every live warm session. */
+    readonly recordSessionLeaseGeneration: (
+      virtualInstanceId: ProviderInstanceId,
+      providerSessionId: ProviderSessionId,
+    ) => Effect.Effect<void>;
     /** Mints a per-session ephemeral loopback proxy token scoped to `(teamId, providerInstanceId, memberId)` on Team Server hosts. */
     readonly issueInternalProxySessionToken: (input: {
       readonly virtualInstanceId: ProviderInstanceId;
@@ -331,6 +336,7 @@ export class TeamProviderManager extends Context.Service<
       readonly threadId: ThreadId;
       readonly providerThreadId: ProviderThreadId;
       readonly runId: RunId;
+      readonly actingMemberId?: TeamMemberId | null;
       readonly error: unknown;
       readonly recycleSession: () => Effect.Effect<void>;
       readonly requestContinuation?: (
@@ -1432,12 +1438,15 @@ const make = Effect.gen(function* () {
       }
 
       const parsedVirtual = parseTeamProviderInstanceId(input.instanceId);
-      let recycleWarmSession = yield* Ref.modify(pendingRecycleInstancesRef, (current) => {
-        if (!current.has(input.instanceId)) return [false, current] as const;
-        const next = new Set(current);
-        next.delete(input.instanceId);
-        return [true, next] as const;
-      });
+      let recycleWarmSession =
+        input.providerSessionId === undefined
+          ? yield* Ref.modify(pendingRecycleInstancesRef, (current) => {
+              if (!current.has(input.instanceId)) return [false, current] as const;
+              const next = new Set(current);
+              next.delete(input.instanceId);
+              return [true, next] as const;
+            })
+          : false;
       if (parsedVirtual !== null) {
         const workspaceOpt = yield* teamRepo
           .getWorkspace()
@@ -1491,20 +1500,30 @@ const make = Effect.gen(function* () {
           RAM_TOKEN_CACHING_DRIVERS.has(tokenLeaseDriver) &&
           input.providerSessionId !== undefined
         ) {
-          const trackedSessionId = input.actingMemberId
-            ? ProviderSessionId.make(`${input.providerSessionId}::member:${input.actingMemberId}`)
-            : input.providerSessionId;
+          const trackedSessionId = input.providerSessionId;
           const currentGen =
             (yield* Ref.get(leaseGenerationByInstanceRef)).get(input.instanceId) ?? 0;
           const sessionGen = (yield* Ref.get(sessionLeaseGenerationRef)).get(trackedSessionId);
           if (sessionGen !== undefined && sessionGen < currentGen) {
             recycleWarmSession = true;
+          } else if (sessionGen === undefined) {
+            const consumedPending = yield* Ref.modify(pendingRecycleInstancesRef, (current) => {
+              if (!current.has(input.instanceId)) return [false, current] as const;
+              const next = new Set(current);
+              next.delete(input.instanceId);
+              return [true, next] as const;
+            });
+            if (consumedPending) {
+              recycleWarmSession = true;
+            }
           }
-          yield* Ref.update(sessionLeaseGenerationRef, (current) => {
-            const next = new Map(current);
-            next.set(trackedSessionId, currentGen);
-            return next;
-          });
+          if (!recycleWarmSession) {
+            yield* Ref.update(sessionLeaseGenerationRef, (current) => {
+              const next = new Map(current);
+              next.set(trackedSessionId, currentGen);
+              return next;
+            });
+          }
         }
       }
 
@@ -1572,6 +1591,19 @@ const make = Effect.gen(function* () {
         );
       }
     }),
+
+    recordSessionLeaseGeneration: Effect.fn("TeamProviderManager.recordSessionLeaseGeneration")(
+      function* (virtualInstanceId, providerSessionId) {
+        if (parseTeamProviderInstanceId(virtualInstanceId) === null) return;
+        const currentGen =
+          (yield* Ref.get(leaseGenerationByInstanceRef)).get(virtualInstanceId) ?? 0;
+        yield* Ref.update(sessionLeaseGenerationRef, (current) => {
+          const next = new Map(current);
+          next.set(providerSessionId, currentGen);
+          return next;
+        });
+      },
+    ),
 
     issueInternalProxySessionToken: Effect.fn("TeamProviderManager.issueInternalProxySessionToken")(
       function* (input) {
@@ -1720,7 +1752,10 @@ const make = Effect.gen(function* () {
         }
 
         const refreshed = yield* Effect.result(
-          requestFreshLease(input.virtualInstanceId, { forceRefresh: true }),
+          requestFreshLease(input.virtualInstanceId, {
+            forceRefresh: true,
+            ...(input.actingMemberId !== undefined ? { actingMemberId: input.actingMemberId } : {}),
+          }),
         );
         if (refreshed._tag === "Failure") {
           if (isTeamProviderAccessRevokedError(refreshed.failure)) {
@@ -1733,8 +1768,10 @@ const make = Effect.gen(function* () {
           return { handled: false, revoked: false };
         }
 
-        // Mark for guaranteed warm session recycle on the continuation turn as well as recycling now.
+        // Bump lease generation + mark pending recycle so every live RAM-caching warm session
+        // recycles on its next turn even if the upstream returned the same token string.
         if (RAM_TOKEN_CACHING_DRIVERS.has(input.driver)) {
+          yield* bumpLeaseGeneration(input.virtualInstanceId);
           yield* Ref.update(pendingRecycleInstancesRef, (current) => {
             const next = new Set(current);
             next.add(input.virtualInstanceId);

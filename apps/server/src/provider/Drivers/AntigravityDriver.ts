@@ -258,15 +258,14 @@ export const AntigravityDriver: ProviderDriver<
       );
       const sessionOverride = yield* ProviderSessionEnvironmentOverride;
       const effectiveBaseEnv: NodeJS.ProcessEnv =
-        Object.keys(sessionOverride).length > 0
-          ? { ...processEnvironment, ...sessionOverride }
-          : processEnvironment;
+        Object.keys(sessionOverride).length > 0 ? { ...baseEnv, ...sessionOverride } : baseEnv;
+      const effectiveApiKey =
+        typeof effectiveBaseEnv.GEMINI_API_KEY === "string" &&
+        effectiveBaseEnv.GEMINI_API_KEY.length > 0
+          ? effectiveBaseEnv.GEMINI_API_KEY
+          : auth.apiKey;
       const effectiveAuth: AntigravityAuthConfig =
-        auth.authMethod === "gemini-api-key" &&
-        typeof sessionOverride.GEMINI_API_KEY === "string" &&
-        sessionOverride.GEMINI_API_KEY.length > 0
-          ? { ...auth, apiKey: sessionOverride.GEMINI_API_KEY }
-          : auth;
+        auth.authMethod === "gemini-api-key" ? { ...auth, apiKey: effectiveApiKey } : auth;
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
         baseEnv: effectiveBaseEnv,
@@ -318,8 +317,8 @@ export const AntigravityDriver: ProviderDriver<
           installation: executable,
           profile,
           cwd,
-          baseEnv,
-          auth,
+          baseEnv: effectiveBaseEnv,
+          auth: effectiveAuth,
           runtimeTempDirectory,
         }),
       };

@@ -174,14 +174,52 @@ type TeamHttpAuthOutcome =
  */
 const encodeJsonUnknown = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function isLoopbackRemoteAddress(raw: string): boolean {
-  const normalized = raw.trim().toLowerCase();
-  return (
-    normalized === "127.0.0.1" ||
-    normalized === "::1" ||
-    normalized === "::ffff:127.0.0.1" ||
-    normalized === "localhost"
+function normalizeSocketIp(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed.length === 0) return null;
+  const withoutBrackets =
+    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  const withoutZone = withoutBrackets.split("%")[0] ?? withoutBrackets;
+  return withoutZone.startsWith("::ffff:") ? withoutZone.slice("::ffff:".length) : withoutZone;
+}
+
+function isLoopbackIp(ip: string): boolean {
+  return ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || ip.startsWith("127.");
+}
+
+/** Fails closed for missing peer sockets or forwarded headers; allows loopback or same-host binds. */
+export function isLocalInternalProxyRequest(request: HttpServerRequest.HttpServerRequest): boolean {
+  if (
+    request.headers["x-forwarded-for"] !== undefined ||
+    request.headers.forwarded !== undefined ||
+    request.headers["x-real-ip"] !== undefined
+  ) {
+    return false;
+  }
+  const source = request.source as
+    | {
+        readonly remoteAddress?: string | null;
+        readonly localAddress?: string | null;
+        readonly socket?: {
+          readonly remoteAddress?: string | null;
+          readonly localAddress?: string | null;
+        };
+      }
+    | undefined;
+  const remote = normalizeSocketIp(
+    source?.socket?.remoteAddress ??
+      source?.remoteAddress ??
+      Option.getOrUndefined(request.remoteAddress),
   );
+  if (remote === null) {
+    return false;
+  }
+  if (isLoopbackIp(remote)) {
+    return true;
+  }
+  const local = normalizeSocketIp(source?.socket?.localAddress ?? source?.localAddress);
+  return local !== null && remote === local;
 }
 
 const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authenticateTeamMember")(
@@ -226,19 +264,17 @@ const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authe
         options.providerInstanceId !== undefined &&
         Option.isSome(teamProviderManagerOpt)
       ) {
-        const remoteAddr = request.remoteAddress;
-        const loopbackAllowed =
-          Option.isNone(remoteAddr) || isLoopbackRemoteAddress(remoteAddr.value);
+        const localOriginAllowed = isLocalInternalProxyRequest(request);
         const internalMatch = yield* teamProviderManagerOpt.value
           .verifyInternalProxyToken(presentedToken, options.providerInstanceId)
           .pipe(Effect.orElseSucceed(() => null));
         if (internalMatch !== null) {
-          if (!loopbackAllowed || internalMatch.teamId !== team.id) {
+          if (!localOriginAllowed || internalMatch.teamId !== team.id) {
             return {
               ok: false,
               status: 403,
               code: "team_access_revoked",
-              message: "Internal team proxy credentials are only valid from loopback.",
+              message: "Internal team proxy credentials are only valid from local loopback.",
             };
           }
           if (internalMatch.memberId !== null) {

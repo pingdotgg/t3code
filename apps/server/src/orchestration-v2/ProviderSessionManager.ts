@@ -275,6 +275,12 @@ export interface ProviderSessionManagerV2Shape {
     ProviderSessionManagerV2Error
   >;
   readonly isLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
+  /** Resolves the currently live effective session ID for `(providerSessionId, threadId, actingMemberId)`, or `null` when cold. */
+  readonly resolveActiveSessionId: (input: {
+    readonly providerSessionId: ProviderSessionId;
+    readonly threadId: ThreadId;
+    readonly actingMemberId?: TeamMemberId | null;
+  }) => Effect.Effect<ProviderSessionId | null>;
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -283,6 +289,8 @@ export interface ProviderSessionManagerV2Shape {
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly release: (input: {
     readonly providerSessionId: ProviderSessionId;
+    readonly threadId?: ThreadId;
+    readonly actingMemberId?: TeamMemberId | null;
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
     readonly preserveTeamEphemeralTokens?: boolean;
@@ -2590,6 +2598,7 @@ export const layerWithOptions = (
           detail: "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
           keepIf: hasUnfinishedRecords,
+          preserveTeamEphemeralTokens: true,
         }).pipe(logReleaseFailure(providerSessionId));
       });
 
@@ -3426,6 +3435,7 @@ export const layerWithOptions = (
                       reason: "manual_shutdown",
                       detail:
                         "Turn author changed; recycling warm provider session with rotated MCP token.",
+                      preserveTeamEphemeralTokens: true,
                     }).pipe(logReleaseFailure(previousSessionId));
                   } else {
                     const previousCredentialId = liveAfterLinks.mcpCredentialIdByThread.get(
@@ -3571,6 +3581,9 @@ export const layerWithOptions = (
                             initialProviderItemIdentityVersion:
                               input.initialProviderItemIdentityVersion,
                           }),
+                      ...(teamProxySessionEnv === null
+                        ? {}
+                        : { sessionEnvironmentOverride: teamProxySessionEnv }),
                     })
                     .pipe(
                       Effect.provideService(
@@ -3682,6 +3695,17 @@ export const layerWithOptions = (
                 ),
               );
               yield* startEventPump(entry, sessionClosed);
+              if (
+                Option.isSome(teamProviderManagerOption) &&
+                isTeamProviderInstanceId(input.modelSelection.instanceId)
+              ) {
+                yield* teamProviderManagerOption.value
+                  .recordSessionLeaseGeneration(
+                    input.modelSelection.instanceId,
+                    effectiveProviderSessionId,
+                  )
+                  .pipe(Effect.ignore);
+              }
               yield* scheduleIdleRelease(effectiveProviderSessionId);
               return exposedRuntime;
             }),
@@ -3691,6 +3715,44 @@ export const layerWithOptions = (
           Ref.get(sessions).pipe(
             Effect.map((current) => matchingSessionIds(current, providerSessionId).length > 0),
           ),
+        resolveActiveSessionId: Effect.fn("ProviderSessionManager.resolveActiveSessionId")(
+          function* (input) {
+            const current = yield* Ref.get(sessions);
+            const byThread = yield* Ref.get(activeSessionIdByThread);
+            const threadSessionId = resolveThreadSessionId(
+              byThread,
+              input.providerSessionId,
+              input.threadId,
+            );
+            const threadEntry = current.get(sessionKey(threadSessionId));
+            if (threadEntry !== undefined) {
+              if (
+                input.actingMemberId === undefined ||
+                threadEntry.ownerActingMemberId === (input.actingMemberId ?? null)
+              ) {
+                return threadEntry.runtime.providerSessionId;
+              }
+            }
+            const base = canonicalBaseSessionId(input.providerSessionId);
+            if (input.actingMemberId !== undefined && input.actingMemberId !== null) {
+              const memberEntry = current.get(
+                sessionKey(memberScopedSessionId(base, input.actingMemberId)),
+              );
+              if (memberEntry !== undefined) {
+                return memberEntry.runtime.providerSessionId;
+              }
+            }
+            const baseEntry = current.get(sessionKey(base));
+            if (
+              baseEntry !== undefined &&
+              (input.actingMemberId === undefined ||
+                baseEntry.ownerActingMemberId === (input.actingMemberId ?? null))
+            ) {
+              return baseEntry.runtime.providerSessionId;
+            }
+            return null;
+          },
+        ),
         get: Effect.fn("ProviderSessionManager.get")(
           function* (providerSessionId, threadId) {
             const effectiveSessionId =
@@ -3775,7 +3837,52 @@ export const layerWithOptions = (
             ),
         ),
         release: Effect.fn("ProviderSessionManager.release")(function* (input) {
-          const ids = matchingSessionIds(yield* Ref.get(sessions), input.providerSessionId);
+          const current = yield* Ref.get(sessions);
+          if (input.threadId !== undefined || input.actingMemberId !== undefined) {
+            let targetId: ProviderSessionId | null = null;
+            if (input.threadId !== undefined) {
+              const byThread = yield* Ref.get(activeSessionIdByThread);
+              const candidate = resolveThreadSessionId(
+                byThread,
+                input.providerSessionId,
+                input.threadId,
+              );
+              const entry = current.get(sessionKey(candidate));
+              if (
+                entry !== undefined &&
+                (input.actingMemberId === undefined ||
+                  entry.ownerActingMemberId === (input.actingMemberId ?? null))
+              ) {
+                targetId = entry.runtime.providerSessionId;
+              }
+            }
+            if (targetId === null) {
+              const base = canonicalBaseSessionId(input.providerSessionId);
+              if (input.actingMemberId !== undefined && input.actingMemberId !== null) {
+                const memberEntry = current.get(
+                  sessionKey(memberScopedSessionId(base, input.actingMemberId)),
+                );
+                if (memberEntry !== undefined) {
+                  targetId = memberEntry.runtime.providerSessionId;
+                }
+              }
+              if (targetId === null) {
+                const baseEntry = current.get(sessionKey(base));
+                if (
+                  baseEntry !== undefined &&
+                  (input.actingMemberId === undefined ||
+                    baseEntry.ownerActingMemberId === (input.actingMemberId ?? null))
+                ) {
+                  targetId = baseEntry.runtime.providerSessionId;
+                }
+              }
+            }
+            if (targetId !== null) {
+              yield* releaseEntry({ ...input, providerSessionId: targetId });
+            }
+            return;
+          }
+          const ids = matchingSessionIds(current, input.providerSessionId);
           const targets = ids.length > 0 ? ids : [input.providerSessionId];
           yield* Effect.forEach(
             targets,

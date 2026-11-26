@@ -490,7 +490,15 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
               }),
             );
           } else {
-            yield* fs.remove(instructionPath, { force: true }).pipe(Effect.ignore);
+            yield* fs.remove(instructionPath, { force: true }).pipe(
+              Effect.catch((cause) => {
+                instructionsMaterialized = false;
+                return Effect.logWarning("TeamProfileMaterializer.removeInstructionFile failed", {
+                  instructionPath,
+                  cause,
+                });
+              }),
+            );
           }
         }
 

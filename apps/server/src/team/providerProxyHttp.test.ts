@@ -2,6 +2,7 @@
 import * as NodeHttp from "node:http";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderDriverKind,
@@ -11,11 +12,20 @@ import {
   type TeamAssetsDeltaResponse,
   type TeamProviderLeaseResponse,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { FetchHttpClient, HttpClient, HttpRouter } from "effect/http";
+import * as Option from "effect/Option";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+  type HttpServerRequest,
+} from "effect/http";
 import { describe, expect, it } from "@effect/vitest";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -228,6 +238,15 @@ describe("TeamProviderProxyHttp", () => {
           const { handler, dispose } = HttpRouter.toWebHandler(routerLayer, {
             disableLogger: true,
           });
+          const servedLoopback = yield* Layer.build(
+            HttpRouter.serve(routerLayer, { disableListenLog: true, disableLogger: true }).pipe(
+              Layer.provideMerge(NodeHttpServer.layerTest),
+            ),
+          );
+          const loopbackServer = Context.get(servedLoopback, HttpServer.HttpServer);
+          const loopbackPort = (loopbackServer.address as { readonly port: number }).port;
+          const loopbackOrigin = `http://127.0.0.1:${loopbackPort}`;
+          const httpClient = yield* HttpClient.HttpClient;
           try {
             // 1. Proxy request injects COMPANY_SECRET_API_KEY and strips Bob's token.
             const proxyRes = yield* Effect.promise(() =>
@@ -377,30 +396,72 @@ describe("TeamProviderProxyHttp", () => {
             expect(bobEnv?.T3_TEAM_PROXY_TOKEN).toBeDefined();
             expect(aliceEnv?.T3_TEAM_PROXY_TOKEN).not.toBe(bobEnv?.T3_TEAM_PROXY_TOKEN);
 
-            // Concurrent requests from Alice and Bob are each attributed to their own member ID!
-            const [aliceProxyRes, bobProxyRes] = yield* Effect.promise(() =>
-              Promise.all([
-                handler(
-                  new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
-                    method: "POST",
-                    headers: {
-                      authorization: `Bearer ${aliceEnv!.T3_TEAM_PROXY_TOKEN}`,
-                      "content-type": "application/json",
-                    },
-                    body: JSON.stringify({ prompt: "from-alice" }),
-                  }),
+            // Internal proxy token MUST fail closed when peer socket address is missing (web handler)
+            // OR when proxy-forwarding headers like x-forwarded-for are present on a loopback peer!
+            const missingRemoteRes = yield* Effect.promise(() =>
+              handler(
+                new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
+                  method: "POST",
+                  headers: {
+                    authorization: `Bearer ${aliceEnv!.T3_TEAM_PROXY_TOKEN}`,
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({ prompt: "missing-socket" }),
+                }),
+              ),
+            );
+            expect(missingRemoteRes.status).toBe(403);
+
+            const forwardedLoopbackRes = yield* httpClient.execute(
+              HttpClientRequest.post(
+                `${loopbackOrigin}/api/team/provider-proxy/company-openai/v1/chat`,
+              ).pipe(
+                HttpClientRequest.setHeader(
+                  "authorization",
+                  `Bearer ${aliceEnv!.T3_TEAM_PROXY_TOKEN}`,
                 ),
-                handler(
-                  new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
-                    method: "POST",
-                    headers: {
-                      authorization: `Bearer ${bobEnv!.T3_TEAM_PROXY_TOKEN}`,
-                      "content-type": "application/json",
-                    },
-                    body: JSON.stringify({ prompt: "from-bob" }),
-                  }),
+                HttpClientRequest.setHeader("x-forwarded-for", "198.51.100.42"),
+                HttpClientRequest.bodyText(
+                  JSON.stringify({ prompt: "via-reverse-proxy" }),
+                  "application/json",
                 ),
-              ]),
+              ),
+            );
+            expect(forwardedLoopbackRes.status).toBe(403);
+
+            // Concurrent direct loopback requests from Alice and Bob are each attributed to their own member ID!
+            const [aliceProxyRes, bobProxyRes] = yield* Effect.all(
+              [
+                httpClient.execute(
+                  HttpClientRequest.post(
+                    `${loopbackOrigin}/api/team/provider-proxy/company-openai/v1/chat`,
+                  ).pipe(
+                    HttpClientRequest.setHeader(
+                      "authorization",
+                      `Bearer ${aliceEnv!.T3_TEAM_PROXY_TOKEN}`,
+                    ),
+                    HttpClientRequest.bodyText(
+                      JSON.stringify({ prompt: "from-alice" }),
+                      "application/json",
+                    ),
+                  ),
+                ),
+                httpClient.execute(
+                  HttpClientRequest.post(
+                    `${loopbackOrigin}/api/team/provider-proxy/company-openai/v1/chat`,
+                  ).pipe(
+                    HttpClientRequest.setHeader(
+                      "authorization",
+                      `Bearer ${bobEnv!.T3_TEAM_PROXY_TOKEN}`,
+                    ),
+                    HttpClientRequest.bodyText(
+                      JSON.stringify({ prompt: "from-bob" }),
+                      "application/json",
+                    ),
+                  ),
+                ),
+              ],
+              { concurrency: "unbounded" },
             );
             expect(aliceProxyRes.status).toBe(200);
             expect(bobProxyRes.status).toBe(200);
@@ -424,16 +485,18 @@ describe("TeamProviderProxyHttp", () => {
 
             // Session release revokes Alice's ephemeral token immediately.
             yield* teamProviderManager.revokeInternalProxySessionToken(aliceSessionId);
-            const afterCloseRes = yield* Effect.promise(() =>
-              handler(
-                new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
-                  method: "POST",
-                  headers: {
-                    authorization: `Bearer ${aliceEnv!.T3_TEAM_PROXY_TOKEN}`,
-                    "content-type": "application/json",
-                  },
-                  body: JSON.stringify({ prompt: "after-close" }),
-                }),
+            const afterCloseRes = yield* httpClient.execute(
+              HttpClientRequest.post(
+                `${loopbackOrigin}/api/team/provider-proxy/company-openai/v1/chat`,
+              ).pipe(
+                HttpClientRequest.setHeader(
+                  "authorization",
+                  `Bearer ${aliceEnv!.T3_TEAM_PROXY_TOKEN}`,
+                ),
+                HttpClientRequest.bodyText(
+                  JSON.stringify({ prompt: "after-close" }),
+                  "application/json",
+                ),
               ),
             );
             expect(afterCloseRes.status).toBe(401);
@@ -488,22 +551,22 @@ describe("TeamProviderProxyHttp", () => {
             );
 
             // Bob's still-live internal per-session proxy token MUST ALSO immediately fail with 403 (NO fallback to owner)!
-            const revokedInternalProxy = yield* Effect.promise(() =>
-              handler(
-                new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
-                  method: "POST",
-                  headers: {
-                    authorization: `Bearer ${bobEnv!.T3_TEAM_PROXY_TOKEN}`,
-                    "content-type": "application/json",
-                  },
-                  body: JSON.stringify({ prompt: "after-suspend-internal" }),
-                }),
+            const revokedInternalProxy = yield* httpClient.execute(
+              HttpClientRequest.post(
+                `${loopbackOrigin}/api/team/provider-proxy/company-openai/v1/chat`,
+              ).pipe(
+                HttpClientRequest.setHeader(
+                  "authorization",
+                  `Bearer ${bobEnv!.T3_TEAM_PROXY_TOKEN}`,
+                ),
+                HttpClientRequest.bodyText(
+                  JSON.stringify({ prompt: "after-suspend-internal" }),
+                  "application/json",
+                ),
               ),
             );
             expect(revokedInternalProxy.status).toBe(403);
-            expect(yield* Effect.promise(() => revokedInternalProxy.text())).toContain(
-              "team_access_revoked",
-            );
+            expect(yield* revokedInternalProxy.text).toContain("team_access_revoked");
 
             const revokedLease = yield* Effect.promise(() =>
               handler(
@@ -533,4 +596,70 @@ describe("TeamProviderProxyHttp", () => {
         }
       }).pipe(Effect.provide(makeTestLayer())),
   );
+
+  it("isLocalInternalProxyRequest allows loopback and same-host explicit binds while rejecting remote peers, forwarded requests, and missing socket addresses", () => {
+    const makeFakeRequest = (input: {
+      readonly headers?: Record<string, string>;
+      readonly remoteAddress?: string;
+      readonly localAddress?: string;
+    }) =>
+      ({
+        headers: input.headers ?? {},
+        remoteAddress:
+          input.remoteAddress === undefined ? Option.none() : Option.some(input.remoteAddress),
+        source:
+          input.remoteAddress !== undefined || input.localAddress !== undefined
+            ? {
+                socket: {
+                  remoteAddress: input.remoteAddress ?? null,
+                  localAddress: input.localAddress ?? null,
+                },
+              }
+            : undefined,
+      }) as unknown as HttpServerRequest.HttpServerRequest;
+
+    expect(
+      TeamProviderProxyHttp.isLocalInternalProxyRequest(
+        makeFakeRequest({ remoteAddress: "127.0.0.1", localAddress: "127.0.0.1" }),
+      ),
+    ).toBe(true);
+    expect(
+      TeamProviderProxyHttp.isLocalInternalProxyRequest(
+        makeFakeRequest({ remoteAddress: "::ffff:127.0.0.1", localAddress: "::ffff:127.0.0.1" }),
+      ),
+    ).toBe(true);
+    // Explicit tailnet/LAN bind: same-host subprocess has remoteAddress === localAddress.
+    expect(
+      TeamProviderProxyHttp.isLocalInternalProxyRequest(
+        makeFakeRequest({ remoteAddress: "100.64.0.5", localAddress: "100.64.0.5" }),
+      ),
+    ).toBe(true);
+    // Remote peer on the same tailnet/LAN MUST be rejected.
+    expect(
+      TeamProviderProxyHttp.isLocalInternalProxyRequest(
+        makeFakeRequest({ remoteAddress: "100.64.0.99", localAddress: "100.64.0.5" }),
+      ),
+    ).toBe(false);
+    // Reverse-proxied loopback (e.g. Tailscale Serve / nginx) MUST be rejected.
+    expect(
+      TeamProviderProxyHttp.isLocalInternalProxyRequest(
+        makeFakeRequest({
+          remoteAddress: "127.0.0.1",
+          localAddress: "127.0.0.1",
+          headers: { "x-forwarded-for": "203.0.113.10" },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      TeamProviderProxyHttp.isLocalInternalProxyRequest(
+        makeFakeRequest({
+          remoteAddress: "127.0.0.1",
+          localAddress: "127.0.0.1",
+          headers: { forwarded: "for=203.0.113.10" },
+        }),
+      ),
+    ).toBe(false);
+    // Missing peer socket address fails closed.
+    expect(TeamProviderProxyHttp.isLocalInternalProxyRequest(makeFakeRequest({}))).toBe(false);
+  });
 });

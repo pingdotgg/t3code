@@ -574,6 +574,8 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly resumeFromSession?: OrchestrationV2ProviderSession;
   readonly initialNativeThreadId?: string;
   readonly initialProviderItemIdentityVersion?: 2;
+  /** Per-session environment overrides merged on top of the instance environment on open/respawn. */
+  readonly sessionEnvironmentOverride?: Readonly<Record<string, string>>;
 }
 
 export interface ProviderAdapterV2EnsureThreadInput {

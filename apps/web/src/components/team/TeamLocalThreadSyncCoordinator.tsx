@@ -626,6 +626,7 @@ export function TeamLocalThreadSyncCoordinator() {
   useEffect(() => {
     if (!primaryEnvironmentId) return;
     const activeTeamIds = new Set<TeamId>();
+    const connectedActiveEnvIds = new Set<EnvironmentId>();
     const envById = new Map(environments.map((env) => [env.environmentId, env] as const));
 
     for (const [teamEnvId, state] of teamStates) {
@@ -635,16 +636,32 @@ export function TeamLocalThreadSyncCoordinator() {
         state.currentMember === null ||
         state.currentMember.status !== "active"
       ) {
-        // Clear cached sync token on disconnect/re-auth transition so reconnecting with a new
-        // AuthSession mints a fresh local-sync token bound to the new session.
-        if (connectedActiveMemberByEnvIdRef.current.delete(teamEnvId)) {
-          localSyncTokenByTeamEnvRef.current.delete(teamEnvId);
-          for (const [boundTeamId, boundEnvId] of envIdByBoundTeamIdRef.current) {
-            if (boundEnvId === teamEnvId) {
-              syncedBindingFingerprintByTeamIdRef.current.delete(boundTeamId);
-            }
-          }
+        continue;
+      }
+      connectedActiveEnvIds.add(teamEnvId);
+    }
+
+    // Evict cached sync tokens for any environment that disconnected, lost active membership,
+    // or was removed (disconnected environments are omitted from `teamStates`), so reconnecting
+    // with a fresh AuthSession always mints and pushes a new local-sync token.
+    for (const trackedEnvId of connectedActiveMemberByEnvIdRef.current.keys()) {
+      if (connectedActiveEnvIds.has(trackedEnvId)) continue;
+      connectedActiveMemberByEnvIdRef.current.delete(trackedEnvId);
+      localSyncTokenByTeamEnvRef.current.delete(trackedEnvId);
+      for (const [boundTeamId, boundEnvId] of envIdByBoundTeamIdRef.current) {
+        if (boundEnvId === trackedEnvId) {
+          syncedBindingFingerprintByTeamIdRef.current.delete(boundTeamId);
         }
+      }
+    }
+
+    for (const [teamEnvId, state] of teamStates) {
+      if (teamEnvId === primaryEnvironmentId) continue;
+      if (
+        state.team === null ||
+        state.currentMember === null ||
+        state.currentMember.status !== "active"
+      ) {
         continue;
       }
       const env = envById.get(teamEnvId);
