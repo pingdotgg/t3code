@@ -113,24 +113,20 @@ function clockLabel(at: number, from: number) {
 }
 
 function widgetAccounts(window: LimitPoolWindow, resolve: MessageResolver): WidgetLimitAccount[] {
-  const columns = window.columns.map((column) => ({
-    column,
-    base: accountName(column.account, resolve),
-  }));
+  const bases = window.columns.map((column) => accountName(column.account, resolve));
   // Redacted initials can collide, and the widget keys segments by name.
-  const taken = new Set(columns.map(({ base }) => base));
-  const next = new Map<string, number>();
-  return columns.map(({ column, base }) => {
+  const taken = new Set(bases);
+  const used = new Set<string>();
+  return window.columns.map((column, index) => {
+    const base = bases[index] ?? "";
     let name = base;
-    let count = next.get(base);
-    if (count === undefined) count = 2;
-    else {
+    if (used.has(name)) {
+      let count = 2;
       while (taken.has(`${base}${count}`)) count += 1;
       name = `${base}${count}`;
       taken.add(name);
-      count += 1;
     }
-    next.set(base, count);
+    used.add(name);
     const color = normalizeProviderAccentColor(column.account.accentColor);
     // expo-widgets cannot convert an explicit undefined into a Kotlin value.
     const account = { name, ...(color && { color }) };
