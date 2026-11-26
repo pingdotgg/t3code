@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act, createElement, isValidElement, type ReactNode } from "react";
+import { act, Children, createElement, isValidElement, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -32,6 +32,7 @@ const state = vi.hoisted(() => ({
   createResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
+  lookupRepository: vi.fn(),
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
   waitForProject: vi.fn(),
@@ -144,10 +145,14 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unkno
 vi.mock("../../state/use-atom-query-runner", () => ({
   useAtomQueryRunner:
     () =>
-    async ({ input }: { input?: { partialPath?: string } }) =>
-      input?.partialPath === "~"
-        ? AsyncResult.success({ parentPath: "/home/tester", entries: [] })
-        : undefined,
+    ({ input }: { input?: { partialPath?: string; repository?: string } }) =>
+      input?.repository
+        ? state.lookupRepository(input.repository)
+        : Promise.resolve(
+            input?.partialPath === "~"
+              ? AsyncResult.success({ parentPath: "/home/tester", entries: [] })
+              : undefined,
+          ),
 }));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/presentation", () => ({
@@ -190,6 +195,7 @@ import {
   AddProjectNewScreen,
   AddProjectDestinationScreen,
   AddProjectLocalFolderScreen,
+  AddProjectRepositoryScreen,
   AddProjectSourceScreen,
 } from "./AddProjectScreen";
 import { AddProjectSourceRoute } from "./AddProjectSourceRoute";
@@ -239,6 +245,52 @@ function renderScreen(render: () => ReactNode) {
   act(() => root.render(createElement(Observer)));
   return screen;
 }
+
+it("does not open the clone destination after leaving the repository screen", async () => {
+  const repository = AsyncResult.success({
+    provider: "github",
+    nameWithOwner: "example/slow",
+    url: "https://github.com/example/slow",
+    sshUrl: "git@github.com:example/slow.git",
+  });
+  const lookup = Promise.withResolvers<typeof repository>();
+  state.lookupRepository.mockReset().mockReturnValue(lookup.promise);
+  state.dispatch.mockReset();
+  state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+  state.connectionStates = {};
+  let screen: ReactNode;
+  function RepositoryScreen() {
+    screen = AddProjectRepositoryScreen({ environmentId: "environment", source: "github" });
+    return null;
+  }
+  function typeRepository(node: ReactNode): void {
+    Children.forEach(node, (child) => {
+      if (
+        !isValidElement<{ children?: ReactNode; onChangeText?: (value: string) => void }>(child)
+      ) {
+        return;
+      }
+      child.props.onChangeText?.("example/slow");
+      typeRepository(child.props.children);
+    });
+  }
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.createElement("div"));
+  mountedRoots.push(root);
+  await act(() => root.render(createElement(RepositoryScreen)));
+  await act(() => typeRepository(screen));
+  const submit = findAction(screen, "Lookup repository");
+  if (!submit) throw new Error("Repository lookup action missing");
+  await act(() => void submit());
+  expect(state.lookupRepository).toHaveBeenCalledWith("example/slow");
+
+  await act(() => root.render(null));
+  await act(async () => {
+    lookup.resolve(repository);
+    await lookup.promise;
+  });
+  expect(state.dispatch).not.toHaveBeenCalled();
+});
 
 function cloneAction() {
   const action = findAction(
