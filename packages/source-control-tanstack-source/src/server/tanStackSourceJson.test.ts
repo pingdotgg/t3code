@@ -92,17 +92,6 @@ describe("toReviewComment", () => {
   });
 });
 
-describe("patchSections", () => {
-  it("splits a unified patch by the path each section changes", () => {
-    const patch =
-      "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n" +
-      "diff --git a/old.ts b/new.ts\nsimilarity index 100%\n";
-    const sections = Json.patchSections(patch);
-    expect([...sections.keys()]).toEqual(["a.ts", "new.ts"]);
-    expect(sections.get("new.ts")).toBe("diff --git a/old.ts b/new.ts\nsimilarity index 100%\n");
-  });
-});
-
 describe("toActivity", () => {
   it("tells conversation comments, line comments and reviews apart, and hides held ones", () => {
     const activity = Json.toActivity({

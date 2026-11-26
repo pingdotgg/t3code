@@ -5,6 +5,10 @@ import {
   type PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 import {
+  diffFileSection,
+  parseDiffFilePaths,
+} from "@t3tools/source-control-core/server/diffFileRevisions";
+import {
   PullRequestProviderError,
   tailLogLines,
   type ProviderChangeRequestDetail,
@@ -538,23 +542,25 @@ export const make = Effect.gen(function* () {
           "getDiff",
           "TanStack Source has no diff for this pull request right now.",
         );
-      const sections = Json.patchSections(diff.patch);
+      if (input.path !== undefined) {
+        const section = diffFileSection(diff.patch, input.path);
+        return {
+          patch: section === null ? "" : section.endsWith("\n") ? section : `${section}\n`,
+          truncated: section === null && diff.truncated === true,
+          nextCursor: null,
+        };
+      }
+      const presentPaths = new Set(
+        parseDiffFilePaths(diff.patch).map((file) => file.newPath ?? file.oldPath),
+      );
       // Files the cut-off patch leaves out still show, as counts.
       const omittedFileStats = (files?.files ?? [])
-        .filter((file) => !sections.has(file.path))
+        .filter((file) => !presentPaths.has(file.path))
         .map((file) => ({
           path: file.path,
           additions: file.additions ?? 0,
           deletions: file.deletions ?? 0,
         }));
-      if (input.path !== undefined) {
-        const section = sections.get(input.path);
-        return {
-          patch: section ?? "",
-          truncated: section === undefined && diff.truncated === true,
-          nextCursor: null,
-        };
-      }
       return {
         patch: diff.patch,
         truncated: diff.truncated === true || omittedFileStats.length > 0,
