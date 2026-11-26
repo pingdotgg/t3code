@@ -752,6 +752,22 @@ export function createTeamEnvironmentAtoms<R, E>(
       label: "environment-data:team:notify-local-assets-updated",
       tag: TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated,
     }),
+    updateMyMobileVisibility: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:update-my-mobile-visibility",
+      tag: TEAM_WS_METHODS.teamUpdateMyMobileVisibility,
+    }),
+    createMobilePairingLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:create-mobile-pairing-link",
+      tag: TEAM_WS_METHODS.teamCreateMobilePairingLink,
+    }),
+    listMyMobilePairingLinks: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:list-my-mobile-pairing-links",
+      tag: TEAM_WS_METHODS.teamListMyMobilePairingLinks,
+    }),
+    revokeMyMobilePairingLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:revoke-my-mobile-pairing-link",
+      tag: TEAM_WS_METHODS.teamRevokeMyMobilePairingLink,
+    }),
   };
 }
 

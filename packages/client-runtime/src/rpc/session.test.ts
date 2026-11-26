@@ -1229,4 +1229,22 @@ describe("RpcSessionFactory", () => {
       expect(config.availableEditors).toEqual(["zed"]);
     }),
   );
+
+  it.effect(
+    "appends the t3TeamsClient handshake query param only when teamsClient is enabled",
+    () =>
+      Effect.gen(function* () {
+        const defaultEnv = yield* makeFactory();
+        yield* defaultEnv.factory.connect(PREPARED);
+        const defaultSocket = yield* awaitSocket(defaultEnv.sockets);
+        expect(new URL(defaultSocket.url).searchParams.get("t3TeamsClient")).toBeNull();
+        defaultSocket.close(1000, "done");
+
+        const teamsEnv = yield* makeFactory({ teamsClient: true });
+        yield* teamsEnv.factory.connect(PREPARED);
+        const teamsSocket = yield* awaitSocket(teamsEnv.sockets);
+        expect(new URL(teamsSocket.url).searchParams.get("t3TeamsClient")).toBe("1");
+        teamsSocket.close(1000, "done");
+      }),
+  );
 });

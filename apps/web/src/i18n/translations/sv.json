@@ -13378,5 +13378,44 @@
   "f5870f7b4f8dc287": "OAuth refresh token (write-only)",
   "f872b076996460f1": "Could not save team skill",
   "fb0e3099b04c9dc8": "{count} refs",
-  "fea38bf1df9d2d73": "Cancel edit"
+  "fea38bf1df9d2d73": "Cancel edit",
+  "007ef30f1128945e": "Synlighet för mobiltrådar uppdaterad",
+  "06971972a3ed211f": "QR-kod för mobilparkoppling i team",
+  "0d6d7d62b296953a": "Officiella mobilklienter visar alla teamtrådar som du har åtkomst till.",
+  "1fb101ec575c2fd8": "Väntande mobilparkopplingskoder",
+  "278bb6bc3d39039e": "Urklipps-API är inte tillgängligt vid kopiering av mobilparkopplingskoden.",
+  "28518f0e951569cd": "Alla åtkomliga teamtrådar",
+  "2a5dfb6c1b0789dc": "Enhetsetikett (valfritt, t.ex. iPhone)",
+  "4297635bc9ee6e7e": "Officiella mobilklienter visar endast dina egna trådar och trådar du följer.",
+  "50be61e05dc1f4cb": "Kunde inte kopiera mobilparkopplingskoden till urklipp.",
+  "51f3f1ad0d1bb194": "Mobilparkopplingskod skapad",
+  "57ad676ecf60bc0c": "Mobilparkopplingskod",
+  "5891c37a751ae818": "Mobilparkopplingskod återkallad",
+  "5c06be376bddebaa": "Mina trådar + följda (standard)",
+  "6e2561975e046ebe": "Kunde inte skapa mobilparkopplingskod",
+  "74cd61a0a08710b6": "Anslut mobil",
+  "8088615323649c6b": "Välj vilka teamtrådar som visas i sidofältet i den officiella T3 Code-mobilappen. Dina Vyer, lås och följaviseringar tillämpas fortfarande av servern.",
+  "839732b9e0582c74": "Kunde inte uppdatera synligheten för mobiltrådar",
+  "a9259586993dea80": "Skapar…",
+  "b4a6d28aa7c99917": "Generera en vanlig parkopplings-QR-kod eller kod bunden till {pseudo} ({role}) för den officiella T3 Code-appen på iOS/Android.",
+  "b625ac1d97e1d933": [
+    "Bunden till ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ·",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "c3c0c1725b86dd27": "Synliga trådar i officiella mobilappen",
+  "c5282ce00f8d353f": "Kunde inte återkalla mobilparkopplingskoden",
+  "eb56b3c5a36b9d51": "Officiell mobilapp",
+  "f3bec5a4fe329e0e": "Skanna QR-koden eller ange koden i den officiella T3 Code-mobilappen för att ansluta som {pseudo}.",
+  "fdf4c0d1563fabcf": "Skapa parkopplingskod"
 }

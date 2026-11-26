@@ -175,6 +175,25 @@ export function requiresTeamNoteApprovalConfirmation(authorRole: TeamRole): bool
 export const TeamMemberStatus = Schema.Literals(["active", "suspended", "removed"]);
 export type TeamMemberStatus = typeof TeamMemberStatus.Type;
 
+export const TEAM_CLIENT_CAPABILITY_HEADER = "x-t3-teams-client";
+export const TEAM_CLIENT_CAPABILITY_QUERY_PARAM = "t3TeamsClient";
+export const TEAM_CLIENT_CAPABILITY_VALUE = "1";
+
+export const TeamUpstreamClientThreadVisibility = Schema.Literals([
+  "owned_and_followed",
+  "all_accessible",
+]);
+export type TeamUpstreamClientThreadVisibility = typeof TeamUpstreamClientThreadVisibility.Type;
+
+export const DEFAULT_UPSTREAM_CLIENT_THREAD_VISIBILITY: TeamUpstreamClientThreadVisibility =
+  "owned_and_followed";
+
+export function effectiveUpstreamClientThreadVisibility(
+  member: Pick<TeamMember, "upstreamClientThreadVisibility"> | null | undefined,
+): TeamUpstreamClientThreadVisibility {
+  return member?.upstreamClientThreadVisibility ?? DEFAULT_UPSTREAM_CLIENT_THREAD_VISIBILITY;
+}
+
 const TEAM_PSEUDO_PATTERN = /^[a-zA-Z0-9._-]{2,32}$/;
 
 export function normalizeTeamPseudo(raw: string): string {
@@ -203,6 +222,7 @@ export const TeamMember = Schema.Struct({
   pseudo: TeamPseudo,
   role: TeamRole,
   status: TeamMemberStatus,
+  upstreamClientThreadVisibility: Schema.optionalKey(TeamUpstreamClientThreadVisibility),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1431,6 +1451,50 @@ export const TeamNotifyLocalAssetsUpdatedResult = Schema.Struct({
   syncedRevision: NonNegativeInt,
 });
 export type TeamNotifyLocalAssetsUpdatedResult = typeof TeamNotifyLocalAssetsUpdatedResult.Type;
+
+export const TeamUpdateMyMobileVisibilityInput = Schema.Struct({
+  upstreamClientThreadVisibility: TeamUpstreamClientThreadVisibility,
+});
+export type TeamUpdateMyMobileVisibilityInput = typeof TeamUpdateMyMobileVisibilityInput.Type;
+
+export const TeamCreateMobilePairingLinkInput = Schema.Struct({
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  scopes: Schema.optionalKey(Schema.Array(AuthEnvironmentScope)),
+});
+export type TeamCreateMobilePairingLinkInput = typeof TeamCreateMobilePairingLinkInput.Type;
+
+export const TeamCreateMobilePairingLinkResult = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  credential: TrimmedNonEmptyString,
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  scopes: Schema.Array(AuthEnvironmentScope),
+  expiresAt: IsoDateTime,
+});
+export type TeamCreateMobilePairingLinkResult = typeof TeamCreateMobilePairingLinkResult.Type;
+
+export const TeamMobilePairingLinkSummary = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: Schema.NullOr(Schema.String),
+  scopes: Schema.Array(AuthEnvironmentScope),
+  createdAt: IsoDateTime,
+  expiresAt: IsoDateTime,
+});
+export type TeamMobilePairingLinkSummary = typeof TeamMobilePairingLinkSummary.Type;
+
+export const TeamListMyMobilePairingLinksResult = Schema.Struct({
+  pairingLinks: Schema.Array(TeamMobilePairingLinkSummary),
+});
+export type TeamListMyMobilePairingLinksResult = typeof TeamListMyMobilePairingLinksResult.Type;
+
+export const TeamRevokeMobilePairingLinkInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+});
+export type TeamRevokeMobilePairingLinkInput = typeof TeamRevokeMobilePairingLinkInput.Type;
+
+export const TeamRevokeMobilePairingLinkResult = Schema.Struct({
+  revoked: Schema.Boolean,
+});
+export type TeamRevokeMobilePairingLinkResult = typeof TeamRevokeMobilePairingLinkResult.Type;
 
 export const TeamOperationErrorCode = Schema.Literals([
   "not_configured",

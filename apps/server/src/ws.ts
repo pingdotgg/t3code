@@ -318,13 +318,15 @@ import {
   assertLocalTerminalRpcExecutionAllowed,
 } from "./team/hubOnly.ts";
 import {
+  adaptThreadStreamForSession,
   assertCanReadAssetResource,
   filterDeviceStateForSession,
   filterPreviewEventsStreamForSession,
   filterSearchThreadsResultForSession,
   filterShellSnapshotForSession,
   filterTerminalMetadataStreamForSession,
-  filterThreadRecordByReadableIds,
+  filterThreadLinkMetadataForSession,
+  filterThreadTitlesForSession,
   guardThreadScopedStreamForSession,
   makeTeamWsRpcHandlers,
   prepareTeamDispatchAttribution,
@@ -332,6 +334,11 @@ import {
   recordTeamThreadLaunch,
   withTeamShellAccessUpdates,
 } from "./team/wsHandlers.ts";
+import {
+  adaptThreadProjectionForUpstreamCompat,
+  adaptThreadShellsForUpstreamCompat,
+  isTeamAwareClientRequest,
+} from "./team/upstreamMobileCompat.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -1203,6 +1210,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     teamSession?: {
       readonly teamService: TeamService.TeamService["Service"];
       readonly sessionId: AuthSessionId;
+      readonly upstreamCompat?: boolean;
     },
   ) {
     const sql = yield* SqlClient.SqlClient;
@@ -1258,6 +1266,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
             teamSession.teamService,
             teamSession.sessionId,
             rawSnapshot,
+            { upstreamCompat: teamSession.upstreamCompat === true },
           )
         : rawSnapshot;
       return {
@@ -1511,6 +1520,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
               ),
             ),
           baseStream,
+          { upstreamCompat: teamSession.upstreamCompat === true },
         )
       : baseStream;
   },
@@ -1522,6 +1532,7 @@ export const layerWsRpc = (
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: ServerSettings.SettingsClient,
+  upstreamCompat = false,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -2091,15 +2102,29 @@ export const layerWsRpc = (
           listProjects: projectStore.listShells(),
           latestSequence: applicationEvents.latestApplicationSequence,
         });
-        const readableIds = yield* teamService.filterReadableThreadIds(
-          currentSessionId,
-          threads.archivedThreads.map((thread) => thread.id),
+        const visibleIds = yield* upstreamCompat
+          ? teamService.filterVisibleShellThreadIds(
+              currentSessionId,
+              threads.archivedThreads.map((thread) => thread.id),
+              { upstreamCompat: true },
+            )
+          : teamService.filterReadableThreadIds(
+              currentSessionId,
+              threads.archivedThreads.map((thread) => thread.id),
+            );
+        const visibleThreads = threads.archivedThreads.filter((thread) =>
+          visibleIds.has(thread.id),
+        );
+        const adaptedThreads = yield* adaptThreadShellsForUpstreamCompat(
+          teamService,
+          visibleThreads,
+          upstreamCompat,
         );
         return {
           schemaVersion: threads.schemaVersion,
           snapshotSequence,
           projects,
-          threads: threads.archivedThreads.filter((thread) => readableIds.has(thread.id)),
+          threads: adaptedThreads,
         } as const;
       }).pipe(
         Effect.flatMap((snapshot) =>
@@ -2136,9 +2161,15 @@ export const layerWsRpc = (
             currentSessionId,
             threads.threads.map((thread) => thread.id),
           );
+          const readableThreads = threads.threads.filter((thread) => readableIds.has(thread.id));
+          const adaptedThreads = yield* adaptThreadShellsForUpstreamCompat(
+            teamService,
+            readableThreads,
+            upstreamCompat,
+          );
           return {
             snapshotSequence,
-            threads: threads.threads.filter((thread) => readableIds.has(thread.id)),
+            threads: adaptedThreads,
           };
         },
       );
@@ -2212,7 +2243,9 @@ export const layerWsRpc = (
                 : Effect.void,
             ),
             Effect.andThen(
-              teamService.assertAndNormalizeDispatchCommand(currentSessionId, command),
+              teamService.assertAndNormalizeDispatchCommand(currentSessionId, command, {
+                upstreamCompat,
+              }),
             ),
             Effect.tap((normalizedCommand) => {
               if (normalizedCommand.type === "thread.create") {
@@ -2372,7 +2405,9 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) =>
           teamService.assertCanUseWorkflows(currentSessionId).pipe(
             Effect.andThen(
-              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId, {
+                upstreamCompat,
+              }),
             ),
             Effect.andThen(teamService.assertCanInterruptThread(currentSessionId, input.threadId)),
             Effect.andThen(threadManagement.stopWorkflow(input)),
@@ -2385,17 +2420,23 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
-          teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId).pipe(
-            Effect.andThen(teamService.assertCanInterruptThread(currentSessionId, input.threadId)),
-            Effect.andThen(threadManagement.forceStopThread(input)),
-            Effect.tap(() =>
-              teamService.notifyTurnInterrupted({
-                actor: { kind: "session", sessionId: currentSessionId },
-                threadId: input.threadId,
-                reason: "force_stop",
-              }),
+          teamService
+            .assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId, {
+              upstreamCompat,
+            })
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanInterruptThread(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(threadManagement.forceStopThread(input)),
+              Effect.tap(() =>
+                teamService.notifyTurnInterrupted({
+                  actor: { kind: "session", sessionId: currentSessionId },
+                  threadId: input.threadId,
+                  reason: "force_stop",
+                }),
+              ),
             ),
-          ),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           teamService
             .assertCanUseWorkflows(currentSessionId)
@@ -2479,7 +2520,9 @@ export const layerWsRpc = (
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
             Effect.flatMap((result) =>
-              filterSearchThreadsResultForSession(teamService, currentSessionId, result),
+              filterSearchThreadsResultForSession(teamService, currentSessionId, result, {
+                upstreamCompat,
+              }),
             ),
             Effect.mapError(
               (cause) =>
@@ -2505,7 +2548,9 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input) =>
           threadManagement.getThreadLinkMetadata(input.threadIds).pipe(
             Effect.flatMap((metadata) =>
-              filterThreadRecordByReadableIds(teamService, currentSessionId, metadata),
+              filterThreadLinkMetadataForSession(teamService, currentSessionId, metadata, {
+                upstreamCompat,
+              }),
             ),
             Effect.mapError(
               (cause) =>
@@ -2518,7 +2563,9 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: (input) =>
           threadManagement.getThreadTitles(input.threadIds).pipe(
             Effect.flatMap((titles) =>
-              filterThreadRecordByReadableIds(teamService, currentSessionId, titles),
+              filterThreadTitlesForSession(teamService, currentSessionId, titles, {
+                upstreamCompat,
+              }),
             ),
             Effect.mapError(
               (cause) =>
@@ -2537,17 +2584,29 @@ export const layerWsRpc = (
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
             Effect.flatMap((page) =>
-              teamService
-                .filterReadableThreadIds(
-                  currentSessionId,
-                  page.threads.map((thread) => thread.id),
-                )
-                .pipe(
-                  Effect.map((readableIds) => ({
-                    ...page,
-                    threads: page.threads.filter((thread) => readableIds.has(thread.id)),
-                  })),
+              (upstreamCompat
+                ? teamService.filterVisibleShellThreadIds(
+                    currentSessionId,
+                    page.threads.map((thread) => thread.id),
+                    { upstreamCompat: true },
+                  )
+                : teamService.filterReadableThreadIds(
+                    currentSessionId,
+                    page.threads.map((thread) => thread.id),
+                  )
+              ).pipe(
+                Effect.flatMap((visibleIds) =>
+                  adaptThreadShellsForUpstreamCompat(
+                    teamService,
+                    page.threads.filter((thread) => visibleIds.has(thread.id)),
+                    upstreamCompat,
+                  ),
                 ),
+                Effect.map((threads) => ({
+                  ...page,
+                  threads,
+                })),
+              ),
             ),
             Effect.mapError(
               (cause) =>
@@ -2578,6 +2637,9 @@ export const layerWsRpc = (
                         projection: projectThreadProjectionForWire(snapshot.projection),
                         snapshotSequence: snapshot.snapshotSequence,
                       }).projection,
+                  ),
+                  Effect.flatMap((projection) =>
+                    adaptThreadProjectionForUpstreamCompat(teamService, projection, upstreamCompat),
                   ),
                   Effect.mapError(
                     (cause) =>
@@ -2730,10 +2792,18 @@ export const layerWsRpc = (
                               Effect.ignore,
                             ),
                     ),
-                    Effect.map((result) => ({
-                      ...result,
-                      projection: projectThreadProjectionForWire(result.projection),
-                    })),
+                    Effect.flatMap((result) =>
+                      adaptThreadProjectionForUpstreamCompat(
+                        teamService,
+                        projectThreadProjectionForWire(result.projection),
+                        upstreamCompat,
+                      ).pipe(
+                        Effect.map((projection) => ({
+                          ...result,
+                          projection,
+                        })),
+                      ),
+                    ),
                   );
               }).pipe(
                 Effect.catchTags({
@@ -2806,18 +2876,26 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
           Stream.unwrap(
-            subscribeOrchestrationV2Shell(input, { teamService, sessionId: currentSessionId }),
+            subscribeOrchestrationV2Shell(input, {
+              teamService,
+              sessionId: currentSessionId,
+              upstreamCompat,
+            }),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           guardThreadScopedStreamForSession(
             teamService,
             currentSessionId,
             input.threadId,
-            Stream.unwrap(
-              Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-                Effect.andThen(threadViewers.view(input.threadId)),
-                Effect.andThen(subscribeOrchestrationV2Thread(input)),
+            adaptThreadStreamForSession(
+              teamService,
+              Stream.unwrap(
+                Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+                  Effect.andThen(threadViewers.view(input.threadId)),
+                  Effect.andThen(subscribeOrchestrationV2Thread(input)),
+                ),
               ),
+              { upstreamCompat },
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
@@ -4918,6 +4996,8 @@ export const layerWsRpc = (
             ),
           ),
         ...makeTeamWsRpcHandlers(teamService, currentSessionId, {
+          callerScopes: currentSession.scopes,
+          serverAuth,
           peerLinks,
           peerClientPairing,
           projectService,
@@ -5037,6 +5117,7 @@ export const layer = Layer.unwrap(
               serverBrowser,
               reportProfiles,
               readSettingsClient(url.value),
+              !isTeamAwareClientRequest(request, url.value),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.

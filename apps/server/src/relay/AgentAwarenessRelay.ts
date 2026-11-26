@@ -629,9 +629,29 @@ export const make = Effect.gen(function* () {
     const snapshot = relayNotificationAllowed
       ? rawSnapshot
       : { ...rawSnapshot, state: null, subagentWait: null };
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
+    const prefixedSnapshotState =
+      Option.isSome(teamService) &&
+      snapshot.state !== null &&
+      typeof teamService.value.formatUpstreamCompatThreadTitle === "function"
+        ? {
+            ...snapshot.state,
+            threadTitle: yield* teamService.value.formatUpstreamCompatThreadTitle(
+              threadId,
+              snapshot.state.threadTitle,
+            ),
+          }
+        : snapshot.state;
+    const effectiveSnapshot =
+      prefixedSnapshotState === snapshot.state
+        ? snapshot
+        : { ...snapshot, state: prefixedSnapshotState };
+    const publishIdentity = agentAwarenessPublishIdentity(
+      effectiveSnapshot.state,
+      effectiveSnapshot.subagentWait,
+    );
     if (
-      (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
+      (effectiveSnapshot.state?.phase === "completed" ||
+        effectiveSnapshot.state?.phase === "failed") &&
       !hasLivePublishedState(publishedStateByThread, threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
@@ -639,7 +659,7 @@ export const make = Effect.gen(function* () {
     if (
       publishedStateByThread.get(threadId) === publishIdentity &&
       // A held completion settled after an earlier clear still has to alert.
-      !(snapshot.state === null && heldCompletions.has(threadId))
+      !(effectiveSnapshot.state === null && heldCompletions.has(threadId))
     ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
@@ -647,7 +667,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("agent activity publish skipped; projected state unchanged", {
         environmentId,
         threadId,
-        reason: snapshot.reason,
+        reason: effectiveSnapshot.reason,
       });
       return;
     }
@@ -655,9 +675,10 @@ export const make = Effect.gen(function* () {
     // Confirm tombstones over live state to avoid removing active cards.
     // Confirm completion: a run can end moments before its continuation starts, and the relay
     // alerts on every move into completed.
-    const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
+    const requiresConfirmation =
+      effectiveSnapshot.state === null || effectiveSnapshot.state?.phase === "completed";
     if (requiresConfirmation) {
-      if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
+      if (effectiveSnapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
       const deadline = publishConfirmDeadlines.get(threadId);
       if (deadline === undefined) {
@@ -665,8 +686,8 @@ export const make = Effect.gen(function* () {
         yield* Effect.logInfo("agent activity publish deferred pending confirmation", {
           environmentId,
           threadId,
-          reason: snapshot.reason,
-          statePhase: snapshot.state?.phase ?? null,
+          reason: effectiveSnapshot.reason,
+          statePhase: effectiveSnapshot.state?.phase ?? null,
           shell: describeThreadShellForAwareness(thread),
         });
         yield* schedulePublishConfirm(threadId);
@@ -678,15 +699,15 @@ export const make = Effect.gen(function* () {
       yield* Effect.logInfo("agent activity deferred publish confirmed", {
         environmentId,
         threadId,
-        reason: snapshot.reason,
-        statePhase: snapshot.state?.phase ?? null,
+        reason: effectiveSnapshot.reason,
+        statePhase: effectiveSnapshot.state?.phase ?? null,
         shell: describeThreadShellForAwareness(thread),
       });
       // Settled during the hold, not resumed: alert the current completion, then clear the card
       // on a new window. Only settlement may hide it; queued or silent runs also project to null.
       const unsettled =
         relayNotificationAllowed &&
-        snapshot.state === null &&
+        effectiveSnapshot.state === null &&
         heldCompletions.has(threadId) &&
         Option.isSome(thread) &&
         thread.value.settledOverride === "settled"
@@ -698,7 +719,17 @@ export const make = Effect.gen(function* () {
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
-        const completion = unsettled.state;
+        const completion =
+          Option.isSome(teamService) &&
+          typeof teamService.value.formatUpstreamCompatThreadTitle === "function"
+            ? {
+                ...unsettled.state,
+                threadTitle: yield* teamService.value.formatUpstreamCompatThreadTitle(
+                  threadId,
+                  unsettled.state.threadTitle,
+                ),
+              }
+            : unsettled.state;
         yield* publishState({
           projectId: unsettled.projectId,
           state: completion,
@@ -717,31 +748,31 @@ export const make = Effect.gen(function* () {
       heldCompletions.delete(threadId);
     }
 
-    if (snapshot.reason === "thread-not-found") {
+    if (effectiveSnapshot.reason === "thread-not-found") {
       yield* Effect.logDebug("publishing agent activity tombstone; thread not found", {
         environmentId,
         threadId,
       });
-    } else if (snapshot.reason === "project-not-found") {
+    } else if (effectiveSnapshot.reason === "project-not-found") {
       yield* Effect.logDebug("publishing agent activity tombstone; project not found", {
         environmentId,
         threadId,
-        projectId: snapshot.projectId,
+        projectId: effectiveSnapshot.projectId,
       });
     }
 
-    const childRequestId = snapshot.subagentWait?.requestId;
+    const childRequestId = effectiveSnapshot.subagentWait?.requestId;
     const childAlert = childAlertByThread.get(threadId);
     const state =
-      snapshot.state !== null &&
+      effectiveSnapshot.state !== null &&
       childRequestId !== undefined &&
       childAlert?.requestId === childRequestId
-        ? { ...snapshot.state, updatedAt: childAlert.updatedAt }
-        : snapshot.state;
+        ? { ...effectiveSnapshot.state, updatedAt: childAlert.updatedAt }
+        : effectiveSnapshot.state;
     yield* publishState({
-      projectId: snapshot.projectId,
+      projectId: effectiveSnapshot.projectId,
       state,
-      reason: snapshot.reason,
+      reason: effectiveSnapshot.reason,
     }).pipe(withRelayClientTracing);
     if (state !== null && childRequestId !== undefined) {
       childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });

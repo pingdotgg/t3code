@@ -35,6 +35,7 @@ import * as AuthConnectDevices from "../persistence/AuthConnectDevices.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 
 export interface BootstrapGrant {
+  readonly pairingLinkId?: string;
   readonly method: ServerAuthBootstrapMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
@@ -663,6 +664,7 @@ const make = Effect.gen(function* () {
           yield* emitRemoved(consumed.value.id);
         }
         return {
+          pairingLinkId: consumed.value.id,
           method: consumed.value.method,
           scopes: consumed.value.scopes,
           subject: consumed.value.subject,

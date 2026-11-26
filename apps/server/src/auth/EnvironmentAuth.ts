@@ -112,6 +112,28 @@ export const clientSessionLabel = (client: AuthClientMetadata | undefined): stri
   ([client?.browser, client?.os].filter((part) => part !== undefined).join(" on ") ||
     "T3 Code client");
 
+export interface PairingRedemptionBinding {
+  readonly teamId: string;
+  readonly memberId: string;
+  readonly effectiveScopes: ReadonlyArray<AuthEnvironmentScope>;
+}
+
+export interface PairingRedemptionHook {
+  readonly beforeIssueSession: (input: {
+    readonly pairingLinkId: string;
+    readonly grantedScopes: ReadonlyArray<AuthEnvironmentScope>;
+  }) => Effect.Effect<
+    PairingRedemptionBinding | null,
+    ServerAuthInvalidCredentialError | ServerAuthScopeNotGrantedError | ServerAuthInternalError
+  >;
+  readonly afterIssueSession: (input: {
+    readonly pairingLinkId: string;
+    readonly sessionId: AuthSessionId;
+    readonly teamId: string;
+    readonly memberId: string;
+  }) => Effect.Effect<void, ServerAuthInternalError>;
+}
+
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
@@ -598,6 +620,9 @@ export class EnvironmentAuth extends Context.Service<
       readonly excludeSubjects?: ReadonlyArray<string>;
     }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
     readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
+    readonly registerPairingRedemptionHook: (
+      hook: PairingRedemptionHook,
+    ) => Effect.Effect<() => void>;
     readonly issueSession: (input?: {
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
@@ -969,6 +994,75 @@ export const make = Effect.gen(function* () {
   // Counts "revoke all others" runs. An exchange or sign-in approval that began before a run
   // issues its session here, under the lock the run holds, so it cannot leave a session behind.
   const otherSessionRevocations = yield* Ref.make(0);
+  const pairingRedemptionHooks = new Set<PairingRedemptionHook>();
+  const registerPairingRedemptionHook: EnvironmentAuth["Service"]["registerPairingRedemptionHook"] =
+    (hook) =>
+      Effect.sync(() => {
+        pairingRedemptionHooks.add(hook);
+        return () => {
+          pairingRedemptionHooks.delete(hook);
+        };
+      });
+
+  const runBeforePairingIssue = Effect.fn("EnvironmentAuth.runBeforePairingIssue")(function* (
+    pairingLinkId: string | undefined,
+    grantedScopes: ReadonlyArray<AuthEnvironmentScope>,
+  ) {
+    if (pairingLinkId === undefined || pairingRedemptionHooks.size === 0) {
+      return {
+        effectiveScopes: grantedScopes,
+        bindings: [] as Array<{
+          readonly hook: PairingRedemptionHook;
+          readonly teamId: string;
+          readonly memberId: string;
+        }>,
+      };
+    }
+    let effectiveScopes = grantedScopes;
+    const bindings: Array<{
+      readonly hook: PairingRedemptionHook;
+      readonly teamId: string;
+      readonly memberId: string;
+    }> = [];
+    for (const hook of pairingRedemptionHooks) {
+      const binding = yield* hook.beforeIssueSession({
+        pairingLinkId,
+        grantedScopes: effectiveScopes,
+      });
+      if (binding !== null) {
+        effectiveScopes = binding.effectiveScopes;
+        if (effectiveScopes.length === 0) {
+          return yield* new ServerAuthScopeNotGrantedError({});
+        }
+        bindings.push({ hook, teamId: binding.teamId, memberId: binding.memberId });
+      }
+    }
+    return { effectiveScopes, bindings };
+  });
+
+  const runAfterPairingIssue = Effect.fn("EnvironmentAuth.runAfterPairingIssue")(function* (
+    pairingLinkId: string | undefined,
+    sessionId: AuthSessionId,
+    bindings: ReadonlyArray<{
+      readonly hook: PairingRedemptionHook;
+      readonly teamId: string;
+      readonly memberId: string;
+    }>,
+  ) {
+    if (pairingLinkId === undefined || bindings.length === 0) return;
+    yield* Effect.forEach(
+      bindings,
+      (binding) =>
+        binding.hook.afterIssueSession({
+          pairingLinkId,
+          sessionId,
+          teamId: binding.teamId,
+          memberId: binding.memberId,
+        }),
+      { discard: true },
+    ).pipe(Effect.onError(() => sessions.revoke(sessionId).pipe(Effect.ignore)));
+  });
+
   const issueUnlessOthersRevokedSince = <A, E>(since: number, issue: Effect.Effect<A, E>) =>
     Ref.get(otherSessionRevocations).pipe(
       Effect.flatMap((count): Effect.Effect<A, E | ServerAuthInvalidCredentialError> =>
@@ -1021,13 +1115,23 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
+    const preparedPairing = yield* runBeforePairingIssue(grant.pairingLinkId, grant.scopes).pipe(
+      Effect.catchTags({
+        ServerAuthScopeNotGrantedError: () =>
+          Effect.fail(
+            new ServerAuthInvalidCredentialError({
+              diagnostic: "Pairing link scopes are no longer permitted for the member.",
+            }),
+          ),
+      }),
+    );
     const session = yield* issueUnlessOthersRevokedSince(
       revocationsAtStart,
       sessions
         .issue({
           method: "browser-session-cookie",
           subject: grant.subject,
-          scopes: grant.scopes,
+          scopes: preparedPairing.effectiveScopes,
           ...(previousSession?.method === "browser-session-cookie"
             ? { replaceSessionId: previousSession.sessionId }
             : {}),
@@ -1038,6 +1142,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause }))),
     );
+    yield* runAfterPairingIssue(grant.pairingLinkId, session.sessionId, preparedPairing.bindings);
     return {
       response: {
         authenticated: true,
@@ -1051,7 +1156,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    "pairingLinkId" | "scopes" | "subject" | "label"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -1172,6 +1277,10 @@ export const make = Effect.gen(function* () {
               if (grantedScopes.length === 0) {
                 return yield* new ServerAuthScopeNotGrantedError({});
               }
+              const preparedPairing = yield* runBeforePairingIssue(
+                grant.pairingLinkId,
+                grantedScopes,
+              );
               // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
               // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
               const renewable =
@@ -1182,7 +1291,7 @@ export const make = Effect.gen(function* () {
                 .issue({
                   method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                   subject: grant.subject,
-                  scopes: grantedScopes,
+                  scopes: preparedPairing.effectiveScopes,
                   ...(input?.proofKeyThumbprint
                     ? {
                         proofKeyThumbprint: input.proofKeyThumbprint,
@@ -1202,9 +1311,15 @@ export const make = Effect.gen(function* () {
                   ),
                 );
               // A proof-key exchange holds the lock from before it spends its credential.
-              return yield* input?.proofKeyThumbprint
+              const issuedSession = yield* input?.proofKeyThumbprint
                 ? issue
                 : issueUnlessOthersRevokedSince(revocationsAtStart, issue);
+              yield* runAfterPairingIssue(
+                grant.pairingLinkId,
+                issuedSession.sessionId,
+                preparedPairing.bindings,
+              );
+              return issuedSession;
             }),
           ),
           Effect.flatMap(toAccessTokenResult),
@@ -1820,6 +1935,7 @@ export const make = Effect.gen(function* () {
     issueStartupPairingCredential,
     listPairingLinks,
     revokePairingLink,
+    registerPairingRedemptionHook,
     issueSession,
     listSessions,
     revokeSession,

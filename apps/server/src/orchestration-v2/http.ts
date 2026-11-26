@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { HttpApiSchemaError } from "effect/http-api/HttpApiError";
@@ -23,7 +24,13 @@ import {
   failEnvironmentOperationForbidden,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { requestUrl } from "../requestUrl.ts";
 import * as TeamService from "../team/TeamService.ts";
+import {
+  adaptThreadProjectionForUpstreamCompat,
+  adaptThreadShellsForUpstreamCompat,
+  isTeamAwareClientRequest,
+} from "../team/upstreamMobileCompat.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -104,6 +111,7 @@ export const layer = HttpApiBuilder.group(
       options: {
         readonly omitIdleSubagents: boolean;
         readonly omitOlderSettled: boolean;
+        readonly upstreamCompat: boolean;
       },
     ) {
       const { snapshot } = yield* loadSubscriberShellSnapshot({
@@ -118,19 +126,28 @@ export const layer = HttpApiBuilder.group(
         latestSequence: applicationEvents.latestApplicationSequence,
         options,
       });
-      const filteredThreads =
-        Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured())
-          ? yield* teamServiceOption.value
-              .filterReadableThreadIds(
-                sessionId,
-                snapshot.threads.map((thread) => thread.id),
-              )
-              .pipe(
-                Effect.map((readableIds) =>
-                  snapshot.threads.filter((thread) => readableIds.has(thread.id)),
+      const isTeam =
+        Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured());
+      const filteredThreads = isTeam
+        ? yield* teamServiceOption.value
+            .filterVisibleShellThreadIds(
+              sessionId,
+              snapshot.threads.map((thread) => thread.id),
+              { upstreamCompat: options.upstreamCompat },
+            )
+            .pipe(
+              Effect.map((visibleIds) =>
+                snapshot.threads.filter((thread) => visibleIds.has(thread.id)),
+              ),
+              Effect.flatMap((threads) =>
+                adaptThreadShellsForUpstreamCompat(
+                  teamServiceOption.value,
+                  threads,
+                  options.upstreamCompat,
                 ),
-              )
-          : snapshot.threads;
+              ),
+            )
+        : snapshot.threads;
       const projects = yield* enrichProjectShells(snapshot.projects);
       return {
         ...snapshot,
@@ -148,6 +165,7 @@ export const layer = HttpApiBuilder.group(
         readonly omitOlderSettled?: string;
         readonly resumeFrom?: string;
       },
+      upstreamCompat: boolean,
     ) {
       const isTeam =
         Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured());
@@ -159,6 +177,7 @@ export const layer = HttpApiBuilder.group(
         loadSnapshot: loadShellSnapshot(sessionId, {
           omitIdleSubagents: query.omitIdleSubagents === "1",
           omitOlderSettled: query.omitOlderSettled === "1",
+          upstreamCompat,
         }),
       });
     });
@@ -230,8 +249,13 @@ export const layer = HttpApiBuilder.group(
         "shellSnapshot",
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const upstreamCompat = !isTeamAwareClientRequest(
+            request,
+            Option.getOrNull(requestUrl(request)),
+          );
           const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* answerShellSnapshot(session.sessionId, args.query).pipe(
+          return yield* answerShellSnapshot(session.sessionId, args.query, upstreamCompat).pipe(
             traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),
@@ -243,23 +267,31 @@ export const layer = HttpApiBuilder.group(
         "threadSnapshot",
         Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const upstreamCompat = !isTeamAwareClientRequest(
+            request,
+            Option.getOrNull(requestUrl(request)),
+          );
           const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           yield* assertTeamThreadReadable(session.sessionId, args.params.threadId);
-          const body = yield* loadThreadSnapshot(
+          const snapshot = yield* loadThreadSnapshot(
             args.params.threadId,
             "orchestration_thread_snapshot_failed",
-          ).pipe(
-            Effect.flatMap((snapshot) =>
-              encodeThreadSnapshotBody({
-                snapshotSequence: snapshot.snapshotSequence,
-                projection: snapshot.projection,
-              }).pipe(
-                // The same defect, and the same empty 500, as a failed response encoding.
-                Effect.catch((cause) =>
-                  Effect.die(new HttpApiSchemaError({ kind: "Body", cause })),
-                ),
-              ),
-            ),
+          );
+          const projection =
+            Option.isSome(teamServiceOption) && upstreamCompat
+              ? yield* adaptThreadProjectionForUpstreamCompat(
+                  teamServiceOption.value,
+                  snapshot.projection,
+                  true,
+                )
+              : snapshot.projection;
+          const body = yield* encodeThreadSnapshotBody({
+            snapshotSequence: snapshot.snapshotSequence,
+            projection,
+          }).pipe(
+            // The same defect, and the same empty 500, as a failed response encoding.
+            Effect.catch((cause) => Effect.die(new HttpApiSchemaError({ kind: "Body", cause }))),
             traceLocalHandlerWork,
           );
           return HttpServerResponse.stream(body, { contentType: "application/json" });
@@ -269,9 +301,14 @@ export const layer = HttpApiBuilder.group(
         "threadTranscript",
         Effect.fn("environment.orchestration.threadTranscript")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const upstreamCompat = !isTeamAwareClientRequest(
+            request,
+            Option.getOrNull(requestUrl(request)),
+          );
           const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           yield* assertTeamThreadReadable(session.sessionId, args.params.threadId);
-          return yield* threadManagement.getThreadTranscript(args.params.threadId).pipe(
+          const transcript = yield* threadManagement.getThreadTranscript(args.params.threadId).pipe(
             Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
             traceLocalHandlerWork,
             Effect.catch(
@@ -289,26 +326,47 @@ export const layer = HttpApiBuilder.group(
               }),
             ),
           );
+          if (Option.isSome(teamServiceOption) && upstreamCompat) {
+            const title = yield* teamServiceOption.value.formatUpstreamCompatThreadTitle(
+              args.params.threadId,
+              transcript.title,
+            );
+            return { ...transcript, title };
+          }
+          return transcript;
         }),
       )
       .handle(
         "threadBoundedSnapshot",
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const upstreamCompat = !isTeamAwareClientRequest(
+            request,
+            Option.getOrNull(requestUrl(request)),
+          );
           const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           yield* assertTeamThreadReadable(session.sessionId, args.params.threadId);
-          const snapshot = yield* loadThreadSnapshotWindow(
+          const rawSnapshot = yield* loadThreadSnapshotWindow(
             args.params.threadId,
             undefined,
             undefined,
             args.query.deferWork === "1",
           ).pipe(traceLocalHandlerWork);
+          const projection =
+            Option.isSome(teamServiceOption) && upstreamCompat
+              ? yield* adaptThreadProjectionForUpstreamCompat(
+                  teamServiceOption.value,
+                  rawSnapshot.projection,
+                  true,
+                )
+              : rawSnapshot.projection;
           const bounded = buildBoundedThreadProjection({
-            projection: snapshot.projection,
-            snapshotSequence: snapshot.snapshotSequence,
+            projection,
+            snapshotSequence: rawSnapshot.snapshotSequence,
           });
           return {
-            snapshotSequence: snapshot.snapshotSequence,
+            snapshotSequence: rawSnapshot.snapshotSequence,
             ...boundedSnapshotResponseFields({
               bounded,
               compactTurnItems: args.query.compactTurnItems === "1",

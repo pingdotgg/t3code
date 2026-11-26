@@ -89,6 +89,10 @@ const mockState = vi.hoisted(() => ({
         readonly input: unknown;
       }) => Promise<AsyncResult.AsyncResult<TeamInviteCreatedResult, unknown>>
     >(),
+  updateMobileVisibilityHandler: vi.fn(),
+  createMobilePairingHandler: vi.fn(),
+  listMobilePairingsHandler: vi.fn(),
+  revokeMobilePairingHandler: vi.fn(),
 }));
 
 const alwaysAllowedAtom = Atom.make(true);
@@ -127,27 +131,43 @@ vi.mock(import("../../state/team"), async (original) => ({
   useTeamEnvironmentState: (environmentId: EnvironmentId | null) =>
     environmentId === envB ? teamStateB : teamStateA,
   teamEnvironment: {
-    initialize: { permissionAtom: () => alwaysAllowedAtom },
-    updateMyPseudo: { permissionAtom: () => alwaysAllowedAtom },
-    createInvite: { permissionAtom: () => alwaysAllowedAtom },
-    revokeInvite: { permissionAtom: () => alwaysAllowedAtom },
-    updateMemberRole: { permissionAtom: () => alwaysAllowedAtom },
-    updateMemberStatus: { permissionAtom: () => alwaysAllowedAtom },
-    createView: { permissionAtom: () => alwaysAllowedAtom },
-    updateView: { permissionAtom: () => alwaysAllowedAtom },
-    deleteView: { permissionAtom: () => alwaysAllowedAtom },
-    setThreadView: { permissionAtom: () => alwaysAllowedAtom },
-    setThreadLocked: { permissionAtom: () => alwaysAllowedAtom },
-    attachEnvironment: { permissionAtom: () => alwaysAllowedAtom },
-    updateEnvironment: { permissionAtom: () => alwaysAllowedAtom },
-    detachEnvironment: { permissionAtom: () => alwaysAllowedAtom },
-    upsertProvider: { permissionAtom: () => alwaysAllowedAtom },
-    deleteProvider: { permissionAtom: () => alwaysAllowedAtom },
-    listProviderUsage: { permissionAtom: () => alwaysAllowedAtom },
-    upsertSkill: { permissionAtom: () => alwaysAllowedAtom },
-    deleteSkill: { permissionAtom: () => alwaysAllowedAtom },
-    upsertPreprompt: { permissionAtom: () => alwaysAllowedAtom },
-    deletePreprompt: { permissionAtom: () => alwaysAllowedAtom },
+    initialize: { tag: "initialize", permissionAtom: () => alwaysAllowedAtom },
+    updateMyPseudo: { tag: "updateMyPseudo", permissionAtom: () => alwaysAllowedAtom },
+    createInvite: { tag: "createInvite", permissionAtom: () => alwaysAllowedAtom },
+    revokeInvite: { tag: "revokeInvite", permissionAtom: () => alwaysAllowedAtom },
+    updateMemberRole: { tag: "updateMemberRole", permissionAtom: () => alwaysAllowedAtom },
+    updateMemberStatus: { tag: "updateMemberStatus", permissionAtom: () => alwaysAllowedAtom },
+    createView: { tag: "createView", permissionAtom: () => alwaysAllowedAtom },
+    updateView: { tag: "updateView", permissionAtom: () => alwaysAllowedAtom },
+    deleteView: { tag: "deleteView", permissionAtom: () => alwaysAllowedAtom },
+    setThreadView: { tag: "setThreadView", permissionAtom: () => alwaysAllowedAtom },
+    setThreadLocked: { tag: "setThreadLocked", permissionAtom: () => alwaysAllowedAtom },
+    attachEnvironment: { tag: "attachEnvironment", permissionAtom: () => alwaysAllowedAtom },
+    updateEnvironment: { tag: "updateEnvironment", permissionAtom: () => alwaysAllowedAtom },
+    detachEnvironment: { tag: "detachEnvironment", permissionAtom: () => alwaysAllowedAtom },
+    upsertProvider: { tag: "upsertProvider", permissionAtom: () => alwaysAllowedAtom },
+    deleteProvider: { tag: "deleteProvider", permissionAtom: () => alwaysAllowedAtom },
+    listProviderUsage: { tag: "listProviderUsage", permissionAtom: () => alwaysAllowedAtom },
+    upsertSkill: { tag: "upsertSkill", permissionAtom: () => alwaysAllowedAtom },
+    deleteSkill: { tag: "deleteSkill", permissionAtom: () => alwaysAllowedAtom },
+    upsertPreprompt: { tag: "upsertPreprompt", permissionAtom: () => alwaysAllowedAtom },
+    deletePreprompt: { tag: "deletePreprompt", permissionAtom: () => alwaysAllowedAtom },
+    updateMyMobileVisibility: {
+      tag: "updateMyMobileVisibility",
+      permissionAtom: () => alwaysAllowedAtom,
+    },
+    createMobilePairingLink: {
+      tag: "createMobilePairingLink",
+      permissionAtom: () => alwaysAllowedAtom,
+    },
+    listMyMobilePairingLinks: {
+      tag: "listMyMobilePairingLinks",
+      permissionAtom: () => alwaysAllowedAtom,
+    },
+    revokeMyMobilePairingLink: {
+      tag: "revokeMyMobilePairingLink",
+      permissionAtom: () => alwaysAllowedAtom,
+    },
   } as never,
 }));
 
@@ -155,8 +175,26 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((command: unknown) => {
     const mock = vi.fn(async (args: { environmentId: EnvironmentId; input: unknown }) => {
-      if (command && typeof command === "object") {
+      const tag =
+        command && typeof command === "object" && "tag" in command
+          ? (command as { readonly tag?: string }).tag
+          : undefined;
+      if (tag === "createInvite") {
         return mockState.createInviteHandler(args);
+      }
+      if (tag === "updateMyMobileVisibility") {
+        return mockState.updateMobileVisibilityHandler(args);
+      }
+      if (tag === "createMobilePairingLink") {
+        return mockState.createMobilePairingHandler(args);
+      }
+      if (tag === "listMyMobilePairingLinks") {
+        return (
+          mockState.listMobilePairingsHandler(args) ?? AsyncResult.success({ pairingLinks: [] })
+        );
+      }
+      if (tag === "revokeMyMobilePairingLink") {
+        return mockState.revokeMobilePairingHandler(args);
       }
       return AsyncResult.success(undefined);
     });
@@ -242,5 +280,43 @@ describe("TeamsSettings", () => {
       .toHaveValue(
         `t3code://team/join?server=${encodeURIComponent(urlA)}&token=t3team_server_a_inflight`,
       );
+  });
+
+  it("generates a member-bound mobile pairing code and updates mobile visibility preference", async () => {
+    mockState.createMobilePairingHandler.mockResolvedValueOnce(
+      AsyncResult.success({
+        id: "pair-mobile-1",
+        credential: "ABCD-EFGH-IJKL",
+        label: "Alice iPhone",
+        scopes: [],
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      }),
+    );
+    mockState.updateMobileVisibilityHandler.mockResolvedValueOnce(
+      AsyncResult.success({
+        ...teamStateA.currentMember!,
+        upstreamClientThreadVisibility: "all_accessible",
+      }),
+    );
+
+    await using screen = await render(<TeamsSettings />);
+
+    await expect.element(screen.getByTestId("team-mobile-compat-section")).toBeVisible();
+    await screen.getByTestId("team-mobile-pairing-label-input").fill("Alice iPhone");
+    await screen.getByTestId("team-mobile-pairing-create").click();
+
+    await expect.element(screen.getByTestId("team-mobile-pairing-generated")).toBeVisible();
+    await expect
+      .element(screen.getByTestId("team-mobile-pairing-code"))
+      .toHaveValue("ABCD-EFGH-IJKL");
+    await expect.element(screen.getByTestId("team-mobile-pairing-qr")).toBeVisible();
+
+    await screen.getByTestId("team-mobile-visibility-select").click();
+    await screen.getByRole("option", { name: "All accessible team threads" }).click();
+
+    expect(mockState.updateMobileVisibilityHandler).toHaveBeenCalledWith({
+      environmentId: envA,
+      input: { upstreamClientThreadVisibility: "all_accessible" },
+    });
   });
 });

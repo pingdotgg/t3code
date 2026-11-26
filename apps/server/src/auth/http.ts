@@ -37,6 +37,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as TeamService from "../team/TeamService.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { checkRequestDpopProof } from "./dpop.ts";
@@ -291,6 +292,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
 
     return handlers
       .handle(
@@ -517,7 +519,43 @@ export const layer = HttpApiBuilder.group(
                 return yield* failEnvironmentScopeRequired(delegatedScope);
               }
             }
-            return yield* serverAuth.issuePairingCredential(args.payload);
+            const shouldBindTeamMember =
+              Option.isSome(teamServiceOption) && args.payload.purpose !== "peer-link";
+            if (shouldBindTeamMember) {
+              yield* teamServiceOption.value
+                .assertCanCreateStandardPairingLink({
+                  sessionId: session.sessionId,
+                  scopes: delegatedScopes,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (error) => new EnvironmentHttpForbiddenError({ message: error.message }),
+                  ),
+                );
+            }
+            const issued = yield* serverAuth.issuePairingCredential(args.payload);
+            if (shouldBindTeamMember) {
+              yield* teamServiceOption.value
+                .bindPairingLinkToSessionMember({
+                  sessionId: session.sessionId,
+                  pairingLinkId: issued.id,
+                })
+                .pipe(
+                  Effect.onError(() => serverAuth.revokePairingLink(issued.id).pipe(Effect.ignore)),
+                  Effect.catch(
+                    Effect.fnUntraced(function* (error) {
+                      if (error.code === "forbidden") {
+                        return yield* new EnvironmentHttpForbiddenError({ message: error.message });
+                      }
+                      return yield* failEnvironmentInternal(
+                        "pairing_credential_issuance_failed",
+                        error,
+                      );
+                    }),
+                  ),
+                );
+            }
+            return issued;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),

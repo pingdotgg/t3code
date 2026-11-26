@@ -38,6 +38,7 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
       environmentThemes: true,
       usageLimitSources: true,
       usageLimitsCommand: true,
+      teamsClient: true,
     }),
   ),
   Layer.provideMerge(
