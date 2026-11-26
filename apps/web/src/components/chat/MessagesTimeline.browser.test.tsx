@@ -2670,6 +2670,48 @@ it("shows an approval's characters that a screen would not draw, and the beginni
   expect(cut!.textContent).not.toContain("Scroll to read");
 });
 
+it("shows a character a screen would not draw at the very end of an approval", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const cases = [
+    ["ls\r", "ls\\r", "\\r"],
+    ["ls\r\n", "ls\\r\n", "\\r"],
+    ["ls\n\r", "ls\n\\r", "\\r"],
+    ["ls\u200D", "lsU+200D", "U+200D"],
+    ["\r\u200D\u001B", "\\rU+200D\\e", "\\rU+200D\\e"],
+  ] as const;
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={cases.map(([detail], index) => ({
+        requestId: RuntimeRequestId.make(`end-${index}`),
+        requestKind: "command",
+        createdAt: fixture.time(6),
+        detail,
+        responseCapability: "live",
+      }))}
+      canOperateThread
+      onRespondToApproval={async () => {}}
+    />,
+  );
+  const cards = [
+    ...screen.container.querySelectorAll<HTMLElement>(
+      '[role="group"][aria-label="Command approval"]',
+    ),
+  ];
+  expect(cards).toHaveLength(cases.length);
+  for (const [index, [, text, name]] of cases.entries()) {
+    const detail = cards[index]!.querySelector<HTMLElement>('[data-approval-detail="complete"]')!;
+    expect(detail.textContent).toBe(text);
+    // The name is the last element of the text, tinted, and takes up room on the screen.
+    const last = detail.querySelector<HTMLElement>("span:last-of-type")!;
+    expect(last.textContent).toBe(name);
+    await expect.element(last).toBeVisible();
+    expect(last.getBoundingClientRect().width).toBeGreaterThan(0);
+  }
+});
+
 it("shows T3 Code's push hooks approval as its own question and another server's as before", async () => {
   setup();
   const fixture = makeStreamingTimelineFixture();

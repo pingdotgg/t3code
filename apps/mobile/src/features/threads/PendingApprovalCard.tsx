@@ -13,8 +13,8 @@ import {
   pushHooksApprovalRows,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { T, useGT, useMessages } from "gt-react-native";
-import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { type ComponentRef, useRef, useState } from "react";
+import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
@@ -73,18 +73,20 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         </View>
       ) : detail ? (
         <>
-          <ApprovalTextParts parts={detail.parts} />
           {detail.hiddenLength > 0 ? (
             <>
+              <ApprovalTextScroll parts={detail.parts} />
               <Text className="font-sans text-xs leading-normal text-warning-foreground">
                 {gt(
                   "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
                   { count: detail.hiddenLength, hidden: detail.hiddenLength.toLocaleString() },
                 )}
               </Text>
-              <ApprovalTextParts parts={detail.tail} />
+              <ApprovalTextScroll parts={detail.tail} fromEnd />
             </>
-          ) : null}
+          ) : (
+            <ApprovalTextParts parts={detail.parts} />
+          )}
         </>
       ) : null}
       {props.approval.reason ? (
@@ -143,6 +145,29 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * One end of text too long to show in full, in a box that scrolls on its own, so the note, the
+ * other end and the buttons stay within reach. The end opens on its last line.
+ */
+function ApprovalTextScroll(props: {
+  readonly parts: ReadonlyArray<ApprovalTextPart>;
+  readonly fromEnd?: boolean;
+}) {
+  const box = useRef<ComponentRef<typeof ScrollView>>(null);
+  return (
+    <ScrollView
+      ref={box}
+      className="max-h-40"
+      nestedScrollEnabled
+      onContentSizeChange={
+        props.fromEnd ? () => box.current?.scrollToEnd({ animated: false }) : undefined
+      }
+    >
+      <ApprovalTextParts parts={props.parts} />
+    </ScrollView>
   );
 }
 

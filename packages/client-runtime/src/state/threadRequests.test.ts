@@ -822,6 +822,64 @@ it("shows the beginning and the end of approval text that passes its limit", () 
   }
 });
 
+it("names a character a screen would not draw wherever it stands, the very end included", () => {
+  const read = (parts: ReadonlyArray<{ text: string; named?: true }>) =>
+    parts.map((part) => (part.named ? `<${part.text}>` : part.text)).join("");
+  const whole = (text: string) => {
+    const scan = approvalTextParts(text);
+    expect([scan.tail, scan.hiddenLength, scan.shownLength]).toEqual([[], 0, text.length]);
+    return read(scan.parts);
+  };
+  expect(whole("ls\r")).toBe("ls<\\r>");
+  expect(whole("ls\r\n")).toBe("ls<\\r>\n");
+  expect(whole("ls\n\r")).toBe("ls\n<\\r>");
+  expect(whole("ls\u200D")).toBe("ls<U+200D>");
+  // Text made only of such characters is one named part.
+  expect(whole("\r")).toBe("<\\r>");
+  expect(approvalTextParts("\r\u200D\u001B\r").parts).toEqual([
+    { text: "\\rU+200D\\e\\r", named: true },
+  ]);
+
+  // The same where long text is cut: 5 units of beginning, 3 of end.
+  const limit = { length: 8, namedRuns: 2, tailLength: 3, tailNamedRuns: 1 };
+  const cut = (text: string) => {
+    const { parts, tail, hiddenLength } = approvalTextParts(text, limit);
+    return [read(parts), hiddenLength, read(tail)];
+  };
+  // The last unit of the text.
+  expect(cut("abcdefgh\r")).toEqual(["abcde", 1, "gh<\\r>"]);
+  expect(cut("abcdefg\r\n")).toEqual(["abcde", 1, "g<\\r>\n"]);
+  expect(cut("abcdefg\n\r")).toEqual(["abcde", 1, "g\n<\\r>"]);
+  expect(cut("abcdefgh\u200D")).toEqual(["abcde", 1, "gh<U+200D>"]);
+  // The last unit of the beginning and the first unit of the end.
+  expect(cut("abcd\rfghi")).toEqual(["abcd<\\r>", 1, "ghi"]);
+  expect(cut("abcd\u200Dfghi")).toEqual(["abcd<U+200D>", 1, "ghi"]);
+  expect(cut("abcdef\rhi")).toEqual(["abcde", 1, "<\\r>hi"]);
+  expect(cut("abcdef\u200Dhi")).toEqual(["abcde", 1, "<U+200D>hi"]);
+  // A joiner the cut parts from its emoji is named on the side it stays on.
+  expect(cut("ab\u{1F469}\u200D\u{1F4BB}xyz")).toEqual(["ab\u{1F469}<U+200D>", 2, "xyz"]);
+  expect(cut("abcd\u{1F469}\u200D\u{1F4BB}")).toEqual(["abcd", 2, "<U+200D>\u{1F4BB}"]);
+  // Only such characters, in the whole text or in its end.
+  expect(cut("\r".repeat(9))).toEqual(["<\\r\\r\\r\\r\\r>", 1, "<\\r\\r\\r>"]);
+  expect(cut("abcdefghi\r\u200D\r")).toEqual(["abcde", 4, "<\\rU+200D\\r>"]);
+
+  // At every length, short or cut, the last thing shown is the name of the last character.
+  for (const [end, name] of [
+    ["\r", "<\\r>"],
+    ["\r\n", "<\\r>\n"],
+    ["\n\r", "\n<\\r>"],
+    ["\u200D", "<U+200D>"],
+  ] as const) {
+    for (let length = 0; length <= 20; length += 1) {
+      const scan = approvalTextParts("x".repeat(length) + end, limit);
+      expect(read(scan.hiddenLength > 0 ? scan.tail : scan.parts).endsWith(name)).toBe(true);
+    }
+    const long = approvalTextParts("x".repeat(APPROVAL_TEXT_LIMIT.length) + end);
+    expect(long.hiddenLength).toBe(end.length);
+    expect(read(long.tail).endsWith(name)).toBe(true);
+  }
+});
+
 it("bounds the parts of a megabyte of approval text and still shows what it ends with", () => {
   const { length, namedRuns, tailLength, tailNamedRuns } = APPROVAL_TEXT_LIMIT;
   const size = 1 << 20;
