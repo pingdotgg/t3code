@@ -16,6 +16,11 @@ it.each([
     "--user set-property --runtime -- -.slice ManagedOOMMemoryPressure=kill ManagedOOMMemoryPressureLimit=99.00%",
   ],
   [
+    "omits a duration systemd reports as [not set]",
+    { cgroup: userService, mode: "kill", limit: "4252017622", duration: "[not set]" },
+    "--user set-property --runtime -- -.slice ManagedOOMMemoryPressure=kill ManagedOOMMemoryPressureLimit=99.00%",
+  ],
+  [
     "keeps a custom duration and an unset limit",
     { cgroup: userService, mode: "kill", limit: "0", duration: "20s" },
     "--user set-property --runtime -- -.slice ManagedOOMMemoryPressure=kill ManagedOOMMemoryPressureLimit=0.00% ManagedOOMMemoryPressureDurationSec=20s",

@@ -702,8 +702,10 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
         checkbox.properties = { type: "checkbox", checked, disabled: true };
         if (node.type === "element") node.properties.className = ["contains-task-list"];
       }
-      breakLines(child, walk.options.breaks);
-    } else if (tagName === "p") {
+      if (child.position) breakLines(child, walk.options.breaks);
+    } else if (tagName === "p" && Object.keys(child.properties).length === 0) {
+      // Words writes a Markdown paragraph bare; one with attributes is raw HTML, which keeps its
+      // lines as written, as remark-breaks never touched raw HTML.
       breakLines(child, walk.options.breaks);
     } else if (tagName === "blockquote") {
       // remarkGithubAlerts
@@ -760,8 +762,43 @@ function imageOwnsLine(items: ElementContent[], at: number): boolean {
 const isBlockElement = (node: ElementContent | undefined) =>
   node?.type === "element" && CLOSES_PARAGRAPH.has(node.tagName);
 
+/** Where the images that end a paragraph after its text start: a caption, then its screenshots. */
+function trailingImagesStart(items: ElementContent[]): number | undefined {
+  let start: number | undefined;
+  for (let at = items.length - 1; at >= 0; at--) {
+    const item = items[at]!;
+    if (isMarkdownImage(item)) start = at;
+    else if (!isElement(item, "br") && !(item.type === "text" && !item.value.trim())) return start;
+  }
+  return undefined;
+}
+
 function breakLines(paragraph: Element, breaks: boolean) {
   const items = paragraph.children;
+  // Inline elements recurse here under `breaks`; only a paragraph's own end is a caption's end.
+  const trailing =
+    paragraph.tagName === "p" || paragraph.tagName === "li"
+      ? trailingImagesStart(items)
+      : undefined;
+  const trailingImage = trailing === undefined ? undefined : items[trailing];
+  const beforeTrailing = trailing === undefined ? undefined : items[trailing - 1];
+  // A line ending before the images breaks below; kept indentation already starts a line.
+  if (
+    trailing !== undefined &&
+    beforeTrailing &&
+    !(
+      beforeTrailing.type === "element" &&
+      (beforeTrailing.tagName === "br" ||
+        (beforeTrailing.tagName === "span" && "dataLeadingWhitespace" in beforeTrailing.properties))
+    ) &&
+    !(beforeTrailing.type === "text" && /\n[ \t]*$/.test(beforeTrailing.value))
+  ) {
+    items.splice(trailing, 0, BREAK, { type: "text", value: "\n" });
+    if (beforeTrailing.type === "text") {
+      beforeTrailing.value = beforeTrailing.value.replace(/[ \t]+$/, "");
+      if (!beforeTrailing.value) items.splice(trailing - 1, 1);
+    }
+  }
   for (let at = 0; at < items.length; at++) {
     const item = items[at]!;
     if (
@@ -774,7 +811,9 @@ function breakLines(paragraph: Element, breaks: boolean) {
     }
     if (item.type !== "text" || !item.value.includes("\n")) continue;
     const afterImage = imageOwnsLine(items, at - 1);
-    const beforeImage = imageOwnsLine(items, at + 1);
+    const beforeImage =
+      imageOwnsLine(items, at + 1) ||
+      (trailingImage !== undefined && items[at + 1] === trailingImage);
     const afterBlock = isBlockElement(items[at - 1]) || (at === 0 && paragraph.tagName === "li");
     const beforeBlock =
       isBlockElement(items[at + 1]) || (at === items.length - 1 && paragraph.tagName === "li");
@@ -1268,32 +1307,37 @@ export function markdownHtmlComments(markdown: string): Array<{ start: number; e
 
 /**
  * The first definition of each label in `markdown`, as one line of Markdown. Words decides which
- * `[label]:` text defines one: each label is looked up again after the text.
+ * `[label]:` text defines one: each label is looked up before the text so an unclosed trailing
+ * block cannot consume the lookups.
  */
 export function markdownReferenceDefinitions(markdown: string): string[] {
   const labels = new Map<string, string>();
   for (const match of markdown.matchAll(/\[((?:[^\\[\]]|\\.){1,999})\]:/g)) {
-    const key = match[1]!.replace(/\s+/g, " ").trim().toLowerCase();
+    const label = match[1]!.replace(/[ \t\r\n\f\v]+/g, " ");
+    const key = label.trim().toLowerCase();
     // `[^1]:` is a footnote.
-    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, match[1]!);
+    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, label);
   }
   if (labels.size === 0) return [];
-  let probe = `${markdown}\n\n`;
+  let probe = "";
   const lookups = new Map<number, string>();
   for (const label of labels.values()) {
     lookups.set(probe.length, label);
     probe += `[${label}]\n\n`;
   }
+  probe += markdown;
   const definitions: string[] = [];
   const visit = (node: Root | Element) => {
     for (const child of node.children) {
       if (child.type !== "element") continue;
       const label = lookups.get(child.position?.start.offset ?? -1);
       if (child.tagName === "a" && label !== undefined) {
-        const href = String(child.properties.href ?? "").replace(/[<>\\\n]/g, encodeURIComponent);
+        const href = String(child.properties.href ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/[<>\\\n]/g, encodeURIComponent);
         const title = child.properties.title;
         definitions.push(
-          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&")}"` : ""}`,
+          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&").replace(/&/g, "&amp;")}"` : ""}`,
         );
       } else visit(child);
     }

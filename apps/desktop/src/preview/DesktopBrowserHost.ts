@@ -17,7 +17,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
-import { sendPageCommand } from "./GuestInput.ts";
+import {
+  type FrameDetachWatch,
+  type PointerRoute,
+  routeMouseToFrame,
+  sendPageCommand,
+} from "./GuestInput.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
@@ -29,6 +34,8 @@ const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|cal
 const AGENT_INPUT_WINDOW_MS = 5_000;
 /** A viewer's pointer travelling over the stream activates nothing on the page. */
 const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
+const ANNOTATING_MESSAGE =
+  "This page is being annotated in the desktop app. Input resumes when the annotation ends.";
 const FOCUS_IDLE = "5 seconds";
 /** How long a screenshot waits for the client to draw its guest at full detail. */
 const CAPTURE_DRAW_WAIT = "1 second";
@@ -52,9 +59,60 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
   /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
   readonly cookiesCleared?: () => Promise<void>;
+  /** Whether the person at this window is annotating the page, whose overlay is theirs alone. */
+  readonly annotating?: () => boolean;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
+
+const trackFrameSession = (
+  tab: {
+    readonly frameSessions: Map<string, string>;
+    readonly frameDetachListeners: Map<string, Set<() => void>>;
+  },
+  method: string,
+  params: unknown,
+) => {
+  if (method === "Target.attachedToTarget") {
+    const { sessionId, targetInfo } = params as {
+      readonly sessionId?: string;
+      readonly targetInfo?: { readonly targetId?: string; readonly type?: string };
+    };
+    if (targetInfo?.type === "iframe" && targetInfo.targetId && sessionId) {
+      tab.frameSessions.set(targetInfo.targetId, sessionId);
+    }
+  } else if (method === "Target.detachedFromTarget") {
+    const { sessionId } = params as { readonly sessionId?: string };
+    for (const [frameId, frameSession] of tab.frameSessions) {
+      if (frameSession === sessionId) tab.frameSessions.delete(frameId);
+    }
+    if (sessionId === undefined) return;
+    const listeners = tab.frameDetachListeners.get(sessionId);
+    tab.frameDetachListeners.delete(sessionId);
+    for (const listener of listeners ?? []) listener();
+  }
+};
+
+const watchFrameDetach =
+  (tab: {
+    readonly frameSessions: Map<string, string>;
+    readonly frameDetachListeners: Map<string, Set<() => void>>;
+  }): FrameDetachWatch =>
+  (sessionId, listener) => {
+    if (![...tab.frameSessions.values()].includes(sessionId)) {
+      listener();
+      return () => {};
+    }
+    const listeners = tab.frameDetachListeners.get(sessionId) ?? new Set();
+    tab.frameDetachListeners.set(sessionId, listeners);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0 && tab.frameDetachListeners.get(sessionId) === listeners) {
+        tab.frameDetachListeners.delete(sessionId);
+      }
+    };
+  };
 
 interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
@@ -81,6 +139,10 @@ interface AttachedTab {
   readonly capturing: Set<object>;
   /** Each wait on the guest's next frame, as whether it still waits; the guest is prodded until none do. */
   readonly frameWaits: Set<() => boolean>;
+  /** Sessions of the guest's cross-site frames that Chromium attached, by frame id. */
+  readonly frameSessions: Map<string, string>;
+  /** Input sent to a frame session, waiting to learn if the frame detaches first. */
+  readonly frameDetachListeners: Map<string, Set<() => void>>;
   nudging: Fiber.Fiber<void> | null;
   /** A wait outlasted its first nudge, so the guest is painted and unthrottled like a capture. */
   frameStalled: boolean;
@@ -437,8 +499,29 @@ export const make = Effect.gen(function* () {
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
+    const routeHidden = routeMouseToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
+    // Read when the pointer queue reaches the event: a guest the window shows routes its own input.
+    const routeMouse: PointerRoute = (params) =>
+      shownTabs.get(keyOf(tab.key)) === true ? Promise.resolve(null) : routeHidden(params);
+    // The annotation overlay lives in the guest and takes any input sent there as the
+    // person's at this window, so relayed input waits until they finish.
+    const annotated = (method: string) =>
+      method.startsWith("Input.") && tab.debuggee.annotating?.() === true;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
-      const result = await sendPageCommand(webContents, debuggee, method, params, sessionId);
+      // Asked again at each dispatch: an annotation can start while the input waits its turn.
+      const refuseAnnotated = () => {
+        if (annotated(method)) throw new Error(ANNOTATING_MESSAGE);
+      };
+      refuseAnnotated();
+      const result = await sendPageCommand(
+        webContents,
+        debuggee,
+        method,
+        params,
+        sessionId,
+        routeMouse,
+        refuseAnnotated,
+      );
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
     };
@@ -463,6 +546,7 @@ export const make = Effect.gen(function* () {
             syncPainting(tab);
             if (tab.screencasts.size > 0) return Promise.resolve({});
           }
+          if (annotated(method)) return Promise.reject(new Error(ANNOTATING_MESSAGE));
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (AGENT_INPUT_METHOD.test(method)) {
             if (owner === undefined || !streamingOwners.has(owner)) {
@@ -595,6 +679,12 @@ export const make = Effect.gen(function* () {
     tab.relay = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
+    // Input routed to a frame would wait for a detach event the tab no longer hears.
+    const listeners = [...tab.frameDetachListeners.values()].flatMap((set) => [...set]);
+    tab.frameDetachListeners.clear();
+    // A route resolved after this would find no session and go to the page.
+    tab.frameSessions.clear();
+    for (const listener of listeners) listener();
     syncPainting(tab);
     if (announced) emit({ type: "detached", ...key });
   };
@@ -619,6 +709,8 @@ export const make = Effect.gen(function* () {
       focusPending: new Map(),
       capturing: new Set(),
       frameWaits: new Set(),
+      frameSessions: new Map(),
+      frameDetachListeners: new Map(),
       nudging: null,
       frameStalled: false,
       painting: false,
@@ -630,6 +722,7 @@ export const make = Effect.gen(function* () {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
           tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
         }
+        trackFrameSession(tab, method, params);
         tab.relay?.event(method, params, sessionId);
       },
       // A screenshot pending when the page loads a new document, a reload included, can

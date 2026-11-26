@@ -22,7 +22,6 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     railOrder: [],
     sidebarProjectScopeKeys: [],
     threadLastVisitedAtById: {},
-    threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
     ...overrides,
@@ -109,13 +108,6 @@ describe("parsePersistedState", () => {
         invalid: "not-a-date",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      threadChangedFilesExpansionVersion: 2,
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-          "turn-2": true,
-        },
-      },
     });
 
     expect(parsed).toEqual({
@@ -130,12 +122,6 @@ describe("parsePersistedState", () => {
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
       pullRequestMergeMethod: "merge",
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-          "turn-2": true,
-        },
-      },
     });
   });
 
@@ -143,19 +129,6 @@ describe("parsePersistedState", () => {
     expect(
       parsePersistedState({ pullRequestMergeMethod: "fast-forward" }).pullRequestMergeMethod,
     ).toBe("fast-forward");
-  });
-
-  it.each([undefined, 1])("ignores changed-file expansion version %s", (version) => {
-    const parsed = parsePersistedState({
-      ...(version === undefined ? {} : { threadChangedFilesExpansionVersion: version }),
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-        },
-      },
-    });
-
-    expect(parsed.threadChangedFilesExpandedById).toEqual({});
   });
 
   it("migrates legacy CWD project preferences into local alias keys", () => {
@@ -217,12 +190,6 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-          "turn-2": true,
-        },
-      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
     });
 
@@ -243,13 +210,6 @@ describe("uiStateStore persistence", () => {
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
       sidebarProjectScopeKey: null,
-      threadChangedFilesExpansionVersion: 2,
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-          "turn-2": true,
-        },
-      },
       pullRequestMergeMethod: "merge",
     });
     expect(parsePersistedState(persisted)).toEqual({
