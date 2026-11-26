@@ -21,15 +21,14 @@ export function providerDimensions(
 ): ProviderDimensions {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
   if (provider === undefined) return { provider: "unknown" };
-  return { provider: provider.driver, model: modelLabel(providers, selection.model) };
+  if (selection.model === "") return { provider: provider.driver };
+  return {
+    provider: provider.driver,
+    model: modelLabel(providers, provider.driver, selection.model),
+  };
 }
 
 const DATED_SNAPSHOT = /-\d{8}$/u;
-// Absolute, home, relative, or Windows paths, such as a local GGUF file. Directories can name the user.
-const FILE_PATH = /^(?:[/~]|\.{1,2}[/\\]|[A-Za-z]:[\\/])|\\/u;
-
-const fileName = (model: string) =>
-  FILE_PATH.test(model) ? model.slice(model.search(/[^/\\]*$/u)) : model;
 
 const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   Object.values(BUNDLED_MODEL_MANIFEST.providers ?? {}).flatMap((catalog) =>
@@ -39,14 +38,37 @@ const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   ),
 );
 
+// Drivers whose model lists come from the vendor. OpenCode, Pi, fx, and ACP agents list
+// the user's own configuration, such as local Ollama tags or GGUF paths.
+const VENDOR_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "antigravity",
+  "kiro",
+  "muse",
+]);
+
+// A custom endpoint, gateway, or Bedrock serves whatever names its owner chose.
+const listsVendorModels = ({ driver, auth }: ServerProvider) =>
+  VENDOR_CATALOG_DRIVERS.has(driver) &&
+  auth.endpoint === undefined &&
+  auth.type !== "customEndpoint" &&
+  auth.type !== "bedrock";
+
 /**
  * The model name analytics reports. A routed id, alias, or dated snapshot that the
- * bundled manifest or a provider's model list knows, such as `anthropic/claude-opus-5-5`
- * or `antigravity-default`, maps to its catalog slug. A file path reports only its file
- * name. Any other id is reported as is.
+ * bundled manifest or a vendor's own model list knows, such as `anthropic/claude-opus-5-5`
+ * or `antigravity-default`, maps to its catalog slug. Any other id can name a user, a
+ * deployment, or a local file, so it reports only the driver as `custom:<driver>`.
  */
-export function modelLabel(providers: ReadonlyArray<ServerProvider>, model: string): string {
-  return fileName(catalogSlug(providers, model) ?? model);
+export function modelLabel(
+  providers: ReadonlyArray<ServerProvider>,
+  driver: string,
+  model: string,
+): string {
+  return catalogSlug(providers, model) ?? `custom:${driver}`;
 }
 
 function catalogSlug(providers: ReadonlyArray<ServerProvider>, model: string) {
@@ -57,10 +79,12 @@ function catalogSlug(providers: ReadonlyArray<ServerProvider>, model: string) {
     if (label !== undefined) return label;
   }
   for (const provider of providers) {
+    if (!listsVendorModels(provider)) continue;
     const match = provider.models.find(
       (entry) =>
-        candidates.includes(entry.slug) ||
-        entry.aliases?.some((alias) => candidates.includes(alias)) === true,
+        !entry.isCustom &&
+        (candidates.includes(entry.slug) ||
+          entry.aliases?.some((alias) => candidates.includes(alias)) === true),
     );
     if (match !== undefined) return match.slug;
   }
@@ -151,7 +175,14 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
               ]) ?? "root"),
       });
     case "t3_thread_send":
-      return defined({ delivery: stringField(output, "delivery") });
+      return defined({
+        delivery: oneOf(stringField(output, "delivery"), [
+          "started",
+          "queued",
+          "steered",
+          "restarted",
+        ]),
+      });
     case "t3_thread_send_attachments":
       return { delivery: "auto" };
     case "schedule_task": {
@@ -166,6 +197,8 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
   }
 }
 
+const ERROR_CODE_SHAPE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
 /** Outcome of a tool call, with the stable failure code when the call failed. */
 export function toolOutcome(
   result:
@@ -178,7 +211,12 @@ export function toolOutcome(
   // closed `code`; the MCP layer does not always set isError for them.
   const code = stringField(content, "code") ?? stringField(asFields(content.error), "_tag");
   if (result.isError === true || (content._tag !== undefined && code !== undefined)) {
-    return { outcome: "error", errorCode: code ?? "unknown" };
+    // Codes and tags are identifiers; anything else may be a message or a value, which stays in
+    // local traces rather than analytics.
+    return {
+      outcome: "error",
+      errorCode: code !== undefined && ERROR_CODE_SHAPE.test(code) ? code : "unknown",
+    };
   }
   return { outcome: "ok" };
 }

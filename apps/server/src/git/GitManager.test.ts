@@ -8,9 +8,10 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -89,6 +90,8 @@ interface FakeProviderScenario {
   createsDraftChangeRequests?: boolean;
   /** The companion repository of a host with private change requests. */
   privateRemote?: { readonly url: string; readonly repository: string };
+  /** Runs as the host names its companion: after the early look at the hooks, before the push. */
+  onPrivateRemote?: () => void;
   /** Answers to successive change request listings, whatever their head selector. */
   prListSequence?: ReadonlyArray<ReadonlyArray<FakeChangeRequest>>;
   prListByHeadSelector?: Record<string, ReadonlyArray<FakeChangeRequest>>;
@@ -489,7 +492,13 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
       createsDraftChangeRequests: scenario.createsDraftChangeRequests ?? true,
       ...(scenario.privateRemote === undefined
         ? {}
-        : { privateChangeRequestRemote: () => Effect.succeed(scenario.privateRemote!) }),
+        : {
+            privateChangeRequestRemote: () =>
+              Effect.sync(() => {
+                scenario.onPrivateRemote?.();
+                return scenario.privateRemote!;
+              }),
+          }),
       ...headBranchProbe,
       listChangeRequests: (input) =>
         record(input.cwd, {
@@ -3692,6 +3701,71 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "truncates commit subjects, toast descriptions, and hook output without splitting an emoji",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        NodeFS.mkdirSync(NodePath.join(repoDir, ".git", "hooks"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
+          `#!/bin/sh\nprintf '%s\\n' '${"a".repeat(499)}😀bbbb'\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "split emoji\n");
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: () =>
+              Effect.succeed({ subject: `${"a".repeat(71)}😀bb`, body: "" }),
+          },
+        });
+        const events: GitActionProgressEvent[] = [];
+
+        const split = yield* runStackedAction(
+          manager,
+          {
+            cwd: repoDir,
+            action: "commit",
+            commitMessage: `${"a".repeat(68)}😀bbbb`,
+          },
+          {
+            actionId: "action-emoji-toast",
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  events.push(event);
+                }),
+            },
+          },
+        );
+
+        expect(split.toast.description).toBe(`${"a".repeat(68)}...`);
+        const hookLines = events
+          .filter(
+            (event): event is Extract<GitActionProgressEvent, { kind: "hook_output" }> =>
+              event.kind === "hook_output",
+          )
+          .map((event) => event.text);
+        expect(hookLines).toContain("a".repeat(499));
+
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "whole emoji\n");
+        const intact = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+          commitMessage: `${"a".repeat(67)}😀bbbb`,
+        });
+
+        expect(intact.toast.description).toBe(`${"a".repeat(67)}😀...`);
+
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "generated emoji\n");
+        const generated = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+
+        expect(generated.commit.subject).toBe("a".repeat(71));
+        expect(generated.toast.description).toBe("a".repeat(71));
+      }),
+  );
+
   it.effect("lowercases a capitalized Conventional Commits description", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4844,6 +4918,20 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               exitCode: 1,
             },
             {
+              ...itemBase(6, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp run split-tail",
+              output: `😀${"b".repeat(1_999)}`,
+              exitCode: 0,
+            },
+            {
+              ...itemBase(7, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp run whole-tail",
+              output: `a😀${"c".repeat(1_998)}`,
+              exitCode: 0,
+            },
+            {
               ...itemBase(5, abandonedRun.id),
               type: "command_execution" as const,
               input: "vp run abandoned",
@@ -4876,6 +4964,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(generatedPrompt).toContain("Make the PR writer see the thread");
       expect(generatedPrompt).toContain("Command: vp lint\nExit code: 1");
       expect(generatedPrompt).toContain("2 lint errors");
+      expect(generatedPrompt).toContain(`Exit code: 0\n[truncated]\n${"b".repeat(1_999)}`);
+      expect(generatedPrompt).toContain(`Exit code: 0\n[truncated]\n😀${"c".repeat(1_998)}`);
+      expect(generatedPrompt.isWellFormed()).toBe(true);
       expect(generatedPrompt).not.toContain("vp run abandoned");
       expect(generatedPrompt).not.toContain("abandoned output");
       expect(Buffer.byteLength(generatedThreadContext ?? "")).toBeLessThanOrEqual(16_000);
@@ -5200,6 +5291,208 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ).toBe(true);
       }),
   );
+
+  describe("createPullRequest and the repository's push hooks", () => {
+    /** A feature branch with one unpushed commit, and hooks kept in the checkout as husky does. */
+    const hookedRepo = Effect.fn(function* (
+      host: Pick<FakeProviderScenario, "privateRemote" | "onPrivateRemote"> = {},
+    ) {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["config", "core.hooksPath", ".husky"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/hooked"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "first.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "first.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "First commit"]);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".husky"));
+      const ran = NodePath.join(yield* makeTempDir("t3code-hook-ran-"), "ran");
+      const writeHook = (name: string, label = name) =>
+        NodeFS.writeFileSync(
+          NodePath.join(repoDir, ".husky", name),
+          `#!/bin/sh\necho ${label} >> '${ran}'\n`,
+          { mode: 0o755 },
+        );
+      const hooksRun = () =>
+        NodeFS.existsSync(ran) ? [...new Set(NodeFS.readFileSync(ran, "utf8").split("\n"))] : [];
+      const pushed = runGit(repoDir, ["ls-remote", "origin", "refs/heads/feature/hooked"]).pipe(
+        Effect.map((result) => result.stdout.trim() !== ""),
+      );
+      const { manager } = yield* makeManager({
+        providerScenario: { ...host, prListSequence: [[], [], [], []] },
+      });
+      const create = (pushHooks?: { readonly approvedDigest: string | null } | "off") =>
+        manager.createPullRequest({
+          cwd: repoDir,
+          projectId: ProjectId.make("project-1"),
+          title: "Feature",
+          body: "Body",
+          pushHooks,
+          ...(host.privateRemote === undefined ? {} : { private: true }),
+        });
+      const isRefusedForHooks = Schema.is(GitManager.GitPushHooksUnapprovedError);
+      /** The create that was refused for its hooks, as the caller that asks would read it. */
+      const refused = (pushHooks: { readonly approvedDigest: string | null }) =>
+        create(pushHooks).pipe(
+          Effect.flip,
+          Effect.filterOrElse(isRefusedForHooks, (error) =>
+            Effect.die(new Error(`Expected a refusal for the hooks, got ${error.message}`)),
+          ),
+        );
+      return { repoDir, remoteDir, writeHook, hooksRun, pushed, create, refused };
+    });
+
+    it.effect("runs them for a caller that needs no approval", () =>
+      Effect.gen(function* () {
+        const repo = yield* hookedRepo();
+        repo.writeHook("pre-push");
+        yield* repo.create();
+        expect(repo.hooksRun()).toContain("pre-push");
+        expect(yield* repo.pushed).toBe(true);
+      }),
+    );
+
+    it.effect("pushes nothing and runs none until they are approved", () =>
+      Effect.gen(function* () {
+        const repo = yield* hookedRepo();
+        repo.writeHook("pre-push");
+        repo.writeHook("reference-transaction");
+        const unapproved = yield* repo.refused({ approvedDigest: null });
+        expect(unapproved).toMatchObject({
+          _tag: "GitPushHooksUnapprovedError",
+          branch: "feature/hooked",
+          commands: [],
+        });
+        expect(unapproved.files.map((file) => NodeFS.realpathSync(file))).toEqual([
+          NodePath.join(NodeFS.realpathSync(repo.repoDir), ".husky", "pre-push"),
+          NodePath.join(NodeFS.realpathSync(repo.repoDir), ".husky", "reference-transaction"),
+        ]);
+        expect(repo.hooksRun()).toEqual([]);
+        expect(yield* repo.pushed).toBe(false);
+
+        // Approved as they are: both run, and the branch is pushed.
+        yield* repo.create({ approvedDigest: unapproved.digest });
+        expect(repo.hooksRun()).toEqual(
+          expect.arrayContaining(["pre-push", "reference-transaction"]),
+        );
+        expect(yield* repo.pushed).toBe(true);
+      }),
+    );
+
+    it.effect(
+      "a private push refused for its hooks leaves the branch's push remote as it was",
+      () =>
+        Effect.gen(function* () {
+          const companionDir = yield* createBareRemote();
+          // The hook is edited after the early look, so the refusal comes as the push would start.
+          const late = { edit: () => {} };
+          const repo = yield* hookedRepo({
+            privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
+            onPrivateRemote: () => late.edit(),
+          });
+          const pushRemote = runGit(repo.repoDir, ["config", "--list"]).pipe(
+            Effect.map(
+              (result) =>
+                result.stdout
+                  .split("\n")
+                  .find((line) => line.startsWith("branch.feature/hooked.pushremote="))
+                  ?.split("=")[1] ?? null,
+            ),
+          );
+          const companionHeads = runGit(repo.repoDir, ["ls-remote", "--heads", companionDir]).pipe(
+            Effect.map((result) => result.stdout.trim()),
+          );
+          repo.writeHook("pre-push");
+          const first = yield* repo.refused({ approvedDigest: null });
+          expect(yield* pushRemote).toBeNull();
+
+          late.edit = () => repo.writeHook("pre-push", "edited");
+          const second = yield* repo.refused({ approvedDigest: first.digest });
+          expect(second.digest).not.toBe(first.digest);
+          expect(yield* pushRemote).toBeNull();
+
+          // One the person had set is put back.
+          yield* runGit(repo.repoDir, ["config", "branch.feature/hooked.pushRemote", "origin"]);
+          late.edit = () => repo.writeHook("pre-push", "edited again");
+          yield* repo.refused({ approvedDigest: second.digest });
+          expect(yield* pushRemote).toBe("origin");
+          expect(yield* companionHeads).toBe("");
+          expect(repo.hooksRun()).toEqual([]);
+
+          // A push that starts keeps the companion as where the branch goes.
+          late.edit = () => {};
+          const third = yield* repo.refused({ approvedDigest: null });
+          yield* repo.create({ approvedDigest: third.digest });
+          expect(yield* pushRemote).toBe("pingdotgg");
+          expect(yield* companionHeads).toContain("refs/heads/feature/hooked");
+        }),
+    );
+
+    it.effect("an approval does not carry to hooks edited afterwards", () =>
+      Effect.gen(function* () {
+        const repo = yield* hookedRepo();
+        repo.writeHook("pre-push");
+        const first = yield* repo.refused({ approvedDigest: null });
+        repo.writeHook("pre-push", "edited");
+        const second = yield* repo.refused({ approvedDigest: first.digest });
+        expect(second.digest).not.toBe(first.digest);
+        expect(repo.hooksRun()).toEqual([]);
+        expect(yield* repo.pushed).toBe(false);
+      }),
+    );
+
+    it.effect("pushes with hooks off when asked to", () =>
+      Effect.gen(function* () {
+        const repo = yield* hookedRepo();
+        repo.writeHook("pre-push");
+        repo.writeHook("reference-transaction");
+        yield* repo.create("off");
+        expect(repo.hooksRun()).toEqual([]);
+        expect(yield* repo.pushed).toBe(true);
+      }),
+    );
+
+    // The remote's own hook runs while the push is under way, long after the hooks were read.
+    const addsHookDuringPush = (repo: { readonly repoDir: string; readonly remoteDir: string }) => {
+      const late = NodePath.join(repo.repoDir, ".husky", "reference-transaction");
+      const ran = NodePath.join(
+        repo.repoDir,
+        "..",
+        `late-hook-ran-${NodePath.basename(repo.repoDir)}`,
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(repo.remoteDir, "hooks", "pre-receive"),
+        `#!/bin/sh\nprintf '#!/bin/sh\\necho late >> "%s"\\n' '${ran}' > '${late}'\nchmod +x '${late}'\n`,
+        { mode: 0o755 },
+      );
+      return () => NodeFS.existsSync(ran);
+    };
+
+    it.effect("a hook that appears after the push starts does not run", () =>
+      Effect.gen(function* () {
+        const repo = yield* hookedRepo();
+        const lateHookRan = addsHookDuringPush(repo);
+        // No hook to run, so no approval is needed.
+        yield* repo.create({ approvedDigest: null });
+        expect(yield* repo.pushed).toBe(true);
+        expect(
+          NodeFS.existsSync(NodePath.join(repo.repoDir, ".husky", "reference-transaction")),
+        ).toBe(true);
+        expect(lateHookRan()).toBe(false);
+      }),
+    );
+
+    it.effect("the same late hook runs for a caller that needs no approval", () =>
+      Effect.gen(function* () {
+        const repo = yield* hookedRepo();
+        const lateHookRan = addsHookDuringPush(repo);
+        yield* repo.create();
+        expect(lateHookRan()).toBe(true);
+      }),
+    );
+  });
 
   it.effect("createPullRequest pushes the branch before opening its PR", () =>
     Effect.gen(function* () {

@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  isExecutableOnPath,
   isMissingExecutable,
   providerAuth,
   type SourceControlManagedCliDiscoverySpec,
@@ -102,23 +103,28 @@ export const makeDiscovery = Effect.gen(function* () {
       TanStackSource.settings,
       current?.sourceControlHosts[TanStackSource.definition.kind],
     );
-    const status = yield* sourceControlHost.process
-      .run({
-        operation: "source-control.discovery.auth",
-        command: "src",
-        args: ["auth", "status"],
-        cwd,
-        env: { SRC_NO_TELEMETRY: "1" },
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-        maxOutputBytes: 8_000,
-        appendTruncationMarker: true,
-      })
-      .pipe(Effect.result);
-    const installed = Result.isSuccess(status) || !isMissingExecutable(status.failure);
-    const accounts = Result.isSuccess(status)
-      ? parseTanStackSourceAuthStatus(`${status.success.stdout}\n${status.success.stderr}`)
-      : [];
+    // An absent src is never spawned; a saved token or SRC_TOKEN still answers through the API.
+    const status = (yield* isExecutableOnPath("src"))
+      ? yield* sourceControlHost.process
+          .run({
+            operation: "source-control.discovery.auth",
+            command: "src",
+            args: ["auth", "status"],
+            cwd,
+            env: { SRC_NO_TELEMETRY: "1" },
+            allowNonZeroExit: true,
+            timeoutMs: 5_000,
+            maxOutputBytes: 8_000,
+            appendTruncationMarker: true,
+          })
+          .pipe(Effect.result)
+      : undefined;
+    const installed =
+      status !== undefined && (Result.isSuccess(status) || !isMissingExecutable(status.failure));
+    const accounts =
+      status !== undefined && Result.isSuccess(status)
+        ? parseTanStackSourceAuthStatus(`${status.success.stdout}\n${status.success.stderr}`)
+        : [];
     const item = (fields: {
       readonly auth: SourceControlProviderAuth;
       readonly available: boolean;
@@ -203,7 +209,7 @@ export const makeDiscovery = Effect.gen(function* () {
     return item({
       available: true,
       auth: providerAuth({
-        status: Result.isSuccess(status) ? "unauthenticated" : "unknown",
+        status: status !== undefined && Result.isSuccess(status) ? "unauthenticated" : "unknown",
         host: HOST,
         detail: failed?.error ?? `Run \`${LOGIN}\` to sign the src CLI in.`,
       }),
