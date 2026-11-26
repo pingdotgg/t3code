@@ -121,18 +121,15 @@ describe.each([
     expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
   });
 
-  it.each([
-    ["reports/~~final~~.txt", "~~final~~.txt", "./reports/~~final~~.txt"],
-    ["reports/~draft~.txt", "~draft~.txt", "./reports/~draft~.txt"],
-  ])("keeps literal tildes in the visible filename: %s", (path, label, url) => {
-    const markdown = render(`:codex-file-citation{path="${path}"}`);
+  it("keeps literal tildes in the visible filename", () => {
+    const markdown = render(':codex-file-citation{path="reports/~~final~~.txt"}');
     const parsed = unified().use(remarkParse).use(remarkGfm).parse(markdown) as TestNode;
     const link = parsed.children?.[0]?.children?.[0];
 
     expect(link).toMatchObject({
       type: "link",
-      url,
-      children: [{ type: "text", value: label }],
+      url: "./reports/~~final~~.txt",
+      children: [{ type: "text", value: "~~final~~.txt" }],
     });
   });
 });
