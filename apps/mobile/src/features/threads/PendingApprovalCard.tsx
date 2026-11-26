@@ -5,6 +5,7 @@ import type {
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import {
+  type ApprovalTextPart,
   approvalTextParts,
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
@@ -72,28 +73,17 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         </View>
       ) : detail ? (
         <>
-          <Text className="font-sans text-sm leading-normal text-foreground-secondary">
-            {detail.parts.map((part, index) =>
-              part.named ? (
-                // oxlint-disable-next-line react/no-array-index-key -- parts never reorder and two may read alike
-                <Text key={index} className="font-mono text-sm text-warning-foreground">
-                  {part.text}
-                </Text>
-              ) : (
-                part.text
-              ),
-            )}
-          </Text>
-          {detail.shownLength < detail.length ? (
-            <Text className="font-sans text-xs leading-normal text-warning-foreground">
-              {gt(
-                "This text is too long to show in full. Above are the first {shown} of its {total} characters.",
-                {
-                  shown: detail.shownLength.toLocaleString(),
-                  total: detail.length.toLocaleString(),
-                },
-              )}
-            </Text>
+          <ApprovalTextParts parts={detail.parts} />
+          {detail.hiddenLength > 0 ? (
+            <>
+              <Text className="font-sans text-xs leading-normal text-warning-foreground">
+                {gt(
+                  "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
+                  { count: detail.hiddenLength, hidden: detail.hiddenLength.toLocaleString() },
+                )}
+              </Text>
+              <ApprovalTextParts parts={detail.tail} />
+            </>
           ) : null}
         </>
       ) : null}
@@ -153,5 +143,22 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+function ApprovalTextParts(props: { readonly parts: ReadonlyArray<ApprovalTextPart> }) {
+  return (
+    <Text className="font-sans text-sm leading-normal text-foreground-secondary">
+      {props.parts.map((part, index) =>
+        part.named ? (
+          // oxlint-disable-next-line react/no-array-index-key -- parts never reorder and two may read alike
+          <Text key={index} className="font-mono text-sm text-warning-foreground">
+            {part.text}
+          </Text>
+        ) : (
+          part.text
+        ),
+      )}
+    </Text>
   );
 }

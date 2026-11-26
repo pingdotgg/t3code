@@ -133,65 +133,150 @@ function isInsideEmoji(text: string, index: number, codePoint: number): boolean 
 }
 
 export interface ApprovalTextLimit {
-  /** UTF-16 units of the text a card shows at most. */
+  /** UTF-16 units of the text a card shows at most, its beginning and its end together. */
   readonly length: number;
-  /** Runs of named characters, each one element in a card, shown at most. */
+  /** Runs of named characters, each one element in a card, shown at most in the beginning. */
   readonly namedRuns: number;
+  /** UTF-16 units of the end of the text shown at most when the text is cut. */
+  readonly tailLength: number;
+  /** Runs of named characters shown at most in the end. */
+  readonly tailNamedRuns: number;
 }
 
 // A card draws one element per run of named characters and lays the whole text out at once, so
-// both are bounded. A command or a patch a person can read fits many times over: 100,000 units are
-// some 1,250 full lines. Measured in Chromium, the web card at either limit renders in well under
-// 100 ms, and past them the time grows in step with the text.
-export const APPROVAL_TEXT_LIMIT: ApprovalTextLimit = { length: 100_000, namedRuns: 2_000 };
+// both are bounded: measured in Chromium, the web card at these limits renders in about 100 ms,
+// and past them the time grows in step with the text. The end comes out of the same 100,000
+// units (some 1,250 full lines, 50 of them the end) and adds at most a tenth to the elements.
+export const APPROVAL_TEXT_LIMIT: ApprovalTextLimit = {
+  length: 100_000,
+  namedRuns: 2_000,
+  tailLength: 4_000,
+  tailNamedRuns: 200,
+};
 
 export interface ApprovalTextScan {
-  /** The shown beginning of the text. A run of named characters is one part. */
+  /** The text, or its shown beginning when it is cut. A run of named characters is one part. */
   readonly parts: ReadonlyArray<ApprovalTextPart>;
-  /** UTF-16 units of the text that `parts` covers. Less than `length` when the text is cut. */
+  /** The shown end of a cut text. Empty when the text is not cut. */
+  readonly tail: ReadonlyArray<ApprovalTextPart>;
+  /** UTF-16 units of the text that `parts` covers. */
   readonly shownLength: number;
+  /** UTF-16 units between the beginning and the end that no part covers. 0 when not cut. */
+  readonly hiddenLength: number;
   /** UTF-16 units of the whole text. */
   readonly length: number;
 }
 
+const isLowSurrogate = (unit: number) => unit >= 0xdc00 && unit <= 0xdfff;
+const isHighSurrogate = (unit: number) => unit >= 0xd800 && unit <= 0xdbff;
+/** Whether `index` is between the two halves of one code point. */
+const splitsCodePoint = (text: string, index: number) =>
+  index > 0 &&
+  index < text.length &&
+  isLowSurrogate(text.charCodeAt(index)) &&
+  isHighSurrogate(text.charCodeAt(index - 1));
+
 /**
- * Approval text in parts, each character a screen would not draw replaced by its name, cut where
- * it passes `limit`. One pass over the shown text: the work per character does not depend on what
- * surrounds it, and nothing after the cut is read.
+ * `shown` in parts, each character a screen would not draw replaced by its name, up to
+ * `namedRuns` runs. `starts[i]` is where part `i` begins in `shown` and `stop` where the parts
+ * end. One pass: the work per character does not depend on what surrounds it.
  */
-export function approvalTextParts(
-  text: string,
-  limit: ApprovalTextLimit = APPROVAL_TEXT_LIMIT,
-): ApprovalTextScan {
+function scanApprovalText(shown: string, namedRuns: number) {
   const parts: ApprovalTextPart[] = [];
-  let stop = Math.min(text.length, Math.max(0, limit.length));
-  // A cut never falls inside a code point.
-  if (stop > 0 && stop < text.length && codePointBefore(text, stop + 1) > 0xffff) stop -= 1;
+  const starts: number[] = [];
+  let stop = shown.length;
   let end = 0;
   let names = "";
-  let namedRuns = 0;
-  for (const match of text.matchAll(UNDRAWN)) {
-    if (match.index >= stop) break;
+  let namesStart = 0;
+  let runs = 0;
+  for (const match of shown.matchAll(UNDRAWN)) {
     const [character] = match;
     const codePoint = character.codePointAt(0) ?? 0;
-    if (isInsideEmoji(text, match.index, codePoint)) continue;
+    if (isInsideEmoji(shown, match.index, codePoint)) continue;
     if (match.index > end || names === "") {
-      if (namedRuns === limit.namedRuns) {
+      if (runs === namedRuns) {
         stop = match.index;
         break;
       }
-      if (names !== "") parts.push({ text: names, named: true });
-      if (match.index > end) parts.push({ text: text.slice(end, match.index) });
+      if (names !== "") {
+        parts.push({ text: names, named: true });
+        starts.push(namesStart);
+      }
+      if (match.index > end) {
+        parts.push({ text: shown.slice(end, match.index) });
+        starts.push(end);
+      }
       names = "";
-      namedRuns += 1;
+      namesStart = match.index;
+      runs += 1;
     }
     names +=
       UNDRAWN_NAMES[character] ?? `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
     end = match.index + character.length;
   }
-  if (names !== "") parts.push({ text: names, named: true });
-  if (end < stop) parts.push({ text: text.slice(end, stop) });
-  return { parts, shownLength: stop, length: text.length };
+  if (names !== "") {
+    parts.push({ text: names, named: true });
+    starts.push(namesStart);
+  }
+  if (end < stop) {
+    parts.push({ text: shown.slice(end, stop) });
+    starts.push(end);
+  }
+  return { parts, starts, stop };
+}
+
+/**
+ * Approval text in parts, each character a screen would not draw replaced by its name. Text that
+ * passes `limit` is cut in the middle: `parts` is its beginning and `tail` its end, so what the
+ * text ends with is always shown. Only the shown text is read, in one pass, and a cut never falls
+ * inside a code point.
+ */
+export function approvalTextParts(
+  text: string,
+  limit: ApprovalTextLimit = APPROVAL_TEXT_LIMIT,
+): ApprovalTextScan {
+  const { length } = text;
+  const tailLength = Math.max(0, Math.min(limit.tailLength, limit.length));
+  let headEnd = length > limit.length ? Math.max(0, limit.length - tailLength) : length;
+  if (splitsCodePoint(text, headEnd)) headEnd -= 1;
+  const head = scanApprovalText(headEnd < length ? text.slice(0, headEnd) : text, limit.namedRuns);
+  if (head.stop === length) {
+    return { parts: head.parts, tail: [], shownLength: length, hiddenLength: 0, length };
+  }
+
+  let tailStart = Math.max(head.stop, length - tailLength);
+  if (splitsCodePoint(text, tailStart)) tailStart += 1;
+  const end = scanApprovalText(text.slice(tailStart), Number.POSITIVE_INFINITY);
+  // Past its runs the end keeps the last of them: it starts after the run before those.
+  let first = 0;
+  for (let index = end.parts.length - 1, runs = 0; index >= 0; index -= 1) {
+    if (!end.parts[index]?.named) continue;
+    if (runs === limit.tailNamedRuns) {
+      first = index + 1;
+      break;
+    }
+    runs += 1;
+  }
+  const tail = first === 0 ? end.parts : end.parts.slice(first);
+  tailStart += end.starts[first] ?? end.stop;
+
+  // The end begins where the beginning stopped: nothing is hidden, so the text is not cut.
+  if (tailStart === head.stop) {
+    return {
+      parts: [...head.parts, ...tail],
+      tail: [],
+      shownLength: length,
+      hiddenLength: 0,
+      length,
+    };
+  }
+  return {
+    parts: head.parts,
+    tail,
+    shownLength: head.stop,
+    hiddenLength: tailStart - head.stop,
+    length,
+  };
 }
 
 export const PUSH_HOOKS_APPROVAL_LABEL = msg("Push hooks approval");
