@@ -12998,6 +12998,24 @@
   "381ceed77cb8b2b3": "Stoppa {name}",
   "5b9fda36b610d25c": "Stoppa",
   "1d372f6d555dde3c": "Stoppa alla enheter",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " till"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " till i Länkade objekt"
+  ],
   "2fc5076786a6b6ed": "Hoppa över kodblock",
   "b0900f4938210634": "API-nyckel",
   "6e4d05cd77caff7c": "Det gick inte att återuppta uppläsningen.",

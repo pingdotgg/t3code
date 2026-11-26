@@ -12986,6 +12986,24 @@
   "381ceed77cb8b2b3": "Detener {name}",
   "5b9fda36b610d25c": "Detener",
   "1d372f6d555dde3c": "Detener todos los dispositivos",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " más"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " más en Elementos vinculados"
+  ],
   "2fc5076786a6b6ed": "Omitir bloques de código",
   "b0900f4938210634": "Clave de API",
   "6e4d05cd77caff7c": "No se pudo reanudar la lectura.",

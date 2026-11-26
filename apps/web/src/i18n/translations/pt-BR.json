@@ -12991,6 +12991,24 @@
   "381ceed77cb8b2b3": "Parar {name}",
   "5b9fda36b610d25c": "Parar",
   "1d372f6d555dde3c": "Parar todos os dispositivos",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " mais"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " mais em Itens vinculados"
+  ],
   "2fc5076786a6b6ed": "Pular blocos de código",
   "b0900f4938210634": "Chave de API",
   "6e4d05cd77caff7c": "Não foi possível retomar a leitura.",
