@@ -1336,28 +1336,41 @@ it.layer(
       }),
   );
 
-  it.effect("labels a running command by its whole process name, spaces included", () =>
-    Effect.gen(function* () {
-      const { manager } = yield* createManager(5, {
-        subprocessPollIntervalMs: 1_000,
-        processKillGraceMs: 0,
-        processTable: Effect.succeed([
-          { pid: 9000, ppid: 1, name: "zsh" },
-          { pid: 200, ppid: 9000, name: "Google Chrome" },
-        ]),
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
-      const label = yield* Deferred.make<string>();
-      const unsubscribe = yield* manager.subscribe((event) =>
-        event.type === "activity"
-          ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
-          : Effect.void,
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-      yield* manager.open(openInput());
-      yield* TestClock.adjust("1 second");
+  it.effect.each([
+    {
+      label: "spaces included",
+      processName: "Google Chrome",
+      expectedLabel: "Google Chrome",
+    },
+    {
+      label: "surrogate-safe truncation",
+      processName: "a".repeat(127) + "😀tail",
+      expectedLabel: "a".repeat(127),
+    },
+  ] as const)(
+    "labels a running command by its process name ($label)",
+    ({ processName, expectedLabel }) =>
+      Effect.gen(function* () {
+        const { manager } = yield* createManager(5, {
+          subprocessPollIntervalMs: 1_000,
+          processKillGraceMs: 0,
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 200, ppid: 9000, name: processName },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+        const label = yield* Deferred.make<string>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "activity"
+            ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        yield* manager.open(openInput());
+        yield* TestClock.adjust("1 second");
 
-      expect(yield* Deferred.await(label)).toBe("Google Chrome");
-    }).pipe(Effect.provide(TestClock.layer())),
+        expect(yield* Deferred.await(label)).toBe(expectedLabel);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("backs off polling a steady command and still sees it exit within five seconds", () =>
@@ -3322,6 +3335,36 @@ it.layer(
         { type: "snapshot", snapshot: { status: "running", pid: ptyAdapter.processes[0]?.pid } },
       ]);
       expect(ptyAdapter.processes).toHaveLength(1);
+    }),
+  );
+
+  it.effect("attaches to a working shell after the original open is interrupted", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new GatedPtyAdapter();
+      const { manager } = yield* createManager(5, { ptyAdapter });
+      const input = openInput();
+      const gate = {
+        spawning: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      ptyAdapter.gate = gate;
+      const opening = yield* manager.open(input).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(gate.spawning);
+      const cancelled = yield* Fiber.interrupt(opening).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(gate.release, undefined);
+      yield* Fiber.join(cancelled);
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const stop = yield* manager.attachStream(input, (event) =>
+        Effect.sync(() => {
+          events.push(event);
+        }),
+      );
+      stop();
+      const first = events[0];
+      expect(first?.type === "snapshot" ? first.snapshot.status : first?.type).toBe("running");
     }),
   );
 

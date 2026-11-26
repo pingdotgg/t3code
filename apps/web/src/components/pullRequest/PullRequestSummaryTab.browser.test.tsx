@@ -394,3 +394,80 @@ it("opens comment timestamps through the link-target setting, not a popup", asyn
     localStorage.removeItem("t3code:pull-request-comment-filter:v1");
   }
 });
+
+it("opens a comment author's profile through the link-target setting, not a popup", async () => {
+  setup();
+  await using screen = await render({
+    ...detail,
+    comments: [
+      {
+        id: "1",
+        kind: "issue-comment" as const,
+        body: "Looks good",
+        author: { login: "reviewer", name: null, avatarUrl: null },
+        createdAt: "2026-09-01T00:00:00Z",
+        url: null,
+        path: null,
+        reviewState: null,
+      },
+    ],
+    commentCount: 1,
+  });
+  const link = await vi.waitFor(() => {
+    const found = screen.container.querySelector('a[aria-label="Open reviewer\'s profile"]');
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  const href = link.getAttribute("href")!;
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  link.dispatchEvent(click);
+
+  expect(click.defaultPrevented).toBe(true);
+  expect(state.openLink).toHaveBeenCalledOnce();
+  expect(state.openLink).toHaveBeenCalledWith(href, { event: expect.anything() });
+});
+
+it("opens a thread's remaining replies through the link-target setting, not a popup", async () => {
+  setup();
+  await using screen = await render({
+    ...detail,
+    reviewThreads: [
+      {
+        id: "thread",
+        path: "a.ts",
+        line: 3,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        commentCount: 3,
+        comments: [
+          {
+            id: "comment",
+            body: "Please rename this",
+            author: { login: "reviewer", name: null, avatarUrl: null },
+            createdAt: "2026-09-01T00:00:00Z",
+            url: "https://github.com/owner/repo/pull/1#discussion_r1",
+          },
+        ],
+      },
+    ],
+  });
+  const link = await vi.waitFor(() => {
+    const found = [...screen.container.querySelectorAll("a")].find(
+      (anchor) => anchor.textContent === "View on host",
+    );
+    expect(found).toBeDefined();
+    return found!;
+  });
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  link.dispatchEvent(click);
+
+  expect(click.defaultPrevented).toBe(true);
+  expect(state.openLink).toHaveBeenCalledOnce();
+  expect(state.openLink).toHaveBeenCalledWith(
+    "https://github.com/owner/repo/pull/1#discussion_r1",
+    {
+      event: expect.anything(),
+    },
+  );
+});
