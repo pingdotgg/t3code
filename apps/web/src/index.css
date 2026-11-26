@@ -2728,20 +2728,20 @@ code {
    plain, unlayered CSS so they win over the rows' own utilities and stay easy to retune. */
 :root {
   --kaluwa-row-pad: var(--sidebar-row-content-inset);
-  --kaluwa-proj-icon: 26px;
-  --kaluwa-proj-font: 13px;
+  --kaluwa-proj-icon: 18px;
+  --kaluwa-proj-font: 12px;
   --kaluwa-proj-weight: 650;
-  --kaluwa-thread-font: 11.5px;
+  --kaluwa-thread-font: 11px;
   --kaluwa-thread-weight: 450;
-  --kaluwa-thread-row-h: 32px;
+  --kaluwa-thread-row-h: 28px;
   --kaluwa-avatar: 12px;
   --kaluwa-badge-font: 6.5px;
   --kaluwa-indent: 18px;
   --kaluwa-tree-line: color-mix(in srgb, var(--sidebar-foreground) 22%, transparent);
   --kaluwa-tree-w: 1.5px;
   --kaluwa-tree-radius: 8px;
-  --kaluwa-ring-w: 2px;
-  --kaluwa-ring-gap: 2px;
+  --kaluwa-ring-w: 1.5px;
+  --kaluwa-ring-gap: 1px;
   --kaluwa-spin: 0.9s;
   --kaluwa-st-working: #60a5fa;
   --kaluwa-st-waiting: #9ca3af;
