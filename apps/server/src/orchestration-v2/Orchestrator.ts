@@ -7678,14 +7678,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode = { type: "queue_after_active" };
     }
     // An agent's automatic send must not overtake its own earlier message still queued
-    // (e.g. behind /compact), or the agent receives them out of send order.
+    // (e.g. behind /compact), or the agent receives them out of send order. A message it
+    // explicitly queued as a later turn is no such barrier.
     if (
       command.deliveryIntent === "auto" &&
       command.createdBy === "agent" &&
       (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active")
     ) {
       const queuedRuns = projection.runs.filter(
-        (run) => run.status === "queued" && run.queueHeld !== true,
+        (run) => run.status === "queued" && run.queueHeld !== true && run.explicitQueue !== true,
       );
       if (queuedRuns.length > 0) {
         const queuedMessages = yield* projectionStore
@@ -7695,15 +7696,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .pipe(mapDispatchError(command));
         if (
-          queuedRuns.some((run) => {
-            const message = queuedMessages.get(run.userMessageId);
-            return (
-              message !== undefined &&
-              message.createdBy === "agent" &&
-              message.senderThreadId === command.senderThreadId &&
-              run.explicitQueue !== true
-            );
-          })
+          [...queuedMessages.values()].some(
+            (message) =>
+              message.createdBy === "agent" && message.senderThreadId === command.senderThreadId,
+          )
         ) {
           dispatchMode = { type: "queue_after_active" };
         }
