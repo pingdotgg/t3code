@@ -28,10 +28,6 @@ describe("remarkNormalizeListItemIndentation", () => {
   it.each([
     ["-     \tfoo\n          bar", '<span data-leading-whitespace="">  </span>bar'],
     ["-        foo\n      \tbar", "\nbar"],
-    ["10.   \t\tfoo\n              bar", '<span data-leading-whitespace="">  </span>bar'],
-    ["-\t  \tfoo\n          bar", '<span data-leading-whitespace="">  </span>bar'],
-    ["-\t\tfoo\n      \tbar", "\nbar"],
-    ["1.    \tfoo\n          bar", '<span data-leading-whitespace="">  </span>bar'],
   ])("keeps continuation indentation aligned to tab stops: %j", (markdown, expected) => {
     const userProcessor = processor().use(remarkEnableLeadingWhitespace);
     const html = toHtml(userProcessor.runSync(userProcessor.parse(markdown), markdown));

@@ -92,10 +92,15 @@ function parseRecoveredMarkdown(value: string, parser: MarkdownParser): Recovere
   };
 }
 
+/**
+ * Indented code in an item starts five columns past the marker, so its tabs reach tab stops
+ * measured from there. Expands the leading tabs up to the first line's content as the source
+ * columns place them, since the recovered text is measured again from column zero.
+ */
 export function expandIndentedCodeTabs(value: string, source: string, start: number): string {
   if (!value.includes("\t")) return value;
-  const columns = (text: string, start = 0) =>
-    [...text].reduce((col, c) => col + (c === "\t" ? 4 - (col % 4) : 1), start);
+  const columns = (text: string, from = 0) =>
+    [...text].reduce((col, c) => col + (c === "\t" ? 4 - (col % 4) : 1), from);
   const marker = /^([-*+]|\d{1,9}[.)])/.exec(source.slice(start))![0];
   const before = source.slice(0, start);
   const prefix = before.slice(Math.max(before.lastIndexOf("\n"), before.lastIndexOf("\r")) + 1);
