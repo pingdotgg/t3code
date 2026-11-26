@@ -1,5 +1,9 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   IssueTrackerKind,
@@ -7,6 +11,8 @@ import {
   RunId,
   ThreadId,
   WS_METHODS,
+  type PreviewOpenInput,
+  type PreviewSessionSnapshot,
   type IssueDetail,
   type IssueRef,
   type ThreadIssueLink,
@@ -33,7 +39,8 @@ import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { reconcilePreviewServerSessions } from "~/previewStateStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
@@ -1011,6 +1018,92 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
   await expect
     .element(screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true }))
     .toBeVisible();
+});
+
+it("forks the visible workspace with fresh browser tabs in the original order", async () => {
+  await page.viewport(1400, 900);
+  const style = document.createElement("style");
+  style.textContent = stylesheet;
+  document.head.append(style);
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  const thread = threadWithHistory("fork-workspace", 1);
+  const source = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const widthKey = `t3code:preview-panel-width:${scopedThreadKey(source)}`;
+  const previousWidth = localStorage.getItem(widthKey);
+  using _width = {
+    [Symbol.dispose]() {
+      if (previousWidth === null) localStorage.removeItem(widthKey);
+      else localStorage.setItem(widthKey, previousWidth);
+    },
+  };
+  localStorage.setItem(widthKey, "380");
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const sessions: PreviewSessionSnapshot[] = [];
+  const addTab = (threadId: ThreadId, url: string) => {
+    const tab = {
+      threadId,
+      tabId: String(sessions.length + 1),
+      navStatus: { _tag: "Success" as const, url, title: url },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    sessions.push(tab);
+    return tab;
+  };
+  addTab(thread.id, "https://example.com/one");
+  addTab(thread.id, "https://example.com/two");
+  const list = (threadId: ThreadId) => ({
+    sessions: sessions.filter((tab) => tab.threadId === threadId),
+    serverEpoch: "test",
+    revision: sessions.length,
+  });
+  using _list = answerRpc(WS_METHODS.previewList, ({ threadId }: { threadId: ThreadId }) =>
+    Effect.succeed(list(threadId)),
+  );
+  using _open = answerRpc(WS_METHODS.previewOpen, (input: PreviewOpenInput) =>
+    Effect.succeed(addTab(input.threadId, input.url ?? "about:blank")),
+  );
+  reconcilePreviewServerSessions(source, list(thread.id));
+  const panels = useRightPanelStore.getState();
+  panels.openBrowser(source, "1");
+  panels.openFile(source, "README.md");
+  panels.openBrowser(source, "2");
+  panels.activateSurface(source, "browser:1");
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, { router: false });
+  await expect
+    .element(screen.getByRole("button", { name: "Fork from this response" }))
+    .toBeInTheDocument();
+  const panelWidth = () =>
+    document.querySelector('[data-preview-panel-mode="inline"]')?.getBoundingClientRect().width;
+  await expect.poll(panelWidth, { timeout: 5000 }).toBe(380);
+  await screen.getByRole("button", { name: "Fork from this response" }).click();
+  await expect
+    .element(screen.getByRole("textbox", { name: `Message ${thread.title} fork`, exact: true }))
+    .toBeVisible();
+  await expect.poll(panelWidth, { timeout: 5000 }).toBe(380);
+  const fork = dispatchedCommands().find((command) => command.type === "thread.fork");
+  if (!fork) throw new Error("Missing fork");
+  const target = scopeThreadRef(ENVIRONMENT_ID, fork.targetThreadId);
+  const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, target);
+  expect(panel.isOpen).toBe(true);
+  expect(panel.activeSurfaceId).toBe("browser:3");
+  expect(panel.surfaces.map((surface) => surface.id)).toEqual([
+    "browser:3",
+    "file:README.md",
+    "browser:4",
+  ]);
+  expect(list(target.threadId).sessions.map((tab) => tab.navStatus)).toEqual(
+    list(thread.id).sessions.map((tab) => tab.navStatus),
+  );
 });
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {

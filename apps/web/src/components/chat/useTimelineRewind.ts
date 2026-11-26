@@ -36,6 +36,10 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { rewindToMessage } from "./chatViewSend";
 import { makeThreadErrorSetter } from "../ChatView.logic";
+import { previewEnvironment } from "../../state/preview";
+import { copyForkWorkspace } from "../../lib/copyForkWorkspace";
+import { toastManager } from "../ui/toast";
+
 interface TimelineRewindInput {
   readonly environmentId: EnvironmentId;
   readonly routeThreadRef: ScopedThreadRef;
@@ -89,6 +93,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const revertThreadCheckpoint = useOrchestrationCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
+  const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const forkThreadFromRun = useAtomCommand(threadEnvironment.forkFromRun, {
     reportFailure: false,
   });
@@ -222,6 +227,15 @@ export function useTimelineRewind(input: TimelineRewindInput) {
         ),
       );
       return;
+    }
+    try {
+      await copyForkWorkspace(routeThreadRef, targetThreadRef, openPreview);
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: m(msg("Unable to open browser")),
+        description: thrownErrorMessage(error, m) ?? String(error),
+      });
     }
     await navigate({
       to: "/$environmentId/$threadId",
