@@ -2972,6 +2972,8 @@ it.effect.each([
     const state = newState();
     state.currentRemoteStatus = baseRemoteStatus;
     if (refs === "moved") {
+      // A fetch during the remote lookup: the poll re-reads its stamp afterwards.
+      state.recheckPollStamp = Effect.sync(() => state.refSnapshot ?? null);
       state.beforeRemoteStatus = Effect.sync(() => {
         state.refSnapshot = "moved";
       });
