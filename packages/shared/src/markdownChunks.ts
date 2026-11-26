@@ -53,7 +53,13 @@ function openedWrappers(line: string): number {
   return opened;
 }
 
-function fenceCloser(line: string): ((line: string) => boolean) | null {
+function markdownColumn(text: string, column = 0): number {
+  for (const character of text) column += character === "\t" ? 4 - (column % 4) : 1;
+  return column;
+}
+
+/** Returns how to recognize the end of a block that `line` opens, or null for none. */
+function blockCloser(line: string): ((line: string) => boolean) | null {
   const fence = FENCE_OPEN.exec(line)?.[1];
   if (fence) {
     return (next) => {
@@ -66,18 +72,6 @@ function fenceCloser(line: string): ((line: string) => boolean) | null {
       );
     };
   }
-  return null;
-}
-
-function markdownColumn(text: string, column = 0): number {
-  for (const character of text) column += character === "\t" ? 4 - (column % 4) : 1;
-  return column;
-}
-
-/** Returns how to recognize the end of a block that `line` opens, or null for none. */
-function blockCloser(line: string): ((line: string) => boolean) | null {
-  const fence = fenceCloser(line);
-  if (fence) return fence;
   for (const [open, close] of SPANNING_BLOCKS) {
     const opener = open.exec(line)?.[0];
     if (opener === undefined) continue;
@@ -181,7 +175,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           const markerEnd = prefix[1]!.length;
           const indent = markdownColumn(prefix[2]!, markerEnd);
           if (indent - markerEnd <= 4) {
-            closes = fenceCloser(line.slice(prefix[0].length));
+            closes = blockCloser(line.slice(prefix[0].length));
             if (closes !== null) listFenceIndent = indent;
           }
         }
