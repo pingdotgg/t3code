@@ -3521,7 +3521,7 @@
   "12170596ff889d5b": "Joindre à nouveau",
   "748efc40dc99b309": "Retirez pour envoyer",
   "fd3d4318e7b094fa": "Brouillon",
-  "9c421cab815b9905": "{count, plural, one {Afficher {count} image jointe de plus} other {Afficher {count} images jointes de plus}}",
+  "c7f5c98f1e79cc6c": "{count, plural, one {Afficher {count} image jointe de plus} other {Afficher {count} images jointes de plus}}",
   "ae136257600738d3": "Joindre des fichiers",
   "3e04fb123bbf31b4": "La pièce jointe du brouillon n’a pas pu être enregistrée localement et risque d’être perdue en changeant de page.",
   "81709882b9996586": "Joindre des fichiers",

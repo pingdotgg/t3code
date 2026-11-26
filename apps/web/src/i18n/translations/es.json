@@ -3521,7 +3521,7 @@
   "12170596ff889d5b": "Volver a adjuntar",
   "748efc40dc99b309": "Quítalo para enviar",
   "fd3d4318e7b094fa": "Borrador",
-  "9c421cab815b9905": "{count, plural, one {Mostrar {count} imagen adjunta más} other {Mostrar {count} imágenes adjuntas más}}",
+  "c7f5c98f1e79cc6c": "{count, plural, one {Mostrar {count} imagen adjunta más} other {Mostrar {count} imágenes adjuntas más}}",
   "ae136257600738d3": "Adjuntar archivos",
   "3e04fb123bbf31b4": "No se pudo guardar localmente el adjunto del borrador y puede perderse al navegar.",
   "81709882b9996586": "Adjuntar archivos",

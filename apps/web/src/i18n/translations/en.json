@@ -3521,7 +3521,7 @@
   "12170596ff889d5b": "Attach again",
   "748efc40dc99b309": "Remove to send",
   "fd3d4318e7b094fa": "Draft",
-  "9c421cab815b9905": "{count, plural, one {Show {count} more image attachments} other {Show {count} more image attachments}}",
+  "c7f5c98f1e79cc6c": "{count, plural, one {Show {count} more image attachment} other {Show {count} more image attachments}}",
   "ae136257600738d3": "Attach files",
   "3e04fb123bbf31b4": "Draft attachment could not be saved locally and may be lost on navigation.",
   "81709882b9996586": "Attach files",
