@@ -576,6 +576,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                     )
                 : false
           : false;
+        const rollbackPrepared = () =>
+          preparedAttribution && Option.isSome(teamServiceOption)
+            ? teamServiceOption.value.rollbackPreparedThreadAttribution(threadId)
+            : Effect.void;
         if (
           (input.message !== undefined || attachments.length > 0) &&
           Option.isSome(teamChildAuth)
@@ -588,6 +592,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 principal: teamChildAuth.value.teamAutomation,
               })
               .pipe(
+                Effect.onError(rollbackPrepared),
                 Effect.mapError(
                   (error) =>
                     new OrchestratorMcpFailure({
@@ -604,6 +609,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 turnId: `msg:${messageId}`,
               })
               .pipe(
+                Effect.onError(rollbackPrepared),
                 Effect.mapError(
                   (error) =>
                     new OrchestratorMcpFailure({

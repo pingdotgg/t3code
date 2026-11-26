@@ -45,6 +45,7 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   formatAcceptedTeamNoteForPrompt,
+  isTeamOwnedThreadAttribution,
   isTeamProviderInstanceId,
   isValidTeamPseudo,
   normalizeTeamPseudo,
@@ -3276,6 +3277,25 @@ const make = Effect.gen(function* () {
     return threadEnvId === principal.environmentId;
   });
 
+  const isMinimalAutomationOwnerOfThread = Effect.fn(
+    "TeamService.isMinimalAutomationOwnerOfThread",
+  )(function* (
+    principal: McpTeamAutomationPrincipal,
+    threadId: ThreadId,
+    attribution: TeamThreadAttribution,
+  ) {
+    if (!isTeamOwnedThreadAttribution(attribution)) return false;
+    const ownerScope = yield* repository
+      .getAutomationTurnScope(`thread-owner:${threadId}`)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    return (
+      Option.isSome(ownerScope) &&
+      ownerScope.value.threadId === threadId &&
+      ownerScope.value.taskId === principal.taskId &&
+      ownerScope.value.mcpAccessLevel === "minimal"
+    );
+  });
+
   const canMinimalAutomationPostInThread = Effect.fn(
     "TeamService.canMinimalAutomationPostInThread",
   )(function* (
@@ -3287,24 +3307,17 @@ const make = Effect.gen(function* () {
     const inScope = yield* matchesMinimalAutomationThreadScope(principal, attribution, projectId);
     if (!inScope) return false;
     if (!attribution.locked) return true;
-    const latestScope = yield* repository
-      .getLatestAutomationTurnScopeForThread(threadId)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (
-      Option.isSome(latestScope) &&
-      latestScope.value.taskId === principal.taskId &&
-      latestScope.value.mcpAccessLevel === "minimal"
-    ) {
+    if (yield* isMinimalAutomationOwnerOfThread(principal, threadId, attribution)) {
       return true;
     }
-    const ownerScope = yield* repository
-      .getAutomationTurnScope(`thread-owner:${threadId}`)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
+    // Preserve in-turn MCP writes when an admin explicitly bound a minimal task to a locked thread,
+    // without allowing stale historical scopes to bypass later admin locks.
+    const activePrincipal = yield* resolveTurnPrincipal({ threadId });
     return (
-      Option.isSome(ownerScope) &&
-      ownerScope.value.threadId === threadId &&
-      ownerScope.value.taskId === principal.taskId &&
-      ownerScope.value.mcpAccessLevel === "minimal"
+      Option.isSome(activePrincipal) &&
+      activePrincipal.value.kind === "team_automation" &&
+      activePrincipal.value.principal.taskId === principal.taskId &&
+      activePrincipal.value.principal.mcpAccessLevel === "minimal"
     );
   });
 
@@ -3779,8 +3792,8 @@ const make = Effect.gen(function* () {
             "Minimal team automations can only interrupt runs within their configured scope.",
           );
         }
-        let activePrincipal: Option.Option<TeamTurnPrincipal> = Option.none();
         if (runId != null) {
+          let activePrincipal: Option.Option<TeamTurnPrincipal> = Option.none();
           const targetRun = yield* repository
             .getRunInProjection(threadId, runId)
             .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -3791,20 +3804,47 @@ const make = Effect.gen(function* () {
               userMessageId: targetRun.value.userMessageId,
             });
           }
-        } else {
-          activePrincipal = yield* resolveTurnPrincipal({ threadId });
+          if (
+            Option.isNone(activePrincipal) ||
+            activePrincipal.value.kind !== "team_automation" ||
+            activePrincipal.value.principal.taskId !== actor.principal.taskId ||
+            activePrincipal.value.principal.mcpAccessLevel !== "minimal"
+          ) {
+            return yield* teamPostAuthError(
+              "Minimal team automations can only interrupt their own automation runs.",
+            );
+          }
+          return;
         }
-        if (
-          Option.isNone(activePrincipal) ||
-          activePrincipal.value.kind !== "team_automation" ||
-          activePrincipal.value.principal.taskId !== actor.principal.taskId ||
-          activePrincipal.value.principal.mcpAccessLevel !== "minimal"
-        ) {
-          return yield* teamPostAuthError(
-            "Minimal team automations can only interrupt their own automation runs.",
-          );
+        const activeRun = yield* repository
+          .getActiveRunInProjection(threadId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isSome(activeRun)) {
+          const activePrincipal = yield* resolveTurnPrincipal({
+            threadId,
+            runId: activeRun.value.runId,
+            userMessageId: activeRun.value.userMessageId,
+          });
+          if (
+            Option.isNone(activePrincipal) ||
+            activePrincipal.value.kind !== "team_automation" ||
+            activePrincipal.value.principal.taskId !== actor.principal.taskId ||
+            activePrincipal.value.principal.mcpAccessLevel !== "minimal"
+          ) {
+            return yield* teamPostAuthError(
+              "Minimal team automations can only interrupt their own automation runs.",
+            );
+          }
+          return;
         }
-        return;
+        // When no run is active (e.g. waiting_for_children, queued, or idle with PR watch), allow
+        // stopping/cancelling only team-owned threads created by this same minimal automation task.
+        if (yield* isMinimalAutomationOwnerOfThread(actor.principal, threadId, ctx.attribution)) {
+          return;
+        }
+        return yield* teamPostAuthError(
+          "Minimal team automations can only interrupt their own automation runs.",
+        );
       }
       let activeTurnAuthorOption: Option.Option<TeamMemberId> = Option.none();
       if (runId != null) {
@@ -6158,22 +6198,24 @@ const make = Effect.gen(function* () {
         ...(executionEnvironmentId !== null ? { executionEnvironmentId } : {}),
         ...(executionEnvironmentLabel !== null ? { executionEnvironmentLabel } : {}),
         createdAt: nowIso,
+        ...(ownerKind === "team" && input.teamAutomation !== undefined
+          ? {
+              ownerAutomationScope: {
+                turnId: `thread-owner:${input.threadId}`,
+                threadId: input.threadId,
+                taskId: input.teamAutomation.taskId,
+                teamId: team.id,
+                projectId: input.teamAutomation.projectId,
+                environmentId: executionEnvironmentId ?? input.teamAutomation.environmentId,
+                viewId,
+                mcpAccessLevel: input.teamAutomation.mcpAccessLevel,
+                createdAt: nowIso,
+              },
+            }
+          : {}),
       });
       if (Option.isNone(inserted)) {
         return yield* teamPostAuthError("Failed to prepare inherited team thread attribution.");
-      }
-      if (locked && input.teamAutomation !== undefined) {
-        yield* repository.recordAutomationTurnScope({
-          turnId: `thread-owner:${input.threadId}`,
-          threadId: input.threadId,
-          taskId: input.teamAutomation.taskId,
-          teamId: team.id,
-          projectId: input.teamAutomation.projectId,
-          environmentId: executionEnvironmentId ?? input.teamAutomation.environmentId,
-          viewId,
-          mcpAccessLevel: input.teamAutomation.mcpAccessLevel,
-          createdAt: nowIso,
-        });
       }
       return true;
     }).pipe(
@@ -6243,12 +6285,7 @@ const make = Effect.gen(function* () {
         executionEnvironmentLabel,
         isLocalSynced: false,
         createdAt: nowIso,
-      });
-      if (Option.isNone(inserted)) {
-        return yield* teamPostAuthError("Failed to prepare team automation thread attribution.");
-      }
-      if (locked) {
-        yield* repository.recordAutomationTurnScope({
+        ownerAutomationScope: {
           turnId: `thread-owner:${input.threadId}`,
           threadId: input.threadId,
           taskId: input.taskId,
@@ -6258,7 +6295,10 @@ const make = Effect.gen(function* () {
           viewId: resolvedViewId,
           mcpAccessLevel: taskMeta?.mcpAccessLevel ?? "minimal",
           createdAt: nowIso,
-        });
+        },
+      });
+      if (Option.isNone(inserted)) {
+        return yield* teamPostAuthError("Failed to prepare team automation thread attribution.");
       }
       return true;
     }).pipe(
@@ -6752,6 +6792,22 @@ const make = Effect.gen(function* () {
             ? { executionEnvironmentLabel: inheritedExecutionEnvironmentLabel }
             : {}),
           createdAt: nowIso,
+          ...(inheritedOwnerKind === "team" && input.teamAutomation !== undefined
+            ? {
+                ownerAutomationScope: {
+                  turnId: `thread-owner:${input.threadId}`,
+                  threadId: input.threadId,
+                  taskId: input.teamAutomation.taskId,
+                  teamId: team.id,
+                  projectId: input.teamAutomation.projectId,
+                  environmentId:
+                    inheritedExecutionEnvironmentId ?? input.teamAutomation.environmentId,
+                  viewId: inheritedViewId,
+                  mcpAccessLevel: input.teamAutomation.mcpAccessLevel,
+                  createdAt: nowIso,
+                },
+              }
+            : {}),
         })
         .pipe(
           Effect.tapError((cause) =>

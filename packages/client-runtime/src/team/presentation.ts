@@ -846,9 +846,9 @@ export function canCurrentMemberMutateTeamScheduledTask(input: {
   const member = teamState.currentMember;
   if (member === null || member.status !== "active") return false;
   const meta = teamState.scheduledTaskMetaByTaskId.get(taskId) ?? null;
-  if (meta === null) {
+  if (meta === null && !isTeamAdminRole(member.role)) {
     // Match server fail-closed rule: unattributed/unhydrated team tasks are owner/admin-only.
-    return isTeamAdminRole(member.role);
+    return false;
   }
   const hostEnvironment =
     environmentId != null
@@ -859,18 +859,20 @@ export function canCurrentMemberMutateTeamScheduledTask(input: {
   if (hostEnvironment !== null && !canMemberAccessTeamEnvironment(member, hostEnvironment)) {
     return false;
   }
-  const metaEnvironment =
-    teamState.environmentById.get(meta.environmentId) ?? hostEnvironment ?? null;
-  const view = teamState.viewById.get(meta.viewId) ?? resolveTeamDefaultView(teamState);
-  if (
-    !canMemberMutateTeamScheduledTask({
-      member,
-      environment: metaEnvironment,
-      view,
-      existingMeta: { locked: meta.locked, mcpAccessLevel: meta.mcpAccessLevel },
-    })
-  ) {
-    return false;
+  if (meta !== null) {
+    const metaEnvironment =
+      teamState.environmentById.get(meta.environmentId) ?? hostEnvironment ?? null;
+    const view = teamState.viewById.get(meta.viewId) ?? resolveTeamDefaultView(teamState);
+    if (
+      !canMemberMutateTeamScheduledTask({
+        member,
+        environment: metaEnvironment,
+        view,
+        existingMeta: { locked: meta.locked, mcpAccessLevel: meta.mcpAccessLevel },
+      })
+    ) {
+      return false;
+    }
   }
   if (boundThreadId != null) {
     const attribution = teamState.attributionByThreadId.get(boundThreadId) ?? null;

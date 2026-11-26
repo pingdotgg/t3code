@@ -3155,6 +3155,10 @@ const make = Effect.gen(function* () {
             : false;
           if (Option.isSome(teamChildAuth)) {
             const derivedChildMessageId = deriveOrchestrationId.delegatedTaskMessage({ commandId });
+            const rollbackPreparedDelegate = () =>
+              preparedAttribution && Option.isSome(maybeTeam)
+                ? maybeTeam.value.rollbackPreparedThreadAttribution(derivedChildThreadId)
+                : Effect.void;
             if (teamChildAuth.value.teamAutomation !== null) {
               yield* teamChildAuth.value.teamService
                 .requireTeamAutomationTurn({
@@ -3163,6 +3167,7 @@ const make = Effect.gen(function* () {
                   principal: teamChildAuth.value.teamAutomation,
                 })
                 .pipe(
+                  Effect.onError(rollbackPreparedDelegate),
                   Effect.mapError((error) =>
                     failure(
                       "capability_denied",
@@ -3178,6 +3183,7 @@ const make = Effect.gen(function* () {
                   turnId: `msg:${derivedChildMessageId}`,
                 })
                 .pipe(
+                  Effect.onError(rollbackPreparedDelegate),
                   Effect.mapError((error) =>
                     failure(
                       "capability_denied",
@@ -3599,6 +3605,10 @@ const make = Effect.gen(function* () {
                     )
                 : false;
               if (initialMessage !== undefined && Option.isSome(teamChildAuth)) {
+                const rollbackPreparedChild = () =>
+                  preparedAttribution && Option.isSome(maybeTeam)
+                    ? maybeTeam.value.rollbackPreparedThreadAttribution(threadId)
+                    : Effect.void;
                 if (teamChildAuth.value.teamAutomation !== null) {
                   yield* teamChildAuth.value.teamService
                     .requireTeamAutomationTurn({
@@ -3606,7 +3616,10 @@ const make = Effect.gen(function* () {
                       turnId: `msg:${initialMessage.messageId}`,
                       principal: teamChildAuth.value.teamAutomation,
                     })
-                    .pipe(Effect.mapError((error) => failure("capability_denied", error.message)));
+                    .pipe(
+                      Effect.onError(rollbackPreparedChild),
+                      Effect.mapError((error) => failure("capability_denied", error.message)),
+                    );
                 } else if (teamChildAuth.value.memberId !== null) {
                   yield* teamChildAuth.value.teamService
                     .requireTurnAuthoredByMember({
@@ -3614,7 +3627,10 @@ const make = Effect.gen(function* () {
                       threadId,
                       turnId: `msg:${initialMessage.messageId}`,
                     })
-                    .pipe(Effect.mapError((error) => failure("capability_denied", error.message)));
+                    .pipe(
+                      Effect.onError(rollbackPreparedChild),
+                      Effect.mapError((error) => failure("capability_denied", error.message)),
+                    );
                 }
               }
               const created = yield* threadManagement

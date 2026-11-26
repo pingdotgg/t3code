@@ -4009,6 +4009,60 @@ describe("TeamService", () => {
             ),
           ))._tag,
         ).toBe("Failure");
+
+        // Idle/waiting_for_children cancellation (runId = undefined): owning minimal task CAN stop
+        // its own idle team-owned child thread, while another minimal task CANNOT.
+        const idleChildThreadId = ThreadId.make("thread-m8-idle-min-child");
+        yield* sql`
+          INSERT OR IGNORE INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json
+          ) VALUES (
+            ${idleChildThreadId}, ${projectId}, ${idleChildThreadId}, 'devReplay', 'full-access', 'default',
+            NULL, ${nowIso}, ${nowIso}, NULL, NULL, '{}'
+          )
+        `;
+        yield* team.prepareThreadInheritedFromParent({
+          parentThreadId: lockedOwnedMinThreadId,
+          threadId: idleChildThreadId,
+          teamAutomation: ownedMinPrincipal,
+        });
+        yield* team.assertActorCanInterruptThread(ownedMinActor, idleChildThreadId);
+        expect(
+          (yield* Effect.exit(team.assertActorCanInterruptThread(minimalActor, idleChildThreadId)))
+            ._tag,
+        ).toBe("Failure");
+
+        // Stale historical automation scope on a later-locked member-owned thread CANNOT bypass the lock.
+        const memberLaterLockedThreadId = ThreadId.make("thread-m8-member-later-locked");
+        yield* sql`
+          INSERT OR IGNORE INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json
+          ) VALUES (
+            ${memberLaterLockedThreadId}, ${projectId}, ${memberLaterLockedThreadId}, 'devReplay', 'full-access', 'default',
+            NULL, ${nowIso}, ${nowIso}, NULL, NULL, '{}'
+          )
+        `;
+        yield* team.recordThreadCreated({
+          sessionId: ownerSession.sessionId,
+          threadId: memberLaterLockedThreadId,
+          viewId: init.team.defaultViewId,
+        });
+        yield* team.requireTeamAutomationTurn({
+          threadId: memberLaterLockedThreadId,
+          turnId: "run-hist-min-1",
+          principal: ownedMinPrincipal,
+        });
+        yield* team.setThreadLocked({
+          sessionId: ownerSession.sessionId,
+          payload: { threadId: memberLaterLockedThreadId, locked: true },
+        });
+        expect(
+          (yield* Effect.exit(
+            team.assertActorCanPostInThread(ownedMinActor, memberLaterLockedThreadId),
+          ))._tag,
+        ).toBe("Failure");
       }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
   );
 });

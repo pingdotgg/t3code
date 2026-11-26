@@ -691,6 +691,7 @@ export class TeamRepository extends Context.Service<
       readonly executionEnvironmentLabel?: string | null;
       readonly isLocalSynced?: boolean;
       readonly createdAt: string;
+      readonly ownerAutomationScope?: StoredTeamAutomationTurnScope;
     }) => Effect.Effect<Option.Option<TeamThreadAttribution>, TeamRepositoryError>;
     readonly upsertLocalSyncedThreadAttribution: (input: {
       readonly threadId: ThreadId;
@@ -1817,6 +1818,26 @@ const make = Effect.gen(function* () {
               yield* sql`
                 INSERT OR IGNORE INTO team_thread_env_labels (thread_id, execution_environment_label)
                 VALUES (${input.threadId}, ${input.executionEnvironmentLabel})
+              `;
+            }
+            if (input.ownerAutomationScope !== undefined) {
+              const scope = input.ownerAutomationScope;
+              yield* sql`
+                INSERT OR IGNORE INTO team_automation_turn_scopes (
+                  turn_id, thread_id, task_id, team_id, project_id, environment_id, view_id,
+                  mcp_access_level, created_at
+                )
+                VALUES (
+                  ${scope.turnId},
+                  ${scope.threadId},
+                  ${scope.taskId},
+                  ${scope.teamId},
+                  ${scope.projectId},
+                  ${scope.environmentId},
+                  ${scope.viewId},
+                  ${scope.mcpAccessLevel},
+                  ${scope.createdAt}
+                )
               `;
             }
           }),
