@@ -45,6 +45,8 @@ type LocalModel = {
   /** Whether the model honors the speed option; clients speed up playback for the rest. */
   readonly appliesSpeed: boolean;
   readonly voices: readonly LocalVoice[];
+  /** The languages its voices speak, as ISO 639-1 codes. */
+  readonly languages: readonly string[];
   /** eSpeak-ng data the model phonemizes with, installed and removed with it. */
   readonly espeakData?: SpeechModelStore.ModelFile;
   /** Cleanup the model's reference implementation applies before it reads text. */
@@ -112,7 +114,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
   {
     id: "kokoro-82m",
     name: "Kokoro",
-    description: "Natural English voices, plus Spanish, French, Hindi, Italian, and Portuguese.",
+    description: "Natural voices, most of them English.",
     file: {
       id: AUDIO_CPP_GGUF,
       revision: GGUF_REVISION,
@@ -122,6 +124,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     },
     appliesSpeed: true,
     voices: KOKORO_VOICES.map((id) => ({ id })),
+    languages: ["en", "es", "fr", "hi", "it", "pt"],
     espeakData: {
       id: "pingdotgg/audio.cpp",
       revision: AUDIO_CPP_VERSION,
@@ -131,7 +134,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
   {
     id: "supertonic-3",
     name: "Supertonic 3",
-    description: "31 languages. Fastest with a GPU.",
+    description: "Fastest with a GPU.",
     file: {
       id: AUDIO_CPP_GGUF,
       revision: "ca0b203eb1bb87f333a7cfbad2d5f6672b4ccba7",
@@ -141,12 +144,46 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     },
     appliesSpeed: true,
     voices: ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"].map((id) => ({ id })),
+    // From the model card.
+    languages: [
+      "en",
+      "ko",
+      "ja",
+      "ar",
+      "bg",
+      "cs",
+      "da",
+      "de",
+      "el",
+      "es",
+      "et",
+      "fi",
+      "fr",
+      "hi",
+      "hr",
+      "hu",
+      "id",
+      "it",
+      "lt",
+      "lv",
+      "nl",
+      "pl",
+      "pt",
+      "ro",
+      "ru",
+      "sk",
+      "sl",
+      "sv",
+      "tr",
+      "uk",
+      "vi",
+    ],
     speakable: supertonicText,
   },
   {
     id: "pocket-tts-english",
     name: "Pocket TTS",
-    description: "English only. Small, and fast without a GPU.",
+    description: "Small, and fast without a GPU.",
     file: {
       id: AUDIO_CPP_GGUF,
       revision: GGUF_REVISION,
@@ -155,6 +192,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
       sha256: "3f71cf6a51f93c2f2e554e98970a3f49fb9a98d0c64bed5a815e65be3d2ff588",
     },
     appliesSpeed: false,
+    languages: ["en"],
     voices: [
       pocketVoice(
         "alba",
@@ -418,6 +456,7 @@ const make = Effect.gen(function* () {
           name: model.name,
           description: model.description,
           voices: model.voices.map((voice) => voice.id),
+          languages: model.languages,
           install,
           ...(model.appliesSpeed ? {} : { speedAppliedByProvider: false }),
         };

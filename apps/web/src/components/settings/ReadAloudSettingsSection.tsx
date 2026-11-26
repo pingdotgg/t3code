@@ -60,6 +60,10 @@ import { SettingsRow, SettingsSearchTarget, SettingsSection } from "./settingsLa
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useCloudRead } from "./CloudVoiceConfiguration";
 import { CatalogCombobox } from "./CatalogCombobox";
+import { ModelCatalogToolbar } from "./ModelCatalogToolbar";
+import { orderSpeechLanguages } from "./SpeechModelComparison";
+import { languageLabel } from "./SpeechLanguageSelect";
+import { preferredSpeechLanguages } from "../../speech/preferredSpeechLanguages";
 import { ReadAloudKeyDialog } from "./ReadAloudKeyDialog";
 import { SpeechProviderIcon } from "./SpeechProviderIcon";
 
@@ -86,6 +90,8 @@ function LocalSpeechModel({
   onChanged: () => void;
 }) {
   const gt = useGT();
+  const locale = useLocale();
+  const languages = model.languages ?? [];
   const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState("");
@@ -139,12 +145,23 @@ function LocalSpeechModel({
               </Badge>
             )}
           </div>
-          <p className="mt-0.5 text-xs leading-normal text-muted-foreground">
-            {model.description}{" "}
-            {install.state === "installed"
-              ? gt("{size}.", { size: formatSize(install.size) })
-              : gt("{size} download.", { size: formatSize(install.size) })}
-          </p>
+          {model.description ? (
+            <p className="mt-0.5 text-xs leading-normal text-muted-foreground">
+              {model.description}
+            </p>
+          ) : null}
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+            {languages.length > 1 ? (
+              <span>
+                {gt("{count, plural, one {{count} language} other {{count} languages}}", {
+                  count: languages.length,
+                })}
+              </span>
+            ) : languages[0] ? (
+              <span>{languageLabel(languages[0], locale)}</span>
+            ) : null}
+            <span>{formatSize(install.size)}</span>
+          </div>
           {install.linkedFrom && (
             <p className="mt-0.5 break-all text-2xs text-muted-foreground">
               <T>
@@ -283,6 +300,122 @@ function LocalSpeechModelLink({
         <T>Use existing</T>
       </Button>
     </form>
+  );
+}
+
+type LocalModelSort = "recommended" | "size";
+type LocalModelEntry = SpeechSynthesisCatalog["models"][number];
+
+/** Read aloud's local models, browsed like transcription models: by name, language, and size. */
+function LocalSpeechModelBrowser({
+  prepared,
+  models,
+  selectedModel,
+  defaultModel,
+  refreshing,
+  onSelect,
+  onChanged,
+}: {
+  prepared: PreparedConnection;
+  models: ReadonlyArray<LocalModelEntry>;
+  selectedModel: string;
+  defaultModel: string;
+  refreshing: boolean;
+  onSelect: (id: string) => void;
+  onChanged: () => void;
+}) {
+  const gt = useGT();
+  const locale = useLocale();
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<LocalModelSort>("recommended");
+  const [downloadedOnly, setDownloadedOnly] = useState(false);
+  const [selection, setSelection] = useState<string[] | null>(null);
+  const [preferred] = useState(preferredSpeechLanguages);
+  const spoken = [...new Set(models.flatMap((entry) => entry.languages ?? []))];
+  const defaultLanguage = preferred.find((code) => spoken.includes(code));
+  const selectedLanguages = selection ?? (defaultLanguage ? [defaultLanguage] : []);
+  const query = search.trim().toLocaleLowerCase();
+  const order = (entry: LocalModelEntry) =>
+    entry.id === selectedModel
+      ? 0
+      : entry.install?.state === "installed"
+        ? 1
+        : entry.install?.state === "downloading" || entry.install?.state === "verifying"
+          ? 2
+          : 3;
+  const shown = models
+    .filter(
+      (entry) =>
+        selectedLanguages.every((code) => entry.languages?.includes(code) ?? true) &&
+        (!downloadedOnly || entry.install?.state === "installed") &&
+        (!query || `${entry.name} ${entry.description ?? ""}`.toLocaleLowerCase().includes(query)),
+    )
+    .toSorted((left, right) =>
+      sort === "size"
+        ? (left.install?.size ?? 0) - (right.install?.size ?? 0)
+        : order(left) - order(right),
+    );
+  const selected = models.find((entry) => entry.id === selectedModel);
+  const rendered = selected && !shown.includes(selected) ? [selected, ...shown] : shown;
+  const sortLabels: Record<LocalModelSort, string> = {
+    recommended: gt("Recommended"),
+    size: gt("Smallest"),
+  };
+  return (
+    <SettingsRow
+      title={gt("Models")}
+      description={gt(
+        "Downloaded once to the selected environment, which reads replies without the text leaving it.",
+      )}
+      className="@container/voice-models"
+    >
+      <ModelCatalogToolbar
+        searchLabel={gt("Search speech models")}
+        search={search}
+        onSearch={setSearch}
+        languages={orderSpeechLanguages(spoken, preferred, locale)}
+        selectedLanguages={selectedLanguages}
+        onSelectLanguages={setSelection}
+        sort={sort}
+        sortLabels={sortLabels}
+        onSort={setSort}
+        downloadedOnly={downloadedOnly}
+        onDownloadedOnly={setDownloadedOnly}
+      />
+      <div
+        className="mt-2 mb-2 max-h-96 divide-y divide-border/60 overflow-y-auto rounded-lg border border-border/60"
+        role="region"
+        aria-label={gt("Read-aloud models")}
+        tabIndex={0}
+      >
+        {shown.length === 0 && (
+          <p className="px-3 py-3 text-sm text-muted-foreground">
+            <T>No models match.</T>
+          </p>
+        )}
+        {rendered.map((entry) => (
+          <LocalSpeechModel
+            key={`${prepared.environmentId}:${entry.id}`}
+            prepared={prepared}
+            model={entry}
+            selected={entry.id === selectedModel}
+            recommended={entry.id === defaultModel}
+            refreshing={refreshing}
+            onSelect={() => onSelect(entry.id)}
+            onDownloaded={() => {
+              // Settings may have moved on while the model downloaded.
+              const current = getClientSettings().readAloud;
+              if (current.provider === "local" && current.environmentId === prepared.environmentId)
+                void updateClientSettings({
+                  readAloud: { ...current, model: entry.id, voice: "" },
+                });
+            }}
+            onChanged={onChanged}
+          />
+        ))}
+      </div>
+      <LocalSpeechModelLink prepared={prepared} onChanged={onChanged} />
+    </SettingsRow>
   );
 }
 
@@ -607,44 +740,15 @@ export function ReadAloudSettingsSection() {
       {settings.provider === "off" ? null : (
         <>
           {prepared && localModels.length > 0 && (
-            <SettingsRow
-              title={gt("Models")}
-              description={gt(
-                "Downloaded once to the selected environment, which reads replies without the text leaving it.",
-              )}
-              className="@container/voice-models"
-            >
-              <div
-                className="mt-3 mb-2 divide-y divide-border/60 rounded-lg border border-border/60"
-                role="region"
-                aria-label={gt("Read-aloud models")}
-              >
-                {localModels.map((entry) => (
-                  <LocalSpeechModel
-                    key={`${prepared.environmentId}:${entry.id}`}
-                    prepared={prepared}
-                    model={entry}
-                    selected={entry.id === model}
-                    recommended={entry.id === catalog.defaultModel}
-                    refreshing={catalogState.version !== catalogVersion}
-                    onSelect={() => change({ model: entry.id, voice: "" })}
-                    onDownloaded={() => {
-                      // Settings may have moved on while the model downloaded.
-                      const current = getClientSettings().readAloud;
-                      if (
-                        current.provider === "local" &&
-                        current.environmentId === prepared.environmentId
-                      )
-                        void updateClientSettings({
-                          readAloud: { ...current, model: entry.id, voice: "" },
-                        });
-                    }}
-                    onChanged={refreshCatalog}
-                  />
-                ))}
-              </div>
-              <LocalSpeechModelLink prepared={prepared} onChanged={refreshCatalog} />
-            </SettingsRow>
+            <LocalSpeechModelBrowser
+              prepared={prepared}
+              models={localModels}
+              selectedModel={model}
+              defaultModel={catalog.defaultModel}
+              refreshing={catalogState.version !== catalogVersion}
+              onSelect={(id) => change({ model: id, voice: "" })}
+              onChanged={refreshCatalog}
+            />
           )}
           {cloudProvider && catalog.supportsModelSelection && catalog.models.length > 0 && (
             <SettingsRow
