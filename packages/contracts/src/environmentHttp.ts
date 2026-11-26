@@ -412,7 +412,6 @@ const EnvironmentSessionRevokeErrors = [
   EnvironmentInternalError,
 ] as const;
 const EnvironmentClientAccessUpdateErrors = [
-  // The managed policy caps runtime modes below the requested level.
   EnvironmentHttpForbiddenError,
   ...EnvironmentScopedOperationErrors,
 ] as const;

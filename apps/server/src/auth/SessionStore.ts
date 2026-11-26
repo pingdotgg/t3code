@@ -64,7 +64,6 @@ export interface VerifiedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly runtimeModeCeiling?: RuntimeMode;
-  /** The stored level of an MCP client; it overrides `runtimeModeCeiling`, which the token froze. */
   readonly mcpAccess?: AuthMcpClientAccess;
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
@@ -477,13 +476,11 @@ export class SessionStore extends Context.Service<
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
-    /** Changes a live MCP client's level and scopes; false unless it has a stored level. */
     readonly setMcpAccess: (
       sessionId: AuthSessionId,
       access: AuthMcpClientAccess,
       scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
-    /** Stores the level of an MCP client issued before levels were stored. */
     readonly recordMcpAccess: (
       sessionId: AuthSessionId,
       access: AuthMcpClientAccess,

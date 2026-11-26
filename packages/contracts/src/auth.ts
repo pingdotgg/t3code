@@ -399,7 +399,6 @@ export const AuthClientSession = Schema.Struct({
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtc),
   connected: Schema.Boolean,
   current: Schema.Boolean,
-  /** Set on an MCP client whose access level can be changed. */
   mcpAccess: Schema.optionalKey(AuthMcpClientAccess),
 });
 export type AuthClientSession = typeof AuthClientSession.Type;

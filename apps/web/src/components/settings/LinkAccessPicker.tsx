@@ -5,7 +5,6 @@ import { useId } from "react";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
-/** An agent access level picker; `unavailable` disables levels and shows why instead. */
 export function AccessLevelSelect({
   value,
   onChange,

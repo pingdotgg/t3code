@@ -503,7 +503,6 @@ export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAut
   }
 }
 
-/** The caller lacks a scope the requested level grants, so it cannot raise a client to it. */
 export class ServerAuthMcpAccessScopeError extends Schema.TaggedError<ServerAuthMcpAccessScopeError>()(
   "ServerAuthMcpAccessScopeError",
   { scope: AuthEnvironmentScope },
@@ -648,13 +647,8 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
-    /**
-     * Changes an MCP client's access level from its next request on. Raising it needs every
-     * scope the level grants; lowering it does not. False when the session is no live MCP client
-     * with a changeable level, such as a peer link.
-     */
     readonly updateMcpClientAccess: (input: {
-      readonly callerScopes: ReadonlyArray<AuthEnvironmentScope>;
+      readonly currentSessionId: AuthSessionId;
       readonly sessionId: AuthSessionId;
       readonly access: AuthMcpClientAccess;
     }) => Effect.Effect<
@@ -1560,8 +1554,9 @@ export const make = Effect.gen(function* () {
 
   const updateMcpClientAccess: EnvironmentAuth["Service"]["updateMcpClientAccess"] = Effect.fn(
     "EnvironmentAuth.updateMcpClientAccess",
-  )(function* ({ callerScopes, sessionId, access }) {
-    const target = (yield* listSessions()).find((session) => session.sessionId === sessionId);
+  )(function* ({ currentSessionId, sessionId, access }) {
+    const activeSessions = yield* listSessions();
+    const target = activeSessions.find((session) => session.sessionId === sessionId);
     if (
       target?.mcpAccess === undefined ||
       target.subject !== MCP_CLIENT_SUBJECT ||
@@ -1569,12 +1564,9 @@ export const make = Effect.gen(function* () {
     ) {
       return false;
     }
-    const raises =
-      AuthMcpClientAccess.literals.indexOf(access) >
-      AuthMcpClientAccess.literals.indexOf(target.mcpAccess);
-    const missingScope = raises
-      ? mcpClientScopes(access).find((scope) => !callerScopes.includes(scope))
-      : undefined;
+    const callerScopes =
+      activeSessions.find((session) => session.sessionId === currentSessionId)?.scopes ?? [];
+    const missingScope = mcpClientScopes(access).find((scope) => !callerScopes.includes(scope));
     if (missingScope !== undefined) {
       return yield* new ServerAuthMcpAccessScopeError({ scope: missingScope });
     }
@@ -1748,7 +1740,6 @@ export const make = Effect.gen(function* () {
               ? (session.runtimeModeCeiling ?? "approval-required")
               : "read-only");
           if (session.mcpAccess === undefined && session.peerLink !== true) {
-            // Issued before levels were stored: store this one so Settings can change it.
             yield* sessions
               .recordMcpAccess(session.sessionId, access)
               .pipe(

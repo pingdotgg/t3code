@@ -505,7 +505,6 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
 });
 
 type ClientAccessChange = {
-  /** Scopes this device holds, which bound the levels it can raise a client to. */
   grantableScopes: ReadonlyArray<AuthEnvironmentScope>;
   managedPolicy: ManagedPolicySummary | undefined;
   updatingAccessSessionId: string | null;
@@ -537,15 +536,11 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
     mcpAccess === undefined
       ? []
       : AuthMcpClientAccess.literals.flatMap((level) => {
-          const raises =
-            AuthMcpClientAccess.literals.indexOf(level) >
-            AuthMcpClientAccess.literals.indexOf(mcpAccess);
           const reason =
             (level === "read-only"
               ? undefined
               : managedRuntimeModeDenial(accessChange.managedPolicy, level, m)) ??
-            (raises &&
-            !mcpClientScopes(level).every((scope) => accessChange.grantableScopes.includes(scope))
+            (!mcpClientScopes(level).every((scope) => accessChange.grantableScopes.includes(scope))
               ? gt("This device cannot grant this.")
               : undefined);
           return reason === undefined ? [] : [[level, reason] as const];

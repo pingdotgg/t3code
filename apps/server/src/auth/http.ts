@@ -568,7 +568,7 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
             const updated = yield* serverAuth.updateMcpClientAccess({
-              callerScopes: [...session.scopes],
+              currentSessionId: session.sessionId,
               sessionId: args.payload.sessionId,
               access: args.payload.access,
             });

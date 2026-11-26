@@ -156,11 +156,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
-    /** Changes a live MCP client's level and scopes together; false unless it has a level to change. */
     readonly setMcpAccess: (
       input: SetAuthSessionMcpAccessInput,
     ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
-    /** Stores the level of an MCP client issued before levels were stored; no-op once one is. */
     readonly recordMcpAccess: (
       input: RecordAuthSessionMcpAccessInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
