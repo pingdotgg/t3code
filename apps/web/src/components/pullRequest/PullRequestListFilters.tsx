@@ -47,7 +47,6 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
@@ -59,6 +58,7 @@ import {
 import { resolveFilterOptions } from "./pullRequestListOptions";
 import { PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface PullRequestFilterOption<Value extends string> {
   readonly value: Value;
@@ -236,12 +236,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
           </MenuRadioItem>
         );
         if (!option.unavailable) return item;
-        return (
-          <Tooltip key={option.value}>
-            <TooltipTrigger render={item} />
-            <TooltipPopup side="top">{option.unavailable}</TooltipPopup>
-          </Tooltip>
-        );
+        return <SharedTooltipTrigger key={option.value} render={item} label={option.unavailable} />;
       })}
     </MenuRadioGroup>
   );
@@ -352,7 +347,9 @@ function PullRequestAuthorChoices({
               <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
               {option.mergedCount > 0 ? (
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {option.mergedCount} {option.mergedCount === 1 ? "merge" : "merges"} loaded
+                  {gt("{count, plural, one {{count} merge loaded} other {{count} merges loaded}}", {
+                    count: option.mergedCount,
+                  })}
                 </span>
               ) : null}
             </span>

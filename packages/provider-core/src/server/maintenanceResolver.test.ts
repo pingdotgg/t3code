@@ -581,6 +581,71 @@ it.layer(
       ),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "gives npm view T3's own lasting npm cache and drops its partial download on interrupt",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-view-cache");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = NodePath.join(tempDir, ".local/bin/native-package-tool");
+        writeExecutable(binaryPath);
+        const npmCacheDir = NodePath.join(tempDir, "t3-caches", "npm");
+        const cacheDirs: Array<unknown> = [];
+        const viewStarted = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) => {
+          const { options } = command as unknown as {
+            readonly options: { readonly env: Record<string, unknown> };
+          };
+          const cacheDir = options.env.npm_config_cache;
+          cacheDirs.push(cacheDir);
+          if (typeof cacheDir === "string") {
+            NodeFS.mkdirSync(NodePath.join(cacheDir, "_cacache", "tmp"), { recursive: true });
+            NodeFS.writeFileSync(NodePath.join(cacheDir, "_cacache", "index"), "");
+            NodeFS.writeFileSync(
+              NodePath.join(cacheDir, "_cacache", "tmp", "partial-packument"),
+              '{"name":"@example/native-package-tool"',
+            );
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.fromEffect(Deferred.succeed(viewStarted, undefined)).pipe(
+                Stream.flatMap(() => Stream.never),
+              ),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        });
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath, env: { PATH: "" }, npmCacheDir },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const fiber = yield* Effect.forkChild(capabilities.lookupLatestVersion!);
+        yield* Deferred.await(viewStarted);
+        yield* Fiber.interrupt(fiber);
+        expect(cacheDirs).toHaveLength(1);
+        const cacheDir = cacheDirs[0] as string;
+        expect(cacheDir.startsWith(npmCacheDir)).toBe(true);
+        expect(NodeFS.existsSync(NodePath.join(cacheDir, "_cacache", "tmp"))).toBe(false);
+        expect(NodeFS.existsSync(NodePath.join(cacheDir, "_cacache", "index"))).toBe(true);
+      }),
+  );
+
   it.effect.skipIf(!symlinksSupported || windowsHost)(
     "keeps configured npm registries' latest versions apart for one install",
     () =>
