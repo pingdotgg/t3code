@@ -11,7 +11,7 @@ import type {
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { cloneUrlRepositoryPath, isScpLikeCloneUrl } from "@t3tools/shared/cloneUrl";
+import { cloneUrlProtocol, cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
 import {
   isAbsolutePath,
   isExplicitRelativePath,
@@ -240,12 +240,12 @@ export function getAddProjectInitialQuery(baseDirectory: string | null | undefin
 
 export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
   const trimmed = (repositoryOrRemoteUrl ?? "").trim();
-  // Local paths keep both delimiters. SCP paths keep a literal # in the repository name.
+  // Local paths keep both delimiters. SSH remotes keep a literal # in the repository path.
   const isLocalPath =
     !trimmed.includes("://") && (isHostPath(trimmed) || isExplicitRelativePath(trimmed));
   const withoutQuery = isLocalPath
     ? trimmed
-    : trimmed.split(isScpLikeCloneUrl(trimmed) ? "?" : /[?#]/, 1)[0]!;
+    : trimmed.split(cloneUrlProtocol(trimmed) === "ssh" ? "?" : /[?#]/, 1)[0]!;
   const schemeIndex = withoutQuery.indexOf("://");
   const hasHost = schemeIndex >= 0 || /^[^/\\:]+@[^/\\:]+:/.test(withoutQuery);
   const pathPart = schemeIndex >= 0 ? withoutQuery.slice(schemeIndex + "://".length) : withoutQuery;

@@ -223,6 +223,12 @@ describe("cloneUrlRepositoryPath", () => {
     expect(cloneUrlRepositoryPath("git@forge.example:team#1/spec#2026.git")).toBe(
       "forge.example/team#1/spec#2026",
     );
+    expect(cloneUrlRepositoryPath("ssh://git@forge.example/team#1/spec#2026.git")).toBe(
+      "forge.example/team#1/spec#2026",
+    );
+    expect(
+      cloneUrlRepositoryPath("ssh://git@forge.example:2222/team#1/spec#2026.git?ref=main"),
+    ).toBe("forge.example/team#1/spec#2026");
     expect(cloneUrlRepositoryPath("https://forge.example/team/spec.git#readme")).toBe(
       "forge.example/team/spec",
     );
