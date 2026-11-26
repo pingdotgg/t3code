@@ -2937,7 +2937,9 @@ const make = Effect.gen(function* () {
               ${input.createdAt}
             )
             ON CONFLICT(team_id, environment_id, subject_prefix) DO UPDATE SET
-              unlink_after_revoke = MAX(unlink_after_revoke, excluded.unlink_after_revoke)
+              id = excluded.id,
+              unlink_after_revoke = MAX(unlink_after_revoke, excluded.unlink_after_revoke),
+              created_at = excluded.created_at
           `,
         );
       },

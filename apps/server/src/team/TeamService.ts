@@ -4623,74 +4623,86 @@ const make = Effect.gen(function* () {
       });
     }
     yield* ensureDefaultEnvironmentForTeam(team);
-    let environmentId = input.payload.environmentId;
-    let resolvedName = input.payload.name?.trim();
-    let peerLinkId: string | null = null;
-
-    if (input.payload.url !== undefined && input.payload.pairingCode !== undefined) {
-      if (input.peerLinks === undefined) {
-        return yield* new TeamOperationError({
-          code: "environment_unavailable",
-          message: "Peer environment linking is unavailable on this server.",
-        });
-      }
-      const linked = yield* input.peerLinks
-        .linkUnlessLinked({
-          url: input.payload.url,
-          pairingCode: input.payload.pairingCode,
-          access: input.payload.access ?? "full-access",
-        })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new TeamOperationError({
-                code: "environment_unavailable",
-                message: error.message,
-              }),
-          ),
-        );
-      environmentId = linked.link.environmentId;
-      peerLinkId = linked.link.environmentId;
-      resolvedName = resolvedName || linked.link.label;
-    } else if (environmentId !== undefined) {
-      peerLinkId = environmentId;
-      if (input.peerLinks !== undefined && !resolvedName) {
-        const existingPeer = yield* input.peerLinks
-          .get(environmentId)
-          .pipe(Effect.orElseSucceed(() => Option.none()));
-        if (Option.isSome(existingPeer)) {
-          resolvedName = existingPeer.value.label;
-        }
-      }
-    } else {
+    if (
+      (input.payload.url === undefined || input.payload.pairingCode === undefined) &&
+      input.payload.environmentId === undefined
+    ) {
       return yield* new TeamOperationError({
         code: "invalid_input",
         message: "Provide either an existing environmentId or a remote URL and pairing code.",
       });
     }
-
     const accessRule = normalizeAccessRule(
       input.payload.accessRule ?? { roles: [...ALL_TEAM_ROLES], memberIds: [] },
     );
     yield* validateAccessRuleMemberIds(team.id, [accessRule]);
-    const nowIso = DateTime.formatIso(yield* DateTime.now);
-    const recordId = TeamEnvironmentRecordId.make(
-      yield* random.uuidV4().pipe(Effect.mapError(toInternalError)),
-    );
-    const environment: TeamEnvironment = {
-      id: recordId,
-      teamId: team.id,
-      environmentId,
-      name: resolvedName && resolvedName.length > 0 ? resolvedName : environmentId,
-      isDefault: false,
-      peerLinkId,
-      accessRule,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
-    yield* remoteEnvLifecycleLock.withPermits(1)(
+
+    // Hold remoteEnvLifecycleLock across peer-link acquisition and attachment commit so a
+    // concurrent pending revocation drain cannot unlink the peer between linking and committing.
+    const environment = yield* remoteEnvLifecycleLock.withPermits(1)(
       Effect.gen(function* () {
-        yield* repository.createEnvironment(environment).pipe(
+        let environmentId = input.payload.environmentId;
+        let resolvedName = input.payload.name?.trim();
+        let peerLinkId: string | null = null;
+
+        if (input.payload.url !== undefined && input.payload.pairingCode !== undefined) {
+          if (input.peerLinks === undefined) {
+            return yield* new TeamOperationError({
+              code: "environment_unavailable",
+              message: "Peer environment linking is unavailable on this server.",
+            });
+          }
+          const linked = yield* input.peerLinks
+            .linkUnlessLinked({
+              url: input.payload.url,
+              pairingCode: input.payload.pairingCode,
+              access: input.payload.access ?? "full-access",
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new TeamOperationError({
+                    code: "environment_unavailable",
+                    message: error.message,
+                  }),
+              ),
+            );
+          environmentId = linked.link.environmentId;
+          peerLinkId = linked.link.environmentId;
+          resolvedName = resolvedName || linked.link.label;
+        } else if (environmentId !== undefined) {
+          peerLinkId = environmentId;
+          if (input.peerLinks !== undefined && !resolvedName) {
+            const existingPeer = yield* input.peerLinks
+              .get(environmentId)
+              .pipe(Effect.orElseSucceed(() => Option.none()));
+            if (Option.isSome(existingPeer)) {
+              resolvedName = existingPeer.value.label;
+            }
+          }
+        } else {
+          return yield* new TeamOperationError({
+            code: "invalid_input",
+            message: "Provide either an existing environmentId or a remote URL and pairing code.",
+          });
+        }
+
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const recordId = TeamEnvironmentRecordId.make(
+          yield* random.uuidV4().pipe(Effect.mapError(toInternalError)),
+        );
+        const nextEnvironment: TeamEnvironment = {
+          id: recordId,
+          teamId: team.id,
+          environmentId,
+          name: resolvedName && resolvedName.length > 0 ? resolvedName : environmentId,
+          isDefault: false,
+          peerLinkId,
+          accessRule,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        yield* repository.createEnvironment(nextEnvironment).pipe(
           Effect.catchTags({
             TeamEnvironmentAlreadyAttachedError: (error) =>
               Effect.fail(
@@ -4707,10 +4719,11 @@ const make = Effect.gen(function* () {
         yield* repository
           .clearPendingRemoteRevocationUnlinkFlag({ teamId: team.id, environmentId })
           .pipe(Effect.mapError(toInternalError));
+        return nextEnvironment;
       }),
     );
     yield* publish({ version: 1, type: "environmentUpserted", payload: environment });
-    yield* publishAccessChange({ type: "environment", environmentId });
+    yield* publishAccessChange({ type: "environment", environmentId: environment.environmentId });
     return environment;
   });
 

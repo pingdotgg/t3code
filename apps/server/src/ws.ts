@@ -4059,6 +4059,9 @@ export const layerWsRpc = (
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
               Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(
                 persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
               ),
             ),

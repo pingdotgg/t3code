@@ -2721,6 +2721,83 @@ describe("TeamService", () => {
         yield* Fiber.join(drainFiber);
         expect(revokedCalls.length).toBe(1);
         expect(unlinkedEnvs).toEqual([]);
+
+        // 7. Concurrent drain finishing revokeSubject WHILE attachEnvironment is mid-linkUnlessLinked
+        // must wait for attachEnvironment to commit and must NOT unlink the newly linked peer.
+        remoteOnline = false;
+        unlinkedEnvs.length = 0;
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: envB },
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+
+        const linkResolved = yield* Deferred.make<void>();
+        const releaseLink = yield* Deferred.make<void>();
+        const drainRevoked = yield* Deferred.make<void>();
+        const slowLinkPeerLinks = {
+          linkUnlessLinked: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(linkResolved, undefined);
+              yield* Deferred.await(releaseLink);
+              return { link: { environmentId: envB, label: "Remote B Linked" } };
+            }),
+          unlink: (environmentId: EnvironmentId) =>
+            Effect.sync(() => {
+              unlinkedEnvs.push(environmentId);
+              return { unlinked: true };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerLinks"]
+        >;
+        const signalRevokePairing = {
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.gen(function* () {
+              revokedCalls.push({ environmentId, prefix });
+              yield* Deferred.succeed(drainRevoked, undefined);
+              return { ok: true as const, revokedSessions: 1, revokedPairingLinks: 0 };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+
+        revokedCalls.length = 0;
+        const attachFiber = yield* Effect.forkChild(
+          team.attachEnvironment({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              url: "http://remote-b.test",
+              pairingCode: "pair-b-1",
+              name: "Remote B Re-Linked",
+              accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+            },
+            peerLinks: slowLinkPeerLinks,
+          }),
+        );
+        yield* Deferred.await(linkResolved);
+
+        // Drain completes remote revokeSubject while attachEnvironment is paused after link resolution.
+        const drainDuringAttachFiber = yield* Effect.forkChild(
+          team.drainPendingRemoteRevocations({
+            peerClientPairing: signalRevokePairing,
+            peerLinks: slowLinkPeerLinks,
+          }),
+        );
+        yield* Deferred.await(drainRevoked);
+        yield* Effect.yieldNow;
+        expect(unlinkedEnvs).toEqual([]);
+
+        yield* Deferred.succeed(releaseLink, undefined);
+        const reattached = yield* Fiber.join(attachFiber);
+        yield* Fiber.join(drainDuringAttachFiber);
+        expect(reattached.environmentId).toBe(envB);
+        expect(revokedCalls.length).toBe(1);
+        expect(unlinkedEnvs).toEqual([]);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });
