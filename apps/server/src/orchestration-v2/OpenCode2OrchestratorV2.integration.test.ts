@@ -475,7 +475,7 @@ describe("OpenCode 2 through the orchestrator", () => {
     }),
   );
 
-  it.effect("forks from an earlier turn before the next turn's user message", () =>
+  it.effect("keeps recovered OpenCode history in a fork across a failed unsent turn", () =>
     Effect.gen(function* () {
       const name = "opencode2-fork";
       const cwd = yield* checkpointWorkspace(name);
@@ -483,15 +483,40 @@ describe("OpenCode 2 through the orchestrator", () => {
         new URL("./testkit/fixtures/opencode2_fork/opencode_transcript.ndjson", import.meta.url),
       );
 
+      const modelRefresh = recorded.entries.filter(
+        (entry) =>
+          entry.type !== "runtime_exit" &&
+          (entry.label === "model.list" || entry.label === "model.list.response"),
+      );
+      const nativeSession = recorded.metadata?.["nativeSessionId"];
+      assert.isString(nativeSession);
+      const loadSession = [
+        out("session.get", { sessionID: nativeSession }),
+        reply("session.get", {
+          data: { ...sessionInfo(cwd, t3Rules(name), name).data, id: nativeSession },
+        }),
+      ];
       const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript(
-        withDirectory(recorded, cwd),
+        withDirectory(
+          {
+            ...recorded,
+            entries: recorded.entries.flatMap((entry) =>
+              entry.type !== "runtime_exit" && entry.label === "message.list.before_prompt"
+                ? [...loadSession, ...modelRefresh, ...loadSession, entry]
+                : [entry],
+            ),
+          },
+          cwd,
+        ),
       );
       const source = threadCommands({ name, worktreePath: cwd });
       const target = ThreadId.make(`thread:${name}:target`);
       const [one, two] = [source.message("one"), source.message("two")];
+      const unsent = source.message("unsent", { instanceId, model: "missing-provider" });
       const commands: ReadonlyArray<OrchestrationV2Command> = [
         source.create,
         one,
+        unsent,
         two,
         {
           type: "thread.fork",
@@ -527,11 +552,25 @@ describe("OpenCode 2 through the orchestrator", () => {
       ).pipe(provideDeterministicTestRuntime);
       const original = result.projections.get(source.threadId);
       assert.isDefined(original);
+      const [first, failed, last] = original.runs;
+      assert.deepEqual(
+        [first?.status, failed?.status, last?.status],
+        ["completed", "failed", "completed"],
+      );
+      assert.deepEqual(
+        original.visibleTurnItems.flatMap(({ item }) =>
+          (item.type === "user_message" || item.type === "assistant_message") &&
+          (item.text === "From the GUI" || item.text === "GUI_REPLY")
+            ? [item.runId]
+            : [],
+        ),
+        [first?.id, first?.id],
+      );
       assert.deepEqual(
         original.visibleTurnItems.flatMap(({ item }) =>
           item.type === "user_message" || item.type === "assistant_message" ? [item.text] : [],
         ),
-        [one.text, "ONE", "From the GUI", "GUI_REPLY", two.text, "TWO"],
+        [one.text, "ONE", "From the GUI", "GUI_REPLY", unsent.text, two.text, "TWO"],
       );
       const forked = result.projections.get(target);
       assert.isDefined(forked);
