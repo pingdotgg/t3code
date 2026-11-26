@@ -41,6 +41,7 @@ import {
   type ReactElement,
 } from "react";
 import { cn } from "../lib/utils";
+import { Button } from "./ui/button";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
 import { useEnvironmentQuery } from "../state/query";
@@ -575,9 +576,10 @@ export function LinkedItemsOverflow({
     );
   }
   return (
-    <button
-      type="button"
-      className="mt-1 flex w-full cursor-pointer items-center rounded-sm px-1 py-1 text-left text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+    <Button
+      variant="ghost-muted"
+      size="xs"
+      className="mt-1 w-full justify-start"
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.preventDefault();
@@ -588,7 +590,7 @@ export function LinkedItemsOverflow({
       <T>
         +<Var>{hidden}</Var> more in Linked items
       </T>
-    </button>
+    </Button>
   );
 }
 
