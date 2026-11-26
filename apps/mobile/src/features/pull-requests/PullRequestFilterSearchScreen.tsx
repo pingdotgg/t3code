@@ -5,6 +5,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import {
   EnvironmentId,
   ProjectId,
+  type ScopedProjectRef,
   type PullRequestFilterOptionKind,
   type PullRequestFilterOptionsInput,
 } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ export type PullRequestFilterSearchParams = {
   readonly environmentId: string | null;
   /** The environments the list reads, which the host search covers as well. */
   readonly environmentIds: readonly string[];
+  readonly projectRefs?: readonly ScopedProjectRef[];
   /** What the loaded rows already carry, offered before the host has answered. */
   readonly suggestions: readonly string[];
   /** Dot colors by lowercased label name, from the loaded rows. */
@@ -56,7 +58,8 @@ export function PullRequestFilterSearchScreen({
 }: StaticScreenProps<PullRequestFilterSearchParams>) {
   const navigation = useNavigation();
   const gt = useGT();
-  const { kind, environmentId, environmentIds, suggestions, labelColors } = route.params;
+  const { kind, environmentId, environmentIds, projectRefs, suggestions, labelColors } =
+    route.params;
   const listControls = usePullRequestListControls();
   const controls = listControls.controlsFor(environmentId);
   const [query, setQuery] = useState("");
@@ -69,7 +72,15 @@ export function PullRequestFilterSearchScreen({
       environmentId: EnvironmentId.make(id),
       input: {
         kind,
-        ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
+        ...(projectRefs
+          ? {
+              projectIds: projectRefs
+                .filter((ref) => ref.environmentId === id)
+                .map((ref) => ref.projectId),
+            }
+          : controls.projectId
+            ? { projectId: ProjectId.make(controls.projectId) }
+            : {}),
         ...(sent ? { query: sent } : {}),
       },
     })),
