@@ -10508,17 +10508,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
     const emitEvent = emit(events, command);
     // Stop disposed the results owed at the time; a follow-up started after it is owed a wake again.
-    if (owner.delegatedCompletion?.disposition === "stopped") {
+    // Re-read the owner so a terminal update since `parent` was read is kept.
+    const currentOwner =
+      owner.delegatedCompletion?.disposition === "stopped"
+        ? (yield* projectionStore
+            .getThreadRecords(parentThreadId, ["runs"], { runIds: [owner.id] })
+            .pipe(mapDispatchError(command))).runs[0]
+        : undefined;
+    if (currentOwner?.delegatedCompletion?.disposition === "stopped") {
       yield* emitEvent({
         type: "run.updated",
         threadId: parentThreadId,
-        runId: owner.id,
+        runId: currentOwner.id,
         nodeId: owner.rootNodeId,
-        providerInstanceId: owner.providerInstanceId,
+        providerInstanceId: currentOwner.providerInstanceId,
         occurredAt: now,
         payload: {
-          ...owner,
-          delegatedCompletion: { ...owner.delegatedCompletion, disposition: "open" },
+          ...currentOwner,
+          delegatedCompletion: { ...currentOwner.delegatedCompletion, disposition: "open" },
         },
       });
     }
