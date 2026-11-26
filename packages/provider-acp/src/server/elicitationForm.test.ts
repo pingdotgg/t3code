@@ -184,4 +184,47 @@ describe("parseElicitationForm", () => {
     });
     assert.isUndefined(form.content({ limit: "", ratio: "", retries: "", threshold: "0.5" }));
   });
+
+  it("marks optional boolean and enum fields as not required and omits skipped answers", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          extras: { type: "boolean" },
+          mode: { type: "string", enum: ["", "fast"] },
+          confirm: { type: "boolean" },
+          tier: { type: "string", enum: ["free", "pro"] },
+        },
+        required: ["name", "confirm", "tier"],
+      },
+      "Configure run",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["name", undefined],
+        ["extras", false],
+        ["mode", false],
+        ["confirm", undefined],
+        ["tier", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ name: "Greg", confirm: "true", tier: "pro" }), {
+      name: "Greg",
+      confirm: true,
+      tier: "pro",
+    });
+    assert.deepStrictEqual(
+      form.content({ name: "Greg", extras: "false", mode: "", confirm: "true", tier: "pro" }),
+      {
+        name: "Greg",
+        extras: false,
+        mode: "",
+        confirm: true,
+        tier: "pro",
+      },
+    );
+  });
 });

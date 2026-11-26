@@ -238,7 +238,7 @@ export function parseElicitationForm(
       ...(field?.kind === "multiChoice" && field.minItems > 0 && required.has(id)
         ? { required: true }
         : {}),
-      ...((kind === "text" || kind === "number") && !required.has(id) ? { required: false } : {}),
+      ...(kind !== "multiChoice" && !required.has(id) ? { required: false } : {}),
     });
   }
   return {

@@ -168,8 +168,12 @@ export function buildPendingUserInputAnswers(
   const entries: Array<[string, PendingUserInputAnswer]> = [];
 
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
+    const draft = draftAnswers[question.id];
+    const answer = resolvePendingUserInputAnswer(question, draft);
     if (answer === null) {
+      if (question.required === false && !draft?.attachmentsBlocked) {
+        continue;
+      }
       return null;
     }
     entries.push([question.id, answer]);
