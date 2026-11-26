@@ -125,6 +125,13 @@ import {
   AgentSessionScanError,
 } from "./agentSessions.ts";
 import {
+  ExtensionsError,
+  ExtensionsListInput,
+  ExtensionsListResult,
+  ExtensionsMutation,
+  ExtensionsMutationResult,
+} from "./extensions.ts";
+import {
   AssetAccessError,
   AssetCreateUrlInput,
   AssetCreateUrlResult,
@@ -512,6 +519,9 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  // Fork: Kaluwa's Extensions page
+  extensionsList: "extensions.list",
+  extensionsMutate: "extensions.mutate",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1753,6 +1763,19 @@ const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
 });
 
+// Fork: Kaluwa's Extensions page
+const WsExtensionsListRpc = Rpc.make(WS_METHODS.extensionsList, {
+  payload: ExtensionsListInput,
+  success: ExtensionsListResult,
+  error: Schema.Union([ExtensionsError, EnvironmentAuthorizationError]),
+});
+
+const WsExtensionsMutateRpc = Rpc.make(WS_METHODS.extensionsMutate, {
+  payload: ExtensionsMutation,
+  success: ExtensionsMutationResult,
+  error: Schema.Union([ExtensionsError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   payload: AgentSessionImportInput,
   success: AgentSessionImportResult,
@@ -2658,6 +2681,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
+  WsExtensionsListRpc,
+  WsExtensionsMutateRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

@@ -23,6 +23,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // An MCP sign-in stores a credential for the agent, as an account sign-in does.
   [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
   [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
+  // Fork: changing a subscription's extensions edits its provider config, as managing a provider does.
+  [WS_METHODS.extensionsMutate]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
