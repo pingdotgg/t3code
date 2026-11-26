@@ -17,7 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAndroidControlSizing } from "../../../components/ui/useAndroidControlSizing";
-import { useStartSafeAreaInset } from "../../../i18n/direction";
+import { useStartSafeAreaInset } from "../../../i18n/startSafeAreaInset";
 import { useToolbarLayout } from "../../../components/ui/useToolbarLayout";
 import { rootNavigationRef } from "../../../lib/rootNavigation";
 import { useWorkspaceConnectionState } from "../../../state/workspace";

@@ -5,8 +5,9 @@ import { isMacPlatform } from "./lib/utils";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
-// Cache the synchronous fullscreen IPC read until subscription.
+// Cache the synchronous fullscreen IPC read while anything is subscribed.
 let windowFullscreenSnapshot: boolean | null = null;
+let windowFullscreenSubscribers = 0;
 
 function macosDesktopBridge() {
   if (!isElectron || !isMacPlatform(navigator.platform)) return null;
@@ -26,10 +27,14 @@ function subscribeToWindowFullscreen(onChange: () => void): () => void {
     onChange();
   });
   // The window may have changed state between the first render and this subscription.
-  windowFullscreenSnapshot = bridge.getWindowFullscreenState();
+  if (windowFullscreenSubscribers === 0) {
+    windowFullscreenSnapshot = bridge.getWindowFullscreenState();
+  }
+  windowFullscreenSubscribers += 1;
   return () => {
     unsubscribe();
-    windowFullscreenSnapshot = null;
+    windowFullscreenSubscribers -= 1;
+    if (windowFullscreenSubscribers === 0) windowFullscreenSnapshot = null;
   };
 }
 

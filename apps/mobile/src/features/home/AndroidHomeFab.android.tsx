@@ -15,7 +15,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { FabScrollContext, FabTopContext } from "./FabScrollContext";
 import { updateFabScroll } from "./fab-scroll";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { useStartSafeAreaInset } from "../../i18n/direction";
+import { useStartSafeAreaInset } from "../../i18n/startSafeAreaInset";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { FLOATING_TABS, floatingTabsMetrics } from "../layout/workspace/floating-workspace-tabs";
 import { useEnabledNavigationTabs } from "../layout/workspace/navigation-tabs";
