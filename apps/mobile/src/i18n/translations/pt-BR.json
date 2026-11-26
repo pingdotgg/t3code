@@ -5398,7 +5398,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} parada} other {{count} paradas}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} parada} other {{count} paradas}}",
   "9830004326e7d8c0": "{count, plural, one {em {count} arquivo} other {em {count} arquivos}}",
   "e6035bad35419efa": "Opções do guia",
   "4d7635a2bf1f5816": "Reescrever guia",
