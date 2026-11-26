@@ -212,6 +212,28 @@ describe("splitMarkdown", () => {
     const oversized = "# Appendix\n" + "[link](/example) ".repeat(11_000);
     const { chunks } = splitMarkdown(preview + "\n" + oversized);
     expect(chunks.map((chunk) => chunk.text)).toEqual([preview, oversized]);
+    const code = unified()
+      .use(remarkParse)
+      .parse(chunks[0]!.text)
+      .children.find((node) => node.type === "code");
+    expect(code?.value).toBe("Sample Markdown\n\n# Sample heading");
+  });
+
+  it.each(["===", "---", "***"])(
+    "keeps HTML together after a long paragraph and %s",
+    (boundary) => {
+      const text = ["x".repeat(9000), boundary, "<span>", "# literal"].join("\n");
+      expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([text]);
+    },
+  );
+
+  it("preserves an oversized ambiguous region for source display", () => {
+    const oversized = ["x".repeat(LARGE_MARKDOWN_CHUNK_MAX_CHARS), "<span>", "# Heading"].join(
+      "\n",
+    );
+    const next = "# Next";
+    const text = oversized + "\n\n" + next;
+    expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([oversized + "\n", next]);
   });
 
   it.each([

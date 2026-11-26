@@ -161,9 +161,11 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   };
   const sourceLines = text.split("\n");
   let flowStart = 0;
+  let parsedThrough = 0;
   let htmlStarts: Set<number> | undefined;
   const resetFlow = (start: number) => {
     flowStart = start;
+    parsedThrough = start;
     htmlStarts = undefined;
   };
   for (const [index, line] of sourceLines.entries()) {
@@ -187,11 +189,11 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       else if (cutPoint) heldCut = lines.length;
       const closer = blockCloser(line);
       closes = closer ?? null;
-      if (closer === null || ATX_HEADING.test(line)) {
+      if (closer === null || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line)) {
         resetFlow(index + 1);
       } else if (closer === undefined && HTML_STANDALONE_TAG.test(line)) {
-        // Type-7 HTML cannot interrupt prose. Parse a bounded run once, and treat tags
-        // beyond that budget as inline rather than parsing a potentially oversized block.
+        // Type-7 HTML cannot interrupt prose. Keep ambiguous tags beyond the parse
+        // budget with their following lines, as a cut could expose literal HTML as Markdown.
         if (htmlStarts === undefined && index > flowStart) {
           let end = flowStart;
           let flowChars = 0;
@@ -199,12 +201,17 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             const next = sourceLines[end]!;
             flowChars += next.length + 1;
             if (flowChars > HTML_FLOW_MAX_CHARS || BLANK_LINE.test(next)) break;
-            // The heading itself can end a lazy container continuation before the cut.
-            if (ATX_HEADING.test(next)) {
+            // Include the boundary line, which can end a lazy container continuation.
+            if (
+              ATX_HEADING.test(next) ||
+              THEMATIC_BREAK.test(next) ||
+              blockCloser(next) !== undefined
+            ) {
               end++;
               break;
             }
           }
+          parsedThrough = end;
           htmlStarts = new Set();
           if (index < end) {
             const flow = flowParser.parse(sourceLines.slice(flowStart, end).join("\n"));
@@ -215,7 +222,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             }
           }
         }
-        if (index === flowStart || htmlStarts?.has(index)) closes = closesAtBlankLine;
+        if (index >= parsedThrough || htmlStarts?.has(index)) closes = closesAtBlankLine;
       }
       // Two or more spaces may put a fence in a list item, which this does not track.
       openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
