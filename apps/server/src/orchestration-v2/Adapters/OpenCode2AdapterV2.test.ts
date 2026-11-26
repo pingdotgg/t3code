@@ -5960,6 +5960,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
+  // regression: #43429 Meta rejects tool names over 64 chars; OpenCode exposes `<server>_<tool>`
+  it.effect("keeps every exposed T3 tool name within 64 characters for UUID thread ids", () =>
+    Effect.gen(function* () {
+      const server = yield* t3McpServerName("d4ecfe87-382d-47a5-80cc-e86859fc985e");
+      assert.isAtMost(`${server}_t3_environment_preferences_update`.length, 64);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it.effect.each([
     {
       external: false,
