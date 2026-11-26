@@ -163,6 +163,7 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --title "tix ${APP_VERSION}" \
+              --latest=false \
               --generate-notes || true
           fi
           gh release upload "$RELEASE_TAG" \
