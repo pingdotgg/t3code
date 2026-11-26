@@ -750,14 +750,26 @@ export function appendTerminalOutput(
 export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
-  // Moves are relative to the last line, and a viewer only holds the lines in `text`.
+  // Count live rows from the end because the retained tail may omit early rows.
   let reachable = 0;
-  let cursor = 0;
-  while (reachable < LIVE_LINES - 1) {
-    const newline = state.text.indexOf("\n", cursor);
+  let cursor = state.text.length;
+  while (reachable < lastRow && cursor > 0) {
+    const newline = state.text.lastIndexOf("\n", cursor - 1);
     if (newline === -1) break;
     reachable += 1;
-    cursor = newline + 1;
+    cursor = newline;
+  }
+  let replay = state.text;
+  if (lastRow < LIVE_LINES - 1 && reachable === lastRow && cursor > 0) {
+    const boundary = state.text.lastIndexOf("\n", cursor - 1) + 1;
+    if (boundary > 0) {
+      // Scroll the history out with blank rows, then clear them before replaying the live window.
+      replay =
+        state.text.slice(0, boundary) +
+        "\n".repeat(LIVE_LINES - 1) +
+        `${ESC}[2J` +
+        state.text.slice(boundary);
+    }
   }
   const up = (row: number) => Math.min(lastRow - row, reachable);
   const goTo = (row: number, col: number) =>
@@ -775,7 +787,7 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
     suffix += goTo(screen.row, screen.col);
   }
   if (screen.pen !== "") suffix += sgr(screen.pen);
-  return state.text + suffix + state.pending;
+  return replay + suffix + state.pending;
 }
 
 export function normalizeTerminalOutput(
