@@ -4137,6 +4137,56 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  it.effect("sends a $skill named in a message that steers the running turn", () =>
+    Effect.gen(function* () {
+      const prompts: Array<unknown> = [];
+      const steerId = "msg_recorded_steer_skill";
+      const greet = {
+        id: "greet",
+        name: "greet",
+        path: `${WORK}/.opencode/skills/greet/SKILL.md`,
+        content: "Say hello.",
+      };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          out("skill.list", { "location[directory]": WORK }),
+          reply("skill.list", { location: { directory: WORK }, data: [greet] }),
+          out("session.prompt", { sessionID: SESSION, id: steerId, delivery: "steer" }),
+          replyData("session.prompt", {
+            id: steerId,
+            sessionID: SESSION,
+            time: { created: 1790656601500 },
+            type: "user",
+            payload: { text: "$greet first" },
+            delivery: "steer",
+          }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: steerId }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { onPrompt: (input) => prompts.push(input) },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const input = turnInput(thread);
+      yield* runtime.startTurn(input);
+      yield* runtime.steerTurn({
+        threadId,
+        runId: input.runId,
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        message: {
+          ...input.message,
+          messageId: MessageId.make("message:opencode2-adapter:steer"),
+          text: "$greet first",
+        },
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      assert.deepInclude(prompts[1], { delivery: "steer", skills: [{ id: "greet" }] });
+    }),
+  );
+
   it.effect.each([
     {
       server: "an external server keeps rejecting requests",
@@ -8609,6 +8659,74 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const input = turnInput(thread);
       yield* runtime.startTurn({ ...input, message: { ...input.message, text: "/goal clear" } });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  // regression: #41870
+  it.effect("does not tell the user to retry /goal resume when OpenCode has no paused goal", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("command.list", "<any>"),
+          reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+          reply("message.list", { data: [], cursor: {} }),
+          out("session.command", { sessionID: SESSION, name: "goal", text: "resume" }),
+          reply("session.command", {
+            status: 500,
+            body: {
+              _tag: "CommandExecutionError",
+              command: "goal",
+              message: "No paused goal to resume.",
+            },
+          }),
+        ],
+        { version: "2.2.5" },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const input = turnInput(thread);
+      yield* runtime
+        .startTurn({ ...input, message: { ...input.message, text: "/goal resume" } })
+        .pipe(Effect.ignore);
+      const ended = yield* Fiber.join(terminal);
+      if (ended?.status !== "completed") {
+        const message = ended?.failure?.message ?? "";
+        assert.notInclude(message, "Retry the turn");
+        assert.match(message, /paused goal|no goal/iu);
+      }
+    }),
+  );
+
+  // regression: #42892
+  it.effect("shows OpenCode's goal length limit when it rejects a /goal objective", () =>
+    Effect.gen(function* () {
+      const objective = "a".repeat(4001);
+      const { runtime, thread } = yield* resumed(
+        [
+          out("command.list", "<any>"),
+          reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+          reply("message.list", { data: [], cursor: {} }),
+          out("session.command", { sessionID: SESSION, name: "goal", text: objective }),
+          reply("session.command", {
+            status: 500,
+            body: {
+              _tag: "CommandExecutionError",
+              command: "goal",
+              message: "A goal objective is limited to 4000 characters (got 4001).",
+            },
+          }),
+        ],
+        { version: "2.2.5" },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const input = turnInput(thread);
+      yield* runtime
+        .startTurn({ ...input, message: { ...input.message, text: `/goal ${objective}` } })
+        .pipe(Effect.ignore);
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.include(ended?.failure?.message ?? "", "4000 characters (got 4001)");
     }),
   );
 
