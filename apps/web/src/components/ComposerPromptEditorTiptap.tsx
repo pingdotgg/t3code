@@ -1558,7 +1558,6 @@ function ComposerPromptEditorTiptapInner(
           if (
             from === to &&
             cursor?.pos === from &&
-            cursor.textOffset === 0 &&
             cursor.nodeBefore?.type.name === "composer-citation" &&
             from + 1 < cursor.end() &&
             doc.textBetween(from, from + 1) === " " &&
