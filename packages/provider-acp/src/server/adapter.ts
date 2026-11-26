@@ -1346,6 +1346,23 @@ function acpMcpToolCallOutput(rawOutput: unknown): unknown {
     : { error: errorMessage, result: resultOutput };
 }
 
+// An `acp-mcp-call` fallback prints its MCP result; terminal tools report it as stdout.
+function terminalMcpResult(
+  rawOutput: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  for (const key of ["stdout", "combinedOutput", "output"]) {
+    const text = rawOutput?.[key];
+    if (typeof text !== "string" || !text.trimStart().startsWith("{")) continue;
+    try {
+      const parsed = unknownRecord(JSON.parse(text));
+      if (parsed !== undefined) return parsed;
+    } catch {
+      // Not a bare result; the shared reader still handles marker-prefixed output.
+    }
+  }
+  return undefined;
+}
+
 function nonEmptyText(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
@@ -5698,7 +5715,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
-            let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
+            let output =
+              (toolCall.kind === "execute" ? terminalMcpResult(rawOutputRecord) : undefined) ??
+              (rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput));
             const resolvedT3Tool = resolveT3McpToolId(toolName);
             const isHtmlRender = resolvedT3Tool === HTML_RENDER_TOOL_NAME;
             const isError =

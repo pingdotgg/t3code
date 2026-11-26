@@ -89,6 +89,23 @@ describe("compactDynamicToolOutput", () => {
     expect(compactDynamicToolOutput({ result: { body: "Private result" } })).toBeUndefined();
   });
 
+  it("reads an application's own output field as data, not as another result envelope", () => {
+    for (const output of ['{"isError":true}', "{}", "x".repeat(17_000)]) {
+      expect(
+        compactDynamicToolOutput({
+          structuredContent: {
+            threadId: "child-thread",
+            runId: "run-1",
+            status: "completed",
+            timedOut: false,
+            output,
+          },
+          content: [],
+        }),
+      ).toEqual({ threadId: "child-thread" });
+    }
+  });
+
   it("uses the first result data but combines explicit failure flags across content blocks", () => {
     expect(
       compactDynamicToolOutput([

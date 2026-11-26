@@ -204,10 +204,6 @@ describe("htmlRenderFromToolItem", () => {
           exit_code: 0,
         },
       ],
-      // Other ACP terminal tools report the fallback's stdout without that marker.
-      ["t3-code.html_render", { stdout: JSON.stringify({ structuredContent: result }) }],
-      ["t3-code.html_render", { combinedOutput: JSON.stringify({ structuredContent: result }) }],
-      ["t3-code.html_render", { output: JSON.stringify({ structuredContent: result }) }],
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }
