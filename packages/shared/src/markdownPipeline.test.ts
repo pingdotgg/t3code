@@ -5,6 +5,12 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import type { Link, Root, RootContent } from "mdast";
+import type { Root as HastRoot } from "hast";
+import {
+  rehypeNormalizeLocalFileLinks,
+  rehypePreserveImageSourceMeta,
+  sanitizeChatHast,
+} from "./markdownHast.ts";
 import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
@@ -547,6 +553,50 @@ it("keeps mixed-case local editor file links by lowercasing the scheme before sa
     "cursor://file/Users/me/repo/file.md:3",
     undefined,
   ]);
+});
+
+it("preserves HTTP(S) targets regardless of scheme casing without allowing other schemes", () => {
+  for (const scheme of ["https", "HTTPS", "hTtPs", "http", "HTTP", "javascript", "JAVASCRIPT"]) {
+    const url = `${scheme}://Example.com/A%2Fb.png?Key=Value#Part`;
+    const expected = /^https?$/i.test(scheme)
+      ? url.replace(scheme, scheme.toLowerCase())
+      : undefined;
+    const tree: HastRoot = {
+      type: "root",
+      children: [
+        { type: "element", tagName: "a", properties: { href: url }, children: [] },
+        {
+          type: "element",
+          tagName: "picture",
+          properties: {},
+          children: [
+            {
+              type: "element",
+              tagName: "source",
+              properties: { media: "(prefers-color-scheme: dark)", srcSet: url },
+              children: [],
+            },
+            {
+              type: "element",
+              tagName: "img",
+              properties: { src: url, dataLightSrc: url },
+              children: [],
+            },
+          ],
+        },
+      ],
+    };
+    rehypePreserveImageSourceMeta()(tree);
+    rehypeNormalizeLocalFileLinks()(tree);
+    const sanitized = sanitizeChatHast(tree);
+    const anchor = sanitized.children[0];
+    const picture = sanitized.children[1];
+    const image = picture?.type === "element" ? picture.children[0] : undefined;
+    expect(anchor?.type === "element" ? anchor.properties.href : null, scheme).toBe(expected);
+    expect(image?.type === "element" ? image.properties.src : null, scheme).toBe(expected);
+    expect(image?.type === "element" ? image.properties.dataDarkSrc : null, scheme).toBe(expected);
+    expect(image?.type === "element" ? image.properties.dataLightSrc : null, scheme).toBe(expected);
+  }
 });
 
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
