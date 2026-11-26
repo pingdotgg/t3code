@@ -1,10 +1,29 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { EnvironmentId, ProjectId, type T3ProjectFile } from "@t3tools/contracts";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { moveDraftToProject } from "./moveDraftToProject";
+import { readPendingWorkspaceDefault } from "./retargetDraftWorkspace";
+import { readT3ProjectFile } from "./t3ProjectFileDefaults";
+
+vi.mock("./t3ProjectFileDefaults", () => ({
+  peekT3ProjectFile: () => undefined,
+  readT3ProjectFile: vi.fn(async () => null),
+}));
+
+vi.mock("../state/presentation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../state/presentation")>();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    environmentSummaries: {
+      ...actual.environmentSummaries,
+      connectedEnvironmentIdsAtom: Atom.make([EnvironmentId.make("environment-local")]),
+    },
+  };
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const draftId = DraftId.make("draft-1");
@@ -55,5 +74,46 @@ describe("moveDraftToProject", () => {
     const store = useComposerDraftStore.getState();
     expect(store.getDraftSessionByProjectRef(currentRef)?.draftId).toBe(draftId);
     expect(store.getDraftSessionByProjectRef(addedRef)).toBeNull();
+  });
+
+  it("keeps the current checkout when the user picks it while the destination file loads", async () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(draftId, "Plan the next project");
+    const read = Promise.withResolvers<T3ProjectFile | null>();
+    vi.mocked(readT3ProjectFile).mockReturnValueOnce(read.promise);
+
+    moveDraftToProject(draftId, added);
+    const pending = readPendingWorkspaceDefault(draftId);
+    expect(pending).not.toBeNull();
+    store.setDraftThreadContext(draftId, { envMode: "local", workspaceExplicit: true });
+
+    read.resolve({ defaultThreadEnvMode: "worktree" });
+    await pending;
+    expect(store.getDraftSession(draftId)?.envMode).toBe("local");
+  });
+
+  it("ignores a previous visit's file result when the draft returns to the same project", async () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(draftId, "Plan the next project");
+    const first = Promise.withResolvers<T3ProjectFile | null>();
+    const latest = Promise.withResolvers<T3ProjectFile | null>();
+    vi.mocked(readT3ProjectFile)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(latest.promise);
+
+    moveDraftToProject(draftId, added);
+    const firstPending = readPendingWorkspaceDefault(draftId);
+    moveDraftToProject(draftId, { ...current, defaultThreadEnvMode: "local" });
+    moveDraftToProject(draftId, added);
+    const latestPending = readPendingWorkspaceDefault(draftId);
+    expect(firstPending).not.toBeNull();
+    expect(latestPending).not.toBeNull();
+
+    latest.resolve(null);
+    await latestPending;
+    first.resolve({ defaultThreadEnvMode: "worktree" });
+    await firstPending;
+
+    expect(store.getDraftSession(draftId)?.envMode).toBe("local");
   });
 });

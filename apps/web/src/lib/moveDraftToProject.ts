@@ -33,6 +33,7 @@ export function moveDraftToProject(draftId: DraftId, project: EnvironmentProject
   const projectChanged =
     session.environmentId !== projectRef.environmentId ||
     session.projectId !== projectRef.projectId;
+  const workspace = projectChanged ? retargetDraftWorkspace(session, projectRef, project) : null;
   store.setLogicalProjectDraftThreadId(
     deriveLogicalProjectKeyFromSettings(
       project,
@@ -40,8 +41,9 @@ export function moveDraftToProject(draftId: DraftId, project: EnvironmentProject
     ),
     projectRef,
     draftId,
-    projectChanged ? retargetDraftWorkspace(session, projectRef) : undefined,
+    workspace?.workspace,
   );
+  workspace?.applyProjectFile(draftId);
   seedDraftModelSelection(draftId, projectRef);
   return true;
 }

@@ -332,7 +332,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       }
       carryFanoutSelections(currentDraft, target.environmentId);
       const projectRef = scopeProjectRef(target.environmentId, project.id);
-      const workspace = retargetDraftWorkspace(currentDraft, projectRef);
+      const { workspace, applyProjectFile } = retargetDraftWorkspace(
+        currentDraft,
+        projectRef,
+        project,
+      );
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(
           deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
@@ -348,6 +352,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           ...workspace,
         });
       }
+      applyProjectFile(draftId);
       seedDraftModelSelection(draftId, projectRef);
     };
     const finish = () => {
