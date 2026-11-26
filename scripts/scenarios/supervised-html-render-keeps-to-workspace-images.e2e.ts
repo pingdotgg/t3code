@@ -24,6 +24,7 @@ const callTool = (server, name, args) => new Promise((resolve, reject) => {
   for (const entry of server.env ?? []) env[entry.name] = entry.value;
   const child = spawn(server.command, server.args ?? [], { env, stdio: ["pipe", "pipe", "inherit"] });
   const write = (message) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+  let settled = false;
   createInterface({ input: child.stdout }).on("line", (line) => {
     let message;
     try { message = JSON.parse(line); } catch { return; }
@@ -31,11 +32,15 @@ const callTool = (server, name, args) => new Promise((resolve, reject) => {
       write({ method: "notifications/initialized" });
       write({ id: 2, method: "tools/call", params: { name, arguments: args } });
     } else if (message.id === 2) {
+      settled = true;
       child.kill();
       resolve(message.result ?? { isError: true, content: [{ type: "text", text: JSON.stringify(message.error) }] });
     }
   });
   child.on("error", reject);
+  child.on("close", (code, signal) => {
+    if (!settled) reject(new Error("T3's MCP server exited (" + (code ?? signal) + ") before answering"));
+  });
   write({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "html-probe", version: "1" } } });
 });
 const handle = async (message) => {
@@ -58,7 +63,7 @@ const handle = async (message) => {
       } else {
         const result = await callTool(server, "html_render", { html, title: "Probe", height: 120 });
         const said = (result.content ?? []).map((part) => part.text ?? "").join(" ");
-        const attachmentId = result.structuredContent?.htmlRender?.attachmentId ?? "";
+        const attachmentId = result.structuredContent?.htmlRender?.attachmentId ?? "NO-ATTACHMENT";
         summary = (result.isError ? "PROBE REFUSED " : "PROBE PUBLISHED " + attachmentId + " ") + said.slice(0, 400);
       }
       send({ method: "session/update", params: { sessionId: params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: summary } } } });
@@ -103,7 +108,7 @@ test(
         return { outside, agent, attachments: path.join(T3_HOME, "userdata", "attachments") };
       }),
     );
-    await runPromise(
+    const before = await runPromise(
       Effect.gen(function* () {
         const client = yield* rpcClient(T3_HOME, origin);
         const settings = yield* client["server.getSettings"]({});
@@ -120,59 +125,80 @@ test(
             },
           },
         });
+        return settings;
       }).pipe(Effect.scoped),
     );
-    const { cli } = makeState(T3_HOME);
-    const ask = async (html: string) => {
-      const { stdout } = await runPromise(
-        cli(
-          [
-            "thread",
-            "start",
-            workspace,
-            `<!--probe-->${html}<!--/probe-->`,
-            "--title",
-            "HTML probe",
-            "--provider",
-            PROBE,
-            "--model",
-            "default",
-            "--wait",
-            "--json",
-          ],
-          [0, 2],
-        ),
+    // The server outlives this test, so the next one gets its settings back.
+    const restore = () =>
+      runPromise(
+        Effect.gen(function* () {
+          const client = yield* rpcClient(T3_HOME, origin);
+          yield* client["server.updateSettings"]({
+            patch: {
+              defaultRuntimeMode: before.defaultRuntimeMode,
+              providerInstances: before.providerInstances,
+            },
+          });
+        }).pipe(Effect.scoped),
       );
-      const run = JSON.parse(stdout) as {
-        readonly threadId: string;
-        readonly reply: string | null;
+    try {
+      const { cli } = makeState(T3_HOME);
+      const ask = async (html: string) => {
+        const { stdout } = await runPromise(
+          cli(
+            [
+              "thread",
+              "start",
+              workspace,
+              `<!--probe-->${html}<!--/probe-->`,
+              "--title",
+              "HTML probe",
+              "--provider",
+              PROBE,
+              "--model",
+              "default",
+              "--wait",
+              "--json",
+            ],
+            [0, 2],
+          ),
+        );
+        const run = JSON.parse(stdout) as {
+          readonly threadId: string;
+          readonly reply: string | null;
+        };
+        return { threadId: run.threadId, reply: run.reply ?? stdout };
       };
-      return { threadId: run.threadId, reply: run.reply ?? stdout };
-    };
-    const insideImage = `${workspace}/chart.png`;
+      const insideImage = `${workspace}/chart.png`;
 
-    // The workspace image still renders for a supervised thread, on base and head alike.
-    const inside = (await ask(`<img src="${insideImage}">`)).reply;
-    expect(inside).toContain("PROBE PUBLISHED");
-    const insideId = /PROBE PUBLISHED (\S+)/.exec(inside)?.[1] ?? "";
-    const insidePage = await runPromise(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const files = yield* fs.readDirectory(attachments, { recursive: true });
-        const file = files.find((name) => name.endsWith(`${insideId}.html`));
-        return file === undefined ? "" : yield* fs.readFileString(`${attachments}/${file}`);
-      }),
-    );
-    expect(insidePage).toContain(PNG_DATA_URI);
+      // The workspace image still renders for a supervised thread, on base and head alike.
+      const inside = (await ask(`<img src="${insideImage}">`)).reply;
+      expect(inside).toContain("PROBE PUBLISHED");
+      const insideId = /PROBE PUBLISHED (\S+)/.exec(inside)?.[1];
+      expect(insideId).toMatch(/-html$/);
+      // This call's own page, by the id it returned.
+      const insidePage = await runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const files = yield* fs.readDirectory(attachments, { recursive: true });
+          const file = files.find((name) => path.basename(name) === `${insideId}.html`);
+          return file === undefined ? "" : yield* fs.readFileString(path.join(attachments, file));
+        }),
+      );
+      expect(insidePage).toContain(PNG_DATA_URI);
 
-    // An image outside the workspace is refused, and never read into the page.
-    const { threadId, reply: outsideReply } = await ask(
-      `<img src="${insideImage}"><img src="${outside}">`,
-    );
-    await t3.open({ threadId });
-    await expect(screen.getByText("PROBE", { exact: false }).first()).toBeVisible();
-    await app.screenshot("outside-image");
-    expect(outsideReply).toContain("PROBE REFUSED");
-    expect(outsideReply).toContain("outside this thread's workspace");
+      // An image outside the workspace is refused, and never read into the page.
+      const { threadId, reply: outsideReply } = await ask(
+        `<img src="${insideImage}"><img src="${outside}">`,
+      );
+      await t3.open({ threadId });
+      await expect(screen.getByText("PROBE", { exact: false }).first()).toBeVisible();
+      await app.screenshot("outside-image");
+      expect(outsideReply).toContain("PROBE REFUSED");
+      expect(outsideReply).toContain("outside this thread's workspace");
+    } finally {
+      await restore();
+    }
   },
 );

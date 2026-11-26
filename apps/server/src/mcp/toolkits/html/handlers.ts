@@ -1,6 +1,7 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 
 import * as ServerConfig from "../../../config.ts";
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
@@ -56,14 +57,23 @@ const handlers = Effect.gen(function* () {
         message: "Pass exactly one of html or path.",
       });
     }
-    const { caller, limits } = yield* loadCaller();
-    if (limits.runtimeMode === "full-access") return source;
+    // Inline HTML still renders when the caller cannot be read; it just gets no workspace.
+    const loaded = yield* Effect.result(loadCaller());
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    // A thread recorded above an administrator's ceiling does not hold full access.
+    const fullAccess =
+      Result.isSuccess(loaded) &&
+      loaded.success.limits.runtimeMode === "full-access" &&
+      (scope.runtimeModeCeiling ?? "full-access") === "full-access";
+    if (fullAccess) return source;
     if ("path" in source) {
+      if (Result.isFailure(loaded)) return yield* loaded.failure;
       return yield* new OrchestratorMcpFailure({
         code: "capability_denied",
         message: "Pass html instead of path: only full-access threads may pass a path.",
       });
     }
+    const caller = Result.isSuccess(loaded) ? loaded.success.caller : undefined;
     const project =
       caller === undefined
         ? Option.none()

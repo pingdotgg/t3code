@@ -507,7 +507,12 @@ it.effect("inlines a supervised thread's local images only from its workspace", 
     for (const name of ["html_preview", "html_render"] as const) {
       const refused = yield* call(name, `<img src="${chart}"><img src="${secret}">`, scope);
       expect(refused.isError, name).toBe(true);
-      const text = JSON.stringify(refused.content);
+      // Decoded, so Windows paths compare as written: html_render declares its failure,
+      // html_preview reports it as plain text.
+      const text =
+        name === "html_render"
+          ? String(declaredFailure(refused)?.message)
+          : refused.content.map((part) => (part.type === "text" ? part.text : "")).join("");
       expect(text, name).toContain("outside this thread's workspace");
       expect(text, name).toContain(secret);
       expect(text, name).not.toContain(chart);
@@ -520,6 +525,13 @@ it.effect("inlines a supervised thread's local images only from its workspace", 
       yield* call("html_render", `<img src="${secret}">`, fullAccess),
     );
     expect(fullAccessImages).toContain(`<img src="${pngUri}">`);
+
+    // A full-access thread above an administrator's lower ceiling is held to its workspace.
+    const capped = yield* call("html_render", `<img src="${secret}">`, {
+      ...fullAccess,
+      runtimeModeCeiling: "auto",
+    });
+    expect(declaredFailure(capped)).toMatchObject({ code: "capability_denied" });
   }).pipe(Effect.provide(layerHtmlTools)),
 );
 
