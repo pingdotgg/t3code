@@ -408,6 +408,7 @@ export function ThreadPullRequestBadgeControl({
   status,
   onOpenList,
   onOpenPullRequest,
+  side,
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
   badge: ThreadPullRequestBadge | null;
@@ -417,6 +418,7 @@ export function ThreadPullRequestBadgeControl({
   status: PrStatusIndicator | null;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+  side?: ThreadLinkBadgeSide | undefined;
 }) {
   const m = useMessages();
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status }, m);
@@ -432,6 +434,7 @@ export function ThreadPullRequestBadgeControl({
       pullRequests={pullRequests}
       onOpenList={onOpenList}
       onOpenPullRequest={onOpenPullRequest}
+      side={side}
     />
   );
 }
@@ -446,6 +449,7 @@ function PullRequestBadge({
   pullRequests,
   onOpenList,
   onOpenPullRequest,
+  side,
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
   presentation: NonNullable<ReturnType<typeof resolveThreadPullRequestBadgePresentation>>;
@@ -456,6 +460,7 @@ function PullRequestBadge({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+  side: ThreadLinkBadgeSide | undefined;
 }) {
   const onClick = opensList
     ? (event: MouseEvent<HTMLElement>) => {
@@ -485,6 +490,7 @@ function PullRequestBadge({
       Icon={presentation.Icon}
       toneClassName={presentation.toneClassName}
       text={presentation.text}
+      side={side}
     >
       {visibleThreadPullRequests(pullRequests).length > 0 ? (
         <ThreadPullRequestsMiniList
@@ -507,23 +513,29 @@ function PullRequestBadge({
   );
 }
 
+type ThreadLinkBadgeSide = "top" | "right";
+
 export function ThreadLinkBadge({
   control,
   Icon,
   toneClassName,
   text,
+  side = "top",
   children,
 }: {
   control: ReactElement;
   Icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   toneClassName: string;
   text: string | number;
+  side?: ThreadLinkBadgeSide | undefined;
   children: ReactNode;
 }) {
   return (
     // The shared popup renders at the app root, so a right-click in it never reaches the row.
     <SharedTooltipTrigger
       render={control}
+      side={side}
+      {...(side === "right" ? { align: "start" as const } : {})}
       sideOffset={0}
       variant="glass"
       className="w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
