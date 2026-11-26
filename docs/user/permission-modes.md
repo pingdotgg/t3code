@@ -19,10 +19,13 @@ Below **Full access**, T3 Code asks you before one of its own tools acts outside
 
 - The request names the action, its target, the repository and the tool, and says when the repository is not your project's. Names from the agent or the repository, such as a branch, are quoted, with any character a screen would hide written out. It does not show the text of an edit, a comment or a review.
 - Opening a pull request names the branch and its commit, the base and, when the branch has to be pushed first, the remote, its address and the Git hooks the push would run (`pre-push`, `reference-transaction`, or `hook.<name>.command`). A private pull request is pushed to the repository's private companion. Merging a stack lists every pull request it would merge and its commit.
-- **Approve** runs that one call; **Decline** does nothing. There is no "always allow". If what the request named has changed by the time you answer (a new commit, edited hooks, another pull request in the stack), nothing is done and you are asked again.
+- **Approve** runs that one call; **Decline** does nothing. There is no "always allow". The agent waits for your answer for as long as you take: the request has no time limit, and is still there after you close and reopen the app.
+- The request belongs to the turn that asked. Stopping the agent, or the turn ending, cancels it and nothing is done. Archiving the thread declines it. If T3 Code restarts while it is open, the request expires and the agent has to ask again.
+- If what the request named has changed by the time you answer (a new commit, edited hooks, another pull request in the stack, another failed check), nothing is done. No new request appears by itself: the agent is told to call the tool again, and that call asks you about what is there now.
 - A hook approval covers the hook files and commands the request names, not what they go on to run or read, such as a package script. A change in the moment between T3 Code's last look and Git starting is not caught.
+- Rerunning checks names each check it would rerun. A push names every address it goes to; one too long to show in full is not asked about, and the agent is told to leave it to you.
 - With Claude and Codex the request appears in the thread. An agent of another provider is told T3 Code could not ask you: do the action yourself, or use Full access. An MCP client from outside T3 Code needs full access for these tools.
-- Below Full access these tools act only in the thread's own environment; a call for a linked environment is refused.
+- A call for a linked environment is asked about in the thread that made it, and names that environment. The linked environment says what the call would do there and acts only on your approval of exactly that. Both environments need a version of T3 Code that does this; otherwise the call is refused.
 - Direct shell commands (`git push`, `gh pr create`) follow the provider's normal command approval rules instead.
 
 ## Provider differences

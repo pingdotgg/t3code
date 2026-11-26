@@ -4497,9 +4497,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // against where this push goes as the last step before Git is started.
     const approved = options?.approved;
     const source = approved?.head ?? "HEAD";
-    // An approved push writes to the one remote the person was asked about, whatever Git's
-    // configuration says about pushing submodules along with it.
-    const onlyThere = approved === undefined ? [] : ["--recurse-submodules=no"];
+    // An approved push writes the one branch to the one remote the person was asked about,
+    // whatever Git's configuration says about pushing submodules or tags along with it.
+    const onlyThere = approved === undefined ? [] : ["--recurse-submodules=no", "--no-follow-tags"];
     const notAsApproved = new GitCommandError({
       ...gitCommandContext({ operation: "GitVcsDriver.pushCurrentBranch", cwd, args: ["push"] }),
       detail: "The branch or where it is pushed changed after the push was approved.",

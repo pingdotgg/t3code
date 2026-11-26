@@ -5419,6 +5419,22 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
 
       it.effect(
+        "a branch that tracks a local branch is not offered an opening without a push",
+        () =>
+          Effect.gen(function* () {
+            const repo = yield* hookedRepo();
+            // Up to date with the local branch it tracks, which says nothing of what a remote has.
+            yield* runGit(repo.repoDir, ["branch", "release"]);
+            yield* runGit(repo.repoDir, ["branch", "--set-upstream-to=release", "feature/hooked"]);
+            const refused = yield* repo.opening().pipe(Effect.flip);
+            expect(refused.message).toContain(
+              "feature/hooked tracks a local branch, so Git does not say which published branch a pull request would be opened from. Nothing was done.",
+            );
+            expect(yield* repo.pushed).toBe(false);
+          }),
+      );
+
+      it.effect(
         "an approval to open from a branch behind its remote is for what the remote has",
         () =>
           Effect.gen(function* () {

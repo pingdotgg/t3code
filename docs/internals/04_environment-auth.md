@@ -123,19 +123,19 @@ model.
   through the same hidden-character and length check on its way out, whatever the handler did
   with it, so a value shown is always data inside the sentence and never more of the sentence.
   What an update, a comment or a review says is not shown: the request names the action and
-  its target. It asks by MCP elicitation
-  ([`McpClientInput`](../../apps/server/src/mcp/McpClientInput.ts)): a sessionless client is
-  answered with the request and calls the tool again with the reply, so everything before the
-  approval must be safe to run from the start twice. The request's state is the tool and a
-  digest of its arguments and of everything they resolved to, shown or not
-  (`OutsideAction.binds` carries what the words do not hold whole), and an answer counts only
-  for that state, so a call that differs in any of it asks again. Once the answer is read the
+  its target. A question too long to show in full is not asked, and the call is refused.
+  The person is asked in the calling thread, by a request the server raises itself
+  ([`McpThreadApproval`](../../apps/server/src/mcp/McpThreadApproval.ts)) and whose answer the
+  orchestrator records, so the approval never depends on what a provider's client says the
+  person chose. The request's state is the tool and a digest of its arguments and of
+  everything they resolved to, shown or not (`OutsideAction.binds` carries what the words do
+  not hold whole), and an answer counts only for that state. Once the answer is read the
   wrapper resolves everything a second time and runs that second reading, and only if its
-  state is the approved one: however long the person took, and whichever call brought their
-  answer, what runs was read after they answered. The rule for a handler: what
-  the action depends on is resolved before the question and is part of that state, and the
-  action then uses what was resolved. Where it has to read something again, it compares with
-  what was asked and does nothing when they differ.
+  state is the approved one: however long the person took, what runs was read after they
+  answered. The rule for a handler: what the action depends on is resolved before the
+  question and is part of that state, and the action then uses what was resolved. Where it
+  has to read something again, it compares with what was asked and does nothing when they
+  differ.
   `pull_request_create` is the case with the most to read. `GitManager.pullRequestOpening`
   reads the branch, the commit at its tip, the base, whether a push is needed, the remote and
   branch it goes to with every address the remote pushes to (shown and compared without the
@@ -150,7 +150,10 @@ model.
   remote still pushes to the approved addresses and branch, and sends that commit by its id;
   it refuses a push Git would have to pick the destination of, and does not report a branch
   as already pushed unless it is at that commit. An approved push is made with submodule
-  recursion off, so it writes to that one remote whatever Git's configuration says. No push
+  recursion and tag following off, so it writes that one branch to that one remote whatever
+  Git's configuration says. Every address a push writes to is shown whole, or the push is not
+  asked about; a branch that tracks a local branch is not offered an opening without a push,
+  since being level with that branch says nothing of the published one. No push
   is made when none was approved, a private push goes only to a remote that pushes to the
   companion alone (checked again as that push starts), the pull request is
   opened against the approved base, and one already open for the branch is returned as it
@@ -161,29 +164,44 @@ model.
   An update resolves each reviewer's name before the question, so a name nobody has ends the
   call before anything is written, and who it resolved to is part of the state. A review's
   line comments are placed in the diff before the question, and those placements are part of
-  the state. `ci_rerun` names the pull request; which of its checks have failed is read when
-  it runs.
+  the state. `ci_rerun` names the checks it would rerun, and the host is asked to rerun
+  exactly those: the service reads them again as it starts and does nothing when they are
+  no longer that set. A review with line comments is sent pinned to the head its lines were
+  placed on.
   A stack merge names each layer it would merge with the head it is pinned to, and those
   numbers and heads are part of the state; the host is given the same list and refuses if the
   stack is not exactly that.
-  The approval is the person's answer in the app, not the client's reply. The Claude and Codex
-  adapters never answer a request T3 Code's own tool made, whatever the turn's runtime mode and
-  whatever was allowed for the session. The request is kept with the thread's MCP session under
-  an id of its own; the adapter, which receives the person's pending-request response, leaves
-  the answer with the thread's requests that ask that message (each message ends with the start
-  of its request's digest, so two requests never read alike); and the tool runs only when the
-  request the reply names holds an approval for that state. That reads the request once and
-  ends it. A reply of "accept" for a request the person did not approve, or one that is gone
-  because the server restarted or the thread's session was replaced, does nothing: the tool
-  fails saying T3 Code has no approval, and the next call asks again.
-  Where no such record can exist, nothing is asked and the call is refused: a thread whose
-  adapter does not pass on the person's answer, whatever its client replies, and an MCP client
-  from outside, which has no thread to show a request in and so needs full access.
-  A call bound for a linked environment is not sent below Full access. What it would do
-  (the pull request "the branch" has there, the checkout's push and hooks) can only be
-  resolved there, and that environment has no one to ask, so there is nothing concrete to
-  show the person here. The agent is told so. From a Full access thread the call is forwarded
-  with the agent's own modes like any other.
+  The call waits for the answer with no limit of its own, as Codex's app server waits on an
+  MCP elicitation. So that the provider's client lets it wait, the request is also sent to
+  that client as an MCP elicitation ([`McpClientInput`](../../apps/server/src/mcp/McpClientInput.ts))
+  carrying the request's id, and the thread's adapter holds that elicitation open until the
+  request has ended and then answers it as it ended. An adapter never answers one itself,
+  whatever the turn's runtime mode and whatever was allowed for the session, and shows no
+  card of its own for it. Codex stops its tool-call clock while an elicitation is open. Claude
+  Code does not, and progress notifications do not extend its limit, so T3 Code's server is
+  registered there with the longest tool-call limit a timer holds.
+  The request is tied to the turn that asked. When that turn ends, is interrupted or gives
+  way to another, the request is cancelled and the call returns saying nothing was done;
+  archiving the thread declines it. A client of the app disconnecting changes nothing: the
+  request is in the thread, and is shown again to whoever opens it. A server restart loses
+  what the server kept in memory for it, so the request is expired at startup and an answer
+  given to it lets nothing through. An approval is used once, by the call that asked or by
+  the same call made again in the same turn after its client cut the first one off.
+  Where the person cannot be asked this way, nothing is shown and the call is refused: a
+  thread whose adapter does not hold T3 Code's requests or whose client takes no
+  elicitation, and an MCP client from outside, which has no thread and so needs full access.
+  A call bound for a linked environment acts on a checkout and a forge login that are there,
+  so only that environment can say what it would do. Below Full access it is first sent as
+  `T3-Outside-Action: describe`: the linked environment resolves the call as above, with
+  repository hooks off, and answers with the request's digest and the words to show, doing
+  nothing. The person is asked here, in the calling thread, with the linked environment
+  named; the call then goes again as `approved <digest>`, and the linked environment
+  resolves it once more and acts only if it is still that request. Both headers are read
+  only from a linked client. An environment that does not answer `T3-Outside-Actions:
+  describe` is never sent either step, since it would act on the call unasked, and the agent
+  is told so. A link paired below full access still starts no such work
+  there. From a Full access thread the call is forwarded with the agent's own modes like any
+  other.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather

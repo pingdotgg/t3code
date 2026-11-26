@@ -406,6 +406,17 @@ const stackNamed = (layers: ReadonlyArray<{ readonly number: number; readonly he
     .map((layer) => `#${layer.number} at ${shortCommit(layer.headSha)}`)
     .join(", ")}, up to`;
 
+const NAMED_CHECKS = 10;
+
+/** The checks a rerun would act on, as the question names them: each by name, then how many more. */
+const checksNamed = (checks: ReadonlyArray<PullRequestService.RerunnableCheck>) => {
+  const names = checks.slice(0, NAMED_CHECKS).map((check) => McpToolAccess.quoted(check.name, 40));
+  const more = checks.length - names.length;
+  return `${checks.length === 1 ? "check" : `${checks.length} checks:`} ${names.join(", ")}${
+    more > 0 ? ` and ${more} more` : ""
+  }`;
+};
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -1228,6 +1239,14 @@ const make = Effect.gen(function* () {
                 .pullRequestOpening({ cwd, baseBranch: input.base, private: input.private })
                 .pipe(Effect.mapError(forgeFailure))
             : undefined;
+          // Each address a push writes to is part of what the person approves, so each is
+          // shown whole or the push is not asked about at all.
+          if (opening?.push?.urls.some((url) => !McpToolAccess.quotedWhole(url, 200)) === true) {
+            return yield* new PullRequestForgeError({
+              detail:
+                "This push goes to an address too long to show the user in full, so they cannot be asked to approve it. Nothing was pushed. Tell the user; they can push the branch themselves.",
+            });
+          }
           const hooks = opening?.push?.hooks ?? undefined;
           const pushHooks =
             opening === undefined || hooks === undefined
@@ -1413,32 +1432,44 @@ const make = Effect.gen(function* () {
         return { asks: asksOf(respondAction(input), located), run };
       }),
     ),
-    pull_request_review: McpToolAccess.actsOutsideThread("pull_request_review", (input) =>
-      Effect.gen(function* () {
-        if (input.verdict === "approve" && input.expectedHeadSha === undefined) {
-          return yield* new PullRequestForgeError({
-            detail:
-              "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
-          });
-        }
-        const located = yield* locate(input);
-        const { target, ref } = located;
-        const comments = yield* reviewComments(ref, input.comments ?? []);
-        const run = pullRequests
-          .submitReview({
-            ...ref,
-            verdict: input.verdict,
-            body: input.body ?? "",
-            comments,
-            ...(input.expectedHeadSha === undefined
-              ? {}
-              : { expectedHeadSha: input.expectedHeadSha }),
-          })
-          .pipe(Effect.mapError(forgeFailure), Effect.as(identityOf(target)));
-        // Where each line comment lands in the diff as it is now. A diff that has moved on by
-        // the time the person answers places them elsewhere, and so is asked about again.
-        return { asks: { ...asksOf(reviewAction(input), located), binds: comments }, run };
-      }),
+    pull_request_review: McpToolAccess.actsOutsideThread(
+      "pull_request_review",
+      (input, { asked }) =>
+        Effect.gen(function* () {
+          if (input.verdict === "approve" && input.expectedHeadSha === undefined) {
+            return yield* new PullRequestForgeError({
+              detail:
+                "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
+            });
+          }
+          const located = yield* locate(input);
+          const { target, ref } = located;
+          // Line comments are placed in the diff as it is now. When the person is asked, the
+          // head those lines belong to is read first and goes with the review, so the host
+          // takes the comments only for the commits they were placed on.
+          const head =
+            input.expectedHeadSha ??
+            (asked && (input.comments ?? []).length > 0
+              ? (yield* pullRequests
+                  .summary({ ...ref, allowStale: false })
+                  .pipe(Effect.mapError(forgeFailure))).headSha
+              : undefined);
+          const comments = yield* reviewComments(ref, input.comments ?? []);
+          const run = pullRequests
+            .submitReview({
+              ...ref,
+              verdict: input.verdict,
+              body: input.body ?? "",
+              comments,
+              ...(head === undefined ? {} : { expectedHeadSha: head }),
+            })
+            .pipe(Effect.mapError(forgeFailure), Effect.as(identityOf(target)));
+          // A diff that has moved on by the time the person answers is another request.
+          return {
+            asks: { ...asksOf(reviewAction(input), located), binds: { comments, head } },
+            run,
+          };
+        }),
     ),
     pull_request_merge: McpToolAccess.actsOutsideThread("pull_request_merge", (input) =>
       Effect.gen(function* () {
@@ -1485,14 +1516,26 @@ const make = Effect.gen(function* () {
         return { ...identityOf(target), checks };
       }),
     ),
-    ci_rerun: McpToolAccess.actsOutsideThread("ci_rerun", (input) =>
+    ci_rerun: McpToolAccess.actsOutsideThread("ci_rerun", (input, { asked }) =>
       Effect.gen(function* () {
         const located = yield* locate(input);
         const { thread, target, ref } = located;
+        const selected = { ...ref, ...(input.check === undefined ? {} : { check: input.check }) };
+        // The person approves the checks that would be rerun as read here, by name, and the
+        // rerun acts on exactly those: one that fails or is added while they read is not theirs.
+        const approved = asked
+          ? yield* pullRequests.rerunnableChecks(selected).pipe(Effect.mapError(forgeFailure))
+          : undefined;
         const run = Effect.gen(function* () {
           const checks = yield* pullRequests
-            .rerunChecks({ ...ref, ...(input.check === undefined ? {} : { check: input.check }) })
-            .pipe(Effect.mapError(forgeFailure));
+            .rerunChecks({ ...selected, ...(approved === undefined ? {} : { approved }) })
+            .pipe(
+              Effect.mapError((error) =>
+                "detail" in error && error.detail === PullRequestService.RERUN_CHECKS_CHANGED
+                  ? new PullRequestForgeError({ detail: error.detail, cause: error })
+                  : forgeFailure(error),
+              ),
+            );
           // Like a push, a rerun makes a watch's finished checks stale, so the thread keeps
           // working until a read sees them run. The rerun already happened, so a failed reopen
           // only logs.
@@ -1514,7 +1557,15 @@ const make = Effect.gen(function* () {
           }
           return { ...identityOf(target), checks };
         });
-        return { asks: asksOf("Rerun checks on", located), run };
+        // With nothing to rerun the call does nothing outside, so there is nothing to ask.
+        if (approved?.length === 0) return { asks: undefined, run };
+        return {
+          asks:
+            approved === undefined
+              ? asksOf("Rerun checks on", located)
+              : { ...asksOf(`Rerun ${checksNamed(approved)} on`, located), binds: approved },
+          run,
+        };
       }),
     ),
   } satisfies McpToolAccess.Handlers<typeof PullRequestsToolkit.tools>;

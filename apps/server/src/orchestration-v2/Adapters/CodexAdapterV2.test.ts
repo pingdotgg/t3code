@@ -1883,31 +1883,47 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  const ownApprovalLayer = Layer.mergeAll(
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
+  );
+
   it.effect.each([
-    { serverName: "t3-code", asked: true, expected: { own: true } },
-    { serverName: "t3-code-direct", asked: true, expected: { own: true } },
-    // A server T3 Code did not register, or a request T3 Code did not make: named as ever.
-    { serverName: "deploys", asked: true, expected: { own: false } },
-    { serverName: "t3-code", asked: false, expected: { own: false } },
+    { serverName: "t3-code", names: "id", own: true },
+    { serverName: "t3-code-direct", names: "id", own: true },
+    // A Codex that passes on no `_meta` is matched by the question's words.
+    { serverName: "t3-code", names: "words", own: true },
+    // A server T3 Code did not register, or a request T3 Code did not make: shown as ever.
+    { serverName: "deploys", names: "id", own: false },
+    { serverName: "t3-code", names: "another id", own: false },
+    { serverName: "t3-code", names: "nothing asked", own: false },
   ] as const)(
-    "shows an approval from $serverName (asked by T3 Code: $asked) as T3 Code's own: $expected.own",
-    ({ serverName, asked, expected }) =>
+    "an approval from $serverName naming $names is held as T3 Code's own: $own",
+    ({ serverName, names, own }) =>
       Effect.gen(function* () {
+        const scenario = `own-approval-${serverName}-${names.replaceAll(" ", "-")}`;
+        const threadId = ThreadId.make(`thread-${scenario}`);
         const nativeThreadId = "own-approval-thread";
         const nativeTurnId = "own-approval-turn";
-        const prompt = "Open a pull request.";
-        const message = "Push tools and run this repository's hook file .husky/pre-push?";
-        const toolAction = {
-          tool: "pull_request_create",
-          action: "Push tools and open",
-          target: "a pull request",
-          repository: "t3tools/t3code",
-        };
-        const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
+        const prompt = "Merge it.";
+        const message = "Merge pull request #5 in org/repo? (request 1a2b3c4d)";
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const asked =
+          names === "nothing asked"
+            ? undefined
+            : yield* sessions.recordApprovalRequest(threadId, { message, state: "state" });
+        const meta =
+          names === "id"
+            ? { "t3.codes/approval-request": asked }
+            : names === "another id"
+              ? { "t3.codes/approval-request": "00000000-0000-4000-8000-000000000000" }
+              : undefined;
         const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
-            scenario: `own-approval-${serverName}-${asked}`,
+            scenario,
             entries: [
               ...codexReplayPreamble({
                 nativeThreadId,
@@ -1930,6 +1946,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     mode: "form",
                     message,
                     requestedSchema: { type: "object", properties: {} },
+                    ...(meta === undefined ? {} : { _meta: meta }),
                   },
                 },
               },
@@ -1954,14 +1971,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ? Queue.offer(pending, event.runtimeRequest)
               : Effect.void,
         );
-        const sessions = yield* McpProviderSessions.McpProviderSessions;
-        const ownAsked = asked
-          ? yield* sessions.recordApprovalRequest(harness.threadId, {
-              message,
-              pushHooks,
-              toolAction,
-            })
-          : undefined;
+        assert.equal(harness.threadId, threadId);
         const turnInput = makeCodexTestTurnInput({
           threadId: harness.threadId,
           providerThread: harness.providerThread,
@@ -1973,65 +1983,50 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ...turnInput,
           runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode: "auto-accept-edits" },
         });
-        const request = yield* Queue.take(pending);
-        const card = harness.events.findLast(
-          (event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
-        );
-        const item = card?.type === "turn_item.updated" ? card.turnItem : undefined;
-        assert.deepInclude(item, { prompt: message });
-        if (expected.own) {
-          assert.deepInclude(item, { pushHooks, toolAction });
-          assert.notProperty(item, "appName");
-        } else {
-          assert.deepInclude(item, { appName: serverName });
-          assert.notProperty(item, "pushHooks");
-          assert.notProperty(item, "toolAction");
-        }
-        if (ownAsked !== undefined) {
-          assert.notProperty(
-            yield* sessions.findApprovalRequest(harness.threadId, message),
-            "approved",
+        const cards = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+              ? [event.turnItem]
+              : [],
           );
+        if (own) {
+          // The server shows the request in the thread itself; the adapter only holds Codex,
+          // and answers it once the server has settled the request.
+          yield* Effect.yieldNow.pipe(Effect.repeat({ times: 50 }));
+          assert.deepEqual(cards(), []);
+          assert.equal(yield* Queue.size(pending), 0);
+          yield* sessions.settleApprovalRequest(threadId, asked!, "accepted");
+        } else {
+          const request = yield* Queue.take(pending);
+          assert.deepInclude(cards().at(-1), { prompt: message, appName: serverName });
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            decision: "accept",
+          });
         }
-        yield* harness.runtime.respondToRuntimeRequest({
-          requestId: request.id,
-          decision: "accept",
-        });
         yield* harness.firstTerminal;
-        // What the person answered in the app stays with the request T3 Code made, and with
-        // no other: a request under T3's server name that T3 Code did not make gets none.
-        if (ownAsked !== undefined) {
-          const kept = yield* sessions.takeApprovalRequest(harness.threadId, ownAsked);
-          if (expected.own) assert.deepInclude(kept, { approved: true });
-          else assert.notProperty(kept, "approved");
+        // An answer given to a card that was not T3 Code's request settles nothing of T3 Code's.
+        if (!own && asked !== undefined) {
+          assert.isTrue(Option.isNone(yield* sessions.approvalAnswer(threadId, asked)));
         }
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.scoped, Effect.provide(ownApprovalLayer)),
   );
 
   it.effect.each(["plan", "default"] as const)(
-    "shows what T3 Code's own tool asks to the person in a Full access turn (%s mode)",
+    "holds T3 Code's own request for the person in a Full access turn too (%s mode)",
     (interactionMode) =>
       Effect.gen(function* () {
+        const scenario = `own-approval-full-access-${interactionMode}`;
+        const threadId = ThreadId.make(`thread-${scenario}`);
         const nativeThreadId = "own-approval-full-access-thread";
         const nativeTurnId = "own-approval-full-access-turn";
-        const prompt = "Open a pull request.";
-        const message = "Push tools and run this repository's hook file .husky/pre-push?";
-        const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
-        const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+        const prompt = "Merge it.";
+        const message = "Merge pull request #5 in org/repo? (request 1a2b3c4d)";
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const asked = yield* sessions.recordApprovalRequest(threadId, { message, state: "state" });
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
-            scenario: `own-approval-full-access-${interactionMode}`,
+            scenario,
             entries: [
               ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt, interactionMode }),
               {
@@ -2046,10 +2041,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     mode: "form",
                     message,
                     requestedSchema: { type: "object", properties: {} },
+                    _meta: { "t3.codes/approval-request": asked },
                   },
                 },
               },
-              { type: "expect_outbound", frame: { id: 0, result: { action: "decline" } } },
+              // A turn's mode alone would have accepted it: it is answered as the request ended.
+              { type: "expect_outbound", frame: { id: 0, result: { action: "cancel" } } },
               {
                 type: "emit_inbound",
                 frame: {
@@ -2062,21 +2059,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             ],
           }),
-          (event) =>
-            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
-              ? Queue.offer(pending, event.runtimeRequest)
-              : Effect.void,
         );
-        const sessions = yield* McpProviderSessions.McpProviderSessions;
-        const ownAsked = yield* sessions.recordApprovalRequest(harness.threadId, {
-          message,
-          pushHooks,
-        });
-        // Another call's request, answered while this one waits, leaves this one T3 Code's own.
-        const answered = yield* sessions.recordApprovalRequest(harness.threadId, {
-          message: "Push docs and run this repository's hook file .husky/pre-push?",
-        });
-        yield* sessions.forgetApprovalRequest(harness.threadId, answered);
         const turnInput = makeCodexTestTurnInput({
           threadId: harness.threadId,
           providerThread: harness.providerThread,
@@ -2092,39 +2075,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             interactionMode,
           },
         });
-        const request = yield* Effect.raceFirst(
-          Queue.take(pending),
-          harness.firstTerminal.pipe(
-            Effect.andThen(Effect.die("T3 Code's own request was answered without the person")),
-          ),
-        );
-        const card = harness.events.findLast(
-          (event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
-        );
-        assert.deepInclude(card?.type === "turn_item.updated" ? card.turnItem : undefined, {
-          prompt: message,
-          pushHooks,
-        });
-        yield* harness.runtime.respondToRuntimeRequest({
-          requestId: request.id,
-          decision: "decline",
-        });
+        yield* Effect.yieldNow.pipe(Effect.repeat({ times: 50 }));
+        yield* sessions.settleApprovalRequest(threadId, asked, "cancelled");
         yield* harness.firstTerminal;
-        assert.deepInclude(yield* sessions.takeApprovalRequest(harness.threadId, ownAsked), {
-          approved: false,
-        });
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
+      }).pipe(Effect.scoped, Effect.provide(ownApprovalLayer)),
   );
 
   it.effect.each([

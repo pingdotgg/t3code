@@ -11241,6 +11241,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("a push approved as named does not publish tags along with it", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const as = ["-c", "user.email=test@example.com", "-c", "user.name=Test"];
+        // An annotated tag on the commit, which Git would send along when told to follow tags.
+        yield* git(repo.cwd, [...as, "tag", "-a", "v1", "-m", "Release"]);
+        yield* git(repo.cwd, ["config", "push.followTags", "true"]);
+        const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
+        const pushed = yield* repo.driver.pushCurrentBranch(repo.cwd, null, {
+          approved: {
+            branch: "topic",
+            head,
+            remoteName: "origin",
+            remoteBranch: "topic",
+            urls: yield* repo.driver.pushAddresses(repo.cwd, "origin"),
+          },
+        });
+        assert.deepInclude(pushed, { status: "pushed" });
+        assert.equal(yield* git(repo.cwd, ["ls-remote", "origin"]), `${head}\trefs/heads/topic`);
+      }),
+    );
+
     it.effect("an approved push runs the approved hook files and no other", () =>
       Effect.gen(function* () {
         const repo = yield* repoToPush();

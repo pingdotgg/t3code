@@ -23,11 +23,12 @@ import { describe, expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { McpSchema, type Tool } from "effect/ai";
+import type { Tool } from "effect/ai";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 import * as GitManager from "../../../git/GitManager.ts";
@@ -42,7 +43,6 @@ import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchS
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
-import * as McpClientInput from "../../McpClientInput.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -162,6 +162,8 @@ interface HarnessOptions {
   readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
   readonly git?: Partial<GitManager.GitManager["Service"]>;
   readonly managedPolicy?: Parameters<typeof ServerSettings.layerTest>[1];
+  /** How the thread's client can be asked. Unset: it holds what T3 Code asks. */
+  readonly asked?: Parameters<typeof McpToolAccessTestkit.makeAskedThread>[0];
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -173,6 +175,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
   const guideRequests = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const thread = options.thread === undefined ? makeThread([]) : options.thread;
   const project = options.project === undefined ? makeProject() : options.project;
+  // The person behind the thread, for what a tool asks them below Full access.
+  const person = yield* McpToolAccessTestkit.makeAskedThread(options.asked).pipe(
+    Effect.provide(McpProviderSessions.layer),
+  );
   const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const rejection = options.reject?.(command) ?? null;
@@ -223,6 +229,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     ServerSettings.layerTest({}, options.managedPolicy),
     // The access wrapper reads the caller's modes here, so they are the thread's own.
     Layer.mock(ThreadManagement.ThreadManagementService)({
+      ...person.threads,
       getThreadShell: (id) =>
         Effect.succeed(
           McpToolAccessTestkit.liveThreadShell(
@@ -257,9 +264,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         // As `/mcp` sets it for every request, from the same policy.
         runtimeModeCeiling: options.managedPolicy?.limits?.maxRuntimeMode,
       }),
+      person.provide,
       Effect.provide(layerDependencies),
     );
-  return { commands, guideRequests, call };
+  return { commands, guideRequests, call, person };
 });
 
 describe("pull request toolkit handlers", () => {
@@ -1293,7 +1301,6 @@ describe("source control tools", () => {
   );
 
   describe("writes to the forge below Full access", () => {
-    const KEY = "outside-action";
     const OTHER = "other-org/other-repo";
     const lowerThread = (
       runtimeMode: RuntimeMode = "auto-accept-edits",
@@ -1325,6 +1332,7 @@ describe("source control tools", () => {
     /** A forge that records each write it is asked for. */
     const recordingForge = () => {
       const writes: Array<string> = [];
+      const reads: Array<string> = [];
       const wrote =
         (name: string) => (input: { readonly repository: string; readonly number: number }) =>
           Effect.sync(() => void writes.push(`${name} ${input.repository}#${input.number}`));
@@ -1334,9 +1342,17 @@ describe("source control tools", () => {
         submitReview: wrote("submitReview"),
         runAction: (input) => wrote(input.action)(input),
         summary: () => Effect.succeed({ state: "merged" } as never),
+        rerunnableChecks: () =>
+          Effect.sync(() => {
+            reads.push("rerunnableChecks");
+            return [
+              { name: "build", url: null },
+              { name: "lint", url: null },
+            ];
+          }),
         rerunChecks: (input) => wrote("rerunChecks")(input).pipe(Effect.as([])),
       };
-      return { writes, pullRequests };
+      return { writes, reads, pullRequests };
     };
 
     interface CheckoutNow {
@@ -1429,69 +1445,28 @@ describe("source control tools", () => {
       return { attempts, git, now, plans: () => plans };
     };
 
-    /** A sessionless client: it is asked by the call's answer and calls again with the reply. */
-    const asClient = (
-      reply?: { readonly action: string; readonly state: string },
-      elicitation = true,
-    ) => {
-      const request = Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined);
-      const provide =
-        (sessions?: McpProviderSessions.McpProviderSessions["Service"]) =>
-        <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          effect.pipe(
-            Effect.provideService(McpClientInput.McpClientInput, { request, sessions }),
-            Effect.provideService(
-              McpSchema.McpRequestContext,
-              McpSchema.McpRequestContext.of({
-                clientId: 1,
-                protocolVersion: "2026-07-28",
-                clientCapabilities: new McpSchema.ClientCapabilities(
-                  elicitation ? { elicitation: {} } : {},
-                ),
-                ...(reply === undefined
-                  ? {}
-                  : {
-                      inputResponses: { [KEY]: { action: reply.action } },
-                      requestState: reply.state,
-                    }),
-              }),
-            ),
-          );
-      return { request, provide };
-    };
-    /** The thread's requests, kept by an adapter that passes on what the person answered. */
-    const shown = Effect.gen(function* () {
-      const sessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
-      return sessions;
-    });
-    const questionOf = (asked: McpSchema.InputRequired | undefined) => {
-      const params = asked?.inputRequests?.[KEY]?.params as
-        | { readonly message: string }
-        | undefined;
-      return params?.message ?? "";
-    };
     type Harness = Effect.Success<ReturnType<typeof makeHarness>>;
     type Name = keyof typeof PullRequestsToolkit.tools;
-    /** One call that ends asking: the question, and the client that brings the reply to it. */
+    /**
+     * One call that waits for the person: the request it raised in the thread, and the two
+     * answers they can give, each ending in what the call then returned.
+     */
     const ask = <N extends Name>(
       harness: Harness,
-      sessions: McpProviderSessions.McpProviderSessions["Service"],
       name: N,
       params: Parameters<Harness["call"]>[1],
     ) =>
       Effect.gen(function* () {
-        const client = asClient();
-        yield* harness.call(name, params as never).pipe(client.provide(sessions), Effect.flip);
-        const asked = Ref.getUnsafe(client.request);
-        const message = questionOf(asked);
-        return {
-          message,
-          state: asked!.requestState!,
-          kept: yield* sessions.findApprovalRequest(THREAD_ID, message),
-          accept: asClient({ action: "accept", state: asked!.requestState! }),
-        };
+        const call = yield* Effect.forkChild(harness.call(name, params as never).pipe(Effect.exit));
+        const request = yield* harness.person.asked;
+        const answered = (decision: "accept" | "decline") =>
+          harness.person
+            .answer(request, decision)
+            .pipe(Effect.andThen(Fiber.join(call)), Effect.flatten);
+        return { ...request, approve: answered("accept"), decline: answered("decline") };
       });
+    const CHANGED =
+      /^Not done: what ".+" would do changed while the user was asked\. Call again to ask\.$/;
 
     const WRITES = [
       [
@@ -1534,186 +1509,276 @@ describe("source control tools", () => {
         "ci_rerun",
         { number: 5 },
         "rerunChecks t3tools/t3code#5",
-        { action: "Rerun checks on", target: "pull request #5" },
+        { action: 'Rerun 2 checks: "build", "lint" on', target: "pull request #5" },
       ],
     ] as const;
+
+    const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     it.effect.each(BELOW_FULL_ACCESS)(
       "%s reaches the forge only for what the person approved",
       ([, options]) =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           for (const [name, params, write, named] of WRITES) {
             const forge = recordingForge();
             const harness = yield* makeHarness({ ...options, pullRequests: forge.pullRequests });
-            const asked = yield* ask(harness, sessions, name, params);
+            const asked = yield* ask(harness, name, params);
             expect(forge.writes).toEqual([]);
             expect(asked.message).toMatch(
               new RegExp(
-                `^${named.action} ${named.target} in t3tools/t3code\\? \\(request [0-9a-f]{8}\\)$`,
+                `^${escaped(named.action)} ${named.target} in t3tools/t3code\\? \\(request [0-9a-f]{8}\\)$`,
               ),
             );
-            expect(asked.kept?.toolAction).toEqual({
+            expect(asked.toolAction).toEqual({
               tool: name,
               ...named,
               repository: "t3tools/t3code",
               host: "github.com",
             });
-
-            // The client's own "accept" is not the person's.
-            const unconfirmed = yield* harness
-              .call(name, params as never)
-              .pipe(asked.accept.provide(sessions), Effect.flip);
-            expect(unconfirmed).toMatchObject({
-              _tag: "OrchestratorMcpFailure",
-              code: "capability_denied",
-            });
-            expect(forge.writes).toEqual([]);
-
-            const again = yield* ask(harness, sessions, name, params);
-            yield* sessions.answerApprovalRequests(THREAD_ID, again.message, true);
-            yield* harness.call(name, params as never).pipe(again.accept.provide(sessions));
+            yield* asked.approve;
             expect(forge.writes).toEqual([write]);
-            // One approval is one call: the same reply sent again is not one.
-            yield* harness
-              .call(name, params as never)
-              .pipe(again.accept.provide(sessions), Effect.flip);
+
+            // One approval is one call: the same call again asks again.
+            const again = yield* ask(harness, name, params);
+            expect(again.id).not.toBe(asked.id);
             expect(forge.writes).toEqual([write]);
           }
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+        }),
     );
 
     it.effect("a Full access thread writes without asking anyone", () =>
       Effect.gen(function* () {
-        const sessions = yield* shown;
         const forge = recordingForge();
         const harness = yield* makeHarness({
           thread: lowerThread("full-access"),
           pullRequests: forge.pullRequests,
         });
         for (const [name, params] of WRITES) {
-          const client = asClient();
-          yield* harness.call(name, params as never).pipe(client.provide(sessions));
-          expect(Ref.getUnsafe(client.request)).toBeUndefined();
+          yield* harness.call(name, params as never);
         }
+        expect(yield* harness.person.raised).toEqual([]);
         expect(forge.writes).toEqual(WRITES.map(([, , write]) => write));
-      }).pipe(Effect.provide(McpProviderSessions.layer)),
+        // Nor does it read what it would only read in order to ask.
+        expect(forge.reads).toEqual([]);
+      }),
     );
 
     it.effect("an approval is for the arguments it was asked with", () =>
       Effect.gen(function* () {
-        const sessions = yield* shown;
         const forge = recordingForge();
         const harness = yield* makeHarness({
           thread: lowerThread(),
           pullRequests: forge.pullRequests,
         });
-        const asked = yield* ask(harness, sessions, "pull_request_respond", {
+        const asked = yield* ask(harness, "pull_request_respond", {
           number: 5,
           body: "Thanks.",
         });
-        yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
 
-        // The reply comes back with another body, another pull request and another tool.
+        // Another body, another pull request and another tool are each asked about themselves.
         for (const [name, params] of [
           ["pull_request_respond", { number: 5, body: "Something else." }],
           ["pull_request_respond", { number: 6, body: "Thanks." }],
           ["pull_request_merge", { number: 5, expectedHeadSha: "abc123" }],
         ] as const) {
-          const client = asClient({ action: "accept", state: asked.state });
-          yield* harness.call(name, params as never).pipe(client.provide(sessions), Effect.flip);
-          const next = Ref.getUnsafe(client.request);
-          expect(next?.requestState).toBeDefined();
-          expect(next?.requestState).not.toBe(asked.state);
+          const other = yield* ask(harness, name, params);
+          expect(other.id).not.toBe(asked.id);
+          expect(other.message).not.toBe(asked.message);
         }
         expect(forge.writes).toEqual([]);
-      }).pipe(Effect.provide(McpProviderSessions.layer)),
+        yield* asked.approve;
+        expect(forge.writes).toEqual(["comment t3tools/t3code#5"]);
+        expect(yield* harness.person.pending).toHaveLength(3);
+      }),
     );
 
-    it.effect("nothing is written when the person declines", () =>
+    it.effect("nothing is written when the person declines, or the turn ends first", () =>
       Effect.gen(function* () {
-        const sessions = yield* shown;
         const forge = recordingForge();
         const harness = yield* makeHarness({
           thread: lowerThread(),
           pullRequests: forge.pullRequests,
         });
         const params = { number: 5, expectedHeadSha: "abc123" };
-        const asked = yield* ask(harness, sessions, "pull_request_merge", params);
-        yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, false);
-        const declined = yield* harness
-          .call("pull_request_merge", params)
-          .pipe(asClient({ action: "decline", state: asked.state }).provide(sessions), Effect.flip);
-        expect(declined).toMatchObject({
+        const asked = yield* ask(harness, "pull_request_merge", params);
+        expect(yield* asked.decline.pipe(Effect.flip)).toMatchObject({
           message: 'Not done: the user declined "Merge pull request #5 in t3tools/t3code".',
         });
-        // Nor when the client's reply says otherwise.
-        const second = yield* ask(harness, sessions, "pull_request_merge", params);
-        yield* sessions.answerApprovalRequests(THREAD_ID, second.message, false);
-        const unconfirmed = yield* harness
-          .call("pull_request_merge", params)
-          .pipe(second.accept.provide(sessions), Effect.flip);
-        expect(unconfirmed).toMatchObject({
+
+        const waiting = yield* Effect.forkChild(
+          harness.call("pull_request_merge", params).pipe(Effect.flip),
+        );
+        yield* harness.person.asked;
+        yield* harness.person.endTurn("interrupted");
+        expect(yield* Fiber.join(waiting)).toMatchObject({
           message:
-            'Not done: T3 Code has no approval from the user for "Merge pull request #5 in t3tools/t3code". Call again to ask.',
+            'Cancelled, nothing was done: the request to approve "Merge pull request #5 in t3tools/t3code" ended without the user\'s answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again.',
         });
         expect(forge.writes).toEqual([]);
-      }).pipe(Effect.provide(McpProviderSessions.layer)),
+      }),
     );
 
     it.effect("a repository that is not the project's own is named as such", () =>
       Effect.gen(function* () {
-        const sessions = yield* shown;
         const forge = recordingForge();
         const harness = yield* makeHarness({
           thread: lowerThread(),
           pullRequests: forge.pullRequests,
         });
-        const asked = yield* ask(harness, sessions, "pull_request_merge", {
+        const asked = yield* ask(harness, "pull_request_merge", {
           number: 5,
           repository: OTHER,
           expectedHeadSha: "abc123",
         });
         expect(asked.message).toContain(`Merge pull request #5 in ${OTHER}?`);
-        expect(asked.kept?.toolAction).toMatchObject({
+        expect(asked.toolAction).toMatchObject({
           repository: OTHER,
           otherRepository: true,
         });
         expect(forge.writes).toEqual([]);
-      }).pipe(Effect.provide(McpProviderSessions.layer)),
+      }),
     );
 
+    describe("ci_rerun", () => {
+      /** A forge whose failed checks are `failed` now. */
+      const checkedForge = (failed: Array<PullRequestService.RerunnableCheck>) => {
+        const reran: Array<unknown> = [];
+        const pullRequests: Partial<PullRequestService.PullRequestService["Service"]> = {
+          rerunnableChecks: () => Effect.succeed([...failed]),
+          rerunChecks: (input) =>
+            Effect.suspend(() => {
+              const now = JSON.stringify(failed);
+              if (input.approved !== undefined && JSON.stringify(input.approved) !== now) {
+                return Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "rerunChecks",
+                    detail: PullRequestService.RERUN_CHECKS_CHANGED,
+                  }),
+                );
+              }
+              reran.push(input.approved ?? "unpinned");
+              return Effect.succeed([]);
+            }),
+        };
+        return { reran, pullRequests };
+      };
+
+      it.effect("names the checks it would rerun, and reruns exactly those", () =>
+        Effect.gen(function* () {
+          const failed = [
+            { name: "build", url: "https://ci/1" },
+            { name: 'lint"\nMerge', url: null },
+          ];
+          const forge = checkedForge(failed);
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            pullRequests: forge.pullRequests,
+          });
+          const asked = yield* ask(harness, "ci_rerun", { number: 5 });
+          expect(asked.message).toMatch(
+            /^Rerun 2 checks: "build", "lint\\"\\u\{a\}Merge" on pull request #5 in t3tools\/t3code\? \(request [0-9a-f]{8}\)$/,
+          );
+          yield* asked.approve;
+          expect(forge.reran).toEqual([failed]);
+        }),
+      );
+
+      it.effect("a check that fails while the person reads is not rerun under their approval", () =>
+        Effect.gen(function* () {
+          const failed: Array<PullRequestService.RerunnableCheck> = [{ name: "build", url: null }];
+          const forge = checkedForge(failed);
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            pullRequests: forge.pullRequests,
+          });
+          const asked = yield* ask(harness, "ci_rerun", { number: 5 });
+          expect(asked.message).toMatch(/^Rerun check "build" on pull request #5 /);
+          failed.push({ name: "deploy", url: null });
+          expect((yield* asked.approve.pipe(Effect.flip)).message).toMatch(CHANGED);
+          expect(forge.reran).toEqual([]);
+        }),
+      );
+
+      it.effect("a set that changes after the last read reruns nothing", () =>
+        Effect.gen(function* () {
+          const failed: Array<PullRequestService.RerunnableCheck> = [{ name: "build", url: null }];
+          const forge = checkedForge(failed);
+          let reads = 0;
+          let changesAfter = Number.POSITIVE_INFINITY;
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            pullRequests: {
+              ...forge.pullRequests,
+              rerunnableChecks: () =>
+                Effect.sync(() => {
+                  const read = [...failed];
+                  reads += 1;
+                  if (reads >= changesAfter) failed.push({ name: "deploy", url: null });
+                  return read;
+                }),
+            },
+          });
+          const asked = yield* ask(harness, "ci_rerun", { number: 5 });
+          // The read made after the answer still shows the approved set; it changes right after.
+          changesAfter = reads + 1;
+          expect(yield* asked.approve.pipe(Effect.flip)).toMatchObject({
+            _tag: "PullRequestForgeError",
+            message:
+              "The checks that would be rerun changed after the user was asked. Nothing was rerun. Call again to ask.",
+          });
+          expect(forge.reran).toEqual([]);
+        }),
+      );
+
+      it.effect("many checks are counted, and with none nothing is asked", () =>
+        Effect.gen(function* () {
+          const failed = Array.from({ length: 14 }, (_, index) => ({
+            name: `job-${index}`,
+            url: null,
+          }));
+          const forge = checkedForge(failed);
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            pullRequests: forge.pullRequests,
+          });
+          const asked = yield* ask(harness, "ci_rerun", { number: 5 });
+          expect(asked.message).toMatch(
+            /^Rerun 14 checks: "job-0", "job-1", .*"job-9" and 4 more on pull request #5 /,
+          );
+          failed.length = 0;
+          expect(yield* harness.call("ci_rerun", { number: 5 })).toMatchObject({ checks: [] });
+          expect(yield* harness.person.raised).toHaveLength(1);
+        }),
+      );
+    });
+
     it.effect.each([
-      ["whose adapter keeps no record of the person's answer", true, false],
-      ["whose client cannot ask a person", false, true],
-    ] as const)("a thread %s is told so and writes nothing", ([, elicitation, keepsRecord]) =>
+      ["whose adapter does not hold T3 Code's requests", { held: false }],
+      ["whose client takes no elicitation", { elicitation: false }],
+    ] as const)("a thread %s is told so and writes nothing", ([, asked]) =>
       Effect.gen(function* () {
-        const sessions = yield* McpProviderSessions.McpProviderSessions;
-        if (keepsRecord) yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
         const forge = recordingForge();
         const hooked = checkout(() => ({ digest: "digest-1" }));
         const harness = yield* makeHarness({
           thread: lowerThread(),
           pullRequests: forge.pullRequests,
           git: hooked.git,
+          asked,
         });
         for (const [name, params] of [
           ...WRITES,
           ["pull_request_create", { title: "Add tools", body: "Adds tools." }],
         ] as const) {
-          const client = asClient(undefined, elicitation);
-          const refused = yield* harness
-            .call(name, params as never)
-            .pipe(client.provide(sessions), Effect.flip);
+          const refused = yield* harness.call(name, params as never).pipe(Effect.flip);
           expect(refused).toMatchObject({ code: "capability_denied" });
           expect((refused as { readonly message: string }).message).toMatch(
             /^Not done: ".+" needs the user's approval below Full access, and this agent's client cannot ask for it\. Tell the user; they can do it themselves or switch this thread to Full access\.$/,
           );
-          expect(Ref.getUnsafe(client.request)).toBeUndefined();
         }
+        expect(yield* harness.person.raised).toEqual([]);
         expect(forge.writes).toEqual([]);
         expect(hooked.attempts).toEqual([]);
-      }).pipe(Effect.provide(McpProviderSessions.layer)),
+      }),
     );
 
     describe("pull_request_create", () => {
@@ -1721,21 +1786,17 @@ describe("source control tools", () => {
 
       it.effect("a Full access thread pushes as it always has", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const hooked = checkout(() => ({ digest: "digest-1" }));
           const harness = yield* makeHarness({
             thread: lowerThread("full-access"),
             git: hooked.git,
           });
-          const client = asClient();
-          const result = yield* harness
-            .call("pull_request_create", args)
-            .pipe(client.provide(sessions));
+          const result = yield* harness.call("pull_request_create", args);
           expect(result).toMatchObject({ number: 43, created: true });
           expect(hooked.attempts).toEqual([undefined]);
           expect(hooked.plans()).toBe(0);
-          expect(Ref.getUnsafe(client.request)).toBeUndefined();
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+          expect(yield* harness.person.raised).toEqual([]);
+        }),
       );
 
       const PUSH =
@@ -1745,10 +1806,9 @@ describe("source control tools", () => {
         "%s asks once, for the push and the hooks it runs",
         ([, options]) =>
           Effect.gen(function* () {
-            const sessions = yield* shown;
             const hooked = checkout(() => ({ digest: "digest-1" }));
             const harness = yield* makeHarness({ ...options, git: hooked.git });
-            const asked = yield* ask(harness, sessions, "pull_request_create", args);
+            const asked = yield* ask(harness, "pull_request_create", args);
             expect(hooked.attempts).toEqual([]);
             expect(asked.message).toMatch(
               new RegExp(
@@ -1756,7 +1816,7 @@ describe("source control tools", () => {
               ),
             );
             // One request carries all of it: what is pushed where, and what the push runs.
-            expect(asked.kept).toMatchObject({
+            expect(asked).toMatchObject({
               toolAction: {
                 tool: "pull_request_create",
                 action:
@@ -1767,11 +1827,7 @@ describe("source control tools", () => {
               pushHooks: { branch: "tools", files: [".husky/pre-push"], commands: [] },
             });
 
-            yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
-            const result = yield* harness
-              .call("pull_request_create", args)
-              .pipe(asked.accept.provide(sessions));
-            expect(result).toMatchObject({ number: 43, created: true });
+            expect(yield* asked.approve).toMatchObject({ number: 43, created: true });
             // It opens as the person read it: that commit, to that remote, with those hooks.
             expect(hooked.attempts).toMatchObject([
               {
@@ -1781,26 +1837,23 @@ describe("source control tools", () => {
                 push: { remoteName: "origin", hooks: { digest: "digest-1" } },
               },
             ]);
-          }).pipe(Effect.provide(McpProviderSessions.layer)),
+            expect(yield* harness.person.raised).toHaveLength(1);
+          }),
       );
 
-      it.effect("hooks edited while the person reads are asked about again", () =>
+      it.effect("hooks edited while the person reads are not run under their approval", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           let digest = "digest-1";
           const hooked = checkout(() => ({ digest }));
           const harness = yield* makeHarness({ thread: lowerThread(), git: hooked.git });
-          const asked = yield* ask(harness, sessions, "pull_request_create", args);
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          const asked = yield* ask(harness, "pull_request_create", args);
           digest = "digest-2";
-          const client = asClient({ action: "accept", state: asked.state });
-          yield* harness
-            .call("pull_request_create", args)
-            .pipe(client.provide(sessions), Effect.flip);
-          // The approval named other contents, so this call asks about the ones there now.
+          expect((yield* asked.approve.pipe(Effect.flip)).message).toMatch(CHANGED);
           expect(hooked.attempts).toEqual([]);
-          expect(questionOf(Ref.getUnsafe(client.request))).toContain("(contents digest-2)");
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+          // Called again, it asks about the contents there now.
+          const again = yield* ask(harness, "pull_request_create", args);
+          expect(again.message).toContain("(contents digest-2)");
+        }),
       );
 
       // What the person was asked about, and each way the checkout can stop being that.
@@ -1835,28 +1888,22 @@ describe("source control tools", () => {
             now.baseBranch = "release";
           },
         ],
-      ] as const)("%s while the person reads is asked about again", ([, change]) =>
+      ] as const)("%s while the person reads pushes nothing", ([, change]) =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const moving = checkout();
           const harness = yield* makeHarness({ thread: lowerThread(), git: moving.git });
-          const asked = yield* ask(harness, sessions, "pull_request_create", args);
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          const asked = yield* ask(harness, "pull_request_create", args);
           change(moving.now);
-          const client = asClient({ action: "accept", state: asked.state });
-          yield* harness
-            .call("pull_request_create", args)
-            .pipe(client.provide(sessions), Effect.flip);
+          expect((yield* asked.approve.pipe(Effect.flip)).message).toMatch(CHANGED);
           expect(moving.attempts).toEqual([]);
-          const next = Ref.getUnsafe(client.request);
-          expect(next?.requestState).toBeDefined();
-          expect(next?.requestState).not.toBe(asked.state);
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+          // Called again, it is another request.
+          const again = yield* ask(harness, "pull_request_create", args);
+          expect(again.message).not.toBe(asked.message);
+        }),
       );
 
       it.effect("a commit that lands after the last read pushes nothing", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           // The branch is on its remote: the person is asked about the pull request alone.
           const pushed = checkout(() => null, false);
           let landsAfter = Number.POSITIVE_INFINITY;
@@ -1875,110 +1922,110 @@ describe("source control tools", () => {
               ),
           };
           const harness = yield* makeHarness({ thread: lowerThread(), git });
-          const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          const asked = yield* ask(harness, "pull_request_create", args);
           expect(asked.message).toMatch(/^Open a pull request for "tools" at "1a2b3c4d5e" /);
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
-          // The answering call reads twice: for the answer, and again before it acts.
-          landsAfter = pushed.plans() + 2;
-          const error = yield* harness
-            .call("pull_request_create", args)
-            .pipe(asked.accept.provide(sessions), Effect.flip);
-          expect(error).toMatchObject({
+          // After the answer the call reads once more before it acts.
+          landsAfter = pushed.plans() + 1;
+          expect(yield* asked.approve.pipe(Effect.flip)).toMatchObject({
             _tag: "PullRequestForgeError",
             message:
               "The branch, its commits, its base or where it is pushed changed after the user was asked. Nothing was pushed. Call again to ask.",
           });
           // The approval it was given went with the attempt, and names no push.
           expect(pushed.attempts).toMatchObject([{ push: null }]);
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+        }),
       );
 
       it.effect("a push that runs no hook is asked about as the push alone", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const plain = checkout();
           const harness = yield* makeHarness({ thread: lowerThread(), git: plain.git });
-          const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          const asked = yield* ask(harness, "pull_request_create", args);
           expect(asked.message).toMatch(new RegExp(`^${PUSH}\\? \\(request [0-9a-f]{8}\\)$`));
-          expect(asked.kept?.pushHooks).toBeUndefined();
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
-          yield* harness.call("pull_request_create", args).pipe(asked.accept.provide(sessions));
+          expect(asked.pushHooks).toBeUndefined();
+          yield* asked.approve;
           expect(plain.attempts).toMatchObject([{ push: { remoteName: "origin", hooks: null } }]);
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+        }),
       );
 
       it.effect("a branch already on its remote is asked about as the pull request alone", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const pushed = checkout(() => ({ digest: "digest-1" }), false);
           const harness = yield* makeHarness({ thread: lowerThread(), git: pushed.git });
-          const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          const asked = yield* ask(harness, "pull_request_create", args);
           expect(asked.message).toMatch(
             /^Open a pull request for "tools" at "1a2b3c4d5e" \("origin\/tools"\) into "main" in T3Tools\/T3Code\? \(request [0-9a-f]{8}\)$/,
           );
-          expect(asked.kept?.pushHooks).toBeUndefined();
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+          expect(asked.pushHooks).toBeUndefined();
+        }),
       );
 
       it.effect("a branch behind its remote is asked about with the commit the remote has", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const behind = checkout(() => null, false);
           behind.now.upstreamHead = "9".repeat(40);
           const harness = yield* makeHarness({ thread: lowerThread(), git: behind.git });
-          const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          const asked = yield* ask(harness, "pull_request_create", args);
           expect(asked.message).toMatch(
             /^Open a pull request for "tools" at "1a2b3c4d5e" \("origin\/tools" at "9999999999"\) into "main" /,
           );
-          // The remote's branch moves on while the person reads: another request.
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          // The remote's branch moves on while the person reads: no longer what they approved.
           behind.now.upstreamHead = "8".repeat(40);
-          const client = asClient({ action: "accept", state: asked.state });
-          yield* harness
-            .call("pull_request_create", args)
-            .pipe(client.provide(sessions), Effect.flip);
-          const next = Ref.getUnsafe(client.request)?.requestState;
-          expect(next).toBeDefined();
-          expect(next).not.toBe(asked.state);
+          expect((yield* asked.approve.pipe(Effect.flip)).message).toMatch(CHANGED);
           expect(behind.attempts).toEqual([]);
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+        }),
       );
 
       it.effect("a private pull request is asked about as a push to the companion repository", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           // Its branch is on the project's remote already; a private one is pushed all the same.
           const pushed = checkout(() => ({ digest: "digest-1" }), false);
           const harness = yield* makeHarness({ thread: lowerThread(), git: pushed.git });
-          const asked = yield* ask(harness, sessions, "pull_request_create", {
+          const asked = yield* ask(harness, "pull_request_create", {
             ...args,
             private: true,
           });
           expect(asked.message).toMatch(
             /^Push "tools" at "1a2b3c4d5e" to this repository's private companion, a separate repository on its host and open a private pull request into "main" in T3Tools\/T3Code, running this repository's hook file "\.husky\/pre-push" \(contents digest-1\)\? \(request [0-9a-f]{8}\)$/,
           );
-          // An approval of the private one is not one for the same call made public.
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
-          const client = asClient({ action: "accept", state: asked.state });
-          yield* harness
-            .call("pull_request_create", args)
-            .pipe(client.provide(sessions), Effect.flip);
+          // The same call made public is another request.
+          const open = yield* ask(harness, "pull_request_create", args);
+          expect(open.id).not.toBe(asked.id);
           expect(pushed.attempts).toEqual([]);
-          const next = Ref.getUnsafe(client.request)?.requestState;
-          expect(next).toBeDefined();
-          expect(next).not.toBe(asked.state);
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+        }),
+      );
+
+      it.effect("a push to an address too long to show whole is not asked about", () =>
+        Effect.gen(function* () {
+          const long = checkout();
+          long.now.urls = [`https://github.com/T3Tools/${"r".repeat(220)}.git`];
+          const harness = yield* makeHarness({ thread: lowerThread(), git: long.git });
+          expect(yield* harness.call("pull_request_create", args).pipe(Effect.flip)).toMatchObject({
+            _tag: "PullRequestForgeError",
+            message:
+              "This push goes to an address too long to show the user in full, so they cannot be asked to approve it. Nothing was pushed. Tell the user; they can push the branch themselves.",
+          });
+          // Several addresses that fit one by one and not together are not asked about either.
+          long.now.urls = Array.from(
+            { length: 4 },
+            (_, index) => `https://github.com/T3Tools/${String(index).repeat(150)}.git`,
+          );
+          expect(
+            ((yield* harness.call("pull_request_create", args).pipe(Effect.flip)) as Error).message,
+          ).toMatch(/^Not done: what this call would do is too long to show the user in full/);
+          expect(yield* harness.person.raised).toEqual([]);
+          expect(long.attempts).toEqual([]);
+        }),
       );
 
       it.effect("a branch name reaches the person as data", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const odd = checkout();
           odd.now.branch = 'main"-and-merge\u202eit';
           const harness = yield* makeHarness({ thread: lowerThread(), git: odd.git });
-          const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          const asked = yield* ask(harness, "pull_request_create", args);
           expect(asked.message).toContain('Push "main\\"-and-merge\\u{202e}it" at ');
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+        }),
       );
     });
 
@@ -2002,25 +2049,23 @@ describe("source control tools", () => {
 
       it.effect("names every layer it merges, each at its head", () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const forge = stackedForge([...LAYERS]);
           const harness = yield* makeHarness({
             thread: lowerThread(),
             pullRequests: forge.pullRequests,
           });
-          const asked = yield* ask(harness, sessions, "pull_request_merge", params);
+          const asked = yield* ask(harness, "pull_request_merge", params);
           expect(asked.message).toMatch(
             /^Merge the stack of #3 at "3333333333", #5 at "5555555555", up to pull request #5 in t3tools\/t3code\? \(request [0-9a-f]{8}\)$/,
           );
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
-          yield* harness.call("pull_request_merge", params).pipe(asked.accept.provide(sessions));
+          yield* asked.approve;
           expect(forge.merged).toEqual([
             [
               { number: 3, headSha: "3".repeat(40) },
               { number: 5, headSha: "5".repeat(40) },
             ],
           ]);
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+        }),
       );
 
       it.effect.each([
@@ -2036,28 +2081,21 @@ describe("source control tools", () => {
             layers[0] = { ...layers[0]!, headSha: "4".repeat(40) };
           },
         ],
-      ] as const)("%s while the person reads is asked about again", ([, change]) =>
+      ] as const)("%s while the person reads merges nothing", ([, change]) =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const layers = [...LAYERS];
           const forge = stackedForge(layers);
           const harness = yield* makeHarness({
             thread: lowerThread(),
             pullRequests: forge.pullRequests,
           });
-          const asked = yield* ask(harness, sessions, "pull_request_merge", params);
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          const asked = yield* ask(harness, "pull_request_merge", params);
           change(layers);
-          const client = asClient({ action: "accept", state: asked.state });
-          yield* harness
-            .call("pull_request_merge", params)
-            .pipe(client.provide(sessions), Effect.flip);
+          expect((yield* asked.approve.pipe(Effect.flip)).message).toMatch(CHANGED);
           expect(forge.merged).toEqual([]);
-          const next = Ref.getUnsafe(client.request);
-          expect(next?.requestState).toBeDefined();
-          expect(next?.requestState).not.toBe(asked.state);
-          expect(questionOf(next)).not.toBe(asked.message);
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+          const again = yield* ask(harness, "pull_request_merge", params);
+          expect(again.message).not.toBe(asked.message);
+        }),
       );
     });
 
@@ -2065,7 +2103,6 @@ describe("source control tools", () => {
       "who a reviewer's name resolves to is settled before anything is asked or written",
       () =>
         Effect.gen(function* () {
-          const sessions = yield* shown;
           const forge = recordingForge();
           const requested: Array<unknown> = [];
           let id = "user-1";
@@ -2084,39 +2121,32 @@ describe("source control tools", () => {
             },
           });
           // A name that matches nobody ends the call before the question, and before the title.
-          const unknown = asClient();
           const failed = yield* harness
             .call("pull_request_update", { number: 5, title: "New", requestReviewers: ["nobody"] })
-            .pipe(unknown.provide(sessions), Effect.flip);
+            .pipe(Effect.flip);
           expect(failed).toMatchObject({ _tag: "PullRequestForgeError" });
-          expect(Ref.getUnsafe(unknown.request)).toBeUndefined();
+          expect(yield* harness.person.raised).toEqual([]);
           expect(forge.writes).toEqual([]);
 
           const params = { number: 5, requestReviewers: ["octo"] };
-          const asked = yield* ask(harness, sessions, "pull_request_update", params);
-          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
-          // The name belongs to someone else by the time the person answers: asked again.
+          const asked = yield* ask(harness, "pull_request_update", params);
+          // The name belongs to someone else by the time the person answers.
           id = "user-2";
-          const client = asClient({ action: "accept", state: asked.state });
-          yield* harness
-            .call("pull_request_update", params)
-            .pipe(client.provide(sessions), Effect.flip);
-          const next = Ref.getUnsafe(client.request)?.requestState;
-          expect(next).toBeDefined();
-          expect(next).not.toBe(asked.state);
+          expect((yield* asked.approve.pipe(Effect.flip)).message).toMatch(CHANGED);
           expect(requested).toEqual([]);
-        }).pipe(Effect.provide(McpProviderSessions.layer)),
+        }),
     );
 
     it.effect("a review's line comments go where they were placed when the person was asked", () =>
       Effect.gen(function* () {
-        const sessions = yield* shown;
         const reviews: Array<unknown> = [];
         let patch =
           "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n";
+        let headSha = "head-1";
         const harness = yield* makeHarness({
           thread: lowerThread(),
           pullRequests: {
+            summary: () => Effect.succeed({ state: "open", headSha } as never),
             diff: () => Effect.succeed({ patch, truncated: false, nextCursor: null }),
             submitReview: (input) => Effect.sync(() => void reviews.push(input)),
           },
@@ -2126,51 +2156,28 @@ describe("source control tools", () => {
           verdict: "comment",
           comments: [{ path: "a.ts", line: 1, body: "Why?" }],
         } as const;
-        const asked = yield* ask(harness, sessions, "pull_request_review", params);
-        yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+        const asked = yield* ask(harness, "pull_request_review", params);
         // The pull request moved on: line 1 is now a line the diff only shows around the change.
+        const placed = patch;
         patch =
           "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n same\n-old\n+new\n";
-        const client = asClient({ action: "accept", state: asked.state });
-        yield* harness
-          .call("pull_request_review", params)
-          .pipe(client.provide(sessions), Effect.flip);
-        const next = Ref.getUnsafe(client.request)?.requestState;
-        expect(next).toBeDefined();
-        expect(next).not.toBe(asked.state);
+        expect((yield* asked.approve.pipe(Effect.flip)).message).toMatch(CHANGED);
         expect(reviews).toEqual([]);
-      }).pipe(Effect.provide(McpProviderSessions.layer)),
-    );
 
-    it.effect("a call bound for a linked environment is not sent below Full access", () =>
-      Effect.gen(function* () {
-        const sessions = yield* shown;
-        const forge = recordingForge();
-        const hooked = checkout(() => ({ digest: "digest-1" }));
-        const harness = yield* makeHarness({
-          thread: lowerThread(),
-          pullRequests: forge.pullRequests,
-          git: hooked.git,
-        });
-        const environmentId = EnvironmentId.make("environment-box");
-        for (const [name, params] of [
-          ...WRITES,
-          ["pull_request_create", { title: "Add tools", body: "Adds tools." }],
-        ] as const) {
-          const client = asClient();
-          const refused = yield* harness
-            .call(name, { ...params, environmentId } as never)
-            .pipe(client.provide(sessions), Effect.flip);
-          expect(refused).toMatchObject({ code: "capability_denied" });
-          expect((refused as { readonly message: string }).message).toMatch(
-            /^Not done: below Full access the user approves this action first, and T3 Code cannot yet show them what it would do in a linked environment\./,
-          );
-          expect(Ref.getUnsafe(client.request)).toBeUndefined();
-        }
-        expect(forge.writes).toEqual([]);
-        expect(hooked.attempts).toEqual([]);
-        expect(hooked.plans()).toBe(0);
-      }).pipe(Effect.provide(McpProviderSessions.layer)),
+        // New commits that leave the line where it was, with other text on it: the placement
+        // reads the same, and the head it was read at does not.
+        patch = placed;
+        const again = yield* ask(harness, "pull_request_review", params);
+        patch = placed.replace("+new", "+newer");
+        headSha = "head-2";
+        expect((yield* again.approve.pipe(Effect.flip)).message).toMatch(CHANGED);
+        expect(reviews).toEqual([]);
+
+        // Unchanged, the review goes to the host pinned to the head its lines were placed on.
+        const settled = yield* ask(harness, "pull_request_review", params);
+        yield* settled.approve;
+        expect(reviews).toMatchObject([{ expectedHeadSha: "head-2" }]);
+      }),
     );
   });
 

@@ -2888,10 +2888,20 @@ export const make = Effect.gen(function* () {
       readonly baseRef: string;
       readonly headBranch: string;
     }) => Effect.Effect<{ readonly title: string; readonly body: string }, E>,
+    /** What a person approved: the pull request is opened for that branch, or not at all. */
+    approved?: Pick<PullRequestOpening, "branch" | "headRef">,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
     const details = yield* gitCore.statusDetails(cwd);
+    // The head sent to the host is taken from this read, so it is the read that must match.
+    if (
+      approved !== undefined &&
+      (details.branch !== approved.branch ||
+        (approved.headRef !== null && details.upstreamRef !== approved.headRef))
+    ) {
+      return yield* openingChanged(cwd);
+    }
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
       return yield* new GitManagerError({
@@ -3160,8 +3170,9 @@ export const make = Effect.gen(function* () {
         // An approved push names its commit, so one made since is not sent with it.
         args: [
           "push",
-          // An approved push writes to the one remote the person was asked about.
-          ...(approved === undefined ? [] : ["--recurse-submodules=no"]),
+          // An approved push writes the one branch to the one remote the person was asked
+          // about, whatever Git's configuration would send along with it.
+          ...(approved === undefined ? [] : ["--recurse-submodules=no", "--no-follow-tags"]),
           "--",
           remoteName,
           `${approved?.head ?? `refs/heads/${branch}`}:refs/heads/${branch}`,
@@ -3309,6 +3320,7 @@ export const make = Effect.gen(function* () {
         input.baseBranch,
         input.draft === true,
         () => Effect.succeed({ title: input.title, body: input.body }),
+        approved,
       );
     }).pipe(
       // A push changes the ahead count, and a new PR changes the branch's PR lookup, so
@@ -3340,6 +3352,13 @@ export const make = Effect.gen(function* () {
       const head = yield* currentHead(cwd);
       const isPrivate = input.private === true;
       const pushes = isPrivate || (yield* createPrNeedsPush(cwd, status));
+      // A branch that tracks a local branch is up to date with that branch, which says
+      // nothing of the published branch a pull request would be opened from.
+      if (!pushes && (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) === ".") {
+        return yield* fail(
+          `${branch} tracks a local branch, so Git does not say which published branch a pull request would be opened from. Nothing was done. Set the branch's upstream to its branch on the remote, then try again.`,
+        );
+      }
       const target =
         pushes && !isPrivate
           ? yield* gitCore.resolvePushTarget(cwd, { branch, hasUpstream: status.hasUpstream })

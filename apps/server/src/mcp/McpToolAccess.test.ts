@@ -11,22 +11,22 @@ import {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import * as McpClientInput from "./McpClientInput.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
-import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+import { liveThreadShell, makeAskedThread } from "./McpToolAccess.testkit.ts";
 
 const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
@@ -544,166 +544,285 @@ const MERGE_FIVE: McpToolAccess.OutsideAction = {
   repository: "org/repo",
 };
 
-/** A tool that acts outside its thread: what ran, and what went to a linked environment. */
+type Outcome = { readonly ran?: string; readonly code?: string; readonly message?: string };
+
+/**
+ * A tool that acts outside its thread, a person to answer what it asks, and a linked
+ * environment `there` that runs the same tool for calls sent to it.
+ */
 const outsideProbe = Effect.fn("outsideProbe")(function* (
   asks: () => McpToolAccess.OutsideAction = () => MERGE_FIVE,
+  options: Parameters<typeof makeAskedThread>[0] & {
+    /** What the linked environment resolves the call to; this one's `asks` when omitted. */
+    readonly asksThere?: () => McpToolAccess.OutsideAction;
+  } = {},
 ) {
+  const thread = yield* makeAskedThread(options);
   const ran: Array<string> = [];
-  const forwarded: Array<string> = [];
+  const sent: Array<McpToolAccess.LinkedOutsideAction | undefined> = [];
   const OutsideToolkit = Toolkit.make(Tool.make("acts_outside", linkedProbe));
-  const toolkit = yield* OutsideToolkit.pipe(
-    Effect.provide(
-      McpToolAccess.HandlersLayer.layer(
-        McpToolAccess.toLayer(OutsideToolkit, {
-          acts_outside: McpToolAccess.actsOutsideThread("acts_outside", () =>
-            Effect.succeed({
-              asks: asks(),
-              run: Effect.sync(() => {
-                ran.push("here");
-                return { ran: "here" };
-              }),
-            }),
-          ),
-        }),
-      ).pipe(
-        Layer.provide(
-          Layer.mock(PeerForwarding.PeerForwarding)({
-            call: (_scope, tool, environmentId) =>
-              Effect.sync(() => {
-                forwarded.push(environmentId);
-                return { ran: `${tool.name} in ${environmentId}` } as never;
-              }),
-          }),
-        ),
-      ),
-    ),
-  );
-  const call = (
-    scope: McpInvocationContext.McpInvocationScope,
-    args: { readonly environmentId?: EnvironmentId } = {},
-    reply?: { readonly action: string; readonly state: string },
+  const build = (
+    where: string,
+    resolved: () => McpToolAccess.OutsideAction,
+    forwarding: Layer.Layer<PeerForwarding.PeerForwarding>,
   ) =>
-    Effect.gen(function* () {
-      const sessions = yield* McpProviderSessions.McpProviderSessions;
-      const request = Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined);
-      const { result } = yield* toolkit.handle("acts_outside", args).pipe(
-        Stream.unwrap,
-        Stream.run(Sink.last()),
-        Effect.flatMap(Effect.fromOption),
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(McpClientInput.McpClientInput, { request, sessions }),
-        Effect.provideService(
-          McpSchema.McpRequestContext,
-          McpSchema.McpRequestContext.of({
-            clientId: 1,
-            protocolVersion: "2026-07-28",
-            clientCapabilities: new McpSchema.ClientCapabilities({ elicitation: {} }),
-            ...(reply === undefined
-              ? {}
-              : {
-                  inputResponses: { "outside-action": { action: reply.action } },
-                  requestState: reply.state,
+    OutsideToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(
+          McpToolAccess.toLayer(OutsideToolkit, {
+            acts_outside: McpToolAccess.actsOutsideThread("acts_outside", () =>
+              Effect.succeed({
+                asks: resolved(),
+                run: Effect.sync(() => {
+                  ran.push(where);
+                  return { ran: where };
                 }),
+              }),
+            ),
           }),
-        ),
-        Effect.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
-          }),
-        ),
-      );
-      const asked = Ref.getUnsafe(request);
-      return {
-        result: result as {
-          readonly ran?: string;
-          readonly code?: string;
-          readonly message?: string;
-        },
-        state: asked?.requestState,
-        question: (
-          asked?.inputRequests?.["outside-action"] as
-            | { readonly params: { readonly message: string } }
-            | undefined
-        )?.params.message,
-      };
-    });
-  return { ran, forwarded, call };
+        ).pipe(Layer.provide(forwarding)),
+      ),
+    );
+  const handle = (
+    toolkit: Effect.Success<ReturnType<typeof build>>,
+    scope: McpInvocationContext.McpInvocationScope,
+    args: { readonly environmentId?: EnvironmentId },
+  ) =>
+    toolkit.handle("acts_outside", args).pipe(
+      Stream.unwrap,
+      Stream.run(Sink.last()),
+      Effect.flatMap(Effect.fromOption),
+      Effect.map(({ result }) => result as Outcome),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+      thread.provide,
+      Effect.provide(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          ...thread.threads,
+          getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+        }),
+      ),
+      Effect.orDie,
+    );
+  // The linked environment: the same tool, called by this one's link with the caller's modes.
+  const there = yield* build(
+    "there",
+    options.asksThere ?? asks,
+    Layer.mock(PeerForwarding.PeerForwarding)({}),
+  );
+  const toolkit = yield* build(
+    "here",
+    asks,
+    Layer.mock(PeerForwarding.PeerForwarding)({
+      label: () => Effect.succeed("Box"),
+      call: (scope, _tool, _environmentId, _params, outsideAction) =>
+        Effect.gen(function* () {
+          sent.push(outsideAction);
+          const limits = scope.thread === undefined ? undefined : shells.get(scope.thread.threadId);
+          const result = yield* handle(
+            there,
+            {
+              ...fullAccessLinkedClient,
+              client: {
+                ...fullAccessLinkedClient.client!,
+                narrowedTo: {
+                  runtimeMode: limits?.runtimeMode ?? "full-access",
+                  interactionMode: limits?.interactionMode ?? "default",
+                },
+              },
+              outsideAction,
+            },
+            {},
+          );
+          return result.code === undefined
+            ? (result as never)
+            : yield* new OrchestratorMcpFailure({
+                code: result.code as "capability_denied",
+                message: result.message ?? "",
+              });
+        }),
+    }),
+  );
+  return {
+    ...thread,
+    ran,
+    sent,
+    call: (
+      scope: McpInvocationContext.McpInvocationScope,
+      args: { readonly environmentId?: EnvironmentId } = {},
+    ) => handle(toolkit, scope, args),
+  };
 });
 
-const personAnswers = Effect.gen(function* () {
-  const sessions = yield* McpProviderSessions.McpProviderSessions;
-  yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
-  return (threadId: ThreadId, question: string, approved: boolean) =>
-    sessions.answerApprovalRequests(threadId, question, approved);
-});
+const QUESTION = /^Merge pull request #5 in org\/repo\? \(request [0-9a-f]{8}\)$/;
 
 it.effect(
-  "below Full access nothing goes to a linked environment, whatever the client replies",
+  "below Full access the person is asked in the thread, and one approval lets one call through",
   () =>
     Effect.gen(function* () {
-      const answer = yield* personAnswers;
       const probed = yield* outsideProbe();
-      // The same call here, asked and approved by the person.
-      const here = yield* probed.call(supervised);
-      yield* answer(supervisedThreadId, here.question!, true);
-
-      for (const reply of [undefined, { action: "accept", state: here.state! }]) {
-        const refused = yield* probed.call(supervised, { environmentId: box }, reply);
-        expect(refused.result).toMatchObject({
-          code: "capability_denied",
-          message:
-            "Not done: below Full access the user approves this action first, and T3 Code cannot yet show them what it would do in a linked environment. Nothing was sent there. Tell the user; they can do it themselves, or from a thread in that environment.",
-        });
-        expect(refused.question).toBeUndefined();
-      }
-      expect(probed.forwarded).toEqual([]);
+      const call = yield* Effect.forkChild(probed.call(supervised));
+      const asked = yield* probed.asked;
+      expect(asked.message).toMatch(QUESTION);
+      expect(asked.toolAction).toEqual({ tool: "acts_outside", ...MERGE_FIVE });
+      // The client is sent the same request, named by the id the thread's adapter reads.
+      yield* Effect.yieldNow;
+      expect(yield* probed.elicited).toEqual([
+        {
+          message: asked.message,
+          meta: {
+            "t3.codes/approval-request": asked.id,
+            "anthropic/permissionDisplay": { description: asked.id },
+          },
+        },
+      ]);
       expect(probed.ran).toEqual([]);
+
+      yield* probed.answer(asked, "accept");
+      expect(yield* Fiber.join(call)).toEqual({ ran: "here" });
+      expect(probed.ran).toEqual(["here"]);
+
+      // The approval is spent: the same call asks again.
+      const again = yield* Effect.forkChild(probed.call(supervised));
+      const second = yield* probed.asked;
+      expect(second.id).not.toBe(asked.id);
+      yield* probed.answer(second, "decline");
+      expect(yield* Fiber.join(again)).toMatchObject({
+        code: "capability_denied",
+        message: 'Not done: the user declined "Merge pull request #5 in org/repo".',
+      });
+      expect(probed.ran).toEqual(["here"]);
     }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
-it.effect("a Full access thread's call goes to a linked environment unasked, as its own", () =>
+it.effect("the call waits for the person with no limit of its own", () =>
   Effect.gen(function* () {
-    yield* personAnswers;
     const probed = yield* outsideProbe();
-    const sent = yield* probed.call(fullAccess, { environmentId: box });
-    expect(sent.result).toEqual({ ran: "acts_outside in environment-box" });
-    expect(sent.question).toBeUndefined();
-    expect(probed.forwarded).toEqual([box]);
+    const call = yield* Effect.forkChild(probed.call(supervised));
+    const asked = yield* probed.asked;
+    yield* TestClock.adjust("12 hours");
+    expect(yield* probed.pending).toHaveLength(1);
+    expect(probed.ran).toEqual([]);
+    yield* probed.answer(asked, "accept");
+    expect(yield* Fiber.join(call)).toEqual({ ran: "here" });
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+const CANCELLED =
+  'Cancelled, nothing was done: the request to approve "Merge pull request #5 in org/repo" ended without the user\'s answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again.';
+
+it.effect.each([
+  ["the turn ends", "completed"],
+  ["the turn is interrupted", "interrupted"],
+] as const)("when %s the request is cancelled and nothing is done", ([, status]) =>
+  Effect.gen(function* () {
+    const probed = yield* outsideProbe();
+    const call = yield* Effect.forkChild(probed.call(supervised));
+    yield* probed.asked;
+    yield* probed.endTurn(status);
+    expect(yield* Fiber.join(call)).toMatchObject({
+      code: "capability_denied",
+      message: CANCELLED,
+    });
+    expect(yield* probed.pending).toEqual([]);
+    expect((yield* probed.raised).map((request) => request.status)).toEqual(["cancelled"]);
+    expect(probed.ran).toEqual([]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect("a request the person dismisses, or the client stops waiting on, is cancelled", () =>
+  Effect.gen(function* () {
+    const probed = yield* outsideProbe();
+    const dismissed = yield* Effect.forkChild(probed.call(supervised));
+    yield* probed.answer(yield* probed.asked, "cancel");
+    expect(yield* Fiber.join(dismissed)).toMatchObject({ message: CANCELLED });
+
+    const stopped = yield* Effect.forkChild(probed.call(supervised));
+    yield* probed.asked;
+    yield* probed.clientStopsWaiting;
+    expect(yield* Fiber.join(stopped)).toMatchObject({ message: CANCELLED });
+    expect(yield* probed.pending).toEqual([]);
+    expect(probed.ran).toEqual([]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect(
+  "a call that is cut off leaves the request, and the same call again finds the answer",
+  () =>
+    Effect.gen(function* () {
+      const probed = yield* outsideProbe();
+      const cut = yield* Effect.forkChild(probed.call(supervised));
+      const asked = yield* probed.asked;
+      yield* Fiber.interrupt(cut);
+      expect(yield* probed.pending).toHaveLength(1);
+      yield* probed.answer(asked, "accept");
+      // The same call in the same turn: no second request, and the answer already given.
+      expect(yield* probed.call(supervised)).toEqual({ ran: "here" });
+      expect(yield* probed.raised).toHaveLength(1);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect.each([
+  ["whose adapter does not hold T3 Code's requests", { held: false }],
+  ["whose client takes no elicitation", { elicitation: false }],
+] as const)("a thread %s is told so, and nothing is shown or done", ([, options]) =>
+  Effect.gen(function* () {
+    const probed = yield* outsideProbe(() => MERGE_FIVE, options);
+    expect(yield* probed.call(supervised)).toMatchObject({
+      code: "capability_denied",
+      message:
+        "Not done: \"Merge pull request #5 in org/repo\" needs the user's approval below Full access, and this agent's client cannot ask for it. Tell the user; they can do it themselves or switch this thread to Full access.",
+    });
+    expect(yield* probed.raised).toEqual([]);
+    expect(probed.ran).toEqual([]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect("a thread with no turn running has nowhere to be asked", () =>
+  Effect.gen(function* () {
+    const probed = yield* outsideProbe();
+    yield* probed.endTurn();
+    expect(yield* probed.call(supervised)).toMatchObject({
+      code: "capability_denied",
+      message:
+        'Not done: "Merge pull request #5 in org/repo" needs the user\'s approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.',
+    });
+    expect(yield* probed.raised).toEqual([]);
   }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
 it.effect("an approval is for what the call resolved to, shown or not", () =>
   Effect.gen(function* () {
-    const answer = yield* personAnswers;
     let binds = "head-1";
     const probed = yield* outsideProbe(() => ({ ...MERGE_FIVE, binds }));
-    const asked = yield* probed.call(supervised);
-    yield* answer(supervisedThreadId, asked.question!, true);
+    const cut = yield* Effect.forkChild(probed.call(supervised));
+    const asked = yield* probed.asked;
+    yield* Fiber.interrupt(cut);
+    yield* probed.answer(asked, "accept");
     // What the words do not carry changes while the person reads: the same words, another request.
     binds = "head-2";
-    const moved = yield* probed.call(supervised, {}, { action: "accept", state: asked.state! });
-    expect(moved.state).toBeDefined();
-    expect(moved.state).not.toBe(asked.state);
-    expect(moved.question).not.toBe(asked.question);
+    const moved = yield* Effect.forkChild(probed.call(supervised));
+    const second = yield* probed.asked;
+    expect(second.id).not.toBe(asked.id);
+    expect(second.message).not.toBe(asked.message);
     expect(probed.ran).toEqual([]);
+    yield* Fiber.interrupt(moved);
   }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
 it.effect("what runs is read after the answer, and only if it is still what was asked", () =>
   Effect.gen(function* () {
-    const answer = yield* personAnswers;
     let reads = 0;
     let movesAfter = Number.POSITIVE_INFINITY;
     const probed = yield* outsideProbe(() => {
       reads += 1;
       return { ...MERGE_FIVE, binds: reads > movesAfter ? "head-2" : "head-1" };
     });
-    const asked = yield* probed.call(supervised);
-    yield* answer(supervisedThreadId, asked.question!, true);
-    // It moves between the read that the answer is checked against and the act.
-    movesAfter = reads + 1;
-    const moved = yield* probed.call(supervised, {}, { action: "accept", state: asked.state! });
-    expect(moved.result).toMatchObject({
+    const call = yield* Effect.forkChild(probed.call(supervised));
+    const asked = yield* probed.asked;
+    // It moves between the question and the act.
+    movesAfter = reads;
+    yield* probed.answer(asked, "accept");
+    expect(yield* Fiber.join(call)).toMatchObject({
       code: "capability_denied",
       message:
         'Not done: what "Merge pull request #5 in org/repo" would do changed while the user was asked. Call again to ask.',
@@ -714,26 +833,117 @@ it.effect("what runs is read after the answer, and only if it is still what was 
 
 it.effect("a name the server did not write is shown as data, with nothing hidden in it", () =>
   Effect.gen(function* () {
-    yield* personAnswers;
     // A line break, a right-to-left override, a zero-width space and a no-break space.
-    const name = 'x"\n in org/other\u202e\u200b\u00a0\\';
+    const name = 'x"\n in org/other‮​ \\';
     expect(McpToolAccess.quoted(name)).toBe(
       '"x\\"\\u{a} in org/other\\u{202e}\\u{200b}\\u{a0}\\\\"',
     );
     expect(McpToolAccess.quoted("a".repeat(200), 10)).toBe(`"${"a".repeat(10)}…"`);
     // A mark Unicode says to draw as nothing, which makes two names look the same.
-    expect(McpToolAccess.quoted("ma\u034fin")).toBe('"ma\\u{34f}in"');
+    expect(McpToolAccess.quoted("ma͏in")).toBe('"ma\\u{34f}in"');
+
+    expect(McpToolAccess.quotedWhole("a".repeat(10), 10)).toBe(true);
+    expect(McpToolAccess.quotedWhole("a".repeat(11), 10)).toBe(false);
 
     // And whatever a handler lets through unquoted still reaches the person on one line.
+    let repository = "org/repo";
     const probed = yield* outsideProbe(() => ({
       action: "Merge",
-      target: "pull request #5\nApprove everything\u202e",
-      repository: `org/${"r".repeat(400)}`,
+      target: "pull request #5\nApprove everything‮",
+      repository,
     }));
-    const asked = yield* probed.call(supervised);
-    expect(asked.question).toMatch(
-      /^Merge pull request #5\\u\{a\}Approve everything\\u\{202e\} in org\/r{196}…\? \(request [0-9a-f]{8}\)$/,
+    const call = yield* Effect.forkChild(probed.call(supervised));
+    expect((yield* probed.asked).message).toMatch(
+      /^Merge pull request #5\\u\{a\}Approve everything\\u\{202e\} in org\/repo\? \(request [0-9a-f]{8}\)$/,
     );
+    yield* Fiber.interrupt(call);
+
+    // A question too long to show in full is not asked: the person would approve what they
+    // could not read.
+    repository = `org/${"r".repeat(400)}`;
+    expect(yield* probed.call(supervised)).toMatchObject({
+      code: "capability_denied",
+      message:
+        "Not done: what this call would do is too long to show the user in full, so they cannot be asked to approve it. Tell the user; they can do it themselves or switch this thread to Full access.",
+    });
+    expect(yield* probed.raised).toHaveLength(1);
+    expect(probed.ran).toEqual([]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect("a Full access thread's call goes to a linked environment unasked, as its own", () =>
+  Effect.gen(function* () {
+    const probed = yield* outsideProbe();
+    expect(yield* probed.call(fullAccess, { environmentId: box })).toEqual({ ran: "there" });
+    expect(probed.sent).toEqual([undefined]);
+    expect(yield* probed.raised).toEqual([]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect(
+  "below Full access a linked environment says what the call would do, the person is asked here, and it acts on that approval",
+  () =>
+    Effect.gen(function* () {
+      const probed = yield* outsideProbe();
+      const call = yield* Effect.forkChild(probed.call(supervised, { environmentId: box }));
+      const asked = yield* probed.asked;
+      // Described there, with nothing done; asked here, naming where it would happen.
+      expect(probed.sent).toEqual(["describe"]);
+      expect(probed.ran).toEqual([]);
+      expect(asked.message).toMatch(
+        /^Merge pull request #5 \(in linked environment "Box"\) in org\/repo\? \(request [0-9a-f]{8}\)$/,
+      );
+      expect(asked.toolAction).toEqual({
+        tool: "acts_outside",
+        action: "Merge",
+        target: 'pull request #5 (in linked environment "Box")',
+        repository: "org/repo",
+      });
+
+      yield* probed.answer(asked, "accept");
+      expect(yield* Fiber.join(call)).toEqual({ ran: "there" });
+      expect(probed.sent).toEqual([
+        "describe",
+        { approved: expect.stringMatching(/^[0-9a-f]{64}$/) },
+      ]);
+      expect(probed.ran).toEqual(["there"]);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect("a linked environment acts only if the call still resolves to what was approved", () =>
+  Effect.gen(function* () {
+    let head = "head-1";
+    const probed = yield* outsideProbe(() => MERGE_FIVE, {
+      asksThere: () => ({ ...MERGE_FIVE, binds: head }),
+    });
+    const call = yield* Effect.forkChild(probed.call(supervised, { environmentId: box }));
+    const asked = yield* probed.asked;
+    head = "head-2";
+    yield* probed.answer(asked, "accept");
+    expect(yield* Fiber.join(call)).toMatchObject({
+      code: "capability_denied",
+      message:
+        'Not done: what "Merge pull request #5 in org/repo" would do changed while the user was asked. Call again to ask.',
+    });
+    expect(probed.ran).toEqual([]);
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect("a declined or cancelled request sends nothing more to the linked environment", () =>
+  Effect.gen(function* () {
+    const probed = yield* outsideProbe();
+    const declined = yield* Effect.forkChild(probed.call(supervised, { environmentId: box }));
+    yield* probed.answer(yield* probed.asked, "decline");
+    expect(yield* Fiber.join(declined)).toMatchObject({
+      message:
+        'Not done: the user declined "Merge pull request #5 (in linked environment "Box") in org/repo".',
+    });
+    const cancelled = yield* Effect.forkChild(probed.call(supervised, { environmentId: box }));
+    yield* probed.asked;
+    yield* probed.endTurn("interrupted");
+    expect((yield* Fiber.join(cancelled)).message).toMatch(/^Cancelled, nothing was done: /);
+    expect(probed.sent).toEqual(["describe", "describe"]);
+    expect(probed.ran).toEqual([]);
   }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
@@ -756,11 +966,10 @@ it.effect.each([
   ["a read-only client", readOnlyClient, "capability_denied"],
 ] as const)("%s has no thread to be asked in: %o", ([, scope, expected]) =>
   Effect.gen(function* () {
-    yield* personAnswers;
     const probed = yield* outsideProbe();
-    const { result, question } = yield* probed.call(scope);
+    const result = yield* probed.call(scope);
     expect(result.code ?? result.ran).toBe(expected);
-    expect(question).toBeUndefined();
+    expect(yield* probed.raised).toEqual([]);
     expect(probed.ran).toEqual(expected === "here" ? ["here"] : []);
     if (expected !== "here" && scope !== readOnlyClient) {
       expect(result.message).toBe(
@@ -768,4 +977,32 @@ it.effect.each([
       );
     }
   }).pipe(Effect.provide(McpProviderSessions.layer)),
+);
+
+it.effect(
+  "what a linked environment is told is read only from a link, and describing never acts",
+  () =>
+    Effect.gen(function* () {
+      const probed = yield* outsideProbe();
+      // A client that is not a link claims an approval: it is as if it had said nothing.
+      const claimed = yield* probed.call({
+        ...supervisedClient,
+        outsideAction: { approved: "0".repeat(64) },
+      });
+      expect(claimed.message).toMatch(/needs full access for this MCP client/);
+      // A link asked to describe only describes, even for a caller nobody needs to be asked for.
+      const described = yield* probed.call({
+        ...fullAccessLinkedClient,
+        outsideAction: "describe",
+      });
+      expect(described.code).toBe("capability_denied");
+      expect(described.message).toMatch(/^t3-outside-action-description \{/);
+      // And an approval for another request is not this one's.
+      const other = yield* probed.call({
+        ...narrowedLinkedClient,
+        outsideAction: { approved: "0".repeat(64) },
+      });
+      expect(other.message).toMatch(/changed while the user was asked/);
+      expect(probed.ran).toEqual([]);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
