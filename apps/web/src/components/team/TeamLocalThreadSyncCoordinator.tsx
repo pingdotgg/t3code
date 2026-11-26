@@ -1,3 +1,4 @@
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { resolveProjectTeamAssignment } from "@t3tools/client-runtime/team";
 import type {
   EnvironmentId,
@@ -172,6 +173,7 @@ export function TeamLocalThreadSyncCoordinator() {
   const syncInFlightRef = useRef(new Set<string>());
   const pendingRetryByKeyRef = useRef(new Map<string, SyncEntry>());
   const latestEntryByKeyRef = useRef(new Map<string, SyncEntry>());
+  const pendingClosingEntriesByKeyRef = useRef(new Map<string, SyncEntry>());
   const retryAttemptsByKeyRef = useRef(new Map<string, number>());
   const retryTimerByKeyRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const subscriptionsByKeyRef = useRef(new Map<string, () => void>());
@@ -251,65 +253,77 @@ export function TeamLocalThreadSyncCoordinator() {
     }
 
     // Propagate archive/delete transitions when a previously-synced thread disappears from active
-    // `threadShells` (ShellStream removes archived & deleted threads via `thread.removed`).
-    const disappearedEntries: Array<SyncEntry> = [];
-    for (const [syncKey, previousEntry] of latestEntryByKeyRef.current) {
-      if (currentEntriesByKey.has(syncKey)) continue;
-      const localProjectStillExists = localProjectsById.has(previousEntry.shell.projectId);
-      const wasSynced = syncedShellFingerprintByKeyRef.current.has(syncKey);
-      if (localProjectStillExists && wasSynced) {
-        disappearedEntries.push(previousEntry);
+    // `threadShells` while its local project is STILL assigned to the same live Team Server
+    // (avoiding false archives when a project is unassigned or Team Server state transiently drops).
+    for (const [syncKey, previousEntry] of Array.from(latestEntryByKeyRef.current.entries())) {
+      if (currentEntriesByKey.has(syncKey)) {
+        pendingClosingEntriesByKeyRef.current.delete(syncKey);
+        continue;
       }
       const unsubscribe = subscriptionsByKeyRef.current.get(syncKey);
       if (unsubscribe) {
         unsubscribe();
         subscriptionsByKeyRef.current.delete(syncKey);
       }
-      latestEntryByKeyRef.current.delete(syncKey);
-      syncedShellFingerprintByKeyRef.current.delete(syncKey);
-      syncedPayloadFingerprintByKeyRef.current.delete(syncKey);
-      retryAttemptsByKeyRef.current.delete(syncKey);
-      const timer = retryTimerByKeyRef.current.get(syncKey);
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        retryTimerByKeyRef.current.delete(syncKey);
-      }
-    }
-
-    for (const previousEntry of disappearedEntries) {
-      const detailResult = appAtomRegistry.get(
-        environmentThreadStateAtom(previousEntry.localEnvironmentId, previousEntry.shell.id),
-      );
-      const detailState = AsyncResult.value(detailResult);
-      const detail =
-        Option.isSome(detailState) && Option.isSome(detailState.value.data)
-          ? detailState.value.data.value
-          : null;
-      const nowIso = new Date().toISOString();
-      const deletedAt =
-        detail?.thread.deletedAt != null ? DateTime.formatIso(detail.thread.deletedAt) : null;
-      const archivedAt =
-        detail?.thread.archivedAt != null
-          ? DateTime.formatIso(detail.thread.archivedAt)
-          : deletedAt === null
-            ? nowIso
+      const localProject = localProjectsById.get(previousEntry.shell.projectId);
+      const stillAssignedToSameTeam =
+        localProject !== undefined &&
+        resolveProjectTeamAssignment({ project: localProject, teamStates })?.teamEnvironmentId ===
+          previousEntry.teamEnvironmentId;
+      const teamStateLive = teamStates.get(previousEntry.teamEnvironmentId)?.team != null;
+      const wasSynced = syncedShellFingerprintByKeyRef.current.has(syncKey);
+      if (
+        stillAssignedToSameTeam &&
+        teamStateLive &&
+        wasSynced &&
+        !pendingClosingEntriesByKeyRef.current.has(syncKey)
+      ) {
+        const detailResult = appAtomRegistry.get(
+          environmentThreadStateAtom(previousEntry.localEnvironmentId, previousEntry.shell.id),
+        );
+        const detailState = AsyncResult.value(detailResult);
+        const detail =
+          Option.isSome(detailState) && Option.isSome(detailState.value.data)
+            ? detailState.value.data.value
             : null;
-      const closingPayload = buildLocalSyncPayload({
-        localEnvironmentId: previousEntry.localEnvironmentId,
-        localEnvironmentLabel: previousEntry.localEnvironmentLabel,
-        teamProjectId: previousEntry.teamProjectId,
-        defaultViewId: previousEntry.defaultViewId,
-        shell: {
+        const nowIso = new Date().toISOString();
+        const deletedAt =
+          detail?.thread.deletedAt != null ? DateTime.formatIso(detail.thread.deletedAt) : null;
+        const archivedAt =
+          detail?.thread.archivedAt != null
+            ? DateTime.formatIso(detail.thread.archivedAt)
+            : deletedAt === null
+              ? nowIso
+              : null;
+        const closingShell = {
           ...previousEntry.shell,
           updatedAt: nowIso,
           archivedAt,
           deletedAt,
-        },
-      });
-      void syncLocalThread({
-        environmentId: previousEntry.teamEnvironmentId,
-        input: closingPayload,
-      });
+        };
+        const closingEntry: SyncEntry = {
+          ...previousEntry,
+          shell: closingShell,
+          shellFingerprint: buildShellFingerprint({
+            shell: closingShell,
+            teamProjectId: previousEntry.teamProjectId,
+            defaultViewId: previousEntry.defaultViewId,
+          }),
+          isActive: false,
+        };
+        pendingClosingEntriesByKeyRef.current.set(syncKey, closingEntry);
+        latestEntryByKeyRef.current.set(syncKey, closingEntry);
+      } else if (!pendingClosingEntriesByKeyRef.current.has(syncKey)) {
+        latestEntryByKeyRef.current.delete(syncKey);
+        syncedShellFingerprintByKeyRef.current.delete(syncKey);
+        syncedPayloadFingerprintByKeyRef.current.delete(syncKey);
+        retryAttemptsByKeyRef.current.delete(syncKey);
+        const timer = retryTimerByKeyRef.current.get(syncKey);
+        if (timer !== undefined) {
+          clearTimeout(timer);
+          retryTimerByKeyRef.current.delete(syncKey);
+        }
+      }
     }
 
     const releaseSubscriptionIfSettled = (syncKey: string) => {
@@ -361,13 +375,29 @@ export function TeamLocalThreadSyncCoordinator() {
         input: payload,
       })
         .then((result) => {
+          const isClosing = pendingClosingEntriesByKeyRef.current.has(syncKey);
           if (result._tag === "Success") {
             syncedPayloadFingerprintByKeyRef.current.set(syncKey, fingerprint);
             syncedShellFingerprintByKeyRef.current.set(syncKey, entry.shellFingerprint);
             retryAttemptsByKeyRef.current.delete(syncKey);
             clearPendingLocalThreadViewId(entry.shell.id);
-            releaseSubscriptionIfSettled(syncKey);
-          } else if (!isPermanentSyncError(result.cause)) {
+            if (isClosing) {
+              pendingClosingEntriesByKeyRef.current.delete(syncKey);
+              latestEntryByKeyRef.current.delete(syncKey);
+              syncedShellFingerprintByKeyRef.current.delete(syncKey);
+              syncedPayloadFingerprintByKeyRef.current.delete(syncKey);
+            } else {
+              releaseSubscriptionIfSettled(syncKey);
+            }
+          } else {
+            const squashed = squashAtomCommandFailure(result);
+            if (isPermanentSyncError(squashed)) {
+              if (isClosing) {
+                pendingClosingEntriesByKeyRef.current.delete(syncKey);
+                latestEntryByKeyRef.current.delete(syncKey);
+              }
+              return;
+            }
             const attempt = (retryAttemptsByKeyRef.current.get(syncKey) ?? 0) + 1;
             if (attempt <= MAX_SYNC_RETRIES) {
               retryAttemptsByKeyRef.current.set(syncKey, attempt);
@@ -377,6 +407,9 @@ export function TeamLocalThreadSyncCoordinator() {
                 triggerSync(syncKey);
               }, delayMs);
               retryTimerByKeyRef.current.set(syncKey, timer);
+            } else if (isClosing) {
+              pendingClosingEntriesByKeyRef.current.delete(syncKey);
+              latestEntryByKeyRef.current.delete(syncKey);
             }
           }
         })
@@ -404,6 +437,10 @@ export function TeamLocalThreadSyncCoordinator() {
         });
         subscriptionsByKeyRef.current.set(syncKey, unsubscribe);
       }
+      triggerSync(syncKey);
+    }
+
+    for (const syncKey of pendingClosingEntriesByKeyRef.current.keys()) {
       triggerSync(syncKey);
     }
   }, [environments, primaryEnvironmentId, projects, syncLocalThread, teamStates, threadShells]);

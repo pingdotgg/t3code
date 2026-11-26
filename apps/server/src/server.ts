@@ -29,6 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -944,6 +945,21 @@ const layerMakeRoutes = Layer.mergeAll(
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
+  ),
+  // Periodically drains pending remote team-member session revocations after an offline peer recovers.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const teamService = yield* TeamService.TeamService;
+      const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
+      const peerLinks = yield* PeerLinks.PeerLinks;
+      yield* teamService
+        .drainPendingRemoteRevocations({ peerClientPairing, peerLinks })
+        .pipe(
+          Effect.ignoreCause({ log: true }),
+          Effect.repeat(Schedule.spaced(Duration.seconds(30))),
+          Effect.forkScoped,
+        );
+    }),
   ),
 ).pipe(
   Layer.provide(

@@ -342,19 +342,27 @@ it.effect(
         );
         if (otherIssued.type !== "credential") return yield* Effect.die(otherIssued);
 
-        // Redeem memberIssued and otherIssued so both have active sessions on box.
+        // Redeem memberIssued with a DPoP proof key (matching real browser/mobile pairing) and
+        // otherIssued with the SAME device proof key to prove:
+        // 1. Revoking a DPoP-bound team session never self-deadlocks connectTrustLock.
+        // 2. Unrelated sessions sharing the same device DPoP key stay authorized.
+        const sharedProofKeyThumbprint = "dpop-thumbprint-shared-device-1";
         const memberSession = yield* b.auth.exchangeBootstrapCredentialForAccessToken(
           memberIssued.credential,
           undefined,
           metadata,
+          { proofKeyThumbprint: sharedProofKeyThumbprint },
         );
         const otherSession = yield* b.auth.exchangeBootstrapCredentialForAccessToken(
           otherIssued.credential,
           undefined,
           metadata,
+          { proofKeyThumbprint: sharedProofKeyThumbprint },
         );
         expect(memberSession.access_token).toBeTruthy();
+        expect(memberSession.token_type).toBe("DPoP");
         expect(otherSession.access_token).toBeTruthy();
+        expect(otherSession.token_type).toBe("DPoP");
 
         const beforeSessions = yield* b.auth.listSessions();
         expect(beforeSessions.some((s) => s.subject === memberSubject)).toBe(true);
@@ -381,6 +389,25 @@ it.effect(
           .exchangeBootstrapCredentialForAccessToken(memberPending.credential, undefined, metadata)
           .pipe(Effect.flip);
         expect(pendingRedeem._tag).toBe("ServerAuthInvalidCredentialError");
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "treats revokeSubject on a non-full-access peer link as a successful no-op without calling the remote",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveBox();
+        const a = yield* makeLaptop;
+        yield* linkTo(a.links, b, "auto");
+
+        const result = yield* a.pairing.revokeSubject(
+          box.environmentId,
+          "team-member:team-1:member-eve:",
+        );
+        expect(result).toEqual({ ok: true, revokedSessions: 0, revokedPairingLinks: 0 });
+        expect(yield* Ref.get(b.bearers)).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

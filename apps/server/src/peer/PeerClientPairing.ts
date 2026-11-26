@@ -338,7 +338,9 @@ const make = Effect.gen(function* () {
       return { ok: false as const, reason: "unknown_link" };
     }
     if (stored.value.access !== "full-access") {
-      return { ok: false as const, reason: "link_access" };
+      // Non-full-access links can never mint client pairings (see issue/ask), so there are no
+      // team-minted direct sessions to revoke on that peer.
+      return { ok: true as const, revokedSessions: 0, revokedPairingLinks: 0 };
     }
     const resolved = yield* links.resolve(environmentId).pipe(Effect.option);
     if (Option.isNone(resolved)) {

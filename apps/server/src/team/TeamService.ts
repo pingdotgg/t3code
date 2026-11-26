@@ -593,6 +593,7 @@ export class TeamService extends Context.Service<
     readonly updateEnvironment: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamUpdateEnvironmentInput;
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
     }) => Effect.Effect<TeamEnvironment, TeamOperationError>;
     readonly detachEnvironment: (input: {
@@ -613,6 +614,7 @@ export class TeamService extends Context.Service<
       readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) => Effect.Effect<{ readonly unlinkedAllowed: boolean }>;
     readonly drainPendingRemoteRevocations: (input: {
+      readonly environmentId?: EnvironmentId;
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
       readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) => Effect.Effect<void>;
@@ -746,6 +748,7 @@ const make = Effect.gen(function* () {
 
   const drainPendingRemoteRevocations = Effect.fn("TeamService.drainPendingRemoteRevocations")(
     function* (input: {
+      readonly environmentId?: EnvironmentId;
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
       readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) {
@@ -758,15 +761,25 @@ const make = Effect.gen(function* () {
         .listPendingRemoteRevocations(workspaceOption.value.id)
         .pipe(Effect.orElseSucceed(() => []));
       for (const item of pending) {
+        if (input.environmentId !== undefined && item.environmentId !== input.environmentId) {
+          continue;
+        }
+        if (item.unlinkAfterRevoke && !input.peerLinks) {
+          continue;
+        }
         const result = yield* input.peerClientPairing.revokeSubject(
           item.environmentId,
           item.subjectPrefix,
         );
         if (result.ok || result.reason === "unknown_link") {
-          yield* repository.deletePendingRemoteRevocation(item.id).pipe(Effect.ignore);
           if (item.unlinkAfterRevoke && result.ok && input.peerLinks) {
-            yield* input.peerLinks.unlink(item.environmentId).pipe(Effect.ignore);
+            const unlinked = yield* input.peerLinks.unlink(item.environmentId).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+            if (!unlinked) continue;
           }
+          yield* repository.deletePendingRemoteRevocation(item.id).pipe(Effect.ignore);
         }
       }
     },
@@ -777,7 +790,6 @@ const make = Effect.gen(function* () {
   )(function* (input: {
     readonly teamId: TeamId;
     readonly peerClientPairing: PeerClientPairing.PeerClientPairing["Service"] | undefined;
-    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     readonly environmentIds: ReadonlyArray<EnvironmentId>;
     readonly subjectPrefixes: ReadonlyArray<string>;
     readonly unlinkAfterRevoke?: boolean;
@@ -785,7 +797,6 @@ const make = Effect.gen(function* () {
     const {
       teamId,
       peerClientPairing,
-      peerLinks,
       environmentIds,
       subjectPrefixes,
       unlinkAfterRevoke = false,
@@ -817,10 +828,6 @@ const make = Effect.gen(function* () {
         }
       }
     }
-    yield* drainPendingRemoteRevocations({
-      peerClientPairing,
-      ...(peerLinks !== undefined ? { peerLinks } : {}),
-    });
     return { allSucceeded };
   });
 
@@ -1443,7 +1450,6 @@ const make = Effect.gen(function* () {
       yield* revokeRemoteMemberGrantsForEnvironments({
         teamId: team.id,
         peerClientPairing: input.peerClientPairing,
-        ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
         environmentIds: revokedEnvIds,
         subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
       });
@@ -1545,7 +1551,6 @@ const make = Effect.gen(function* () {
         yield* revokeRemoteMemberGrantsForEnvironments({
           teamId: team.id,
           peerClientPairing: input.peerClientPairing,
-          ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
           environmentIds: targetEnvIds,
           subjectPrefixes: [remoteSubjectForMember(team.id, updated.value.id)],
         });
@@ -4671,6 +4676,7 @@ const make = Effect.gen(function* () {
   const updateEnvironment = Effect.fn("TeamService.updateEnvironment")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly payload: TeamUpdateEnvironmentInput;
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
   }) {
     const team = yield* requireWorkspace();
@@ -4771,7 +4777,6 @@ const make = Effect.gen(function* () {
         const outcome = yield* revokeRemoteMemberGrantsForEnvironments({
           teamId: team.id,
           peerClientPairing: input.peerClientPairing,
-          ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
           environmentIds: [input.payload.environmentId],
           subjectPrefixes: [remoteSubjectPrefixForTeam(team.id)],
           unlinkAfterRevoke: shouldUnlink,
@@ -4811,7 +4816,6 @@ const make = Effect.gen(function* () {
     const outcome = yield* revokeRemoteMemberGrantsForEnvironments({
       teamId: workspaceOption.value.id,
       peerClientPairing: input.peerClientPairing,
-      ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
       environmentIds: [input.environmentId],
       subjectPrefixes: [remoteSubjectPrefixForTeam(workspaceOption.value.id)],
       unlinkAfterRevoke: true,

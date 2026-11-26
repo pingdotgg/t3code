@@ -2519,4 +2519,127 @@ describe("TeamService", () => {
       }).pipe(Effect.provide(failingServiceLayer));
     },
   );
+
+  it.effect(
+    "drains pending remote revocations with unlinkAfterRevoke safely across omitted peerLinks, unlink failure, and environment filtering",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({
+          subject: "owner-alice",
+          method: "browser-session-cookie",
+          scopes: AuthStandardClientScopes,
+        });
+        yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Acme", ownerPseudo: "alice" },
+        });
+
+        const envA = EnvironmentId.make("env-remote-a");
+        const envB = EnvironmentId.make("env-remote-b");
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envA,
+            name: "Remote A",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envB,
+            name: "Remote B",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+
+        let remoteOnline = false;
+        let unlinkSucceeds = false;
+        const revokedCalls: Array<{ environmentId: EnvironmentId; prefix: string }> = [];
+        const unlinkedEnvs: Array<EnvironmentId> = [];
+
+        const mockPeerClientPairing = {
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.sync(() => {
+              revokedCalls.push({ environmentId, prefix });
+              return remoteOnline
+                ? { ok: true as const, revokedSessions: 1, revokedPairingLinks: 0 }
+                : { ok: false as const, reason: "unreachable" as const };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+
+        const mockPeerLinks = {
+          unlink: (environmentId: EnvironmentId) =>
+            unlinkSucceeds
+              ? Effect.sync(() => {
+                  unlinkedEnvs.push(environmentId);
+                  return { unlinked: true };
+                })
+              : Effect.fail({ _tag: "MockPeerUnlinkFailed" } as const),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerLinks"]
+        >;
+
+        // Detaching while offline queues a pending revocation with unlinkAfterRevoke = true.
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: envA },
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(unlinkedEnvs).toEqual([]);
+
+        // Bring remote online.
+        remoteOnline = true;
+
+        // 1. Filtering to envB must not touch envA's pending revocation.
+        revokedCalls.length = 0;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+          environmentId: envB,
+        });
+        expect(revokedCalls).toEqual([]);
+
+        // 2. Draining WITHOUT peerLinks must not drop an unlinkAfterRevoke row.
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+        });
+        expect(revokedCalls).toEqual([]);
+
+        // 3. Draining WITH peerLinks while unlink fails keeps the pending row for retry.
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(revokedCalls.length).toBe(1);
+        expect(unlinkedEnvs).toEqual([]);
+
+        // 4. Once unlink succeeds, the row is drained and deleted; a subsequent drain is a no-op.
+        unlinkSucceeds = true;
+        revokedCalls.length = 0;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(revokedCalls.length).toBe(1);
+        expect(unlinkedEnvs).toEqual([envA]);
+
+        revokedCalls.length = 0;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(revokedCalls).toEqual([]);
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
 });

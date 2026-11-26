@@ -1747,8 +1747,13 @@ export function useComposerSend(input: ComposerSendInput) {
           teamAcceptedNoteRefs = refs;
         }
       }
+      const shouldSetPendingLocalDraftView = Boolean(
+        isLocalDraftThread &&
+        teamDraftAccess?.viewId &&
+        teamNotesSendCtx?.isViewingOnLocalExecutionEnvironment,
+      );
       if (failure === null) {
-        if (isLocalDraftThread && teamDraftAccess?.viewId) {
+        if (shouldSetPendingLocalDraftView && teamDraftAccess?.viewId) {
           // Preserve restricted-View selection when TeamLocalThreadSyncCoordinator mirrors a local draft.
           setPendingLocalThreadViewId(threadIdForSend, teamDraftAccess.viewId);
         }
@@ -1805,7 +1810,7 @@ export function useComposerSend(input: ComposerSendInput) {
         const startResult = await startPromise;
         if (startResult._tag === "Failure") {
           failure = startResult;
-          if (isLocalDraftThread && teamDraftAccess?.viewId) {
+          if (shouldSetPendingLocalDraftView) {
             clearPendingLocalThreadViewId(threadIdForSend);
           }
           if (localNoteReservation !== null) {

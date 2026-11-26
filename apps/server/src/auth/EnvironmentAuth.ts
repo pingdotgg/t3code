@@ -1767,10 +1767,10 @@ export const make = Effect.gen(function* () {
 
   const revokeGrantsBySubjectPrefix: EnvironmentAuth["Service"]["revokeGrantsBySubjectPrefix"] =
     Effect.fn("EnvironmentAuth.revokeGrantsBySubjectPrefix")(function* (subjectPrefix) {
-      // Serialize with connect/bootstrap issuance and bump otherSessionRevocations so any
-      // in-flight pairing redemption aborts in issueUnlessOthersRevokedSince instead of racing past.
+      // Revoke pending links and matching sessions directly (avoiding re-entrant connectTrustLock
+      // via revokeConnectDevice and preserving unrelated sessions on the same DPoP key), then bump
+      // otherSessionRevocations last so in-flight redemptions abort in issueUnlessOthersRevokedSince.
       return yield* Effect.gen(function* () {
-        yield* Ref.update(otherSessionRevocations, (count) => count + 1);
         const activeLinks = yield* bootstrapCredentials
           .listActive()
           .pipe(Effect.mapError((cause) => new ServerAuthPairingLinksListError({ cause })));
@@ -1785,12 +1785,15 @@ export const make = Effect.gen(function* () {
         let revokedSessions = 0;
         for (const session of activeSessions) {
           if (!session.subject.startsWith(subjectPrefix)) continue;
-          if (yield* revokeClient(session.sessionId)) {
+          if (yield* revokeSession(session.sessionId)) {
             revokedSessions += 1;
           }
         }
         return { revokedSessions, revokedPairingLinks };
-      }).pipe(connectTrustLock.withPermits(1));
+      }).pipe(
+        Effect.ensuring(Ref.update(otherSessionRevocations, (count) => count + 1)),
+        connectTrustLock.withPermits(1),
+      );
     });
 
   yield* revokePairedClientsThePolicyDisallows(managedPolicy, {

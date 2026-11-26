@@ -2936,15 +2936,23 @@ export const layerWsRpc = (
             "project.id": input.projectId,
           }).pipe(Effect.andThen(listAcpRegistrySessions(input))),
         [WS_METHODS.serverImportAcpRegistrySession]: (input) =>
-          Effect.annotateCurrentSpan({
-            "provider.instance_id": input.instanceId,
-            "project.id": input.projectId,
-          }).pipe(Effect.andThen(acpRegistrySessions.importSession(input))),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              Effect.annotateCurrentSpan({
+                "provider.instance_id": input.instanceId,
+                "project.id": input.projectId,
+              }).pipe(Effect.andThen(acpRegistrySessions.importSession(input))),
+            ),
+          ),
         [WS_METHODS.serverDeleteAcpRegistrySession]: (input) =>
-          Effect.annotateCurrentSpan({
-            "provider.instance_id": input.instanceId,
-            "project.id": input.projectId,
-          }).pipe(Effect.andThen(deleteAcpRegistrySession(input))),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              Effect.annotateCurrentSpan({
+                "provider.instance_id": input.instanceId,
+                "project.id": input.projectId,
+              }).pipe(Effect.andThen(deleteAcpRegistrySession(input))),
+            ),
+          ),
         [WS_METHODS.serverListAcpRegistryProviders]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
@@ -3341,7 +3349,11 @@ export const layerWsRpc = (
           teamService.assertCanAccessEnvironment(currentSessionId, input.environmentId).pipe(
             Effect.andThen(
               teamService
-                .drainPendingRemoteRevocations({ peerClientPairing, peerLinks })
+                .drainPendingRemoteRevocations({
+                  environmentId: input.environmentId,
+                  peerClientPairing,
+                  peerLinks,
+                })
                 .pipe(Effect.ignore),
             ),
             Effect.andThen(teamService.getRemotePairingSubject(currentSessionId)),
@@ -3419,7 +3431,10 @@ export const layerWsRpc = (
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
-        [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
+        [WS_METHODS.serverPrepareTriage]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(triage.prepare(input))),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
@@ -3503,7 +3518,9 @@ export const layerWsRpc = (
         [WS_METHODS.pullRequestsReviewGuide]: (input) =>
           withPullRequestViewer(input, reviewGuides.get(input)),
         [WS_METHODS.pullRequestsGenerateReviewGuide]: (input) =>
-          withPullRequestViewer(input, reviewGuides.generate(input)),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(withPullRequestViewer(input, reviewGuides.generate(input)))),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>
           withPullRequestViewer(input, pullRequests.threadComments(input)),
         [WS_METHODS.pullRequestsDiffFileContents]: (input) =>
@@ -3567,7 +3584,9 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
-          sourceControlRepositories.cloneRepository(input),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(sourceControlRepositories.cloneRepository(input))),
         [WS_METHODS.sourceControlSignInStart]: (input) => sourceControlSignIn.start(input),
         [WS_METHODS.sourceControlSignInWait]: (input) => sourceControlSignIn.wait(input),
         [WS_METHODS.sourceControlSignInCancel]: (input) => sourceControlSignIn.cancel(input),
@@ -3575,61 +3594,83 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlStarred]: (input) => sourceControlSignIn.starred(input),
         [WS_METHODS.sourceControlStar]: (input) => sourceControlSignIn.star(input),
         [WS_METHODS.projectCloneStart]: (input) =>
-          projectCloneTracker.start(input, {
-            createProject: (project) =>
-              projectService
-                .create({
-                  commandId: CommandId.make(`project-clone-create:${project.projectId}`),
-                  projectId: project.projectId,
-                  title: project.title,
-                  workspaceRoot: project.workspaceRoot,
-                  createWorkspaceRootIfMissing: true,
-                })
-                .pipe(
-                  Effect.asVoid,
-                  Effect.mapError((cause) =>
-                    cause._tag === "ProjectConflictError"
-                      ? cause
-                      : new OrchestrationDispatchCommandError({
-                          message: "Failed to create clone project.",
-                          cause,
-                        }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              projectCloneTracker.start(input, {
+                createProject: (project) =>
+                  projectService
+                    .create({
+                      commandId: CommandId.make(`project-clone-create:${project.projectId}`),
+                      projectId: project.projectId,
+                      title: project.title,
+                      workspaceRoot: project.workspaceRoot,
+                      createWorkspaceRootIfMissing: true,
+                    })
+                    .pipe(
+                      Effect.asVoid,
+                      Effect.mapError((cause) =>
+                        cause._tag === "ProjectConflictError"
+                          ? cause
+                          : new OrchestrationDispatchCommandError({
+                              message: "Failed to create clone project.",
+                              cause,
+                            }),
+                      ),
+                    ),
+                onCloned: (project) =>
+                  repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
+                    Effect.andThen(
+                      projectService.update({
+                        commandId: CommandId.make(`project-clone-done:${project.projectId}`),
+                        projectId: project.projectId,
+                      }),
+                    ),
+                    Effect.andThen(refreshGitStatus(project.workspaceRoot)),
+                    // The folder was empty when the project was created, so the cached
+                    // enrichment says "no repository" and clients cannot group it yet.
+                    Effect.andThen(projectEnrichment.invalidate([project.workspaceRoot])),
+                    Effect.andThen(projectEnrichment.request(project.workspaceRoot)),
+                    Effect.ignoreCause({ log: true }),
                   ),
-                ),
-            onCloned: (project) =>
-              repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
-                Effect.andThen(
-                  projectService.update({
-                    commandId: CommandId.make(`project-clone-done:${project.projectId}`),
-                    projectId: project.projectId,
-                  }),
-                ),
-                Effect.andThen(refreshGitStatus(project.workspaceRoot)),
-                // The folder was empty when the project was created, so the cached
-                // enrichment says "no repository" and clients cannot group it yet.
-                Effect.andThen(projectEnrichment.invalidate([project.workspaceRoot])),
-                Effect.andThen(projectEnrichment.request(project.workspaceRoot)),
-                Effect.ignoreCause({ log: true }),
-              ),
-          }),
-        [WS_METHODS.projectsEnsureScratch]: () =>
-          managedFolders.ensureScratchProject.pipe(
-            Effect.mapError(
-              (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+              }),
             ),
           ),
-        [WS_METHODS.projectsCreateNew]: (input) =>
-          managedFolders
-            .createNamedProject(input)
+        [WS_METHODS.projectsEnsureScratch]: () =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
             .pipe(
-              Effect.mapError(
-                (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+              Effect.andThen(
+                managedFolders.ensureScratchProject.pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+                  ),
+                ),
+              ),
+            ),
+        [WS_METHODS.projectsCreateNew]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                managedFolders
+                  .createNamedProject(input)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+                    ),
+                  ),
               ),
             ),
         [WS_METHODS.projectsCreateFromThread]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(teamService.assertCanAccessLocalEnvironment(currentSessionId)),
               Effect.andThen(
                 scratchThreadPromotion
                   .promote(input)
@@ -3642,17 +3683,37 @@ export const layerWsRpc = (
               ),
             ),
         [WS_METHODS.projectCloneCancel]: (input) =>
-          projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                projectCloneTracker
+                  .cancel(input.projectId)
+                  .pipe(Effect.map((applied) => ({ applied }))),
+              ),
+            ),
         [WS_METHODS.projectCloneRetry]: (input) =>
-          projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                projectCloneTracker
+                  .retry(input.projectId)
+                  .pipe(Effect.map((applied) => ({ applied }))),
+              ),
+            ),
         [WS_METHODS.subscribeProjectClones]: () => projectCloneTracker.stream,
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
-          sourceControlRepositories.publishRepository(input).pipe(
-            // A failed push still leaves the new remote added.
-            Effect.ensuring(
-              repositoryIdentityResolver
-                .resolve(input.cwd, { refresh: true })
-                .pipe(Effect.andThen(refreshGitStatus(input.cwd))),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              sourceControlRepositories.publishRepository(input).pipe(
+                // A failed push still leaves the new remote added.
+                Effect.ensuring(
+                  repositoryIdentityResolver
+                    .resolve(input.cwd, { refresh: true })
+                    .pipe(Effect.andThen(refreshGitStatus(input.cwd))),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
@@ -3715,32 +3776,44 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
-          workspaceFileSystem.writeFile(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectWriteFileError({
-                  cwd: input.cwd,
-                  relativePath: input.relativePath,
-                  ...projectFileFailureContext(cause),
-                  cause,
-                }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              workspaceFileSystem.writeFile(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectWriteFileError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.projectsMutate]: (mutation) =>
-          startup.enqueueCommand(mutateProject(mutation)).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectMutationError({
-                  commandId: mutation.commandId,
-                  message:
-                    cause._tag === "ProjectNotEmptyError" || cause._tag === "ProjectInvalidError"
-                      ? cause.message
-                      : "Failed to mutate project.",
-                  cause,
-                }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              startup.enqueueCommand(mutateProject(mutation)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectMutationError({
+                      commandId: mutation.commandId,
+                      message:
+                        cause._tag === "ProjectNotEmptyError" ||
+                        cause._tag === "ProjectInvalidError"
+                          ? cause.message
+                          : "Failed to mutate project.",
+                      cause,
+                    }),
+                ),
+              ),
             ),
           ),
-        [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
+        [WS_METHODS.shellOpenInEditor]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(externalLauncher.launchEditor(input))),
         [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
@@ -3757,22 +3830,34 @@ export const layerWsRpc = (
         [WS_METHODS.workspaceScanFolders]: (input) => workspaceFolders.scan(input),
         [WS_METHODS.workspaceTaskFolder]: (input) =>
           taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
-        [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
+        [WS_METHODS.workspaceAddTaskFolderRepository]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(taskFolders.addRepository(input))),
         [WS_METHODS.workspaceLayoutCommands]: (input) =>
           taskFolders.layoutCommands(input.projectId),
         // The one place an approval is recorded: a person's client session, behind the scope.
         [WS_METHODS.workspaceApproveLayoutCommands]: (input) =>
-          Effect.forEach(
-            input.approvals,
-            (approval) =>
-              layoutCommandApprovalWrites.set({ projectId: input.projectId, ...approval }),
-            { discard: true },
-          ).pipe(Effect.andThen(taskFolders.layoutCommands(input.projectId))),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                Effect.forEach(
+                  input.approvals,
+                  (approval) =>
+                    layoutCommandApprovalWrites.set({ projectId: input.projectId, ...approval }),
+                  { discard: true },
+                ),
+              ),
+              Effect.andThen(taskFolders.layoutCommands(input.projectId)),
+            ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
         [WS_METHODS.agentSessionsImport]: (input) =>
-          agentSessionImporter.importRecentAgentThreads(input),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(agentSessionImporter.importRecentAgentThreads(input))),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
@@ -4255,7 +4340,10 @@ export const layerWsRpc = (
           teamService
             .assertCanReadThread(currentSessionId, input.threadId)
             .pipe(Effect.andThen(previewManager.list(input))),
-        [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
+        [WS_METHODS.previewClearProfile]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(serverBrowser.clearProfile(input.profileId))),
         [WS_METHODS.previewReportProfiles]: (input) => reportProfiles(input),
         [WS_METHODS.previewReportStatus]: (input) =>
           teamService
@@ -4325,7 +4413,10 @@ export const layerWsRpc = (
               filterDeviceStateForSession(teamService, currentSessionId, state),
             ),
           ),
-        [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
+        [WS_METHODS.previewStopLocalServer]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(portDiscovery.stopServer(input))),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {
