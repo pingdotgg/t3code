@@ -1476,7 +1476,7 @@ describe("source control tools", () => {
         "pull_request_update",
         { number: 5, title: "New title" },
         "update t3tools/t3code#5",
-        { action: "Update", target: "pull request #5" },
+        { action: "Change the title of", target: "pull request #5" },
       ],
       [
         "pull_request_update",
@@ -1605,7 +1605,8 @@ describe("source control tools", () => {
         const params = { number: 5, expectedHeadSha: "abc123" };
         const asked = yield* ask(harness, "pull_request_merge", params);
         expect(yield* asked.decline.pipe(Effect.flip)).toMatchObject({
-          message: 'Not done: the user declined "Merge pull request #5 in t3tools/t3code".',
+          message:
+            'Not done: the user declined "Merge pull request #5 in t3tools/t3code". Do not get the same result another way unless the user asks for it.',
         });
 
         const waiting = yield* Effect.forkChild(
@@ -1615,7 +1616,7 @@ describe("source control tools", () => {
         yield* harness.person.endTurn("interrupted");
         expect(yield* Fiber.join(waiting)).toMatchObject({
           message:
-            'Cancelled, nothing was done: the request to approve "Merge pull request #5 in t3tools/t3code" ended without the user\'s answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again.',
+            'Cancelled, nothing was done: the request to approve "Merge pull request #5 in t3tools/t3code" ended without the user\'s answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again or getting the same result another way.',
         });
         expect(forge.writes).toEqual([]);
       }),
@@ -1733,7 +1734,7 @@ describe("source control tools", () => {
         }),
       );
 
-      it.effect("many checks are counted, and with none nothing is asked", () =>
+      it.effect("every check is named whole, and with none nothing is asked", () =>
         Effect.gen(function* () {
           const failed = Array.from({ length: 14 }, (_, index) => ({
             name: `job-${index}`,
@@ -1746,8 +1747,31 @@ describe("source control tools", () => {
           });
           const asked = yield* ask(harness, "ci_rerun", { number: 5 });
           expect(asked.message).toMatch(
-            /^Rerun 14 checks: "job-0", "job-1", .*"job-9" and 4 more on pull request #5 /,
+            new RegExp(
+              `^Rerun 14 checks: ${failed.map(({ name }) => `"${name}"`).join(", ")} on pull request #5 `,
+            ),
           );
+          yield* asked.decline.pipe(Effect.flip);
+
+          // A name that cannot be shown whole, or more names than fit, is not asked about.
+          failed.splice(0, failed.length, { name: `deploy-${"x".repeat(90)}`, url: null });
+          expect(yield* harness.call("ci_rerun", { number: 5 }).pipe(Effect.flip)).toMatchObject({
+            message:
+              "A check this would rerun has a name too long to show the user in full, so they cannot be asked to approve it. Nothing was rerun. Tell the user; they can rerun it themselves.",
+          });
+          failed.splice(
+            0,
+            failed.length,
+            ...Array.from({ length: 40 }, (_, index) => ({
+              name: `a-job-with-a-long-name-${index}`,
+              url: null,
+            })),
+          );
+          expect(
+            (yield* harness.call("ci_rerun", { number: 5 }).pipe(Effect.flip)).message,
+          ).toMatch(/^Not done: what this call would do is too long to show the user in full/);
+          expect(forge.reran).toEqual([]);
+
           failed.length = 0;
           expect(yield* harness.call("ci_rerun", { number: 5 })).toMatchObject({ checks: [] });
           expect(yield* harness.person.raised).toHaveLength(1);
@@ -1952,6 +1976,30 @@ describe("source control tools", () => {
           });
           // The approval it was given went with the attempt, and names no push.
           expect(pushed.attempts).toMatchObject([{ push: null }]);
+        }),
+      );
+
+      it.effect("a pull request not opened after the approved push says the push was made", () =>
+        Effect.gen(function* () {
+          const hooked = checkout();
+          const git: Partial<GitManager.GitManager["Service"]> = {
+            ...hooked.git,
+            createPullRequest: (input) =>
+              Effect.fail(
+                new GitManagerError({
+                  operation: "createPullRequest",
+                  cwd: input.cwd,
+                  detail: GitManager.PULL_REQUEST_OPENING_CHANGED_AFTER_PUSH,
+                }),
+              ),
+          };
+          const harness = yield* makeHarness({ thread: lowerThread(), git });
+          const asked = yield* ask(harness, "pull_request_create", args);
+          expect(yield* asked.approve.pipe(Effect.flip)).toMatchObject({
+            _tag: "PullRequestForgeError",
+            message:
+              "The branch was pushed as the user approved, but another branch was checked out before the pull request was opened, so none was opened. Call again to ask.",
+          });
         }),
       );
 

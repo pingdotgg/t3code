@@ -155,7 +155,7 @@ const isPushNotAsApproved = Schema.is(GitVcsDriver.PushNotAsApprovedError);
 
 /**
  * What opening a pull request from a checkout does there, for a caller that asks a person
- * first: it shows them this, and `createPullRequest` given it back does exactly this or nothing.
+ * first: it shows them this, and `createPullRequest` given it back does this and nothing else.
  */
 export interface PullRequestOpening {
   readonly branch: string;
@@ -180,9 +180,19 @@ export interface PullRequestOpening {
   readonly key: string;
 }
 
-/** Said when a checkout is no longer as the person approved it. A caller that asks reads it as its cue. */
+/**
+ * Said when a checkout is no longer as the person approved it, before anything was pushed or
+ * opened. A caller that asks reads it as its cue.
+ */
 export const PULL_REQUEST_OPENING_CHANGED =
   "The branch, its commits, its base or where it is pushed changed after the user was asked. Nothing was pushed. Call again to ask.";
+
+/** The same, found once the approved push was made: the push stands, and nothing was opened. */
+export const PULL_REQUEST_OPENING_CHANGED_AFTER_PUSH =
+  "The branch was pushed as the user approved, but another branch was checked out before the pull request was opened, so none was opened. Call again to ask.";
+
+export const isPullRequestOpeningChanged = (detail: string) =>
+  detail === PULL_REQUEST_OPENING_CHANGED || detail === PULL_REQUEST_OPENING_CHANGED_AFTER_PUSH;
 
 export interface GitCreatePullRequestResult {
   readonly status: "created" | "opened_existing";
@@ -261,15 +271,9 @@ export class GitManager extends Context.Service<
        */
       readonly private?: boolean | undefined;
       /**
-       * For a caller whose own commands wait for a person: the push runs the repository's hooks
-       * only when `approvedDigest` is the digest of what it would run, and otherwise fails with
-       * `GitPushHooksUnapprovedError` before pushing. "off", or no hook to run, pushes with none.
-       */
-      readonly pushHooks?: { readonly approvedDigest: string | null } | "off" | undefined;
-      /**
-       * What a person approved, as `pullRequestOpening` read it for the same input. Does
-       * exactly that (that commit to that remote branch with those hooks, or no push, against
-       * that base), or fails with `PULL_REQUEST_OPENING_CHANGED` having done nothing.
+       * What a person approved, as `pullRequestOpening` read it. Does that and nothing else, or
+       * fails: `PULL_REQUEST_OPENING_CHANGED` or `GitPushHooksUnapprovedError` with nothing
+       * pushed, `PULL_REQUEST_OPENING_CHANGED_AFTER_PUSH` with the push made and nothing opened.
        */
       readonly approved?: PullRequestOpening | undefined;
     }) => Effect.Effect<
@@ -1052,11 +1056,11 @@ export const make = Effect.gen(function* () {
         args: ["rev-parse", "--verify", "HEAD^{commit}"],
       })
       .pipe(Effect.map((result) => result.stdout.trim()));
-  const openingChanged = (cwd: string, cause?: unknown) =>
+  const openingChanged = (cwd: string, cause?: unknown, detail = PULL_REQUEST_OPENING_CHANGED) =>
     new GitManagerError({
       operation: "createPullRequest",
       cwd,
-      detail: PULL_REQUEST_OPENING_CHANGED,
+      detail,
       ...(cause === undefined ? {} : { cause }),
     });
   /** The driver's refusal to start a push that is not the approved one. */
@@ -2847,6 +2851,12 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  /** The branch a push writes, as the pull request step names a head that is not the upstream. */
+  const pushedRef = (target: { readonly remoteName: string; readonly branchName: string }) => ({
+    remoteName: target.remoteName,
+    upstreamRef: `${target.remoteName}/${target.branchName}`,
+  });
+
   const ensurePrHeadIsNotBase = Effect.fn("ensurePrHeadIsNotBase")(function* (
     cwd: string,
     status: { branch: string; upstreamRef: string | null; hasUpstream: boolean },
@@ -2856,8 +2866,7 @@ export const make = Effect.gen(function* () {
     if (!target) return;
     const headContext = yield* resolveBranchHeadContext(cwd, {
       branch: status.branch,
-      upstreamRef: `${target.remoteName}/${target.branchName}`,
-      remoteName: target.remoteName,
+      ...pushedRef(target),
     });
     if (headContext.isCrossRepository) return;
     const { baseBranch } = yield* resolvePrBase(
@@ -2889,14 +2898,20 @@ export const make = Effect.gen(function* () {
       readonly headBranch: string;
     }) => Effect.Effect<{ readonly title: string; readonly body: string }, E>,
     /** What a person approved: the pull request is opened for that branch, or not at all. */
-    approved?: Pick<PullRequestOpening, "branch" | "headRef">,
+    approved?: Pick<PullRequestOpening, "branch" | "headRef" | "push">,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
     const details = yield* gitCore.statusDetails(cwd);
-    // The head sent to the host is taken from this read, so it is the read that must match.
+    // Without a push the head sent to the host is taken from this read, so it must match. After
+    // an approved push the head is `pushRemoteRef`, the branch that push wrote, and this read
+    // only says the branch is still the one checked out.
+    if (approved !== undefined && approved.push !== null && details.branch !== approved.branch) {
+      return yield* openingChanged(cwd, undefined, PULL_REQUEST_OPENING_CHANGED_AFTER_PUSH);
+    }
     if (
       approved !== undefined &&
+      approved.push === null &&
       (details.branch !== approved.branch ||
         (approved.headRef !== null && details.upstreamRef !== approved.headRef))
     ) {
@@ -3314,9 +3329,16 @@ export const make = Effect.gen(function* () {
         input.cwd,
         null,
         () => Effect.void,
-        push && "pushRemote" in push && push.pushRemote && push.upstreamBranch
-          ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
-          : undefined,
+        // The head of an approved push is the branch the person was asked about, as approved:
+        // what the branch tracks may have changed while the push ran its hooks.
+        approvedPush !== undefined
+          ? pushedRef({
+              remoteName: approvedPush.remoteName,
+              branchName: approvedPush.remoteBranch,
+            })
+          : push && "pushRemote" in push && push.pushRemote && push.upstreamBranch
+            ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+            : undefined,
         input.baseBranch,
         input.draft === true,
         () => Effect.succeed({ title: input.title, body: input.body }),
@@ -3379,11 +3401,7 @@ export const make = Effect.gen(function* () {
                 ),
               }
             : yield* resolveBranchHeadContext(cwd, { branch, upstreamRef: status.upstreamRef })
-          : yield* resolveBranchHeadContext(cwd, {
-              branch,
-              upstreamRef: `${target.remoteName}/${target.branchName}`,
-              remoteName: target.remoteName,
-            });
+          : yield* resolveBranchHeadContext(cwd, { branch, ...pushedRef(target) });
       const baseBranch =
         input.baseBranch ??
         (yield* resolvePrBase(cwd, branch, status.upstreamRef, headContext)).baseBranch;
@@ -3454,21 +3472,16 @@ export const make = Effect.gen(function* () {
     }
     // The base is the one approved, not one read again after the push.
     const input = approved === undefined ? given : { ...given, baseBranch: approved.baseBranch };
-    const pushHooks =
-      approved === undefined
-        ? input.pushHooks
-        : { approvedDigest: approved.push?.hooks?.digest ?? null };
     const opening =
       input.private === true ? openPrivatePullRequest(input) : pushAndOpenPullRequest(input);
-    const result = yield* pushHooks === undefined
+    const result = yield* approved === undefined
       ? opening
-      : opening.pipe(
-          Effect.provideService(
-            GitVcsDriver.RepositoryHooks,
-            pushHooks === "off"
-              ? { _tag: "none" }
-              : { _tag: "approved-push", digest: pushHooks.approvedDigest },
-          ),
+      : // The push runs the hooks the person was shown, or does not start.
+        opening.pipe(
+          Effect.provideService(GitVcsDriver.RepositoryHooks, {
+            _tag: "approved-push",
+            digest: approved.push?.hooks?.digest ?? null,
+          }),
         );
     // The person was asked about opening one. One already open is handed back as it is.
     if (approved !== undefined && result.status === "opened_existing") return result;

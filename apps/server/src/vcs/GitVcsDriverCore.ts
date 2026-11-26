@@ -4445,22 +4445,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
-  const pushAddresses: GitVcsDriver.GitVcsDriver["Service"]["pushAddresses"] = (cwd, remoteName) =>
-    runGitStdout("GitVcsDriver.pushAddresses", cwd, [
+  const pushAddresses: GitVcsDriver.GitVcsDriver["Service"]["pushAddresses"] = Effect.fn(
+    "pushAddresses",
+  )(function* (cwd, remoteName) {
+    const listed = (yield* runGitStdout("GitVcsDriver.pushAddresses", cwd, [
       "remote",
       "get-url",
       "--push",
       "--all",
       "--",
       remoteName,
-    ]).pipe(
-      Effect.map((stdout) =>
-        stdout
-          .split("\n")
-          .filter((url) => url !== "")
-          .map(GitVcsDriver.pushAddress),
-      ),
-    );
+    ]))
+      .split("\n")
+      .filter((url) => url !== "");
+    // Git prints one address a line and quotes nothing, so an address that holds a newline
+    // reads as two. The configured values are counted apart from each other by NUL.
+    const configured = (key: string) =>
+      runGitStdout(
+        "GitVcsDriver.pushAddresses.configured",
+        cwd,
+        ["config", "--null", "--get-all", `remote.${remoteName}.${key}`],
+        true,
+      ).pipe(Effect.map((stdout) => stdout.split("\0").filter((url) => url !== "").length));
+    const count = (yield* configured("pushurl")) || (yield* configured("url"));
+    if (count !== listed.length) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.pushAddresses",
+          cwd,
+          args: ["remote", "get-url", "--push", "--all", "--", remoteName],
+        }),
+        detail: `The remote ${remoteName} has a push address that cannot be read as one line.`,
+      });
+    }
+    return listed.map(GitVcsDriver.pushAddress);
+  });
 
   const resolvePushTarget: GitVcsDriver.GitVcsDriver["Service"]["resolvePushTarget"] = Effect.fn(
     "resolvePushTarget",
@@ -4552,6 +4571,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const hasNoLocalDelta = details.aheadCount === 0 && details.behindCount === 0;
     const destination = yield* resolvePushDestination(cwd, branch, details.hasUpstream);
+    // Before anything is taken as already there: that is said of this destination too.
+    yield* asApproved(destination);
     if (hasNoLocalDelta && details.hasUpstream) {
       if (!destination?.pushRemote) {
         // A local upstream and a separate push URL both leave the publish destination unchecked.
@@ -4631,7 +4652,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
-    yield* asApproved(destination);
     if (destination?.publishes) {
       const { remoteName, branchName: publishBranch, upstream } = destination;
       // Publishing retargets the upstream, so preserve its comparison base first.

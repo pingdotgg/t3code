@@ -364,16 +364,27 @@ const updateAction = (input: {
   readonly removeLabels?: unknown;
   readonly requestReviewers?: unknown;
 }) => {
-  const edits =
-    input.title !== undefined ||
-    input.body !== undefined ||
-    input.ready !== undefined ||
-    input.addLabels !== undefined ||
-    input.removeLabels !== undefined ||
-    input.requestReviewers !== undefined;
-  if (input.state === undefined) return "Update";
+  // The kinds of edit are named, never their text: some notify people and some do not.
+  const edits = [
+    ...(input.title === undefined ? [] : ["the title"]),
+    ...(input.body === undefined ? [] : ["the description"]),
+    ...(input.addLabels === undefined && input.removeLabels === undefined ? [] : ["the labels"]),
+    ...(input.ready === undefined
+      ? []
+      : [`the draft status (to ${input.ready === true ? "ready for review" : "draft"})`]),
+    ...(input.requestReviewers === undefined ? [] : ["the reviewers (requesting review)"]),
+  ];
+  const changes =
+    edits.length === 0
+      ? undefined
+      : `Change ${edits.length === 1 ? edits[0] : `${edits.slice(0, -1).join(", ")} and ${edits.at(-1)}`} of`;
+  if (input.state === undefined) return changes ?? "Update";
   const ends = input.state === "closed" ? "close" : "reopen";
-  return edits ? `Update and ${ends}` : input.state === "closed" ? "Close" : "Reopen";
+  return changes === undefined
+    ? input.state === "closed"
+      ? "Close"
+      : "Reopen"
+    : `${changes} and ${ends}`;
 };
 
 const respondAction = (input: {
@@ -406,16 +417,13 @@ const stackNamed = (layers: ReadonlyArray<{ readonly number: number; readonly he
     .map((layer) => `#${layer.number} at ${shortCommit(layer.headSha)}`)
     .join(", ")}, up to`;
 
-const NAMED_CHECKS = 10;
+const CHECK_NAME_SHOWN = 80;
 
-/** The checks a rerun would act on, as the question names them: each by name, then how many more. */
-const checksNamed = (checks: ReadonlyArray<PullRequestService.RerunnableCheck>) => {
-  const names = checks.slice(0, NAMED_CHECKS).map((check) => McpToolAccess.quoted(check.name, 40));
-  const more = checks.length - names.length;
-  return `${checks.length === 1 ? "check" : `${checks.length} checks:`} ${names.join(", ")}${
-    more > 0 ? ` and ${more} more` : ""
-  }`;
-};
+/** The checks a rerun would act on, as the question names them: every one, by its whole name. */
+const checksNamed = (checks: ReadonlyArray<PullRequestService.RerunnableCheck>) =>
+  `${checks.length === 1 ? "check" : `${checks.length} checks:`} ${checks
+    .map((check) => McpToolAccess.quoted(check.name, CHECK_NAME_SHOWN))
+    .join(", ")}`;
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
@@ -1290,7 +1298,7 @@ const make = Effect.gen(function* () {
                   isPushHooksUnapproved(error)
                     ? new PullRequestForgeError({ detail: PUSH_HOOKS_CHANGED, cause: error })
                     : error._tag === "GitManagerError" &&
-                        error.detail === GitManager.PULL_REQUEST_OPENING_CHANGED
+                        GitManager.isPullRequestOpeningChanged(error.detail)
                       ? new PullRequestForgeError({ detail: error.detail, cause: error })
                       : forgeFailure(error),
                 ),
@@ -1559,6 +1567,17 @@ const make = Effect.gen(function* () {
         });
         // With nothing to rerun the call does nothing outside, so there is nothing to ask.
         if (approved?.length === 0) return { asks: undefined, run };
+        // Each check is part of what the person approves, so each is named whole. A list too
+        // long for the question is refused where every question is checked.
+        if (
+          approved?.some((check) => !McpToolAccess.quotedWhole(check.name, CHECK_NAME_SHOWN)) ===
+          true
+        ) {
+          return yield* new PullRequestForgeError({
+            detail:
+              "A check this would rerun has a name too long to show the user in full, so they cannot be asked to approve it. Nothing was rerun. Tell the user; they can rerun it themselves.",
+          });
+        }
         return {
           asks:
             approved === undefined

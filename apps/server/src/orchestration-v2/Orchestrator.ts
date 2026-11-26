@@ -11802,6 +11802,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Provider session ${providerSessionId} was not found.`,
         });
       }
+      // Stop cancels the server's own request with its turn. Until the provider confirms the
+      // turn ended the card is still shown, and it can be declined or dismissed, not approved.
+      const askedRunId = context.node?.runId;
+      if (
+        recordOnly &&
+        askedRunId !== undefined &&
+        askedRunId !== null &&
+        command.decision !== "decline" &&
+        command.decision !== "cancel" &&
+        (yield* stopReachedRun(command, command.threadId, askedRunId))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The turn that asked was stopped, so this request can no longer be approved.",
+        });
+      }
       let answers = command.answers;
       if (runtimeRequest.kind === "user_input" && answers !== undefined) {
         const decoded = yield* decodeUserInputAnswers(answers).pipe(mapDispatchError(command));

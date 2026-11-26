@@ -498,6 +498,7 @@ it.effect("tells a peer that describes outside actions which step of asking a ca
 it.effect("sends no call that asks first to a peer that does not say it describes them", () =>
   Effect.gen(function* () {
     const posted: Array<string> = [];
+    const peer = { describes: false };
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
         const body =
@@ -509,7 +510,10 @@ it.effect("sends no call that asks first to a peer that does not say it describe
           request,
           new Response(method === "tools/call" ? probeResult : "", {
             status: method === "notifications/initialized" ? 202 : 200,
-            headers: { "mcp-session-id": "session" },
+            headers: {
+              "mcp-session-id": "session",
+              ...(peer.describes ? { "t3-outside-actions": "describe" } : {}),
+            },
           }),
         );
       }),
@@ -556,13 +560,28 @@ it.effect("sends no call that asks first to a peer that does not say it describe
       expect(yield* call(outsideAction).pipe(Effect.flip)).toMatchObject({
         code: "capability_denied",
         message: expect.stringMatching(
-          /^Not done: below Full access the user approves this action first, and the linked environment runs a version of T3 Code that cannot say what it would do\. Nothing was sent there\./,
+          /^Not done: the user approves this action first, and the linked environment runs a version of T3 Code that cannot say what it would do\. Nothing was sent there\./,
         ),
       });
     }
-    // The handshake alone reached it. An ordinary call still goes.
-    expect(posted).toEqual(["initialize", "notifications/initialized"]);
+    // Handshakes alone reached it: the first, and one more to ask again before refusing.
+    expect(posted).toEqual([
+      "initialize",
+      "notifications/initialized",
+      "initialize",
+      "notifications/initialized",
+    ]);
+    // An ordinary call still goes.
     expect(yield* call()).toEqual({ modes: "approval-required/plan" });
     expect(posted.at(-1)).toBe("tools/call");
+
+    // The peer is updated. The next call that asks first finds that out for itself.
+    peer.describes = true;
+    posted.length = 0;
+    expect(yield* call("describe")).toEqual({ modes: "approval-required/plan" });
+    expect(posted).toEqual(["initialize", "notifications/initialized", "tools/call"]);
+    // And the session that says so is kept.
+    expect(yield* call({ approved: "a".repeat(64) })).toEqual({ modes: "approval-required/plan" });
+    expect(posted.slice(3)).toEqual(["tools/call"]);
   }).pipe(Effect.scoped),
 );

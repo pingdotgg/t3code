@@ -108,129 +108,76 @@ model.
   the digest, so an approval is for the named files and not for everything the push executes.
 - **Below Full access, a tool that acts outside its thread runs only once a person approved that
   call.** The provider adapters pre-approve T3 Code's own tools in every mode, so the server is
-  what holds them to the thread's mode. A tool declared with
-  [`McpToolAccess.actsOutsideThread`](../../apps/server/src/mcp/McpToolAccess.ts) (the forge
-  writes of the pull-request and issue toolkits) first checks its arguments and resolves what
-  they name, doing nothing yet; then, for a caller not in Full access by the rule above, the
-  wrapper asks the person what will be done to what. The server writes the sentence. A name in
-  it that the server did not write (a branch, a remote and its URL, a hook file or command, an
-  issue key that is not shaped like one, the state `set_issue_state` was given) goes in with
-  `McpToolAccess.quoted`: in quotation marks, on one line, cut to a fixed length, with any
-  character a screen would hide (controls, format characters such as direction overrides and
-  zero-width spaces, marks Unicode says to draw as nothing, every space but U+0020) written
-  out as its code point. Numbers, commit ids
-  and the repository and host a target resolved to go in as they are. Every field then passes
-  through the same hidden-character and length check on its way out, whatever the handler did
-  with it, so a value shown is always data inside the sentence and never more of the sentence.
-  What an update, a comment or a review says is not shown: the request names the action and
-  its target. A question too long to show in full is not asked, and the call is refused.
-  The person is asked in the calling thread, by a request the server raises itself
-  ([`McpThreadApproval`](../../apps/server/src/mcp/McpThreadApproval.ts)) and whose answer the
-  orchestrator records, so the approval never depends on what a provider's client says the
-  person chose. The request's state is the tool and a digest of its arguments and of
-  everything they resolved to, shown or not (`OutsideAction.binds` carries what the words do
-  not hold whole), and an answer counts only for that state. Once the answer is read the
-  wrapper resolves everything a second time and runs that second reading, and only if its
-  state is the approved one: however long the person took, what runs was read after they
-  answered. The rule for a handler: what the action depends on is resolved before the
-  question and is part of that state, and the action then uses what was resolved. Where it
-  has to read something again, it compares with what was asked and does nothing when they
-  differ.
-  `pull_request_create` is the case with the most to read. `GitManager.pullRequestOpening`
-  reads the branch, the commit at its tip, the base, whether a push is needed, the remote and
-  branch it goes to with every address the remote pushes to (shown and compared without the
-  login, query or fragment a URL may carry), the branch on its remote the pull request is of
-  when nothing is pushed and the commit that branch is at as last fetched, and the hooks a
-  push would run, all with repository hooks off, and
-  reads the hooks only when there is a push. The question names these (a private pull
-  request's push is named as going to the repository's private companion, which the host
-  makes only when the push is under way). `createPullRequest` given that reading back reads
-  the checkout again and fails without pushing if any of it differs. The driver then checks,
-  as its last step before Git starts, that the branch is at the approved commit and that the
-  remote still pushes to the approved addresses and branch, and sends that commit by its id;
-  it refuses a push Git would have to pick the destination of, and does not report a branch
-  as already pushed unless it is at that commit. An approved push is made with submodule
-  recursion and tag following off, so it writes that one branch to that one remote whatever
-  Git's configuration says. Every address a push writes to is shown whole, or the push is not
-  asked about; a branch that tracks a local branch is not offered an opening without a push,
-  since being level with that branch says nothing of the published one. No push
-  is made when none was approved, a private push goes only to a remote that pushes to the
-  companion alone (checked again as that push starts), the pull request is
-  opened against the approved base, and one already open for the branch is returned as it
-  is. A remote's address changed in the moment between that last check and Git starting is
-  not caught. Which repository the host's own tool opens the pull request in is the host's
-  configuration and is not read beforehand; the question names the project's repository and
-  host.
-  An update resolves each reviewer's name before the question, so a name nobody has ends the
-  call before anything is written, and who it resolved to is part of the state. A review's
-  line comments are placed in the diff before the question, and those placements are part of
-  the state. `ci_rerun` names the checks it would rerun, and the host is asked to rerun
-  exactly those: the service reads them again as it starts and does nothing when they are
-  no longer that set. A review with line comments is sent pinned to the head its lines were
-  placed on.
-  A stack merge names each layer it would merge with the head it is pinned to, and those
-  numbers and heads are part of the state; the host is given the same list and refuses if the
-  stack is not exactly that.
-  The call waits for the answer with no limit of its own, as Codex's app server waits on an
-  MCP elicitation. So that the provider's client lets it wait, the request is also sent to
-  that client as an MCP elicitation ([`McpClientInput`](../../apps/server/src/mcp/McpClientInput.ts))
-  carrying the request's id, and the thread's adapter holds that elicitation open until the
-  request has ended and then answers it as it ended. A client with a session is sent it while
-  the call stays open. A sessionless one, as Claude Code is, is sent it as the call's answer
-  and calls again with its reply, so everything before the question must be safe to run from
-  the start twice. An adapter never answers one itself,
-  whatever the turn's runtime mode and whatever was allowed for the session, and shows no
-  card of its own for it. Codex stops its tool-call clock while an elicitation is open. Claude
-  Code does not, and progress notifications do not extend its limit, so T3 Code's server is
-  registered there with the longest tool-call limit a timer holds.
-  The request is tied to the turn that asked. When that turn ends, is interrupted or gives
-  way to another, the request is cancelled and the call returns saying nothing was done;
-  archiving the thread declines it. A client of the app disconnecting changes nothing: the
-  request is in the thread, and is shown again to whoever opens it. A server restart loses
-  what the server kept in memory for it, so the request is expired at startup and an answer
-  given to it lets nothing through. An approval is used once, by the call that asked or by
-  the same call made again in the same turn after its client cut the first one off.
-  Every thread is asked this way, whatever its provider. An adapter that holds T3 Code's
-  requests says so (`holdsApprovalRequests`): Claude, Codex and the ACP adapters, which know
-  the elicitation by the request id in its `_meta` or, where an agent passes that on with
-  nothing else, by the question's words. A thread whose adapter does not, or whose client
-  takes no elicitation or answers it for itself, has nothing holding its call open, and
-  T3 Code does not set those clients' tool-call limits. There the call waits a bounded time
-  and then returns `{ status: "awaiting_approval", next }`
-  ([`awaitingApproval`](../../apps/server/src/mcp/awaitingApproval.ts)), which is part of each
-  gated tool's result and not a failure: nothing was done, the request stays in the thread
-  until it is answered or its turn ends, and the same call made again waits on it or finds
-  its answer.
-  An agent client that prompts for tool calls on its own leaves the tools in
-  `T3_MCP_TOOLS_ASKED_BY_T3` to this request where the client names the call's MCP server and
-  tool in fields of their own: Pi's extension (by the path of the bridge that registered the
-  tool) and Kiro (`_meta.kiro.serverName` with `rawInput.tool_id`, answered with its one-time
-  choice). A title is the model's wording and is never read for this, so the other ACP agents
-  still show their own prompt before T3 Code's request.
-  Only where there is nowhere to show a request is the call refused, with a message that says
-  which: a thread with no turn running, and an MCP client from outside, which has no thread
-  and so needs full access.
-  `preview_act` asks through the same gate (`actsAsCallerAsking`) for an upload alone, and only
-  for files that are not the thread's own: each path is resolved through links and compared
-  with the thread's folders, resolved the same way, and with its attachments, and a path that
-  cannot be resolved or placed is outside. The request names those files and the origin of the
-  page they go to; those, every resolved path and the tab are its state. Like every gated
-  call it is read again once the answer is in, so a page that moved on, or a path that now
-  resolves elsewhere, sends nothing. What is sent is the resolved paths, not the ones given,
-  so a link changed afterwards does not change the file. A page that navigates in the moment
-  between that last read and the browser setting the files is not caught.
-  A call bound for a linked environment acts on a checkout and a forge login that are there,
-  so only that environment can say what it would do. Below Full access it is first sent as
-  `T3-Outside-Action: describe`: the linked environment resolves the call as above, with
-  repository hooks off, and answers with the request's digest and the words to show, doing
-  nothing. The person is asked here, in the calling thread, with the linked environment
-  named; the call then goes again as `approved <digest>`, and the linked environment
-  resolves it once more and acts only if it is still that request. Both headers are read
-  only from a linked client. An environment that does not answer `T3-Outside-Actions:
-  describe` is never sent either step, since it would act on the call unasked, and the agent
-  is told so. A link paired below full access still starts no such work
-  there. From a Full access thread the call is forwarded with the agent's own modes like any
-  other.
+  what holds them to the thread's mode: the forge writes of the pull-request and issue toolkits
+  ([`McpToolAccess.actsOutsideThread`](../../apps/server/src/mcp/McpToolAccess.ts)) and a
+  `preview_act` upload of a file that is not the thread's own (`actsAsCallerAsking`).
+  - **The approval is the server's record, never a client's reply.** The request is raised by
+    the server in the calling thread
+    ([`McpThreadApproval`](../../apps/server/src/mcp/McpThreadApproval.ts)) and the orchestrator
+    records the answer. The same request is sent to the provider's client as an MCP elicitation
+    only so that the client lets the call wait; an adapter that says it holds these
+    (`holdsApprovalRequests`) keeps it open until the request has ended, never answers it from
+    a mode or an earlier grant, and shows no card of its own. Claude and Codex know T3 Code's
+    elicitation by its server together with the request id, or the question's words where no
+    id is passed on. ACP names no server on an elicitation: its adapter goes by the id or the
+    words, and rules one out when it is tied to a tool call the agent said belongs to another
+    server.
+  - **An approval is for one resolved action, and is used once.** The request's state is the
+    tool, its arguments and everything they resolved to, shown or not (`OutsideAction.binds`).
+    After the answer the wrapper resolves everything again and runs that second reading only
+    if its state is the approved one. So a handler resolves all the action depends on before
+    the question, acts on what was resolved, and where it must read something again compares
+    it and does nothing when it differs. Calls that ask the same thing at once wait on one
+    request; its approval is taken by exactly one of them, and the others ask again. The same
+    call made again in the same turn, after its client cut the first off, finds that request.
+  - **What the person reads is the server's sentence.** A name the server did not write goes
+    in through `McpToolAccess.quoted`, and every field passes the same hidden-character and
+    length check on its way out. An action too long to show in full is refused, not asked
+    about. What an update, a comment or a review says is not shown.
+  - **The request lives and ends with the turn that asked.** That turn ending or being
+    interrupted cancels it; archiving the thread declines it; a server restart expires it, and
+    an answer given to it afterwards lets nothing through. A client of the app disconnecting
+    changes nothing. A thread keeps a bounded number of requests: one more than that, with
+    every kept one still waiting for the person, is refused, so no card is left that no call
+    waits on.
+  - **Nothing times the person; the server times the work.** A client whose adapter holds
+    the elicitation waits as long as the person takes. Any other gets
+    `{ status: "awaiting_approval", next }`
+    ([`awaitingApproval`](../../apps/server/src/mcp/awaitingApproval.ts)) after a bounded wait,
+    which is a result and not a failure, and the same call made again waits on the same
+    request. Claude Code's tool-call clock runs while an elicitation is open, so T3 Code's
+    server is registered there with the longest limit a timer holds, and the bound on a hung
+    call is the server's own: [`McpToolDeadline`](../../apps/server/src/mcp/McpToolDeadline.ts)
+    ends any T3 tool call that has worked for its limit, not counting time spent waiting on a
+    person, and interrupts the handler. What the handler had already sent to a remote, a forge
+    or a linked environment by then is not undone.
+  - **A sessionless client is sent the elicitation as the call's answer and calls again**, so
+    everything a gated handler does before the question must be safe to run from the start
+    twice.
+  - **`pull_request_create` approves the push and the pull request together.**
+    `GitManager.pullRequestOpening` reads what would be done with repository hooks off, and
+    `createPullRequest` given that reading back does that and nothing else: it fails before
+    pushing if the checkout no longer matches, the driver compares commit, remote, branch and
+    push addresses as its last step before Git starts (before it reports anything as already
+    pushed, too), and after an approved push the pull request's head is the branch that was
+    approved, never one read from the checkout again. A push that was made stands when the
+    pull request then cannot be opened, and the result says so. Not caught: a remote's
+    address changed between that last check and Git starting, and which repository the host's
+    own tool opens the pull request in.
+  - **A call bound for a linked environment is described there and approved here.** Only that
+    environment can resolve it, so below Full access it is sent as `T3-Outside-Action:
+    describe`, which does nothing, and again as `approved <digest>`, which acts only if the
+    call still resolves to that digest. Both headers are read only from a linked client. An
+    environment that does not answer `T3-Outside-Actions: describe` is sent neither, since it
+    would act unasked; the capability is asked for again before a call is refused for it. A
+    link paired below full access still starts no such work there.
+  - **An agent client that prompts for tool calls itself** leaves the tools in
+    `T3_MCP_TOOLS_ASKED_BY_T3` to this request only where it names the call's MCP server and
+    tool in fields of their own (Pi, Kiro). A title is the model's wording and is never read
+    for this.
+  - **An upload sends the resolved paths**, not the ones given, to the origin the person was
+    shown. A page that navigates between the last read and the browser setting the files is
+    not caught.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather

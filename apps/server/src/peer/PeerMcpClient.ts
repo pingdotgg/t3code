@@ -100,7 +100,7 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
 const cannotDescribe = new OrchestratorMcpFailure({
   code: "capability_denied",
   message:
-    "Not done: below Full access the user approves this action first, and the linked environment runs a version of T3 Code that cannot say what it would do. Nothing was sent there. Tell the user; they can update it, do it themselves, or do it from a thread in that environment.",
+    "Not done: the user approves this action first, and the linked environment runs a version of T3 Code that cannot say what it would do. Nothing was sent there. Tell the user; they can update it, do it themselves, or do it from a thread in that environment.",
 });
 
 const stoppedAnswering = new OrchestratorMcpFailure({
@@ -242,10 +242,16 @@ const make = Effect.gen(function* () {
                   ? "describe"
                   : `approved ${input.outsideAction.approved}`,
             };
+      // A call that asks first goes only to a session whose peer said it describes such calls.
       const callOnce = (session: PeerSession) =>
         input.outsideAction !== undefined && !session.describesOutsideActions
           ? Effect.fail(cannotDescribe)
           : callWith(session.id);
+      const renewSession = openSession(resolved, limitHeader).pipe(
+        Effect.tap((renewed) =>
+          Ref.update(sessions, (current) => new Map(current).set(sessionKey, renewed)),
+        ),
+      );
       const callWith = (sessionId: string) =>
         post(
           resolved.url,
@@ -265,16 +271,19 @@ const make = Effect.gen(function* () {
           },
         );
       const existing = (yield* Ref.get(sessions)).get(sessionKey);
-      const session = existing ?? (yield* openSession(resolved, limitHeader));
       // The initialized session outlives a tool request, including a long wait or cancellation.
-      if (existing === undefined) {
-        yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, session));
-      }
+      const kept = existing ?? (yield* renewSession);
+      // What a kept session says of its peer is as old as the session, and the peer may have
+      // been updated since: it is asked again before a call is refused for it.
+      const session =
+        existing !== undefined &&
+        input.outsideAction !== undefined &&
+        !existing.describesOutsideActions
+          ? yield* renewSession
+          : kept;
       let response = yield* callOnce(session);
       if (response.status === 404) {
-        const renewed = yield* openSession(resolved, limitHeader);
-        yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, renewed));
-        response = yield* callOnce(renewed);
+        response = yield* callOnce(yield* renewSession);
       }
       if (response.status === 401) {
         return yield* new OrchestratorMcpFailure({

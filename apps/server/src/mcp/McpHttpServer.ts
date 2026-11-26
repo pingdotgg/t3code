@@ -54,6 +54,7 @@ import {
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpClientInput from "./McpClientInput.ts";
+import * as McpToolDeadline from "./McpToolDeadline.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
@@ -1372,6 +1373,43 @@ const withClientInput = Effect.fn("McpHttpServer.withClientInput")(function* <A,
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, askingServer));
 });
 
+/**
+ * Bounds what each call does on the server. A provider's own tool-call limit cannot: it either
+ * keeps counting while a person is asked, or is set high enough not to.
+ */
+const withActiveTimeLimit = Effect.fn("McpHttpServer.withActiveTimeLimit")(function* <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const limitingServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool", { attributes: routineSpan })(function (options) {
+      const { name } = options.tool;
+      return server.addTool({
+        ...options,
+        handle: (payload) =>
+          McpToolDeadline.within(McpToolDeadline.ACTIVE_TIME_LIMIT, options.handle(payload)).pipe(
+            Effect.map(
+              Option.getOrElse(
+                () =>
+                  new McpSchema.CallToolResult({
+                    isError: true,
+                    content: [
+                      {
+                        type: "text",
+                        text: McpToolDeadline.timedOut(name, McpToolDeadline.ACTIVE_TIME_LIMIT),
+                      },
+                    ],
+                  }),
+              ),
+            ),
+          ),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, limitingServer));
+});
+
 /** `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one. */
 const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
   Tools extends Record<string, Tool.Any>,
@@ -1427,7 +1465,12 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
       withToolResultCapture(
         withToolSpans(
           withClientInput(
-            withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+            withActiveTimeLimit(
+              withAdvertisedSchemas(
+                toolkit,
+                McpServer.registerToolkit(decodeAsAdvertised(toolkit)),
+              ),
+            ),
           ),
         ),
       ),
@@ -1446,9 +1489,9 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(withToolResultCapture(withToolSpans(register)))).pipe(
-    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
-  );
+  Layer.effectDiscard(
+    withToolAnalytics(withToolResultCapture(withToolSpans(withActiveTimeLimit(register)))),
+  ).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),

@@ -18,8 +18,9 @@ import { randomUuidV4 } from "./randomUuid.ts";
 // Other providers may never consume these references.
 const MAX_KEPT_HTML_RENDERS = 64;
 const MAX_KEPT_TOOL_RESULTS = 64;
-// A request whose call never comes back for its answer stays until the session ends.
-const MAX_KEPT_APPROVAL_REQUESTS = 8;
+// A request whose call never comes back for its answer stays until the session ends. An
+// answered one makes room for a new one; one still waiting for the person is never dropped.
+export const MAX_KEPT_APPROVAL_REQUESTS = 8;
 
 // Antigravity truncates long HTML arguments to a marked tail of at most 8,000 characters.
 const BOUNDED_TEXT_MARKER = "[Earlier output truncated]\n\n";
@@ -63,6 +64,24 @@ export interface KeptApprovalRequest extends T3ApprovalRequest {
 
 interface WaitingApprovalRequest extends KeptApprovalRequest {
   readonly answer: Deferred.Deferred<T3ApprovalAnswer>;
+}
+
+type KeptApprovalRequests = Map<ThreadId, ReadonlyArray<WaitingApprovalRequest>>;
+
+interface JoinedRequest {
+  readonly request: WaitingApprovalRequest;
+  readonly opened: boolean;
+}
+
+/** The request a call waits on. */
+export interface JoinedApprovalRequest {
+  readonly id: string;
+  /** Whether this call opened it, and so shows it. Otherwise one already kept asks the same. */
+  readonly opened: boolean;
+  /** Waits until the request is settled. */
+  readonly answer: Effect.Effect<T3ApprovalAnswer>;
+  /** The answer the request has so far, without waiting for one. */
+  readonly answered: Effect.Effect<Option.Option<T3ApprovalAnswer>>;
 }
 
 interface ToolResultState {
@@ -122,15 +141,15 @@ export class McpProviderSessions extends Context.Service<
     readonly clearToolResults: (threadId: ThreadId) => Effect.Effect<void>;
     // T3's own tools ask the person in the thread itself and keep the request here until it
     // has ended. The server alone settles it, from its record of what the person answered.
-    readonly recordApprovalRequest: (
+    /**
+     * The thread's request for `request.state`: the one already kept, which the same call made
+     * again or made twice at once joins, or else a new one. Undefined, with nothing kept, when
+     * the thread already has `MAX_KEPT_APPROVAL_REQUESTS` waiting for the person.
+     */
+    readonly joinApprovalRequest: (
       threadId: ThreadId,
       request: T3ApprovalRequest,
-    ) => Effect.Effect<string>;
-    /** The request of the thread still waiting for `state`, which the same call made again joins. */
-    readonly findApprovalRequest: (
-      threadId: ThreadId,
-      state: string,
-    ) => Effect.Effect<KeptApprovalRequest | undefined>;
+    ) => Effect.Effect<JoinedApprovalRequest | undefined>;
     readonly settleApprovalRequest: (
       threadId: ThreadId,
       id: string,
@@ -141,12 +160,12 @@ export class McpProviderSessions extends Context.Service<
       threadId: ThreadId,
       id: string,
     ) => Effect.Effect<T3ApprovalAnswer>;
-    /** The answer the request has so far, without waiting for one. */
-    readonly approvalAnswer: (
-      threadId: ThreadId,
-      id: string,
-    ) => Effect.Effect<Option.Option<T3ApprovalAnswer>>;
-    readonly forgetApprovalRequest: (threadId: ThreadId, id: string) => Effect.Effect<void>;
+    /**
+     * Stops keeping the request, and says whether this call was the one that did. An answer is
+     * used by the call that takes its request away, so of the calls waiting on one request
+     * exactly one is told true.
+     */
+    readonly forgetApprovalRequest: (threadId: ThreadId, id: string) => Effect.Effect<boolean>;
     // A waiting request is also sent to the thread's client as an MCP elicitation. An adapter
     // that is handed those says so for its provider instance and holds each until the request
     // is settled, never answering one itself. It knows one by the id the client passes on, or
@@ -253,9 +272,7 @@ const make = Effect.gen(function* () {
     entries: new Map(),
     epochs: new Map(),
   });
-  const approvalRequests = yield* Ref.make(
-    new Map<ThreadId, ReadonlyArray<WaitingApprovalRequest>>(),
-  );
+  const approvalRequests = yield* Ref.make<KeptApprovalRequests>(new Map());
   const approvalRequestsHeldBy = yield* Ref.make<ReadonlySet<ProviderInstanceId>>(new Set());
   const withoutThread = <A>(kept: ReadonlyMap<ThreadId, A>, threadId: ThreadId) => {
     const next = new Map(kept);
@@ -421,26 +438,45 @@ const make = Effect.gen(function* () {
     clearToolResults: Effect.fn("McpProviderSessions.clearToolResults")(function (threadId) {
       return Ref.update(toolResultState, (state) => clearThreadToolResults(state, threadId));
     }),
-    recordApprovalRequest: Effect.fn("McpProviderSessions.recordApprovalRequest")(
+    joinApprovalRequest: Effect.fn("McpProviderSessions.joinApprovalRequest")(
       function* (threadId, request) {
         const id = yield* randomUuidV4;
         const answer = yield* Deferred.make<T3ApprovalAnswer>();
-        const dropped = yield* Ref.modify(approvalRequests, (current) => {
-          const kept = [...(current.get(threadId) ?? []), { ...request, id, answer }];
-          return [
-            kept.slice(0, -MAX_KEPT_APPROVAL_REQUESTS),
-            new Map(current).set(threadId, kept.slice(-MAX_KEPT_APPROVAL_REQUESTS)),
-          ];
-        });
-        yield* cancelAll(dropped);
-        return id;
-      },
-    ),
-    findApprovalRequest: Effect.fn("McpProviderSessions.findApprovalRequest")(
-      function (threadId, state) {
-        return Ref.get(approvalRequests).pipe(
-          Effect.map((current) => current.get(threadId)?.find((kept) => kept.state === state)),
+        const joined = yield* Ref.modify(
+          approvalRequests,
+          (current: KeptApprovalRequests): [JoinedRequest | "full", KeptApprovalRequests] => {
+            const kept = current.get(threadId) ?? [];
+            const same = kept.find((candidate) => candidate.state === request.state);
+            if (same !== undefined) return [{ request: same, opened: false }, current];
+            // The oldest answered requests make room. Their calls never came back for the answer.
+            const excess = Math.max(0, kept.length + 1 - MAX_KEPT_APPROVAL_REQUESTS);
+            const dropped = new Set(
+              kept.filter((candidate) => Deferred.isDoneUnsafe(candidate.answer)).slice(0, excess),
+            );
+            if (dropped.size < excess) return ["full", current];
+            const opened = { ...request, id, answer };
+            return [
+              { request: opened, opened: true },
+              new Map(current).set(threadId, [
+                ...kept.filter((candidate) => !dropped.has(candidate)),
+                opened,
+              ]),
+            ];
+          },
         );
+        if (joined === "full") return undefined;
+        const waiting = joined.request.answer;
+        return {
+          id: joined.request.id,
+          opened: joined.opened,
+          answer: Deferred.await(waiting),
+          answered: Effect.gen(function* () {
+            const polled = yield* Deferred.poll(waiting);
+            return Option.isNone(polled)
+              ? Option.none<T3ApprovalAnswer>()
+              : Option.some(yield* polled.value);
+          }),
+        } satisfies JoinedApprovalRequest;
       },
     ),
     settleApprovalRequest: Effect.fn("McpProviderSessions.settleApprovalRequest")(
@@ -456,12 +492,6 @@ const make = Effect.gen(function* () {
         return request === undefined ? "cancelled" : yield* Deferred.await(request.answer);
       },
     ),
-    approvalAnswer: Effect.fn("McpProviderSessions.approvalAnswer")(function* (threadId, id) {
-      const request = yield* waitingApprovalRequest(threadId, id);
-      if (request === undefined) return Option.some("cancelled" as const);
-      const answer = yield* Deferred.poll(request.answer);
-      return Option.isNone(answer) ? Option.none() : Option.some(yield* answer.value);
-    }),
     forgetApprovalRequest: Effect.fn("McpProviderSessions.forgetApprovalRequest")(
       function* (threadId, id) {
         const forgotten = yield* Ref.modify(approvalRequests, (current) => {
@@ -476,7 +506,9 @@ const make = Effect.gen(function* () {
               : new Map(current).set(threadId, rest),
           ];
         });
-        if (forgotten !== undefined) yield* Deferred.succeed(forgotten.answer, "cancelled");
+        if (forgotten === undefined) return false;
+        yield* Deferred.succeed(forgotten.answer, "cancelled");
+        return true;
       },
     ),
     holdsApprovalRequests: Effect.fn("McpProviderSessions.holdsApprovalRequests")(

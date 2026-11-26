@@ -20,6 +20,8 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -28,6 +30,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
@@ -56,6 +59,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as McpToolDeadline from "./McpToolDeadline.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -1223,6 +1227,110 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
         result: { protocolVersion: string };
       };
       expect(initialized.result.protocolVersion).toBe("2025-06-18");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("ends a tool call that has worked for the limit, with an error that says so", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const token = "providerTokenWithoutDots";
+      const scope: McpInvocationContext.McpInvocationScope = {
+        environmentId,
+        requestNamespace: "provider-session",
+        thread: {
+          threadId: ThreadId.make("thread-provider"),
+          providerSessionId: "provider-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const started = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<void>();
+      const HangToolkit = Toolkit.make(
+        Tool.make("hang", {
+          description: "Never finishes.",
+          success: Schema.Struct({ ok: Schema.Boolean }),
+        }),
+      );
+      const layerServer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.toolkitRegistration(
+          HangToolkit,
+          McpToolAccess.toLayer(HangToolkit, {
+            hang: McpToolAccess.reads(() =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(stopped, undefined)),
+              ),
+            ),
+          }),
+        ),
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (presented) =>
+              Effect.succeed(
+                presented === token
+                  ? (scope as McpInvocationContext.McpThreadInvocationScope)
+                  : undefined,
+              ),
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(layerServer, {
+        disableListenLog: true,
+        disableLogger: true,
+      }).pipe(Layer.build);
+      const httpClient = (yield* HttpClient.HttpClient).pipe(
+        HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+      );
+      const call = yield* httpClient
+        .post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            "mcp-method": "tools/call",
+            "mcp-name": "hang",
+            "mcp-protocol-version": "2026-07-28",
+          },
+          body: HttpBody.text(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: 4,
+              method: "tools/call",
+              params: {
+                name: "hang",
+                arguments: {},
+                _meta: {
+                  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                  "io.modelcontextprotocol/clientCapabilities": {},
+                  "io.modelcontextprotocol/clientInfo": { name: "mcp-test", version: "1.0.0" },
+                },
+              },
+            }),
+            "application/json",
+          ),
+        })
+        .pipe(
+          Effect.flatMap((response) => response.text),
+          Effect.forkChild,
+        );
+      yield* Deferred.await(started);
+      yield* Effect.yieldNow.pipe(Effect.repeat({ times: 50 }));
+      yield* TestClock.adjust(
+        Duration.millis(Duration.toMillis(McpToolDeadline.ACTIVE_TIME_LIMIT) - 1),
+      );
+      expect(call.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust(1);
+      const body = yield* Fiber.join(call);
+      expect(body).toContain('"isError":true');
+      expect(body).toContain(
+        "Stopped: hang ran for 65 minutes without finishing, so T3 Code ended the call.",
+      );
+      // The handler is interrupted, so what it runs that can be stopped is.
+      yield* Deferred.await(stopped);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

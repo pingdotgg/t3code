@@ -128,7 +128,6 @@ import {
   type ProviderApprovalFullAccessOverride,
   ProviderMcpSignInError,
   type ProviderApprovalOption,
-  type ProviderApprovalPushHooks,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRuntimeModeLimitReason,
@@ -2905,8 +2904,8 @@ const CLAUDE_T3_MCP_SERVER = "t3-code";
 
 // A T3 tool that asks the person waits for as long as they take, and Claude Code's tool-call
 // clock keeps running while it waits: neither an open elicitation nor progress stops it, and at
-// the limit it ends the call. So the limit is the longest a timer holds, about 24.8 days; each
-// tool bounds its own work.
+// the limit it ends the call. So the limit is the longest a timer holds, about 24.8 days, and
+// the server bounds the time each call works itself (`McpToolDeadline`).
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 2 ** 31 - 1;
 
 // allowedTools pre-approves calls; tools controls availability. Pre-approve T3 tools for headless modes,
@@ -9799,7 +9798,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly requestKind: OrchestrationV2RuntimeRequest["kind"];
           readonly prompt?: string;
           readonly appName?: string;
-          readonly pushHooks?: ProviderApprovalPushHooks | undefined;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
           readonly presentation?: ReturnType<typeof claudeApprovalPresentation>;
 
@@ -9893,7 +9891,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestKind: input.requestKind as ProviderRequestKind,
                   ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
                   ...(input.appName === undefined ? {} : { appName: input.appName }),
-                  ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
                   ...(input.options === undefined ? {} : { options: input.options }),
                   ...input.presentation,
                 }

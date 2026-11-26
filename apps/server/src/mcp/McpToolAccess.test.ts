@@ -701,7 +701,8 @@ it.effect(
       yield* probed.answer(second, "decline");
       expect(yield* Fiber.join(again)).toMatchObject({
         code: "capability_denied",
-        message: 'Not done: the user declined "Merge pull request #5 in org/repo".',
+        message:
+          'Not done: the user declined "Merge pull request #5 in org/repo". Do not get the same result another way unless the user asks for it.',
       });
       expect(probed.ran).toEqual(["here"]);
     }).pipe(Effect.provide(McpProviderSessions.layer)),
@@ -721,7 +722,7 @@ it.effect("the call waits for the person with no limit of its own", () =>
 );
 
 const CANCELLED =
-  'Cancelled, nothing was done: the request to approve "Merge pull request #5 in org/repo" ended without the user\'s answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again.';
+  'Cancelled, nothing was done: the request to approve "Merge pull request #5 in org/repo" ended without the user\'s answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again or getting the same result another way.';
 
 it.effect.each([
   ["the turn ends", "completed"],
@@ -873,7 +874,7 @@ it.effect("a thread with no turn running has nowhere to be asked", () =>
     expect(yield* probed.call(supervised)).toMatchObject({
       code: "capability_denied",
       message:
-        'Not done: "Merge pull request #5 in org/repo" needs the user\'s approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.',
+        'Not done: "Merge pull request #5 in org/repo" needs the user\'s approval, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.',
     });
     expect(yield* probed.raised).toEqual([]);
   }).pipe(Effect.provide(McpProviderSessions.layer)),
@@ -953,7 +954,7 @@ it.effect("a name the server did not write is shown as data, with nothing hidden
     expect(yield* probed.call(supervised)).toMatchObject({
       code: "capability_denied",
       message:
-        "Not done: what this call would do is too long to show the user in full, so they cannot be asked to approve it. Tell the user; they can do it themselves or switch this thread to Full access.",
+        "Not done: what this call would do is too long to show the user in full, so they cannot be asked to approve it. Tell the user; they can do it themselves.",
     });
     expect(yield* probed.raised).toHaveLength(1);
     expect(probed.ran).toEqual([]);
@@ -1025,7 +1026,7 @@ it.effect("a declined or cancelled request sends nothing more to the linked envi
     yield* probed.answer(yield* probed.asked, "decline");
     expect(yield* Fiber.join(declined)).toMatchObject({
       message:
-        'Not done: the user declined "Merge pull request #5 (in linked environment "Box") in org/repo".',
+        'Not done: the user declined "Merge pull request #5 (in linked environment "Box") in org/repo". Do not get the same result another way unless the user asks for it.',
     });
     const cancelled = yield* Effect.forkChild(probed.call(supervised, { environmentId: box }));
     yield* probed.asked;
@@ -1062,7 +1063,7 @@ it.effect.each([
     expect(probed.ran).toEqual(expected === "here" ? ["here"] : []);
     if (expected !== "here" && scope !== readOnlyClient) {
       expect(result.message).toBe(
-        'Not done: "Merge pull request #5 in org/repo" needs full access for this MCP client, which has no thread where a person could approve it.',
+        'Not done: "Merge pull request #5 in org/repo" needs the user\'s approval, and this MCP client has no thread where they could be asked. Tell the user; they can do it themselves.',
       );
     }
   }).pipe(Effect.provide(McpProviderSessions.layer)),
@@ -1078,7 +1079,7 @@ it.effect(
         ...supervisedClient,
         outsideAction: { approved: "0".repeat(64) },
       });
-      expect(claimed.message).toMatch(/needs full access for this MCP client/);
+      expect(claimed.message).toMatch(/this MCP client has no thread where they could be asked/);
       // A link asked to describe only describes, even for a caller nobody needs to be asked for.
       const described = yield* probed.call({
         ...fullAccessLinkedClient,

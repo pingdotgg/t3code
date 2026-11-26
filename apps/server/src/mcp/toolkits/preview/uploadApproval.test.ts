@@ -291,7 +291,7 @@ it.effect("a declined upload sends nothing", () =>
       yield* person.answer(yield* person.asked, "decline");
       expect(yield* Fiber.join(call)).toMatchObject({
         code: "capability_denied",
-        message: `Not done: the user declined "Upload "${paths.elsewhere}" to https://forms.example".`,
+        message: `Not done: the user declined "Upload "${paths.elsewhere}" to https://forms.example". Do not get the same result another way unless the user asks for it.`,
       });
       expect(operations).toEqual([]);
     }),

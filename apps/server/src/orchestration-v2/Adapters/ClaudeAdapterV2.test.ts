@@ -8548,10 +8548,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ["declined", { action: "decline" }],
             ["cancelled", { action: "cancel" }],
           ] as const) {
-            const id = yield* sessions.recordApprovalRequest(harness.threadId, {
+            const { id } = (yield* sessions.joinApprovalRequest(harness.threadId, {
               message,
               state: `state ${answer}`,
-            });
+            }))!;
             const held = yield* elicit(own(id));
             yield* Effect.yieldNow.pipe(Effect.repeat({ times: 20 }));
             // The server shows the request in the thread; the adapter adds nothing to it.
@@ -8563,10 +8563,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }
 
           // A CLI that passes on no id is matched by the question's words.
-          const worded = yield* sessions.recordApprovalRequest(harness.threadId, {
+          const { id: worded } = (yield* sessions.joinApprovalRequest(harness.threadId, {
             message,
             state: "state worded",
-          });
+          }))!;
           const byWords = yield* elicit(own(undefined));
           yield* sessions.settleApprovalRequest(harness.threadId, worded, "accepted");
           assert.deepEqual(yield* Fiber.join(byWords), { action: "accept", content: {} });
@@ -8606,10 +8606,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(yield* Fiber.join(foreign), { action: "accept", content: {} });
 
         // T3 Code's own request with those words still waits for its own answer.
-        const id = yield* sessions.recordApprovalRequest(harness.threadId, {
+        const { id } = (yield* sessions.joinApprovalRequest(harness.threadId, {
           message,
           state: "state",
-        });
+        }))!;
         const held = yield* elicit({ ...own, description: id });
         yield* Effect.yieldNow.pipe(Effect.repeat({ times: 20 }));
         assert.isUndefined(held.pollUnsafe());

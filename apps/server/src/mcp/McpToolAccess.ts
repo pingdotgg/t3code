@@ -27,7 +27,10 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
-import { hashToolInput } from "@t3tools/provider-core/server/McpProviderSessions";
+import {
+  hashToolInput,
+  MAX_KEPT_APPROVAL_REQUESTS,
+} from "@t3tools/provider-core/server/McpProviderSessions";
 
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import {
@@ -37,6 +40,7 @@ import {
   callerLinkOrigin,
 } from "./linkOrigin.ts";
 import type { AwaitingApproval } from "./awaitingApproval.ts";
+import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpThreadApproval from "./McpThreadApproval.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
@@ -390,6 +394,11 @@ const hasFullAccess = ({ limits, scope }: Caller) =>
 const requestOf = (tool: string, params: unknown, resolved: OutsideAction) =>
   hashToolInput({ tool, params, asks: resolved });
 
+const noThreadToAskIn = (sentence: string) =>
+  outsideActionRefused(
+    `Not done: "${sentence}" needs the user's approval, and this MCP client has no thread where they could be asked. Tell the user; they can do it themselves.`,
+  );
+
 /**
  * Asks the person behind the calling thread to approve `asks`, and ends unless they did. They
  * are asked in the thread, by a request the server raises and whose answer it records itself;
@@ -402,8 +411,13 @@ const askInThread = Effect.fnUntraced(function* (
   asks: OutsideAction,
 ) {
   const sentence = outsideActionSentence(asks);
+  const thread = caller.scope.thread;
+  const sessions = Option.getOrUndefined(
+    yield* Effect.serviceOption(McpClientInput.McpClientInput),
+  )?.sessions;
+  if (thread === undefined || sessions === undefined) return yield* noThreadToAskIn(sentence);
   const { also: _also, binds: _binds, pushHooks, ...named } = asks;
-  const answer = yield* McpThreadApproval.ask(caller, {
+  const answer = yield* McpThreadApproval.ask(caller.threads, sessions, thread, {
     state: `${tool} ${request}`,
     // The start of the request's own name ends the question, so two requests never read alike.
     message: `${sentence}? (request ${hashToolInput({ request }).slice(0, 8)})`,
@@ -421,20 +435,20 @@ const askInThread = Effect.fnUntraced(function* (
       return { awaiting } as const;
     }
     case "declined":
-      return yield* outsideActionRefused(`Not done: the user declined "${sentence}".`);
+      return yield* outsideActionRefused(
+        `Not done: the user declined "${sentence}". Do not get the same result another way unless the user asks for it.`,
+      );
     case "cancelled":
       return yield* outsideActionRefused(
-        `Cancelled, nothing was done: the request to approve "${sentence}" ended without the user's answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again.`,
+        `Cancelled, nothing was done: the request to approve "${sentence}" ended without the user's answer. They dismissed it, or the turn ended or was interrupted. Ask the user before trying again or getting the same result another way.`,
       );
-    case "unavailable":
-      // Never read: a caller with a thread is asked in it.
-      return yield* outsideActionRefused(`Not done: "${sentence}" has no thread to be asked in.`);
-    case "asked":
-      // Never read: the elicitation is this call's answer.
-      return yield* outsideActionRefused("Waiting for the user's approval.");
+    case "full":
+      return yield* outsideActionRefused(
+        `Not done: "${sentence}" needs the user's approval, and this thread already has ${MAX_KEPT_APPROVAL_REQUESTS} approval requests waiting for their answer. Call again once they have answered those.`,
+      );
     case "no-turn":
       return yield* outsideActionRefused(
-        `Not done: "${sentence}" needs the user's approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.`,
+        `Not done: "${sentence}" needs the user's approval, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.`,
       );
   }
 });
@@ -484,13 +498,13 @@ const personApproves = Effect.fnUntraced(function* (
   if (linked !== "describe" && hasFullAccess(caller)) return;
   if (!shownWhole(resolved)) {
     return yield* outsideActionRefused(
-      "Not done: what this call would do is too long to show the user in full, so they cannot be asked to approve it. Tell the user; they can do it themselves or switch this thread to Full access.",
+      "Not done: what this call would do is too long to show the user in full, so they cannot be asked to approve it. Tell the user; they can do it themselves.",
     );
   }
   const asks = shownAction(resolved);
   const sentence = outsideActionSentence(asks);
   const request = requestOf(tool, params, resolved);
-  if (caller.caller !== undefined) {
+  if (caller.scope.thread !== undefined) {
     const answer = yield* askInThread(caller, tool, request, asks);
     if ("awaiting" in answer) return { awaiting: answer.awaiting } as const;
     return { approved: { request, sentence } } as const;
@@ -507,9 +521,7 @@ const personApproves = Effect.fnUntraced(function* (
       `Not done: what "${sentence}" would do changed while the user was asked. Call again to ask.`,
     );
   }
-  return yield* outsideActionRefused(
-    `Not done: "${sentence}" needs full access for this MCP client, which has no thread where a person could approve it.`,
-  );
+  return yield* noThreadToAskIn(sentence);
 });
 
 interface Planned<A, E, R, Asks> {
@@ -550,7 +562,7 @@ const startsOutsideWork = "start work here that is not its link's";
 const isMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 const LINKED_DID_NOT_DESCRIBE =
-  "Stopped: below Full access the user approves this action first, and the linked environment answered without saying what it would do. Tell the user, and do not call again.";
+  "Stopped: the user approves this action first, and the linked environment answered without saying what it would do. Tell the user, and do not call again.";
 
 /**
  * A call bound for a linked environment. Below Full access that environment first says what

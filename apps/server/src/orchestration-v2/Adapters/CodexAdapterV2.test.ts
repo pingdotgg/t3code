@@ -1913,10 +1913,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const asked =
           names === "nothing asked"
             ? undefined
-            : yield* sessions.recordApprovalRequest(threadId, { message, state: "state" });
+            : (yield* sessions.joinApprovalRequest(threadId, { message, state: "state" }))!;
         const meta =
           names === "id"
-            ? { "t3.codes/approval-request": asked }
+            ? { "t3.codes/approval-request": asked?.id }
             : names === "another id"
               ? { "t3.codes/approval-request": "00000000-0000-4000-8000-000000000000" }
               : undefined;
@@ -1995,7 +1995,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* Effect.yieldNow.pipe(Effect.repeat({ times: 50 }));
           assert.deepEqual(cards(), []);
           assert.equal(yield* Queue.size(pending), 0);
-          yield* sessions.settleApprovalRequest(threadId, asked!, "accepted");
+          yield* sessions.settleApprovalRequest(threadId, asked!.id, "accepted");
         } else {
           const request = yield* Queue.take(pending);
           assert.deepInclude(cards().at(-1), { prompt: message, appName: serverName });
@@ -2007,7 +2007,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* harness.firstTerminal;
         // An answer given to a card that was not T3 Code's request settles nothing of T3 Code's.
         if (!own && asked !== undefined) {
-          assert.isTrue(Option.isNone(yield* sessions.approvalAnswer(threadId, asked)));
+          assert.isTrue(Option.isNone(yield* asked.answered));
         }
       }).pipe(Effect.scoped, Effect.provide(ownApprovalLayer)),
   );
@@ -2023,7 +2023,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const prompt = "Merge it.";
         const message = "Merge pull request #5 in org/repo? (request 1a2b3c4d)";
         const sessions = yield* McpProviderSessions.McpProviderSessions;
-        const asked = yield* sessions.recordApprovalRequest(threadId, { message, state: "state" });
+        const { id: asked } = (yield* sessions.joinApprovalRequest(threadId, {
+          message,
+          state: "state",
+        }))!;
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario,

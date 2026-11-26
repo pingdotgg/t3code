@@ -5238,27 +5238,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const pushed = runGit(repoDir, ["ls-remote", "origin", "refs/heads/feature/hooked"]).pipe(
         Effect.map((result) => result.stdout.trim() !== ""),
       );
-      const { manager } = yield* makeManager({
+      const { manager, providerCalls } = yield* makeManager({
         providerScenario: { ...host, prListSequence: [[], [], [], []] },
       });
-      const create = (pushHooks?: { readonly approvedDigest: string | null } | "off") =>
+      /** A create by a caller that asks nobody. */
+      const create = () =>
         manager.createPullRequest({
           cwd: repoDir,
           projectId: ProjectId.make("project-1"),
           title: "Feature",
           body: "Body",
-          pushHooks,
           ...(host.privateRemote === undefined ? {} : { private: true }),
         });
       const isRefusedForHooks = Schema.is(GitManager.GitPushHooksUnapprovedError);
-      /** The create that was refused for its hooks, as the caller that asks would read it. */
-      const refused = (pushHooks: { readonly approvedDigest: string | null }) =>
-        create(pushHooks).pipe(
-          Effect.flip,
-          Effect.filterOrElse(isRefusedForHooks, (error) =>
-            Effect.die(new Error(`Expected a refusal for the hooks, got ${error.message}`)),
-          ),
-        );
       const opening = (input: { readonly private?: boolean; readonly baseBranch?: string } = {}) =>
         manager.pullRequestOpening({
           cwd: repoDir,
@@ -5275,6 +5267,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           approved,
           ...(host.privateRemote === undefined ? {} : { private: true }),
         });
+      /** The approved create that was refused as its push would start, for its hooks. */
+      const refusedForHooks = (approved: GitManager.PullRequestOpening) =>
+        createApproved(approved).pipe(
+          Effect.flip,
+          Effect.filterOrElse(isRefusedForHooks, (error) =>
+            Effect.die(new Error(`Expected a refusal for the hooks, got ${error.message}`)),
+          ),
+        );
       const remoteHead = runGit(repoDir, ["ls-remote", "origin", "refs/heads/feature/hooked"]).pipe(
         Effect.map((result) => result.stdout.split("\t")[0] ?? ""),
       );
@@ -5291,11 +5291,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         hooksRun,
         pushed,
         create,
-        refused,
+        refusedForHooks,
         opening,
         createApproved,
         remoteHead,
         commit,
+        providerCalls,
       };
     });
 
@@ -5396,6 +5397,62 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           const original = yield* runGit(repo.repoDir, ["ls-remote", "--heads", repo.remoteDir]);
           expect(original.stdout).not.toContain("feature/");
         }),
+      );
+
+      it.effect(
+        "an approved push opens the pull request from the branch it pushed, whatever the branch tracks by then",
+        () =>
+          Effect.gen(function* () {
+            const repo = yield* hookedRepo();
+            yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+            const head = yield* repo.commit("second.txt");
+            // Another branch of the remote already holds the commit.
+            yield* runGit(repo.repoDir, ["push", "origin", "feature/hooked:feature/elsewhere"]);
+            // While the push runs, the branch is made to track that other branch.
+            NodeFS.writeFileSync(
+              NodePath.join(repo.repoDir, ".husky", "pre-push"),
+              "#!/bin/sh\ngit config branch.feature/hooked.merge refs/heads/feature/elsewhere\n",
+              { mode: 0o755 },
+            );
+            const approved = yield* repo.opening();
+            expect(approved.push).toMatchObject({
+              remoteName: "origin",
+              remoteBranch: "feature/hooked",
+            });
+
+            yield* repo.createApproved(approved);
+            expect(yield* repo.remoteHead).toBe(head);
+            expect(
+              (yield* runGit(repo.repoDir, [
+                "config",
+                "branch.feature/hooked.merge",
+              ])).stdout.trim(),
+            ).toBe("refs/heads/feature/elsewhere");
+            expect(created(repo.providerCalls).map((call) => call.headSelector)).toEqual([
+              "feature/hooked",
+            ]);
+          }),
+      );
+
+      it.effect(
+        "another branch checked out while the approved push runs opens nothing, and says the push was made",
+        () =>
+          Effect.gen(function* () {
+            const repo = yield* hookedRepo();
+            const head = (yield* runGit(repo.repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+            NodeFS.writeFileSync(
+              NodePath.join(repo.repoDir, ".husky", "pre-push"),
+              "#!/bin/sh\ngit checkout --quiet -b feature/other\n",
+              { mode: 0o755 },
+            );
+            const refused = yield* repo.createApproved(yield* repo.opening()).pipe(Effect.flip);
+            expect(refused.message).toContain(
+              "The branch was pushed as the user approved, but another branch was checked out before the pull request was opened, so none was opened. Call again to ask.",
+            );
+            expect(refused.message).not.toContain("Nothing was pushed");
+            expect(yield* repo.remoteHead).toBe(head);
+            expect(created(repo.providerCalls)).toEqual([]);
+          }),
       );
 
       it.effect("an approval to open without a push is for the branch its remote has", () =>
@@ -5629,13 +5686,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const repo = yield* hookedRepo();
         repo.writeHook("pre-push");
         repo.writeHook("reference-transaction");
-        const unapproved = yield* repo.refused({ approvedDigest: null });
-        expect(unapproved).toMatchObject({
-          _tag: "GitPushHooksUnapprovedError",
-          branch: "feature/hooked",
-          commands: [],
-        });
-        expect(unapproved.files.map((file) => NodeFS.realpathSync(file))).toEqual([
+        const asked = yield* repo.opening();
+        expect(asked.push?.hooks?.commands).toEqual([]);
+        expect(asked.push?.hooks?.files.map((file) => NodeFS.realpathSync(file))).toEqual([
           NodePath.join(NodeFS.realpathSync(repo.repoDir), ".husky", "pre-push"),
           NodePath.join(NodeFS.realpathSync(repo.repoDir), ".husky", "reference-transaction"),
         ]);
@@ -5643,7 +5696,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(yield* repo.pushed).toBe(false);
 
         // Approved as they are: both run, and the branch is pushed.
-        yield* repo.create({ approvedDigest: unapproved.digest });
+        yield* repo.createApproved(asked);
         expect(repo.hooksRun()).toEqual(
           expect.arrayContaining(["pre-push", "reference-transaction"]),
         );
@@ -5656,7 +5709,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       () =>
         Effect.gen(function* () {
           const companionDir = yield* createBareRemote();
-          // The hook is edited after the early look, so the refusal comes as the push would start.
+          // The hook is edited after the checkout was compared with what was approved, so the
+          // refusal comes as the push would start.
           const late = { edit: () => {} };
           const repo = yield* hookedRepo({
             privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
@@ -5675,26 +5729,24 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             Effect.map((result) => result.stdout.trim()),
           );
           repo.writeHook("pre-push");
-          const first = yield* repo.refused({ approvedDigest: null });
-          expect(yield* pushRemote).toBeNull();
-
+          const first = yield* repo.opening();
           late.edit = () => repo.writeHook("pre-push", "edited");
-          const second = yield* repo.refused({ approvedDigest: first.digest });
-          expect(second.digest).not.toBe(first.digest);
+          const refused = yield* repo.refusedForHooks(first);
+          expect(refused).toMatchObject({ branch: "feature/hooked", commands: [] });
+          expect(refused.digest).not.toBe(first.push?.hooks?.digest);
           expect(yield* pushRemote).toBeNull();
 
           // One the person had set is put back.
           yield* runGit(repo.repoDir, ["config", "branch.feature/hooked.pushRemote", "origin"]);
           late.edit = () => repo.writeHook("pre-push", "edited again");
-          yield* repo.refused({ approvedDigest: second.digest });
+          yield* repo.refusedForHooks(yield* repo.opening());
           expect(yield* pushRemote).toBe("origin");
           expect(yield* companionHeads).toBe("");
           expect(repo.hooksRun()).toEqual([]);
 
           // A push that starts keeps the companion as where the branch goes.
           late.edit = () => {};
-          const third = yield* repo.refused({ approvedDigest: null });
-          yield* repo.create({ approvedDigest: third.digest });
+          yield* repo.createApproved(yield* repo.opening());
           expect(yield* pushRemote).toBe("pingdotgg");
           expect(yield* companionHeads).toContain("refs/heads/feature/hooked");
         }),
@@ -5704,23 +5756,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       Effect.gen(function* () {
         const repo = yield* hookedRepo();
         repo.writeHook("pre-push");
-        const first = yield* repo.refused({ approvedDigest: null });
+        const approved = yield* repo.opening();
         repo.writeHook("pre-push", "edited");
-        const second = yield* repo.refused({ approvedDigest: first.digest });
-        expect(second.digest).not.toBe(first.digest);
+        const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+        expect(refused.message).toContain("changed after the user was asked. Nothing was pushed.");
+        expect((yield* repo.opening()).push?.hooks?.digest).not.toBe(approved.push?.hooks?.digest);
         expect(repo.hooksRun()).toEqual([]);
         expect(yield* repo.pushed).toBe(false);
-      }),
-    );
-
-    it.effect("pushes with hooks off when asked to", () =>
-      Effect.gen(function* () {
-        const repo = yield* hookedRepo();
-        repo.writeHook("pre-push");
-        repo.writeHook("reference-transaction");
-        yield* repo.create("off");
-        expect(repo.hooksRun()).toEqual([]);
-        expect(yield* repo.pushed).toBe(true);
       }),
     );
 
@@ -5744,8 +5786,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       Effect.gen(function* () {
         const repo = yield* hookedRepo();
         const lateHookRan = addsHookDuringPush(repo);
-        // No hook to run, so no approval is needed.
-        yield* repo.create({ approvedDigest: null });
+        // Approved with no hook to run.
+        yield* repo.createApproved(yield* repo.opening());
         expect(yield* repo.pushed).toBe(true);
         expect(
           NodeFS.existsSync(NodePath.join(repo.repoDir, ".husky", "reference-transaction")),

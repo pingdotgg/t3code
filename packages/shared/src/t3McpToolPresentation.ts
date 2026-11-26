@@ -115,6 +115,10 @@ const T3_MCP_SERVER_ALIASES = new Set([
   "t3_code_direct",
 ]);
 
+/** Whether an MCP server name a provider reports is one T3 Code's own server is registered under. */
+export const isT3McpServerName = (server: string): boolean =>
+  T3_MCP_SERVER_ALIASES.has(server.trim().toLowerCase());
+
 const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   link_pull_request: tool(
     ["Link", "Linking", "Linked", "a pull request"],

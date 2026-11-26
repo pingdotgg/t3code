@@ -40,7 +40,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
-import { resolveT3McpToolId, t3ApprovalRequestId } from "@t3tools/shared/t3McpToolPresentation";
+import {
+  isT3McpServerName,
+  resolveT3McpToolId,
+  t3ApprovalRequestId,
+} from "@t3tools/shared/t3McpToolPresentation";
 import {
   compactDynamicToolOutput,
   compactT3McpToolOutput,
@@ -7833,8 +7837,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               // T3 Code shows its own request in the thread and records the answer itself, so
               // one the agent passes on is held until that request ends and answered as it
               // ended. It comes first: no policy below answers it, whatever else it carries.
+              const elicitingTurn = yield* Ref.get(activeTurn);
+              // ACP names no MCP server on an elicitation, only the tool call it may belong to.
+              // When the agent said that call is another server's, the request is not T3
+              // Code's, whatever id or words it carries. One tied to no call the agent
+              // described is known by its id or words alone.
+              const elicitingTool =
+                "toolCallId" in params && typeof params.toolCallId === "string"
+                  ? elicitingTurn?.tools.get(params.toolCallId)
+                  : undefined;
+              const elicitingServer =
+                elicitingTool === undefined
+                  ? undefined
+                  : extractMcpToolCallIdentity(elicitingTool)?.server;
               const ownThreadId =
-                params.mode === "form" ? (yield* Ref.get(activeTurn))?.input.threadId : undefined;
+                params.mode === "form" &&
+                (elicitingServer === undefined || isT3McpServerName(elicitingServer))
+                  ? elicitingTurn?.input.threadId
+                  : undefined;
               const ownRequest =
                 ownThreadId === undefined
                   ? undefined

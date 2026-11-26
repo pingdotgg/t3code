@@ -15,13 +15,16 @@ import {
   RunId,
   type RuntimeMode,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -42,6 +45,7 @@ import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpThreadApproval from "./McpThreadApproval.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as McpToolDeadline from "./McpToolDeadline.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 
 const now = DateTime.makeUnsafe("2026-11-25T12:00:00.000Z");
@@ -87,6 +91,13 @@ const withThread = <A, E>(
       }>
     >;
     readonly answer: (requestId: string, decision: "accept" | "decline") => Effect.Effect<void>;
+    /** The same, for an answer the orchestrator may refuse: whether it took it. */
+    readonly tryAnswer: (
+      requestId: string,
+      decision: "accept" | "decline",
+    ) => Effect.Effect<boolean>;
+    /** The person presses Stop. The provider has not confirmed the turn ended. */
+    readonly stop: Effect.Effect<void>;
     readonly archive: Effect.Effect<void>;
     /** What answering `requestId` left for the provider's adapter to deliver. */
     readonly deliveries: (requestId: string) => Effect.Effect<number>;
@@ -367,6 +378,49 @@ const withThread = <A, E>(
             decision,
           })
           .pipe(Effect.asVoid, Effect.orDie),
+      tryAnswer: (requestId, decision) =>
+        orchestrator
+          .dispatch({
+            type: "runtime-request.respond",
+            commandId: CommandId.make(`thread-approval:try-answer:${decision}:${requestId}`),
+            threadId,
+            requestId: requestId as never,
+            decision,
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+      // What the orchestrator records when Stop reaches a run, before the provider confirms.
+      stop: projections
+        .apply({
+          id: EventId.make("thread-approval:stop"),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make("turn-item:thread-approval:stop"),
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1_000,
+            status: "completed",
+            title: "Interrupt requested",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "run_interrupt_request",
+            message: "Stopped by the user",
+          },
+        })
+        .pipe(Effect.asVoid, Effect.orDie),
       archive: orchestrator
         .dispatch({
           type: "thread.archive",
@@ -437,10 +491,11 @@ it.effect(
         yield* settle;
         const requests = yield* thread.requests;
         assert.equal(requests.length, 2);
-        yield* thread.answer(requests[1]!.id, "decline");
+        yield* thread.answer(requests.find(({ status }) => status === "pending")!.id, "decline");
         assert.deepInclude(yield* Fiber.join(second), {
           code: "capability_denied",
-          message: 'Not done: the user declined "Merge pull request #5 in org/repo".',
+          message:
+            'Not done: the user declined "Merge pull request #5 in org/repo". Do not get the same result another way unless the user asks for it.',
         });
         assert.deepEqual(thread.ran, ["merged #5"]);
       }),
@@ -480,7 +535,8 @@ it.effect("archiving the thread declines what it was asked", () =>
       yield* thread.archive;
       assert.deepInclude(yield* Fiber.join(call), {
         code: "capability_denied",
-        message: 'Not done: the user declined "Merge pull request #5 in org/repo".',
+        message:
+          'Not done: the user declined "Merge pull request #5 in org/repo". Do not get the same result another way unless the user asks for it.',
       });
       assert.deepInclude((yield* thread.requests)[0], { status: "resolved", decision: "decline" });
       assert.deepEqual(thread.ran, []);
@@ -563,5 +619,172 @@ it.effect.each(["cursor", "opencode", "pi"] as const)(
           assert.equal((yield* thread.requests).length, 1);
         }),
       false,
+    ),
+);
+
+it.effect(
+  "two identical calls made at once share one request, and its one approval lets one of them through",
+  () =>
+    withThread("codex", "approval-required", (thread) =>
+      Effect.gen(function* () {
+        const both = yield* Effect.forkChild(
+          Effect.all([thread.call(), thread.call()], { concurrency: "unbounded" }),
+        );
+        yield* settle;
+        const asked = yield* thread.requests;
+        assert.equal(asked.length, 1);
+        yield* thread.answer(asked[0]!.id, "accept");
+        yield* settle;
+        assert.deepEqual(thread.ran, ["merged #5"]);
+
+        // The call the approval did not go to asks for itself, by a request of its own.
+        const requests = yield* thread.requests;
+        assert.equal(requests.length, 2);
+        const again = requests.find((request) => request.id !== asked[0]!.id);
+        assert.deepInclude(again, { status: "pending" });
+        assert.deepEqual((yield* thread.cards).map((card) => card.status).toSorted(), [
+          "completed",
+          "waiting",
+        ]);
+        yield* thread.answer(again!.id, "decline");
+        const results = yield* Fiber.join(both);
+        assert.deepEqual(results.map((result) => result.ran ?? result.code).toSorted(), [
+          "capability_denied",
+          "merged #5",
+        ]);
+        assert.deepEqual(thread.ran, ["merged #5"]);
+      }),
+    ),
+);
+
+it.effect("every call waiting on a request hears that the person declined it", () =>
+  withThread("codex", "approval-required", (thread) =>
+    Effect.gen(function* () {
+      const both = yield* Effect.forkChild(
+        Effect.all([thread.call(), thread.call()], { concurrency: "unbounded" }),
+      );
+      yield* settle;
+      const [request] = yield* thread.requests;
+      yield* thread.answer(request!.id, "decline");
+      assert.deepEqual(
+        (yield* Fiber.join(both)).map((result) => result.code),
+        ["capability_denied", "capability_denied"],
+      );
+      assert.equal((yield* thread.requests).length, 1);
+      assert.deepEqual(thread.ran, []);
+    }),
+  ),
+);
+
+it.effect(
+  "a thread with every kept request still waiting is not asked another, and each one waiting still takes its answer",
+  () =>
+    withThread("codex", "approval-required", (thread) =>
+      Effect.gen(function* () {
+        const waiting = yield* Effect.forEach(
+          Array.from({ length: McpProviderSessions.MAX_KEPT_APPROVAL_REQUESTS }, (_, n) => n + 1),
+          (number) => Effect.forkChild(thread.call(number)),
+        );
+        yield* settle;
+        const open = yield* thread.requests;
+        assert.equal(open.length, McpProviderSessions.MAX_KEPT_APPROVAL_REQUESTS);
+
+        // One more shows no card, and says why.
+        assert.deepInclude(yield* thread.call(100), {
+          code: "capability_denied",
+          message:
+            'Not done: "Merge pull request #100 in org/repo" needs the user\'s approval, and this thread already has 8 approval requests waiting for their answer. Call again once they have answered those.',
+        });
+        assert.equal((yield* thread.requests).length, open.length);
+        assert.isTrue((yield* thread.cards).every((card) => card.status === "waiting"));
+
+        // Every request asked is still the person's to answer, and each answer counts.
+        yield* Effect.forEach(open, (request) => thread.answer(request.id, "accept"));
+        yield* Effect.forEach(waiting, Fiber.join);
+        assert.deepEqual(
+          thread.ran.toSorted(),
+          open.map((_, n) => `merged #${n + 1}`),
+        );
+      }),
+    ),
+);
+
+it.effect("a call is ended once it has worked for the limit, and one that hangs is cut there", () =>
+  withThread("codex", "full-access", (thread) =>
+    Effect.gen(function* () {
+      const limit = McpToolDeadline.ACTIVE_TIME_LIMIT;
+      const hung = yield* Effect.forkChild(McpToolDeadline.within(limit, Effect.never));
+      const stopped = yield* Ref.make(false);
+      const slow = yield* Effect.forkChild(
+        McpToolDeadline.within(
+          limit,
+          Effect.sleep("2 hours").pipe(Effect.onInterrupt(() => Ref.set(stopped, true))),
+        ),
+      );
+      const quick = yield* McpToolDeadline.within(limit, thread.call());
+      assert.deepEqual(quick, Option.some({ ran: "merged #5" }));
+      yield* TestClock.adjust(Duration.millis(Duration.toMillis(limit) - 1_000));
+      assert.isUndefined(hung.pollUnsafe());
+      yield* TestClock.adjust("1 second");
+      assert.deepEqual(yield* Fiber.join(hung), Option.none());
+      assert.deepEqual(yield* Fiber.join(slow), Option.none());
+      // What the call was doing is interrupted.
+      yield* settle;
+      assert.isTrue(yield* Ref.get(stopped));
+    }),
+  ),
+);
+
+it.effect(
+  "a call that waits half a day for the person and then acts is not ended: only the time it works counts",
+  () =>
+    withThread("codex", "approval-required", (thread) =>
+      Effect.gen(function* () {
+        const limit = McpToolDeadline.ACTIVE_TIME_LIMIT;
+        const call = yield* Effect.forkChild(McpToolDeadline.within(limit, thread.call()));
+        yield* settle;
+        const [request] = yield* thread.requests;
+        yield* TestClock.adjust("12 hours");
+        yield* settle;
+        assert.isUndefined(call.pollUnsafe());
+        assert.deepInclude((yield* thread.requests)[0], { status: "pending" });
+        yield* thread.answer(request!.id, "accept");
+        assert.deepEqual(yield* Fiber.join(call), Option.some({ ran: "merged #5" }));
+
+        // Work on either side of the wait is counted together.
+        const working = (work: Duration.Input) =>
+          McpToolDeadline.within(
+            limit,
+            Effect.sleep(work).pipe(
+              Effect.andThen(McpToolDeadline.whileWaitingOnPerson(Effect.sleep("12 hours"))),
+              Effect.andThen(Effect.sleep(work)),
+            ),
+          );
+        const under = yield* Effect.forkChild(working("30 minutes"));
+        const over = yield* Effect.forkChild(working("40 minutes"));
+        yield* TestClock.adjust("14 hours");
+        assert.isTrue(Option.isSome(yield* Fiber.join(under)));
+        assert.isTrue(Option.isNone(yield* Fiber.join(over)));
+      }),
+    ),
+);
+
+it.effect(
+  "once Stop has reached the turn, its request can be declined but no longer approved",
+  () =>
+    withThread("codex", "approval-required", (thread) =>
+      Effect.gen(function* () {
+        const call = yield* Effect.forkChild(thread.call());
+        yield* settle;
+        const [request] = yield* thread.requests;
+        yield* thread.stop;
+        assert.isFalse(yield* thread.tryAnswer(request!.id, "accept"));
+        yield* settle;
+        assert.deepEqual(thread.ran, []);
+        assert.isUndefined(call.pollUnsafe());
+        assert.isTrue(yield* thread.tryAnswer(request!.id, "decline"));
+        assert.equal((yield* Fiber.join(call)).code, "capability_denied");
+        assert.deepEqual(thread.ran, []);
+      }),
     ),
 );

@@ -11201,6 +11201,54 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("a push approved for elsewhere is refused even when the branch is up to date", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
+        yield* git(repo.cwd, ["push", "-u", "origin", "topic"]);
+        const approved = {
+          branch: "topic",
+          head,
+          remoteName: "origin",
+          remoteBranch: "topic",
+          urls: yield* repo.driver.pushAddresses(repo.cwd, "origin"),
+        };
+        const push = (named: typeof approved) =>
+          repo.driver.pushCurrentBranch(repo.cwd, null, { approved: named });
+        for (const other of [
+          { ...approved, remoteName: "fork" },
+          { ...approved, remoteBranch: "main" },
+          { ...approved, urls: ["https://example.com/org/elsewhere.git"] },
+        ]) {
+          const refused = yield* push(other).pipe(Effect.flip);
+          assert.instanceOf(refused.cause, GitVcsDriver.PushNotAsApprovedError);
+        }
+        assert.deepInclude(yield* push(approved), { status: "skipped_up_to_date" });
+      }),
+    );
+
+    it.effect("a remote's push addresses are read one each, or not at all", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const elsewhere = yield* makeTmpDir("git-hooked-elsewhere-");
+        yield* git(repo.cwd, ["remote", "set-url", "--add", "--push", "origin", elsewhere]);
+        yield* git(repo.cwd, ["remote", "set-url", "--add", "--push", "origin", `${elsewhere}-2`]);
+        assert.deepEqual(yield* repo.driver.pushAddresses(repo.cwd, "origin"), [
+          elsewhere,
+          `${elsewhere}-2`,
+        ]);
+        // One address that reads as those two lines is not passed off as them.
+        yield* git(repo.cwd, [
+          "config",
+          "--replace-all",
+          "remote.origin.pushurl",
+          `${elsewhere}\n${elsewhere}-2`,
+        ]);
+        const refused = yield* repo.driver.pushAddresses(repo.cwd, "origin").pipe(Effect.flip);
+        assert.include(refused.detail, "cannot be read as one line");
+      }),
+    );
+
     it.effect("a push approved as named does not push submodules along with it", () =>
       Effect.gen(function* () {
         const repo = yield* repoToPush();

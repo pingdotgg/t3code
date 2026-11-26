@@ -82,7 +82,6 @@ import type {
   ProviderUserInputAnswers,
   ProviderApprovalDecision,
   ProviderApprovalOption,
-  ProviderApprovalPushHooks,
   ProviderRequestKind,
   ProviderThreadId,
   ProviderTurnId,
@@ -5054,7 +5053,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly prompt?: string | null;
           readonly reason?: string | null | undefined;
           readonly appName?: string;
-          readonly pushHooks?: ProviderApprovalPushHooks | undefined;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) {
           const createdAt = yield* DateTime.now;
@@ -5140,7 +5138,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               : { prompt: input.prompt }),
             ...(reason === undefined ? {} : { reason }),
             ...(input.appName === undefined ? {} : { appName: input.appName }),
-            ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
             ...(input.options === undefined ? {} : { options: input.options }),
           };
           return { node, request, turnItem };

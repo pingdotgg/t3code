@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpClientInput from "./McpClientInput.ts";
+import * as McpToolDeadline from "./McpToolDeadline.ts";
 import type { Caller } from "./threadAccess.ts";
 
 /**
@@ -29,15 +30,9 @@ export const UNHELD_WAIT = Duration.seconds(45);
 /**
  * "cancelled": ended without the person's answer (dismissed, or its turn ended). "no-turn": no
  * turn is running to show a request in. "waiting": not answered yet, and still theirs to answer.
- * "unavailable": the call comes from no thread. "asked": a sessionless client was sent the
- * request as this call's answer, and calls again.
+ * "full": the thread already has as many requests waiting for the person as it keeps.
  */
-export type Answer =
-  | McpProviderSessions.T3ApprovalAnswer
-  | "no-turn"
-  | "waiting"
-  | "unavailable"
-  | "asked";
+export type Answer = McpProviderSessions.T3ApprovalAnswer | "no-turn" | "waiting" | "full";
 
 type Threads = ThreadManagement.ThreadManagementService["Service"];
 type Sessions = McpProviderSessions.McpProviderSessions["Service"];
@@ -138,13 +133,14 @@ const followToItsEnd = (threads: Threads, sessions: Sessions, kept: Raised, aske
   );
 
 /**
- * Asks the person in the calling thread by a request the server raises and records the answer
- * to, whatever the thread's provider. A client that holds an elicitation open for it lets the
- * call wait as long as the person takes; any other is answered "waiting" after `UNHELD_WAIT`.
- * One approval lets one call through: the call that asked, or the same call made again.
+ * Asks the person in `thread` by a request the server raises and records the answer to. A client
+ * that holds an elicitation for it waits as long as they take; any other hears "waiting" after
+ * `UNHELD_WAIT`. One approval lets one call through: of calls waiting on one request, the rest ask again.
  */
 export const ask = Effect.fn("McpThreadApproval.ask")(function* (
-  caller: Caller,
+  threads: Threads,
+  sessions: Sessions,
+  thread: NonNullable<Caller["scope"]["thread"]>,
   input: {
     readonly state: string;
     readonly message: string;
@@ -152,93 +148,83 @@ export const ask = Effect.fn("McpThreadApproval.ask")(function* (
     readonly pushHooks?: ProviderApprovalPushHooks | undefined;
   },
 ): Effect.fn.Return<Answer> {
-  const sessions = Option.getOrUndefined(
-    yield* Effect.serviceOption(McpClientInput.McpClientInput),
-  )?.sessions;
-  const thread = caller.scope.thread;
-  if (sessions === undefined || thread === undefined) return "unavailable";
-  const { threads } = caller;
-
-  // A request needs a turn to be shown in and to end with.
-  const records = yield* threads
-    .getThreadRecords(thread.threadId, ["runs"])
-    .pipe(Effect.orElseSucceed(() => undefined));
-  const run = records === undefined ? undefined : ThreadManagement.latestActiveRun(records);
-  if (
-    run === undefined ||
-    run.rootNodeId === null ||
-    run.providerInstanceId !== thread.providerInstanceId
-  ) {
-    return "no-turn";
-  }
-  const asked: Turn = { runId: run.id, nodeId: run.rootNodeId };
-  const state = `${asked.runId} ${input.state}`;
-
-  const found = yield* sessions.findApprovalRequest(thread.threadId, state);
-  let kept: Raised | undefined =
-    found === undefined ? undefined : { threadId: thread.threadId, id: found.id };
-  if (kept === undefined) {
-    const id = yield* sessions.recordApprovalRequest(thread.threadId, {
-      message: input.message,
-      state,
-    });
-    const raised = { id, threadId: thread.threadId };
-    const shown = yield* threads
-      .dispatch({
-        type: "approval_request.record",
-        commandId: CommandId.make(`mcp:approval-request:${id}`),
-        threadId: thread.threadId,
-        ...asked,
-        requestId: requestIdOf(id),
-        prompt: input.message,
-        toolAction: input.toolAction,
-        ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
-      })
-      .pipe(
-        Effect.as(true),
-        Effect.catch((error) =>
-          Effect.logWarning("Could not show an approval request in its thread", {
-            error: error.message,
-          }).pipe(Effect.as(false)),
-        ),
-      );
-    if (!shown) {
-      // The orchestrator refuses a request for a turn that ended since it was read.
-      yield* sessions.forgetApprovalRequest(thread.threadId, id);
+  while (true) {
+    // A request needs a turn to be shown in and to end with.
+    const records = yield* threads
+      .getThreadRecords(thread.threadId, ["runs"])
+      .pipe(Effect.orElseSucceed(() => undefined));
+    const run = records === undefined ? undefined : ThreadManagement.latestActiveRun(records);
+    if (
+      run === undefined ||
+      run.rootNodeId === null ||
+      run.providerInstanceId !== thread.providerInstanceId
+    ) {
       return "no-turn";
     }
-    yield* followToItsEnd(threads, sessions, raised, asked).pipe(Effect.forkDetach);
-    kept = raised;
-  }
+    const asked: Turn = { runId: run.id, nodeId: run.rootNodeId };
 
-  const waiting = kept;
-  const answered = sessions.awaitApprovalAnswer(thread.threadId, waiting.id);
-  const settled = sessions.approvalAnswer(thread.threadId, waiting.id);
-  type Outcome = Option.Option<McpProviderSessions.T3ApprovalAnswer> | "asked";
-  // Once the client holds nothing open, as after it answers for itself or its turn is
-  // interrupted, the call can only wait as long as that client's own limit allows.
-  const unheld: Effect.Effect<Outcome> = Effect.timeoutOption(answered, UNHELD_WAIT);
-  // Only an adapter that holds T3 Code's requests is sent one: any other would show or answer it.
-  const held =
-    (yield* sessions.areApprovalRequestsHeld(thread.providerInstanceId)) &&
-    (yield* McpClientInput.takesElicitation);
-  // Read before the client is asked again: the call that brings a reply finds the answer here.
-  const already = yield* settled;
-  const outcome: Outcome = Option.isSome(already)
-    ? already
-    : yield* Effect.raceFirst(
-        Effect.asSome(answered),
-        held
-          ? McpClientInput.elicit({ id: waiting.id, message: input.message }).pipe(
-              Effect.flatMap((sent): Effect.Effect<Outcome> =>
-                sent === "asked" ? Effect.succeed("asked") : unheld,
-              ),
-            )
-          : unheld,
-      );
-  // The elicitation is the call's answer, and the request stays for the call that follows it.
-  if (outcome === "asked") return "asked";
-  if (Option.isNone(outcome)) return "waiting";
-  yield* sessions.forgetApprovalRequest(thread.threadId, waiting.id);
-  return outcome.value;
+    const joined = yield* sessions.joinApprovalRequest(thread.threadId, {
+      message: input.message,
+      state: `${asked.runId} ${input.state}`,
+    });
+    if (joined === undefined) return "full";
+    const kept: Raised = { id: joined.id, threadId: thread.threadId };
+    if (joined.opened) {
+      const shown = yield* threads
+        .dispatch({
+          type: "approval_request.record",
+          commandId: CommandId.make(`mcp:approval-request:${kept.id}`),
+          threadId: thread.threadId,
+          ...asked,
+          requestId: requestIdOf(kept.id),
+          prompt: input.message,
+          toolAction: input.toolAction,
+          ...(input.pushHooks === undefined ? {} : { pushHooks: input.pushHooks }),
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.logWarning("Could not show an approval request in its thread", {
+              error: error.message,
+            }).pipe(Effect.as(false)),
+          ),
+        );
+      if (!shown) {
+        // The orchestrator refuses a request for a turn that ended since it was read.
+        yield* sessions.forgetApprovalRequest(thread.threadId, kept.id);
+        return "no-turn";
+      }
+      yield* followToItsEnd(threads, sessions, kept, asked).pipe(Effect.forkDetach);
+    }
+
+    type Outcome = Option.Option<McpProviderSessions.T3ApprovalAnswer>;
+    // Once the client holds nothing open, as after it answers for itself or its turn is
+    // interrupted, the call can only wait as long as that client's own limit allows.
+    const unheld: Effect.Effect<Outcome> = Effect.timeoutOption(joined.answer, UNHELD_WAIT);
+    // Only an adapter that holds T3 Code's requests is sent one: any other would show or answer it.
+    const held =
+      (yield* sessions.areApprovalRequestsHeld(thread.providerInstanceId)) &&
+      (yield* McpClientInput.takesElicitation);
+    // Read before the client is asked again: the call that brings a reply finds the answer here.
+    const already = yield* joined.answered;
+    const outcome: Outcome = Option.isSome(already)
+      ? already
+      : yield* McpToolDeadline.whileWaitingOnPerson(
+          Effect.raceFirst(
+            Effect.asSome(joined.answer),
+            held
+              ? McpClientInput.elicit({ id: kept.id, message: input.message }).pipe(
+                  // A sessionless client got the elicitation as this call's answer, and the
+                  // request stays for the call that follows it.
+                  Effect.flatMap((sent) => (sent === "asked" ? Effect.succeedNone : unheld)),
+                )
+              : unheld,
+          ),
+        );
+    if (Option.isNone(outcome)) return "waiting";
+    const taken = yield* sessions.forgetApprovalRequest(thread.threadId, kept.id);
+    // An approval is used once. Another call waiting on this request took it, so this one asks.
+    if (outcome.value === "accepted" && !taken) continue;
+    return outcome.value;
+  }
 });

@@ -174,54 +174,68 @@ describe("McpProviderSessions approval requests", () => {
     browserToolsAvailable: false,
   });
 
-  it.effect("keeps a request until it is forgotten, found by what it asks for", () =>
+  it.effect("keeps a request until it is forgotten, joined by what it asks for", () =>
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
-      const asked = yield* sessions.recordApprovalRequest(threadId, {
-        message: "Merge #5?",
-        state: "run-1 merge 5",
-      });
-      assert.deepInclude(yield* sessions.findApprovalRequest(threadId, "run-1 merge 5"), {
-        id: asked,
-        message: "Merge #5?",
+      const request = { message: "Merge #5?", state: "run-1 merge 5" };
+      const asked = yield* sessions.joinApprovalRequest(threadId, request);
+      assert.isTrue(asked?.opened);
+      // The same state again is the same request, whoever asks.
+      assert.deepInclude(yield* sessions.joinApprovalRequest(threadId, request), {
+        id: asked!.id,
+        opened: false,
       });
       // Another turn's state, another thread: not this request.
-      assert.isUndefined(yield* sessions.findApprovalRequest(threadId, "run-2 merge 5"));
-      assert.isUndefined(
-        yield* sessions.findApprovalRequest(ThreadId.make("another-thread"), "run-1 merge 5"),
-      );
-      yield* sessions.forgetApprovalRequest(threadId, asked);
-      assert.isUndefined(yield* sessions.findApprovalRequest(threadId, "run-1 merge 5"));
+      for (const other of [
+        yield* sessions.joinApprovalRequest(threadId, { ...request, state: "run-2 merge 5" }),
+        yield* sessions.joinApprovalRequest(ThreadId.make("another-thread"), request),
+      ]) {
+        assert.isTrue(other?.opened);
+        assert.notEqual(other?.id, asked!.id);
+      }
+      assert.isTrue(yield* sessions.forgetApprovalRequest(threadId, asked!.id));
+      assert.isTrue((yield* sessions.joinApprovalRequest(threadId, request))?.opened);
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
 
   it.effect("a request is settled once, and everyone waiting on it hears the same answer", () =>
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
-      const asked = yield* sessions.recordApprovalRequest(threadId, {
-        message: "Merge #5?",
-        state: "state",
-      });
-      const other = yield* sessions.recordApprovalRequest(threadId, {
-        message: "Merge #5?",
-        state: "state",
-      });
-      const gate = yield* Effect.forkChild(sessions.awaitApprovalAnswer(threadId, asked));
-      const adapter = yield* Effect.forkChild(sessions.awaitApprovalAnswer(threadId, asked));
+      const request = { message: "Merge #5?", state: "state" };
+      const asked = (yield* sessions.joinApprovalRequest(threadId, request))!;
+      const joined = (yield* sessions.joinApprovalRequest(threadId, request))!;
+      const other = (yield* sessions.joinApprovalRequest(threadId, {
+        ...request,
+        state: "another",
+      }))!;
+      const gate = yield* Effect.forkChild(joined.answer);
+      const adapter = yield* Effect.forkChild(sessions.awaitApprovalAnswer(threadId, asked.id));
       yield* Effect.yieldNow;
-      assert.isTrue(Option.isNone(yield* sessions.approvalAnswer(threadId, asked)));
+      assert.isTrue(Option.isNone(yield* asked.answered));
 
-      yield* sessions.settleApprovalRequest(threadId, asked, "accepted");
+      yield* sessions.settleApprovalRequest(threadId, asked.id, "accepted");
       // The first answer stands.
-      yield* sessions.settleApprovalRequest(threadId, asked, "declined");
+      yield* sessions.settleApprovalRequest(threadId, asked.id, "declined");
       assert.equal(yield* Fiber.join(gate), "accepted");
       assert.equal(yield* Fiber.join(adapter), "accepted");
-      assert.deepEqual(yield* sessions.approvalAnswer(threadId, asked), Option.some("accepted"));
-      // Two calls asking the same thing are answered one at a time.
-      assert.isTrue(Option.isNone(yield* sessions.approvalAnswer(threadId, other)));
-      // A request is settled in its own thread only.
-      yield* sessions.settleApprovalRequest(ThreadId.make("another-thread"), other, "accepted");
-      assert.isTrue(Option.isNone(yield* sessions.approvalAnswer(threadId, other)));
+      assert.deepEqual(yield* joined.answered, Option.some("accepted"));
+      // A request is settled by its own id, in its own thread only.
+      yield* sessions.settleApprovalRequest(ThreadId.make("another-thread"), other.id, "accepted");
+      assert.isTrue(Option.isNone(yield* other.answered));
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
+
+  it.effect("of the calls waiting on one request, one takes it away", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const request = { message: "Merge #5?", state: "state" };
+      const { id } = (yield* sessions.joinApprovalRequest(threadId, request))!;
+      yield* sessions.settleApprovalRequest(threadId, id, "accepted");
+      const took = yield* Effect.all(
+        Array.from({ length: 5 }, () => sessions.forgetApprovalRequest(threadId, id)),
+        { concurrency: "unbounded" },
+      );
+      assert.deepEqual(took.toSorted(), [false, false, false, false, true]);
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
 
@@ -229,35 +243,59 @@ describe("McpProviderSessions approval requests", () => {
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
       yield* sessions.set(makeSession("provider-session-1"));
-      const forgotten = yield* sessions.recordApprovalRequest(threadId, {
+      const forgotten = (yield* sessions.joinApprovalRequest(threadId, {
         message: "Merge #5?",
         state: "a",
-      });
-      const replaced = yield* sessions.recordApprovalRequest(threadId, {
+      }))!;
+      const replaced = (yield* sessions.joinApprovalRequest(threadId, {
         message: "Merge #6?",
         state: "b",
-      });
-      const waitsOnForgotten = yield* Effect.forkChild(
-        sessions.awaitApprovalAnswer(threadId, forgotten),
-      );
+      }))!;
+      const waitsOnForgotten = yield* Effect.forkChild(forgotten.answer);
       const waitsOnReplaced = yield* Effect.forkChild(
-        sessions.awaitApprovalAnswer(threadId, replaced),
+        sessions.awaitApprovalAnswer(threadId, replaced.id),
       );
       yield* Effect.yieldNow;
-      yield* sessions.forgetApprovalRequest(threadId, forgotten);
+      yield* sessions.forgetApprovalRequest(threadId, forgotten.id);
       assert.equal(yield* Fiber.join(waitsOnForgotten), "cancelled");
       // A new provider session, or the thread's session ending, takes its requests with it.
       yield* sessions.set(makeSession("provider-session-2"));
       assert.equal(yield* Fiber.join(waitsOnReplaced), "cancelled");
-      assert.equal(yield* sessions.awaitApprovalAnswer(threadId, replaced), "cancelled");
-      assert.isUndefined(yield* sessions.findApprovalRequest(threadId, "b"));
+      assert.equal(yield* sessions.awaitApprovalAnswer(threadId, replaced.id), "cancelled");
+      assert.equal(yield* replaced.answer, "cancelled");
+      assert.isFalse(yield* sessions.forgetApprovalRequest(threadId, replaced.id));
 
-      const cleared = yield* sessions.recordApprovalRequest(threadId, {
+      const cleared = (yield* sessions.joinApprovalRequest(threadId, {
         message: "Merge #7?",
         state: "c",
-      });
+      }))!;
       yield* sessions.clear(threadId);
-      assert.equal(yield* sessions.awaitApprovalAnswer(threadId, cleared), "cancelled");
+      assert.equal(yield* sessions.awaitApprovalAnswer(threadId, cleared.id), "cancelled");
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
+
+  it.effect("a request still waiting for the person is never dropped to make room", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const ask = (n: number) =>
+        sessions.joinApprovalRequest(threadId, { message: `Merge #${n}?`, state: `merge ${n}` });
+      const kept = yield* Effect.forEach(
+        Array.from({ length: McpProviderSessions.MAX_KEPT_APPROVAL_REQUESTS }, (_, n) => n),
+        ask,
+      );
+      // One more is refused, and every request already open still takes its answer.
+      assert.isUndefined(yield* ask(100));
+      for (const request of kept) assert.isTrue(Option.isNone(yield* request!.answered));
+      yield* sessions.settleApprovalRequest(threadId, kept[0]!.id, "accepted");
+      assert.equal(yield* kept[0]!.answer, "accepted");
+      // An answered one whose call has not come back for it makes room, oldest first.
+      yield* sessions.settleApprovalRequest(threadId, kept[3]!.id, "declined");
+      assert.isTrue((yield* ask(100))?.opened);
+      assert.deepInclude(yield* ask(3), { id: kept[3]!.id, opened: false });
+      assert.isTrue((yield* ask(101))?.opened);
+      // With every request left waiting on the person, there is no room again.
+      assert.isUndefined(yield* ask(3));
+      assert.deepInclude(yield* ask(1), { id: kept[1]!.id, opened: false });
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
 
@@ -270,10 +308,10 @@ describe("McpProviderSessions approval requests", () => {
       assert.isTrue(yield* sessions.areApprovalRequestsHeld(instance));
       assert.isFalse(yield* sessions.areApprovalRequestsHeld(ProviderInstanceId.make("cursor")));
 
-      const asked = yield* sessions.recordApprovalRequest(threadId, {
+      const { id: asked } = (yield* sessions.joinApprovalRequest(threadId, {
         message: "Merge #5?",
         state: "state",
-      });
+      }))!;
       const own = { id: asked, message: "Merge #5?", state: "state" };
       assert.deepEqual(
         yield* sessions.ownApprovalRequest(threadId, { id: asked, message: "anything" }),

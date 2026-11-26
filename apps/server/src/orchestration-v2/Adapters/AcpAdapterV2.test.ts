@@ -9702,10 +9702,10 @@ describe("AcpAdapterV2", () => {
         const responseLog = `${yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-own-approval-",
         })}/responses.log`;
-        const asked = yield* sessions.recordApprovalRequest(threadId, {
+        const { id: asked } = (yield* sessions.joinApprovalRequest(threadId, {
           message: "Approve this request?",
           state: "state",
-        });
+        }))!;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           flavor: {
@@ -9763,6 +9763,91 @@ describe("AcpAdapterV2", () => {
         // The server shows the request; the adapter raises none of its own for it.
         assert.isFalse(events.some((event) => event.type === "runtime_request.updated"));
         assert.deepEqual(JSON.parse((yield* fileSystem.readFileString(responseLog)).trim()), reply);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.live.each([
+    { server: "other-server", names: "its words", held: false },
+    { server: "other-server", names: "its id", held: false },
+    { server: "t3-code", names: "its id", held: true },
+  ] as const)(
+    "an elicitation tied to a tool call of $server, naming T3 Code's request by $names, is held: $held",
+    ({ server, names, held }) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const suffix = `${server}-${names.replaceAll(" ", "-")}`;
+        const instanceId = ProviderInstanceId.make(`acp-test-eliciting-server-${suffix}`);
+        const threadId = ThreadId.make(`thread-acp-eliciting-server-${suffix}`);
+        const responseLog = `${yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-eliciting-server-",
+        })}/responses.log`;
+        const asked = (yield* sessions.joinApprovalRequest(threadId, {
+          message: "Approve this request?",
+          state: "state",
+        }))!;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: {
+                T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION: "1",
+                T3_ACP_ELICITATION_SCHEMA: '{"type":"object","properties":{}}',
+                T3_ACP_ELICITATION_RESPONSE_LOG_PATH: responseLog,
+                T3_ACP_ELICITATION_TOOL_CALL_SERVER: server,
+                ...(names === "its id" ? { T3_ACP_ELICITATION_T3_APPROVAL_REQUEST: asked.id } : {}),
+              },
+            }),
+          },
+          selfInvocation,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`provider-session-acp-eliciting-${suffix}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const collected = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        // Another server's elicitation is the agent's to answer by this turn's mode, and T3
+        // Code's request stays the person's. T3 Code's own waits for the request to end.
+        if (held) yield* sessions.settleApprovalRequest(threadId, asked.id, "declined");
+        yield* Fiber.join(collected);
+        assert.deepEqual(
+          JSON.parse((yield* fileSystem.readFileString(responseLog)).trim()),
+          held ? { action: "decline" } : { action: "accept", content: {} },
+        );
+        if (!held) assert.isTrue(Option.isNone(yield* asked.answered));
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
