@@ -49,7 +49,7 @@ export function resolveCodexFileCitationLink(
 }
 
 function markdownLabel(value: string): string {
-  return value.replace(/[\\[\]*_`<&|]/g, "\\$&");
+  return value.replace(/[\\[\]*_`~<&|]/g, "\\$&");
 }
 
 function markdownDestination(value: string): string {
