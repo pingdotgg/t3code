@@ -494,22 +494,28 @@ interface ClaudeProcessRow {
   readonly startTimeMicros?: number;
 }
 
-/** Parses `ps -A -o pid=,ppid=,pgid=,lstart=`; pid plus start time tells a process from a reused pid. */
+const isClaudeProcessRow = Schema.is(
+  Schema.Struct({
+    pid: Schema.Int,
+    ppid: Schema.Int,
+    pgid: Schema.Int,
+    startTimeSeconds: Schema.Int,
+  }),
+);
+
+/** Parses the C-locale, UTC output of `ps -A -o pid=,ppid=,pgid=,lstart=`. */
 function parseClaudeProcessTable(table: string): ReadonlyArray<ClaudeProcessRow> {
   return table.split("\n").flatMap((line) => {
     const [pid, ppid, pgid, ...started] = line.trim().split(/\s+/);
+    const start = DateTime.make(started.join(" ") + " GMT");
+    if (Option.isNone(start)) return [];
     const row = {
       pid: Number(pid),
       ppid: Number(ppid),
       pgid: Number(pgid),
-      startTimeSeconds: Date.parse(started.join(" ") + " GMT") / 1000,
+      startTimeSeconds: DateTime.toEpochSeconds(start.value),
     };
-    return Number.isSafeInteger(row.pid) &&
-      Number.isSafeInteger(row.ppid) &&
-      Number.isSafeInteger(row.pgid) &&
-      Number.isFinite(row.startTimeSeconds)
-      ? [row]
-      : [];
+    return isClaudeProcessRow(row) ? [row] : [];
   });
 }
 
