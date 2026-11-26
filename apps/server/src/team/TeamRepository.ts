@@ -1019,9 +1019,6 @@ export class TeamRepository extends Context.Service<
     readonly getAutomationTurnScope: (
       turnId: string,
     ) => Effect.Effect<Option.Option<StoredTeamAutomationTurnScope>, TeamRepositoryError>;
-    readonly getLatestAutomationTurnScopeForThread: (
-      threadId: ThreadId,
-    ) => Effect.Effect<Option.Option<StoredTeamAutomationTurnScope>, TeamRepositoryError>;
   }
 >()("t3/team/TeamRepository") {}
 
@@ -1796,7 +1793,7 @@ const make = Effect.gen(function* () {
         "recordThreadAttribution.insert",
         sql.withTransaction(
           Effect.gen(function* () {
-            yield* sql`
+            const insertedRows = yield* sql<{ readonly thread_id: string }>`
               INSERT OR IGNORE INTO team_thread_meta (
                 thread_id, team_id, owner_kind, creator_member_id, view_id, locked, locked_by_member_id,
                 execution_environment_id, is_local_synced, created_at
@@ -1813,7 +1810,9 @@ const make = Effect.gen(function* () {
                 ${input.isLocalSynced === true ? 1 : 0},
                 ${input.createdAt}
               )
+              RETURNING thread_id
             `;
+            if (insertedRows.length === 0) return;
             if (input.executionEnvironmentLabel != null) {
               yield* sql`
                 INSERT OR IGNORE INTO team_thread_env_labels (thread_id, execution_environment_label)
@@ -3621,23 +3620,6 @@ const make = Effect.gen(function* () {
                  mcp_access_level, created_at
           FROM team_automation_turn_scopes
           WHERE turn_id = ${turnId}
-          LIMIT 1
-        `,
-      );
-      return rows[0] ? Option.some(mapAutomationTurnScopeRow(rows[0])) : Option.none();
-    }),
-
-    getLatestAutomationTurnScopeForThread: Effect.fn(
-      "TeamRepository.getLatestAutomationTurnScopeForThread",
-    )(function* (threadId) {
-      const rows = yield* runSql(
-        "getLatestAutomationTurnScopeForThread",
-        sql<AutomationTurnScopeRow>`
-          SELECT turn_id, thread_id, task_id, team_id, project_id, environment_id, view_id,
-                 mcp_access_level, created_at
-          FROM team_automation_turn_scopes
-          WHERE thread_id = ${threadId}
-          ORDER BY rowid DESC
           LIMIT 1
         `,
       );

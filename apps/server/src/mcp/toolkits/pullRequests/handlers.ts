@@ -783,6 +783,17 @@ const make = Effect.gen(function* () {
             : {};
         const project = yield* projectOf(thread, PullRequestLinkFailedError);
         const target = yield* resolveTarget(input, project);
+        const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+          Effect.mapError((cause) => new PullRequestLinkFailedError({ cause })),
+        );
+        if (
+          Option.isSome(scopedProjectId) &&
+          (project === undefined ||
+            project.id !== scopedProjectId.value ||
+            projectForPullRequest([project], target, project) === undefined)
+        ) {
+          return yield* new PullRequestProjectNotFoundError({ repository: target.repository });
+        }
         const existing = threadPullRequestsOf(thread).find((link) =>
           threadPullRequestKeysEqual(link, target),
         );
@@ -810,13 +821,31 @@ const make = Effect.gen(function* () {
     link_pull_requests: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);
+        const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+          Effect.mapError((cause) => new PullRequestLinkFailedError({ cause })),
+        );
+        const scopedProject = Option.isSome(scopedProjectId)
+          ? yield* projectOf(thread, PullRequestLinkFailedError)
+          : undefined;
         const targets: Array<ResolvedTarget> = [];
         const invalidUrls: Array<string> = [];
         for (const url of input.urls) {
           const target = yield* resolveTarget({ url }, undefined).pipe(Effect.option);
           if (Option.isNone(target)) invalidUrls.push(url);
-          else if (!targets.some((seen) => threadPullRequestKeysEqual(seen, target.value)))
-            targets.push(target.value);
+          else {
+            if (
+              Option.isSome(scopedProjectId) &&
+              (scopedProject === undefined ||
+                scopedProject.id !== scopedProjectId.value ||
+                projectForPullRequest([scopedProject], target.value, scopedProject) === undefined)
+            ) {
+              return yield* new PullRequestProjectNotFoundError({
+                repository: target.value.repository,
+              });
+            }
+            if (!targets.some((seen) => threadPullRequestKeysEqual(seen, target.value)))
+              targets.push(target.value);
+          }
         }
         const links = threadPullRequestsOf(thread);
         const isLinked = (target: ResolvedTarget) =>
