@@ -7,7 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { assert, describe, it } from "@effect/vitest";
+import { afterAll, assert, describe, it } from "@effect/vitest";
 import * as ByteSize from "effect/ByteSize";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -59,9 +59,13 @@ function mockProcess(exit: number | PlatformError.PlatformError) {
   });
 }
 
+// The runner locks its home on disk, so tests never point it at a shared path.
+const devServerHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-dev-runner-"));
+afterAll(() => NodeFS.rmSync(devServerHome, { recursive: true, force: true }));
+
 const devServerInput = {
   mode: "dev:server",
-  t3Home: "/tmp/t3code-dev-runner",
+  t3Home: devServerHome,
   browser: undefined,
   autoBootstrapProjectFromCwd: undefined,
   logWebSocketEvents: undefined,
@@ -845,11 +849,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = yield* spawnedHome({
-            t3Home: "/tmp/explicit-home",
+            t3Home: path.join(root, "explicit-home"),
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            ambientHome: path.join(root, "ambient-home"),
           });
-          assert.equal(home, path.resolve("/tmp/explicit-home"));
+          assert.equal(home, path.join(path.resolve(root), "explicit-home"));
         }).pipe(Effect.scoped),
       );
 
@@ -860,7 +864,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: "   ",
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            ambientHome: path.join(root, "ambient-home"),
           });
           assert.equal(home, path.join(path.resolve(root), ".t3"));
         }).pipe(Effect.scoped),
@@ -873,7 +877,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: undefined,
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            ambientHome: path.join(root, "ambient-home"),
           });
           assert.equal(home, path.join(path.resolve(root), ".t3"));
         }).pipe(Effect.scoped),
@@ -905,6 +909,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
                 Effect.provideService(HostProcess.WorkingDirectory, root),
                 Effect.provideService(HostProcess.HomeDirectory, home),
                 Effect.provideService(HostProcess.Environment, {}),
+                // Each run is its own runner process, which releases the state directory lock.
+                Effect.scoped,
               );
               return spawned.filter((args) =>
                 args.some((arg) => arg.endsWith("migrate-dev-db.ts")),
@@ -1003,13 +1009,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       it.effect("falls back to an ambient T3CODE_HOME outside a worktree", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const ambientHome = path.join(root, "ambient-home");
           const home = yield* spawnedHome({
             t3Home: undefined,
             cwd: NodeOS.tmpdir(),
-            ambientHome: "/home/user/.t3",
+            ambientHome,
           });
-          assert.equal(home, path.resolve("/home/user/.t3"));
-        }),
+          assert.equal(home, path.resolve(ambientHome));
+        }).pipe(Effect.scoped),
       );
     });
   });
