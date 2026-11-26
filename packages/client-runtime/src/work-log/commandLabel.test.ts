@@ -5,6 +5,9 @@ import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
 describe("commandProgramName", () => {
   it.each([
     ["/bin/bash --rcfile /tmp/config -c 'git status'", "git"],
+    ['bash -lc -- "printf ok"', "printf"],
+    // fish runs `--` itself as the script; "printf ok" is a positional argument
+    ['fish -c -- "printf ok"', "--"],
     ["zsh -lc 'CI=1 env -u DEBUG sudo -u root vp test run'", "vp"],
     ['"C:\\Program Files\\Git\\bin\\bash.exe" -lc "git status"', "git"],
     // regression: #9371 a multiline script whose later line re-quotes must still label its first program
@@ -22,7 +25,7 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
-  it.each(["zsh -lc", "zsh -lc 'git status", "zsh -lc 'env'"])(
+  it.each(["zsh -lc", "bash -c --", "zsh -lc 'git status", "zsh -lc 'env'"])(
     "falls back for missing or malformed scripts: %s",
     (command) => {
       expect(commandProgramName(command)).toBeNull();
@@ -62,6 +65,17 @@ describe("commandProgramName", () => {
     ["cd /tmp && # use the selected workspace\nnpm test", "npm"],
     ["cd ${ROOT:-path;with;semicolons} && bun test", "bun"],
   ])("skips leading cd commands and uses the next useful program: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  // regression: #41718 a leading env-setup eval hid the real program behind "Running command"
+  it.each([
+    [
+      'cd /path/to/repo && eval "$(fnm env --shell zsh)" && fnm use 26.13.1 && git commit -m "msg"',
+      "fnm",
+    ],
+    ['eval "$(/opt/homebrew/bin/brew shellenv)" && pnpm test', "pnpm"],
+  ])("skips leading env-setup eval segments: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
 
@@ -138,6 +152,16 @@ describe("commandProgramName", () => {
   });
 });
 
+describe("commandDisplayText with shell option terminators", () => {
+  it.each([
+    ['bash -lc -- "printf ok"', "printf ok"],
+    ['fish -c -- "printf ok"', 'fish -c -- "printf ok"'],
+    ['bash -c -- "printf ok" arg0', 'bash -c -- "printf ok" arg0'],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
 describe("commandDisplayText with redacted Codex commands", () => {
   // Codex replaces secrets in command text before sending it
   // (codex-rs/secrets/src/sanitizer.rs). Usually the quoting survives.
@@ -155,6 +179,24 @@ describe("commandDisplayText with redacted Codex commands", () => {
   it("keeps the wrapper when redaction broke the quoting", () => {
     const input = `/bin/zsh -lc "python3 -c 'token=[REDACTED_SECRET]"apiToken\\"]; print(token)'"`;
     expect(commandDisplayText(input)).toBe(input);
+  });
+});
+
+describe("commandDisplayText with Windows shell wrappers", () => {
+  it.each([
+    [
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"`,
+      "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
+    ],
+    [
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command 'rg -n -F "new Date()" .'`,
+      'rg -n -F "new Date()" .',
+    ],
+    ['cmd.exe /c "npm test"', "npm test"],
+    ['Bash.exe -lc "git status"', "git status"],
+    ['"C:\\Program Files\\Git\\bin\\Bash.exe" -lc "rg foo"', "rg foo"],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
   });
 });
 

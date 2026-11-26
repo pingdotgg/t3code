@@ -1,14 +1,15 @@
 import { assert } from "@effect/vitest"
-import { JsonSchema, Schema, SchemaRepresentation } from "effect"
+import { Exit, JsonSchema, Schema, SchemaRepresentation } from "effect"
 import { TestSchema } from "effect/testing"
 import { describe, it } from "vitest"
 import { deepStrictEqual, throws } from "../../utils/assert.ts"
+import { assertSchemas, makeModule } from "../../utils/schemaCodegen.ts"
 
-const makeCode = SchemaRepresentation.makeCode
+const makeCode = (runtime: string, Type: string): SchemaRepresentation.Code => ({ runtime, Type })
 
 type Expected = {
   readonly codes: SchemaRepresentation.Code
-  readonly references?: Partial<SchemaRepresentation.CodeDocument["references"]>
+  readonly references?: Readonly<Record<string, SchemaRepresentation.Code>>
 }
 
 function toSchemaFromJsonSchemaDocument(
@@ -46,26 +47,21 @@ describe("fromJsonSchemaDocument", () => {
         `Schema.StructWithRest(Schema.Struct({ "value": Impossible }), [Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" }))])`,
         `{ readonly "value": Impossible } & { readonly [x: string]: Schema.Json }`
       ),
-      references: {
-        nonRecursives: [{
-          $ref: `Impossible`,
-          code: makeCode(`Schema.Never.annotate({ "identifier": "Impossible" })`, `never`)
-        }]
-      }
+      references: { "Impossible": makeCode(`Schema.Never.annotate({ "identifier": "Impossible" })`, `never`) }
     })
   })
 
   it("preserves Never in array items and union members", () => {
     assertFromJsonSchema(
       { schema: { type: "array", items: { not: {} } } },
-      { codes: makeCode(`Schema.Array(Schema.Never)`, `ReadonlyArray<never>`) }
+      { codes: makeCode(`Schema.Array(Schema.Never)`, `globalThis.ReadonlyArray<never>`) }
     )
     assertFromJsonSchema(
       { schema: { type: "array", prefixItems: [{ not: {} }] } },
       {
         codes: makeCode(
           `Schema.TupleWithRest(Schema.Tuple([Schema.optionalKey(Schema.Never)]), [Schema.Json.annotate({ "expected": "JSON value" })])`,
-          `readonly [(never)?, ...Array<Schema.Json>]`
+          `readonly [(never)?, ...globalThis.Array<Schema.Json>]`
         )
       }
     )
@@ -139,13 +135,9 @@ describe("fromJsonSchemaDocument", () => {
   }
 
   function assertCode(schema: Schema.Top, expected: Expected) {
-    deepStrictEqual(SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast])), {
-      codes: [expected.codes],
-      references: {
-        nonRecursives: expected.references?.nonRecursives ?? [],
-        recursives: expected.references?.recursives ?? {}
-      },
-      artifacts: []
+    assertSchemas(makeModule(SchemaRepresentation.toRepresentations([schema.ast])), {
+      ...expected.references,
+      TestRoot0: expected.codes
     })
   }
 
@@ -428,7 +420,7 @@ describe("fromJsonSchemaDocument", () => {
         assertFromJsonSchema({ schema: { pattern: "^a+$" } }, {
           codes: makeCode(
             `Schema.Union([Schema.Null, Schema.String.check(Schema.isPattern(new globalThis.RegExp("^a+$", "u")).annotate({ "expected": "a string matching the RegExp ^a+$" })), Schema.Finite, Schema.Boolean, Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" })), Schema.Array(Schema.Json.annotate({ "expected": "JSON value" }))])`,
-            `null | string | number | boolean | { readonly [x: string]: Schema.Json } | ReadonlyArray<Schema.Json>`
+            `null | string | number | boolean | { readonly [x: string]: Schema.Json } | globalThis.ReadonlyArray<Schema.Json>`
           )
         })
       })
@@ -598,7 +590,7 @@ describe("fromJsonSchemaDocument", () => {
         {
           codes: makeCode(
             `Schema.Array(Schema.Json.annotate({ "expected": "JSON value" }))`,
-            `ReadonlyArray<Schema.Json>`
+            `globalThis.ReadonlyArray<Schema.Json>`
           )
         }
       )
@@ -612,7 +604,7 @@ describe("fromJsonSchemaDocument", () => {
             items: { type: "string" }
           }
         },
-        { codes: makeCode(`Schema.Array(Schema.String)`, `ReadonlyArray<string>`) }
+        { codes: makeCode(`Schema.Array(Schema.String)`, `globalThis.ReadonlyArray<string>`) }
       )
     })
 
@@ -628,7 +620,7 @@ describe("fromJsonSchemaDocument", () => {
         {
           codes: makeCode(
             `Schema.TupleWithRest(Schema.Tuple([Schema.optionalKey(Schema.String), Schema.optionalKey(Schema.Finite)]), [Schema.Json.annotate({ "expected": "JSON value" })]).check(Schema.isMaxLength(1).annotate({ "expected": "a value with a length of at most 1" }))`,
-            `readonly [(string)?, (number)?, ...Array<Schema.Json>]`
+            `readonly [(string)?, (number)?, ...globalThis.Array<Schema.Json>]`
           )
         }
       )
@@ -646,7 +638,7 @@ describe("fromJsonSchemaDocument", () => {
         {
           codes: makeCode(
             `Schema.TupleWithRest(Schema.Tuple([Schema.optionalKey(Schema.String)]), [Schema.Json.annotate({ "expected": "JSON value" })]).check(Schema.isMaxLength(2).annotate({ "expected": "a value with a length of at most 2" }))`,
-            `readonly [(string)?, ...Array<Schema.Json>]`
+            `readonly [(string)?, ...globalThis.Array<Schema.Json>]`
           )
         }
       )
@@ -706,7 +698,7 @@ describe("fromJsonSchemaDocument", () => {
         {
           codes: makeCode(
             `Schema.TupleWithRest(Schema.Tuple([Schema.String]), [Schema.Finite])`,
-            `readonly [string, ...Array<number>]`
+            `readonly [string, ...globalThis.Array<number>]`
           )
         }
       )
@@ -719,7 +711,7 @@ describe("fromJsonSchemaDocument", () => {
           {
             codes: makeCode(
               `Schema.Array(Schema.Json.annotate({ "expected": "JSON value" })).check(Schema.isMinLength(1).annotate({ "expected": "a value with a length of at least 1" }))`,
-              `ReadonlyArray<Schema.Json>`
+              `globalThis.ReadonlyArray<Schema.Json>`
             )
           }
         )
@@ -731,7 +723,7 @@ describe("fromJsonSchemaDocument", () => {
           {
             codes: makeCode(
               `Schema.Array(Schema.Json.annotate({ "expected": "JSON value" })).check(Schema.isMaxLength(1).annotate({ "expected": "a value with a length of at most 1" }))`,
-              `ReadonlyArray<Schema.Json>`
+              `globalThis.ReadonlyArray<Schema.Json>`
             )
           }
         )
@@ -743,7 +735,7 @@ describe("fromJsonSchemaDocument", () => {
           {
             codes: makeCode(
               `Schema.Array(Schema.Json.annotate({ "expected": "JSON value" })).check(Schema.isUnique().annotate({ "expected": "an array with unique items" }))`,
-              `ReadonlyArray<Schema.Json>`
+              `globalThis.ReadonlyArray<Schema.Json>`
             )
           }
         )
@@ -753,7 +745,7 @@ describe("fromJsonSchemaDocument", () => {
         assertFromJsonSchema({ schema: { type: "array", uniqueItems: false } }, {
           codes: makeCode(
             `Schema.Array(Schema.Json.annotate({ "expected": "JSON value" }))`,
-            `ReadonlyArray<Schema.Json>`
+            `globalThis.ReadonlyArray<Schema.Json>`
           )
         })
       })
@@ -908,6 +900,44 @@ describe("fromJsonSchemaDocument", () => {
       )
     })
 
+    it("imports additionalProperties that accept the declared property's values", () => {
+      // Reduced from OpenRouter's ImageGenerationServerToolConfig.
+      const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        type: "object",
+        properties: { model: { type: "string" } },
+        additionalProperties: {
+          anyOf: [{ type: "string" }, { type: "number" }]
+        }
+      }))
+      const decode = Schema.decodeUnknownExit(schema as unknown as Schema.ConstraintDecoder<unknown>)
+
+      for (const input of [{ model: "image-model", seed: 1 }, { extra: "value" }]) {
+        assert.deepStrictEqual(decode(input), Exit.succeed(input))
+      }
+      assert.isTrue(Exit.isFailure(decode({ model: 1 })))
+      assert.isTrue(Exit.isFailure(decode({ model: "image-model", extra: true })))
+    })
+
+    it("closes implicit additional properties after intersections", () => {
+      for (const additionalProperties of [undefined, true, {}]) {
+        const schema = toSchemaFromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({
+            allOf: [
+              { type: "object", properties: { a: { type: "string" } } },
+              { type: "object", properties: { b: { type: "number" } }, additionalProperties }
+            ]
+          }),
+          { closeObjects: true }
+        )
+        const decode = Schema.decodeUnknownExit(schema as unknown as Schema.ConstraintDecoder<unknown>)
+        const input = { a: "a", b: 1, extra: true }
+        assert.deepStrictEqual(
+          decode(input),
+          Exit.succeed(additionalProperties === undefined ? { a: "a", b: 1 } : input)
+        )
+      }
+    })
+
     it("explains why typed additional properties cannot exclude patterned keys", () => {
       throws(
         () =>
@@ -988,19 +1018,14 @@ describe("fromJsonSchemaDocument", () => {
       }, {
         codes: makeCode(`Schema.Struct({ "values": Values })`, `{ readonly "values": Values }`),
         references: {
-          nonRecursives: [{
-            $ref: `Value`,
-            code: makeCode(
-              `Schema.String.check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points", "identifier": "Value" }))`,
-              `string`
-            )
-          }, {
-            $ref: `Values`,
-            code: makeCode(
-              `Schema.Record(Schema.String.check(Schema.isPattern(new globalThis.RegExp("a", "u")).annotate({ "expected": "a string matching the RegExp a" })), Value).annotate({ "identifier": "Values" })`,
-              `{ readonly [x: string]: Value }`
-            )
-          }]
+          "Value": makeCode(
+            `Schema.String.check(Schema.isMinCodePoints(2).annotate({ "expected": "a string with at least 2 code points", "identifier": "Value" }))`,
+            `string`
+          ),
+          "Values": makeCode(
+            `Schema.Record(Schema.String.check(Schema.isPattern(new globalThis.RegExp("a", "u")).annotate({ "expected": "a string matching the RegExp a" })), Value).annotate({ "identifier": "Values" })`,
+            `{ readonly [x: string]: Value }`
+          )
         }
       })
     })
@@ -1199,6 +1224,118 @@ describe("fromJsonSchemaDocument", () => {
     )
   })
 
+  it.each(["anyOf", "oneOf"] as const)("keeps parent and branch examples separate with %s", (mode) => {
+    assertFromJsonSchema({
+      schema: {
+        type: "string",
+        [mode]: [
+          { const: "Router", examples: ["Router"] },
+          { const: "GPT", examples: ["GPT"] }
+        ],
+        examples: ["GPT"]
+      }
+    }, {
+      codes: makeCode(
+        `Schema.Union([Schema.Literal("Router").annotate({ "examples": ["Router"] }), Schema.Literal("GPT").annotate({ "examples": ["GPT"] })]${
+          mode === "oneOf" ? `, { mode: "oneOf" }` : ""
+        }).annotate({ "examples": ["GPT"] })`,
+        `"Router" | "GPT"`
+      )
+    })
+  })
+
+  it("keeps examples on an enum intersected with a nullable reference to itself", () => {
+    assertFromJsonSchema({
+      schema: {
+        allOf: [
+          { $ref: "#/$defs/Tokenizer" },
+          { anyOf: [{ $ref: "#/$defs/Tokenizer" }, { type: "null" }] }
+        ],
+        $defs: { Tokenizer: { type: "string", enum: ["Router", "GPT"], examples: ["GPT"] } }
+      }
+    }, {
+      codes: makeCode(
+        `Schema.Literals(["Router", "GPT"]).annotate({ "examples": ["GPT"] })`,
+        `"Router" | "GPT"`
+      )
+    })
+  })
+
+  it.each([undefined, ["a"]])(
+    "preserves oneOf when intersecting a nullable enum reference with examples %j",
+    (examples) => {
+      assertFromJsonSchema({
+        schema: {
+          allOf: [
+            { oneOf: [{ const: "a" }, { const: "b" }] },
+            { anyOf: [{ $ref: "#/$defs/U" }, { type: "null" }] }
+          ],
+          $defs: { U: { enum: ["a", "b"], examples } }
+        }
+      }, {
+        codes: makeCode(
+          `Schema.Union([Schema.Literal("a"), Schema.Literal("b")], { mode: "oneOf" })${
+            examples === undefined ? "" : `.annotate({ "examples": ["a"] })`
+          }`,
+          `"a" | "b"`
+        )
+      })
+    }
+  )
+
+  it.each(["$ref", "$dynamicRef"])("omits contentSchema containing a nested %s", (keyword) => {
+    const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+      type: "string",
+      contentEncoding: "base64",
+      contentMediaType: "application/json",
+      contentSchema: {
+        type: "object",
+        properties: {
+          values: {
+            type: "array",
+            items: { anyOf: [{ [keyword]: "#/$defs/Payload" }] }
+          }
+        }
+      },
+      $defs: { Payload: { type: "number" } }
+    }))
+
+    assertCode(schema, {
+      codes: makeCode(
+        `Schema.String.annotate({ "contentEncoding": "base64", "contentMediaType": "application/json" })`,
+        `string`
+      )
+    })
+    deepStrictEqual(Schema.toJsonSchemaDocument(schema), {
+      dialect: "draft-2020-12",
+      schema: { type: "string", contentEncoding: "base64", contentMediaType: "application/json" },
+      definitions: {}
+    })
+  })
+
+  it("preserves reference-like data inside contentSchema", () => {
+    const data = { $ref: "#/$defs/Payload", $dynamicRef: "#node" }
+    const contentSchema = {
+      type: "object",
+      properties: {
+        $ref: { type: "string" },
+        value: { const: data, enum: [data], default: data, examples: [data] }
+      },
+      examples: [data]
+    }
+    const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+      type: "string",
+      contentMediaType: "application/json",
+      contentSchema
+    }))
+
+    deepStrictEqual(Schema.toJsonSchemaDocument(schema).schema, {
+      type: "string",
+      contentMediaType: "application/json",
+      contentSchema
+    })
+  })
+
   describe("$ref", () => {
     it("rejects local references inside nested resources", () => {
       const reference = { $ref: "#/$defs/X" }
@@ -1247,9 +1384,7 @@ describe("fromJsonSchemaDocument", () => {
           `Schema.StructWithRest(Schema.Struct({ "child": Schema.optionalKey(Schema.Finite), "value": Schema.optionalKey(X) }), [Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" }))])`,
           `{ readonly "child"?: number, readonly "value"?: X } & { readonly [x: string]: Schema.Json }`
         ),
-        references: {
-          nonRecursives: [{ $ref: `X`, code: makeCode(`Schema.String.annotate({ "identifier": "X" })`, `string`) }]
-        }
+        references: { "X": makeCode(`Schema.String.annotate({ "identifier": "X" })`, `string`) }
       })
     })
 
@@ -1267,9 +1402,7 @@ describe("fromJsonSchemaDocument", () => {
           `Schema.StructWithRest(Schema.Struct({ "child": Schema.optionalKey(X) }), [Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" }))])`,
           `{ readonly "child"?: X } & { readonly [x: string]: Schema.Json }`
         ),
-        references: {
-          nonRecursives: [{ $ref: "X", code: makeCode(`Schema.String.annotate({ "identifier": "X" })`, `string`) }]
-        }
+        references: { "X": makeCode(`Schema.String.annotate({ "identifier": "X" })`, `string`) }
       })
 
       throws(
@@ -1798,12 +1931,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(`A_B_C`, `A_B_C`),
-        references: {
-          nonRecursives: [{
-            $ref: `A_B_C`,
-            code: makeCode(`Schema.String.annotate({ "identifier": "A/B~C" })`, `string`)
-          }]
-        }
+        references: { "A_B_C": makeCode(`Schema.String.annotate({ "identifier": "A/B~C" })`, `string`) }
       })
     })
 
@@ -1817,9 +1945,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(`A_B`, `A_B`),
-        references: {
-          nonRecursives: [{ $ref: `A_B`, code: makeCode(`Schema.String.annotate({ "identifier": "A B" })`, `string`) }]
-        }
+        references: { "A_B": makeCode(`Schema.String.annotate({ "identifier": "A B" })`, `string`) }
       })
     })
 
@@ -1833,9 +1959,7 @@ describe("fromJsonSchemaDocument", () => {
         }
       }, {
         codes: makeCode(`_`, `_`),
-        references: {
-          nonRecursives: [{ $ref: `_`, code: makeCode(`Schema.String.annotate({ "identifier": "" })`, `string`) }]
-        }
+        references: { "_": makeCode(`Schema.String.annotate({ "identifier": "" })`, `string`) }
       })
     })
 
@@ -1853,9 +1977,7 @@ describe("fromJsonSchemaDocument", () => {
         },
         {
           codes: makeCode(`A`, `A`),
-          references: {
-            nonRecursives: [{ $ref: `A`, code: makeCode(`Schema.String.annotate({ "identifier": "A" })`, `string`) }]
-          }
+          references: { "A": makeCode(`Schema.String.annotate({ "identifier": "A" })`, `string`) }
         }
       )
     })
@@ -1875,9 +1997,7 @@ describe("fromJsonSchemaDocument", () => {
         },
         {
           codes: makeCode(`Schema.suspend((): Schema.Codec<A> => A).annotate({ "description": "a" })`, `A`),
-          references: {
-            nonRecursives: [{ $ref: `A`, code: makeCode(`Schema.String.annotate({ "identifier": "A" })`, `string`) }]
-          }
+          references: { "A": makeCode(`Schema.String.annotate({ "identifier": "A" })`, `string`) }
         }
       )
     })
@@ -1894,13 +2014,10 @@ describe("fromJsonSchemaDocument", () => {
       }, {
         codes: makeCode(`Schema.suspend((): Schema.Codec<A> => A).annotate({ "format": "custom" })`, `A`),
         references: {
-          nonRecursives: [{
-            $ref: `A`,
-            code: makeCode(
-              `Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number", "identifier": "A" }))`,
-              `number`
-            )
-          }]
+          "A": makeCode(
+            `Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number", "identifier": "A" }))`,
+            `number`
+          )
         }
       })
     })
@@ -1922,9 +2039,7 @@ describe("fromJsonSchemaDocument", () => {
         },
         {
           codes: makeCode(`Schema.suspend((): Schema.Codec<A> => A).annotate({ "description": "a" })`, `A`),
-          references: {
-            nonRecursives: [{ $ref: `A`, code: makeCode(`Schema.String.annotate({ "identifier": "A" })`, `string`) }]
-          }
+          references: { "A": makeCode(`Schema.String.annotate({ "identifier": "A" })`, `string`) }
         }
       )
     })
@@ -1960,12 +2075,10 @@ describe("fromJsonSchemaDocument", () => {
         {
           codes: makeCode(`A`, `A`),
           references: {
-            recursives: {
-              A: makeCode(
-                `Schema.Struct({ "name": Schema.String, "children": Schema.Array(Schema.suspend((): Schema.Codec<A> => A)) }).annotate({ "identifier": "A" })`,
-                `{ readonly "name": string, readonly "children": ReadonlyArray<A> }`
-              )
-            }
+            A: makeCode(
+              `Schema.Struct({ "name": Schema.String, "children": Schema.Array(Schema.suspend((): Schema.Codec<A> => A)) }).annotate({ "identifier": "A" })`,
+              `{ readonly "name": string, readonly "children": globalThis.ReadonlyArray<A> }`
+            )
           }
         }
       )
@@ -1994,12 +2107,10 @@ describe("fromJsonSchemaDocument", () => {
         {
           codes: makeCode(`Node`, `Node`),
           references: {
-            recursives: {
-              Node: makeCode(
-                `Schema.Struct({ "child": Schema.suspend((): Schema.Codec<Node> => Node).annotate({ "description": "recursive child" }) }).annotate({ "identifier": "Node" })`,
-                `{ readonly "child": Node }`
-              )
-            }
+            Node: makeCode(
+              `Schema.Struct({ "child": Schema.suspend((): Schema.Codec<Node> => Node).annotate({ "description": "recursive child" }) }).annotate({ "identifier": "Node" })`,
+              `{ readonly "child": Node }`
+            )
           }
         }
       )
@@ -2098,7 +2209,63 @@ describe("fromJsonSchemaDocument", () => {
       })
     })
 
-    it("rejects intersections requiring a Cartesian product", () => {
+    it("intersects overlapping unions of referenced discriminated objects", () => {
+      // Reduced from the base and extension of OpenRouter's OpenResponsesResult.output items.
+      for (const mode of ["anyOf", "oneOf"] as const) {
+        const base = { [mode]: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }] }
+        const extension = { [mode]: [{ $ref: "#/$defs/ExtendedA" }, { $ref: "#/$defs/C" }, { $ref: "#/$defs/B" }] }
+        for (const allOf of [[base, extension], [extension, base]]) {
+          const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+            $defs: {
+              A: {
+                type: "object",
+                properties: { type: { const: "a" }, value: { type: "string" } },
+                required: ["type", "value"]
+              },
+              ExtendedA: {
+                type: "object",
+                properties: { type: { const: "a" }, extra: { type: "number" } },
+                required: ["type", "extra"]
+              },
+              B: {
+                type: "object",
+                properties: { type: { const: "b" }, child: { $ref: "#/$defs/B" } },
+                required: ["type"]
+              },
+              C: { type: "object", properties: { type: { const: "c" } }, required: ["type"] }
+            },
+            allOf
+          }))
+          const decode = Schema.decodeUnknownExit(schema as unknown as Schema.ConstraintDecoder<unknown>)
+
+          for (const input of [{ type: "a", value: "value", extra: 1 }, { type: "b", child: { type: "b" } }]) {
+            assert.deepStrictEqual(decode(input), Exit.succeed(input))
+          }
+          assert.isTrue(Exit.isFailure(decode({ type: "c" })))
+          assert.isTrue(Exit.isFailure(decode({ type: "a", value: "value" })))
+          assert.isTrue(Exit.isFailure(decode({ type: "a", extra: 1 })))
+          assert.isTrue(Exit.isFailure(decode({})))
+        }
+      }
+    })
+
+    it("intersects type partitions with heterogeneous finite enums", () => {
+      const partition = { anyOf: [{ type: "string" }, { type: "number" }] }
+      const enums = { anyOf: [{ enum: ["a", 1] }, { enum: ["b", 2] }] }
+      for (const allOf of [[partition, enums], [enums, partition]]) {
+        const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ allOf }))
+        const decode = Schema.decodeUnknownExit(schema as unknown as Schema.ConstraintDecoder<unknown>)
+
+        for (const input of ["a", "b", 1, 2]) {
+          assert.deepStrictEqual(decode(input), Exit.succeed(input))
+        }
+        for (const input of ["other", 3, null]) {
+          assert.isTrue(Exit.isFailure(decode(input)))
+        }
+      }
+    })
+
+    it("rejects union intersections without a proven disjoint partition", () => {
       throws(
         () =>
           toSchemaFromJsonSchemaDocument(
@@ -2121,6 +2288,159 @@ describe("fromJsonSchemaDocument", () => {
           ),
         `Cannot intersect these "anyOf" or "oneOf" alternatives without expanding their branches.\n  at ["schema"]["allOf"][1]`
       )
+    })
+
+    it.each(["anyOf", "oneOf"] as const)("intersects flat tagged %s alternatives", (mode) => {
+      const tagged = {
+        [mode]: ["a", "b"].map((tag) => ({
+          type: "object",
+          properties: { tag: { const: tag } },
+          required: ["tag"]
+        }))
+      }
+      const fields = {
+        [mode]: ["x", "y"].map((key) => ({
+          type: "object",
+          properties: { [key]: { type: "string" } },
+          required: [key]
+        }))
+      }
+      for (const allOf of [[tagged, fields], [fields, tagged]]) {
+        const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ allOf }))
+        const decode = Schema.decodeUnknownExit(schema as unknown as Schema.ConstraintDecoder<unknown>)
+
+        for (const tag of ["a", "b"]) {
+          for (const key of ["x", "y"]) {
+            const input = { tag, [key]: "value" }
+            assert.deepStrictEqual(decode(input), Exit.succeed(input))
+          }
+        }
+        for (const input of [{ tag: "c", x: "value" }, { tag: "a" }, { tag: "a", x: 1 }]) {
+          assert.isTrue(Exit.isFailure(decode(input)))
+        }
+        assert.strictEqual(Exit.isSuccess(decode({ tag: "a", x: "x", y: "y" })), mode === "anyOf")
+      }
+    })
+
+    it("preserves mutually recursive references intersected with themselves", () => {
+      const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        $ref: "#/$defs/Node",
+        $defs: {
+          Node: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+              children: { allOf: [{ $ref: "#/$defs/Children" }, { $ref: "#/$defs/Children" }] }
+            },
+            required: ["value"]
+          },
+          Children: {
+            type: "array",
+            items: { allOf: [{ $ref: "#/$defs/Node" }, { $ref: "#/$defs/Node" }] }
+          }
+        }
+      }))
+      const decode = Schema.decodeUnknownExit(schema as unknown as Schema.ConstraintDecoder<unknown>)
+      const input = { value: "parent", children: [{ value: "child", children: [] }] }
+
+      assert.deepStrictEqual(decode(input), Exit.succeed(input))
+      assert.isTrue(Exit.isFailure(decode({ value: "parent", children: [{ value: 1 }] })))
+      assert.isTrue(Exit.isFailure(decode({ value: "parent", children: [{}] })))
+    })
+
+    it.each([
+      {
+        name: "directly",
+        definition: { allOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/A" }] }
+      },
+      {
+        name: "through a union",
+        definition: {
+          anyOf: [
+            { allOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/A" }] },
+            { type: "string" }
+          ]
+        }
+      }
+    ])("rejects circular aliases repeated in an intersection $name", ({ definition }) => {
+      assert.throws(() =>
+        toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+          $ref: "#/$defs/A",
+          $defs: { A: definition }
+        })), /Definition "A" is a circular alias/)
+    })
+
+    it("rejects alias cycles through unions in a same-reference intersection", () => {
+      assert.throws(() =>
+        toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+          $defs: { A: { anyOf: [{ $ref: "#/$defs/A" }, { type: "string" }] } },
+          allOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/A" }]
+        })), /Definition "A" is a circular alias/)
+    })
+
+    it.each([
+      {
+        name: "distinct references",
+        schema: {
+          allOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }],
+          $defs: {
+            A: { type: "object", properties: { next: { $ref: "#/$defs/A" } } },
+            B: { type: "object", properties: { next: { $ref: "#/$defs/B" } } }
+          }
+        },
+        message: /^Cannot normalize this recursive intersection\./
+      },
+      {
+        name: "annotated aliases with an inline constraint",
+        schema: {
+          allOf: [{ $ref: "#/$defs/A" }, { type: "string" }],
+          $defs: {
+            A: { $ref: "#/$defs/B", description: "alias", examples: ["x"] },
+            B: { anyOf: [{ $ref: "#/$defs/A" }, { type: "null" }] }
+          }
+        },
+        message: /^Cannot normalize this recursive intersection\./
+      },
+      {
+        name: "a constraint needing an unfinished definition",
+        schema: {
+          $ref: "#/$defs/A",
+          $defs: {
+            A: {
+              type: "object",
+              properties: {
+                next: {
+                  allOf: [
+                    { $ref: "#/$defs/A" },
+                    { type: "object", properties: { extra: { type: "string" } } }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        message: /^Cannot resolve recursive definition "A" during normalization\./
+      }
+    ])("rejects unsupported recursive intersections: $name", ({ message, schema }) => {
+      assert.throws(() => toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12(schema)), message)
+    })
+
+    it("allows independent uses of the same reference intersection", () => {
+      const intersection = { allOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }] }
+      const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        type: "object",
+        properties: { first: intersection, second: intersection },
+        $defs: {
+          A: { type: "number", minimum: 0 },
+          B: { type: "number", maximum: 10 }
+        }
+      }))
+      const decode = Schema.decodeUnknownExit(schema as unknown as Schema.ConstraintDecoder<unknown>)
+      const input = { first: 1, second: 2 }
+
+      assert.deepStrictEqual(decode(input), Exit.succeed(input))
+      assert.isTrue(Exit.isFailure(decode({ first: -1, second: 2 })))
+      assert.isTrue(Exit.isFailure(decode({ first: 1, second: 11 })))
     })
 
     it.each([
@@ -2178,12 +2498,7 @@ describe("fromJsonSchemaDocument", () => {
           `Schema.Union([Schema.StructWithRest(Schema.Struct({ "a": Schema.Json.annotate({ "expected": "JSON value" }), "value": Value }), [Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" }))]), Schema.StructWithRest(Schema.Struct({ "b": Schema.Json.annotate({ "expected": "JSON value" }), "value": Value }), [Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" }))])])`,
           `{ readonly "a": Schema.Json, readonly "value": Value } & { readonly [x: string]: Schema.Json } | { readonly "b": Schema.Json, readonly "value": Value } & { readonly [x: string]: Schema.Json }`
         ),
-        references: {
-          nonRecursives: [{
-            $ref: `Value`,
-            code: makeCode(`Schema.String.annotate({ "identifier": "Value" })`, `string`)
-          }]
-        }
+        references: { "Value": makeCode(`Schema.String.annotate({ "identifier": "Value" })`, `string`) }
       })
     })
 
@@ -2255,7 +2570,7 @@ describe("fromJsonSchemaDocument", () => {
         {
           codes: makeCode(
             `Schema.Array(Schema.Json.annotate({ "expected": "JSON value" })).annotate({ "description": "a" })`,
-            `ReadonlyArray<Schema.Json>`
+            `globalThis.ReadonlyArray<Schema.Json>`
           )
         }
       )
@@ -2917,7 +3232,7 @@ describe("fromJsonSchemaDocument", () => {
           {
             codes: makeCode(
               `Schema.Array(Schema.Json.annotate({ "expected": "JSON value" })).check(Schema.isUnique().annotate({ "expected": "an array with unique items" }))`,
-              `ReadonlyArray<Schema.Json>`
+              `globalThis.ReadonlyArray<Schema.Json>`
             )
           }
         )
@@ -2940,7 +3255,7 @@ describe("fromJsonSchemaDocument", () => {
           {
             codes: makeCode(
               `Schema.TupleWithRest(Schema.Tuple([Schema.String, Schema.Literal("tail")]), [Schema.String])`,
-              `readonly [string, "tail", ...Array<string>]`
+              `readonly [string, "tail", ...globalThis.Array<string>]`
             )
           }
         )

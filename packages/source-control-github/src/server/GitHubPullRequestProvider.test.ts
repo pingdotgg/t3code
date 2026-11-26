@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
-import type { PullRequestReaction } from "@t3tools/contracts";
+import { SourceControlProviderKind, type PullRequestReaction } from "@t3tools/contracts";
 
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -349,7 +349,7 @@ describe("gitHubViewerPermissions", () => {
       if (readChecks === undefined) return yield* Effect.die("checks read missing");
       expect(
         yield* readChecks({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 }),
-      ).toEqual({ state: detail.state, checks: detail.checks });
+      ).toEqual({ state: detail.state, checks: detail.checks, workflowApprovalsRequired: 1 });
       expect(detail.workflowApprovalsRequired).toBe(1);
       expect(detail.checks).toEqual([
         {
@@ -419,6 +419,7 @@ describe("gitHubViewerPermissions", () => {
           listWorkflowRunsRequiringApproval: () =>
             Effect.succeed([
               {
+                pullRequestNumbers: [7],
                 id: 123,
                 name: "contributor tests",
                 url: "https://github.com/acme/web/actions/runs/123",
@@ -510,11 +511,68 @@ it.effect("adds unstarted same-repository workflow runs as pending, not as appro
         // Run 201 is represented by its running job; run 202 is queued before any job exists.
         listUnfinishedWorkflowRuns: () =>
           Effect.succeed([
-            { id: 201, name: "Lint", url: "https://github.com/acme/web/actions/runs/201" },
-            { id: 202, name: "CI", url: "https://github.com/acme/web/actions/runs/202" },
+            {
+              pullRequestNumbers: [],
+              id: 201,
+              name: "Lint",
+              url: "https://github.com/acme/web/actions/runs/201",
+            },
+            {
+              pullRequestNumbers: [],
+              id: 202,
+              name: "CI",
+              url: "https://github.com/acme/web/actions/runs/202",
+            },
           ]),
+        listWorkflowRunsRequiringApproval: () => Effect.succeed([]),
+        getViewerAccess: () =>
+          Effect.succeed({
+            canWrite: true,
+            canTriage: true,
+            canUpdate: true,
+            didAuthor: false,
+            mergeCapabilities: { merge: true, squash: true, rebase: true },
+            autoMergeAllowed: true,
+          }),
+      }),
+    ),
+  ),
+);
+
+it.effect("discovers workflow approval for a same-repository bot pull request", () =>
+  Effect.gen(function* () {
+    const provider = yield* make;
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+
+    expect(detail.workflowApprovalsRequired).toBe(1);
+    expect(detail.checks).toEqual([
+      {
+        name: "bot tests",
+        status: "action-required",
+        description: "A maintainer must approve this workflow before it can run.",
+        url: "https://github.com/acme/web/actions/runs/123",
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        revalidateChecks: (_input, read) => read,
+        getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
+        listUnfinishedWorkflowRuns: () => Effect.succeed([]),
         listWorkflowRunsRequiringApproval: () =>
-          Effect.die("same-repository pull requests must not probe fork workflow approvals"),
+          Effect.succeed([
+            {
+              pullRequestNumbers: [7],
+              id: 123,
+              name: "bot tests",
+              url: "https://github.com/acme/web/actions/runs/123",
+            },
+          ]),
         getViewerAccess: () =>
           Effect.succeed({
             canWrite: true,
@@ -737,6 +795,7 @@ describe("getChangeRequest commits", () => {
               authors: [],
             },
           ],
+          truncated: false,
         }),
       listReviewThreadComments: () => Effect.succeed({ ...baseThreadComments, commits }),
     });
@@ -786,7 +845,7 @@ describe("getChangeRequest commits", () => {
   );
 });
 
-describe("getChangeRequestActivity dismissed reviews", () => {
+describe("getChangeRequestActivity", () => {
   const dismissedReview = (body: string) => ({
     id: "PRR_1",
     kind: "review" as const,
@@ -817,7 +876,12 @@ describe("getChangeRequestActivity dismissed reviews", () => {
     Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
       revalidateChecks: (_input, read) => read,
       getPullRequestActivity: () =>
-        Effect.succeed({ author: null, comments: [dismissedReview(body)], commits: [] }),
+        Effect.succeed({
+          author: null,
+          comments: [dismissedReview(body)],
+          commits: [],
+          truncated: false,
+        }),
       listReviewThreadComments: () => Effect.succeed(threadComments),
     });
   const readActivity = Effect.gen(function* () {
@@ -840,6 +904,59 @@ describe("getChangeRequestActivity dismissed reviews", () => {
       Effect.provide(layerFor("<!-- Macroscope (Approvability) review body marker -->")),
     ),
   );
+
+  const failingThreadRead = (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
+    Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+      getPullRequestActivity: () =>
+        Effect.succeed({ author: null, comments: [], commits: [], truncated: false }),
+      listReviewThreadComments: () => Effect.fail(error),
+    });
+  const retryAt = 1_900_000_000_000;
+
+  it.effect.each([
+    {
+      name: "rate limit",
+      error: new GitHubRequestPolicy.GitHubApiRateLimitError({
+        host: "github.com",
+        operation: "listReviewThreadComments",
+        retryAt,
+      }),
+    },
+    {
+      name: "rate-limit pause",
+      error: new SourceControlRateLimit.SourceControlRateLimitPausedError({
+        provider: SourceControlProviderKind.make("github"),
+        host: "github.com",
+        retryAt,
+      }),
+    },
+  ])("fails rate-limited when the review-thread read hits a $name", ({ error }) =>
+    readActivity.pipe(
+      Effect.flip,
+      Effect.map((failure) => expect(failure).toMatchObject({ reason: "rate-limited", retryAt })),
+      Effect.provide(failingThreadRead(error)),
+    ),
+  );
+
+  it.effect(
+    "keeps activity with truncated threads when the review-thread read fails otherwise",
+    () =>
+      readActivity.pipe(
+        Effect.map((activity) => {
+          expect(activity.reviewThreads).toEqual([]);
+          expect(activity.reviewThreadsTruncated).toBe(true);
+        }),
+        Effect.provide(
+          failingThreadRead(
+            new GitHubRequestPolicy.GitHubApiResponseError({
+              host: "github.com",
+              operation: "listReviewThreadComments",
+              status: 500,
+            }),
+          ),
+        ),
+      ),
+  );
 });
 
 describe("loginAvatarUrl", () => {
@@ -848,6 +965,60 @@ describe("loginAvatarUrl", () => {
       expect(loginAvatarUrl(login, "github.com")).toBeNull();
     }
   });
+});
+
+describe("listChangeRequests", () => {
+  it.effect("counts a team review request as the viewer's only on search rows", () =>
+    Effect.gen(function* () {
+      const teamOnly = {
+        number: 1,
+        title: "Change",
+        url: "https://github.com/acme/web/pull/1",
+        author: null,
+        headBranch: "feature",
+        baseBranch: "main",
+        state: "open" as const,
+        isDraft: false,
+        mergeability: "mergeable" as const,
+        additions: 0,
+        deletions: 0,
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-02T00:00:00Z",
+        reviewRequestLogins: ["someone-else"],
+        hasTeamReviewRequest: true,
+        labels: [],
+        reviewDecision: null,
+        checksState: null,
+      };
+      const list = (continues: boolean, involvement: "all" | "reviewing") =>
+        make.pipe(
+          Effect.provide(
+            Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+              listPullRequests: () =>
+                Effect.succeed({ items: [teamOnly], truncated: false, continues }),
+            }),
+          ),
+          Effect.flatMap((provider) =>
+            provider.listChangeRequests({
+              cwd: "/w",
+              host: "github.com",
+              repository: "acme/web",
+              state: "open",
+              involvement,
+              viewer: "Viewer",
+              limit: 50,
+            }),
+          ),
+        );
+      const searched = yield* list(true, "reviewing");
+      expect(searched.items[0]!.reviewRequestLogins).toEqual(["someone-else", "Viewer"]);
+      const all = yield* list(true, "all");
+      expect(all.items[0]!.reviewRequestLogins).toEqual(["someone-else"]);
+      // The listing fallback keeps any team's request; it cannot say the team is the viewer's.
+      const listed = yield* list(false, "reviewing");
+      expect(listed.items[0]!.reviewRequestLogins).toEqual(["someone-else"]);
+    }),
+  );
 });
 
 describe("listChangeRequestsAcross", () => {
@@ -962,6 +1133,23 @@ describe("listChangeRequestsAcross", () => {
         covered: () => true,
       });
       expect((yield* read(across)).unresolved).toEqual(["acme/docs"]);
+    }),
+  );
+
+  it.effect("counts a review requested from the viewer's team as requested from the viewer", () =>
+    Effect.gen(function* () {
+      const teamOnly = { ...searched("acme/web"), hasTeamReviewRequest: true };
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [teamOnly], truncated: false },
+          { items: [teamOnly], truncated: false },
+        ],
+        covered: () => true,
+      });
+      const reviewing = yield* read({ ...across, involvement: "reviewing" });
+      expect(reviewing.items[0]!.reviewRequestLogins).toEqual(["viewer"]);
+      const all = yield* read(across);
+      expect(all.items[0]!.reviewRequestLogins).toEqual([]);
     }),
   );
 

@@ -79,7 +79,7 @@
         "type": "string"
       }
     },
-    "disableAdditionalProperties": {
+    "closeObjects": {
       "type": "boolean",
       "description": "When true, closes object schemas that declare properties and no additionalProperties of their own, preventing StructWithRest emission. Object compositions (allOf, and properties next to anyOf/oneOf) are merged before closing.",
       "default": false

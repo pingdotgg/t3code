@@ -111,7 +111,7 @@ function parseField(
       const values = new Set(options.map(optionValue));
       const minItems = typeof property.minItems === "number" ? property.minItems : 0;
       const maxItems = typeof property.maxItems === "number" ? property.maxItems : Infinity;
-      // Clients require a selection, so empty-only questions cannot be answered.
+      // Empty-only questions carry no choice worth asking.
       if (maxItems === 0 || minItems > maxItems || minItems > values.size) return undefined;
       return { field: { kind: "multiChoice", values, minItems, maxItems }, options };
     }
@@ -177,9 +177,11 @@ function typedAnswer(
 }
 
 // Decline unaskable forms; validate types and selection counts, leaving other constraints to the agent.
+// `allowOther` lets single choices take typed text, sent as the field's value.
 export function parseElicitationForm(
   requestedSchema: unknown,
   message: string,
+  { allowOther = false }: { readonly allowOther?: boolean } = {},
 ): ElicitationForm | undefined {
   const schema = unknownRecord(requestedSchema);
   const required = new Set(
@@ -201,18 +203,16 @@ export function parseElicitationForm(
     fields.set(id, parsed.field);
     parsedFields.push({ id, property, options: parsed.options });
   }
-  // An optional `<id>__other` text field (OMP's ask dialog) is the free-text answer to
-  // optional single choice `<id>`: ask them as one question and send custom text to the
-  // companion. Multi-select keeps both fields, since it can answer with options and text.
+  // An optional `<id>__other` or `<id>_other` text field is the free-text answer to optional
+  // single choice `<id>`: ask them as one question and send custom text to the companion.
+  // Multi-select keeps both fields, since it can answer with options and text.
   const companions = new Map<string, string>();
   for (const [id, field] of fields) {
-    const companionId = `${id}__other`;
-    if (
-      field.kind === "choice" &&
-      fields.get(companionId)?.kind === "text" &&
-      !required.has(id) &&
-      !required.has(companionId)
-    ) {
+    if (field.kind !== "choice" || required.has(id)) continue;
+    const companionId = [`${id}__other`, `${id}_other`].find(
+      (candidate) => fields.get(candidate)?.kind === "text" && !required.has(candidate),
+    );
+    if (companionId !== undefined) {
       companions.set(id, companionId);
     }
   }
@@ -220,16 +220,25 @@ export function parseElicitationForm(
   const questions: OrchestrationV2UserInputQuestion[] = [];
   for (const { id, property, options } of parsedFields) {
     if (folded.has(id)) continue;
-    const kind = fields.get(id)?.kind;
+    const field = fields.get(id);
+    const kind = field?.kind;
     questions.push({
       id,
       header: text(property.title) ?? `Question ${questions.length + 1}`,
       question: text(property.description) ?? message,
       options,
-      ...(kind === "text" || kind === "number" || companions.has(id)
+      ...(kind === "text" ||
+      kind === "number" ||
+      companions.has(id) ||
+      (allowOther && kind === "choice")
         ? {}
         : { allowCustomAnswer: false }),
       ...(kind === "multiChoice" ? { multiSelect: true } : {}),
+      // An empty selection answers "none" unless the schema demands a choice.
+      ...(field?.kind === "multiChoice" && field.minItems > 0 && required.has(id)
+        ? { required: true }
+        : {}),
+      ...((kind === "text" || kind === "number") && !required.has(id) ? { required: false } : {}),
     });
   }
   return {
@@ -242,7 +251,14 @@ export function parseElicitationForm(
         const typed = answer === undefined ? undefined : typedAnswer(field, answer);
         const companionId = companions.get(id);
         if (typed !== undefined) entries.push([id, typed]);
-        else if (companionId !== undefined && typeof answer === "string") {
+        else if (
+          allowOther &&
+          field.kind === "choice" &&
+          typeof answer === "string" &&
+          answer.trim() !== ""
+        ) {
+          entries.push([id, answer]);
+        } else if (companionId !== undefined && typeof answer === "string") {
           entries.push([companionId, answer]);
         } else if (required.has(id)) return undefined;
       }

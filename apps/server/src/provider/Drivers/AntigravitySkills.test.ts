@@ -25,6 +25,7 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
   return {
     cwd: path.join(temporaryDirectory, "workspace"),
     userHome: path.join(temporaryDirectory, "home"),
+    profileDirectory: path.join(temporaryDirectory, "profile"),
   };
 });
 
@@ -80,8 +81,8 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       ];
       const expected = [];
       for (const [index, root] of roots.entries()) {
-        const name = `review-${index}`;
-        const description = `Review changes in root ${index}.`;
+        const name = index === 0 ? "2026" : `review-${index}`;
+        const description = index === 1 ? "1.0" : `Review changes in root ${index}.`;
         const skillPath = yield* writeSkill(
           path.join(root.directory, name),
           `---\nname: ${name}\ndescription: ${description}\n---\n# Review\n`,
@@ -90,6 +91,36 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
+    }),
+  );
+
+  it.effect("reads skills from enabled plugins in the instance's Antigravity profile", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* makeWorkspace();
+      const profileDirectory = path.join(workspace.userHome, "t3", "providers", "antigravity", "p");
+      const plugins = path.join(profileDirectory, "config", "plugins");
+      for (const plugin of ["demo", "off"]) {
+        yield* writeSkill(
+          path.join(plugins, plugin, "skills", `${plugin}-skill`),
+          `---\nname: ${plugin}-skill\ndescription: From ${plugin}.\n---\n`,
+        );
+      }
+      yield* fileSystem.writeFileString(
+        path.join(profileDirectory, "config", "config.json"),
+        JSON.stringify({ plugins: { off: { enabled: false } } }),
+      );
+      yield* fileSystem.writeFileString(path.join(plugins, ".DS_Store"), "x");
+      const input = { ...workspace, profileDirectory };
+
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills(input)).map(({ name, displayName }) => ({
+          name,
+          displayName,
+        })),
+        [{ name: "demo-skill", displayName: "demo:demo-skill" }],
+      );
     }),
   );
 
@@ -121,21 +152,27 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect("loads a root skill without scanning its children", () =>
+  it.effect("keeps child skills visible under a project root SKILL.md", () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
-      const root = path.join(input.cwd, ".agents", "skills");
-      const skillPath = yield* writeSkill(root, "---\nname: root-skill\n---\n");
-      yield* writeSkill(path.join(root, "child"), "---\nname: child-skill\n---\n");
+      const agentsRoot = path.join(input.cwd, ".agents", "skills");
+      const legacyRoot = path.join(input.cwd, ".agent", "skills");
+      yield* writeSkill(agentsRoot, "---\nname: root-skill\n---\n");
+      yield* writeSkill(legacyRoot, "---\nname: legacy-root-skill\n---\n");
+      const child = yield* writeSkill(
+        path.join(agentsRoot, "child"),
+        "---\nname: child-skill\n---\n",
+      );
+      const legacyChild = yield* writeSkill(
+        path.join(legacyRoot, "child"),
+        "---\nname: legacy-child-skill\n---\n",
+      );
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), [
-        { name: "root-skill", path: skillPath, scope: "project", enabled: true },
+        { name: "child-skill", path: child, scope: "project", enabled: true },
+        { name: "legacy-child-skill", path: legacyChild, scope: "project", enabled: true },
       ]);
-
-      yield* fileSystem.writeFileString(skillPath, "---\nname: [invalid\n---\n");
-      assert.deepEqual(yield* discoverAntigravitySkills(input), []);
     }),
   );
 
@@ -202,6 +239,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       );
       yield* fileSystem.makeDirectory(path.join(root, ".not-a-skill"));
       yield* fileSystem.writeFileString(path.join(root, "README.md"), "Not a skill.");
+      yield* fileSystem.writeFileString(path.join(root, "SKILL.MD"), "---\nname: uppercase\n---\n");
       const skillPath = yield* writeSkill(
         path.join(root, ".native-hidden-skill"),
         "---\nname: native-name\ndescription: >\n  Review the code\n  and run tests.\n---\n",
@@ -338,5 +376,116 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         assert.equal(result.failure.path, path.join(root, "large-8", "SKILL.md"));
       }
     }),
+  );
+
+  it.effect(
+    "reads skills declared in global and workspace skills.json with filters and inherits",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = yield* makeWorkspace();
+
+        const sharedSkills = path.join(input.userHome, ".agents", "skills");
+        const keptPath = yield* writeSkill(
+          path.join(sharedSkills, "yagni"),
+          "---\nname: yagni\ndescription: Keep it simple.\n---\n",
+        );
+        const experimentalPath = yield* writeSkill(
+          path.join(sharedSkills, "experimental-draft"),
+          "---\nname: experimental-draft\n---\n",
+        );
+
+        const inheritedSkills = path.join(input.userHome, "inherited-skills");
+        const inheritedPath = yield* writeSkill(
+          path.join(inheritedSkills, "linter"),
+          "---\nname: linter\n---\n",
+        );
+        yield* writeSkill(path.join(inheritedSkills, "skipped"), "---\nname: skipped\n---\n");
+        yield* writeSkill(path.join(inheritedSkills, "lint-draft"), "---\nname: lint-draft\n---\n");
+
+        const projectSkills = path.join(input.cwd, "tools", "skills");
+        const projectPath = yield* writeSkill(
+          path.join(projectSkills, "deploy"),
+          "---\nname: deploy\n---\n",
+        );
+        yield* writeSkill(path.join(projectSkills, "internal"), "---\nname: internal\n---\n");
+        const releasePath = yield* writeSkill(
+          path.join(projectSkills, "public"),
+          "---\nname: release\n---\n",
+        );
+        yield* writeSkill(path.join(projectSkills, "excluded"), "---\nname: excluded-root\n---\n");
+        const explicitRoot = path.join(projectSkills, "explicit");
+        yield* writeSkill(path.join(explicitRoot, "child"), "---\nname: not-discovered\n---\n");
+        yield* fileSystem.writeFileString(path.join(explicitRoot, "SKILL.MD"), "---\n---\n");
+
+        // agy does not expand ~, so a ~/ entry loads nothing.
+        yield* writeSkill(
+          path.join(input.userHome, "tilde-skills", "tilde"),
+          "---\nname: tilde\n---\n",
+        );
+
+        const globalConfigDir = path.join(input.userHome, ".gemini", "config");
+        const inheritedConfigPath = path.join(input.userHome, "shared-skills.json");
+        yield* fileSystem.makeDirectory(globalConfigDir, { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(input.cwd, ".agents"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          inheritedConfigPath,
+          JSON.stringify({
+            inherits: [{ path: path.join(globalConfigDir, "skills.json") }],
+            entries: [{ path: inheritedSkills }],
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(globalConfigDir, "skills.json"),
+          JSON.stringify({
+            inherits: [{ path: inheritedConfigPath, include_only: ["linter", "lint-.*"] }],
+            entries: [
+              { path: sharedSkills, exclude: ["experimental-.*"] },
+              { path: "~/tilde-skills" },
+            ],
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(input.cwd, ".agents", "skills.json"),
+          JSON.stringify({
+            entries: null,
+            inherits: [{ path: "workspace-skills.json", include_only: null }],
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(input.cwd, "workspace-skills.json"),
+          JSON.stringify({
+            inherits: null,
+            entries: [
+              { path: "tools/skills/deploy/SKILL.md", exclude: null },
+              { path: "tools/skills/internal/SKILL.md", exclude: ["internal"] },
+              { path: "tools/skills/public", include_only: ["public"] },
+              { path: "tools/skills/excluded", exclude: ["excluded"] },
+              { path: "tools/skills/excluded", include_only: ["public"] },
+              { path: "tools/skills/explicit" },
+            ],
+          }),
+        );
+
+        assert.deepEqual(yield* discoverAntigravitySkills(input), [
+          { name: "deploy", path: projectPath, scope: "project", enabled: true },
+          {
+            name: "experimental-draft",
+            path: experimentalPath,
+            scope: "user",
+            enabled: true,
+          },
+          { name: "linter", path: inheritedPath, scope: "user", enabled: true },
+          { name: "release", path: releasePath, scope: "project", enabled: true },
+          {
+            name: "yagni",
+            description: "Keep it simple.",
+            path: keptPath,
+            scope: "user",
+            enabled: true,
+          },
+        ]);
+      }),
   );
 });

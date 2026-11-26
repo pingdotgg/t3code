@@ -1,6 +1,9 @@
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as DatabaseMigrationProgress from "./DatabaseMigrationProgress.ts";
 import {
   DATABASE_MIGRATION_PROGRESS_MESSAGE,
   DATABASE_MIGRATIONS_FINISHED_MESSAGE,
@@ -100,6 +103,33 @@ import Migration0089 from "./Migrations/089_ShellThreadReadIndexes.ts";
 import Migration0090 from "./Migrations/090_AuthConnectDevices.ts";
 import Migration0091 from "./Migrations/091_AuthConnectDeniedRequests.ts";
 import Migration0092 from "./Migrations/092_QueuedTurnInputIndexJsonValid.ts";
+import Migration0093 from "./Migrations/093_ProviderTurnAttemptIndex.ts";
+import Migration0094 from "./Migrations/094_TurnItemMessageOrdinalIndex.ts";
+import Migration0095 from "./Migrations/095_TurnItemInlineWorkOutput.ts";
+import Migration0096 from "./Migrations/096_RepairStaleTitleRegeneration.ts";
+import Migration0097 from "./Migrations/097_IssueTrackerBindings.ts";
+import Migration0098 from "./Migrations/098_ActiveShellIndexIndexes.ts";
+import Migration0099 from "./Migrations/099_BackgroundRecoveryIndexes.ts";
+import Migration0100 from "./Migrations/100_TurnStartReadIndexes.ts";
+import Migration0101 from "./Migrations/101_DelegatedTaskReadIndexes.ts";
+import Migration0102 from "./Migrations/102_ThreadItemCounts.ts";
+import Migration0103 from "./Migrations/103_IssueTrackerAdditionalScopes.ts";
+import Migration0104 from "./Migrations/104_ProjectionProjectsTrackedFolders.ts";
+import Migration0105 from "./Migrations/105_TaskFolders.ts";
+import Migration0106 from "./Migrations/106_WorktreePathKeyIndex.ts";
+import Migration0107 from "./Migrations/107_DeferredSlashCommandIndex.ts";
+import Migration0108 from "./Migrations/108_AgentFeedback.ts";
+import Migration0109 from "./Migrations/109_IssueTrackerAccounts.ts";
+import Migration0110 from "./Migrations/110_Workflows.ts";
+import Migration0111 from "./Migrations/111_SupersededRunAttemptIndex.ts";
+import Migration0112 from "./Migrations/112_LayoutCommandApprovals.ts";
+import Migration0113 from "./Migrations/113_WorkflowSkippedRuns.ts";
+import Migration0114 from "./Migrations/114_WorkflowRunIndexes.ts";
+import Migration0115 from "./Migrations/115_WorkflowRunTags.ts";
+import Migration0116 from "./Migrations/116_ForkHistoryMembership.ts";
+import Migration0117 from "./Migrations/117_WorkflowMailSender.ts";
+import Migration0118 from "./Migrations/118_WorkflowPools.ts";
+import Migration0119 from "./Migrations/119_WorkflowRunSubject.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -195,6 +225,33 @@ const migrationEntries = [
   [90, "AuthConnectDevices", Migration0090],
   [91, "AuthConnectDeniedRequests", Migration0091],
   [92, "QueuedTurnInputIndexJsonValid", Migration0092],
+  [93, "ProviderTurnAttemptIndex", Migration0093],
+  [94, "TurnItemMessageOrdinalIndex", Migration0094],
+  [95, "TurnItemInlineWorkOutput", Migration0095],
+  [96, "RepairStaleTitleRegeneration", Migration0096],
+  [97, "IssueTrackerBindings", Migration0097],
+  [98, "ActiveShellIndexIndexes", Migration0098],
+  [99, "BackgroundRecoveryIndexes", Migration0099],
+  [100, "TurnStartReadIndexes", Migration0100],
+  [101, "DelegatedTaskReadIndexes", Migration0101],
+  [102, "ThreadItemCounts", Migration0102],
+  [103, "IssueTrackerAdditionalScopes", Migration0103],
+  [104, "ProjectionProjectsTrackedFolders", Migration0104],
+  [105, "TaskFolders", Migration0105],
+  [106, "WorktreePathKeyIndex", Migration0106],
+  [107, "DeferredSlashCommandIndex", Migration0107],
+  [108, "AgentFeedback", Migration0108],
+  [109, "IssueTrackerAccounts", Migration0109],
+  [110, "Workflows", Migration0110],
+  [111, "SupersededRunAttemptIndex", Migration0111],
+  [112, "LayoutCommandApprovals", Migration0112],
+  [113, "WorkflowSkippedRuns", Migration0113],
+  [114, "WorkflowRunIndexes", Migration0114],
+  [115, "WorkflowRunTags", Migration0115],
+  [116, "ForkHistoryMembership", Migration0116],
+  [117, "WorkflowMailSender", Migration0117],
+  [118, "WorkflowPools", Migration0118],
+  [119, "WorkflowRunSubject", Migration0119],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -281,11 +338,14 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  const progress = yield* Effect.serviceOption(DatabaseMigrationProgress.DatabaseMigrationProgress);
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingMigrations();
+  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
-  const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+  // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
+  const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
@@ -307,17 +367,26 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   // One transaction per migration: an index build on a large database can take minutes, and a
   // restart then resumes after the last finished migration instead of rolling all of them back.
   const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
-  for (const [index, [id, name]] of pending.entries()) {
-    if (latestRecordedId > 0) {
-      yield* Effect.log(DATABASE_MIGRATION_PROGRESS_MESSAGE).pipe(
-        Effect.annotateLogs({
-          migration: `${id}_${name}`,
-          progress: `${index + 1} of ${pending.length}`,
-        }),
-      );
+  yield* Effect.gen(function* () {
+    for (const [index, [id, name]] of pending.entries()) {
+      if (Option.isSome(progress)) {
+        yield* Ref.set(progress.value.current, { current: index + 1, total: pending.length });
+      }
+      if (latestRecordedId > 0) {
+        yield* Effect.log(
+          `${DATABASE_MIGRATION_PROGRESS_MESSAGE} (${index + 1} of ${pending.length})`,
+        ).pipe(
+          Effect.annotateLogs({
+            migration: `${id}_${name}`,
+            progress: `${index + 1} of ${pending.length}`,
+          }),
+        );
+      }
+      executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
     }
-    executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
-  }
+  }).pipe(
+    Effect.ensuring(Option.isSome(progress) ? Ref.set(progress.value.current, null) : Effect.void),
+  );
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

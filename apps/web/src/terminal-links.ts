@@ -1,11 +1,4 @@
-import {
-  formatFilePathPosition,
-  parseFileUrlHref,
-  resolvePathLinkTarget,
-  splitFilePathPosition,
-} from "@t3tools/shared/fileLinks";
-import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
-import { stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
+import { parseFileUrlHref, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -15,6 +8,12 @@ export interface TerminalLinkMatch {
   text: string;
   start: number;
   end: number;
+  /**
+   * `text` cut after its `:line:col`, or with its closing `(line,col)` read as one. Only the
+   * filesystem can tell grep's `./a.js:1:function` or MSBuild's `/a.cs(1,2)` from a name that
+   * holds those characters, so this stands in when `text` as a whole is not a file.
+   */
+  fallback?: { text: string; end: number };
 }
 
 export interface TerminalBufferLineLike {
@@ -40,10 +39,16 @@ const POWERSHELL_PROMPT_PATH_PATTERN = /^PS ((?:[A-Za-z]:[\\/]|\\\\|\/)[^>\r\n]*
 // Bare paths start only at a segment boundary: hover detection runs this on
 // every frame, so separator-free output must not be rescanned at every suffix.
 // Parenthesized path segments need a following slash to distinguish compiler locations.
+// A bare `name.ext` needs `:line:col` or a TS location after it, so prose and `host:port` stay text.
 const FILE_PATH_PATTERN =
-  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._-])[\p{L}\p{M}\p{N}._-]+(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+(?:(?::\d+){1,2}|\(\d+,\d+\)(?=:\s+(?:error|warning) TS\d+:))?/gu;
+  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._$+@-])[\p{L}\p{M}\p{N}._$+@-]+(?:(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+|\.\p{L}[\p{L}\p{M}\p{N}_-]*(?=:\d+:\d|\(\d+,\d+\):\s+(?:error|warning) TS\d+:))(?:(?::\d+){1,2}|\(\d+,\d+\)(?=:\s+(?:error|warning) TS\d+:))?/gu;
 const QUOTED_FILE_PATH_PATTERN =
   /(["'`])(?<path>(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\|[\p{L}\p{M}\p{N}._ -]+[\\/])[^\r\n]*?|[\p{L}\p{M}\p{N}._ -]+\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2})\1(?<position>(?::\d+){0,2})/gu;
+// The `:line` or `:line:col` that grep, ripgrep and Ruby backtraces follow with a colon and text.
+const POSITION_BEFORE_TEXT_PATTERN = /^.+?(?::\d+){1,2}(?=:)/u;
+const POSITIONS_ONLY_PATTERN = /^(?::\d+)+$/u;
+// The `(line)` or `(line,col)` that MSBuild, MSVC and PHP stack frames put right after a file name.
+const PARENTHESIZED_POSITION_PATTERN = /(?<![\\/])\((\d+)(?:,(\d+))?\)$/u;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
@@ -104,15 +109,36 @@ function collectMatches(
     if (trimmed.length === 0) continue;
     if (kind === "path" && isTerminalUrl(trimmed)) continue;
 
+    const cut =
+      kind === "path" && quotedPath === undefined
+        ? POSITION_BEFORE_TEXT_PATTERN.exec(trimmed)?.[0]
+        : undefined;
+    // What follows `main.c:10` in `main.c:10:5` is its column, not text.
+    const fallback =
+      cut !== undefined && !POSITIONS_ONLY_PATTERN.test(trimmed.slice(cut.length))
+        ? cut
+        : undefined;
+    const text =
+      kind === "path" && /^:\s+(?:error|warning) TS\d+:/u.test(line.slice(start + trimmed.length))
+        ? trimmed.replace(/\((\d+),(\d+)\)$/, ":$1:$2")
+        : trimmed;
+    const located =
+      kind === "path" && quotedPath === undefined
+        ? text.replace(PARENTHESIZED_POSITION_PATTERN, (_, row: string, column?: string) =>
+            column === undefined ? `:${row}` : `:${row}:${column}`,
+          )
+        : text;
     const candidate: TerminalLinkMatch = {
       kind,
-      text:
-        kind === "path" && /^:\s+(?:error|warning) TS\d+:/u.test(line.slice(start + trimmed.length))
-          ? trimmed.replace(/\((\d+),(\d+)\)$/, ":$1:$2")
-          : trimmed,
+      text,
       start,
       // A position outside quotes spans the closing quote in the terminal buffer.
       end: start + trimmed.length + (rawMatch.groups?.position ? 1 : 0),
+      ...(fallback !== undefined
+        ? { fallback: { text: fallback, end: start + fallback.length } }
+        : located !== text
+          ? { fallback: { text: located, end: start + trimmed.length } }
+          : {}),
     };
 
     const collides = [...existing, ...matches].some((other) => overlaps(candidate, other));
@@ -161,16 +187,18 @@ export function isTerminalUrl(value: string): boolean {
   return /^https?:\/\//iu.test(value);
 }
 
-/** Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`. */
-export function resolveTerminalLinkTarget(text: string, cwd: string): string {
-  const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text) : null;
+/**
+ * Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`.
+ * `hostname` is the terminal's environment's, which producers such as GNU `ls` put in the URI.
+ * A URI's path is the exact filename, so only its `#L12C3` hash is a position.
+ */
+export function resolveTerminalLinkTarget(text: string, cwd: string, hostname?: string): string {
+  const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text, hostname) : null;
   if (!fileUrl) return resolvePathLinkTarget(text, cwd);
-  return formatFilePathPosition(
-    splitFilePathPosition(
-      stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path)),
-      fileUrl.hash,
-    ),
-  );
+  // Keep URI identity until consumers decode the filename, separately from its position.
+  const uri = new URL(text);
+  if (!fileUrl.path.startsWith("\\")) uri.hostname = "";
+  return uri.href;
 }
 
 export function collectWrappedTerminalLinkLine(

@@ -1,5 +1,6 @@
 import { resolveTimelineMinimapPreview, type TimelineMinimapItem } from "./timelineMinimapItems";
 import { useRef, useState, type MouseEvent } from "react";
+import { T, useGT } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -31,7 +32,7 @@ function onMouseButtonsReleased(onRelease: () => void): () => void {
 
 export function TimelineMinimap({
   hasPersistentGutter,
-  hitStripWidth,
+  hitStrip: { left: hitStripLeft, width: hitStripWidth },
   currentIndex,
   atEnd,
   items,
@@ -40,7 +41,7 @@ export function TimelineMinimap({
   onSelect,
 }: {
   hasPersistentGutter: boolean;
-  hitStripWidth: number;
+  hitStrip: { left: number; width: number };
   currentIndex: number | null;
   atEnd: boolean;
   items: ReadonlyArray<TimelineMinimapItem>;
@@ -48,6 +49,7 @@ export function TimelineMinimap({
   onWheel: (event: WheelEvent) => void;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
+  const gt = useGT();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;
@@ -105,7 +107,7 @@ export function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 w-18",
+        "group/minimap pointer-events-none absolute bottom-0 left-0 top-[calc(-1*var(--chat-header-height,0px))] z-40 w-18",
         hasPersistentGutter
           ? "opacity-100"
           : "hidden opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(pointer:fine)]:block",
@@ -117,7 +119,7 @@ export function TimelineMinimap({
       <div className="relative h-full w-full select-none">
         <div
           className={cn(
-            "absolute top-1/2 left-3 -translate-y-1/2",
+            "absolute top-1/2 -translate-y-1/2",
             hitStripWidth > 0 && !passThrough ? "pointer-events-auto" : "pointer-events-none",
           )}
           onMouseDown={() => {
@@ -134,6 +136,7 @@ export function TimelineMinimap({
           }}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
+            left: hitStripLeft,
             width: hitStripWidth,
           }}
         >
@@ -146,7 +149,9 @@ export function TimelineMinimap({
             }}
           />
           <button
-            aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
+            aria-label={gt("Jump to message: {text}", {
+              text: activeItem?.userText ?? gt("User message"),
+            })}
             className="absolute inset-y-0 left-0 w-full cursor-pointer bg-transparent before:absolute before:inset-x-0 before:-inset-y-1 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
             onBlur={() => setActiveIndex(null)}
             onClick={(event) => {
@@ -186,7 +191,6 @@ export function TimelineMinimap({
             onMouseDown={(event) => event.preventDefault()}
             type="button"
           >
-            <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
             {items.map((item, index) => {
               const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
               const activeDistance =
@@ -231,7 +235,7 @@ export function TimelineMinimap({
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
                   <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                    {activeItem.userText ?? "User message"}
+                    {activeItem.userText ?? <T>User message</T>}
                   </span>
                   {activeItem.assistantText ? (
                     <span
@@ -274,8 +278,9 @@ function TimelineMinimapNavigationButton({
   interactive: boolean;
   onClick: () => void;
 }) {
+  const gt = useGT();
   const previous = direction === "previous";
-  const label = previous ? "Previous turn" : "Next turn";
+  const label = previous ? gt("Previous turn") : gt("Next turn");
   const Icon = previous ? ChevronUpIcon : ChevronDownIcon;
 
   return (
