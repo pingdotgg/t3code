@@ -55,6 +55,8 @@ export function ChunkedMarkdown(props: {
     props.relativePath,
   ]);
   const saved = savedPositions.get(positionKey);
+  // A streaming file may not have reached the saved piece yet; opening at the top beats its end.
+  const restore = saved && saved.index < items.length ? saved : undefined;
   return (
     <div
       // Clicking the text focuses the preview, so Select All stays inside it.
@@ -72,12 +74,7 @@ export function ChunkedMarkdown(props: {
       <LegendList<ChunkItem>
         ref={listRef}
         data={items}
-        {...(saved && {
-          initialScrollIndex: {
-            index: Math.min(saved.index, Math.max(items.length - 1, 0)),
-            viewOffset: saved.viewOffset,
-          },
-        })}
+        {...(restore && { initialScrollIndex: restore })}
         onScroll={() => {
           const list = listRef.current?.getState();
           if (!list) return;
