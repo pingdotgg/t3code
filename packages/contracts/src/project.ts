@@ -127,12 +127,13 @@ const DashboardIconFile = TrimmedNonEmptyString.check(
   Schema.isMaxLength(128),
   Schema.isPattern(/^\w[\w.-]*\.(?:svg|png|webp)$/),
 );
-const ProjectDashboardIcon = Schema.Struct({
+export const ProjectDashboardIcon = Schema.Struct({
   kind: Schema.Literal("dashboard-icon"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
   file: DashboardIconFile,
   darkFile: Schema.optional(DashboardIconFile),
 });
+export type ProjectDashboardIcon = typeof ProjectDashboardIcon.Type;
 export const ProjectFaviconPath = TrimmedNonEmptyString.check(
   Schema.isMaxLength(1024),
   Schema.isPattern(/\.(?:avif|gif|icns|ico|jpe?g|png|svg|webp)$/i),

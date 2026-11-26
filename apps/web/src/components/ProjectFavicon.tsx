@@ -1,5 +1,5 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { ProjectIconOverride } from "@t3tools/contracts";
+import type { ProjectDashboardIcon } from "@t3tools/contracts";
 import { dashboardIconUrl } from "@t3tools/shared/dashboardIcons";
 import {
   getProjectFaviconResourceKey,
@@ -94,7 +94,7 @@ function DashboardProjectIcon({
   projectName,
   className,
 }: {
-  readonly icon: Extract<ProjectIconOverride, { kind: "dashboard-icon" }>;
+  readonly icon: ProjectDashboardIcon;
   readonly projectName: string;
   readonly className?: string | undefined;
 }) {
@@ -107,7 +107,6 @@ function DashboardProjectIcon({
       className={className}
       fallbackIcon={FolderCodeIcon}
       fallbackProjectName={projectName}
-      onRemoteLoadError={() => {}}
     />
   );
 }
@@ -197,7 +196,7 @@ function ProjectFaviconImage({
   readonly className?: string | undefined;
   readonly fallbackIcon: ComponentType<{ className?: string }>;
   readonly fallbackProjectName?: string | undefined;
-  readonly onRemoteLoadError: () => void;
+  readonly onRemoteLoadError?: () => void;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(() =>
     src.startsWith("data:image/") ? src : null,
@@ -209,7 +208,7 @@ function ProjectFaviconImage({
     setDisplayedSrc((currentSrc) => (currentSrc === failedSrc ? null : currentSrc));
     if (failedSrc.startsWith("data:") || refreshedAfterError) return;
     setRefreshedAfterError(true);
-    onRemoteLoadError();
+    onRemoteLoadError?.();
   };
 
   return (
@@ -225,6 +224,7 @@ function ProjectFaviconImage({
         <img
           src={displayedSrc}
           alt=""
+          referrerPolicy="no-referrer"
           className={cn("size-3.5 shrink-0 rounded-[25%] object-contain", className)}
           onError={() => handleLoadError(displayedSrc)}
         />
@@ -233,6 +233,7 @@ function ProjectFaviconImage({
         <img
           src={src}
           alt=""
+          referrerPolicy="no-referrer"
           className="hidden"
           onLoad={() => {
             setDisplayedSrc(src);

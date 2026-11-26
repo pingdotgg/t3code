@@ -6,6 +6,14 @@ import { ProjectIconPickerDialog } from "./ProjectIconPickerDialog";
 
 import "~/index.css";
 
+vi.mock(import("@t3tools/shared/dashboardIcons"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  dashboardIconUrl: (icon) =>
+    icon.name === "plexamp"
+      ? "http://127.0.0.1:9/plexamp.svg"
+      : `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>')}`,
+}));
+
 it("Escape in the icon search clears it without closing the dialog", async () => {
   const onOpenChange = vi.fn();
   await using _screen = await render(
@@ -49,10 +57,10 @@ it("Escape in the icon search clears it without closing the dialog", async () =>
   expect(onOpenChange.mock.calls.map(([open]) => open)).toEqual([false]);
 });
 
-it("suggests dashboard icons from the project name and saves the pick", async () => {
+it("suggests loadable dashboard icons from the project name and saves the pick", async () => {
   const catalog = {
     plex: { base: "svg", aliases: [], colors: { dark: "plex", light: "plex-light" } },
-    docker: { base: "svg", aliases: [] },
+    plexamp: { base: "svg", aliases: [] },
   };
   const fetchMock = vi.fn(async () => Response.json(catalog));
   vi.stubGlobal("fetch", fetchMock);
@@ -70,7 +78,7 @@ it("suggests dashboard icons from the project name and saves the pick", async ()
     expect(fetchMock).not.toHaveBeenCalled();
     await userEvent.type(page.getByRole("searchbox"), "folder");
     await userEvent.click(page.getByRole("button", { name: "Logos" }));
-    await expect.element(page.getByRole("button", { name: "docker" })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "plexamp" })).not.toBeInTheDocument();
     await userEvent.click(page.getByRole("button", { name: "plex" }));
     await userEvent.click(page.getByRole("button", { name: "Save icon" }));
     expect(onSelect).toHaveBeenCalledWith({

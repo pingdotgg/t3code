@@ -14,6 +14,7 @@ const entries = parseDashboardIcons({
   plexamp: { base: "png", aliases: [] },
   "home-assistant": { base: "svg", aliases: [] },
   homer: { base: "svg", aliases: [] },
+  kubernetes: { base: "svg", aliases: ["K8s"] },
   broken: { base: "gif" },
 });
 const names = (icons: ReadonlyArray<{ name: string }>) => icons.map(({ name }) => name);
@@ -54,6 +55,7 @@ describe("findDashboardIcons", () => {
       "homer",
     ]);
     expect(names(findDashboardIcons(entries, "", "github-actions-runner"))).toEqual(["github"]);
+    expect(names(findDashboardIcons(entries, "", "k8s-manifests"))).toEqual(["kubernetes"]);
     expect(findDashboardIcons(entries, "", "zz")).toEqual([]);
   });
 });

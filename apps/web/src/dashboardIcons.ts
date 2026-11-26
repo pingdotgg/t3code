@@ -1,19 +1,11 @@
-import { ProjectIconOverride } from "@t3tools/contracts";
+import { ProjectDashboardIcon } from "@t3tools/contracts";
 import { DASHBOARD_ICONS_CDN_URL } from "@t3tools/shared/dashboardIcons";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
-export type DashboardIcon = Extract<ProjectIconOverride, { kind: "dashboard-icon" }>;
-
-export interface DashboardIconEntry {
-  readonly icon: DashboardIcon;
-  /** Name then aliases, as lowercase letters and digits. */
-  readonly keys: ReadonlyArray<string>;
-}
-
-const isProjectIcon = Schema.is(ProjectIconOverride);
+const isDashboardIcon = Schema.is(ProjectDashboardIcon);
 const decodeEntry = Schema.decodeUnknownOption(
   Schema.Struct({
     base: Schema.Literals(["svg", "png", "webp"]),
@@ -28,37 +20,38 @@ const decodeEntry = Schema.decodeUnknownOption(
   }),
 );
 
-const compact = (text: string) =>
+/** Lowercase letters and digits only, so "Home Assistant" matches "home-assistant". */
+const searchKey = (text: string) =>
   text
     .normalize("NFKD")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 
 /** Builds the searchable list from dashboard-icons' metadata.json. */
-export function parseDashboardIcons(metadata: unknown): ReadonlyArray<DashboardIconEntry> {
+export function parseDashboardIcons(metadata: unknown) {
   if (typeof metadata !== "object" || metadata === null) return [];
   return Object.entries(metadata).flatMap(([name, raw]) => {
     const entry = Option.getOrUndefined(decodeEntry(raw));
     if (!entry) return [];
     const file = `${entry.colors?.dark ?? name}.${entry.base}`;
     const darkFile = `${entry.colors?.light ?? name}.${entry.base}`;
-    const icon: DashboardIcon = {
-      kind: "dashboard-icon",
+    const icon = {
+      kind: "dashboard-icon" as const,
       name,
       file,
       ...(darkFile === file ? {} : { darkFile }),
     };
-    return isProjectIcon(icon)
-      ? [{ icon, keys: [name, ...(entry.aliases ?? [])].map(compact) }]
-      : [];
+    if (!isDashboardIcon(icon)) return [];
+    return [{ icon, name: searchKey(name), aliases: (entry.aliases ?? []).map(searchKey) }];
   });
 }
+type DashboardIconEntry = ReturnType<typeof parseDashboardIcons>[number];
 
 function ranked(
   entries: ReadonlyArray<DashboardIconEntry>,
   rankOf: (entry: DashboardIconEntry) => number | undefined,
   limit: number,
-): ReadonlyArray<DashboardIcon> {
+) {
   return entries
     .flatMap((entry) => {
       const rank = rankOf(entry);
@@ -74,12 +67,12 @@ export function findDashboardIcons(
   entries: ReadonlyArray<DashboardIconEntry>,
   query: string,
   projectName: string,
-): ReadonlyArray<DashboardIcon> {
-  const search = compact(query);
+) {
+  const search = searchKey(query);
   if (search) {
     return ranked(
       entries,
-      ({ keys: [name = "", ...aliases] }) =>
+      ({ name, aliases }) =>
         name === search
           ? 0
           : name.startsWith(search)
@@ -93,11 +86,11 @@ export function findDashboardIcons(
   const parts = projectName.toLowerCase().split(/[^a-z0-9]+/);
   // Adjacent pairs catch names written as one word, like "Home Assistant" → homeassistant.
   const pairs = parts.slice(1).map((part, index) => `${parts[index]}${part}`);
-  const words = [compact(projectName), ...parts, ...pairs].filter((word) => word.length >= 3);
+  const words = [searchKey(projectName), ...parts, ...pairs].filter((word) => word.length >= 3);
   return ranked(
     entries,
-    ({ keys: [name = ""] }) =>
-      words.includes(name)
+    ({ name, aliases }) =>
+      words.includes(name) || aliases.some((alias) => words.includes(alias))
         ? 0
         : words.some((word) => word.length >= 4 && name.startsWith(word))
           ? 1
@@ -107,7 +100,9 @@ export function findDashboardIcons(
 }
 
 async function loadDashboardIcons() {
-  const response = await fetch(`${DASHBOARD_ICONS_CDN_URL}/metadata.json`);
+  const response = await fetch(`${DASHBOARD_ICONS_CDN_URL}/metadata.json`, {
+    referrerPolicy: "no-referrer",
+  });
   if (!response.ok) throw new Error(`dashboard-icons metadata answered ${response.status}`);
   return parseDashboardIcons(await response.json());
 }

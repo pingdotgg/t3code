@@ -3,9 +3,13 @@ import { dashboardIconUrl } from "@t3tools/shared/dashboardIcons";
 import { AsyncResult } from "effect/reactivity";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectMonogram } from "../ProjectMonogram";
-import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
+import type {
+  ProjectDashboardIcon,
+  ProjectIconColor,
+  ProjectIconOverride,
+} from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
-import { createElement, useState } from "react";
+import { type ComponentProps, createElement, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
@@ -16,7 +20,7 @@ import {
 } from "../../projectIconOptions";
 import { cn } from "~/lib/utils";
 import { lucideIconByName } from "../../lib/lucideIconByName";
-import { type DashboardIcon, dashboardIconsAtom, findDashboardIcons } from "../../dashboardIcons";
+import { dashboardIconsAtom, findDashboardIcons } from "../../dashboardIcons";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { Button } from "../ui/button";
 import {
@@ -33,8 +37,25 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const DEFAULT_ICON = "folder-code";
-const GRID_BUTTON_CLASS_NAME =
-  "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+
+function PickerGridButton({
+  selected,
+  className,
+  ...props
+}: ComponentProps<"button"> & { readonly selected: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      className={cn(
+        "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        selected && "border-border bg-accent",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 
 function PickerIcon({ name }: { name: string }) {
   const icon = lucideIconByName(name);
@@ -101,7 +122,7 @@ function ProjectIconPickerBody({
     current?.kind === "monogram" ? current.text : automatic.monogram,
   );
   const [emoji, setEmoji] = useState(current?.kind === "emoji" ? current.emoji : "💻");
-  const [dashboardIcon, setDashboardIcon] = useState<DashboardIcon | null>(
+  const [dashboardIcon, setDashboardIcon] = useState<ProjectDashboardIcon | null>(
     current?.kind === "dashboard-icon" ? current : null,
   );
   const [query, setQuery] = useState("");
@@ -238,20 +259,15 @@ function ProjectIconPickerBody({
                 ) : (
                   <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
                     {icons.map((name) => (
-                      <button
+                      <PickerGridButton
                         key={name}
-                        type="button"
                         aria-label={iconLabel(name)}
-                        aria-pressed={iconName === name}
-                        className={cn(
-                          GRID_BUTTON_CLASS_NAME,
-                          iconName === name && "border-border bg-accent",
-                          selectedColorClassName,
-                        )}
+                        selected={iconName === name}
+                        className={selectedColorClassName}
                         onClick={() => setIconName(name)}
                       >
                         <PickerIcon name={name} />
-                      </button>
+                      </PickerGridButton>
                     ))}
                   </div>
                 )}
@@ -262,7 +278,7 @@ function ProjectIconPickerBody({
                 <T>
                   Icons from{" "}
                   <a
-                    className="text-foreground underline underline-offset-2 hover:text-primary"
+                    className="underline"
                     href="https://dashboardicons.com"
                     rel="noreferrer"
                     target="_blank"
@@ -303,20 +319,15 @@ function ProjectIconPickerBody({
             <ScrollArea scrollFade className="max-h-64">
               <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
                 {PROJECT_EMOJIS.map((option) => (
-                  <button
+                  <PickerGridButton
                     key={option.emoji}
-                    type="button"
                     aria-label={m(option.label)}
-                    aria-pressed={emoji === option.emoji}
-                    className={cn(
-                      GRID_BUTTON_CLASS_NAME,
-                      "text-xl",
-                      emoji === option.emoji && "border-border bg-accent",
-                    )}
+                    selected={emoji === option.emoji}
+                    className="text-xl"
                     onClick={() => setEmoji(option.emoji)}
                   >
                     {option.emoji}
-                  </button>
+                  </PickerGridButton>
                 ))}
               </div>
             </ScrollArea>
@@ -360,19 +371,22 @@ function DashboardIconGrid({
 }: {
   readonly query: string;
   readonly projectName: string;
-  readonly selected: DashboardIcon | null;
-  readonly onSelect: (icon: DashboardIcon) => void;
+  readonly selected: ProjectDashboardIcon | null;
+  readonly onSelect: (icon: ProjectDashboardIcon) => void;
 }) {
   const appearance = useRenderedAppearance();
+  // Some catalog files fail on the CDN; hide them rather than show blank tiles.
+  const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
   const result = useAtomValue(dashboardIconsAtom);
   const retry = useAtomRefresh(dashboardIconsAtom);
   const found = AsyncResult.isSuccess(result)
     ? findDashboardIcons(result.value, query, projectName)
     : [];
-  const icons =
+  const icons = (
     selected && !query.trim() && !found.some((icon) => icon.name === selected.name)
       ? [selected, ...found]
-      : found;
+      : found
+  ).filter((icon) => !failed.has(icon.name));
 
   if (AsyncResult.isFailure(result)) {
     return (
@@ -413,24 +427,21 @@ function DashboardIconGrid({
       )}
       <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
         {icons.map((icon) => (
-          <button
+          <PickerGridButton
             key={icon.name}
-            type="button"
             aria-label={icon.name}
-            aria-pressed={icon.name === selected?.name}
-            className={cn(
-              GRID_BUTTON_CLASS_NAME,
-              icon.name === selected?.name && "border-border bg-accent",
-            )}
+            selected={icon.name === selected?.name}
             onClick={() => onSelect(icon)}
           >
             <img
               src={dashboardIconUrl(icon, appearance)}
               alt=""
               loading="lazy"
+              referrerPolicy="no-referrer"
               className="size-6 object-contain"
+              onError={() => setFailed((current) => new Set(current).add(icon.name))}
             />
-          </button>
+          </PickerGridButton>
         ))}
       </div>
     </>

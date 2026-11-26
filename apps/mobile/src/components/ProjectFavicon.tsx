@@ -4,7 +4,7 @@ import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
 import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
-import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectDashboardIcon, ProjectIconOverride } from "@t3tools/contracts";
 import { dashboardIconUrl } from "@t3tools/shared/dashboardIcons";
 import {
   getProjectFaviconCacheKey,
@@ -105,7 +105,7 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
 });
 
 function DashboardProjectFavicon(props: {
-  readonly icon: Extract<ProjectIconOverride, { kind: "dashboard-icon" }>;
+  readonly icon: ProjectDashboardIcon;
   readonly open?: boolean;
   readonly projectTitle: string;
   readonly size: number;

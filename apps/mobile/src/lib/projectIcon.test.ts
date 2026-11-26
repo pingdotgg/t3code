@@ -1,4 +1,5 @@
 import type { ProjectIconOverride } from "@t3tools/contracts";
+import { dashboardIconUrl } from "@t3tools/shared/dashboardIcons";
 import { describe, expect, it } from "vite-plus/test";
 
 import { projectAutoMonogram, resolveProjectChipIcon } from "./projectIcon";
@@ -38,16 +39,16 @@ describe("resolveProjectChipIcon", () => {
     ).toEqual({ kind: "monogram", text: "LP", color: "emerald" });
   });
 
-  it("loads a dashboard icon from the CDN", () => {
-    const github = project("t3code", {
+  it("loads a dashboard icon's light-background file from the CDN", () => {
+    const icon = {
       kind: "dashboard-icon",
       name: "github",
       file: "github.svg",
       darkFile: "github-light.svg",
-    });
-    expect(resolveProjectChipIcon(github, null, favicon)).toEqual({
+    } as const;
+    expect(resolveProjectChipIcon(project("t3code", icon), null, favicon)).toEqual({
       kind: "favicon",
-      uri: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github.svg",
+      uri: dashboardIconUrl(icon, "light"),
     });
   });
 

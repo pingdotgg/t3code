@@ -24,6 +24,7 @@ vi.mock(import("@t3tools/shared/dashboardIcons"), () => ({
 
 function setup() {
   state.refresh = () => {};
+  state.logoUrls.clear();
   const activeResources = new Set<string>();
   state.favicon = Atom.make((get) => {
     activeResources.add("favicon");
@@ -131,6 +132,7 @@ it("asks for a new URL only once when the new URL fails too", async () => {
 });
 
 it("drops a loaded logo when a newly picked logo fails", async () => {
+  setup();
   const registry = AtomRegistry.make();
   const svg =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>';
@@ -162,7 +164,6 @@ it("drops a loaded logo when a newly picked logo fails", async () => {
     });
     expect(screen.container.querySelector("img:not(.hidden)")).toBeNull();
   } finally {
-    state.logoUrls.clear();
     URL.revokeObjectURL(plexUrl);
     registry.dispose();
   }
