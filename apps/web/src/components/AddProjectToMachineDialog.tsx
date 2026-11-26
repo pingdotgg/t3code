@@ -412,17 +412,28 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   ) : null}
                 </div>
                 {canSearchFiles && (allIgnoredFiles.data?.truncated || fileQuery.length > 0) ? (
+                  // Native search inputs clear on Escape even during IME composition.
                   <Input
                     size="sm"
-                    type="search"
+                    type="text"
+                    role="searchbox"
+                    enterKeyHint="search"
                     aria-label={gt("Search ignored files")}
                     placeholder={gt("Search ignored files")}
                     value={fileQuery}
                     maxLength={256}
                     onChange={(event) => setFileQuery(event.target.value)}
-                    // Enter would otherwise submit the clone.
                     onKeyDown={(event) => {
+                      // Enter would otherwise submit the clone.
                       if (event.key === "Enter") event.preventDefault();
+                      if (event.key !== "Escape" || event.defaultPrevented) return;
+                      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+                      const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+                      if (!composing && !fileQuery && !event.repeat) return;
+                      event.stopPropagation();
+                      if (composing) return;
+                      event.preventDefault();
+                      setFileQuery("");
                     }}
                     spellCheck={false}
                     autoComplete="off"
