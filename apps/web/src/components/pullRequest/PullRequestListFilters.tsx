@@ -47,10 +47,10 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
+  selectedPullRequestLabels,
   pullRequestLabelChoices,
   pullRequestLabelColor,
   type PullRequestAuthorFacet,
@@ -59,6 +59,7 @@ import {
 import { resolveFilterOptions } from "./pullRequestListOptions";
 import { PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface PullRequestFilterOption<Value extends string> {
   readonly value: Value;
@@ -116,8 +117,10 @@ export function PullRequestSearchInput({
       <InputGroupAddon>
         {busy ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
       </InputGroupAddon>
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
-        type="search"
+        type="text"
+        role="searchbox"
         value={draft ?? value}
         onFocus={() => setDraft(value)}
         onBlur={() => setDraft(null)}
@@ -129,9 +132,16 @@ export function PullRequestSearchInput({
           }
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
-            onSubmit(event.currentTarget.value);
-          }
+          const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+          if (event.key === "Enter" && !composing) onSubmit(event.currentTarget.value);
+          if (event.key !== "Escape" || event.defaultPrevented) return;
+          if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+          if (!composing && !event.currentTarget.value) return;
+          // The pull requests page leaves on an Escape that reaches it.
+          event.stopPropagation();
+          if (composing) return;
+          setDraft("");
+          onChange("");
         }}
         placeholder={placeholder}
         aria-label={label}
@@ -227,12 +237,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
           </MenuRadioItem>
         );
         if (!option.unavailable) return item;
-        return (
-          <Tooltip key={option.value}>
-            <TooltipTrigger render={item} />
-            <TooltipPopup side="top">{option.unavailable}</TooltipPopup>
-          </Tooltip>
-        );
+        return <SharedTooltipTrigger key={option.value} render={item} label={option.unavailable} />;
       })}
     </MenuRadioGroup>
   );
@@ -343,7 +348,9 @@ function PullRequestAuthorChoices({
               <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
               {option.mergedCount > 0 ? (
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {option.mergedCount} {option.mergedCount === 1 ? "merge" : "merges"} loaded
+                  {gt("{count, plural, one {{count} merge loaded} other {{count} merges loaded}}", {
+                    count: option.mergedCount,
+                  })}
                 </span>
               ) : null}
             </span>
@@ -413,9 +420,9 @@ function PullRequestLabelChoices({
   const selected = new Set(value.map((name) => name.toLowerCase()));
   const choices = pullRequestLabelChoices(options, hosted.labels, query);
   const visible = [
-    ...value
-      .filter((name) => !choices.some((option) => option.name.toLowerCase() === name.toLowerCase()))
-      .map((name) => ({ name, color: null, count: 0 })),
+    ...selectedPullRequestLabels(options, hosted.labels, value).filter(
+      (label) => !choices.some((option) => option.name.toLowerCase() === label.name.toLowerCase()),
+    ),
     ...choices,
   ];
   return (

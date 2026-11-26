@@ -1,0 +1,2 @@
+ALTER TABLE "relay_account_deletions" ADD COLUMN "completed_at" varchar(64);--> statement-breakpoint
+CREATE INDEX "idx_relay_account_deletions_pending" ON "relay_account_deletions" ("attempts","requested_at") WHERE "completed_at" is null;

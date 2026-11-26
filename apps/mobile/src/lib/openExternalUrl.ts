@@ -6,7 +6,6 @@ const ExternalUrlTarget = Schema.Literals([
   "markdown-link",
   "pull-request",
   "provider-auth",
-  "html-render",
   "mcp-app",
   "secret-request",
   "external-link",

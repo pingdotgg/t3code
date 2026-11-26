@@ -495,6 +495,38 @@ it.effect("cancels a stalled registration without retrying or retaining its prom
   }).pipe(Effect.provide(realQueryRunner)),
 );
 
+it.effect("reports MCP startup after the CLI boots, while it registers the servers", () =>
+  Effect.gen(function* () {
+    const steps: Array<string> = [];
+    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => {
+            steps.push("booted");
+            return {};
+          },
+          setMcpServers: async () => {
+            steps.push("registered");
+            return { added: ["t3-code"], removed: [], errors: {} };
+          },
+          close: vi.fn(),
+          [Symbol.asyncDispose]: async () => {},
+        }) as unknown as ClaudeSdk.Query,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+    const runner = yield* ClaudeAgentSdkQueryRunner;
+    const { resume, ...options } = resumedMcpQueryInput.options;
+    const session = yield* runner.open({
+      ...resumedMcpQueryInput,
+      options: { ...options, sessionId: resume },
+      onStartupPhase: (phase) => Effect.sync(() => steps.push(phase ?? "ended")),
+    });
+    yield* session.close;
+
+    assert.deepEqual(steps, ["booted", "mcp", "registered", "ended"]);
+  }).pipe(Effect.provide(realQueryRunner)),
+);
+
 it.effect("retries a fresh session once after MCP registration times out", () =>
   Effect.gen(function* () {
     const registrationStarted = Promise.withResolvers<void>();
@@ -516,15 +548,19 @@ it.effect("retries a fresh session once after MCP registration times out", () =>
     yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
     const runner = yield* ClaudeAgentSdkQueryRunner;
     const { resume, ...options } = resumedMcpQueryInput.options;
+    const phases: Array<string> = [];
     const opening = yield* runner
       .open({
         ...resumedMcpQueryInput,
         options: { ...options, sessionId: resume },
+        onStartupPhase: (phase) => Effect.sync(() => phases.push(phase ?? "ended")),
       })
       .pipe(Effect.result, Effect.forkChild);
     yield* Effect.promise(() => registrationStarted.promise);
     yield* TestClock.adjust("90 seconds");
     const result = yield* Fiber.join(opening);
+    // The replacement CLI boots without the timed-out attempt's phase.
+    assert.deepEqual(phases, ["mcp", "ended", "mcp", "ended"]);
 
     assert.equal(result._tag, "Success");
     if (result._tag === "Success") yield* result.success.close;
@@ -727,7 +763,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     pid,
     ppid,
     pgid: pid,
-    started: `Sun Nov 15 10:00:0${startedSecond} 2026`,
+    startTimeSeconds: startedSecond,
   });
   const byNumber = (left: number, right: number) => left - right;
 
@@ -791,6 +827,25 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       });
     },
   );
+
+  it.effect("rejects a same-second pid reuse after an intervening lower precision snapshot", () => {
+    const cli = processRow(1000, 10, 0);
+    const child = processRow(1100, 1000, 1);
+    const orphan = { ...child, ppid: 1 };
+    const tables = [
+      [cli, { ...child, startTimeMicros: 1000001 }],
+      [cli, orphan],
+      [{ ...orphan, startTimeMicros: 1000002 }, processRow(1101, orphan.pid, 2)],
+    ];
+    const tracker = makeClaudeDescendantPoll(Effect.sync(() => tables.shift() ?? [])).track(
+      cli.pid,
+    );
+    return Effect.gen(function* () {
+      yield* tracker.refresh;
+      yield* tracker.refresh;
+      assert.deepStrictEqual(yield* tracker.leftovers, []);
+    });
+  });
 
   // The poll and a session close read the table independently. The older table still lists a
   // re-parented job and the child it just started; the newer one lists a job started since.

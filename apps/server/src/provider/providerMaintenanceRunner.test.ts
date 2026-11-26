@@ -224,6 +224,7 @@ function makeRegistry(
         );
       },
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),
+      runtimeModeLimits: () => Effect.succeed([]),
       invalidateModelCaches: () => Effect.void,
       refreshModelCatalog: Effect.void,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
@@ -876,7 +877,7 @@ describe("providerMaintenanceRunner", () => {
   // binary behind that later updates mistake for an install.
   it.effect.each([
     { runFor: "6 minutes", status: "succeeded", message: "Provider updated." },
-    { runFor: "31 minutes", status: "failed", message: "Update timed out after 30 minutes." },
+    { runFor: "2 hours", status: "succeeded", message: "Provider updated." },
   ] as const)("lets a slow installer run for $runFor", ({ runFor, status, message }) => {
     const started = Deferred.makeUnsafe<void>();
     return Effect.gen(function* () {
@@ -1271,6 +1272,69 @@ describe("providerMaintenanceRunner", () => {
           ),
         );
       }),
+  );
+
+  // npm moves the working package and its bin shims aside before it downloads
+  // the new version; a forced kill then (taskkill /F on Windows) leaves no CLI.
+  it.effect("does not force-kill an npm global update still running at the timeout", () =>
+    Effect.gen(function* () {
+      const kills: Array<string> = [];
+      let spawns = 0;
+      const spawned = yield* Deferred.make<void>();
+      const respawned = yield* Deferred.make<void>();
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Deferred.succeed((spawns += 1) === 1 ? spawned : respawned, undefined).pipe(
+          Effect.as(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Deferred.await(exit),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.sync(() => kills.push("kill")),
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const { registry } = yield* makeRegistry(baseOpenCodeProvider);
+        const updater = yield* makeTestRunner(registry);
+        yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkScoped);
+        yield* Deferred.await(spawned);
+        yield* TestClock.adjust("31 minutes");
+
+        assert.deepStrictEqual(
+          kills,
+          [],
+          "the update timeout force-killed npm while it was replacing the installed CLI",
+        );
+        // npm is still replacing the install, so a retry must not start a second installer.
+        yield* Effect.yieldNow.pipe(Effect.repeat({ times: 20 }));
+        const retry = yield* Effect.raceFirst(
+          updater.updateProvider(OPENCODE_DRIVER).pipe(
+            Effect.flip,
+            Effect.map((error) => error.reason),
+          ),
+          Deferred.await(respawned).pipe(Effect.as("a second installer started")),
+        );
+        assert.include(retry, "already running");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerNonWindowsPlatform,
+            layerLatestVersionHttpClient("9.9.9"),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ),
+      );
+    }),
   );
 
   it.effect("resolves npm to a .cmd shim from the provider's PATH on win32", () => {
