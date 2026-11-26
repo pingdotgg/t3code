@@ -926,7 +926,9 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath", {
 });
 
 // Matches for a bare command in PATH order, up to the first one `until` accepts; not cached.
-export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(function* (
+export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths", {
+  attributes: routineSpan,
+})(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly until: (match: string) => boolean },
 ) {

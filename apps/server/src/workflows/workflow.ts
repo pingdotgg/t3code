@@ -331,8 +331,7 @@ const stepAs = <A, I, X, E>(
     // Made per try, so a retry numbers its signals from the start again and counts as an attempt.
     const execute = Effect.andThen(
       run.store.stepStarted(run.runId, name, "step"),
-      // A step is the workflow author's own work, so it is never sampled like engine bookkeeping.
-      Effect.suspend(() => withoutRoutineSpans(Effect.provideContext(code, run.forStep(name)))),
+      Effect.suspend(() => Effect.provideContext(code, run.forStep(name))),
     );
     return journaled(
       run,
@@ -340,12 +339,15 @@ const stepAs = <A, I, X, E>(
       `step/${name}`,
       options.returns,
       settle(
-        retry.times === 0
-          ? execute
-          : Effect.retry(execute, {
-              times: retry.times,
-              ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
-            }),
+        // A step and its retry schedule are the workflow author's own work, never sampled.
+        withoutRoutineSpans(
+          retry.times === 0
+            ? execute
+            : Effect.retry(execute, {
+                times: retry.times,
+                ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
+              }),
+        ),
       ).pipe(
         // A value that does not encode fails the step, so it is never marked done first.
         Effect.tap((value) =>
