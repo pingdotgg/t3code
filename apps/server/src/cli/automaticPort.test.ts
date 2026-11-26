@@ -43,6 +43,7 @@ const select = (scenario: Scenario) => {
   const reserved = [...(scenario.reservedPorts ?? [50_001])];
   const net: NetService.NetServiceShape = {
     canListenOnHost: () => Effect.succeed(true),
+    probeListenOnHost: () => Effect.succeed(true),
     hasListenerOnHost: () => Effect.succeed(false),
     isPortAvailableOnLoopback: () => Effect.succeed(true),
     reserveLoopbackPort: () => Effect.sync(() => reserved.shift() ?? 60_000),
