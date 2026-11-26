@@ -194,7 +194,7 @@ describe("thread links", () => {
   it("ends code where CommonMark does, so a link after it stays live", () => {
     const after = "See <t3-thread://v2/env-1/t1>";
     const hidden = "<t3-thread://v2/local/in-code>";
-    const lfCases = [
+    for (const markdown of [
       ["```ts", 'const fence = "```";', hidden, "```", after],
       ["> ```ts", '> const fence = "```";', `> ${hidden}`, "> ```", `> ${after}`],
       ["> ```", ` > ${hidden}`, "> ```", after],
@@ -231,12 +231,10 @@ describe("thread links", () => {
       ["> Stray ` tick", "---", `${after} and \`code\``],
       ["Use `example", "```" + hidden + "`", after],
       ["\\\\``" + after + "`"],
-    ];
-    for (const joined of [
-      ...lfCases.map((lines) => lines.join("\n")),
-      `Use \`example\r${hidden} end\`. Stray \` tick\r\r${after}\rand \`code\``,
-      `Stray \` tick\r# ${after}\rand \`code\``,
+      [`Use \`example\r${hidden} end\`. Stray \` tick\r\r${after}\rand \`code\``],
+      [`Stray \` tick\r# ${after}\rand \`code\``],
     ]) {
+      const joined = markdown.join("\n");
       expect(threadLinkRefs(joined, local)).toEqual([ref("env-1", "t1")]);
       expect(relabelThreadLinks(joined, local, () => "New")).toBe(
         joined.replace("<t3-thread://v2/env-1/t1>", "[New](t3-thread://v2/env-1/t1)"),
