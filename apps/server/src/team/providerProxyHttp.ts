@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
+  FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpRouter,
@@ -24,12 +25,14 @@ import {
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import { requestUrl } from "../requestUrl.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import {
   issueEphemeralTeamProviderLease,
   readTeamProviderSecret,
 } from "./TeamProviderLeaseService.ts";
+import * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 
 const TEAM_PROVIDER_PROXY_PREFIX = "/api/team/provider-proxy/";
@@ -42,6 +45,7 @@ const NO_STORE_HEADERS = {
 } as const;
 
 const HOP_BY_HOP_AND_AUTH_HEADERS = new Set([
+  "accept-encoding",
   "connection",
   "keep-alive",
   "proxy-authenticate",
@@ -57,6 +61,67 @@ const HOP_BY_HOP_AND_AUTH_HEADERS = new Set([
   "x-goog-api-key",
   "cookie",
 ]);
+
+function safeDecodeURIComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+function resolveSafeUpstreamUrl(
+  upstreamBaseUrl: string,
+  subpath: string,
+  search: string,
+): string | null {
+  let base: URL;
+  try {
+    base = new URL(upstreamBaseUrl);
+  } catch {
+    return null;
+  }
+  if (base.protocol !== "http:" && base.protocol !== "https:") {
+    return null;
+  }
+  if (subpath.includes("\\") || subpath.includes("\0")) {
+    return null;
+  }
+  const segments = subpath.split("/");
+  for (const segment of segments) {
+    if (segment.length === 0) continue;
+    const decoded = safeDecodeURIComponent(segment);
+    if (
+      decoded === null ||
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      decoded.includes("\0")
+    ) {
+      return null;
+    }
+  }
+  const normalizedBase = upstreamBaseUrl.replace(/\/+$/, "");
+  let resolved: URL;
+  try {
+    resolved = new URL(`${normalizedBase}${subpath}${search}`);
+  } catch {
+    return null;
+  }
+  if (resolved.origin !== base.origin) {
+    return null;
+  }
+  const basePath = base.pathname.replace(/\/+$/, "");
+  if (
+    basePath.length > 0 &&
+    resolved.pathname !== basePath &&
+    !resolved.pathname.startsWith(`${basePath}/`)
+  ) {
+    return null;
+  }
+  return resolved.toString();
+}
 
 const LeaseBodySchema = Schema.fromJsonString(
   Schema.Struct({
@@ -112,6 +177,10 @@ const encodeJsonUnknown = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown
 const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authenticateTeamMember")(
   function* (
     request: HttpServerRequest.HttpServerRequest,
+    options?: {
+      readonly allowInternalProxyToken?: boolean;
+      readonly providerInstanceId?: ProviderInstanceId;
+    },
   ): Effect.fn.Return<
     TeamHttpAuthOutcome,
     never,
@@ -122,6 +191,10 @@ const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authe
     const teamRepo = yield* TeamRepository.TeamRepository;
     const assetsRepo = yield* TeamAssetsRepository.TeamAssetsRepository;
     const envAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const authSessionsOpt = yield* Effect.serviceOption(AuthSessions.AuthSessionRepository);
+    const teamProviderManagerOpt = yield* Effect.serviceOption(
+      TeamProviderManager.TeamProviderManager,
+    );
 
     const workspaceOpt = yield* teamRepo
       .getWorkspace()
@@ -138,6 +211,34 @@ const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authe
 
     const presentedToken = extractPresentedBearerLikeToken(request);
     if (presentedToken !== null) {
+      if (options?.allowInternalProxyToken === true && Option.isSome(teamProviderManagerOpt)) {
+        const internalMatch = yield* teamProviderManagerOpt.value
+          .verifyInternalProxyToken(presentedToken, options.providerInstanceId)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (internalMatch !== null && internalMatch.teamId === team.id) {
+          let memberOpt: Option.Option<TeamMember> = Option.none();
+          if (internalMatch.memberId !== null) {
+            memberOpt = yield* teamRepo
+              .getMemberById(internalMatch.memberId)
+              .pipe(Effect.orElseSucceed(() => Option.none()));
+          }
+          if (Option.isNone(memberOpt) || memberOpt.value.status !== "active") {
+            const members = yield* teamRepo
+              .listMembers(team.id)
+              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
+            const fallbackOwner =
+              members.find((m) => m.status === "active" && m.role === "owner") ??
+              members.find((m) => m.status === "active");
+            if (fallbackOwner !== undefined) {
+              memberOpt = Option.some(fallbackOwner);
+            }
+          }
+          if (Option.isSome(memberOpt) && memberOpt.value.status === "active") {
+            return { ok: true, team, member: memberOpt.value };
+          }
+        }
+      }
+
       const tokenRecordOpt = yield* assetsRepo
         .findLocalSyncTokenByHash(hashToken(presentedToken))
         .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -150,6 +251,24 @@ const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authe
             code: "team_access_revoked",
             message: "Your team access has been revoked.",
           };
+        }
+        if (Option.isSome(authSessionsOpt)) {
+          const sessionOpt = yield* authSessionsOpt.value
+            .getById({ sessionId: tokenRecord.sessionId })
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          if (
+            Option.isNone(sessionOpt) ||
+            sessionOpt.value.revokedAt !== null ||
+            DateTime.toEpochMillis(sessionOpt.value.expiresAt) <= nowMs
+          ) {
+            return {
+              ok: false,
+              status: 403,
+              code: "team_access_revoked",
+              message: "Your team session has expired or been revoked.",
+            };
+          }
         }
         const memberOpt = yield* teamRepo
           .getMemberById(tokenRecord.memberId)
@@ -217,17 +336,21 @@ const handleProviderProxy = Effect.fn("TeamProviderProxyHttp.proxy")(function* (
     return jsonErrorResponse(400, "invalid_input", "Malformed request URL.");
   }
 
-  const auth = yield* authenticateTeamMemberHttpRequest(request);
+  const remainder = urlOpt.value.pathname.slice(TEAM_PROVIDER_PROXY_PREFIX.length);
+  const slashIndex = remainder.indexOf("/");
+  const rawInstanceId = safeDecodeURIComponent(
+    slashIndex === -1 ? remainder : remainder.slice(0, slashIndex),
+  );
+  const subpath = slashIndex === -1 ? "" : remainder.slice(slashIndex);
+
+  const auth = yield* authenticateTeamMemberHttpRequest(request, {
+    allowInternalProxyToken: true,
+    ...(rawInstanceId ? { providerInstanceId: ProviderInstanceId.make(rawInstanceId) } : {}),
+  });
   if (!auth.ok) {
     return jsonErrorResponse(auth.status, auth.code, auth.message);
   }
 
-  const remainder = urlOpt.value.pathname.slice(TEAM_PROVIDER_PROXY_PREFIX.length);
-  const slashIndex = remainder.indexOf("/");
-  const rawInstanceId = decodeURIComponent(
-    slashIndex === -1 ? remainder : remainder.slice(0, slashIndex),
-  );
-  const subpath = slashIndex === -1 ? "" : remainder.slice(slashIndex);
   if (!rawInstanceId) {
     return jsonErrorResponse(400, "invalid_input", "Missing providerInstanceId in proxy path.");
   }
@@ -257,13 +380,17 @@ const handleProviderProxy = Effect.fn("TeamProviderProxyHttp.proxy")(function* (
     );
   }
 
+  const targetUrl = resolveSafeUpstreamUrl(provider.upstreamBaseUrl, subpath, urlOpt.value.search);
+  if (targetUrl === null) {
+    return jsonErrorResponse(400, "invalid_input", "Invalid proxy subpath for upstream provider.");
+  }
+
   const storedSecret = provider.secretKey
     ? yield* readTeamProviderSecret(secrets, provider.secretKey).pipe(
         Effect.orElseSucceed(() => null),
       )
     : null;
 
-  const targetUrl = `${provider.upstreamBaseUrl.replace(/\/+$/, "")}${subpath}${urlOpt.value.search}`;
   const method = request.method.toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
   const bodyBytes = hasBody
@@ -273,12 +400,14 @@ const handleProviderProxy = Effect.fn("TeamProviderProxyHttp.proxy")(function* (
       )
     : undefined;
 
+  const injectedHeaderLower = (provider.apiKeyHeader ?? "authorization").trim().toLowerCase();
   let outbound = HttpClientRequest.make(
     method as "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD",
   )(targetUrl);
   for (const [key, value] of Object.entries(request.headers)) {
     if (value === undefined) continue;
-    if (HOP_BY_HOP_AND_AUTH_HEADERS.has(key.toLowerCase())) continue;
+    const lower = key.toLowerCase();
+    if (HOP_BY_HOP_AND_AUTH_HEADERS.has(lower) || lower === injectedHeaderLower) continue;
     outbound = HttpClientRequest.setHeader(outbound, key, value);
   }
   if (storedSecret?.apiKey) {
@@ -296,7 +425,12 @@ const handleProviderProxy = Effect.fn("TeamProviderProxyHttp.proxy")(function* (
   }
 
   const upstreamResult = yield* Effect.result(
-    httpClient.execute(outbound).pipe(Effect.timeout("120 seconds")),
+    httpClient
+      .execute(outbound)
+      .pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        Effect.timeout("120 seconds"),
+      ),
   );
   const nowIso = DateTime.formatIso(yield* DateTime.now);
   const usageId = yield* random.uuidV4();
@@ -354,7 +488,7 @@ const handleProviderLease = Effect.fn("TeamProviderProxyHttp.lease")(function* (
     return jsonErrorResponse(auth.status, auth.code, auth.message);
   }
 
-  const rawInstanceId = decodeURIComponent(
+  const rawInstanceId = safeDecodeURIComponent(
     urlOpt.value.pathname.slice(TEAM_PROVIDER_LEASE_PREFIX.length).replace(/\/+$/, ""),
   );
   if (!rawInstanceId || rawInstanceId.includes("/")) {

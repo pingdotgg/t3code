@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthSessionId,
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
@@ -17,8 +18,10 @@ import {
   TeamMemberId,
   TeamPrepromptId,
   TeamProviderId,
+  TeamPseudo,
   TeamSkillId,
   TeamSkillSlug,
+  TeamViewId,
   ThreadId,
   makeTeamProviderInstanceId,
   type TeamPreprompt,
@@ -222,11 +225,39 @@ describe("TeamProviderManager", () => {
           );
           expect(remoteFail._tag).toBe("Failure");
 
-          // Personal project continues using personal providers cleanly.
+          // Personal project continues using personal providers cleanly,
+          // and strictly REJECTS virtual team:* providers!
           yield* manager.assertProviderAllowedForProject({
             projectId: personalProjectId,
             instanceId: ProviderInstanceId.make("codex"),
           });
+          const personalTeamProviderFail = yield* Effect.result(
+            manager.assertProviderAllowedForProject({
+              projectId: personalProjectId,
+              instanceId: agyVirtualId,
+            }),
+          );
+          expect(personalTeamProviderFail._tag).toBe("Failure");
+          const personalPrepareFail = yield* Effect.result(
+            manager.prepareForTurn({
+              projectId: personalProjectId,
+              instanceId: agyVirtualId,
+              driver: ProviderDriverKind.make("antigravity"),
+              nativeThreadHasTurns: false,
+            }),
+          );
+          expect(personalPrepareFail._tag).toBe("Failure");
+
+          // Invalid non-http(s) teamServerUrl is rejected by syncLocalTeamBinding.
+          const badUrlSync = yield* manager.syncLocalTeamBinding({
+            teamId: TeamId.make("team-evil"),
+            teamName: "Evil",
+            teamServerUrl: "file:///etc/passwd",
+            providers: [],
+            projects: [],
+            assetsRevision: NonNegativeInt.make(0),
+          });
+          expect(badUrlSync.synced).toBe(false);
 
           // Pre-turn preparation fetches lease, writes chmod 0600 token file (no refresh_token), and returns turn pre-prompts!
           const prep = yield* manager.prepareForTurn({
@@ -264,6 +295,15 @@ describe("TeamProviderManager", () => {
           expect(recycledCount).toBe(1);
           expect(continuations).toHaveLength(1);
 
+          // Pending recycle marker guarantees continuation turn recycles warm RAM-caching session even when lease is already fresh!
+          const continuationPrep = yield* manager.prepareForTurn({
+            projectId,
+            instanceId: agyVirtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            nativeThreadHasTurns: true,
+          });
+          expect(continuationPrep.recycleWarmSession).toBe(true);
+
           // Now revoke member -> 403 immediately purges ephemeral token file and refuses auto-resume!
           revoked = true;
           const revokedRecovery = yield* manager.handleActiveTurnAuthFailure({
@@ -293,7 +333,13 @@ describe("TeamProviderManager", () => {
             driver: ProviderDriverKind.make("antigravity"),
           });
           const tokenExists = yield* Effect.promise(() =>
-            NodeFSP.access(NodePath.join(paths.profileDir, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME))
+            NodeFSP.access(
+              NodePath.join(
+                paths.profileDir,
+                "antigravity-acp",
+                TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
+              ),
+            )
               .then(() => true)
               .catch(() => false),
           );
@@ -301,6 +347,153 @@ describe("TeamProviderManager", () => {
         } finally {
           yield* Effect.promise(
             () => new Promise<void>((resolve) => mockTeamServer.close(() => resolve())),
+          );
+        }
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.live(
+    "supports Team Server workspace token-lease issuance without local binding, loopback proxy config, and Antigravity proxy authMethod",
+    () =>
+      Effect.gen(function* () {
+        const oauthServer = NodeHttp.createServer((req, res) => {
+          if (req.url === "/oauth/token") {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify({
+                access_token: "team-server-leased-access",
+                token_type: "Bearer",
+                expires_in: 3600,
+              }),
+            );
+            return;
+          }
+          res.writeHead(404);
+          res.end();
+        });
+        yield* Effect.promise(
+          () => new Promise<void>((resolve) => oauthServer.listen(0, "127.0.0.1", () => resolve())),
+        );
+        const oauthPort = (oauthServer.address() as { port: number }).port;
+        try {
+          const teamRepo = yield* TeamRepository.TeamRepository;
+          const assetsRepo = yield* TeamAssetsRepository.TeamAssetsRepository;
+          const secrets = yield* ServerSecretStore.ServerSecretStore;
+          const manager = yield* TeamProviderManager.TeamProviderManager;
+
+          const teamId = TeamId.make("team-srv-1");
+          const ownerId = TeamMemberId.make("member-owner");
+          const now = IsoDateTime.make("2026-01-01T00:00:00.000Z");
+          yield* teamRepo.initializeWorkspace({
+            team: {
+              id: teamId,
+              name: "Server Team",
+              defaultViewId: TeamViewId.make("view-default"),
+              createdAt: now,
+              updatedAt: now,
+            },
+            owner: {
+              id: ownerId,
+              teamId,
+              pseudo: TeamPseudo.make("alice"),
+              role: "owner",
+              status: "active",
+              createdAt: now,
+              updatedAt: now,
+            },
+            ownerSessionId: AuthSessionId.make("sess-owner"),
+          });
+          const projectId = ProjectId.make("proj-srv-1");
+          yield* teamRepo.upsertProjectAssignment({
+            projectId,
+            teamId,
+            repoIdentityKey: null,
+            defaultViewId: null,
+            assignedByMemberId: ownerId,
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          const encoder = new TextEncoder();
+          const leaseSecretKey = "team-provider-secret-lease";
+          yield* secrets.set(
+            leaseSecretKey,
+            encoder.encode(
+              JSON.stringify({
+                oauthAccessToken: "stale-token",
+                oauthRefreshToken: "master-refresh",
+                oauthExpiresAt: "2020-01-01T00:00:00.000Z",
+                oauthTokenEndpoint: `http://127.0.0.1:${oauthPort}/oauth/token`,
+                oauthClientId: "cid",
+              }),
+            ),
+          );
+          yield* assetsRepo.upsertProvider({
+            id: TeamProviderId.make("tp-srv-lease"),
+            teamId,
+            providerInstanceId: ProviderInstanceId.make("srv-codex"),
+            driver: ProviderDriverKind.make("codex"),
+            displayName: "Server Codex",
+            deliveryStrategy: "token-lease",
+            secretKey: leaseSecretKey,
+            upstreamBaseUrl: null,
+            apiKeyHeader: null,
+            apiKeyPrefix: null,
+            config: {},
+            enabled: true,
+            updatedByMemberId: ownerId,
+            now,
+          });
+
+          const proxySecretKey = "team-provider-secret-proxy";
+          yield* secrets.set(
+            proxySecretKey,
+            encoder.encode(JSON.stringify({ apiKey: "RAW_COMPANY_GEMINI_KEY" })),
+          );
+          yield* assetsRepo.upsertProvider({
+            id: TeamProviderId.make("tp-srv-agy-proxy"),
+            teamId,
+            providerInstanceId: ProviderInstanceId.make("srv-agy-proxy"),
+            driver: ProviderDriverKind.make("antigravity"),
+            displayName: "Server Agy Proxy",
+            deliveryStrategy: "proxy",
+            secretKey: proxySecretKey,
+            upstreamBaseUrl: "https://generativelanguage.googleapis.com",
+            apiKeyHeader: "x-goog-api-key",
+            apiKeyPrefix: "",
+            config: {},
+            enabled: true,
+            updatedByMemberId: ownerId,
+            now,
+          });
+
+          const virtualCodexId = makeTeamProviderInstanceId(
+            teamId,
+            ProviderInstanceId.make("srv-codex"),
+          );
+          const lease = yield* manager.getLeasedAccessToken(virtualCodexId);
+          expect(lease.accessToken).toBe("team-server-leased-access");
+
+          const virtuals = yield* manager.getVirtualProviderConfigs;
+          const virtualAgyId = makeTeamProviderInstanceId(
+            teamId,
+            ProviderInstanceId.make("srv-agy-proxy"),
+          );
+          const agyConfig = virtuals[virtualAgyId];
+          expect(agyConfig).toBeDefined();
+          const agyInnerConfig = agyConfig?.config as Record<string, unknown> | undefined;
+          expect(agyInnerConfig?.authMethod).toBe("gemini-api-key");
+          expect(typeof agyInnerConfig?.apiKey).toBe("string");
+          expect(agyInnerConfig?.apiKey).not.toBe("RAW_COMPANY_GEMINI_KEY");
+          expect(
+            agyConfig?.environment?.some((entry) => entry.value === "RAW_COMPANY_GEMINI_KEY"),
+          ).toBe(false);
+          expect(
+            agyConfig?.environment?.find((entry) => entry.name === "GOOGLE_GEMINI_BASE_URL")?.value,
+          ).toContain("/api/team/provider-proxy/srv-agy-proxy");
+        } finally {
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => oauthServer.close(() => resolve())),
           );
         }
       }).pipe(Effect.provide(makeTestLayer())),

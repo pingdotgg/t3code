@@ -1,5 +1,9 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
+import {
+  filterProviderEntriesForTeamProject,
+  resolveProjectTeamAssignment,
+} from "@t3tools/client-runtime/team";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -62,6 +66,7 @@ import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useTeamStatesByEnvironment } from "../../state/team";
 import {
   useEnvironment,
   useEnvironmentHttpBaseUrl,
@@ -1493,7 +1498,8 @@ function ScheduledTaskEditorForm({
     );
   const scopedProjects = projectsOn(environmentId);
   const settings = useEnvironmentSettings(environmentId);
-  const providers =
+  const teamStates = useTeamStatesByEnvironment();
+  const allProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
@@ -1534,6 +1540,13 @@ function ScheduledTaskEditorForm({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const selectedTeamAssignment = selectedProject
+    ? resolveProjectTeamAssignment({ project: selectedProject, teamStates })
+    : null;
+  const providers = filterProviderEntriesForTeamProject({
+    entries: allProviders,
+    teamAssignment: selectedTeamAssignment,
+  });
   const automaticBaseRef = draft.workspaceMode === "worktree" && !draft.baseRef.trim();
   const automaticBaseRefs = usePaginatedBranches({
     environmentId,

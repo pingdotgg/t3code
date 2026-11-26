@@ -128,6 +128,10 @@ export const removeTeamProviderSecret = Effect.fn("TeamProviderLease.removeSecre
 
 const refreshLocks = new Map<string, Semaphore.Semaphore>();
 
+export function clearTeamProviderRefreshLock(lockKey: string): void {
+  refreshLocks.delete(lockKey);
+}
+
 function getRefreshLock(lockKey: string): Effect.Effect<Semaphore.Semaphore> {
   const existing = refreshLocks.get(lockKey);
   if (existing) return Effect.succeed(existing);
@@ -168,10 +172,19 @@ export const issueEphemeralTeamProviderLease = Effect.fn("TeamProviderLease.issu
         if (stored === null && input.fallbackAntigravityProfileDir) {
           const imported = yield* Effect.promise(
             async (): Promise<StoredTeamProviderSecret | null> => {
-              const raw = await NodeFSP.readFile(
-                NodePath.join(input.fallbackAntigravityProfileDir!, "antigravity-oauth-token"),
-                "utf8",
-              ).catch(() => undefined);
+              const raw =
+                (await NodeFSP.readFile(
+                  NodePath.join(
+                    input.fallbackAntigravityProfileDir!,
+                    "antigravity-acp",
+                    "antigravity-oauth-token",
+                  ),
+                  "utf8",
+                ).catch(() => undefined)) ??
+                (await NodeFSP.readFile(
+                  NodePath.join(input.fallbackAntigravityProfileDir!, "antigravity-oauth-token"),
+                  "utf8",
+                ).catch(() => undefined));
               if (!raw) return null;
               const parsedOpt = decodeAntigravityOAuthTokenFile(raw);
               if (Option.isNone(parsedOpt)) return null;

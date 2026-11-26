@@ -10,6 +10,8 @@ import {
   type Project as ProjectRecord,
   type ServerProvider,
   T3_PROJECT_FILE_NAME,
+  isTeamProviderInstanceId,
+  isTeamProviderInstanceIdForTeam,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -22,6 +24,7 @@ import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as TeamService from "../../../team/TeamService.ts";
+import * as TeamProviderManager from "../../../team/TeamProviderManager.ts";
 import { assertLocalAgentMcpExecutionAllowed } from "../../../team/hubOnly.ts";
 import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -420,6 +423,30 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // project's effective defaults, as the composer does. Its mode stays
         // within the ceiling it was approved with.
         const projectDefaults = caller === undefined ? projectSettings : undefined;
+        const teamProviderManagerOpt = yield* Effect.serviceOption(
+          TeamProviderManager.TeamProviderManager,
+        );
+        const repoIdentityKey =
+          project !== undefined
+            ? (project.repositoryIdentity?.origin?.canonicalKey ??
+              project.repositoryIdentity?.canonicalKey ??
+              null)
+            : null;
+        const projectTeamIdOpt = Option.isSome(teamProviderManagerOpt)
+          ? yield* teamProviderManagerOpt.value
+              .resolveTeamIdForProject({ projectId, repoIdentityKey })
+              .pipe(Effect.orElseSucceed(() => Option.none()))
+          : Option.none();
+        const candidateProviders =
+          projectDefaults !== undefined
+            ? (yield* ProviderRegistry.ProviderRegistry.pipe(
+                Effect.flatMap((registry) => registry.getProviders),
+              )).filter((provider) =>
+                Option.isSome(projectTeamIdOpt)
+                  ? isTeamProviderInstanceIdForTeam(provider.instanceId, projectTeamIdOpt.value)
+                  : !isTeamProviderInstanceId(provider.instanceId),
+              )
+            : [];
         const modelSelection =
           validatedModelSelection ??
           launchedModel ??
@@ -428,9 +455,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ? resolveNewThreadModelSelection({
                 defaultSelection: projectDefaults.defaultModelSelection,
                 fallbackSelection: projectDefaults.fallbackModelSelection,
-                providers: yield* ProviderRegistry.ProviderRegistry.pipe(
-                  Effect.flatMap((registry) => registry.getProviders),
-                ),
+                providers: candidateProviders,
                 settings: projectDefaults,
                 projectId,
                 now: DateTime.toEpochMillis(yield* DateTime.now),
@@ -443,6 +468,23 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
+        if (!replaying && Option.isSome(teamProviderManagerOpt)) {
+          yield* teamProviderManagerOpt.value
+            .assertProviderAllowedForProject({
+              projectId,
+              repoIdentityKey,
+              instanceId: modelSelection.instanceId,
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code: "capability_denied",
+                    message: error.message,
+                  }),
+              ),
+            );
+        }
         let startedRuntimeMode =
           projectDefaults !== undefined && input.runtimeMode === undefined
             ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(

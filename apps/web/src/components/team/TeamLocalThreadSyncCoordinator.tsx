@@ -186,6 +186,7 @@ export function TeamLocalThreadSyncCoordinator() {
   const syncedBindingFingerprintByTeamIdRef = useRef(new Map<TeamId, string>());
   const syncedAssetsRevisionByTeamIdRef = useRef(new Map<TeamId, number>());
   const boundTeamIdsRef = useRef(new Set<TeamId>());
+  const envIdByBoundTeamIdRef = useRef(new Map<TeamId, EnvironmentId>());
 
   const syncedPayloadFingerprintByKeyRef = useRef(new Map<string, string>());
   const syncedShellFingerprintByKeyRef = useRef(new Map<string, string>());
@@ -642,6 +643,7 @@ export function TeamLocalThreadSyncCoordinator() {
       const teamId = state.team.id;
       const teamName = state.team.name;
       activeTeamIds.add(teamId);
+      envIdByBoundTeamIdRef.current.set(teamId, teamEnvId);
 
       const localProjects = projects.filter(
         (project) => project.environmentId === primaryEnvironmentId,
@@ -687,6 +689,10 @@ export function TeamLocalThreadSyncCoordinator() {
             if (issued._tag === "Success") {
               memberToken = issued.value.token;
               localSyncTokenByTeamEnvRef.current.set(teamEnvId, memberToken);
+            } else {
+              // Retry issuing token on next state update instead of binding permanently without credentials.
+              syncedBindingFingerprintByTeamIdRef.current.delete(teamId);
+              return;
             }
           }
           const synced = await syncLocalBinding({
@@ -695,7 +701,7 @@ export function TeamLocalThreadSyncCoordinator() {
               teamId,
               teamName,
               teamServerUrl,
-              ...(memberToken ? { memberToken } : {}),
+              memberToken,
               providers: [...state.providers],
               projects: projectsPayload,
               assetsRevision: NonNegativeInt.make(Math.max(0, state.assetsRevision)),
@@ -720,12 +726,28 @@ export function TeamLocalThreadSyncCoordinator() {
       }
     }
 
-    // Cleanly purge local bindings and ephemeral tokens if a Team Server was removed or member revoked.
+    // Only purge local bindings when the Team Server environment was explicitly removed
+    // OR the Team Server affirmatively reports that membership is no longer active.
+    // Transient offline/disconnect states (state.team === null while env stays registered)
+    // preserve local bindings so offline laptops keep their team providers and skills.
     for (const previousTeamId of boundTeamIdsRef.current) {
-      if (!activeTeamIds.has(previousTeamId)) {
+      if (activeTeamIds.has(previousTeamId)) continue;
+      const boundEnvId = envIdByBoundTeamIdRef.current.get(previousTeamId);
+      const envStillRegistered = boundEnvId !== undefined && envById.has(boundEnvId);
+      const envTeamState = boundEnvId !== undefined ? teamStates.get(boundEnvId) : undefined;
+      const explicitlyRevoked =
+        envTeamState?.team !== null &&
+        envTeamState?.currentMember !== null &&
+        envTeamState?.currentMember !== undefined &&
+        envTeamState.currentMember.status !== "active";
+      if (!envStillRegistered || explicitlyRevoked) {
         boundTeamIdsRef.current.delete(previousTeamId);
+        envIdByBoundTeamIdRef.current.delete(previousTeamId);
         syncedBindingFingerprintByTeamIdRef.current.delete(previousTeamId);
         syncedAssetsRevisionByTeamIdRef.current.delete(previousTeamId);
+        if (boundEnvId !== undefined) {
+          localSyncTokenByTeamEnvRef.current.delete(boundEnvId);
+        }
         void removeLocalBinding({
           environmentId: primaryEnvironmentId,
           input: { teamId: previousTeamId },

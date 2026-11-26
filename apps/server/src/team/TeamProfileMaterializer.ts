@@ -26,12 +26,21 @@ class TeamProfileMaterializerIoError extends Schema.TaggedError<TeamProfileMater
 ) {}
 
 const encodeJsonUnknown = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeProfileMarker = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      assetsHash: Schema.optionalKey(Schema.String),
+    }),
+  ),
+);
 
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
+import { validateTeamSkillPayload } from "./TeamSkillValidation.ts";
 
 const TEAM_PROFILE_MARKER_FILENAME = ".t3-team-profile.json";
 const TEAM_ANTIGRAVITY_SKILLS_DIRNAME = "team-skills";
 export const TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME = "antigravity-oauth-token";
+const TEAM_ANTIGRAVITY_ACP_DIRNAME = "antigravity-acp";
 
 export interface TeamProfilePaths {
   readonly profileDir: string;
@@ -64,8 +73,13 @@ export const resolveTeamProfilePaths = Effect.fn("TeamProfileMaterializer.resolv
         skillsDir: path.join(dirs.profile, TEAM_ANTIGRAVITY_SKILLS_DIRNAME),
         instructionFile: path.join(dirs.profile, "GEMINI.md"),
         ephemeralTokenFiles: [
+          path.join(
+            dirs.profile,
+            TEAM_ANTIGRAVITY_ACP_DIRNAME,
+            TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
+          ),
           path.join(dirs.profile, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME),
-          path.join(dirs.profile, "antigravity-acp", "acp_token.json"),
+          path.join(dirs.profile, TEAM_ANTIGRAVITY_ACP_DIRNAME, "acp_token.json"),
         ],
       };
     }
@@ -196,6 +210,17 @@ async function syncDirectoryPersonalSkillLinks(input: {
   }
 }
 
+function assertPathContainedWithin(rootDir: string, candidatePath: string): void {
+  const resolvedRoot = NodePath.resolve(rootDir);
+  const resolvedCandidate = NodePath.resolve(candidatePath);
+  const prefix = resolvedRoot.endsWith(NodePath.sep)
+    ? resolvedRoot
+    : `${resolvedRoot}${NodePath.sep}`;
+  if (!resolvedCandidate.startsWith(prefix)) {
+    throw new Error(`Refusing to write outside isolated team skills directory: ${candidatePath}`);
+  }
+}
+
 /**
  * Materializes team skills and `"thread"`-scoped pre-prompts exclusively inside `<teamProfile>`.
  * Personal config directories (`~/.gemini`, `~/.codex`, `~/.claude`) are never modified; personal
@@ -223,13 +248,83 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
       driver: input.driver,
     });
 
-    const activeSkills = selectTeamSkillsForDriver(input.skills, input.driver);
+    const selectedSkills = selectTeamSkillsForDriver(input.skills, input.driver);
+    const activeSkills: Array<TeamSkill> = [];
+    for (const skill of selectedSkills) {
+      const validated = yield* Effect.result(
+        validateTeamSkillPayload({
+          slug: skill.slug,
+          providerDriver: skill.providerDriver,
+          skillMd: skill.skillMd,
+          references: skill.references,
+          enabled: skill.enabled,
+        }),
+      );
+      if (validated._tag === "Failure") {
+        yield* Effect.logWarning("TeamProfileMaterializer skipped invalid remote team skill", {
+          virtualInstanceId: input.virtualInstanceId,
+          slug: skill.slug,
+          reason: validated.failure.message,
+        });
+        continue;
+      }
+      activeSkills.push({
+        ...skill,
+        slug: validated.success.slug as TeamSkill["slug"],
+        skillMd: validated.success.skillMd,
+        references: validated.success.references,
+      });
+    }
+
     const threadPreprompts = selectTeamPrepromptsForDriver(
       input.preprompts,
       input.driver,
       "thread",
     );
     const teamSlugsLower = new Set(activeSkills.map((skill) => skill.slug.toLowerCase()));
+    const assetsHash = NodeCrypto.createHash("sha256")
+      .update(
+        encodeJsonUnknown({
+          revision: input.revision,
+          skills: activeSkills.map((s) => ({
+            slug: s.slug,
+            skillMd: s.skillMd,
+            references: s.references,
+          })),
+          preprompts: threadPreprompts.map((p) => ({
+            name: p.name,
+            content: p.content,
+          })),
+        }),
+        "utf8",
+      )
+      .digest("hex");
+
+    const alreadyUpToDate = yield* Effect.tryPromise({
+      try: async () => {
+        const markerRaw = await NodeFSP.readFile(
+          NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
+          "utf8",
+        );
+        const markerOpt = decodeProfileMarker(markerRaw);
+        if (markerOpt._tag !== "Some" || markerOpt.value.assetsHash !== assetsHash) return false;
+        const skillsStat = await NodeFSP.stat(paths.skillsDir);
+        if (!skillsStat.isDirectory()) return false;
+        if (paths.instructionFile !== null) {
+          const expectsInstruction = threadPreprompts.length > 0;
+          const hasInstruction = await NodeFSP.stat(paths.instructionFile)
+            .then((s) => s.isFile())
+            .catch(() => false);
+          if (expectsInstruction !== hasInstruction) return false;
+        }
+        return true;
+      },
+      catch: () => false,
+    }).pipe(Effect.orElseSucceed(() => false));
+
+    if (alreadyUpToDate) {
+      return paths;
+    }
 
     yield* Effect.tryPromise({
       try: async () => {
@@ -238,31 +333,67 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
           await NodeFSP.chmod(paths.profileDir, 0o700).catch(() => undefined);
         }
 
-        // Write team profile marker so upstream Antigravity profile linking preserves team-owned files.
-        await NodeFSP.writeFile(
-          NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
-          `${encodeJsonUnknown({
-            teamId: input.teamId,
-            virtualInstanceId: input.virtualInstanceId,
-            driver: input.driver,
-            revision: input.revision,
-          })}\n`,
-          "utf8",
-        );
-
-        // Rebuild skills directory cleanly so deleted/disabled team skills vanish immediately.
-        await NodeFSP.rm(paths.skillsDir, { recursive: true, force: true });
-        await NodeFSP.mkdir(paths.skillsDir, { recursive: true, mode: 0o700 });
-
-        for (const skill of activeSkills) {
-          const skillDir = NodePath.join(paths.skillsDir, skill.slug);
-          await NodeFSP.mkdir(skillDir, { recursive: true, mode: 0o700 });
-          await NodeFSP.writeFile(NodePath.join(skillDir, "SKILL.md"), skill.skillMd, "utf8");
-          for (const ref of skill.references) {
-            const refPath = NodePath.join(skillDir, ...ref.path.split("/"));
-            await NodeFSP.mkdir(NodePath.dirname(refPath), { recursive: true, mode: 0o700 });
-            await NodeFSP.writeFile(refPath, ref.content, "utf8");
+        // Stage skills directory in a sibling temp folder and swap atomically so active agents
+        // never observe an empty or half-written team skills directory during sync.
+        const stagingSkillsDir = `${paths.skillsDir}.tmp-${NodeCrypto.randomUUID()}`;
+        const backupSkillsDir = `${paths.skillsDir}.old-${NodeCrypto.randomUUID()}`;
+        await NodeFSP.mkdir(stagingSkillsDir, { recursive: true, mode: 0o700 });
+        try {
+          for (const skill of activeSkills) {
+            const skillDir = NodePath.join(stagingSkillsDir, skill.slug);
+            assertPathContainedWithin(stagingSkillsDir, skillDir);
+            await NodeFSP.mkdir(skillDir, { recursive: true, mode: 0o700 });
+            const skillMdPath = NodePath.join(skillDir, "SKILL.md");
+            assertPathContainedWithin(skillDir, skillMdPath);
+            await NodeFSP.writeFile(skillMdPath, skill.skillMd, "utf8");
+            for (const ref of skill.references) {
+              const refPath = NodePath.join(skillDir, ...ref.path.split("/"));
+              assertPathContainedWithin(skillDir, refPath);
+              await NodeFSP.mkdir(NodePath.dirname(refPath), { recursive: true, mode: 0o700 });
+              await NodeFSP.writeFile(refPath, ref.content, "utf8");
+            }
           }
+
+          if (input.driver === "codex") {
+            await syncDirectoryPersonalSkillLinks({
+              targetSkillsDir: stagingSkillsDir,
+              personalSkillsDir: NodePath.join(userHome, ".codex", "skills"),
+              teamSlugsLower,
+              platform,
+            });
+          } else if (input.driver === "claudeAgent") {
+            await syncDirectoryPersonalSkillLinks({
+              targetSkillsDir: stagingSkillsDir,
+              personalSkillsDir: NodePath.join(userHome, ".claude", "skills"),
+              teamSlugsLower,
+              platform,
+            });
+          }
+
+          const hadExisting = await NodeFSP.lstat(paths.skillsDir)
+            .then(() => true)
+            .catch(() => false);
+          if (hadExisting) {
+            await NodeFSP.rename(paths.skillsDir, backupSkillsDir);
+          }
+          try {
+            await NodeFSP.rename(stagingSkillsDir, paths.skillsDir);
+          } catch (swapError) {
+            if (hadExisting) {
+              await NodeFSP.rename(backupSkillsDir, paths.skillsDir).catch(() => undefined);
+            }
+            throw swapError;
+          }
+          if (hadExisting) {
+            await NodeFSP.rm(backupSkillsDir, { recursive: true, force: true }).catch(
+              () => undefined,
+            );
+          }
+        } catch (stageError) {
+          await NodeFSP.rm(stagingSkillsDir, { recursive: true, force: true }).catch(
+            () => undefined,
+          );
+          throw stageError;
         }
 
         if (input.driver === "antigravity") {
@@ -285,20 +416,6 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
             await NodeFSP.unlink(skillsConfigPath);
           }
           await NodeFSP.writeFile(skillsConfigPath, `${encodeJsonUnknown({ entries })}\n`, "utf8");
-        } else if (input.driver === "codex") {
-          await syncDirectoryPersonalSkillLinks({
-            targetSkillsDir: paths.skillsDir,
-            personalSkillsDir: NodePath.join(userHome, ".codex", "skills"),
-            teamSlugsLower,
-            platform,
-          });
-        } else if (input.driver === "claudeAgent") {
-          await syncDirectoryPersonalSkillLinks({
-            targetSkillsDir: paths.skillsDir,
-            personalSkillsDir: NodePath.join(userHome, ".claude", "skills"),
-            teamSlugsLower,
-            platform,
-          });
         }
       },
       catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
@@ -346,6 +463,23 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
       }
     }
 
+    // Write team profile marker after skills & instructions complete so assetsHash reflects disk state.
+    yield* Effect.tryPromise({
+      try: () =>
+        NodeFSP.writeFile(
+          NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
+          `${encodeJsonUnknown({
+            teamId: input.teamId,
+            virtualInstanceId: input.virtualInstanceId,
+            driver: input.driver,
+            revision: input.revision,
+            assetsHash,
+          })}\n`,
+          "utf8",
+        ),
+      catch: () => undefined,
+    }).pipe(Effect.ignore);
+
     return paths;
   },
 );
@@ -376,7 +510,11 @@ export const materializeEphemeralLeaseToken = Effect.fn(
   });
 
   if (input.driver === "antigravity") {
-    const tokenPath = NodePath.join(paths.profileDir, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME);
+    const tokenPath = NodePath.join(
+      paths.profileDir,
+      TEAM_ANTIGRAVITY_ACP_DIRNAME,
+      TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
+    );
     // Explicitly omit `refresh_token` so refresh credentials never touch a teammate's disk.
     const payload = {
       token: {

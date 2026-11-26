@@ -5,6 +5,7 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
   EnvironmentAuthorizationError,
 } from "../auth.ts";
 import {
@@ -159,9 +160,9 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamUpsertPreprompt]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamDeletePreprompt]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamIssueLocalSyncToken]: AuthOrchestrationOperateScope,
-  [TEAM_WS_METHODS.teamSyncLocalBinding]: AuthOrchestrationOperateScope,
-  [TEAM_WS_METHODS.teamRemoveLocalBinding]: AuthOrchestrationOperateScope,
-  [TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamSyncLocalBinding]: AuthProvidersManageScope,
+  [TEAM_WS_METHODS.teamRemoveLocalBinding]: AuthProvidersManageScope,
+  [TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated]: AuthProvidersManageScope,
 } as const;
 
 export const TEAM_RPC_REQUIRED_SCOPES = {

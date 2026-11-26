@@ -683,6 +683,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  /** Recycles the warm provider session after a mid-turn team OAuth lease refresh. */
+  readonly recycleSession?: () => Effect.Effect<void>;
 }
 
 type RunBaselineInput = Pick<
@@ -1393,7 +1395,7 @@ export const layer: Layer.Layer<
                 providerThreadId: providerThread.id,
                 runId: input.run.id,
                 error: terminal.failure,
-                recycleSession: () => Effect.void,
+                recycleSession: input.recycleSession ?? (() => Effect.void),
                 ...(Option.isSome(continuationRequestsOption)
                   ? {
                       requestContinuation: (req) =>

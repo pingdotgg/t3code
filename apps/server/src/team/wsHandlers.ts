@@ -209,39 +209,53 @@ export function makeTeamWsRpcHandlers(
         TeamProviderManager.TeamProviderManager["Service"]["syncLocalTeamBinding"]
       >[0],
     ) =>
-      deps?.teamProviderManager !== undefined
-        ? deps.teamProviderManager.syncLocalTeamBinding(payload)
-        : Effect.succeed({
-            synced: false,
-            virtualInstanceIds: [],
-            assetsRevision: NonNegativeInt.make(0),
-          }),
+      teamService.assertLocalBindingHostAllowed().pipe(
+        Effect.andThen(
+          deps?.teamProviderManager !== undefined
+            ? deps.teamProviderManager.syncLocalTeamBinding(payload)
+            : Effect.succeed({
+                synced: false,
+                virtualInstanceIds: [],
+                assetsRevision: NonNegativeInt.make(0),
+              }),
+        ),
+      ),
     [TEAM_WS_METHODS.teamRemoveLocalBinding]: (payload: {
       readonly teamId: Parameters<
         TeamProviderManager.TeamProviderManager["Service"]["removeLocalTeamBinding"]
       >[0];
     }) =>
-      deps?.teamProviderManager !== undefined
-        ? deps.teamProviderManager
-            .removeLocalTeamBinding(payload.teamId)
-            .pipe(Effect.map((removed) => ({ removed })))
-        : Effect.succeed({ removed: false }),
+      teamService
+        .assertLocalBindingHostAllowed()
+        .pipe(
+          Effect.andThen(
+            deps?.teamProviderManager !== undefined
+              ? deps.teamProviderManager
+                  .removeLocalTeamBinding(payload.teamId)
+                  .pipe(Effect.map((removed) => ({ removed })))
+              : Effect.succeed({ removed: false }),
+          ),
+        ),
     [TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated]: (payload: {
       readonly teamId: Parameters<
         TeamProviderManager.TeamProviderManager["Service"]["syncLocalAssetsDelta"]
       >[0];
       readonly revision: number;
     }) =>
-      deps?.teamProviderManager !== undefined
-        ? deps.teamProviderManager
-            .syncLocalAssetsDelta(payload.teamId, { targetRevision: payload.revision })
-            .pipe(
-              Effect.map((syncedRevision) => ({
-                syncedRevision: NonNegativeInt.make(Math.max(0, syncedRevision)),
-              })),
-              Effect.orElseSucceed(() => ({ syncedRevision: NonNegativeInt.make(0) })),
-            )
-        : Effect.succeed({ syncedRevision: NonNegativeInt.make(0) }),
+      teamService.assertLocalBindingHostAllowed().pipe(
+        Effect.andThen(
+          deps?.teamProviderManager !== undefined
+            ? deps.teamProviderManager
+                .syncLocalAssetsDelta(payload.teamId, { targetRevision: payload.revision })
+                .pipe(
+                  Effect.map((syncedRevision) => ({
+                    syncedRevision: NonNegativeInt.make(Math.max(0, syncedRevision)),
+                  })),
+                  Effect.orElseSucceed(() => ({ syncedRevision: NonNegativeInt.make(0) })),
+                )
+            : Effect.succeed({ syncedRevision: NonNegativeInt.make(0) }),
+        ),
+      ),
   };
 }
 

@@ -74,7 +74,7 @@ export function buildCodexTeamTurnContext(
   const chunks = chunkUtf8ForCodexAdditionalContext(teamTurnInstructions);
   return Object.fromEntries(
     chunks.map((chunk, index) => [
-      `t3_team_turn_instructions_${String(index + 1).padStart(2, "0")}`,
+      `t3_team_turn_instructions_${String(index + 1).padStart(3, "0")}`,
       { kind: "application" as const, value: chunk },
     ]),
   );

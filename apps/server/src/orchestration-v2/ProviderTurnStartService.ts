@@ -1108,9 +1108,19 @@ export const layer: Layer.Layer<
             projectOpt.value.repositoryIdentity?.canonicalKey ??
             null)
           : null;
-        const hasPriorTurnsOnProviderThread = projection.providerTurns.some(
-          (turn) => turn.providerThreadId === providerThread.id && isDeliveredProviderTurn(turn),
+        const slashMessageIds = new Set(
+          projection.messages.filter(isSlashCommandMessage).map((candidate) => candidate.id),
         );
+        const hasPriorTurnsOnProviderThread = projection.providerTurns.some((turn) => {
+          if (turn.providerThreadId !== providerThread.id || !isDeliveredProviderTurn(turn)) {
+            return false;
+          }
+          const turnRun = projection.runs.find((candidate) => candidate.rootNodeId === turn.nodeId);
+          return turnRun === undefined || !slashMessageIds.has(turnRun.userMessageId);
+        });
+        yield* teamProviderManagerOption.value
+          .setActiveTeamServerTurnMember(run.providerInstanceId, actingMemberId ?? null)
+          .pipe(Effect.ignore);
         const prepResult = yield* Effect.result(
           teamProviderManagerOption.value.prepareForTurn({
             projectId: projection.thread.projectId,
@@ -2517,6 +2527,15 @@ export const layer: Layer.Layer<
         },
         modelSelection: run.modelSelection,
         runtimePolicy: resolvedRuntimePolicy,
+        recycleSession: () =>
+          providerSessions
+            .release({
+              providerSessionId: activeProviderSessionId,
+              reason: "manual_shutdown",
+              detail:
+                "Team OAuth lease rotated during active turn; recycling warm provider session.",
+            })
+            .pipe(Effect.ignore),
       });
     });
 

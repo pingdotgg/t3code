@@ -26,6 +26,7 @@ import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
+import * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamProviderProxyHttp from "./providerProxyHttp.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
@@ -37,10 +38,11 @@ const makeTestLayer = () => {
   );
   const persistence = SqlitePersistence.layerMemory.pipe(Layer.provide(base));
   const secrets = ServerSecretStore.layer.pipe(Layer.provide(base));
+  const authSessions = AuthSessions.layer.pipe(Layer.provide(persistence));
   const authDeps = Layer.mergeAll(
     persistence,
     secrets,
-    AuthSessions.layer.pipe(Layer.provide(persistence)),
+    authSessions,
     ServerEnvironment.layer.pipe(Layer.provide(secrets), Layer.provide(base)),
   );
   const sessions = SessionStore.layer.pipe(Layer.provideMerge(authDeps), Layer.provide(base));
@@ -52,6 +54,12 @@ const makeTestLayer = () => {
   );
   const teamRepo = TeamRepository.layer.pipe(Layer.provide(persistence));
   const assetsRepo = TeamAssetsRepository.layer.pipe(Layer.provide(persistence));
+  const teamProviderManager = TeamProviderManager.layer.pipe(
+    Layer.provideMerge(assetsRepo),
+    Layer.provideMerge(teamRepo),
+    Layer.provideMerge(secrets),
+    Layer.provideMerge(base),
+  );
   const teamService = TeamService.layer.pipe(
     Layer.provideMerge(teamRepo),
     Layer.provideMerge(assetsRepo),
@@ -61,8 +69,10 @@ const makeTestLayer = () => {
   );
   return Layer.mergeAll(
     teamService,
+    teamProviderManager,
     teamRepo,
     assetsRepo,
+    authSessions,
     sessions,
     envAuth,
     secrets,
@@ -91,6 +101,11 @@ describe("TeamProviderProxyHttp", () => {
               authHeader: req.headers.authorization,
               body,
             });
+            if (req.url === "/redirect-secret") {
+              res.writeHead(302, { location: `${upstreamOrigin}/redirect-target` });
+              res.end();
+              return;
+            }
             if (req.url === "/oauth/token") {
               res.writeHead(200, { "content-type": "application/json" });
               res.end(
@@ -188,12 +203,19 @@ describe("TeamProviderProxyHttp", () => {
             payload: { skillId: skill2.id },
           });
 
-          // Bob obtains a local sync token.
+          // Bob obtains a dedicated local sync token (opaque, never valid as a general session).
           const bobSync = yield* team.issueLocalSyncToken(bobSession.sessionId);
+          expect(bobSync.token.startsWith("t3teamsync_")).toBe(true);
+          const verifySyncAsSession = yield* Effect.result(sessions.verify(bobSync.token));
+          expect(verifySyncAsSession._tag).toBe("Failure");
+
+          const teamProviderManager = yield* TeamProviderManager.TeamProviderManager;
 
           const testContext = yield* Effect.context<
             | TeamRepository.TeamRepository
             | TeamAssetsRepository.TeamAssetsRepository
+            | TeamProviderManager.TeamProviderManager
+            | AuthSessions.AuthSessionRepository
             | EnvironmentAuth.EnvironmentAuth
             | ServerSecretStore.ServerSecretStore
             | HttpClient.HttpClient
@@ -285,6 +307,104 @@ describe("TeamProviderProxyHttp", () => {
             )) as TeamAssetsDeltaResponse;
             expect(deltaAssets.fullSync).toBe(false);
             expect(deltaAssets.deletedSkillIds).toEqual([skill2.id]);
+
+            // 4b. Security hardening: path traversal, malformed percent-encoding, and 3xx redirects are blocked.
+            const traversalRes = yield* Effect.promise(() =>
+              handler(
+                new Request(
+                  "http://team.local/api/team/provider-proxy/company-openai/v1/..%2fadmin",
+                  {
+                    method: "POST",
+                    headers: { authorization: `Bearer ${bobSync.token}` },
+                  },
+                ),
+              ),
+            );
+            expect(traversalRes.status).toBe(400);
+
+            const malformedRes = yield* Effect.promise(() =>
+              handler(
+                new Request("http://team.local/api/team/provider-proxy/company-openai/v1/%ZZ", {
+                  method: "POST",
+                  headers: { authorization: `Bearer ${bobSync.token}` },
+                }),
+              ),
+            );
+            expect([400, 404]).toContain(malformedRes.status);
+
+            const redirectRes = yield* Effect.promise(() =>
+              handler(
+                new Request(
+                  "http://team.local/api/team/provider-proxy/company-openai/redirect-secret",
+                  {
+                    method: "GET",
+                    headers: { authorization: `Bearer ${bobSync.token}` },
+                  },
+                ),
+              ),
+            );
+            expect(redirectRes.status).toBe(302);
+            expect(upstreamRequests.some((r) => r.url === "/redirect-target")).toBe(false);
+
+            // 4c. Team Server internal loopback proxy token keeps company API key out of agent env & records usage!
+            const virtualConfigs = yield* teamProviderManager.getVirtualProviderConfigs;
+            const virtualOpenAiKey = Object.keys(virtualConfigs).find((k) =>
+              k.endsWith(":company-openai"),
+            );
+            expect(virtualOpenAiKey).toBeDefined();
+            const virtualOpenAi = virtualConfigs[virtualOpenAiKey as ProviderInstanceId]!;
+            const internalProxyToken = virtualOpenAi.environment?.find(
+              (entry) => entry.name === "T3_TEAM_PROXY_TOKEN",
+            )?.value;
+            expect(internalProxyToken).toBeDefined();
+            expect(internalProxyToken).not.toBe("COMPANY_SECRET_API_KEY");
+            expect(
+              virtualOpenAi.environment?.some((entry) => entry.value === "COMPANY_SECRET_API_KEY"),
+            ).toBe(false);
+
+            yield* teamProviderManager.setActiveTeamServerTurnMember(
+              virtualOpenAiKey as ProviderInstanceId,
+              bobRedeemed.member.id,
+            );
+            const internalProxyRes = yield* Effect.promise(() =>
+              handler(
+                new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
+                  method: "POST",
+                  headers: {
+                    authorization: `Bearer ${internalProxyToken}`,
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({ prompt: "from-team-server" }),
+                }),
+              ),
+            );
+            expect(internalProxyRes.status).toBe(200);
+
+            // 4d. Revoking Bob's underlying AuthSession immediately rejects bobSync.token even while member stays active!
+            const bobInvite2 = yield* team.createInvite({
+              sessionId: aliceSession.sessionId,
+              payload: { role: "regular", prefilledPseudo: "charlie" },
+            });
+            const charlieRedeemed = yield* team.redeemInvite({
+              token: bobInvite2.token,
+              pseudo: "charlie",
+              client: { deviceType: "desktop" },
+            });
+            const charlieSession = yield* sessions.verify(charlieRedeemed.accessToken);
+            const charlieSync = yield* team.issueLocalSyncToken(charlieSession.sessionId);
+            yield* sessions.revoke(charlieSession.sessionId);
+
+            const revokedSessionRes = yield* Effect.promise(() =>
+              handler(
+                new Request("http://team.local/api/team/assets?since=0", {
+                  headers: { authorization: `Bearer ${charlieSync.token}` },
+                }),
+              ),
+            );
+            expect(revokedSessionRes.status).toBe(403);
+            expect(yield* Effect.promise(() => revokedSessionRes.text())).toContain(
+              "team_access_revoked",
+            );
 
             // 5. Alice suspends Bob -> proxy, lease, and assets endpoints IMMEDIATELY return 403 team_access_revoked!
             yield* team.updateMemberStatus({

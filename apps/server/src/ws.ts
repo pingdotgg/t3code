@@ -36,6 +36,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   AuthProvidersManageScope,
+  requiredScopesForServerSettingsPatch,
   type AuthEnvironmentScope,
   ProviderDriverKind,
   type ProjectId,
@@ -2220,14 +2221,37 @@ export const layerWsRpc = (
                   normalizedCommand.modelSelection.instanceId,
                 );
               }
-              if (
+              const threadScopedCheck: {
+                readonly threadId: ThreadId;
+                readonly instanceId: ProviderInstanceId;
+              } | null =
                 normalizedCommand.type === "message.dispatch" &&
-                normalizedCommand.modelSelection !== undefined &&
-                Option.isSome(projectionStoreOption)
-              ) {
-                const targetInstanceId = normalizedCommand.modelSelection.instanceId;
+                normalizedCommand.modelSelection !== undefined
+                  ? {
+                      threadId: normalizedCommand.threadId,
+                      instanceId: normalizedCommand.modelSelection.instanceId,
+                    }
+                  : normalizedCommand.type === "thread.model-selection.set" ||
+                      normalizedCommand.type === "provider.switch"
+                    ? {
+                        threadId: normalizedCommand.threadId,
+                        instanceId: normalizedCommand.modelSelection.instanceId,
+                      }
+                    : normalizedCommand.type === "queued-run.edit" &&
+                        normalizedCommand.modelSelection !== undefined
+                      ? {
+                          threadId: normalizedCommand.threadId,
+                          instanceId: normalizedCommand.modelSelection.instanceId,
+                        }
+                      : normalizedCommand.type === "delegated_task.request"
+                        ? {
+                            threadId: normalizedCommand.parentThreadId,
+                            instanceId: normalizedCommand.modelSelection.instanceId,
+                          }
+                        : null;
+              if (threadScopedCheck !== null && Option.isSome(projectionStoreOption)) {
                 return projectionStoreOption.value
-                  .getThreadRecords(normalizedCommand.threadId, [])
+                  .getThreadRecords(threadScopedCheck.threadId, [])
                   .pipe(
                     Effect.orElseSucceed(() => null),
                     Effect.flatMap((records) =>
@@ -2235,7 +2259,7 @@ export const layerWsRpc = (
                         ? Effect.void
                         : assertTeamProviderAllowedForProject(
                             records.thread.projectId,
-                            targetInstanceId,
+                            threadScopedCheck.instanceId,
                           ),
                     ),
                   );
@@ -3568,7 +3592,10 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
             yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
-            if (providerInstanceMutation !== undefined || patch.providerInstances !== undefined) {
+            if (
+              providerInstanceMutation !== undefined ||
+              requiredScopesForServerSettingsPatch(patch).includes(AuthProvidersManageScope)
+            ) {
               yield* teamService.assertCanManageServerProviders(currentSessionId);
             }
             const deviceHosts = patch.deviceHosts

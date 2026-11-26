@@ -6,6 +6,7 @@ import {
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthRelayWriteScope,
   AuthSessionId,
   AuthStandardClientScopes,
@@ -3122,6 +3123,78 @@ describe("TeamService", () => {
         expect(bobState.skills).toHaveLength(1);
         expect(bobState.preprompts).toHaveLength(1);
         expect(bobState.assetsRevision).toBeGreaterThanOrEqual(2);
+
+        // C5: regular and modo sessions MUST NOT hold AuthProvidersManageScope.
+        expect(bobSession.scopes).not.toContain(AuthProvidersManageScope);
+        expect(charlieSession.scopes).not.toContain(AuthProvidersManageScope);
+
+        // C2: local binding host guard rejects local-binding mutations on a configured Team Server.
+        expect((yield* Effect.exit(team.assertLocalBindingHostAllowed()))._tag).toBe("Failure");
+
+        // M1: double-prefixed team:* providerInstanceId and invalid oauthTokenEndpoint are rejected, and clearSecret clears stored secrets.
+        const prefixedExit = yield* Effect.exit(
+          team.upsertProvider({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              providerInstanceId: ProviderInstanceId.make("team:other:foo"),
+              driver: ProviderDriverKind.make("codex"),
+              deliveryStrategy: "remote-only",
+            },
+          }),
+        );
+        expect(prefixedExit._tag).toBe("Failure");
+
+        const badEndpointExit = yield* Effect.exit(
+          team.upsertProvider({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              providerInstanceId: ProviderInstanceId.make("bad-oauth"),
+              driver: ProviderDriverKind.make("antigravity"),
+              deliveryStrategy: "token-lease",
+              oauthTokenEndpoint: "ftp://evil.example/token",
+            },
+          }),
+        );
+        expect(badEndpointExit._tag).toBe("Failure");
+
+        const cleared = yield* team.upsertProvider({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            providerInstanceId: ProviderInstanceId.make("company-llm"),
+            driver: ProviderDriverKind.make("acpRegistry"),
+            displayName: "Company LLM",
+            deliveryStrategy: "proxy",
+            upstreamBaseUrl: "https://llm.example",
+            clearSecret: true,
+          },
+        });
+        expect(cleared.hasSecret).toBe(false);
+
+        // M2: toggling enabled or injectionScope updates contentHash & revision.
+        const toggledSkill = yield* team.upsertSkill({
+          sessionId: charlieSession.sessionId,
+          payload: {
+            skillId: skill.id,
+            slug: "team-review",
+            providerDriver: "*",
+            skillMd: "---\nname: team-review\ndescription: Team review\n---\nCheck tests.",
+            references: [{ path: "checklist.md", content: "- Run tests" }],
+            enabled: false,
+          },
+        });
+        expect(toggledSkill.contentHash).not.toBe(skill.contentHash);
+
+        const toggledPreprompt = yield* team.upsertPreprompt({
+          sessionId: charlieSession.sessionId,
+          payload: {
+            prepromptId: preprompt.id,
+            name: "Security Guard",
+            providerDriver: "*",
+            injectionScope: "thread",
+            content: "Never commit company keys.",
+          },
+        });
+        expect(toggledPreprompt.contentHash).not.toBe(preprompt.contentHash);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

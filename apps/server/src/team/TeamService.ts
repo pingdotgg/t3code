@@ -8,6 +8,7 @@ import {
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
   AuthRelayWriteScope,
   AuthStandardClientScopes,
   canAssignTeamRole,
@@ -36,6 +37,7 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   formatAcceptedTeamNoteForPrompt,
+  isTeamProviderInstanceId,
   isValidTeamPseudo,
   normalizeTeamPseudo,
   resolveTeamThreadEnvironmentAccess,
@@ -162,6 +164,7 @@ import {
   mirrorLocalThreadSnapshotToEventSink,
 } from "./TeamLocalSyncService.ts";
 import {
+  clearTeamProviderRefreshLock,
   readTeamProviderSecret,
   removeTeamProviderSecret,
   teamProviderSecretKey,
@@ -187,6 +190,7 @@ const hashNoteContent = (body: string): string =>
 const ADMIN_ONLY_SESSION_SCOPES: ReadonlySet<AuthEnvironmentScope> = new Set([
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthProvidersManageScope,
   AuthRelayWriteScope,
   AuthEnvironmentMaintainScope,
 ]);
@@ -785,6 +789,7 @@ export class TeamService extends Context.Service<
     readonly assertCanManageServerProviders: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertLocalBindingHostAllowed: () => Effect.Effect<void, TeamOperationError>;
   }
 >()("t3/team/TeamService") {}
 
@@ -6314,6 +6319,12 @@ const make = Effect.gen(function* () {
       });
     }
     const assetsRepo = yield* requireAssetsRepository();
+    if (isTeamProviderInstanceId(input.payload.providerInstanceId)) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Team provider instance IDs must not already use the virtual team: prefix.",
+      });
+    }
     const deliveryStrategy =
       input.payload.deliveryStrategy ?? defaultTeamProviderDeliveryStrategy(input.payload.driver);
     const upstreamBaseUrl =
@@ -6337,6 +6348,20 @@ const make = Effect.gen(function* () {
         message: "Upstream base URL must be a valid http:// or https:// URL.",
       });
     }
+    const oauthTokenEndpoint =
+      input.payload.oauthTokenEndpoint !== undefined && input.payload.oauthTokenEndpoint !== null
+        ? input.payload.oauthTokenEndpoint.trim()
+        : null;
+    if (
+      oauthTokenEndpoint !== null &&
+      oauthTokenEndpoint.length > 0 &&
+      !isValidHttpUrl(oauthTokenEndpoint)
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "OAuth token endpoint must be a valid http:// or https:// URL.",
+      });
+    }
 
     const existingOpt = yield* assetsRepo
       .getProviderByInstanceId(team.id, input.payload.providerInstanceId)
@@ -6357,6 +6382,13 @@ const make = Effect.gen(function* () {
       input.payload.oauthAuthMethod !== undefined;
 
     let secretKey: string | null = existing?.secretKey ?? null;
+    if (input.payload.clearSecret === true) {
+      if (secretKey !== null && Option.isSome(secretStoreOption)) {
+        yield* removeTeamProviderSecret(secretStoreOption.value, secretKey).pipe(Effect.ignore);
+        clearTeamProviderRefreshLock(secretKey);
+      }
+      secretKey = null;
+    }
     if (hasIncomingSecret) {
       if (Option.isNone(secretStoreOption)) {
         return yield* new TeamOperationError({
@@ -6383,9 +6415,8 @@ const make = Effect.gen(function* () {
         ...(input.payload.oauthExpiresAt !== undefined && input.payload.oauthExpiresAt !== null
           ? { oauthExpiresAt: input.payload.oauthExpiresAt }
           : {}),
-        ...(input.payload.oauthTokenEndpoint !== undefined &&
-        input.payload.oauthTokenEndpoint !== null
-          ? { oauthTokenEndpoint: input.payload.oauthTokenEndpoint }
+        ...(oauthTokenEndpoint !== null && oauthTokenEndpoint.length > 0
+          ? { oauthTokenEndpoint }
           : {}),
         ...(input.payload.oauthClientId !== undefined && input.payload.oauthClientId !== null
           ? { oauthClientId: input.payload.oauthClientId }
@@ -6465,6 +6496,7 @@ const make = Effect.gen(function* () {
       yield* removeTeamProviderSecret(secretStoreOption.value, removedOpt.value.secretKey).pipe(
         Effect.ignore,
       );
+      clearTeamProviderRefreshLock(removedOpt.value.secretKey);
     }
     yield* publish({
       version: 1,
@@ -6510,6 +6542,7 @@ const make = Effect.gen(function* () {
       slug: input.payload.slug,
       providerDriver: input.payload.providerDriver ?? "*",
       skillMd: input.payload.skillMd,
+      enabled: input.payload.enabled ?? true,
       ...(input.payload.references !== undefined ? { references: input.payload.references } : {}),
     }).pipe(
       Effect.mapError(
@@ -6611,7 +6644,9 @@ const make = Effect.gen(function* () {
     const validated = yield* validateTeamPrepromptPayload({
       name: input.payload.name,
       providerDriver: input.payload.providerDriver ?? "*",
+      injectionScope: input.payload.injectionScope ?? "thread",
       content: input.payload.content,
+      enabled: input.payload.enabled ?? true,
     }).pipe(
       Effect.mapError(
         (error) => new TeamOperationError({ code: "invalid_input", message: error.message }),
@@ -6702,48 +6737,42 @@ const make = Effect.gen(function* () {
       });
     }
     const assetsRepo = yield* requireAssetsRepository();
-    const nowIso = DateTime.formatIso(yield* DateTime.now);
-    const issued = yield* sessionStore
-      .issue({
-        subject: `team-member:${actor.id}`,
-        method: "bearer-access-token",
-        scopes: scopesForTeamRole(actor.role),
-        client: {
-          deviceType: "desktop",
-          label: `${actor.pseudo} (Team Local Sync)`,
-        },
-      })
-      .pipe(logAndMapInternalError("issueLocalSyncToken.issueSession"));
-    yield* repository
-      .bindSession({
-        sessionId: issued.sessionId,
-        teamId: team.id,
-        memberId: actor.id,
-        boundAt: nowIso,
-      })
-      .pipe(
-        Effect.onError(() => sessionStore.revoke(issued.sessionId).pipe(Effect.ignore)),
-        logAndMapInternalError("issueLocalSyncToken.bindSession"),
-      );
+    const now = yield* DateTime.now;
+    const nowIso = DateTime.formatIso(now);
+    const expiresAt = DateTime.formatIso(DateTime.addDuration(now, RENEWABLE_SESSION_WINDOW));
+    // Mint a dedicated opaque token accepted ONLY by /api/team/{provider-proxy,provider-lease,assets},
+    // never registered in SessionStore (so spawned agents reading env vars cannot access WS/HTTP APIs).
+    const token = `t3teamsync_${NodeCrypto.randomBytes(32).toString("base64url")}`;
     yield* assetsRepo
       .insertLocalSyncToken({
-        tokenHash: hashInviteToken(issued.token),
+        tokenHash: hashInviteToken(token),
         teamId: team.id,
         memberId: actor.id,
-        sessionId: issued.sessionId,
+        sessionId,
         createdAt: nowIso,
       })
-      .pipe(
-        Effect.onError(() => sessionStore.revoke(issued.sessionId).pipe(Effect.ignore)),
-        Effect.mapError(toInternalError),
-      );
+      .pipe(Effect.mapError(toInternalError));
     return {
-      token: issued.token,
+      token,
       teamId: team.id,
       memberId: actor.id,
-      expiresAt: DateTime.formatIso(issued.expiresAt),
+      expiresAt,
     } satisfies TeamIssueLocalSyncTokenResult;
   });
+
+  const assertLocalBindingHostAllowed = Effect.fn("TeamService.assertLocalBindingHostAllowed")(
+    function* () {
+      const workspaceOpt = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isSome(workspaceOpt)) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "Local team provider bindings cannot be configured on a Team Server.",
+        });
+      }
+    },
+  );
 
   const assertCanManageServerProviders = Effect.fn("TeamService.assertCanManageServerProviders")(
     function* (sessionId: AuthSessionId) {
@@ -6884,6 +6913,7 @@ const make = Effect.gen(function* () {
     deletePreprompt,
     issueLocalSyncToken,
     assertCanManageServerProviders,
+    assertLocalBindingHostAllowed,
   });
 });
 

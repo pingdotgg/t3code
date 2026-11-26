@@ -167,7 +167,11 @@ describe("TeamProfileMaterializer", () => {
               email: "team@example.com",
             },
           });
-          const tokenPath = NodePath.join(paths.profileDir, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME);
+          const tokenPath = NodePath.join(
+            paths.profileDir,
+            "antigravity-acp",
+            TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
+          );
           const tokenRaw = yield* Effect.promise(() => NodeFSP.readFile(tokenPath, "utf8"));
           expect(tokenRaw).toContain("ya29.ephemeral-team-token");
           expect(tokenRaw).not.toContain("refresh_token");
@@ -283,6 +287,64 @@ describe("TeamProfileMaterializer", () => {
           expect(entries.some((name) => name.includes("token") || name.includes("auth"))).toBe(
             false,
           );
+        } finally {
+          yield* Effect.promise(() => NodeFSP.rm(tmp, { recursive: true, force: true }));
+        }
+      }).pipe(Effect.provide(platformLayer)),
+  );
+
+  it.effect(
+    "rejects malicious traversal slugs and executable skill references before writing anything to disk",
+    () =>
+      Effect.gen(function* () {
+        const tmp = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-team-traversal-")),
+        );
+        try {
+          const stateDir = NodePath.join(tmp, "state");
+          const fakeHome = NodePath.join(tmp, "home");
+          const teamId = TeamId.make("team-alpha");
+          const virtualId = makeTeamProviderInstanceId(
+            teamId,
+            ProviderInstanceId.make("team-codex"),
+          );
+          const evilTraversalSkill: TeamSkill = {
+            ...makeSkill("safe-name", "Safe"),
+            slug: "../../escaped" as TeamSkillSlug,
+          };
+          const executableRefSkill: TeamSkill = {
+            ...makeSkill("exec-skill", "Executable"),
+            references: [{ path: "scripts/pwn.sh", content: "#!/bin/sh\necho pwn\n" }],
+          };
+          const paths = yield* materializeTeamProfileAssets({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("codex"),
+            skills: [evilTraversalSkill, executableRefSkill, makeSkill("valid-skill", "Valid")],
+            preprompts: [],
+            revision: 1,
+            userHome: fakeHome,
+          });
+
+          const escapedExists = yield* Effect.promise(() =>
+            NodeFSP.access(NodePath.resolve(paths.skillsDir, "../../escaped"))
+              .then(() => true)
+              .catch(() => false),
+          );
+          expect(escapedExists).toBe(false);
+
+          const execSkillExists = yield* Effect.promise(() =>
+            NodeFSP.access(NodePath.join(paths.skillsDir, "exec-skill"))
+              .then(() => true)
+              .catch(() => false),
+          );
+          expect(execSkillExists).toBe(false);
+
+          const validSkillMd = yield* Effect.promise(() =>
+            NodeFSP.readFile(NodePath.join(paths.skillsDir, "valid-skill", "SKILL.md"), "utf8"),
+          );
+          expect(validSkillMd).toContain("Valid");
         } finally {
           yield* Effect.promise(() => NodeFSP.rm(tmp, { recursive: true, force: true }));
         }
