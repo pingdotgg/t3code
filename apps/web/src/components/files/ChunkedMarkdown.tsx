@@ -78,6 +78,8 @@ export function ChunkedMarkdown(props: {
       }}
     >
       <LegendList<ChunkItem>
+        // The panel keeps this mounted across threads; the initial index only applies on mount.
+        key={positionKey}
         ref={listRef}
         data={items}
         {...(saved && {

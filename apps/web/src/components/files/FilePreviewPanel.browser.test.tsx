@@ -836,4 +836,29 @@ describe("rendered Markdown scroll position", () => {
     await screen.rerender(preview(chunks.length, false));
     await expectReadingPosition(saved);
   });
+
+  it("keeps each thread's position when the same file stays open across threads", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const { chunks, definitions } = splitMarkdown(sections, 200);
+    const preview = (threadId: string) =>
+      sized(
+        <ChunkedMarkdown
+          chunks={chunks}
+          definitions={definitions}
+          cwd="/workspace"
+          relativePath="shared.md"
+          threadRef={{ environmentId, threadId: ThreadId.make(threadId) }}
+          workspaceMutationId={null}
+        />,
+      );
+
+    await using screen = await render(preview("first"));
+    await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+    const saved = await scrollDown();
+    await screen.rerender(preview("second"));
+    await vi.waitFor(() => expect(readingPosition()?.heading).toBe("Section 0"));
+    await screen.rerender(preview("first"));
+    await expectReadingPosition(saved);
+  });
 });
