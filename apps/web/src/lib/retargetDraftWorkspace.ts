@@ -22,6 +22,7 @@ interface PendingWorkspaceDefault {
   readonly envMode: DraftSessionState["envMode"];
   readonly openedManual: boolean;
   readonly settled: Promise<void>;
+  readonly branchActions: Set<Promise<void>>;
 }
 
 const pendingWorkspaceDefaults = new Map<DraftId, PendingWorkspaceDefault>();
@@ -64,8 +65,29 @@ export function readPendingWorkspaceDefault(draftId: DraftId): Promise<boolean> 
   return Promise.race([pending.settled.then(() => true), moved.promise]).finally(unsubscribe);
 }
 
-export function clearPendingWorkspaceDefault(draftId: DraftId): void {
+function clearPendingWorkspaceDefault(draftId: DraftId): void {
   pendingWorkspaceDefaults.delete(draftId);
+}
+
+/** Hold a pending default until a manual branch action commits or finishes without a choice. */
+export async function withDraftBranchChoice(
+  draftId: DraftId | null,
+  action: (commit: () => void) => Promise<void>,
+): Promise<void> {
+  const pending = draftId === null ? undefined : pendingWorkspaceDefaults.get(draftId);
+  if (draftId === null || !pending) return action(() => {});
+  const hold = Promise.withResolvers<void>();
+  pending.branchActions.add(hold.promise);
+  try {
+    await action(() => {
+      if (pendingWorkspaceDefaults.get(draftId) === pending) {
+        clearPendingWorkspaceDefault(draftId);
+      }
+    });
+  } finally {
+    pending.branchActions.delete(hold.promise);
+    hold.resolve();
+  }
 }
 
 /** Resolve the workspace immediately, then register a cold file read after the draft is written. */
@@ -120,11 +142,15 @@ export function prepareDraftWorkspaceDefault(
     applyProjectFile(draftId: DraftId) {
       const { getDraftSession, setDraftThreadContext } = useComposerDraftStore.getState();
       const openedManual = getDraftSession(draftId)?.environmentSelection === "manual";
+      const branchActions = new Set<Promise<void>>();
       const settled = readT3ProjectFile(projectRef.environmentId, project.workspaceRoot)
-        .then((file) => {
+        .then(async (file) => {
+          if (file === null) return;
+          while (pendingWorkspaceDefaults.get(draftId) === pending && branchActions.size > 0) {
+            await Promise.all(branchActions);
+          }
           const draft = getDraftSession(draftId);
           if (
-            file === null ||
             pendingWorkspaceDefaults.get(draftId) !== pending ||
             !keepsProvisionalWorkspace(draft, pending)
           )
@@ -146,7 +172,13 @@ export function prepareDraftWorkspaceDefault(
             clearPendingWorkspaceDefault(draftId);
           }
         });
-      const pending = { projectRef, envMode: workspace.envMode, openedManual, settled };
+      const pending = {
+        projectRef,
+        envMode: workspace.envMode,
+        openedManual,
+        settled,
+        branchActions,
+      };
       pendingWorkspaceDefaults.set(draftId, pending);
     },
   };

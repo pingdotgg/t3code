@@ -33,7 +33,7 @@ import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
-import { clearPendingWorkspaceDefault } from "../lib/retargetDraftWorkspace";
+import { withDraftBranchChoice } from "../lib/retargetDraftWorkspace";
 import { usePaginatedBranches } from "../state/queries";
 import { useProjectClone } from "../state/projectClones";
 import { readThreadShell, useProject, useQuietThreadShell } from "../state/entities";
@@ -444,10 +444,13 @@ export function BranchToolbarBranchSelector({
       );
       return;
     }
-    startBranchActionTransition(async () => {
-      await action();
-      branchRefState.refresh();
-    });
+    const completed = Promise.withResolvers<void>();
+    startBranchActionTransition(() =>
+      action()
+        .then(() => branchRefState.refresh())
+        .finally(() => completed.resolve()),
+    );
+    return completed.promise;
   };
 
   // The picker's list, and the server's coalesced ref listing, can predate a checkout an agent
@@ -462,21 +465,23 @@ export function BranchToolbarBranchSelector({
     return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
   };
 
-  const keepDraftWorkspaceForBranchChoice = () => {
-    if (hasServerThread) return;
-    const selectedDraft = draftId ?? useComposerDraftStore.getState().getDraftIdByRef(threadRef);
-    if (selectedDraft) clearPendingWorkspaceDefault(selectedDraft);
-  };
+  const selectedDraftId = () =>
+    hasServerThread
+      ? null
+      : (draftId ?? useComposerDraftStore.getState().getDraftIdByRef(threadRef));
 
-  const selectBranch = async (listedRef: VcsRef) => {
-    if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
-    keepDraftWorkspaceForBranchChoice();
+  const applyBranchSelection = async (
+    listedRef: VcsRef,
+    branchCwd: string,
+    activeProjectCwd: string,
+    commit: () => void,
+  ) => {
     const selectionId = ++latestSelectionIdRef.current;
 
     let latest = readLatestThreadState();
     if (isSelectingWorktreeBase) {
       if (latest.worktreePath) return;
-      setThreadBranch(listedRef.name, null);
+      if (setThreadBranch(listedRef.name, null)) commit();
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;
@@ -511,7 +516,7 @@ export function BranchToolbarBranchSelector({
       selectionTarget.reuseExistingWorktree &&
       !(selectionTarget.staysInActiveCheckout && canWriteSourceControl)
     ) {
-      setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
+      if (setThreadBranch(refName.name, selectionTarget.nextWorktreePath)) commit();
       return;
     }
 
@@ -519,7 +524,7 @@ export function BranchToolbarBranchSelector({
       ? deriveLocalBranchNameFromRemoteRef(refName.name, refName.remoteName)
       : refName.name;
 
-    runBranchAction(async () => {
+    return runBranchAction(async () => {
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
       const checkoutKey = pickerCheckoutKey(environmentId, selectionTarget.checkoutCwd);
@@ -548,6 +553,7 @@ export function BranchToolbarBranchSelector({
             : undefined,
         );
         if (applied) {
+          commit();
           hold = {
             branch: nextBranchName,
             environmentId,
@@ -583,25 +589,28 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const createRef = (rawName: string) => {
-    if (!canChangeThreadBranch) return;
-    const name = sanitizeNewRefName(rawName);
-    if (!branchCwd || !name || isBranchActionPending) return;
-    keepDraftWorkspaceForBranchChoice();
+  const selectBranch = (listedRef: VcsRef) => {
+    if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
+    void withDraftBranchChoice(selectedDraftId(), (commit) =>
+      applyBranchSelection(listedRef, branchCwd, activeProjectCwd, commit),
+    );
+  };
+
+  const applyNewRef = async (name: string, cwd: string, commit: () => void) => {
     latestSelectionIdRef.current++;
 
     setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
 
-    runBranchAction(async () => {
+    return runBranchAction(async () => {
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
-      const checkoutKey = pickerCheckoutKey(environmentId, branchCwd);
+      const checkoutKey = pickerCheckoutKey(environmentId, cwd);
       pickerCheckouts.set(checkoutKey, null);
       const createBranchResult = await createRefMutation({
         environmentId,
         input: {
-          cwd: branchCwd,
+          cwd: cwd,
           refName: name,
           switchRef: true,
         },
@@ -611,10 +620,11 @@ export function BranchToolbarBranchSelector({
         pickerCheckouts.set(checkoutKey, nextBranchName);
         const applied = setThreadBranch(nextBranchName, activeWorktreePath);
         if (applied) {
+          commit();
           setBranchHold({
             branch: nextBranchName,
             environmentId,
-            checkouts: [{ cwd: branchCwd, replaces: canonicalActiveBranch }],
+            checkouts: [{ cwd: cwd, replaces: canonicalActiveBranch }],
           });
         }
         setOptimisticBranch(applied ? nextBranchName : previousBranch);
@@ -632,6 +642,13 @@ export function BranchToolbarBranchSelector({
         );
       }
     });
+  };
+
+  const createRef = (rawName: string) => {
+    if (!canChangeThreadBranch) return;
+    const name = sanitizeNewRefName(rawName);
+    if (!branchCwd || !name || isBranchActionPending) return;
+    void withDraftBranchChoice(selectedDraftId(), (commit) => applyNewRef(name, branchCwd, commit));
   };
 
   const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
