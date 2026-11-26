@@ -2247,6 +2247,18 @@ describe("PullRequestSyncReactor", () => {
       linked: [3],
     },
     {
+      name: "a Forgejo pull request",
+      input: "gt pr create --title x --base main",
+      output: "https://gitea.example.com/owner/repository/pulls/7",
+      linked: [7],
+    },
+    {
+      name: "a Forgejo create alongside a list of existing pull requests",
+      input: "gt pr create --title x; gt pr list",
+      output: "https://gitea.example.com/owner/repository/pulls/7",
+      linked: [],
+    },
+    {
       name: "a new pull request whose number appears in the create command",
       input: "timeout 60 gh pr create --fill",
       output: "https://github.com/owner/repository/pull/60",

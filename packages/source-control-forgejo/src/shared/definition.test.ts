@@ -137,6 +137,13 @@ describe("Forgejo remotes", () => {
 });
 
 describe("Forgejo CLI commands", () => {
+  it("recognizes gt commands that print the created pull request URL", () => {
+    expect(definition.changeRequestCreateCommand.test("gt pr create")).toBe(true);
+    expect(definition.changeRequestCreateCommand.test("gt pr new")).toBe(true);
+    expect(definition.changeRequestCreateCommand.test("gt pr view 7")).toBe(false);
+    expect(definition.changeRequestCreateCommand.test("fj pr create")).toBe(false);
+  });
+
   it("recognizes shell merges and closes under every spelling gt, tea and fj accept", () => {
     for (const command of [
       "tea pulls merge 7",
