@@ -1543,6 +1543,7 @@ it.layer(
           ...previousProvider,
           checkedAt: "2026-10-30T00:01:00.000Z",
           models: [previousProvider.models[0]],
+          ...(driver === "claudeAgent" ? { modelsIncomplete: true } : {}),
         } satisfies ServerProvider;
 
         assert.deepStrictEqual(
@@ -1552,11 +1553,12 @@ it.layer(
       },
     );
 
-    it("drops claudeAgent models a ready probe from the same gateway stopped listing", () => {
-      const gatewayAuth = {
+    it("drops a Claude gateway model the same gateway no longer lists (#43603)", () => {
+      const auth = {
         status: "authenticated",
         type: "customEndpoint",
-        endpoint: "https://gateway.example.com",
+        label: "Custom API endpoint",
+        endpoint: "http://127.0.0.1:15721",
       } as const;
       const previousProvider = {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -1564,55 +1566,33 @@ it.layer(
         status: "ready",
         enabled: true,
         installed: true,
-        auth: gatewayAuth,
-        checkedAt: "2026-11-26T00:00:00.000Z",
+        auth,
+        checkedAt: "2026-11-25T00:00:00.000Z",
         version: "2.1.332",
         models: [
+          { slug: "claude-sonnet-5-5", name: "Sonnet 5.5", isCustom: false, capabilities: null },
           {
-            slug: "anthropic/claude-sonnet-4.5",
-            name: "Sonnet 4.5",
+            slug: "gw--model:free[1m]",
+            name: "gw--model:free",
             isCustom: false,
             capabilities: null,
           },
-          { slug: "openai/gpt-5", name: "GPT-5", isCustom: false, capabilities: null },
+          { slug: "gw--model:free", name: "gw--model:free", isCustom: false, capabilities: null },
         ],
         slashCommands: [],
         skills: [],
       } as const satisfies ServerProvider;
-      const merge = ProviderRegistry.mergeProviderSnapshot;
-
-      const sameGateway = {
+      const refreshedProvider = {
         ...previousProvider,
-        checkedAt: "2026-11-26T00:01:00.000Z",
-        models: [previousProvider.models[0]],
+        checkedAt: "2026-11-26T00:00:00.000Z",
+        models: [previousProvider.models[0], previousProvider.models[1]],
       } satisfies ServerProvider;
-      assert.deepStrictEqual(
-        merge(previousProvider, sameGateway).models.map((model) => model.slug),
-        ["anthropic/claude-sonnet-4.5"],
-      );
-
-      const otherGateway = {
-        ...sameGateway,
-        auth: { ...gatewayAuth, endpoint: "https://other-gateway.example.com" },
-      } satisfies ServerProvider;
-      assert.deepStrictEqual(
-        merge(previousProvider, otherGateway).models.map((model) => model.slug),
-        ["anthropic/claude-sonnet-4.5", "openai/gpt-5"],
-      );
 
       assert.deepStrictEqual(
-        merge(previousProvider, { ...sameGateway, status: "warning" }).models.map(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models.map(
           (model) => model.slug,
         ),
-        ["anthropic/claude-sonnet-4.5", "openai/gpt-5"],
-      );
-
-      const noEndpoint = { ...previousProvider, auth: { status: "authenticated" } } as const;
-      assert.deepStrictEqual(
-        merge(noEndpoint, { ...sameGateway, auth: { status: "authenticated" } }).models.map(
-          (model) => model.slug,
-        ),
-        ["anthropic/claude-sonnet-4.5", "openai/gpt-5"],
+        ["claude-sonnet-5-5", "gw--model:free[1m]"],
       );
     });
 
@@ -4844,6 +4824,7 @@ it.layer(
             ["gateway/kimi-3[1m]", "Kimi (mine)", true],
           ],
         );
+        assert.strictEqual(status.modelsIncomplete, undefined);
         assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
         assert.deepStrictEqual(added[1]?.capabilities?.optionDescriptors, [
           {
@@ -5056,6 +5037,7 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.label, "Custom API endpoint");
+        assert.strictEqual(status.modelsIncomplete, true);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
