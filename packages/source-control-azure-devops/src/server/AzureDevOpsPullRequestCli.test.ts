@@ -189,7 +189,10 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
           ),
         )
         .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))))
-        .mockReturnValueOnce(Effect.succeed(output("[]")));
+        .mockReturnValueOnce(Effect.succeed(output("[]")))
+        .mockReturnValueOnce(
+          Effect.succeed(output(json({ count: 1, value: [{ id: "4f1c", name: "release-1.0" }] }))),
+        );
       const provider = yield* AzureDevOpsPullRequestProvider.make;
       const detail = yield* provider.getChangeRequest({
         cwd: "/w",
@@ -200,7 +203,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(detail.headSha).toBe(latestHead);
       expect(argsOfCall(2)).toContain("iterationId=2");
-      expect(mockedExecute).toHaveBeenCalledTimes(4);
+      expect(argsOfCall(4)).toContain("pullRequestLabels");
+      expect(detail.labels).toEqual([{ name: "release-1.0", color: null }]);
+      expect(mockedExecute).toHaveBeenCalledTimes(5);
     }),
   );
 
@@ -269,9 +274,47 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         author: "ana@acme.dev",
       });
 
-      const args = argsOfCall(0);
-      assert.strictEqual(args[args.indexOf("--creator") + 1], "ana@acme.dev");
-      assert.strictEqual(args[args.indexOf("--reviewer") + 1], "bilal@acme.dev");
+      expect(argsOfCall(0)).toContain("--creator=ana@acme.dev");
+      expect(argsOfCall(0)).toContain("--reviewer=bilal@acme.dev");
+    }),
+  );
+
+  it.effect("sends a repository, viewer and author that look like `@path` as text", () =>
+    Effect.gen(function* () {
+      // az has one stdin; it reads each further value from a file that holds the text.
+      const filed = new Map<string, string>();
+      mockedExecute.mockImplementationOnce((input) =>
+        Effect.sync(() => {
+          for (const arg of input.args) {
+            const match = /^(--\w+)=@(.+)$/u.exec(arg);
+            if (match?.[1] === undefined || match[2] === undefined || match[2] === "-") continue;
+            filed.set(match[1], NodeFS.readFileSync(match[2], "utf8"));
+          }
+          return output(pullRequests(1, 1));
+        }),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "@web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "@bilal",
+        limit: 10,
+        author: "@ana",
+      });
+
+      expect(argsOfCall(0)).toContain("--repository=@-");
+      assert.strictEqual(mockedExecute.mock.calls[0]?.[0].stdin, "@web");
+      assert.deepStrictEqual(
+        [...filed],
+        [
+          ["--reviewer", "@bilal"],
+          ["--creator", "@ana"],
+        ],
+      );
+      expect(argsOfCall(0).filter((arg) => arg.startsWith("@"))).toEqual([]);
     }),
   );
 
@@ -445,6 +488,36 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(argsOfCall(0)).toContain("--description=- rewrote the page\n- kept the rest");
     }),
+  );
+
+  it.effect(
+    "sends a title or description that looks like `@path` as text, not as a file for az to read",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        yield* cli.updatePullRequest({
+          cwd: "/w",
+          number: 42,
+          title: "@notes.txt",
+          body: "@notes.txt",
+        });
+
+        // az replaces an argument that starts with `@`, or whose text after the first `=` does, with that file's contents.
+        const fileReads = argsOfCall(0).flatMap((arg) => {
+          const value = arg.startsWith("@") ? arg : arg.slice(arg.indexOf("=") + 1);
+          return (arg.startsWith("@") || arg.includes("=")) && value.startsWith("@")
+            ? [value.slice(1)]
+            : [];
+        });
+        expect(fileReads).not.toContain("notes.txt");
+        // Each `@` value goes over stdin, which reaches az wherever it runs; one per call.
+        expect(mockedExecute.mock.calls.map(([call]) => call.stdin)).toEqual([
+          "@notes.txt",
+          "@notes.txt",
+        ]);
+      }),
   );
 
   it.effect("names the head's blob as what a cleared file was cleared at", () =>

@@ -180,6 +180,21 @@ describe("CloudManagedEndpointRuntime", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic"),
     ).toBe("warning");
+    for (const prefix of ["", "Request failed "]) {
+      expect(
+        ManagedEndpointRuntime.classifyRelayClientOutput(
+          `2026-06-17T02:00:00Z ERR ${prefix}error="Incoming request ended abruptly: context canceled" connIndex=0`,
+        ),
+      ).toBe("debug");
+    }
+    for (const line of [
+      '2026-06-17T02:00:00Z ERR error="Incoming request ended abruptly: context deadline exceeded" connIndex=0',
+      '2026-06-17T02:00:00Z ERR Failed to serve tunnel connection error="context canceled"',
+      '2026-06-17T02:00:00Z FTL error="Incoming request ended abruptly: context canceled"',
+      '2026-06-17T02:00:00Z PNC error="Incoming request ended abruptly: context canceled"',
+    ]) {
+      expect(ManagedEndpointRuntime.classifyRelayClientOutput(line)).toBe("warning");
+    }
   });
 
   it("classifies connection unregistration apart from registration and routine output", () => {
@@ -493,6 +508,55 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(yield* runtime.inspectConnector).toMatchObject({ pid: 801 });
     }),
   );
+
+  it.effect("restarts a relay client that ignores SIGTERM within a bounded time", () => {
+    // cloudflared on a half-open HTTP/2 socket keeps running after SIGTERM; only SIGKILL stops it.
+    const exits: Array<Deferred.Deferred<ChildProcessSpawner.ExitCode>> = [];
+    return Effect.gen(function* () {
+      const started = yield* Queue.unbounded<number>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const pid = 900 + exits.length;
+          const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          exits.push(exit);
+          const handle = ChildProcessSpawner.makeHandle({
+            ...makeHandle({ pid, exitCode: Deferred.await(exit), onKill: () => {} }),
+            kill: (options) =>
+              options?.forceKillAfter === undefined
+                ? Deferred.await(exit).pipe(Effect.asVoid)
+                : Effect.sleep(options.forceKillAfter).pipe(
+                    Effect.andThen(Deferred.succeed(exit, ChildProcessSpawner.ExitCode(137))),
+                    Effect.asVoid,
+                  ),
+          });
+          yield* Queue.offer(started, pid);
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.applyConfig(tunnelConfig);
+      expect(yield* Queue.take(started)).toBe(900);
+
+      const restart = yield* runtime
+        .restartConnector(900, Effect.succeed(true))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust(Duration.minutes(1));
+
+      expect(restart.pollUnsafe()).toEqual(Exit.succeed(true));
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          Effect.forEach(
+            exits,
+            (exit) => Deferred.succeed(exit, ChildProcessSpawner.ExitCode(143)),
+            {
+              discard: true,
+            },
+          ),
+        ),
+      ),
+    );
+  });
 
   it.effect("still owns a relay client when activation is interrupted while recording it", () =>
     Effect.gen(function* () {

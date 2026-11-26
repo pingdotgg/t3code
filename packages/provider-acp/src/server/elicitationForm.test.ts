@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { parseElicitationForm } from "./elicitationForm.ts";
+import { parseElicitationForm, withOptionalChoices } from "./elicitationForm.ts";
 
 describe("parseElicitationForm", () => {
   for (const type of ["string", "array"] as const) {
@@ -80,6 +80,26 @@ describe("parseElicitationForm", () => {
       q1__other: "Only on Fridays",
     });
 
+    // A single-underscore `<id>_other` companion folds the same way.
+    const singleUnderscore = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q0: ask("Use Postgres for the new service?", "Database"),
+          q0_other: { type: "string", title: "Other" },
+        },
+      },
+      "Answer 1 question",
+    );
+    assert(singleUnderscore !== undefined);
+    assert.deepStrictEqual(
+      singleUnderscore.questions.map((question) => question.id),
+      ["q0"],
+    );
+    assert.deepStrictEqual(singleUnderscore.content({ q0: "Only on Fridays" }), {
+      q0_other: "Only on Fridays",
+    });
+
     // A multi-select answer can carry options and free text together, so both fields stay.
     const multi = parseElicitationForm(
       {
@@ -92,9 +112,161 @@ describe("parseElicitationForm", () => {
       "Databases?",
     );
     assert(multi !== undefined);
+    assert.deepStrictEqual(
+      multi.questions.map((question) => [question.id, question.required]),
+      [
+        ["q0", undefined],
+        ["q0__other", false],
+      ],
+    );
     assert.deepStrictEqual(multi.content({ q0: ["Postgres"], q0__other: "SQLite" }), {
       q0: ["Postgres"],
       q0__other: "SQLite",
     });
+  });
+
+  it("requires a multi-select only for a required minimum and accepts none otherwise", () => {
+    const items = { type: "string", enum: ["web", "mobile"] };
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          targets: { type: "array", minItems: 1, items },
+          extras: { type: "array", items },
+          platforms: { type: "array", minItems: 1, items },
+        },
+        required: ["targets"],
+      },
+      "Choose",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["targets", true],
+        ["extras", undefined],
+        ["platforms", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ targets: ["web"], extras: [], platforms: [] }), {
+      targets: ["web"],
+      extras: [],
+    });
+  });
+
+  it("marks optional number and integer fields as not required and omits blank answers", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          limit: { type: "integer" },
+          ratio: { type: "number" },
+          retries: { type: "integer" },
+          threshold: { type: "number" },
+        },
+        required: ["retries", "threshold"],
+      },
+      "Configure limits",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["limit", false],
+        ["ratio", false],
+        ["retries", undefined],
+        ["threshold", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ limit: "", ratio: "", retries: "3", threshold: "0.5" }), {
+      retries: 3,
+      threshold: 0.5,
+    });
+    assert.isUndefined(form.content({ limit: "", ratio: "", retries: "", threshold: "0.5" }));
+  });
+
+  it("lets optional boolean and single-choice fields be skipped", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          extras: { type: "boolean" },
+          mode: { type: "string", enum: ["", "fast"] },
+          confirm: { type: "boolean" },
+          tier: { type: "string", enum: ["free", "pro"] },
+        },
+        required: ["confirm", "tier"],
+      },
+      "Configure run",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["extras", false],
+        ["mode", false],
+        ["confirm", undefined],
+        ["tier", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ confirm: "true", tier: "pro" }), {
+      confirm: true,
+      tier: "pro",
+    });
+    assert.deepStrictEqual(
+      form.content({ extras: "false", mode: "", confirm: "true", tier: "pro" }),
+      { extras: false, mode: "", confirm: true, tier: "pro" },
+    );
+    assert.isUndefined(form.content({ extras: "true", tier: "pro" }));
+  });
+});
+
+describe("withOptionalChoices", () => {
+  const choice = (id: string) => ({
+    id,
+    header: id,
+    question: id,
+    options: [{ label: "Fast", description: "Fast", value: "fast" }],
+  });
+  const form = withOptionalChoices(
+    {
+      questions: [
+        choice("mode"),
+        choice("tier"),
+        { ...choice("tags"), multiSelect: true },
+        { ...choice("notes"), options: [] },
+      ],
+      respond: (answers) => ({ action: "accept", content: { answered: Object.keys(answers) } }),
+    },
+    {
+      type: "object",
+      properties: {
+        mode: { type: "string" },
+        tier: { type: "string" },
+        tags: { type: "array" },
+        notes: { type: "string" },
+      },
+      required: ["tier"],
+    },
+  );
+
+  it("marks only the single choices the schema leaves optional", () => {
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["mode", false],
+        ["tier", undefined],
+        ["tags", undefined],
+        ["notes", undefined],
+      ],
+    );
+  });
+
+  it("answers without a skipped choice and cancels without a required one", () => {
+    assert.deepStrictEqual(form.respond({ tier: "fast" }), {
+      action: "accept",
+      content: { answered: ["tier"] },
+    });
+    assert.deepStrictEqual(form.respond({ mode: "fast" }), { action: "cancel" });
   });
 });

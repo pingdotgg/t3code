@@ -3,10 +3,21 @@ import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SPEECH_MAX_OPTIONS_BYTES } from "
 
 import {
   chooseSetupSpeechModel,
+  recommendSpeechModels,
   decodeSpeechPcmRequest,
   encodeSpeechPcmRequest,
   resolveSpeechVocabulary,
+  speechModelDownloadPercent,
 } from "./speech.ts";
+
+describe("speechModelDownloadPercent", () => {
+  it.each([
+    { downloaded: 995, percent: 99 },
+    { downloaded: 1_000, percent: 99 },
+  ])("reads $downloaded of 1000 bytes as $percent", ({ downloaded, percent }) => {
+    expect(speechModelDownloadPercent(downloaded, 1_000)).toBe(percent);
+  });
+});
 
 describe("speech PCM request framing", () => {
   it("round-trips options and unaligned PCM without changing audio bytes", () => {
@@ -52,7 +63,7 @@ describe("speech PCM request framing", () => {
 });
 
 describe("resolveSpeechVocabulary", () => {
-  it("prefers project spellings, keeps hints under the cap, and drops duplicates", () => {
+  it("prefers project spellings and keeps hints out of the dictionary", () => {
     const personal = Array.from({ length: 100 }, (_, index) => ({
       term: `word${index}`,
       aliases: index === 0 ? ["Effect"] : [],
@@ -60,16 +71,15 @@ describe("resolveSpeechVocabulary", () => {
     const resolved = resolveSpeechVocabulary({
       personal,
       project: [{ term: "effect", aliases: ["a fact"] }],
-      hints: ["  T3   Code ", "word1", "", "x".repeat(51)],
+      hints: ["  T3   Code ", "word1", "", "x".repeat(51), "t3 code"],
     });
-    expect(resolved).toHaveLength(100);
-    expect(resolved.slice(0, 3)).toEqual([
-      { term: "T3 Code", aliases: [] },
+    expect(resolved.speechHints).toEqual(["T3 Code"]);
+    expect(resolved.speechCustomWords).toHaveLength(100);
+    expect(resolved.speechCustomWords.slice(0, 2)).toEqual([
       { term: "effect", aliases: ["a fact"] },
       { term: "word0", aliases: [] },
     ]);
-    expect(resolved.filter(({ term }) => term === "word1")).toHaveLength(1);
-    expect(resolved.at(-1)?.term).toBe("word97");
+    expect(resolved.speechCustomWords.at(-1)?.term).toBe("word98");
   });
 });
 
@@ -79,7 +89,18 @@ describe("chooseSetupSpeechModel", () => {
     languages: string[],
     supportsLanguageDetection: boolean,
     recommended: boolean,
-  ) => ({ id, languages, supportsLanguageDetection, recommended });
+  ) => ({
+    id,
+    languages,
+    supportsLanguageDetection,
+    recommended,
+    benchmark: {
+      accuracy: Object.fromEntries(
+        languages.map((language) => [language, { errorPercent: recommended ? 4 : 10 }]),
+      ),
+      secondsPer30s: { accelerated: 2, cpu: 3 },
+    },
+  });
   const catalog = [
     model("unrecommended", ["en", "de", "es"], true, false),
     model("english", ["en"], false, true),
@@ -146,7 +167,173 @@ describe("chooseSetupSpeechModel", () => {
       undefined,
     ],
   ] as const)("%s", (_, selectedModelId, intent, preferred, expected) => {
-    const choice = chooseSetupSpeechModel(catalog, { selectedModelId, intent, preferred });
+    const choice = chooseSetupSpeechModel(catalog, {
+      selectedModelId,
+      intent,
+      preferred,
+      benchmarkTier: "accelerated",
+    });
     expect(choice && { id: choice.model.id, language: choice.language }).toEqual(expected);
+  });
+
+  it("keeps suitable selections and preference order, and falls back safely without measurements", () => {
+    const best = {
+      ...catalog[0]!,
+      benchmark: {
+        accuracy: { de: { errorPercent: 1 } },
+        secondsPer30s: { accelerated: 1, cpu: 2 },
+      },
+    };
+    expect(
+      chooseSetupSpeechModel([...catalog, { ...best, id: "best" }], {
+        benchmarkTier: "accelerated",
+        selectedModelId: "gone",
+        intent: "auto",
+        preferred: ["de", "en"],
+      }),
+    ).toMatchObject({ model: { id: "best" }, language: "de", recommended: true });
+    expect(
+      chooseSetupSpeechModel([...catalog, { ...best, id: "best" }], {
+        benchmarkTier: "accelerated",
+        selectedModelId: "detecting",
+        intent: "auto",
+        preferred: ["de", "en"],
+      }),
+    ).toMatchObject({ model: { id: "detecting" }, language: "de", recommended: false });
+    const unmeasured = catalog.map(({ benchmark: _benchmark, ...model }) => model);
+    expect(
+      chooseSetupSpeechModel(unmeasured, {
+        benchmarkTier: "accelerated",
+        selectedModelId: "gone",
+        intent: "auto",
+        preferred: ["de", "en"],
+      }),
+    ).toMatchObject({ model: { id: "unrecommended" }, language: "de", recommended: false });
+    expect(
+      chooseSetupSpeechModel([], {
+        benchmarkTier: "accelerated",
+        selectedModelId: "gone",
+        intent: "auto",
+        preferred: [],
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("recommendSpeechModels", () => {
+  const model = (
+    id: string,
+    errors: Record<string, number>,
+    wait: number | null,
+    cpu: number | null,
+  ) => ({
+    id,
+    languages: Object.keys(errors),
+    benchmark: {
+      accuracy: Object.fromEntries(
+        Object.entries(errors).map(([language, errorPercent]) => [language, { errorPercent }]),
+      ),
+      secondsPer30s: { accelerated: wait, cpu },
+    },
+  });
+  const models = [
+    model("balanced", { en: 4, de: 16 }, 2, 7),
+    model("fast", { en: 7, de: 7 }, 1, 3),
+    model("accurate", { en: 2, de: 2 }, 8, 20),
+    model("incomplete", { en: 1 }, 1, 1),
+  ];
+
+  it("balances all requested languages and assigns each model its first role", () => {
+    expect([...recommendSpeechModels(models.slice(0, 3), ["en"], "accelerated")]).toEqual([
+      ["balanced", "recommended"],
+      ["fast", "faster"],
+      ["accurate", "accurate"],
+    ]);
+    expect([...recommendSpeechModels(models, ["en", "de", "de"], "accelerated")]).toEqual([
+      ["fast", "recommended"],
+      ["accurate", "accurate"],
+    ]);
+    expect([...recommendSpeechModels(models.slice(0, 3), ["en"], "cpu")]).toEqual([
+      ["fast", "recommended"],
+      ["balanced", "accurate"],
+    ]);
+    expect([...recommendSpeechModels(models, ["en", "de"], "cpu")]).toEqual([
+      ["fast", "recommended"],
+    ]);
+  });
+
+  it("offers alternatives only when they improve on the balanced pick on the same tier", () => {
+    expect([
+      ...recommendSpeechModels(
+        [model("cpu-fast-gpu-slow", { en: 3 }, 4, 1), model("balanced", { en: 3.2 }, 1, 8)],
+        ["en"],
+        "accelerated",
+      ),
+    ]).toEqual([
+      ["balanced", "recommended"],
+      ["cpu-fast-gpu-slow", "accurate"],
+    ]);
+    expect([
+      ...recommendSpeechModels(
+        [model("equal-accuracy", { en: 4 }, 8, 20), model("balanced", { en: 4 }, 2, 20)],
+        ["en"],
+        "accelerated",
+      ),
+    ]).toEqual([["balanced", "recommended"]]);
+    expect([
+      ...recommendSpeechModels(
+        [model("balanced", { en: 4 }, 12, 20), model("outside-budget", { en: 2 }, 30, 40)],
+        ["en"],
+        "accelerated",
+      ),
+    ]).toEqual([["balanced", "recommended"]]);
+  });
+
+  it("does not invent measurements, preferences, or a model covering missing languages", () => {
+    expect(recommendSpeechModels(models, [], "accelerated").size).toBe(0);
+    expect(recommendSpeechModels(models, ["ja"], "accelerated").size).toBe(0);
+    expect(
+      recommendSpeechModels(
+        [
+          model("missing-speed", { en: 1, de: 1 }, null, 1),
+          { ...model("missing-accuracy", { en: 1 }, 1, 1), languages: ["en", "de"] },
+        ],
+        ["en", "de"],
+        "accelerated",
+      ).size,
+    ).toBe(0);
+    expect([
+      ...recommendSpeechModels([model("no-cpu", { en: 1 }, 1, null)], ["en"], "accelerated"),
+    ]).toEqual([["no-cpu", "recommended"]]);
+    expect(recommendSpeechModels([model("no-cpu", { en: 1 }, 1, null)], ["en"], "cpu").size).toBe(
+      0,
+    );
+    expect([
+      ...recommendSpeechModels([model("cpu-only", { en: 1 }, null, 2)], ["en"], "cpu"),
+    ]).toEqual([["cpu-only", "recommended"]]);
+  });
+
+  it("prefers useful accuracy before speed and relaxes the wait budget before quality", () => {
+    expect([
+      ...recommendSpeechModels(
+        [model("poor", { en: 25 }, 1, 1), model("slow", { en: 4 }, 12, 20)],
+        ["en"],
+        "accelerated",
+      ),
+    ]).toEqual([["slow", "recommended"]]);
+    expect([
+      ...recommendSpeechModels(
+        [model("worse", { en: 30, de: 40 }, 1, 1), model("least-poor", { en: 29, de: 30 }, 20, 40)],
+        ["en", "de"],
+        "accelerated",
+      ),
+    ]).toEqual([["least-poor", "recommended"]]);
+    expect([
+      ...recommendSpeechModels(
+        [model("zero", { en: 0, de: 0 }, 1, 1)],
+        ["en", "de"],
+        "accelerated",
+      ),
+    ]).toEqual([["zero", "recommended"]]);
   });
 });

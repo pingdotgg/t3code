@@ -66,7 +66,8 @@ const targetScope = (field: HTMLElement | null | undefined) =>
 // Keys an outside editor (the preview guest) relays arrive on window, so remember their editor.
 const relayedFrom = new WeakMap<Event, symbol>();
 
-// Escape inside another shown dictation editor, or the dialog hosting it, belongs to that editor.
+// Escape inside another shown dictation editor, or the dialog hosting it, belongs to that editor;
+// Escape inside any other dialog belongs to that dialog, so it closes before dictation cancels.
 // The editor itself is checked before dialogs, since one dialog can host several editors.
 function inOtherShortcutTarget(id: symbol, event: Event) {
   const source = relayedFrom.get(event);
@@ -82,7 +83,10 @@ function inOtherShortcutTarget(id: symbol, event: Event) {
     if (scope(own)?.contains(target)) return false;
     if (others.some((field) => scope(field)?.contains(target))) return true;
   }
-  return false;
+  const dialog = (target instanceof Element ? target : target.parentElement)?.closest(
+    '[role="dialog"]',
+  );
+  return !!dialog && !dialog.contains(own ?? null);
 }
 
 export function useDictationShortcut(input: ShortcutInput) {
@@ -98,6 +102,7 @@ export function useDictationShortcut(input: ShortcutInput) {
   const pressed = useRef<{
     generation: number;
     code: string;
+    modifiers: string[];
     startedAt: number;
     mode: typeof mode;
     starting: Promise<void>;
@@ -110,7 +115,10 @@ export function useDictationShortcut(input: ShortcutInput) {
     shortcutTargets.set(id.current, () => current.current);
     const finish = (event: KeyboardEvent | null) => {
       const press = pressed.current;
-      if (!press || (event && (event.code || event.key) !== press.code)) return;
+      if (!press) return;
+      // macOS can omit the letter keyup while Command is held; releasing a chord modifier ends it too.
+      if (event && (event.code || event.key) !== press.code && !press.modifiers.includes(event.key))
+        return;
       pressed.current = null;
       if (shouldFinishDictationOnRelease(press.mode, performance.now() - press.startedAt)) {
         void press.starting.then(() => {
@@ -166,6 +174,7 @@ export function useDictationShortcut(input: ShortcutInput) {
       pressed.current = {
         generation: generation.current,
         code: event.code || event.key,
+        modifiers: ["Alt", "Control", "Meta", "Shift"].filter((key) => event.getModifierState(key)),
         startedAt: performance.now(),
         mode,
         starting: speech.start(),

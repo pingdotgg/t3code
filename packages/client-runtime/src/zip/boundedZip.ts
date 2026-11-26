@@ -1,5 +1,28 @@
 import JSZip from "jszip";
 import { checkZipDirectory } from "./zipDirectory.ts";
+import { ZipError } from "./zipError.ts";
+
+const CP437_HIGH_BYTES =
+  "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒ" +
+  "áíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐" +
+  "└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀" +
+  "αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00a0";
+
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+// JSZip only calls this for names without the UTF-8 flag or a Unicode path field. Many
+// archivers still write UTF-8 there, so CP437 (the ZIP spec's default) is the fallback;
+// replacing invalid bytes instead would collapse distinct legacy names into one key.
+function decodeFileName(name: string[] | Uint8Array) {
+  const raw = Array.isArray(name) ? Uint8Array.from(name, (char) => char.charCodeAt(0)) : name;
+  try {
+    return utf8.decode(raw);
+  } catch {
+    return Array.from(raw, (byte) =>
+      byte < 128 ? String.fromCharCode(byte) : CP437_HIGH_BYTES[byte - 128],
+    ).join("");
+  }
+}
 
 export const ARCHIVE_MAX_BYTES = 50 * 1024 * 1024;
 export const ARCHIVE_ENTRY_MAX_BYTES = 10 * 1024 * 1024;
@@ -16,13 +39,12 @@ export async function boundedZip(
     markupLimit?: number;
   } = {},
 ) {
-  if (bytes.byteLength > ARCHIVE_MAX_BYTES)
-    throw new Error("Preview limited to files under 50 MB.");
+  if (bytes.byteLength > ARCHIVE_MAX_BYTES) throw new ZipError({ code: "file-too-large" });
   checkZipDirectory(bytes, ARCHIVE_MAX_ENTRIES);
-  const zip = await JSZip.loadAsync(bytes);
+  const zip = await JSZip.loadAsync(bytes, { decodeFileName });
   const entries = Object.values(zip.files);
   if (entries.length > ARCHIVE_MAX_ENTRIES)
-    throw new Error("This archive contains more than 2,048 entries.");
+    throw new ZipError({ code: "archive-too-many-entries" });
   const files = new Map<
     string,
     { bytes: Uint8Array<ArrayBuffer>; date: Date; directory: boolean }
@@ -30,7 +52,7 @@ export async function boundedZip(
   let total = 0;
   let markup = 0;
   for (const entry of entries) {
-    if (entry.name.length > 1024) throw new Error("An archive path is too long to preview.");
+    if (entry.name.length > 1024) throw new ZipError({ code: "archive-path-too-long" });
     const chunks: Uint8Array<ArrayBuffer>[] = [];
     let length = 0;
     await new Promise<void>((resolve, reject) => {
@@ -55,11 +77,7 @@ export async function boundedZip(
             (entry.name.endsWith(".xml") && length > (limits.xmlLimit ?? 8 * 1024 * 1024))
           ) {
             stream.pause();
-            reject(
-              new Error(
-                "The expanded archive exceeds the preview size or compression ratio limit.",
-              ),
-            );
+            reject(new ZipError({ code: "archive-expanded-too-large" }));
           } else chunks.push(chunk);
         })
         .on("error", reject)

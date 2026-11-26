@@ -1,12 +1,15 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import * as Schema from "effect/Schema";
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { AndroidFoldError, setAndroidFold, type AndroidFoldPosture } from "./deviceFold";
 import { androidFoldReadAtom, androidFoldViewAtom, foldAngle, NOOP_ATOM } from "./deviceHubAtoms";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 const isAndroidFoldError = Schema.is(AndroidFoldError);
 
@@ -20,6 +23,7 @@ export function DeviceAndroidFoldControls(props: {
   readonly screenHeight: number | undefined;
   readonly renewAccess: () => Promise<DeviceHubAccess | null>;
 }) {
+  const gt = useGT();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
@@ -60,10 +64,8 @@ export function DeviceAndroidFoldControls(props: {
         setAngle(foldAngle(fold));
         setError(
           controller.signal.aborted
-            ? "Fold command timed out."
-            : cause instanceof Error
-              ? cause.message
-              : "Could not change fold posture.",
+            ? gt("Fold command timed out.")
+            : (thrownErrorMessage(cause, m) ?? gt("Could not change fold posture.")),
         );
       })
       .finally(() => {
@@ -74,59 +76,64 @@ export function DeviceAndroidFoldControls(props: {
   };
 
   return (
-    <div aria-label="Android fold controls" className="flex flex-col items-center gap-2">
+    <div aria-label={gt("Android fold controls")} className="flex flex-col items-center gap-2">
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-sm">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon"
-                variant={fold.posture === "closed" ? "secondary" : "ghost"}
-                aria-label="Fold device"
-                aria-pressed={fold.posture === "closed"}
-                disabled={pending || !props.enabled}
-                onClick={() => change("closed")}
-              />
-            }
-          >
-            <DeviceDuoGlyph pose="closed" />
-          </TooltipTrigger>
-          <TooltipPopup side="left">Fold device</TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon"
-                variant={fold.posture === "opened" ? "secondary" : "ghost"}
-                aria-label="Unfold device"
-                aria-pressed={fold.posture === "opened"}
-                disabled={pending || !props.enabled}
-                onClick={() => change("opened")}
-              />
-            }
-          >
-            <DeviceDuoGlyph pose="open" />
-          </TooltipTrigger>
-          <TooltipPopup side="left">Unfold device</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              size="icon"
+              variant={fold.posture === "closed" ? "secondary" : "ghost"}
+              aria-label={gt("Fold device")}
+              aria-pressed={fold.posture === "closed"}
+              disabled={pending || !props.enabled}
+              onClick={() => change("closed")}
+            />
+          }
+          label={
+            <>
+              <T>Fold device</T>
+            </>
+          }
+          side="left"
+        >
+          <DeviceDuoGlyph pose="closed" />
+        </SharedTooltipTrigger>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              size="icon"
+              variant={fold.posture === "opened" ? "secondary" : "ghost"}
+              aria-label={gt("Unfold device")}
+              aria-pressed={fold.posture === "opened"}
+              disabled={pending || !props.enabled}
+              onClick={() => change("opened")}
+            />
+          }
+          label={
+            <>
+              <T>Unfold device</T>
+            </>
+          }
+          side="left"
+        >
+          <DeviceDuoGlyph pose="open" />
+        </SharedTooltipTrigger>
       </div>
       {error ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                tabIndex={0}
-                role="alert"
-                aria-label={error}
-                className="pointer-events-auto text-xs text-destructive"
-              >
-                !
-              </span>
-            }
-          />
-          <TooltipPopup side="left">{error}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <span
+              tabIndex={0}
+              role="alert"
+              aria-label={error}
+              className="pointer-events-auto text-xs text-destructive"
+            >
+              !
+            </span>
+          }
+          label={error}
+          side="left"
+        />
       ) : null}
     </div>
   );
