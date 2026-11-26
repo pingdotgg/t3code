@@ -818,6 +818,19 @@ jobs:
             -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" "${auth[@]}"
           rm -f "$key_path"
 
+      # Notes are a courtesy: a failure here must not block recording the delivered build.
+      - name: Set TestFlight What to Test
+        continue-on-error: true
+        env:
+          APPLE_API_KEY: ${{ secrets.ASC_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.ASC_API_ISSUER }}
+          BUNDLE_ID: com.louisefindlay23.t3code
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          BASE_REF="$(git for-each-ref --sort=-creatordate --count=1 --format='%(*objectname)' 'refs/tags/testflight/*')"
+          BASE_REF="$BASE_REF" node .github/scripts/testflight-whats-new.cjs
+
       # The tag means "delivered", so it follows the upload.
       - name: Record the TestFlight build
         env:
