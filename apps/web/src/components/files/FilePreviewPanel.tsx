@@ -829,7 +829,14 @@ function useFileLineReveal(
         if (scroller === "codeView") {
           // That window's geometry cannot place the line, so the viewer scrolls to it.
           instance.scrollToLine(line, "center", (result) => {
-            if (result === "settled") state.revealedScrollTop = scrollContainer.scrollTop;
+            if (result !== "settled") return;
+            // The viewer centers its estimate of the line; the mounted row is where it really is.
+            const root = fileContainer.shadowRoot ?? fileContainer;
+            const settledTop = root.querySelector(`[data-line="${line}"]`)
+              ? resolveScrollTarget(line)
+              : null;
+            if (settledTop !== null) scrollContainer.scrollTop = settledTop;
+            state.revealedScrollTop = scrollContainer.scrollTop;
           });
           return;
         }

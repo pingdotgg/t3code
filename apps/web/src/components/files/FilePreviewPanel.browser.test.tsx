@@ -419,7 +419,7 @@ describe("source file scroll", () => {
       return rect ? (rect.top + rect.bottom) / 2 : Number.NaN;
     };
     const lineIsCentered = () =>
-      expect(Math.abs(middle(row(82)) - middle(scroller()))).toBeLessThan(20);
+      expect(Math.abs(middle(row(82)) - middle(scroller()))).toBeLessThan(2);
 
     await using screen = await render(hostFile(null));
     await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(3000));
