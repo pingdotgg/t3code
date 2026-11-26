@@ -388,18 +388,18 @@ export const AntigravityDriver: ProviderDriver<
         spawn,
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
-        const external = executable.version === null;
-        const attempt = external ? ++nextExternalAttempt : 0;
-        const identity = external
+        // A launcher can select a different runtime based on the thread's environment.
+        const observeVersion = executable.version === null && threadEnvironment === undefined;
+        const attempt = observeVersion ? ++nextExternalAttempt : 0;
+        const identity = observeVersion
           ? yield* externalExecutableIdentity(executable.executablePath)
           : undefined;
         const version = (yield* runtime.initialize()).agentInfo?.version;
         const refused = yield* runtimeIncompatibility(executable, version);
-        // A late handshake must not replace the result of a newer attempt.
-        if (attempt > completedExternalAttempt) {
+        // An unversioned or late handshake cannot supersede a known version.
+        if (version && identity && attempt > completedExternalAttempt) {
           completedExternalAttempt = attempt;
-          rejectedExternalRuntime =
-            refused && version && identity ? { identity, version } : undefined;
+          rejectedExternalRuntime = refused ? { identity, version } : undefined;
         }
         if (refused) {
           return yield* new AcpErrors.AcpTransportError({ detail: refused.detail, cause: refused });
@@ -616,7 +616,14 @@ export const AntigravityDriver: ProviderDriver<
         rejectedExternalRuntime && Equal.equals(rejectedExternalRuntime.identity, identity)
           ? rejectedExternalRuntime.version
           : undefined;
-      if (previousRejection === rejectedExternalRuntime && rememberedVersion === undefined) {
+      const invalidatedVersion =
+        previousRejection &&
+        previousRejection === rejectedExternalRuntime &&
+        identity &&
+        rememberedVersion === undefined
+          ? previousRejection.version
+          : undefined;
+      if (invalidatedVersion !== undefined || executable.version !== null) {
         rejectedExternalRuntime = undefined;
       }
       const version = executable.version ?? rememberedVersion;
@@ -628,6 +635,7 @@ export const AntigravityDriver: ProviderDriver<
       }
       return {
         protocolVersion: 1,
+        ...(invalidatedVersion === undefined ? {} : { invalidatedVersion }),
         agentCapabilities: {
           loadSession: true,
           promptCapabilities: { image: true, audio: true, embeddedContext: true },

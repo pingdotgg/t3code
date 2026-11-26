@@ -200,7 +200,7 @@ interface AntigravityProviderOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly stampIdentity: (snapshot: ServerProviderDraft) => Effect.Effect<ServerProvider>;
   readonly probe: Effect.Effect<
-    EffectAcpSchema.InitializeResponse,
+    EffectAcpSchema.InitializeResponse & { readonly invalidatedVersion?: string },
     EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
@@ -338,6 +338,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const applyCheck = (state: AntigravityProviderState) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
+      const previousVersion =
+        initialized?.invalidatedVersion === draft.version ? null : draft.version;
       const authenticated = draft.auth.status === "authenticated";
       const message =
         errorMessage ??
@@ -352,7 +354,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...draft,
           installed: !missingInstallation,
           // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
-          version: version === "unknown" ? draft.version : version || draft.version,
+          version: version === "unknown" ? previousVersion : version || previousVersion,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
           ...(missingInstallation
