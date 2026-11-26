@@ -1208,9 +1208,10 @@ export async function extractDocumentText(path: string, extension: string): Prom
           if (pending !== undefined) {
             if (NOTEBOOK_OUTPUT_TEXT.test(output.slice(0, remaining))) {
               const roomAfterHeading = Math.max(0, remaining - NOTEBOOK_OUTPUT_HEADING.length);
-              const fittingOutput = output
-                .slice(0, roomAfterHeading)
-                .replace(TRAILING_HIGH_SURROGATE, "");
+              const fittingOutput =
+                output.length < roomAfterHeading
+                  ? output
+                  : output.slice(0, roomAfterHeading).replace(TRAILING_HIGH_SURROGATE, "");
               if (!NOTEBOOK_OUTPUT_TEXT.test(fittingOutput)) throw new Truncation("Output budget");
               result += takeRaw(NOTEBOOK_OUTPUT_HEADING) + pending;
               pending = undefined;

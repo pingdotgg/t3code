@@ -5,21 +5,41 @@ import * as NodePath from "node:path";
 import { expect, it } from "vite-plus/test";
 import { extractDocumentText } from "./documentTextWorker.ts";
 
-it("omits the output heading when only half an emoji fits after it", async () => {
+const cellHeading = "## Cell 1 (code)\n";
+const outputHeading = "\nOutput:\n";
+
+it.each([
+  {
+    name: "omits the output heading when only half an emoji fits after it",
+    source: "x".repeat(1_000_000 - cellHeading.length - outputHeading.length - 1),
+    outputs: ["😀"],
+    remainder: "\n\n[Extracted text truncated at document extraction limits.]",
+  },
+  {
+    name: "keeps reading after a high surrogate in an output below the limit",
+    source: "run()",
+    outputs: ["\uD83D", "\uDE00"],
+    remainder: "\nOutput:\n\uD83D\n\uDE00\n\n## Cell 2 (markdown)\nLater cell",
+  },
+])("$name", async ({ source, outputs, remainder }) => {
   const folder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-notebook-budget-"));
   try {
     const path = NodePath.join(folder, "output.ipynb");
-    const source = "x".repeat(1_000_000 - "## Cell 1 (code)\n".length - "\nOutput:\n".length - 1);
     await NodeFSP.writeFile(
       path,
       JSON.stringify({
-        cells: [{ cell_type: "code", source, outputs: [{ output_type: "stream", text: "😀" }] }],
+        cells: [
+          {
+            cell_type: "code",
+            source,
+            outputs: outputs.map((text) => ({ output_type: "stream", text })),
+          },
+          { cell_type: "markdown", source: "Later cell" },
+        ],
       }),
     );
     const extracted = await extractDocumentText(path, ".ipynb");
-    expect(extracted.slice(source.length + "## Cell 1 (code)\n".length)).toBe(
-      "\n\n[Extracted text truncated at document extraction limits.]",
-    );
+    expect(extracted.slice(source.length + cellHeading.length)).toBe(remainder);
   } finally {
     await NodeFSP.rm(folder, { recursive: true, force: true });
   }
