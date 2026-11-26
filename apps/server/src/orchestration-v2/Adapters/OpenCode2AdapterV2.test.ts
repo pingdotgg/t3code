@@ -3872,6 +3872,52 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("does not show a command's own prompt as one from another client", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("command.list", "<any>"),
+        reply("command.list", { location: { directory: WORK }, data: [{ name: "quick" }] }),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+        reply("message.list", { data: [], cursor: {} }),
+        out("session.command", { sessionID: SESSION, name: "quick", text: "" }),
+        event("session.inbox.enqueued", {
+          sessionID: SESSION,
+          inboxID: "msg_user_quick",
+          item: { type: "user", payload: { text: "Answer quickly", files: [] }, delivery: "steer" },
+        }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_user_quick" }),
+        reply("session.command", null),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_answer",
+          ordinal: 0,
+          text: "Quick answer",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        message: { ...turnInput(thread).message, text: "/quick" },
+      });
+      const seen = yield* Fiber.join(collected);
+      assert.deepEqual(
+        seen.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          (event.turnItem.type === "user_message" || event.turnItem.type === "assistant_message")
+            ? [`${event.turnItem.type}: ${event.turnItem.text}`]
+            : [],
+        ),
+        ["assistant_message: Quick answer"],
+      );
+    }),
+  );
+
   it.effect("sends a $skill that appears once OpenCode finishes scanning the directory", () =>
     Effect.gen(function* () {
       const prompts: Array<unknown> = [];

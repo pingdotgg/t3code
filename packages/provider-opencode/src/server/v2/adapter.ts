@@ -265,7 +265,8 @@ interface ActiveTurn {
   readonly models: Set<string>;
   lastStep: Tokens | undefined;
   before: string | null | undefined;
-  commandPrompt: string | undefined;
+  // `null` while a `session.command` it sent has not yet enqueued its prompt, which carries no T3 ID.
+  commandPrompt: string | null | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
   todoPlanId: PlanId | undefined;
@@ -393,6 +394,7 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
+  /** Prompts other clients queued, shown once delivered; `leads` the next wake if no T3 turn or report preceded it. */
   readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
@@ -3631,12 +3633,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (state.subagent !== undefined) {
           if (turn === undefined) state.subagent.prompt ??= text;
         } else if (!isOwnPrompt(event.data.inboxID)) {
-          if (
-            !held &&
-            turn !== undefined &&
-            turn.before !== undefined &&
-            turn.commandPrompt === undefined
-          ) {
+          if (!held && turn !== undefined && turn.commandPrompt === null) {
             turn.commandPrompt = event.data.inboxID;
             return;
           }
@@ -4546,7 +4543,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const markBefore = (sessionId: string, before: string | null) =>
       Effect.sync(() => {
         const turn = threads.get(sessionId)?.active;
-        if (turn !== undefined) turn.before = before;
+        if (turn === undefined) return;
+        turn.before = before;
+        turn.commandPrompt = null;
       });
 
     const beginTurn = Effect.fn("OpenCode2Adapter.beginTurn")(function* (
