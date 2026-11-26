@@ -190,10 +190,11 @@ function withDefinitions(
     };
   }
   if (!segment.text.includes("[")) return segment;
+  const bomLength = segment.sourceOffset === 0 && segment.text.startsWith("\uFEFF") ? 1 : 0;
   return {
     ...segment,
-    text: definitions + segment.text,
-    sourceOffset: segment.sourceOffset - definitions.length,
+    text: definitions + segment.text.slice(bomLength),
+    sourceOffset: segment.sourceOffset + bomLength - definitions.length,
   };
 }
 
