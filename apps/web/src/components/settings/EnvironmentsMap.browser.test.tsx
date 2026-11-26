@@ -174,4 +174,61 @@ describe("EnvironmentsMap", () => {
     await userEvent.keyboard("{Escape}");
     await expect.element(settings).not.toBeInTheDocument();
   });
+
+  it("clears the machine search on Esc without closing Settings and ignores IME composition keys", async () => {
+    await using _screen = await renderSettingsMap();
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    const search = page.getByRole("searchbox", { name: "Find a machine on the map" });
+
+    await search.fill("browser");
+    for (const composition of [
+      { isComposing: true, keyCode: 27 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      await act(() => {
+        search
+          .element()
+          .dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", ...composition, bubbles: true }),
+          );
+      });
+      await expect.element(search).toHaveValue("browser");
+      expect(settings.element()).toHaveAttribute("data-open");
+    }
+
+    let enterNotPrevented = false;
+    await act(() => {
+      enterNotPrevented = search.element().dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          isComposing: false,
+          keyCode: 229,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(enterNotPrevented).toBe(true);
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(search).toHaveValue("");
+    expect(settings.element()).toHaveAttribute("data-open");
+
+    let repeatNotPrevented = true;
+    await act(() => {
+      repeatNotPrevented = search.element().dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          repeat: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(repeatNotPrevented).toBe(false);
+    expect(settings.element()).toHaveAttribute("data-open");
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(settings).not.toBeInTheDocument();
+  });
 });

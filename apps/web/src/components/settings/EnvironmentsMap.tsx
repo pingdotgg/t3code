@@ -888,9 +888,12 @@ function FleetCanvas({
             <InputGroupAddon>
               <SearchIcon aria-hidden />
             </InputGroupAddon>
+            {/* Native search inputs clear on Escape even during IME composition. */}
             <InputGroupInput
               size="sm"
-              type="search"
+              type="text"
+              role="searchbox"
+              enterKeyHint="search"
               value={query}
               aria-label={gt("Find a machine on the map")}
               placeholder={gt("Find a machine")}
@@ -898,13 +901,21 @@ function FleetCanvas({
               autoComplete="off"
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
+                if (event.defaultPrevented) return;
+                const composing = event.nativeEvent.isComposing || event.keyCode === 229;
                 if (event.key === "Enter") {
+                  if (composing) return;
                   event.preventDefault();
                   goToFirstMatch();
-                } else if (event.key === "Escape" && query !== "") {
-                  event.stopPropagation();
-                  setQuery("");
+                  return;
                 }
+                if (event.key !== "Escape") return;
+                if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+                if (!composing && !query && !event.repeat) return;
+                event.stopPropagation();
+                if (composing) return;
+                event.preventDefault();
+                setQuery("");
               }}
             />
           </InputGroup>
