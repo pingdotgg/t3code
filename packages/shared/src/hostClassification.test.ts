@@ -119,20 +119,57 @@ describe("isPublicFaviconHost", () => {
 
 describe("IPv6 bind host spellings", () => {
   it("classifies every spelling of the IPv6 wildcard address", () => {
-    for (const host of ["::", "[::]", "::0", "[::0]", "0:0:0:0:0:0:0:0"]) {
+    for (const host of [
+      "::",
+      "[::]",
+      "::0",
+      "[::0]",
+      "0:0:0:0:0:0:0:0",
+      "::0.0.0.0",
+      "[::0.0.0.0]",
+      "0:0:0:0:0:0:0.0.0.0",
+    ]) {
       expect({ host, wildcard: isWildcardHost(host) }).toEqual({ host, wildcard: true });
       expect({ host, loopback: listensOnLoopback(host) }).toEqual({ host, loopback: true });
       expect({ host, private: isPrivateNetworkHost(host) }).toEqual({ host, private: true });
     }
-    expect(isWildcardHost("::1")).toBe(false);
+    for (const host of ["::1", "::0.0.0.1", "::0.0.1.0", "::ffff:0.0.0.0"]) {
+      expect(isWildcardHost(host), host).toBe(false);
+    }
   });
 
   it("classifies every spelling of the IPv6 loopback address", () => {
-    for (const host of ["::1", "[::1]", "0:0:0:0:0:0:0:1", "::0:1"]) {
+    for (const host of [
+      "::1",
+      "[::1]",
+      "0:0:0:0:0:0:0:1",
+      "::0:1",
+      "::0.0.0.1",
+      "[::0.0.0.1]",
+      "0:0:0:0:0:0:0.0.0.1",
+    ]) {
       expect({ host, loopback: isLocalLoopbackHost(host) }).toEqual({ host, loopback: true });
       expect({ host, private: isPrivateNetworkHost(host) }).toEqual({ host, private: true });
     }
-    expect(isLocalLoopbackHost("::2")).toBe(false);
-    expect(isLocalLoopbackHost("1::1")).toBe(false);
+    for (const host of ["::2", "1::1", "::0.0.0.0", "::0.0.1.1", "::ffff:127.0.0.1"]) {
+      expect(isLocalLoopbackHost(host), host).toBe(false);
+    }
+  });
+
+  it("rejects malformed dotted IPv6 suffixes", () => {
+    for (const host of [
+      "::0.0.0.256",
+      "::0.0..0",
+      "::0.0.0.01",
+      "::0.0.0.-0",
+      "::0.0.0.1e0",
+      "::0.0.0.1:0",
+      "::0.0.0.0::",
+      "0:0:0:0:0:0:0:0.0.0.0",
+      "0:0:0:0:0:0.0.0.1",
+    ]) {
+      expect(isWildcardHost(host), host).toBe(false);
+      expect(isLocalLoopbackHost(host), host).toBe(false);
+    }
   });
 });

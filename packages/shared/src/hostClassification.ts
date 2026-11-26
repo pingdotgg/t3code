@@ -26,8 +26,18 @@ const parseIpv4MappedIpv6Address = (host: string): readonly number[] | null => {
 };
 
 const parseIpv6Address = (host: string): readonly number[] | null => {
-  const normalized = normalizeHostname(host);
+  let normalized = normalizeHostname(host);
   if (!normalized.includes(":")) return null;
+  if (normalized.includes(".")) {
+    const suffixStart = normalized.lastIndexOf(":") + 1;
+    const suffix = normalized.slice(suffixStart);
+    if (!/^(?:0|[1-9]\d{0,2})(?:\.(?:0|[1-9]\d{0,2})){3}$/u.test(suffix)) return null;
+    const ipv4 = parseIpv4Address(suffix);
+    if (!ipv4) return null;
+    const high = ((ipv4[0]! << 8) | ipv4[1]!).toString(16);
+    const low = ((ipv4[2]! << 8) | ipv4[3]!).toString(16);
+    normalized = `${normalized.slice(0, suffixStart)}${high}:${low}`;
+  }
   const halves = normalized.split("::");
   if (halves.length > 2) return null;
   const head = halves[0] ? halves[0].split(":") : [];
