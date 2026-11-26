@@ -787,12 +787,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }
   });
 
-  const openDevice = Effect.fn("DeviceService.openDevice")(
-    function* (
-      host: DeviceHost.DeviceHost["Service"],
-      input: DeviceOpenInput,
-      context: DeviceHost.DeviceOpenContext | undefined,
-    ) {
+  const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
+    function* (input, context) {
+      const host = yield* resolveHost(input.hostId);
+      yield* ensurePlatform(host, input.platform);
       const ready = yield* readiness(host.id);
       let state = yield* refresh(ready);
       let device = findDevice(state, host.id, input.deviceId);
@@ -867,65 +865,51 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         platform: device.platform,
         openedAt,
       };
-      const publishOpen = lifecycleLock.withPermit(
-        Effect.gen(function* () {
-          if (hosts.get(host.id) !== host)
-            return yield* new DeviceHostUnavailableError({
-              hostId: host.id,
-              hostLabel: host.label,
-              reason: "Host configuration changed. Retry the operation.",
-            });
-          if (!(yield* readDeviceSettings).enabled)
-            return yield* new DeviceHostUnavailableError({
-              hostId: host.id,
-              hostLabel: host.label,
-              reason: "Device support was turned off while the device was opening.",
-            });
-          yield* publish((current) => ({
-            ...current,
-            sessions: [
-              ...current.sessions.filter(
-                (existing) =>
-                  !(
-                    existing.threadId === session.threadId &&
-                    existing.hostId === session.hostId &&
-                    existing.deviceId === session.deviceId
-                  ),
-              ),
-              session,
-            ],
-          }));
-        }),
-      );
-      if (input.deviceId === session.deviceId) {
-        yield* publishOpen;
-        return Effect.succeed(session);
-      }
-      // An Android boot can replace an AVD name with a serial. Release the AVD's lock
-      // before taking the serial's, then recheck that Stop did not power it off.
-      return deviceLocks.withLock(
+      // Only the opened device is locked: a catalog entry boots a new device per open.
+      // Under the lock, a Stop of this device has either committed or not started.
+      yield* deviceLocks.withLock(
         deviceKey(session.hostId, session.deviceId),
-        Effect.gen(function* () {
-          const state = yield* refresh(ready);
-          if (!findDevice(state, session.hostId, session.deviceId)?.booted)
-            return yield* new DeviceNotFoundError({
-              hostId: session.hostId,
-              deviceId: session.deviceId,
-            });
-          yield* publishOpen;
-          return session;
-        }),
+        lifecycleLock.withPermit(
+          Effect.gen(function* () {
+            if (hosts.get(host.id) !== host)
+              return yield* new DeviceHostUnavailableError({
+                hostId: host.id,
+                hostLabel: host.label,
+                reason: "Host configuration changed. Retry the operation.",
+              });
+            if (!(yield* readDeviceSettings).enabled)
+              return yield* new DeviceHostUnavailableError({
+                hostId: host.id,
+                hostLabel: host.label,
+                reason: "Device support was turned off while the device was opening.",
+              });
+            const { state } = yield* SynchronizedRef.get(stateRef);
+            if (
+              input.boot !== false &&
+              !findDevice(state, session.hostId, session.deviceId)?.booted
+            )
+              return yield* new DeviceNotFoundError({
+                hostId: session.hostId,
+                deviceId: session.deviceId,
+              });
+            yield* publish((current) => ({
+              ...current,
+              sessions: [
+                ...current.sessions.filter(
+                  (existing) =>
+                    !(
+                      existing.threadId === session.threadId &&
+                      existing.hostId === session.hostId &&
+                      existing.deviceId === session.deviceId
+                    ),
+                ),
+                session,
+              ],
+            }));
+          }),
+        ),
       );
-    },
-    (effect, host, input) =>
-      deviceLocks.withLock(deviceKey(host.id, input.deviceId), effect).pipe(Effect.flatten),
-  );
-
-  const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
-    function* (input, context) {
-      const host = yield* resolveHost(input.hostId);
-      yield* ensurePlatform(host, input.platform);
-      return yield* openDevice(host, input, context);
+      return session;
     },
   );
 
