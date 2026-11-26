@@ -32,7 +32,7 @@ import {
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
 import { currentClientMetadata } from "../../connection/platform";
-import { readProject, useProjects } from "../../state/entities";
+import { readProjects, subscribeProjects, useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
@@ -343,11 +343,26 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const draft = readSwitchingDraft();
       if (!draft) return;
       const projectRef = scopeProjectRef(target.environmentId, project.id);
-      const workspaceRoot = readProject(projectRef)?.workspaceRoot;
-      const defaultWorkspace = await retargetDraftWorkspace(draft, projectRef);
+      // Use the catalog-backed list: an unpaired machine can still have a cached project snapshot.
+      const findDestination = (projects: typeof allProjects) =>
+        projects.find(
+          (candidate) =>
+            candidate.environmentId === projectRef.environmentId &&
+            candidate.id === projectRef.projectId,
+        );
+      const workspaceRoot = findDestination(readProjects())?.workspaceRoot;
+      const controller = new AbortController();
+      const unsubscribe = subscribeProjects((projects) => {
+        if (findDestination(projects)?.workspaceRoot !== workspaceRoot) controller.abort();
+      });
+      const workspaceRead =
+        workspaceRoot === undefined
+          ? Promise.resolve({})
+          : retargetDraftWorkspace(draft, projectRef, controller.signal);
+      const defaultWorkspace = await workspaceRead.finally(unsubscribe);
       const currentDraft = readSwitchingDraft();
       if (!currentDraft) return;
-      const destination = readProject(projectRef);
+      const destination = findDestination(readProjects());
       if (!destination) {
         toastManager.add(
           stackedThreadToast({
@@ -358,7 +373,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         );
         return;
       }
-      if (destination.workspaceRoot !== workspaceRoot) {
+      if (controller.signal.aborted || destination.workspaceRoot !== workspaceRoot) {
         return retarget(destination, triagePrompt);
       }
       const workspace =

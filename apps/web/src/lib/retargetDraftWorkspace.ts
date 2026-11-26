@@ -18,7 +18,7 @@ function readWorkspaceContext(projectRef: ScopedProjectRef) {
   return { project, serverConfig, settings: serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS };
 }
 
-async function newThreadWorkspace(projectRef: ScopedProjectRef) {
+async function newThreadWorkspace(projectRef: ScopedProjectRef, signal: AbortSignal) {
   let { project, serverConfig, settings } = readWorkspaceContext(projectRef);
   let projectFile: T3ProjectFile | null = null;
   const workspaceRoot = project?.workspaceRoot;
@@ -30,7 +30,7 @@ async function newThreadWorkspace(projectRef: ScopedProjectRef) {
     const cached = peekT3ProjectFile(projectRef.environmentId, workspaceRoot);
     if (cached === undefined) {
       // A paired project can appear before its connection summary reports connected.
-      projectFile = await readT3ProjectFile(projectRef.environmentId, workspaceRoot);
+      projectFile = await readT3ProjectFile(projectRef.environmentId, workspaceRoot, signal);
       ({ project, serverConfig, settings } = readWorkspaceContext(projectRef));
     } else {
       projectFile = cached;
@@ -73,8 +73,9 @@ async function newThreadWorkspace(projectRef: ScopedProjectRef) {
 export async function retargetDraftWorkspace(
   draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
   projectRef: ScopedProjectRef,
+  signal: AbortSignal,
 ): Promise<{ envMode?: DraftSessionState["envMode"]; startFromOrigin?: boolean }> {
   return draft.workspaceExplicit || draft.worktreePath !== null
     ? {}
-    : newThreadWorkspace(projectRef);
+    : newThreadWorkspace(projectRef, signal);
 }

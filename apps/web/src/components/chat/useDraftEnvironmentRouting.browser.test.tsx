@@ -27,8 +27,16 @@ import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
+  unpaired: null as EnvironmentId | null,
+  projectListeners: new Set<(projects: readonly EnvironmentProject[]) => void>(),
   readProjectFile:
-    vi.fn<(environmentId: EnvironmentId, root: string) => Promise<T3ProjectFile | null>>(),
+    vi.fn<
+      (
+        environmentId: EnvironmentId,
+        root: string,
+        signal?: AbortSignal,
+      ) => Promise<T3ProjectFile | null>
+    >(),
   pickedEnvironmentId: null as EnvironmentId | null,
   refreshSelection: vi.fn<(ids: readonly EnvironmentId[]) => Promise<EnvironmentId | null>>(),
 }));
@@ -43,6 +51,12 @@ vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => resources.projects,
+  readProjects: () =>
+    resources.projects.filter((project) => project.environmentId !== resources.unpaired),
+  subscribeProjects: (listener: (projects: readonly EnvironmentProject[]) => void) => {
+    resources.projectListeners.add(listener);
+    return () => resources.projectListeners.delete(listener);
+  },
   readThreadShells: () => [],
   readProject: (ref: { environmentId: EnvironmentId; projectId: ProjectId }) =>
     resources.projects.find(
@@ -59,6 +73,8 @@ function setup() {
   resources.refreshSelection.mockReset();
   resources.readProjectFile.mockReset().mockResolvedValue(null);
   resources.projects = [];
+  resources.unpaired = null;
+  resources.projectListeners.clear();
   resources.pickedEnvironmentId = null;
   const a = EnvironmentId.make("machine-a");
   const b = EnvironmentId.make("machine-b");
@@ -405,16 +421,16 @@ it("keeps a workspace the user picked when the draft switches machine by hand", 
   expect(store.getDraftSession(draftId)?.envMode).toBe("local");
 });
 
-it.each(["deleted", "moved"] as const)(
+it.each(["deleted", "unpaired", "moved"] as const)(
   "checks the destination again when the project was %s during the default read",
   async (change) => {
     const { a, b, draftId, input, store } = fanoutSetup();
-    const firstRead = Promise.withResolvers<T3ProjectFile | null>();
-    resources.readProjectFile.mockImplementation((_environmentId, root) =>
-      root === "/workspace/moved"
-        ? Promise.resolve({ defaultThreadEnvMode: "worktree" })
-        : firstRead.promise,
-    );
+    resources.readProjectFile.mockImplementation((_environmentId, root, signal) => {
+      if (root === "/workspace/moved") return Promise.resolve({ defaultThreadEnvMode: "worktree" });
+      return new Promise((resolve) =>
+        signal?.addEventListener("abort", () => resolve(null), { once: true }),
+      );
+    });
     store.setDraftThreadContext(draftId, { envMode: "local" });
 
     await using screen = await render(
@@ -424,16 +440,23 @@ it.each(["deleted", "moved"] as const)(
     const send = screen.getByRole("button", { name: "Send", exact: true });
     await expect.element(send).toBeDisabled();
     await act(async () => {
-      resources.projects = resources.projects.flatMap((project) => {
-        if (project.environmentId !== b) return [project];
-        return change === "deleted" ? [] : [{ ...project, workspaceRoot: "/workspace/moved" }];
-      });
-      firstRead.resolve({ defaultThreadEnvMode: "local" });
+      if (change === "unpaired") {
+        resources.unpaired = b;
+      } else {
+        resources.projects = resources.projects.flatMap((project) => {
+          if (project.environmentId !== b) return [project];
+          return change === "deleted" ? [] : [{ ...project, workspaceRoot: "/workspace/moved" }];
+        });
+      }
+      const visibleProjects = resources.projects.filter(
+        (project) => project.environmentId !== resources.unpaired,
+      );
+      for (const listener of resources.projectListeners) listener(visibleProjects);
     });
     await expect.element(send).toBeEnabled();
     expect(store.getDraftSession(draftId)).toMatchObject({
-      environmentId: change === "deleted" ? a : b,
-      envMode: change === "deleted" ? "local" : "worktree",
+      environmentId: change === "moved" ? b : a,
+      envMode: change === "moved" ? "worktree" : "local",
     });
     expect(store.getComposerDraft(draftId)?.prompt).toBe("Keep this prompt");
   },
