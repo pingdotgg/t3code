@@ -97,6 +97,14 @@ export interface AcpPatchedProtocolOptions {
   readonly onNotification?: (
     notification: AcpIncomingNotification,
   ) => Effect.Effect<void, AcpError.AcpError, never>;
+  /**
+   * Runs with the payload, as received, of a notification that failed to decode and is dropped.
+   * It finishes before the next message is read; a failure in it does not stop the reader.
+   */
+  readonly onUndecodableNotification?: (
+    method: string,
+    payload: unknown,
+  ) => Effect.Effect<void, AcpError.AcpError, never>;
   readonly onExtRequest?: (
     method: string,
     params: unknown,
@@ -644,37 +652,43 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
 
   // Drop undecodable notifications without ending working sessions; newer specs may add unknown shapes.
   // Warn once per distinct failure per connection because agents repeat bad payloads.
-  const dropUndecodableNotification = (method: string) => (cause: Schema.SchemaError) => {
-    const error = AcpError.AcpProtocolParseError.fromSchemaError(
-      "decode-notification-payload",
-      method,
-      cause,
-    );
-    const diagnostics = decodeFailureDiagnostics(error);
-    const key = `${method}\n${error.issueSummary}`;
-    const firstOfItsKind = !warnedDecodeFailures.has(key);
-    warnedDecodeFailures.add(key);
-    return logProtocol({
-      direction: "incoming",
-      stage: "decode_failed",
-      payload: diagnostics,
-    }).pipe(
-      Effect.andThen(
-        firstOfItsKind
-          ? Effect.logWarning("Dropped an ACP notification that failed to decode").pipe(
-              Effect.annotateLogs(diagnostics),
-            )
-          : Effect.void,
-      ),
-    );
-  };
+  const dropUndecodableNotification =
+    (method: string, payload: unknown) => (cause: Schema.SchemaError) => {
+      const error = AcpError.AcpProtocolParseError.fromSchemaError(
+        "decode-notification-payload",
+        method,
+        cause,
+      );
+      const diagnostics = decodeFailureDiagnostics(error);
+      const key = `${method}\n${error.issueSummary}`;
+      const firstOfItsKind = !warnedDecodeFailures.has(key);
+      warnedDecodeFailures.add(key);
+      return logProtocol({
+        direction: "incoming",
+        stage: "decode_failed",
+        payload: diagnostics,
+      }).pipe(
+        Effect.andThen(
+          firstOfItsKind
+            ? Effect.logWarning("Dropped an ACP notification that failed to decode").pipe(
+                Effect.annotateLogs(diagnostics),
+              )
+            : Effect.void,
+        ),
+        Effect.andThen(
+          options.onUndecodableNotification
+            ? isolateNotificationHandler(options.onUndecodableNotification(method, payload))
+            : Effect.void,
+        ),
+      );
+    };
 
   const handleRequestEncoded = (message: RpcMessage.RequestEncoded, lineLength: number) => {
     if (message.id === "") {
       if (message.tag === CLIENT_METHODS.session_update) {
         return decodeSessionUpdate(message.payload).pipe(
           Effect.matchEffect({
-            onFailure: dropUndecodableNotification(CLIENT_METHODS.session_update),
+            onFailure: dropUndecodableNotification(CLIENT_METHODS.session_update, message.payload),
             onSuccess: (params) =>
               dispatchNotification(
                 {
@@ -694,7 +708,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         const method = message.tag;
         return decodeElicitationComplete(message.payload).pipe(
           Effect.matchEffect({
-            onFailure: dropUndecodableNotification(method),
+            onFailure: dropUndecodableNotification(method, message.payload),
             onSuccess: (params) =>
               dispatchNotification({ _tag: "ElicitationComplete", method, params }, lineLength),
           }),
