@@ -5781,6 +5781,10 @@ interface ClaudeLiveQueryContext {
   // Root messages this process streamed; what it holds beyond the history it resumed.
   readonly emittedMessageUuids: Set<string>;
   transcriptPath: string | undefined;
+  // This process's root request is out with no tool step since.
+  rootRequestInFlight: boolean;
+  // Background commands its subagents started, for completions that do not say so.
+  readonly subagentOwnedTaskIds: Set<string>;
 }
 
 interface ActiveClaudeToolCall {
@@ -6642,14 +6646,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           string,
           Map<string, Extract<SDKMessage, { readonly subtype: "task_notification" }>>
         >();
-        // Judged on arrival, because buffered frames replay later: native threads whose root
-        // request is out with no tool step since, the notifications that landed during one, and
-        // the requests that carry what was queued before them.
-        const rootRequestInFlightNativeThreads = new Set<string>();
+        // Judged on arrival, because buffered frames replay later: the notifications that landed
+        // during a root request, and the requests that carry what was queued before them.
         const notificationsDuringRootRequest = new WeakSet<SDKMessage>();
         const foldingRootRequests = new WeakSet<SDKMessage>();
-        // A subagent's background command reports to that subagent, never to the root.
-        const subagentOwnedTaskIds = new Set<string>();
         const lastProviderThreadByNativeThread = yield* Ref.make(
           new Map<string, OrchestrationV2ProviderThread>(),
         );
@@ -7749,7 +7749,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
           possibleEarlyWakeNativeThreads.delete(nativeThreadId);
           unfoldedTaskNotificationsByNativeThread.delete(nativeThreadId);
-          rootRequestInFlightNativeThreads.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
           yield* clearNativeThreadTaskIdSet(
             wakeEligibleBackgroundTasksByNativeThread,
@@ -11378,11 +11377,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return updated;
               });
             }
+            // A foreground command can move to the background later, so record it now.
+            if (Reflect.get(message, "owned_by_subagent") === true) {
+              (yield* Ref.get(queryContext))?.subagentOwnedTaskIds.add(message.task_id);
+            }
             if (message.is_backgrounded === false) {
               return false;
-            }
-            if (Reflect.get(message, "owned_by_subagent") === true) {
-              subagentOwnedTaskIds.add(message.task_id);
             }
             yield* upsertPendingBackgroundTask(input.nativeThreadId, {
               ...backgroundTaskLaunch(input.activeContext, message.tool_use_id),
@@ -11413,7 +11413,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.nativeThreadId,
               message.task_id,
             );
-            const subagentOwned = subagentOwnedTaskIds.delete(message.task_id);
+            const subagentOwned = yield* takeSubagentOwnership(message);
             if (
               input.activeContext !== null &&
               notificationsDuringRootRequest.has(message) &&
@@ -11449,43 +11449,45 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return true;
         });
 
-        // A wake turn whose output streamed into a user turn answered the notifications buffered
-        // for it; with no root frame buffered, no continuation would ever retire them.
+        // A wake turn whose output streamed into a user turn answered the notification buffered
+        // for it (matched by run id when the CLI reports one); with no root frame buffered, no
+        // continuation would ever retire it.
         const retireAnsweredBufferedNotifications = Effect.fnUntraced(function* (
           nativeThreadId: string,
           activeContext: ActiveClaudeTurnContext,
+          result: SDKResultMessage,
         ) {
+          const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages;
+          if (buffered === undefined || buffered.some(isClaudeRootTurnFrame)) return;
           const tombstones = taskIdSetForNativeThread(
             yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
             nativeThreadId,
           );
-          const answered = yield* Ref.modify(wakeBuffers, (current) => {
-            const entry = current.get(nativeThreadId);
-            if (entry === undefined || entry.messages.some(isClaudeRootTurnFrame)) {
-              return [[] as ReadonlyArray<string>, current] as const;
-            }
-            const taskIds = entry.messages.flatMap((buffered) =>
-              buffered.type === "system" &&
-              buffered.subtype === "task_notification" &&
-              tombstones.has(buffered.task_id)
-                ? [buffered.task_id]
+          const origin: unknown = result.origin;
+          const runId =
+            origin !== null && typeof origin === "object"
+              ? Reflect.get(origin, "runId")
+              : undefined;
+          const answered = new Set(
+            buffered.flatMap((entry) =>
+              entry.type === "system" &&
+              entry.subtype === "task_notification" &&
+              tombstones.has(entry.task_id) &&
+              (typeof runId !== "string" || Reflect.get(entry, "run_id") === runId)
+                ? [entry.task_id]
                 : [],
-            );
-            if (taskIds.length === 0) return [taskIds, current] as const;
-            const kept = entry.messages.filter(
-              (buffered) =>
-                !(
-                  buffered.type === "system" &&
-                  buffered.subtype === "task_notification" &&
-                  taskIds.includes(buffered.task_id)
-                ),
-            );
-            const next = new Map(current);
-            if (kept.length === 0) next.delete(nativeThreadId);
-            else next.set(nativeThreadId, { ...entry, messages: kept });
-            return [taskIds, next] as const;
-          });
-          if (answered.length === 0) return;
+            ),
+          );
+          if (answered.size === 0) return;
+          const kept = buffered.filter(
+            (entry) =>
+              !(
+                entry.type === "system" &&
+                entry.subtype === "task_notification" &&
+                answered.has(entry.task_id)
+              ),
+          );
+          if (!(yield* replaceWakeBuffer(nativeThreadId, buffered, kept, answered))) return;
           for (const taskId of answered) {
             yield* clearOpaqueBackgroundTaskReplayTombstone(nativeThreadId, taskId);
             yield* clearPendingBackgroundTask(nativeThreadId, taskId);
@@ -11493,32 +11495,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* emitRosterUpdate(nativeThreadId, activeContext);
         });
 
-        // A root request sent with no tool step since (a retry, a Stop hook's) carries nothing queued.
-        const trackRootRequestPhase = (nativeThreadId: string, message: SDKMessage) => {
+        // A new turn's first request also carries what was queued before it.
+        const trackRootRequestPhase = (query: ClaudeLiveQueryContext, message: SDKMessage) => {
           if (Reflect.get(message, "parent_tool_use_id") != null) return;
           if (
             message.type === "system" &&
             message.subtype === "status" &&
             message.status === "requesting"
           ) {
-            if (!rootRequestInFlightNativeThreads.has(nativeThreadId)) {
-              foldingRootRequests.add(message);
-            }
-            rootRequestInFlightNativeThreads.add(nativeThreadId);
+            if (!query.rootRequestInFlight) foldingRootRequests.add(message);
+            query.rootRequestInFlight = true;
           } else if (
             message.type === "result" ||
             (message.type === "system" && message.subtype === "init") ||
             claudeToolResultBlocksFromUserMessage(message).length > 0
           ) {
-            rootRequestInFlightNativeThreads.delete(nativeThreadId);
+            query.rootRequestInFlight = false;
           } else if (
             message.type === "system" &&
             message.subtype === "task_notification" &&
-            rootRequestInFlightNativeThreads.has(nativeThreadId)
+            query.rootRequestInFlight
           ) {
             notificationsDuringRootRequest.add(message);
           }
         };
+
+        // A subagent's background command reports to that subagent, so no root turn answers it.
+        const takeSubagentOwnership = Effect.fnUntraced(function* (
+          message: Extract<SDKMessage, { readonly subtype: "task_notification" }>,
+        ) {
+          const recorded =
+            (yield* Ref.get(queryContext))?.subagentOwnedTaskIds.delete(message.task_id) === true;
+          return Reflect.get(message, "owned_by_subagent") === true || recorded;
+        });
 
         // The first root request after a tool step carries every notification queued before it.
         const foldQueuedTaskNotifications = Effect.fnUntraced(function* (
@@ -13461,7 +13470,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Foreign output already streamed; exclude its result so only the prompt's own echoing result settles the turn.
             if (isClaudeTaskNotificationOriginResult(message)) {
               yield* clearWakeReports(liveQuery.nativeThreadId);
-              yield* retireAnsweredBufferedNotifications(liveQuery.nativeThreadId, context);
+              yield* retireAnsweredBufferedNotifications(
+                liveQuery.nativeThreadId,
+                context,
+                message,
+              );
             }
             yield* Effect.logInfo("orchestration-v2.claude-result-for-other-turn", {
               providerTurnId: context.providerTurnId,
@@ -14469,6 +14482,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
             emittedMessageUuids: new Set(),
             transcriptPath: undefined,
+            rootRequestInFlight: false,
+            subagentOwnedTaskIds: new Set(),
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
@@ -14553,7 +14568,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       resultsReportingNewContextWindow.add(message);
                     }
                   }
-                  trackRootRequestPhase(nativeThreadId, message);
+                  trackRootRequestPhase(context, message);
                   const isInit = message.type === "system" && message.subtype === "init";
                   const handled = handleSdkMessage({ query: querySession, message }).pipe(
                     Effect.andThen(
