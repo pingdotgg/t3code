@@ -1,13 +1,12 @@
-/** Offset of the `[ ]` marker on the first line of the list item starting at `listItemStart`. */
+// Callers pass the start of an item remark-gfm parsed as a task, so this only locates the marker:
+// after the bullet, or on the next line (past any blockquote prefix) when the bullet stands alone.
+const taskMarker =
+  /[ \t]*(?:[-+*]|\d+[.)])(?:[ \t]+|[ \t]*(?:\r\n?|\n)(?:[ \t]*>)*[ \t]*)\[[ xX]\]/y;
+
+/** Offset of the `[ ]` marker of the task list item starting at `listItemStart`. */
 export function taskListMarkerOffset(markdown: string, listItemStart: number): number | null {
-  const firstLineEnd = markdown.indexOf("\n", listItemStart);
-  const firstLine = markdown.slice(
-    listItemStart,
-    firstLineEnd === -1 ? markdown.length : firstLineEnd,
-  );
-  const match = firstLine.match(/^(?:\s*(?:[-+*]|\d+[.)])\s+)(\[[ xX]\])/);
-  if (!match?.[1]) return null;
-  return listItemStart + firstLine.indexOf(match[1]);
+  taskMarker.lastIndex = listItemStart;
+  return taskMarker.exec(markdown) ? taskMarker.lastIndex - 3 : null;
 }
 
 export function setMarkdownTaskChecked(
