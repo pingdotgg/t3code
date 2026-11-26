@@ -768,6 +768,18 @@ describe("workflowOneLine", () => {
     expect(workflowOneLine("```foo``` is an inline code span. Next.")).toBe(
       "foo is an inline code span.",
     );
+    expect(workflowOneLine("## Report\n\n    ```\n\nDeployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("````\ncode\n    ````\nmore\n````\nDeployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("   ```ts\r\ncode\r\n   ``` \t\r\n   Deployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("    Error: build failed")).toBe("Error: build failed");
+    expect(workflowOneLine("\tError: build failed")).toBe("Error: build failed");
+    expect(workflowOneLine("## Summary\n\n    - Nested bullet item.")).toBe("Nested bullet item.");
   });
 });
 
