@@ -85,14 +85,8 @@ const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
 // Cap the lookahead for a frontmatter closer; a leading rule with none is a thematic break.
 const FRONTMATTER_MAX_LINES = 1000;
 
-function hasFrontmatterClose(lines: readonly string[]): boolean {
-  const limit = Math.min(lines.length, FRONTMATTER_MAX_LINES + 1);
-  for (let index = 1; index < limit; index++) {
-    const line = lines[index];
-    if (line !== undefined && FRONTMATTER_CLOSE.test(line)) return true;
-  }
-  return false;
-}
+const hasFrontmatterClose = (lines: readonly string[]) =>
+  lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
 
 // A one-line link reference definition; footnotes are left alone so each piece does not grow
 // a footnote section.
