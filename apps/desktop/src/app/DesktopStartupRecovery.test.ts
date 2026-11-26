@@ -195,6 +195,8 @@ it.effect.each([
       if (shouldRecover) {
         const html = decodeURIComponent(loaded[0]!);
         expect(html).toContain('<html lang="he" dir="rtl">');
+        expect(html).toContain('<p dir="auto">Server failed before readiness</p>');
+        expect(html).toContain("\u2066/task/logs\u2069");
         if (output) expect(html).toContain('<pre dir="ltr">Failure details</pre>');
         else expect(html).toMatch(/<pre>[^<]+<\/pre>/);
         if (closeMain) yield* Ref.set(mainRef, Option.none());

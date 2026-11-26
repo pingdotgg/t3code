@@ -164,11 +164,11 @@ h1{font-size:18px;margin:0}p{margin:0}.muted{color:var(--muted)}
 pre{flex:1;min-height:60px;margin:0;overflow:auto;background:var(--code);border:1px solid var(--line);border-radius:6px;padding:10px;font:11px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
 </style></head><body>
 <h1>${title}</h1>
-<p>${escapeHtml(input.failure.reason)}</p>
+<p dir="auto">${escapeHtml(input.failure.reason)}</p>
 <p>${escapeHtml(offer.text)}</p>
 <div class="actions">${offer.action}${actionLink("copy", m(msg("Copy details")))}${actionLink("quit", m(msg("Quit", { $context: "button, quits the app" })))}</div>
 ${output.length > 0 ? `<pre dir="ltr">${escapeHtml(output)}</pre>` : `<pre>${escapeHtml(m(msg("The server wrote no output.")))}</pre>`}
-<p class="muted">${escapeHtml(m(msg("Version {version}. T3 Code tries again in the background. Logs: {logDir}"), { version: input.appVersion, logDir: input.logDir }))}</p>
+<p class="muted">${escapeHtml(m(msg("Version {version}. T3 Code tries again in the background. Logs: {logDir}"), { version: input.appVersion, logDir: `\u2066${input.logDir}\u2069` }))}</p>
 </body></html>`;
 }
 
