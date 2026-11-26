@@ -286,7 +286,8 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.test != 'false' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # GitHub's 4-core runners take about twice as long as the 8-core ones this job was sized for.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -352,7 +353,7 @@ jobs:
             for package in $TEST_PACKAGES; do filters+=(--filter "$package"); done
           fi
           # The runner's trace writer can crash on surrogate pairs in test output.
-          vp run --parallel --concurrency-limit 4 "${filters[@]}" test 2>&1 | python3 -u -c '
+          vp run --parallel --concurrency-limit 3 "${filters[@]}" test 2>&1 | python3 -u -c '
           import sys
           for line in sys.stdin:
               sys.stdout.write(line.encode("ascii", "backslashreplace").decode("ascii"))
