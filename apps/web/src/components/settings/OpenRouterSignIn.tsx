@@ -129,7 +129,7 @@ export function OpenRouterSignIn({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <Button
           type="button"
-          variant="secondary"
+          variant="outline"
           disabled={disabled || phase.kind === "starting"}
           onClick={() => void start()}
         >
