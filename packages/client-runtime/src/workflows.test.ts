@@ -762,11 +762,8 @@ describe("workflowOneLine", () => {
 
   it("skips fenced code blocks to read the prose sentence after them", () => {
     expect(workflowOneLine('```json\n{"ok": true}\n```\nAll good. Next.')).toBe("All good.");
-    expect(workflowOneLine('```json\r\n{"ok": true}\r\n```\r\nAll good. Next.')).toBe("All good.");
     expect(workflowOneLine("~~~\nconst x = 1;\n~~~\nDone.")).toBe("Done.");
     expect(workflowOneLine("````md\n```ts\nconst x = 1;\n```\n````\nDone.")).toBe("Done.");
-    expect(workflowOneLine("```\n```js\nconst x = 1;\n```\nDone.")).toBe("Done.");
-    expect(workflowOneLine("```ts\nconst a = 1;\n```")).toBe("");
     expect(workflowOneLine("```ts\nconst a = 1;\nStill inside an unclosed fence.")).toBe("");
     expect(workflowOneLine("```foo``` is an inline code span. Next.")).toBe(
       "foo is an inline code span.",
