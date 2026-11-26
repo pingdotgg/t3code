@@ -265,19 +265,23 @@ function statusArgs(state: PullRequestListState): ReadonlyArray<string> {
   }
 }
 
-function involvementArgs(input: {
+function involvementOptions(input: {
   readonly involvement: PullRequestInvolvement;
   readonly viewer: string;
-}): ReadonlyArray<string> {
+}): ReadonlyArray<readonly [option: string, value: string]> {
   switch (input.involvement) {
     case "authored":
-      return ["--creator", input.viewer];
+      return [["--creator", input.viewer]];
     case "reviewing":
-      return ["--reviewer", input.viewer];
+      return [["--reviewer", input.viewer]];
     case "all":
       return [];
   }
 }
+
+// az reads a `key=@value` argument from that file, so a route value cannot start with `@`.
+const readsAFile = (parameters: ReadonlyArray<string>) =>
+  parameters.some((parameter) => parameter.slice(parameter.indexOf("=") + 1).startsWith("@"));
 
 function actionArgs(
   action: PullRequestAction,
@@ -315,7 +319,7 @@ function actionArgs(
 
 function isReviewerName(value: string): boolean {
   const name = value.trim();
-  return name.length > 0 && !name.startsWith("-");
+  return name.length > 0 && !name.startsWith("-") && !name.startsWith("@");
 }
 
 /** @public */
@@ -338,6 +342,16 @@ export const make = Effect.gen(function* () {
       ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
     });
 
+  const namedWithAt = (cwd: string, operation: string) =>
+    new AzureDevOpsPullRequestReadError({
+      command: "az",
+      cwd,
+      operation,
+      cause: new Error(
+        "Azure DevOps project or repository names that start with @ cannot be read.",
+      ),
+    });
+
   /** Use the extension's credentials; `az rest` uses the default tenant. */
   const invoke = <A>(input: {
     readonly cwd: string;
@@ -348,40 +362,42 @@ export const make = Effect.gen(function* () {
     readonly maxOutputBytes?: number;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
   }): Effect.Effect<A, AzureDevOpsPullRequestCliError> =>
-    executeJson({
-      cwd: input.cwd,
-      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      args: [
-        "devops",
-        "invoke",
-        ...detectArgs,
-        "--area",
-        "git",
-        "--resource",
-        input.resource,
-        "--api-version",
-        REST_API_VERSION,
-        "--route-parameters",
-        ...input.routeParameters,
-        ...(input.queryParameters === undefined
-          ? []
-          : ["--query-parameters", ...input.queryParameters]),
-      ],
-    }).pipe(
-      Effect.flatMap((result) => {
-        const decoded = input.decode(result.stdout.trim());
-        return Result.isSuccess(decoded)
-          ? Effect.succeed(decoded.success)
-          : Effect.fail(
-              new AzureDevOpsPullRequestReadError({
-                command: "az",
-                cwd: input.cwd,
-                operation: input.operation,
-                cause: decoded.failure,
-              }),
-            );
-      }),
-    );
+    readsAFile(input.routeParameters)
+      ? Effect.fail(namedWithAt(input.cwd, input.operation))
+      : executeJson({
+          cwd: input.cwd,
+          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+          args: [
+            "devops",
+            "invoke",
+            ...detectArgs,
+            "--area",
+            "git",
+            "--resource",
+            input.resource,
+            "--api-version",
+            REST_API_VERSION,
+            "--route-parameters",
+            ...input.routeParameters,
+            ...(input.queryParameters === undefined
+              ? []
+              : ["--query-parameters", ...input.queryParameters]),
+          ],
+        }).pipe(
+          Effect.flatMap((result) => {
+            const decoded = input.decode(result.stdout.trim());
+            return Result.isSuccess(decoded)
+              ? Effect.succeed(decoded.success)
+              : Effect.fail(
+                  new AzureDevOpsPullRequestReadError({
+                    command: "az",
+                    cwd: input.cwd,
+                    operation: input.operation,
+                    cause: decoded.failure,
+                  }),
+                );
+          }),
+        );
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
@@ -421,9 +437,10 @@ export const make = Effect.gen(function* () {
   > => {
     const remaining = input.limit - input.items.length;
     const top = remaining + 1;
-    // As `textOption`s, so a name or author filter starting with `@` or `-` stays a value.
+    // As `textOption`s, so a name, viewer or author filter starting with `@` or `-` stays a value.
     const named = AzureDevOpsCli.textOptions([
       ["--repository", input.repository],
+      ...involvementOptions(input),
       ...(input.author === undefined || input.involvement === "authored"
         ? []
         : [["--creator", input.author] as const]),
@@ -434,7 +451,9 @@ export const make = Effect.gen(function* () {
           command: "az",
           cwd: input.cwd,
           operation: "listPullRequests",
-          cause: new Error("The repository and author filter cannot both start with @."),
+          cause: new Error(
+            "Only one of the repository, viewer and author filter can start with @.",
+          ),
         }),
       );
     }
@@ -449,7 +468,6 @@ export const make = Effect.gen(function* () {
         ...detectArgs,
         ...named.args,
         ...statusArgs(input.state),
-        ...involvementArgs(input),
         "--include-links",
         ...(input.skip === 0 ? [] : ["--skip", String(input.skip)]),
         "--top",
@@ -710,6 +728,9 @@ export const make = Effect.gen(function* () {
         if (BLOB_ID.test(id) && !requested.has(key)) requested.set(key, id);
       }
       if (requested.size === 0) return new Map<string, AzureDevOpsItemContent>();
+      if (readsAFile(repositoryRoute(input.location))) {
+        return yield* namedWithAt(input.cwd, "readBlobs");
+      }
       const readFailure = (cause: unknown) =>
         new AzureDevOpsPullRequestReadError({
           command: "az",

@@ -277,7 +277,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       const args = argsOfCall(0);
       expect(args).toContain("--repository=web");
       expect(args).toContain("--creator=ana@acme.dev");
-      assert.strictEqual(args[args.indexOf("--reviewer") + 1], "bilal@acme.dev");
+      expect(args).toContain("--reviewer=bilal@acme.dev");
     }),
   );
 
@@ -1142,21 +1142,45 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("refuses a reviewer az would read as a flag, before running anything", () =>
+  it.effect("refuses a reviewer az would read as a flag or a file, before running anything", () =>
     Effect.gen(function* () {
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      const error = yield* Effect.flip(
-        cli.setPullRequestReviewers({
-          cwd: "/w",
-          number: 42,
-          reviewers: ["--query"],
-          requested: true,
-        }),
-      );
-
-      assert.strictEqual(error._tag, "AzureDevOpsReviewerNameError");
+      for (const reviewer of ["--query", "@.env"]) {
+        const error = yield* Effect.flip(
+          cli.setPullRequestReviewers({
+            cwd: "/w",
+            number: 42,
+            reviewers: [reviewer],
+            requested: true,
+          }),
+        );
+        assert.strictEqual(error._tag, "AzureDevOpsReviewerNameError");
+      }
       assert.strictEqual(mockedExecute.mock.calls.length, 0);
     }),
+  );
+
+  it.effect(
+    "refuses a project or repository az would read as a file, before running anything",
+    () =>
+      Effect.gen(function* () {
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        for (const location of [
+          { project: "platform", repository: "@.env" },
+          { project: "@.env", repository: "web" },
+        ]) {
+          const item = yield* Effect.flip(
+            cli.readItemContent({ cwd: "/w", location, path: "README.md", commit: "a".repeat(40) }),
+          );
+          assert.strictEqual(item._tag, "AzureDevOpsPullRequestReadError");
+          const blobs = yield* Effect.flip(
+            cli.readBlobs({ cwd: "/w", location, objectIds: ["a".repeat(40)] }),
+          );
+          assert.strictEqual(blobs._tag, "AzureDevOpsPullRequestReadError");
+        }
+        assert.strictEqual(mockedExecute.mock.calls.length, 0);
+      }),
   );
 });
