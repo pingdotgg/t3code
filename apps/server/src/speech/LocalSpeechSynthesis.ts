@@ -34,12 +34,14 @@ import type { SpeechSynthesisPart } from "./CloudSpeech.ts";
 import { loadLocalSynthesisModel, type LocalSynthesisModel } from "./localSynthesisWorker.ts";
 import { supertonicText } from "./synthesisAudio.ts";
 
-/** A preset the model names itself, or one it reads from its own file. */
+/** A preset the model names itself, one it reads from its own file, or a speaker it imitates. */
 type LocalVoice = {
   readonly id: string;
   /** For ids that read poorly, such as `Uncle_Fu`. */
   readonly name?: string;
   readonly file?: SpeechModelStore.ModelFile;
+  /** A recording of the speaker, and what they say in it. */
+  readonly clip?: { readonly file: SpeechModelStore.ModelFile; readonly text: string };
 };
 
 type LocalModel = {
@@ -57,6 +59,16 @@ type LocalModel = {
   readonly espeakData?: SpeechModelStore.ModelFile;
   /** Cleanup the model's reference implementation applies before it reads text. */
   readonly speakable?: (text: string) => string;
+  /** The request option that carries a clip's transcript, for models that want one. */
+  readonly clipText?: "reference_text" | "prompt_text";
+  /** False for a model with one voice and no option to choose it. */
+  readonly voiceOption?: false;
+  /** Request options the model needs beyond voice and speed. */
+  readonly options?: Readonly<Record<string, string>>;
+  /** Overrides the host's backend, for a model whose GPU output is broken. */
+  readonly backend?: "cpu";
+  /** False for a model that rejects a language in the request, taking it from the voice. */
+  readonly takesLanguage?: false;
 };
 
 const AUDIO_CPP_GGUF = "audio-cpp/audio.cpp-gguf";
@@ -93,6 +105,196 @@ const pocketModel = (
       sha256: voiceSha256,
     },
   })),
+});
+
+const gguf = (filename: string, size: number, sha256: string): SpeechModelStore.ModelFile => ({
+  id: AUDIO_CPP_GGUF,
+  revision: GGUF_REVISION,
+  filename,
+  size,
+  sha256,
+});
+
+// LibriTTS-R recordings (CC BY 4.0), for models that imitate a speaker instead of naming voices.
+const VOICE_CLIP_RELEASE = "t3-2026.11.17";
+const voiceClip = (id: string, name: string, size: number, sha256: string, text: string) => {
+  const filename = `audio-${VOICE_CLIP_RELEASE}-voice-${id}.wav`;
+  return {
+    id,
+    name,
+    clip: {
+      file: {
+        id: "pingdotgg/audio.cpp",
+        revision: VOICE_CLIP_RELEASE,
+        filename,
+        url: `https://github.com/pingdotgg/audio.cpp/releases/download/${VOICE_CLIP_RELEASE}/${filename}`,
+        size,
+        sha256,
+      },
+      text,
+    },
+  } satisfies LocalVoice;
+};
+const CLIP_VOICES = [
+  voiceClip(
+    "female-1",
+    "Female 1",
+    339_918,
+    "f7dd6a3e1bb24b54c47aab237c88d9eb7d883c4c6ae4d3f8a1e64b1bbbc33392",
+    "As yet, they had been unable to attempt any fancy riding with their ponies, owing to the rugged nature of the country through which they had been journeying.",
+  ),
+  voiceClip(
+    "male-1",
+    "Male 1",
+    403_278,
+    "aeb2b5c256c2511ee25a3d6f4a01f6a0f91bb9d31bb2f836bd49c11f69582432",
+    "The heavy, lumpy sea strained her cordage, her timbers creaked, and she labored painfully in the trough of the sea.",
+  ),
+  voiceClip(
+    "female-2",
+    "Female 2",
+    443_598,
+    "5943b56b205a11fbf7118cb044554633ef915f7f823c271a2bb6cc769443ed80",
+    "So soon as the growth of the child had rendered him fitted for it, he had brought him out on the stage, that is, he had produced him in front of the van.",
+  ),
+  voiceClip(
+    "male-2",
+    "Male 2",
+    391_758,
+    "0c4e4efa6120dfa1391e968e8fe63207d3499159bf8bc523aa98a259f07ab884",
+    "The Reverend Mr. North, in this cool atmosphere, seemed to recover himself, and conversation progressed with some sprightliness.",
+  ),
+];
+
+const capitalized = (id: string) => ({ id, name: id[0]!.toUpperCase() + id.slice(1) });
+// Kitten TTS 2 names some presets in camel case, such as `AirportAnnouncer`.
+const KITTEN_2_VOICES = [
+  "Bella",
+  "Jasper",
+  "Luna",
+  "Bruno",
+  "Rosie",
+  "Hugo",
+  "Kiki",
+  "Leo",
+  "Matthew",
+  "Elliot",
+  "Willow",
+  "Dolores",
+  "Victor",
+  "Dante",
+  "Alfred",
+  "Saoirse",
+  "Claire",
+  "Raven",
+  "Marcus",
+  "Herbert",
+  "Diana",
+  "Laurence",
+  "Maeve",
+  "Walter",
+  "Edith",
+  "Miles",
+  "Grace",
+  "Reginald",
+  "Iris",
+  "Frank",
+  "Serena",
+  "Julian",
+  "Eleanor",
+  "Otis",
+  "Vincent",
+  "Martha",
+  "Sable",
+  "Victoria",
+  "Arabic",
+  "Chinese",
+  "French",
+  "German",
+  "Hindi",
+  "Italian",
+  "Portuguese",
+  "Russian",
+  "Spanish",
+  "AirportAnnouncer",
+  "ArabicChildSchool",
+  "ArabicFalconer",
+  "ArabicMother",
+  "ArabicNews",
+  "AudiobookNarratorFemale",
+  "BoredTeenager",
+  "CalmHostageNegotiator",
+  "ChineseKidSpringFestival",
+  "ChineseLivestreamSeller",
+  "ChineseNewsCctv",
+  "ChineseXianxiaMaster",
+  "DutchBaker",
+  "DutchGrandpaStory",
+  "DutchWeatherPresenter",
+  "FairytaleNarratorWhimsical",
+  "FrenchDocumentary",
+  "FrenchGrandmereRecette",
+  "FrenchTeacher",
+  "FrenchWaiter",
+  "GermanKidBirthday",
+  "GermanKneipe",
+  "GermanProfessor",
+  "GermanTrainAnnouncement",
+  "GrandmaBedtimeStory",
+  "GriefEulogy",
+  "HindiBollywoodDrama",
+  "HindiCollegeFriends",
+  "HindiDadiKahani",
+  "HindiYogaTeacher",
+  "IndonesianNewsAnchor",
+  "IndonesianTourGuide",
+  "ItalianChildSchool",
+  "ItalianFashionDesigner",
+  "ItalianFootballFan",
+  "ItalianGondolier",
+  "ItalianNonnaKitchen",
+  "ItalianOperaTenor",
+  "JapaneseAnimeHeroine",
+  "JapaneseGrandma",
+  "JapaneseSalarymanApology",
+  "JapaneseTrainConductor",
+  "KoreanGrandpaAdvice",
+  "KoreanKdramaConfession",
+  "KoreanNewsAnchor",
+  "LittleGirlExplaining",
+  "NervousFirstDate",
+  "NewsAnchorFemale",
+  "PilotCabinAnnouncement",
+  "PolishBabciaPierogi",
+  "PolishMountainGuide",
+  "PolishNewsAnchor",
+  "PolishPoetryStudent",
+  "PortugueseBeach",
+  "PortugueseBusiness",
+  "PortugueseFado",
+  "PortugueseGrandpaFarm",
+  "PortugueseKidFutebol",
+  "PortugueseNewsAnchor",
+  "RussianBabushka",
+  "RussianFairyTale",
+  "RussianHockeyCheer",
+  "RussianLiteratureTeacher",
+  "RussianSpaceControl",
+  "RussianTaxiDriver",
+  "SarcasticCoworker",
+  "SchoolboyPresentation",
+  "SpanishAbuela",
+  "SpanishBreakupSad",
+  "SpanishChildCuento",
+  "SpanishNews",
+  "SpanishTango",
+  "TurkishFisherman",
+  "TurkishGrandmaCooking",
+  "TurkishNewsAnchor",
+  "WeatherPresenterCheerful",
+].map((id) => {
+  const name = id.replaceAll(/(?<=[a-z])(?=[A-Z])/g, " ");
+  return name === id ? { id } : { id, name };
 });
 
 // Japanese and Chinese Kokoro voices need the multilingual package's dictionaries.
@@ -353,11 +555,472 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     voices: [{ id: "1" }],
     languages: ["zh", "en", "de", "fr", "ja", "ko"],
   },
+  {
+    id: "qwen3-tts-0.6b",
+    name: "Qwen3-TTS 0.6B",
+    description: "Natural recorded voices, smaller and faster than Qwen3-TTS 1.7B. Needs a GPU.",
+    recommended: true,
+    file: gguf(
+      "Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf",
+      1_991_217_728,
+      "c7d0e6c9485a25ae1f6a4c0796f0023230a0051c44cbd2bd05d73770f2cce637",
+    ),
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    clipText: "reference_text",
+    languages: ["en", "zh", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"],
+  },
+  {
+    id: "piper-lessac",
+    name: "Piper",
+    description: "One English voice. Tiny, and fast on any computer.",
+    file: gguf(
+      "Piper-TTS-GGUF/piper-en-us-lessac-medium-orig.gguf",
+      62_662_016,
+      "12432fab389024e7f839fbc0d989afba46e74bf0d2fa75495642b3ae44a4b093",
+    ),
+    appliesSpeed: true,
+    voices: [{ id: "lessac", name: "Lessac" }],
+    voiceOption: false,
+    languages: ["en"],
+    espeakData: {
+      id: "pingdotgg/audio.cpp",
+      revision: AUDIO_CPP_VERSION,
+      ...AUDIO_CPP_ESPEAK_DATA,
+    },
+  },
+  {
+    id: "inflect-micro-v2",
+    name: "Inflect Micro",
+    description: "One English voice. Tiny, and fast on any computer.",
+    file: gguf(
+      "Inflect-Micro-v2-GGUF/inflect-micro-v2-orig.gguf",
+      72_082_592,
+      "9d01cfe6a94592f544f8dde273d89c9ec5cd0fd4720c2a46becbf517bba06b1c",
+    ),
+    appliesSpeed: true,
+    voices: [{ id: "default", name: "Default" }],
+    voiceOption: false,
+    languages: ["en"],
+    espeakData: {
+      id: "pingdotgg/audio.cpp",
+      revision: AUDIO_CPP_VERSION,
+      ...AUDIO_CPP_ESPEAK_DATA,
+    },
+  },
+  {
+    id: "kitten-tts-mini",
+    name: "Kitten TTS Mini",
+    description: "Eight English voices. Small, and fast without a GPU.",
+    file: gguf(
+      "KittenTTS-GGUF/kitten-tts-mini-0.8-orig.gguf",
+      302_167_648,
+      "485a50101b6c16e98c842f231780789d54136ffb07a6cacb33dc0735103274d7",
+    ),
+    takesLanguage: false,
+    appliesSpeed: true,
+    voices: ["Bella", "Jasper", "Luna", "Bruno", "Rosie", "Hugo", "Kiki", "Leo"].map((id) => ({
+      id,
+    })),
+    languages: ["en"],
+    // GPU backends return silence.
+    backend: "cpu",
+    espeakData: {
+      id: "pingdotgg/audio.cpp",
+      revision: AUDIO_CPP_VERSION,
+      ...AUDIO_CPP_ESPEAK_DATA,
+    },
+  },
+  {
+    id: "pocket-tts-small",
+    name: "Pocket TTS Small",
+    description: "One English voice. The smallest model, and fast on any computer.",
+    file: gguf(
+      "PocketTTS-Small-GGUF/english-18m-refl/english-18m-refl-f32.gguf",
+      111_809_536,
+      "f19bbf172c443ce63aaf22ce2d2fbabf45726cc48694c3c4904e8ec4a8661a3c",
+    ),
+    takesLanguage: false,
+    appliesSpeed: false,
+    voices: [
+      {
+        id: "Alba",
+        file: {
+          id: AUDIO_CPP_GGUF,
+          revision: GGUF_REVISION,
+          filename: "pocket-tts-small-alba.safetensors",
+          url: `https://huggingface.co/${AUDIO_CPP_GGUF}/resolve/${GGUF_REVISION}/PocketTTS-Small-GGUF/english-18m-refl/embeddings/alba.safetensors`,
+          size: 4_163_992,
+          sha256: "e1aa12e17245952e044853867deef5e77ec4474df119cbeefa4ed2a3d878a7b1",
+        },
+      },
+    ],
+    languages: ["en"],
+  },
+  {
+    id: "neutts-2e",
+    name: "NeuTTS 2E",
+    description: "Nine English voices.",
+    file: gguf(
+      "NeuTTS-2E-GGUF/neutts-2e-orig.gguf",
+      3_016_181_288,
+      "fb1b437f6ae9ba005930a38977573f994bc08290f3b16ee6ca99028a2aeb402d",
+    ),
+    takesLanguage: false,
+    appliesSpeed: false,
+    voices: ["emily", "dave", "greta", "jo", "juliette", "mateo", "paul", "sophie", "steven"].map(
+      capitalized,
+    ),
+    languages: ["en"],
+  },
+  {
+    id: "chatterbox-turbo",
+    name: "Chatterbox Turbo",
+    description: "One English voice.",
+    file: gguf(
+      "Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf",
+      699_102_368,
+      "acf02bed2b9ac94e271a01f556526818161a28009120f2337b9e8e10035c42b6",
+    ),
+    appliesSpeed: false,
+    voices: [{ id: "default", name: "Default" }],
+    voiceOption: false,
+    languages: ["en"],
+  },
+  {
+    id: "kitten-tts-2",
+    name: "Kitten TTS 2",
+    description: "Over 100 voices in 16 languages; each voice speaks its own.",
+    file: gguf(
+      "KittenTTS2-GGUF/kitten-tts2-20261021-q4_0.gguf",
+      2_638_763_488,
+      "bbbef13230061a886adb0c38eecc84a4297ed8d965d3f014ac08f22f1c0f8658",
+    ),
+    takesLanguage: false,
+    appliesSpeed: false,
+    voices: KITTEN_2_VOICES,
+    languages: [
+      "en",
+      "ar",
+      "zh",
+      "fr",
+      "de",
+      "hi",
+      "it",
+      "pt",
+      "ru",
+      "es",
+      "nl",
+      "id",
+      "ja",
+      "ko",
+      "pl",
+      "tr",
+    ],
+  },
+  {
+    id: "voxtral-4b",
+    name: "Voxtral 4B",
+    description: "20 voices in 9 languages. Needs a GPU. For non-commercial use only.",
+    file: gguf(
+      "Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-q8_0.gguf",
+      4_722_918_208,
+      "46eca2bfc66c89c415b66995d3544e91dea3320c93765ec0596f5c616354972d",
+    ),
+    takesLanguage: false,
+    appliesSpeed: false,
+    voices: [
+      "casual_female",
+      "casual_male",
+      "cheerful_female",
+      "neutral_female",
+      "neutral_male",
+      "fr_female",
+      "fr_male",
+      "es_female",
+      "es_male",
+      "de_female",
+      "de_male",
+      "it_female",
+      "it_male",
+      "pt_female",
+      "pt_male",
+      "nl_female",
+      "nl_male",
+      "ar_male",
+      "hi_female",
+      "hi_male",
+    ].map((id) => {
+      const [first = "", ...rest] = id.split("_");
+      const lead =
+        first.length === 2 ? first.toUpperCase() : first[0]!.toUpperCase() + first.slice(1);
+      return { id, name: [lead, ...rest].join(" ") };
+    }),
+    languages: ["en", "fr", "es", "de", "it", "pt", "nl", "ar", "hi"],
+  },
+  {
+    id: "kugelaudio-0",
+    name: "KugelAudio",
+    description: "Four voices in 23 languages. Needs a GPU.",
+    file: gguf(
+      "KugelAudio-0-Open-GGUF/kugelaudio-0-open-q4_k.gguf",
+      5_732_997_442,
+      "38a79cf4ffdcdeed69dc05d6350fc88042f951f952924799f59a0b93bc3895e9",
+    ),
+    takesLanguage: false,
+    appliesSpeed: false,
+    voices: [
+      { id: "default", name: "Default" },
+      { id: "clear", name: "Clear" },
+      { id: "english_female", name: "English female" },
+      { id: "english_male", name: "English male" },
+    ],
+    languages: [
+      "en",
+      "de",
+      "fr",
+      "es",
+      "it",
+      "pt",
+      "nl",
+      "pl",
+      "ru",
+      "uk",
+      "cs",
+      "ro",
+      "hu",
+      "sv",
+      "da",
+      "fi",
+      "no",
+      "el",
+      "bg",
+      "sk",
+      "hr",
+      "sr",
+      "tr",
+    ],
+  },
+  {
+    id: "magpie-tts",
+    name: "Magpie TTS",
+    description: "Three voices in 11 languages. Slow; needs a fast GPU.",
+    file: gguf(
+      "MagpieTTS-Multilingual-357M-GGUF/magpie-tts-multilingual-357m-q8_0.gguf",
+      1_562_142_912,
+      "c762503a80f9af75db33379763b923c5c8a00ca79374e1e0d4051e6d68151377",
+    ),
+    appliesSpeed: false,
+    voices: [{ id: "Sofia" }, { id: "Jason" }, { id: "0", name: "Default" }],
+    languages: ["en", "de", "es", "fr", "it", "pt", "zh", "hi", "ko", "vi", "ar"],
+  },
+  {
+    id: "plapre-3",
+    name: "Plapre 3",
+    description: "Five Danish voices.",
+    file: gguf(
+      "Plapre-3-GGUF/plapre-3-bf16.gguf",
+      1_145_069_888,
+      "8baa6069d5cd81bc01bfc039bfcb7c4b7406e659157b3c768fa2bc839fdfc9a1",
+    ),
+    takesLanguage: false,
+    appliesSpeed: false,
+    voices: ["tor", "ida", "liv", "ask", "kaj"].map(capitalized),
+    languages: ["da"],
+  },
+  {
+    id: "qwen3-tts-1.7b-base",
+    name: "Qwen3-TTS 1.7B Base",
+    description: "Qwen3-TTS 1.7B, reading in recorded voices. Needs a GPU.",
+    file: gguf(
+      "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
+      2_695_186_240,
+      "92641a8022d521efd79a5db45e952589b3f2b781680f9abfcf26f075d37b86c6",
+    ),
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    clipText: "reference_text",
+    languages: ["en", "zh", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"],
+  },
+  {
+    id: "cosyvoice-3",
+    name: "CosyVoice 3",
+    description: "Recorded voices in 9 languages. Needs a GPU.",
+    file: gguf(
+      "CosyVoice3-GGUF/cosyvoice3-q8_0.gguf",
+      2_257_658_336,
+      "d13bd731ead92d6d514d5749d9b59ea1b3ae735569fa46978250caaf5c983133",
+    ),
+    takesLanguage: false,
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    clipText: "reference_text",
+    languages: ["zh", "en", "ja", "ko", "de", "es", "fr", "it", "ru"],
+  },
+  {
+    id: "moss-tts-nano",
+    name: "MOSS-TTS Nano",
+    description: "Recorded voices, for Chinese and English. Small and fast.",
+    file: gguf(
+      "MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf",
+      193_343_328,
+      "823b0de64f01f1ee9a168356c1199be500d71ec2f769f0183b416c9e6dbc0abc",
+    ),
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    // The default cap cuts off a clone partway through a long sentence.
+    options: { max_tokens: "1000" },
+    languages: ["zh", "en"],
+  },
+  {
+    id: "voxcpm-0.5b",
+    name: "VoxCPM 0.5B",
+    description: "Recorded voices, for Chinese and English.",
+    file: gguf(
+      "VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf",
+      847_888_768,
+      "c5cd54e0b011a1f5c43cce41f7deb24d2dfbd74b635fcc6b5229b57a4ec37d11",
+    ),
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    clipText: "prompt_text",
+    languages: ["zh", "en"],
+  },
+  {
+    id: "voxcpm-2",
+    name: "VoxCPM 2",
+    description: "Recorded voices, for Chinese and English. Needs a GPU.",
+    file: gguf(
+      "VoxCPM2-GGUF/voxcpm2-q8_0.gguf",
+      2_955_007_488,
+      "8df1faf274e1bdeedef1fd9ddd6aba6632536f66f2e080991d2352af35ceef72",
+    ),
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    clipText: "prompt_text",
+    // Retrying a bad take cannot work once its audio has streamed.
+    options: { retry_badcase: "false" },
+    languages: ["zh", "en"],
+  },
+  {
+    id: "chatterbox",
+    name: "Chatterbox",
+    description: "Recorded voices in 19 languages. Slow; needs a fast GPU.",
+    file: gguf(
+      "Chatterbox-GGUF/chatterbox-q8_0.gguf",
+      2_088_399_204,
+      "45d71d8d248ba831014813bbbbba74c7d786dd9447c02090fe05c44344f69453",
+    ),
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    languages: [
+      "en",
+      "ar",
+      "da",
+      "de",
+      "el",
+      "es",
+      "fi",
+      "fr",
+      "hi",
+      "it",
+      "ko",
+      "ms",
+      "nl",
+      "no",
+      "pl",
+      "pt",
+      "sv",
+      "sw",
+      "tr",
+    ],
+  },
+  {
+    id: "index-tts-2.5",
+    name: "IndexTTS 2.5",
+    description: "Recorded voices in 5 languages. Slow to start; needs a fast GPU.",
+    file: gguf(
+      "IndexTTS2.5-GGUF/index-tts2_5-q8_0.gguf",
+      3_502_960_096,
+      "d1ab7b5c3f5ecf2bcd285753be76c7290b0a54939a76b7c39e8f886f80cf6b5c",
+    ),
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    languages: ["zh", "en", "ja", "es", "ar"],
+  },
+  {
+    id: "omnivoice",
+    name: "OmniVoice",
+    description: "Recorded voices in hundreds of languages. For non-commercial use only.",
+    file: gguf(
+      "OmniVoice-GGUF/omnivoice-q8_0.gguf",
+      1_350_296_096,
+      "0e5a721edd1b08d9067ef66f40ded609a6b14f5a8445c703f9869736cabd350a",
+    ),
+    appliesSpeed: true,
+    voices: CLIP_VOICES,
+    clipText: "reference_text",
+    languages: [
+      "en",
+      "zh",
+      "ja",
+      "ko",
+      "de",
+      "fr",
+      "es",
+      "it",
+      "pt",
+      "ru",
+      "ar",
+      "hi",
+      "nl",
+      "pl",
+      "tr",
+      "vi",
+      "id",
+      "th",
+      "uk",
+      "sv",
+    ],
+  },
+  {
+    id: "higgs-audio-v3",
+    name: "Higgs Audio v3",
+    description:
+      "Recorded voices, for English and Chinese. Needs a GPU. For non-commercial research only.",
+    file: gguf(
+      "Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf",
+      5_095_359_136,
+      "cfa5cc01adcd199dfcf1baf0f610aa474cda83418fd1802aa6defa82d956a0e4",
+    ),
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    clipText: "reference_text",
+    languages: ["en", "zh"],
+  },
+  {
+    id: "breeze-tts-2",
+    name: "Breeze TTS 2",
+    description:
+      "Recorded voices, for Taiwanese Mandarin and English. Needs a GPU. For non-commercial research only.",
+    file: gguf(
+      "Breeze-TTS-2-GGUF/breeze-tts-2-q8_0.gguf",
+      5_079_670_336,
+      "b17b89b1c21107c44e8d556ab0a856d7acd06bdd0c914e68e0e57f6e33f555a3",
+    ),
+    takesLanguage: false,
+    appliesSpeed: false,
+    voices: CLIP_VOICES,
+    clipText: "reference_text",
+    languages: ["zh", "en"],
+  },
 ];
 
 const modelFiles = (model: LocalModel) => [
   model.file,
   ...model.voices.flatMap((voice) => (voice.file ? [voice.file] : [])),
+  // Several models share the same clips; an install fetches each once.
+  ...model.voices.flatMap((voice) => (voice.clip ? [voice.clip.file] : [])),
   ...(model.espeakData ? [model.espeakData] : []),
 ];
 const totalSize = (files: readonly SpeechModelStore.ModelFile[]) =>
@@ -408,9 +1071,11 @@ export class LocalSpeechSynthesis extends Context.Service<
 /** Picks the language a model declares for a setting such as `en-US`; `auto` picks none. */
 export function localSynthesisLanguage(setting: string, languages: readonly string[]) {
   const wanted = setting.toLowerCase();
+  const base = wanted.split("-")[0];
   return (
     languages.find((language) => language.toLowerCase() === wanted) ??
-    languages.find((language) => language.toLowerCase() === wanted.split("-")[0])
+    languages.find((language) => language.toLowerCase() === base) ??
+    languages.find((language) => language.toLowerCase().split("-")[0] === base)
   );
 }
 
@@ -753,16 +1418,19 @@ const make = Effect.gen(function* () {
       permit.withPermits(1)(
         Effect.gen(function* () {
           if (worker?.modelId === modelId) yield* unloadWorker;
-          yield* Effect.forEach(modelFiles(model), (file) => store.remove(file)).pipe(
-            Effect.mapError(installFailed),
+          const remaining = yield* Effect.filter(LOCAL_SYNTHESIS_MODELS, (entry) =>
+            entry.id === model.id ? Effect.succeed(false) : store.isReady(entry.file),
           );
-          if (model.espeakData)
+          // eSpeak data and voice clips stay while another installed model reads them.
+          const shared = new Set(remaining.flatMap(modelFiles).map((file) => file.filename));
+          yield* Effect.forEach(
+            modelFiles(model).filter((file) => !shared.has(file.filename)),
+            (file) => store.remove(file),
+          ).pipe(Effect.mapError(installFailed));
+          if (model.espeakData && !remaining.some((entry) => entry.espeakData))
             yield* fs
               .remove(espeakCache, { recursive: true, force: true })
               .pipe(Effect.mapError(installFailed));
-          const remaining = yield* Effect.filter(LOCAL_SYNTHESIS_MODELS, (entry) =>
-            store.isReady(entry.file),
-          );
           if (remaining.length === 0)
             yield* fs
               .remove(runtimeDirectory, { recursive: true, force: true })
@@ -805,7 +1473,7 @@ const make = Effect.gen(function* () {
       try: () =>
         loadLocalSynthesisModel({
           libraryPath,
-          backend: runtime.backend,
+          backend: definition.backend ?? runtime.backend,
           modelPath: paths.modelPath,
           ...(paths.espeakPath && {
             env: { AUDIOCPP_ESPEAK_DATA: paths.espeakPath, AUDIOCPP_ESPEAK_CACHE: espeakCache },
@@ -853,8 +1521,9 @@ const make = Effect.gen(function* () {
     const paths = yield* loadablePaths(definition);
     const voice =
       definition.voices.find((entry) => entry.id === request.voice) ?? definition.voices[0]!;
-    const voicePath = voice.file && (yield* store.installedPath(voice.file));
-    if (!paths || (voice.file && !voicePath)) return yield* failure("missing-model");
+    const voiceFile = voice.file ?? voice.clip?.file;
+    const voicePath = voiceFile && (yield* store.installedPath(voiceFile));
+    if (!paths || (voiceFile && !voicePath)) return yield* failure("missing-model");
     // Held until the stream ends, after any cancelled synthesis has stopped.
     // Interruptible, so a request abandoned while waiting stops waiting.
     yield* Effect.acquireRelease(
@@ -866,7 +1535,10 @@ const make = Effect.gen(function* () {
       { interruptible: true },
     );
     const model = yield* ensureWorker(definition, paths);
-    const language = localSynthesisLanguage(request.language, model.languages);
+    const language =
+      definition.takesLanguage === false
+        ? undefined
+        : localSynthesisLanguage(request.language, model.languages);
     // One encoder spans the whole reply, so PCM time is MP3 time.
     let spokenSeconds = 0;
     const spoken = model
@@ -875,9 +1547,15 @@ const make = Effect.gen(function* () {
           text: definition.speakable?.(request.text) ?? request.text,
           ...(language ? { language } : {}),
           options: {
-            ...(voicePath ? { voice_embedding_file: voicePath } : { voice_id: voice.id }),
+            ...definition.options,
+            ...(voice.clip
+              ? definition.clipText && { [definition.clipText]: voice.clip.text }
+              : voicePath
+                ? { voice_embedding_file: voicePath }
+                : definition.voiceOption !== false && { voice_id: voice.id }),
             ...(definition.appliesSpeed ? { speed: String(request.speed) } : {}),
           },
+          ...(voice.clip && voicePath ? { voiceClip: voicePath } : {}),
         },
         (bytes) => Queue.offerUnsafe(queue, bytes),
         (pcm, rate) => {

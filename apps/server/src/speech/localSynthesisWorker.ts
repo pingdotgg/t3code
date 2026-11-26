@@ -8,12 +8,13 @@ import {
   pcm16Mono,
   speechLines,
   splitAtPunctuation,
+  wavAudio,
 } from "./synthesisAudio.ts";
 
 // Inlined like the dictation worker, so packaged builds need no separate worker artifact.
 const entry = `
   const { createRequire, findPackageJSON } = await import("node:module");
-  const { readFileSync } = await import("node:fs");
+  const { existsSync, readFileSync, readdirSync, statSync } = await import("node:fs");
   const { dirname, join } = await import("node:path");
   const { pathToFileURL } = await import("node:url");
   const bindAudioCpp = ${bindAudioCpp.toString()};
@@ -21,6 +22,17 @@ const entry = `
   const mp3Kbps = ${mp3Kbps.toString()};
   const speechLines = ${speechLines.toString()};
   const splitAtPunctuation = ${splitAtPunctuation.toString()};
+  const wavAudio = ${wavAudio.toString()};
+  // Where the runtime unpacked the eSpeak data package, newest first.
+  const espeakDirectory = () => {
+    const root = process.env.AUDIOCPP_ESPEAK_CACHE && join(process.env.AUDIOCPP_ESPEAK_CACHE, "audio.cpp", "espeak-data");
+    if (!root || !existsSync(root)) return undefined;
+    return readdirSync(root)
+      .map((name) => join(root, name, "espeak-ng-data"))
+      .filter((path) => existsSync(join(path, "phontab")))
+      .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
+  };
+  const clips = new Map();
   const packageJson = (name) => {
     const path = findPackageJSON(name, baseUrl);
     if (!path) throw new Error("The " + name + " package is unavailable.");
@@ -51,20 +63,23 @@ const entry = `
         const lameEntry = join(dirname(lamePath), JSON.parse(readFileSync(lamePath, "utf8")).module);
         lame = await import(pathToFileURL(lameEntry).href);
         model = bindAudioCpp(koffi, message.libraryPath).loadSpeechModel(message.modelPath, {
-          backend: message.backend, threads: message.threads,
+          backend: message.backend, threads: message.threads, espeakDirectory,
         });
         reply({ ok: true, backend: model.backend, languages: model.languages });
       } else if (message.kind === "synthesize") {
         cancelled = false;
         // One encoder across every part keeps the MP3 a single seamless stream.
         let encoder;
-        const pending = speechLines(message.request.text);
+        const { voiceClip, ...request } = message.request;
+        if (voiceClip && !clips.has(voiceClip)) clips.set(voiceClip, wavAudio(readFileSync(voiceClip)));
+        const voiceAudio = voiceClip && clips.get(voiceClip);
+        const pending = speechLines(request.text);
         while (pending.length && !cancelled) {
           const text = pending.shift();
           let spoke = false;
           let stream;
           try {
-            stream = model.stream({ ...message.request, text });
+            stream = model.stream({ ...request, text, ...(voiceAudio && { voiceAudio }) });
             while (!cancelled) {
               const audio = stream.next();
               if (!audio) break;
@@ -128,6 +143,11 @@ type Reply = {
 };
 
 export type LocalSynthesisModel = Awaited<ReturnType<typeof loadLocalSynthesisModel>>;
+
+export type LocalSynthesisRequest = Omit<AudioCppSynthesisRequest, "voiceAudio"> & {
+  /** A 16-bit PCM WAV of the speaker a voice-cloning model imitates. */
+  readonly voiceClip?: string;
+};
 
 /** Loads a model in an isolated process; aborting `signal` kills it, even mid-synthesis. */
 export async function loadLocalSynthesisModel(options: {
@@ -237,7 +257,7 @@ export async function loadLocalSynthesisModel(options: {
      * from; resolves once the stream ends or is cancelled.
      */
     stream: async (
-      request: AudioCppSynthesisRequest,
+      request: LocalSynthesisRequest,
       onAudio: (bytes: Uint8Array) => void,
       onPcm?: (pcm: Int16Array, rate: number) => void,
     ) => {

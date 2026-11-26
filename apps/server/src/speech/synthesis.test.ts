@@ -18,7 +18,33 @@ import {
   speechLines,
   splitAtPunctuation,
   supertonicText,
+  wavAudio,
 } from "./synthesisAudio.ts";
+
+it("reads the samples of a 16-bit PCM WAV past any chunk before its data", () => {
+  const samples = Int16Array.of(0, 16384, -32768, 32767);
+  const bytes = new Uint8Array(44 + 10 + samples.byteLength);
+  const view = new DataView(bytes.buffer);
+  const tag = (at: number, id: string) => bytes.set(new TextEncoder().encode(id), at);
+  tag(0, "RIFF");
+  tag(8, "WAVE");
+  tag(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 24_000, true);
+  view.setUint16(34, 16, true);
+  tag(36, "LIST");
+  view.setUint32(40, 2, true);
+  tag(46, "data");
+  view.setUint32(50, samples.byteLength, true);
+  bytes.set(new Uint8Array(samples.buffer), 54);
+  expect(wavAudio(bytes)).toEqual({
+    samples: Float32Array.of(0, 0.5, -1, 32767 / 32768),
+    sampleRate: 24_000,
+    channels: 1,
+  });
+});
 
 it("encodes model samples as clipped mono 16-bit PCM", () => {
   const pcm = pcm16Mono(Float32Array.of(0, 1, -1, 2, -2, Number.NaN, 0.5), 1);
@@ -75,6 +101,10 @@ it.each([
   ["xx", undefined],
 ])("maps the %s reading language onto a local model language", (setting, language) => {
   expect(localSynthesisLanguage(setting, ["en", "pt", "ko"])).toBe(language);
+});
+
+it("maps a reading language onto a model language that names its region", () => {
+  expect(localSynthesisLanguage("pt", ["en", "pt-BR"])).toBe("pt-BR");
 });
 
 it.each([

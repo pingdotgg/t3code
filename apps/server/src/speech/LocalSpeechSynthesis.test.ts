@@ -189,3 +189,31 @@ it.effect("refuses a download or link while a removal deletes the shared runtime
     );
   }),
 );
+
+it.effect("keeps eSpeak data and voice clips while another installed model reads them", () =>
+  Effect.gen(function* () {
+    const removed: Array<string> = [];
+    const installed = ["kokoro-82m", "Qwen3-TTS-12Hz-1.7B-Base", "CosyVoice3"];
+    yield* withService(
+      {
+        isReady: (file) =>
+          Effect.succeed(
+            !file.filename.startsWith("Piper") &&
+              !file.filename.startsWith("Qwen3-TTS-12Hz-0.6B") &&
+              (installed.some((name) => file.filename.toLowerCase().includes(name.toLowerCase())) ||
+                file.id === "pingdotgg/audio.cpp"),
+          ),
+        remove: (file) => Effect.sync(() => void removed.push(file.filename)),
+      },
+      (service) =>
+        Effect.gen(function* () {
+          yield* service.remove("piper-lessac");
+          yield* service.remove("qwen3-tts-0.6b");
+          expect(removed).toEqual([
+            "Piper-TTS-GGUF/piper-en-us-lessac-medium-orig.gguf",
+            "Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf",
+          ]);
+        }),
+    );
+  }),
+);

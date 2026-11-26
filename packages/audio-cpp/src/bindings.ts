@@ -13,6 +13,8 @@ export type AudioCppSynthesisRequest = {
   readonly language?: string;
   /** Request options the model spec declares, such as `voice_id` or `speed`. */
   readonly options?: Readonly<Record<string, string>>;
+  /** The speaker a voice-cloning model imitates. */
+  readonly voiceAudio?: AudioCppAudio;
 };
 
 export type AudioCppSpeechStream = {
@@ -32,10 +34,18 @@ export type AudioCppModel = {
 
 export type AudioCppLibrary = {
   readonly buildVersion: string;
-  /** Opens a streaming text-to-speech session, falling back to the CPU when `backend` fails. */
+  /**
+   * Opens a text-to-speech session, streaming when the model can, falling back to the CPU when
+   * `backend` fails.
+   */
   readonly loadSpeechModel: (
     path: string,
-    options: { readonly backend: string; readonly threads: number },
+    options: {
+      readonly backend: string;
+      readonly threads: number;
+      /** The unpacked espeak-ng-data directory, for families that cannot find it themselves. */
+      readonly espeakDirectory?: () => string | undefined;
+    },
   ) => AudioCppModel;
 };
 
@@ -86,6 +96,11 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
       out(Session),
     ]),
     sessionFree: lib.func("audiocpp_session_free", "void", [Session]),
+    sessionRun: lib.func("audiocpp_session_run", "int", [Session, Request, out(Result)]),
+    resultFree: lib.func("audiocpp_result_free", "void", [Result]),
+    optionsCreate: lib.func("audiocpp_options_create", "void *", []),
+    optionsSet: lib.func("audiocpp_options_set", "int", ["void *", "const char *", "const char *"]),
+    optionsFree: lib.func("audiocpp_options_free", "void", ["void *"]),
     streamStart: lib.func("audiocpp_stream_start", "int", [Session, Request]),
     streamNextEvent: lib.func("audiocpp_stream_next_event", "int", [Session, out(Event)]),
     streamReset: lib.func("audiocpp_stream_reset", "int", [Session]),
@@ -120,6 +135,13 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
       "const char *",
       "const char *",
     ]),
+    requestSetVoiceAudio: lib.func("audiocpp_request_set_voice_audio", "int", [
+      Request,
+      "float *",
+      "size_t",
+      "int",
+      "int",
+    ]),
   };
   // Refuse a library whose major ABI differs from the one these signatures describe.
   if (native.abiVersion() >>> 16 !== 0) throw new Error("Unsupported audio.cpp ABI version.");
@@ -133,39 +155,79 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
   const registry: [unknown] = [null];
   check(native.registryCreate(null, registry), "registry creation");
 
-  const openSession = (model: unknown, backend: string, threads: number) => {
+  const openSession = (
+    model: unknown,
+    mode: string,
+    backend: string,
+    threads: number,
+    sessionOptions: Readonly<Record<string, string>>,
+  ) => {
     const session: [unknown] = [null];
-    check(
-      native.sessionCreate(
-        model,
-        "tts",
-        "streaming",
-        { backend, device: 0, threads },
-        null,
-        session,
-      ),
-      `${backend} session creation`,
-    );
+    const options = native.optionsCreate();
+    try {
+      for (const [key, value] of Object.entries(sessionOptions))
+        check(native.optionsSet(options, key, value), `session option ${key}`);
+      check(
+        native.sessionCreate(model, "tts", mode, { backend, device: 0, threads }, options, session),
+        `${backend} session creation`,
+      );
+    } finally {
+      native.optionsFree(options);
+    }
     return session[0];
+  };
+  // Chunked families name each piece; families that generate in one pass do not.
+  const readAudio = (result: unknown) => {
+    const samples: [unknown] = [null];
+    const frames: [number | bigint] = [0];
+    const sampleRate: [number] = [0];
+    const channels: [number] = [0];
+    check(
+      Number(native.namedAudioCount(result)) > 0
+        ? native.namedAudio(result, 0, [""], samples, frames, sampleRate, channels)
+        : native.resultAudio(result, samples, frames, sampleRate, channels),
+      "audio read",
+    );
+    const length = Number(frames[0]) * channels[0];
+    // decode copies the samples before the result is freed; a koffi.view ArrayBuffer
+    // over native memory aborts the process under Electron.
+    const copy: Float32Array = length
+      ? koffi.decode(samples[0], koffi.array("float", length, "Typed"))
+      : new Float32Array(0);
+    return { samples: copy, sampleRate: sampleRate[0], channels: channels[0] };
   };
 
   return {
     buildVersion: native.buildVersion(),
-    loadSpeechModel(path, { backend, threads }) {
+    loadSpeechModel(path, { backend, threads, espeakDirectory }) {
       const loaded: [unknown] = [null];
       check(native.modelLoad(registry[0], path, null, null, loaded), "model load");
       const model = loaded[0];
       let session: unknown;
       let sessionBackend = backend;
+      const streaming = native.modelSupports(model, "tts", "streaming") === 1;
+      const mode = streaming ? "streaming" : "offline";
       try {
-        if (!native.modelSupports(model, "tts", "streaming"))
-          throw new Error("This model does not support streaming text to speech.");
+        if (!streaming && !native.modelSupports(model, "tts", "offline"))
+          throw new Error("This model does not support text to speech.");
+        let sessionOptions: Record<string, string> = {};
+        const open = (target: string) => {
+          try {
+            return openSession(model, mode, target, threads, sessionOptions);
+          } catch (error) {
+            // Some families read espeak-ng-data only from an explicit path; failing once unpacks it.
+            const directory = /espeak-ng-data directory/.test(String(error)) && espeakDirectory?.();
+            if (!directory) throw error;
+            sessionOptions = { [`${native.modelFamily(model)}.espeak_data_path`]: directory };
+            return openSession(model, mode, target, threads, sessionOptions);
+          }
+        };
         try {
-          session = openSession(model, backend, threads);
+          session = open(backend);
         } catch (error) {
           if (backend === "cpu") throw error;
           sessionBackend = "cpu";
-          session = openSession(model, "cpu", threads);
+          session = open("cpu");
         }
       } catch (error) {
         native.modelFree(model);
@@ -181,13 +243,51 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
         family: native.modelFamily(model),
         backend: sessionBackend,
         languages,
-        stream({ text, language, options = {} }) {
+        stream({ text, language, options = {}, voiceAudio }) {
           const request = native.requestCreate();
           if (!request) throw new Error("audio.cpp could not allocate a request.");
-          try {
+          const build = () => {
             check(native.requestSetText(request, text, language ?? null), "request text");
             for (const [key, value] of Object.entries(options))
               check(native.requestSetOption(request, key, value), `request option ${key}`);
+            if (voiceAudio)
+              check(
+                native.requestSetVoiceAudio(
+                  request,
+                  voiceAudio.samples,
+                  voiceAudio.samples.length / voiceAudio.channels,
+                  voiceAudio.sampleRate,
+                  voiceAudio.channels,
+                ),
+                "voice audio",
+              );
+          };
+          if (!streaming) {
+            // Generates the whole text in one call, which `next` makes so it can be cancelled first.
+            let pending = true;
+            const close = () => {
+              if (!pending) return;
+              pending = false;
+              native.requestFree(request);
+            };
+            return {
+              next() {
+                if (!pending) return undefined;
+                const result: [unknown] = [null];
+                try {
+                  build();
+                  check(native.sessionRun(session, request, result), "synthesis");
+                  return readAudio(result[0]);
+                } finally {
+                  if (result[0]) native.resultFree(result[0]);
+                  close();
+                }
+              },
+              close,
+            };
+          }
+          try {
+            build();
             // Starting copies the request into the session, so it can be freed right away.
             check(native.streamStart(session, request), "stream start");
           } finally {
@@ -214,25 +314,7 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
                 return undefined;
               }
               try {
-                const samples: [unknown] = [null];
-                const frames: [number | bigint] = [0];
-                const sampleRate: [number] = [0];
-                const channels: [number] = [0];
-                const result = native.eventAsResult(event[0]);
-                // Chunked families name each piece; families that generate in one pass do not.
-                check(
-                  Number(native.namedAudioCount(result)) > 0
-                    ? native.namedAudio(result, 0, [""], samples, frames, sampleRate, channels)
-                    : native.resultAudio(result, samples, frames, sampleRate, channels),
-                  "audio read",
-                );
-                const length = Number(frames[0]) * channels[0];
-                // decode copies the samples before the event is freed; a koffi.view ArrayBuffer
-                // over native memory aborts the process under Electron.
-                const copy: Float32Array = length
-                  ? koffi.decode(samples[0], koffi.array("float", length, "Typed"))
-                  : new Float32Array(0);
-                return { samples: copy, sampleRate: sampleRate[0], channels: channels[0] };
+                return readAudio(native.eventAsResult(event[0]));
               } finally {
                 native.eventFree(event[0]);
               }

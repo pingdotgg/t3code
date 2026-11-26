@@ -114,6 +114,34 @@ function isEncodablePcm(pcm: Uint8Array, rate: number, channels: number) {
 }
 
 /** Whether MP3 can carry PCM at this rate and channel count unchanged. */
+/**
+ * The samples of a 16-bit PCM WAV, such as a voice clip. The synthesis worker inlines it, so it
+ * references nothing outside itself.
+ */
+export function wavAudio(bytes: Uint8Array) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let channels = 0;
+  let sampleRate = 0;
+  let bits = 0;
+  for (let at = 12; at + 8 <= bytes.length;) {
+    const id = String.fromCharCode(...bytes.subarray(at, at + 4));
+    const size = view.getUint32(at + 4, true);
+    if (id === "fmt ") {
+      channels = view.getUint16(at + 10, true);
+      sampleRate = view.getUint32(at + 12, true);
+      bits = view.getUint16(at + 22, true);
+    } else if (id === "data") {
+      if (bits !== 16 || !channels) throw new Error("Voice clips must be 16-bit PCM WAV.");
+      const samples = new Float32Array(Math.floor(Math.min(size, bytes.length - at - 8) / 2));
+      for (let index = 0; index < samples.length; index++)
+        samples[index] = view.getInt16(at + 8 + index * 2, true) / 0x8000;
+      return { samples, sampleRate, channels };
+    }
+    at += 8 + size + (size & 1);
+  }
+  throw new Error("The voice clip has no audio.");
+}
+
 export function isEncodableFormat(rate: number, channels: number) {
   return MP3_SAMPLE_RATES.includes(rate) && (channels === 1 || channels === 2);
 }
