@@ -5,6 +5,7 @@ import {
   MessageId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
   ProviderDriverKind,
@@ -319,7 +320,7 @@ it.effect.each([
 it.effect("an agent's send to an idle plan-mode thread moves it to build mode", () => {
   const projectId = ProjectId.make("project:thread-management:plan-send");
   const threadId = ThreadId.make("thread:thread-management:plan-send");
-  const dispatched: Array<OrchestrationV2Command> = [];
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
     Layer.provide(
       Layer.succeed(ThreadWorktreeRestore, {
