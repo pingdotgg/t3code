@@ -126,6 +126,10 @@ export function createAuthEnvironmentAtoms<R, E>(
     }),
     updateClientAccess: createEnvironmentCommand(runtime, {
       label: "environment-data:server:auth-update-client-access",
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sessionId]),
+      },
       execute: (input: AuthUpdateClientAccessInput) =>
         executeConnectedEnvironmentHttpRequest({
           group: "auth",
