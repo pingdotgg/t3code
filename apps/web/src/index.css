@@ -6505,37 +6505,54 @@ body {
 .composer-prompt-body {
   grid-template-areas: "attachments" "prompt";
   --composer-actions-gap: calc(var(--spacing) * 1.5);
+  --composer-actions-float: right;
+  --composer-corner-dir: to right;
+}
+
+.composer-prompt-body:dir(rtl) {
+  --composer-actions-float: left;
+  --composer-corner-dir: to left;
 }
 
 .composer-prompt-body .composer-text::before {
   content: "";
-  float: inline-end;
+  float: var(--composer-actions-float);
   width: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
   height: 1lh;
 }
 
-/* Past one line the actions stay in the top corner while text keeps their column clear. */
+/* Keep lines beside the top-corner actions clear while lines below run full width.
+   Separate selectors keep Blink from trying a pseudo-element :is() on every element. */
 .composer-prompt-body[data-composer-multiline]
-  :is([data-composer-empty="false"] [data-testid="composer-editor"]),
-.composer-prompt-body[data-composer-multiline]
-  [data-composer-placeholder][data-composer-placeholder] {
-  padding-inline-end: calc(
-    var(--composer-actions-width, 100px) + var(--composer-actions-gap) + var(--spacing)
-  );
+  [data-composer-empty="false"]
+  [data-testid="composer-editor"]::before,
+.composer-prompt-body[data-composer-multiline] [data-composer-placeholder]::before {
+  height: max(1lh, var(--composer-actions-height, 2rem));
 }
 
-/* Separate from the rule above: a nested pseudo-element under a selector list compiles to
-   one :is() that every element tries. The repeated attribute keeps the list's specificity. */
-.composer-prompt-body[data-composer-multiline]
-  :is([data-composer-empty="false"] [data-testid="composer-editor"])::before,
-.composer-prompt-body[data-composer-multiline]
-  [data-composer-placeholder][data-composer-placeholder]::before {
-  display: none;
+/* The float scrolls away with the text, so a scrolled prompt fades out before the
+   actions' corner instead of running beneath them; the scrollbar starts below them. */
+.composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"] {
+  --composer-corner-w: calc(
+    var(--composer-actions-width, 100px) + var(--composer-actions-gap) + var(--spacing)
+  );
+  --composer-corner-h: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
+  mask-image:
+    linear-gradient(
+      var(--composer-corner-dir),
+      black calc(100% - var(--composer-corner-w)),
+      transparent calc(100% - var(--composer-corner-w) + 0.625rem)
+    ),
+    linear-gradient(
+      to bottom,
+      transparent calc(var(--composer-corner-h) - 0.5rem),
+      black calc(var(--composer-corner-h) + 0.25rem)
+    );
 }
 
 .composer-prompt-body[data-composer-overflow]
   [data-testid="composer-editor"]::-webkit-scrollbar-track {
-  margin-top: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
+  margin-top: calc(var(--composer-corner-h) + 0.25rem);
 }
 
 /* A suffix that would run under the actions or past the edge stays hidden, as text never wraps for it. */
