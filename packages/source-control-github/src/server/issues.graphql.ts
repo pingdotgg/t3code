@@ -55,6 +55,39 @@ export const IssueRow = Schema.Struct({
 })
 export interface IssueRow extends Schema.Struct.Type<typeof IssueRow.fields> {}
 
+/**
+ * The category of a planning status, which decides whether the issue is open or
+ * closed. Issue statuses are in preview and only available to accounts enrolled in the preview.
+ */
+export const PlanningStatusCategory = Schema.Struct({
+  /**
+   * A stable identifier for the category, such as `new`, `backlog`, `planned`,
+   * `started`, `completed`, `not_planned` or `duplicate`. Clients should expect
+   * new keys to be added.
+   */
+  key: Schema.String,
+  /** The state an issue in this category has. */
+  state: GraphQL.enumLiterals(Shared.IssueState.literals),
+  /** The reason a closed issue in this category was closed, or null when the category is open. */
+  stateReason: Schema.NullOr(GraphQL.enumLiterals(Shared.IssueStateReason.literals))
+})
+export interface PlanningStatusCategory extends Schema.Struct.Type<typeof PlanningStatusCategory.fields> {}
+
+/**
+ * `fragment PlanningStatusFields on PlanningStatus`
+ *
+ * A planning status an issue can be in. Issue statuses are in preview and only available to accounts enrolled in the preview.
+ */
+export const PlanningStatusFields = Schema.Struct({
+  /** The Node ID of the PlanningStatus object */
+  id: Shared.ID,
+  /** The display name of the planning status. */
+  name: Schema.String,
+  /** The category of the planning status, which decides whether the issue is open or closed. */
+  category: PlanningStatusCategory
+})
+export interface PlanningStatusFields extends Schema.Struct.Type<typeof PlanningStatusFields.fields> {}
+
 /** Information about pagination in a connection. */
 export const SearchPageInfoPageInfo = Schema.Struct({
   /** When paginating forwards, are there more items? */
@@ -106,7 +139,7 @@ export const NodesCommentsIssueCommentConnection = Schema.Struct({
 export interface NodesCommentsIssueCommentConnection extends Schema.Struct.Type<typeof NodesCommentsIssueCommentConnection.fields> {}
 
 /** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
-export const NodesIssue = Schema.Struct({
+export const IssueSearchSearchNodesIssue = Schema.Struct({
   __typename: Schema.Literal("Issue"),
   ...IssueRow.fields,
   /** A list of Users assigned to this object. */
@@ -116,7 +149,7 @@ export const NodesIssue = Schema.Struct({
   /** A list of comments associated with the Issue. */
   comments: NodesCommentsIssueCommentConnection
 })
-export interface NodesIssue extends Schema.Struct.Type<typeof NodesIssue.fields> {}
+export interface IssueSearchSearchNodesIssue extends Schema.Struct.Type<typeof IssueSearchSearchNodesIssue.fields> {}
 
 /** The results of a search. */
 export const SearchResultItemOther = Schema.Struct({
@@ -129,16 +162,16 @@ export interface SearchResultItemOther extends Schema.Struct.Type<typeof SearchR
  * of matches, a maximum of 1,000 results will be available across all types,
  * potentially split across many pages.
  */
-export const SearchResultItemConnection = Schema.Struct({
+export const IssueSearchSearchSearchResultItemConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: SearchPageInfoPageInfo,
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
-    NodesIssue,
+    IssueSearchSearchNodesIssue,
     SearchResultItemOther
   ]))))
 })
-export interface SearchResultItemConnection extends Schema.Struct.Type<typeof SearchResultItemConnection.fields> {}
+export interface IssueSearchSearchSearchResultItemConnection extends Schema.Struct.Type<typeof IssueSearchSearchSearchResultItemConnection.fields> {}
 
 /** `query IssueSearch` */
 export const IssueSearch = GraphQL.query("IssueSearch", {
@@ -162,7 +195,7 @@ export const IssueSearch = GraphQL.query("IssueSearch", {
   },
   result: Schema.Struct({
     /** Perform a search across resources, returning a maximum of 1,000 results. */
-    search: SearchResultItemConnection
+    search: IssueSearchSearchSearchResultItemConnection
   })
 })
 export declare namespace IssueSearch {
@@ -487,6 +520,8 @@ export const SourceIssue = Schema.Struct({
   __typename: Schema.Literal("Issue"),
   /** Identifies the issue number. */
   number: Shared.Int,
+  /** The HTTP URL for this issue */
+  url: Shared.URI,
   /** The repository associated with this node. */
   repository: NodesRepositoryRepository
 })
@@ -584,7 +619,7 @@ export const IssueDetail = GraphQL.query("IssueDetail", {
     ],
     selections: [
       { name: "viewer", body: ["{login}"] },
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){viewerPermission issue(number:$", "number", "){...IssueRow assignees(first:100){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}labels(first:100){pageInfo{hasNextPage endCursor}nodes{name color}}body viewerCanUpdate viewerCanClose viewerCanReopen...Reactions comments(last:100){totalCount pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}closedByPullRequestsReferences(first:20 includeClosedPrs:true){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}timelineItems(last:100 itemTypes:[CLOSED_EVENT REOPENED_EVENT LABELED_EVENT UNLABELED_EVENT ASSIGNED_EVENT UNASSIGNED_EVENT RENAMED_TITLE_EVENT CROSS_REFERENCED_EVENT]){nodes{__typename...on ClosedEvent{id createdAt actor{__typename login avatarUrl}}...on ReopenedEvent{id createdAt actor{__typename login avatarUrl}}...on LabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on UnlabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on AssignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on UnassignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on RenamedTitleEvent{id createdAt actor{__typename login avatarUrl}currentTitle}...on CrossReferencedEvent{id createdAt actor{__typename login avatarUrl}source{__typename...on PullRequest{number title url state isDraft repository{nameWithOwner}}...on Issue{number repository{nameWithOwner}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){viewerPermission issue(number:$", "number", "){...IssueRow assignees(first:100){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}labels(first:100){pageInfo{hasNextPage endCursor}nodes{name color}}body viewerCanUpdate viewerCanClose viewerCanReopen...Reactions comments(last:100){totalCount pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}closedByPullRequestsReferences(first:20 includeClosedPrs:true){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}timelineItems(last:100 itemTypes:[CLOSED_EVENT REOPENED_EVENT LABELED_EVENT UNLABELED_EVENT ASSIGNED_EVENT UNASSIGNED_EVENT RENAMED_TITLE_EVENT CROSS_REFERENCED_EVENT]){nodes{__typename...on ClosedEvent{id createdAt actor{__typename login avatarUrl}}...on ReopenedEvent{id createdAt actor{__typename login avatarUrl}}...on LabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on UnlabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on AssignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on UnassignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on RenamedTitleEvent{id createdAt actor{__typename login avatarUrl}currentTitle}...on CrossReferencedEvent{id createdAt actor{__typename login avatarUrl}source{__typename...on PullRequest{number title url state isDraft repository{nameWithOwner}}...on Issue{number url repository{nameWithOwner}}}}}}}}"] }
     ],
     fragments: [
       { name: "IssueRow", body: ["on Issue{number title url state stateReason createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] },
@@ -664,6 +699,52 @@ export const IssueComments = GraphQL.query("IssueComments", {
 export declare namespace IssueComments {
   export type Variables = typeof IssueComments.variables.Type
   export type Result = typeof IssueComments.result.Type
+}
+
+/** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
+export const IssueLinkMetadataRepositoryIssueIssue = Schema.Struct({
+  /** Identifies the issue number. */
+  number: Shared.Int,
+  /** Identifies the issue title. */
+  title: Schema.String,
+  /** The HTTP URL for this issue */
+  url: Shared.URI
+})
+export interface IssueLinkMetadataRepositoryIssueIssue extends Schema.Struct.Type<typeof IssueLinkMetadataRepositoryIssueIssue.fields> {}
+
+/** A repository contains the content for a project. */
+export const IssueLinkMetadataRepositoryRepository = Schema.Struct({
+  /** Returns a single issue from the current repository by number. */
+  issue: Schema.NullOr(IssueLinkMetadataRepositoryIssueIssue)
+})
+export interface IssueLinkMetadataRepositoryRepository extends Schema.Struct.Type<typeof IssueLinkMetadataRepositoryRepository.fields> {}
+
+/** `query IssueLinkMetadata` */
+export const IssueLinkMetadata = GraphQL.query("IssueLinkMetadata", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "number", body: "Int!" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){number title url}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    number: Shared.Int
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(IssueLinkMetadataRepositoryRepository)
+  })
+})
+export declare namespace IssueLinkMetadata {
+  export type Variables = typeof IssueLinkMetadata.variables.Type
+  export type Result = typeof IssueLinkMetadata.result.Type
 }
 
 /** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
@@ -1037,5 +1118,174 @@ export declare namespace IssueCollections {
   export type Result = typeof IssueCollections.result.Type
 }
 
+/** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
+export const IssueSearchWithStatusSearchNodesIssue = Schema.Struct({
+  __typename: Schema.Literal("Issue"),
+  ...IssueRow.fields,
+  /**
+   * The status of this issue, or null when it has none or issue statuses aren't
+   * available in the repository. Issue statuses are in preview and only available
+   * to accounts enrolled in the preview.
+   */
+  status: Schema.NullOr(PlanningStatusFields),
+  /** A list of Users assigned to this object. */
+  assignees: NodesAssigneesUserConnection,
+  /** A list of labels associated with the object. */
+  labels: Schema.NullOr(NodesLabelsLabelConnection),
+  /** A list of comments associated with the Issue. */
+  comments: NodesCommentsIssueCommentConnection
+})
+export interface IssueSearchWithStatusSearchNodesIssue extends Schema.Struct.Type<typeof IssueSearchWithStatusSearchNodesIssue.fields> {}
+
+/**
+ * A list of results that matched against a search query. Regardless of the number
+ * of matches, a maximum of 1,000 results will be available across all types,
+ * potentially split across many pages.
+ */
+export const IssueSearchWithStatusSearchSearchResultItemConnection = Schema.Struct({
+  /** Information to aid in pagination. */
+  pageInfo: SearchPageInfoPageInfo,
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
+    IssueSearchWithStatusSearchNodesIssue,
+    SearchResultItemOther
+  ]))))
+})
+export interface IssueSearchWithStatusSearchSearchResultItemConnection extends Schema.Struct.Type<typeof IssueSearchWithStatusSearchSearchResultItemConnection.fields> {}
+
+/** `query IssueSearchWithStatus` */
+export const IssueSearchWithStatus = GraphQL.query("IssueSearchWithStatus", {
+  document: {
+    variables: [
+      { name: "q", body: "String!" },
+      { name: "cursor", body: "String" },
+      { name: "rows", body: "Int!" }
+    ],
+    selections: [
+      { name: "search", body: ["(query:$", "q", " type:ISSUE first:$", "rows", " after:$", "cursor", "){pageInfo{hasNextPage endCursor}nodes{__typename...on Issue{...IssueRow status{...PlanningStatusFields}assignees(first:20){nodes{login name avatarUrl}}labels(first:20){nodes{name color}}comments{totalCount}}}}"] }
+    ],
+    fragments: [
+      { name: "IssueRow", body: ["on Issue{number title url state stateReason createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] },
+      { name: "PlanningStatusFields", body: ["on PlanningStatus{id name category{key state stateReason}}"] }
+    ]
+  },
+  variables: {
+    q: Schema.String,
+    cursor: Schema.optional(Schema.NullOr(Schema.String)),
+    rows: Shared.Int
+  },
+  result: Schema.Struct({
+    /** Perform a search across resources, returning a maximum of 1,000 results. */
+    search: IssueSearchWithStatusSearchSearchResultItemConnection
+  })
+})
+export declare namespace IssueSearchWithStatus {
+  export type Variables = typeof IssueSearchWithStatus.variables.Type
+  export type Result = typeof IssueSearchWithStatus.result.Type
+}
+
+/** The connection type for PlanningStatus. */
+export const PlanningStatusConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PlanningStatusFields)))
+})
+export interface PlanningStatusConnection extends Schema.Struct.Type<typeof PlanningStatusConnection.fields> {}
+
+/** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
+export const IssueStatusesRepositoryIssueIssue = Schema.Struct({
+  /**
+   * Whether the viewer can set this issue's status. Issue statuses are in preview
+   * and only available to accounts enrolled in the preview.
+   */
+  viewerCanSetStatus: Schema.Boolean,
+  /**
+   * The status of this issue, or null when it has none or issue statuses aren't
+   * available in the repository. Issue statuses are in preview and only available
+   * to accounts enrolled in the preview.
+   */
+  status: Schema.NullOr(PlanningStatusFields)
+})
+export interface IssueStatusesRepositoryIssueIssue extends Schema.Struct.Type<typeof IssueStatusesRepositoryIssueIssue.fields> {}
+
+/** A repository contains the content for a project. */
+export const IssueStatusesRepositoryRepository = Schema.Struct({
+  /**
+   * The planning statuses issues in this repository can be in, or null when issue
+   * statuses aren't available for this repository or viewer. Planning statuses are
+   * returned in display order. Issue statuses are in preview and only available to
+   * accounts enrolled in the preview.
+   */
+  planningStatuses: Schema.NullOr(PlanningStatusConnection),
+  /** Returns a single issue from the current repository by number. */
+  issue: Schema.NullOr(IssueStatusesRepositoryIssueIssue)
+})
+export interface IssueStatusesRepositoryRepository extends Schema.Struct.Type<typeof IssueStatusesRepositoryRepository.fields> {}
+
+/** `query IssueStatuses` */
+export const IssueStatuses = GraphQL.query("IssueStatuses", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "number", body: "Int!" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){planningStatuses(first:50){nodes{...PlanningStatusFields}}issue(number:$", "number", "){viewerCanSetStatus status{...PlanningStatusFields}}}"] }
+    ],
+    fragments: [
+      { name: "PlanningStatusFields", body: ["on PlanningStatus{id name category{key state stateReason}}"] }
+    ]
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    number: Shared.Int
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(IssueStatusesRepositoryRepository)
+  })
+})
+export declare namespace IssueStatuses {
+  export type Variables = typeof IssueStatuses.variables.Type
+  export type Result = typeof IssueStatuses.result.Type
+}
+
+/** Autogenerated return type of SetIssueStatus. */
+export const SetIssueStatusPayload = Schema.Struct({
+  /** A unique identifier for the client performing the mutation. */
+  clientMutationId: Schema.NullOr(Schema.String)
+})
+export interface SetIssueStatusPayload extends Schema.Struct.Type<typeof SetIssueStatusPayload.fields> {}
+
+/** `mutation SetIssueStatus` */
+export const SetIssueStatus = GraphQL.mutation("SetIssueStatus", {
+  document: {
+    variables: [
+      { name: "issueId", body: "ID!" },
+      { name: "statusId", body: "ID!" }
+    ],
+    selections: [
+      { name: "setIssueStatus", body: ["(input:{issueId:$", "issueId", " statusId:$", "statusId", "}){clientMutationId}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    issueId: Shared.ID,
+    statusId: Shared.ID
+  },
+  result: Schema.Struct({
+    /**
+     * Sets the status of an issue, closing or reopening it when the status calls for
+     * it. Issue statuses are in preview and only available to accounts enrolled in the preview.
+     */
+    setIssueStatus: Schema.NullOr(SetIssueStatusPayload)
+  })
+})
+export declare namespace SetIssueStatus {
+  export type Variables = typeof SetIssueStatus.variables.Type
+  export type Result = typeof SetIssueStatus.result.Type
+}
+
 /** Every operation in issues.graphql. */
-export const IssuesGraphQLGroup = GraphQLGroup.make(IssueSearch, IssueDetail, IssueComments, IssueNodeId, IssueCommentScope, IssueCandidates, IssueTemplates, IssueViewer, IssueCollections)
+export const IssuesGraphQLGroup = GraphQLGroup.make(IssueSearch, IssueDetail, IssueComments, IssueLinkMetadata, IssueNodeId, IssueCommentScope, IssueCandidates, IssueTemplates, IssueViewer, IssueCollections, IssueSearchWithStatus, IssueStatuses, SetIssueStatus)

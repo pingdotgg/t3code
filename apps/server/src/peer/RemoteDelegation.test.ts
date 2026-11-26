@@ -37,7 +37,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as TestClock from "effect/testing/TestClock";
-import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
@@ -451,7 +451,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
                   },
                 ]),
           ]
-        ).map((entry, position) => ({ ...entry, position }));
+        )
+          // Position 0 is the task's prompt, which the follower reads past.
+          .map((entry, index) => ({ ...entry, position: index + 1 }));
         const visible =
           options.itemId === undefined
             ? replies.filter(
@@ -492,7 +494,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
                   }),
             } as never,
           })),
-          totalItems: replies.length,
+          totalItems: replies.length + 1,
           hasMore:
             options.itemId === undefined &&
             matching.length > 0 &&
@@ -742,7 +744,9 @@ const makeLaptop = (
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(NodeCrypto.layer),
       Layer.provideMerge(layerThreads),
-      Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+      Layer.provide(
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      ),
       Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
       Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
       Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
@@ -1304,6 +1308,38 @@ it.effect("a task named only by environment inherits the parent's model, within 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect.each([
+  { access: "auto-accept-edits", keepsMode: false },
+  { access: "full-access", keepsMode: true },
+] as const)(
+  "a task inheriting over a $access link carries the parent's agent mode: $keepsMode",
+  ({ access, keepsMode }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, access);
+        const effort = { id: "reasoningEffort", value: "high" };
+        const mode = { id: "_t3/session-mode", value: "yolo" };
+        yield* seedParent(a, { ...modelSelection, options: [effort, mode] });
+
+        const result = yield* a.call("delegate_task", {
+          task: "Run the suite on the box.",
+          target: { environmentId: box.environmentId },
+        });
+        expect(result.isError, JSON.stringify(result.content)).toBe(false);
+        expect((yield* Ref.get(thread.launchedWith))?.modelSelection.options).toEqual(
+          keepsMode ? [effort, mode] : [effort],
+        );
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("a task naming another driver there never runs its model on the parent's instance", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1714,7 +1750,7 @@ it.effect.each(["tail-error", "middle-error", "reply-fallback", "cancel-refill"]
           const pages = reads.filter((read) => read.itemId === undefined && read.limit === 100);
           // A page moves on by however many items the response budget left it.
           const remaining = (read: OrchestratorMcpThreadReadInput) =>
-            timeline.length - 1 - (read.afterPosition ?? -1);
+            timeline.length - (read.afterPosition ?? 0);
           expect(pages[0]).toMatchObject({
             view: "activity",
             limit: 100,
@@ -1832,8 +1868,9 @@ it.effect.each([
         }
         const pages = reads.filter((read) => read.itemId === undefined && read.limit === 100);
         // The thread's final page starts at its canonical 100-item boundary.
-        const tailPosition = Math.floor((timeline.length - 1) / 100) * 100 - 1;
-        expect(pages.at(0)?.afterPosition).toBeUndefined();
+        const tailPosition = Math.floor(timeline.length / 100) * 100 - 1;
+        // Starts after the prompt, a cursor every peer accepts.
+        expect(pages.at(0)?.afterPosition).toBe(0);
         expect(
           pages.every(
             (read) =>
@@ -2075,6 +2112,37 @@ it.effect("stopping the parent stops its task there", () =>
       // The follower sees it ended here and stops it there.
       yield* Deferred.await(thread.interruptedOnce);
       expect(yield* Ref.get(thread.interrupted)).toBe(1);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("the parent's Stop queues stopping a task that runs only there", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+
+      yield* delegateToBox(a);
+      yield* a.orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("command:thread-stop:remote-only"),
+        threadId: parentThreadId,
+        reason: "User stopped",
+      });
+      const sql = Context.get(database, SqlClient.SqlClient);
+      const outbox = yield* sql<{ readonly effect_type: string }>`
+        SELECT effect_type
+        FROM orchestration_v2_effect_outbox
+        WHERE thread_id = ${parentThreadId}
+      `;
+      expect(outbox.some((row) => row.effect_type === "delegated-tasks.stop")).toBe(true);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
