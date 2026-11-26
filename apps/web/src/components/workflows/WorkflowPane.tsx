@@ -87,8 +87,8 @@ export default function WorkflowPane({
     <div className="flex h-full min-h-0 flex-col">
       <div
         className={cn(
-          "flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-2 pe-2",
-          electron && "drag-region wco:pr-(--workspace-native-controls-inset)",
+          "flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-2 pe-2 rtl:pe-(--workspace-controls-left)",
+          electron && "drag-region ltr:wco:pr-(--workspace-native-controls-inset)",
         )}
       >
         <div
