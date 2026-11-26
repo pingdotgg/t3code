@@ -13,12 +13,14 @@ const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
+const THEMATIC_BREAK = Symbol("thematic-break");
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 type TextPart =
   | string
   | typeof CELL_START
   | typeof CELL_END
   | typeof LINE_START
+  | typeof THEMATIC_BREAK
   | { imageDescription: string }
   | { fallback: string };
 
@@ -325,6 +327,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   for (const child of node.children) {
     if (typeof child === "string") yield child;
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
+    else if (child.name === "hr") yield THEMATIC_BREAK;
     else if (["tbl", "table"].includes(child.name)) yield* table(child);
     else if (child.name === "pre" && child.hasText) {
       yield LINE_START;
@@ -1132,6 +1135,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let started = false;
   let space = false;
   let midLine = false;
+  let pendingThematicBreak: string | undefined;
   let endsWithWord = false;
   let afterImageDescription = false;
   let truncated = false;
@@ -1146,8 +1150,14 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === CELL_END) {
+        remaining -= pendingThematicBreak?.length ?? 0;
+        pendingThematicBreak = undefined;
         cellDepth--;
         if (cellDepth > 0 && started) space = true;
+        continue;
+      }
+      if (part === THEMATIC_BREAK) {
+        if (midLine) pendingThematicBreak ??= "";
         continue;
       }
       if (part === LINE_START) {
@@ -1164,6 +1174,17 @@ export async function extractDocumentText(path: string, extension: string): Prom
       } else {
         if (started) continue;
         raw = part.fallback;
+      }
+      if (pendingThematicBreak !== undefined) {
+        const next = pendingThematicBreak + raw;
+        const hasContent = /[^ \t]/u.test(raw);
+        // Inline markup can split significant indentation across chunks.
+        if (!hasContent && next.length < remaining) {
+          pendingThematicBreak = next;
+          continue;
+        }
+        raw = hasContent && !/^[ \t]*\n/u.test(raw) ? "\n" + next : next;
+        pendingThematicBreak = undefined;
       }
       // Resolve image boundaries here, after inline markup has been flattened.
       // Pending cell whitespace has already used its share of the output budget.
