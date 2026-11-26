@@ -11,10 +11,9 @@ import { isWithinRoot } from "../../../workspace/KnownWorkspaces.ts";
 import * as WorkspaceFolders from "../../../workspace/WorkspaceFolders.ts";
 
 /**
- * The files among `paths` that are not the thread's own: outside the folders it works in and
- * not one of its attachments. Each is named by what it resolves to, links followed, so a link
- * inside a folder to a file elsewhere is that file. A path that cannot be resolved, or a thread
- * whose folders cannot be read, is placed nowhere, and so is outside.
+ * `outside`: the files among `paths` that are not the thread's own (in none of its folders, not
+ * one of its attachments); a path that cannot be resolved or placed is outside. `files`: every
+ * path as what it resolves to, links followed, which is what was placed and so what to send.
  */
 export const filesOutsideThread = Effect.fn("PreviewToolkit.filesOutsideThread")(function* (
   thread: Pick<OrchestrationV2ThreadShell, "id" | "projectId" | "worktreePath">,
@@ -54,8 +53,10 @@ export const filesOutsideThread = Effect.fn("PreviewToolkit.filesOutsideThread")
     path.basename(real).startsWith(`${segment}-`);
 
   const outside: Array<string> = [];
+  const files: Array<string> = [];
   for (const given of paths) {
     const real = yield* resolved(given);
+    files.push(real ?? given);
     if (
       real !== undefined &&
       (roots.some((root) => isWithinRoot(path, real, root!)) || isOwnAttachment(real))
@@ -63,5 +64,5 @@ export const filesOutsideThread = Effect.fn("PreviewToolkit.filesOutsideThread")
       continue;
     outside.push(real ?? given);
   }
-  return outside;
+  return { outside, files };
 });

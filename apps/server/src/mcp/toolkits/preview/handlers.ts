@@ -194,25 +194,26 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
 
 const invalidAct = (cause: Schema.SchemaError) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message });
-const decodeUpload = Schema.decodeUnknownEffect(PreviewAutomationActInputs.upload);
 
 /** The page a tab shows, as the address bar would name where a file goes. */
 const pageOrigin = (url: string | null | undefined) => {
   if (!url) return "a page T3 Code could not read";
   const origin = URL.canParse(url) ? new URL(url).origin : "null";
-  return origin === "null" ? url.slice(0, 200) : origin;
+  // A page with no origin of its own, such as a `data:` one, is named by its address, as data.
+  return origin === "null" ? McpToolAccess.quoted(url, 200) : origin;
 };
 
 /**
- * What an upload sends out of the thread: the files that are not its own, and the page they go
- * to. Nothing when every file is in the thread's folders or one of its attachments.
+ * An upload as it is placed against the thread: `files` are the paths resolved, which are what
+ * is sent, and `asks` what leaves the thread, the files that are not its own and the page they
+ * go to. No `asks` when every file is in the thread's folders or one of its attachments.
  */
 const uploadLeavingThread = Effect.fn("PreviewToolkit.uploadLeavingThread")(function* (
   thread: OrchestrationV2ThreadShell,
   upload: PreviewAutomationUploadInput,
 ) {
-  const outside = yield* filesOutsideThread(thread, upload.paths);
-  if (outside.length === 0) return undefined;
+  const { outside, files } = yield* filesOutsideThread(thread, upload.paths);
+  if (outside.length === 0) return { files, asks: undefined };
   const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const page = yield* broker
@@ -225,11 +226,14 @@ const uploadLeavingThread = Effect.fn("PreviewToolkit.uploadLeavingThread")(func
       ...(upload.tabId === undefined ? {} : { tabId: upload.tabId }),
     })
     .pipe(Effect.orElseSucceed(() => null));
-  return {
+  const asks: McpToolAccess.OutsideAction = {
     action: "Upload",
-    target: outside.join(", "),
+    target: outside.map((file) => McpToolAccess.quoted(file, 200)).join(", "),
     origin: pageOrigin(page?.url),
-  } satisfies McpToolAccess.OutsideAction;
+    // The tab too: the same page open in another one is another place to send a file.
+    binds: { files, tabId: page?.tabId ?? upload.tabId ?? null },
+  };
+  return { files, asks };
 });
 
 const handlers = {
@@ -276,26 +280,23 @@ const handlers = {
       },
     );
   }),
-  preview_act: McpToolAccess.actsAsCallerAsking(
-    "preview_act",
-    ({ action, ...input }, thread) =>
-      action === "upload"
-        ? decodeUpload(input).pipe(
-            Effect.mapError(invalidAct),
-            Effect.flatMap((upload) => uploadLeavingThread(thread, upload)),
-          )
-        : Effect.undefined,
-    ({ action, ...input }) =>
-      decodeActInput[action](input).pipe(
-        Effect.mapError(invalidAct),
-        Effect.flatMap((decoded) =>
-          invokeTargeted<object>(
-            action,
-            decoded,
-            "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
-          ),
+  preview_act: McpToolAccess.actsAsCallerAsking("preview_act", ({ action, ...input }, asked) =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeActInput[action](input).pipe(Effect.mapError(invalidAct));
+      // Below Full access an upload is placed first, and sends the files that were placed.
+      const placed =
+        action === "upload" && asked !== undefined
+          ? yield* uploadLeavingThread(asked, decoded as PreviewAutomationUploadInput)
+          : undefined;
+      return {
+        asks: placed?.asks,
+        run: invokeTargeted<object>(
+          action,
+          placed === undefined ? decoded : { ...decoded, paths: placed.files },
+          "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
         ),
-      ),
+      };
+    }),
   ),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(

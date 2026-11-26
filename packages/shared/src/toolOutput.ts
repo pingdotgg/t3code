@@ -49,7 +49,8 @@ interface CompactToolOutput {
   messageId?: string;
   taskId?: string;
   scheduledTaskId?: string;
-  status?: "rolled_back";
+  /** "awaiting_approval": the tool asked the person and they have not answered; nothing ran. */
+  status?: "rolled_back" | "awaiting_approval";
   htmlRender?: HtmlRenderReference;
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
   thread?: { threadId: string };
@@ -141,7 +142,9 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       const id = boundedId(data[key]);
       if (id !== undefined) output[key] = id;
     }
-    if (data.status === "rolled_back") output.status = "rolled_back";
+    if (data.status === "rolled_back" || data.status === "awaiting_approval") {
+      output.status = data.status;
+    }
     for (const key of ["linkedCount", "unlinkedCount"] as const) {
       const count = data[key];
       if (typeof count === "number" && Number.isSafeInteger(count)) output[key] = count;

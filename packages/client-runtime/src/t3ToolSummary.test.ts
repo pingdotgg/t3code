@@ -77,6 +77,15 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("review-pr", [completed({ verdict: "approve" }, {})]).label).toBe(
       "Reviewed 1 pull request",
     );
+    // A call that ended waiting for the person's approval merged nothing and did not fail.
+    const waiting = completed({ number: 1 }, { status: "awaiting_approval", next: "Call again." });
+    expect(summarizeT3ToolCalls("merge-pr", [waiting])).toEqual({
+      label: "Tried to merge 1 pull request",
+      failedCount: 0,
+    });
+    expect(summarizeT3ToolCalls("merge-pr", [waiting, merge(false, "merged")]).label).toBe(
+      "Merged 1 pull request",
+    );
   });
 
   it("counts the checks a CI rerun restarted, and the ones the host refused", () => {

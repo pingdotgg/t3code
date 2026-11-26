@@ -37,6 +37,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { orAwaitingApproval } from "./awaitingApproval.ts";
 import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpThreadApproval from "./McpThreadApproval.ts";
@@ -68,6 +69,8 @@ const withThread = <A, E>(
       readonly ran?: string;
       readonly code?: string;
       readonly message?: string;
+      readonly status?: string;
+      readonly next?: string;
     }>;
     readonly requests: Effect.Effect<
       ReadonlyArray<{
@@ -223,7 +226,7 @@ const withThread = <A, E>(
     const OutsideToolkit = Toolkit.make(
       Tool.make("acts_outside", {
         parameters: Schema.Struct({ number: Schema.Number }),
-        success: Schema.Struct({ ran: Schema.String }),
+        success: orAwaitingApproval(Schema.Struct({ ran: Schema.String })),
         failure: OrchestratorMcpFailure,
         failureMode: "return" as const,
         dependencies: [
@@ -283,6 +286,8 @@ const withThread = <A, E>(
               readonly ran?: string;
               readonly code?: string;
               readonly message?: string;
+              readonly status?: string;
+              readonly next?: string;
             },
         ),
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
@@ -362,9 +367,11 @@ it.effect.each(["acpRegistry", "cursor", "opencode", "pi"] as const)(
         // The call waits for the person, then says it is still waiting. Nothing has run.
         const first = yield* Effect.forkChild(thread.call());
         yield* TestClock.adjust(McpThreadApproval.ANSWER_WAIT);
+        // That is an answer, not a failure: the call ended, and what it asks is still open.
         const waiting = yield* Fiber.join(first);
-        assert.equal(waiting.code, "capability_denied");
-        assert.match(waiting.message ?? "", WAITING);
+        assert.equal(waiting.code, undefined);
+        assert.equal(waiting.status, "awaiting_approval");
+        assert.match(waiting.next ?? "", WAITING);
         assert.deepEqual(thread.ran, []);
 
         // The request is the same card the Claude and Codex adapters raise for this question.
@@ -421,7 +428,7 @@ it.effect("an approval answered between two calls is found by the second", () =>
     Effect.gen(function* () {
       const first = yield* Effect.forkChild(thread.call());
       yield* TestClock.adjust(McpThreadApproval.ANSWER_WAIT);
-      assert.match((yield* Fiber.join(first)).message ?? "", WAITING);
+      assert.match((yield* Fiber.join(first)).next ?? "", WAITING);
       const [request] = yield* thread.requests;
       yield* thread.answer(request!.id, "accept");
 
@@ -450,11 +457,12 @@ it.effect("a request the agent stops asking about ends with its turn", () =>
       assert.deepInclude((yield* thread.requests)[0], { status: "resolved", decision: "cancel" });
       assert.equal((yield* thread.cards)[0]?.status, "cancelled");
 
-      // With no turn to show a request in, the thread is told so, and nothing runs.
+      // With no turn to show a request in, the thread is told exactly that, and nothing runs.
       const refused = yield* thread.call();
-      assert.match(
-        refused.message ?? "",
-        /^Not done: ".+" needs the user's approval below Full access, and this agent's client cannot ask for it\./,
+      assert.equal(refused.code, "capability_denied");
+      assert.equal(
+        refused.message,
+        'Not done: "Merge pull request #5 in org/repo" needs the user\'s approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.',
       );
       assert.equal((yield* thread.requests).length, 1);
       assert.deepEqual(thread.ran, []);

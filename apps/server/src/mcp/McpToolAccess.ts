@@ -35,6 +35,7 @@ import {
   assertSameLink,
   callerLinkOrigin,
 } from "./linkOrigin.ts";
+import type { AwaitingApproval } from "./awaitingApproval.ts";
 import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpThreadApproval from "./McpThreadApproval.ts";
@@ -175,28 +176,25 @@ export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A,
   );
 
 /**
- * Acts for its own thread like `actsAsCaller`, and below Full access asks the person first when
- * `leaves` names something the call would send out of the thread, as a page upload of a file
- * from elsewhere does. A call that sends nothing out runs unasked.
+ * Acts for its own thread like `actsAsCaller`. Below Full access `plan` is given the thread and
+ * says in `asks` what the call would send out of it, as a page upload of a file from elsewhere
+ * does: the person approves that first. A call that sends nothing out runs unasked.
  */
 export const actsAsCallerAsking = <P, A, E, R, E2, R2>(
   tool: string,
-  leaves: (
+  plan: (
     params: P,
-    caller: OrchestrationV2ThreadShell,
-  ) => Effect.Effect<OutsideAction | undefined, E2, R2>,
-  handle: (params: P) => Effect.Effect<A, E, R>,
+    /** The calling thread when the person is asked before `run`; a Full access call asks nobody. */
+    asked: OrchestrationV2ThreadShell | undefined,
+  ) => Effect.Effect<Planned<A, E, R, OutsideAction | undefined>, E2, R2>,
 ) =>
   declare(
     (params: P) =>
       Effect.gen(function* () {
         yield* requireThreadCaller;
         const caller = yield* writingCaller;
-        if (!hasFullAccess(caller) && caller.caller !== undefined) {
-          const asks = yield* leaves(params, caller.caller);
-          if (asks !== undefined) yield* personApproves(caller, tool, params, asks);
-        }
-        return yield* handle(params);
+        const thread = hasFullAccess(caller) ? undefined : caller.caller;
+        return yield* runApproved(caller, tool, params, () => plan(params, thread));
       }),
     undefined,
   );
@@ -388,7 +386,7 @@ const personApproves = Effect.fnUntraced(function* (
     elicited === "unavailable" ? yield* McpThreadApproval.ask(caller, asking) : elicited;
   switch (answer) {
     case "accepted":
-      return { request, sentence };
+      return { approved: { request, sentence } } as const;
     case "declined":
       return yield* outsideActionRefused(`Not done: the user declined "${sentence}".`);
     case "unconfirmed":
@@ -397,14 +395,54 @@ const personApproves = Effect.fnUntraced(function* (
       );
     case "unavailable":
       return yield* cannotAsk;
-    case "waiting":
+    case "no-turn":
       return yield* outsideActionRefused(
-        `Not done yet: T3 Code is asking the user to approve "${sentence}" in this thread, and they have not answered. Call again with the same arguments to wait for their answer.`,
+        `Not done: "${sentence}" needs the user's approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.`,
       );
+    case "waiting": {
+      const awaiting: AwaitingApproval = {
+        status: "awaiting_approval",
+        next: `Not done yet: T3 Code is asking the user to approve "${sentence}" in this thread, and they have not answered. Call again with the same arguments to wait for their answer.`,
+      };
+      return { awaiting } as const;
+    }
     case "asked":
       // Never read: the question is this call's answer.
       return yield* outsideActionRefused("Waiting for the user's approval.");
   }
+});
+
+interface Planned<A, E, R, Asks> {
+  readonly asks: Asks;
+  readonly run: Effect.Effect<A, E, R>;
+}
+
+/**
+ * Runs what `plan` resolved once the person approved what it asks. They take as long as they
+ * like to answer, and a client may bring the answer in the call that asked, so what runs is
+ * read again after the answer, and only if it is still what they were asked about.
+ */
+const runApproved = Effect.fnUntraced(function* <A, E, R, E2, R2>(
+  caller: Caller,
+  tool: string,
+  params: unknown,
+  // Called for each reading, so one a handler builds eagerly is still read twice.
+  plan: () => Effect.Effect<Planned<A, E, R, OutsideAction | undefined>, E2, R2>,
+) {
+  const planned = yield* plan();
+  if (planned.asks === undefined) return yield* planned.run;
+  const answer = yield* personApproves(caller, tool, params, planned.asks);
+  if (answer === undefined) return yield* planned.run;
+  // Still theirs to answer: the call ends without failing, and the request stays in the thread.
+  if ("awaiting" in answer) return answer.awaiting;
+  const { approved } = answer;
+  const now = yield* plan();
+  if (now.asks === undefined || requestOf(tool, params, now.asks) !== approved.request) {
+    return yield* outsideActionRefused(
+      `Not done: what "${approved.sentence}" would do changed while the user was asked. Call again to ask.`,
+    );
+  }
+  return yield* now.run;
 });
 
 const startsOutsideWork = "start work here that is not its link's";
@@ -429,14 +467,7 @@ export const actsOutsideThread = <P, A, E, R, E2, R2>(
     params: P,
     /** `asked`: the person is asked before `run`, so what a full-access call skips is read. */
     caller: { readonly asked: boolean },
-  ) => Effect.Effect<
-    {
-      readonly asks: OutsideAction;
-      readonly run: Effect.Effect<A, E, R>;
-    },
-    E2,
-    R2
-  >,
+  ) => Effect.Effect<Planned<A, E, R, OutsideAction>, E2, R2>,
 ) =>
   declare(
     (params: P) =>
@@ -444,19 +475,7 @@ export const actsOutsideThread = <P, A, E, R, E2, R2>(
         const caller = yield* writingCaller;
         yield* assertNotLinked(caller, startsOutsideWork);
         const asked = !hasFullAccess(caller);
-        const planned = yield* plan(params, { asked });
-        const approved = yield* personApproves(caller, tool, params, planned.asks);
-        if (approved === undefined) return yield* planned.run;
-        // The person takes as long as they like to answer, and a client may bring the answer
-        // in the call that asked. So what runs is read now, after the answer, and only if it
-        // is still what they were asked about.
-        const now = yield* plan(params, { asked });
-        if (requestOf(tool, params, now.asks) !== approved.request) {
-          return yield* outsideActionRefused(
-            `Not done: what "${approved.sentence}" would do changed while the user was asked. Call again to ask.`,
-          );
-        }
-        return yield* now.run;
+        return yield* runApproved(caller, tool, params, () => plan(params, { asked }));
       }),
     () =>
       Effect.gen(function* () {

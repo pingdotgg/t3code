@@ -27,6 +27,7 @@ import * as McpSchema from "effect/ai/McpSchema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 
+import { orAwaitingApproval } from "../../awaitingApproval.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -691,7 +692,7 @@ const CreatePullRequestTool = Tool.make("pull_request_create", {
         "Visible to writers only; the branch never reaches origin. Fails on a host without private PRs.",
     }),
   }),
-  success: CreatePullRequestResult,
+  success: orAwaitingApproval(CreatePullRequestResult),
   failure: PullRequestToolError,
   dependencies: [...forgeDependencies, GitManager.GitManager],
 })
@@ -722,7 +723,7 @@ const UpdatePullRequestTool = Tool.make("pull_request_update", {
       UpdateNames.annotate({ description: "Logins, or org/team for a team." }),
     ),
   }),
-  success: Schema.Struct(PullRequestIdentity),
+  success: orAwaitingApproval(Schema.Struct(PullRequestIdentity)),
   failure: PullRequestToolError,
   dependencies: forgeDependencies,
 })
@@ -742,7 +743,7 @@ const RespondToPullRequestTool = Tool.make("pull_request_respond", {
     body: Schema.optional(TrimmedNonEmptyString),
     resolved: Schema.optional(Schema.Boolean),
   }),
-  success: RespondToPullRequestResult,
+  success: orAwaitingApproval(RespondToPullRequestResult),
   failure: PullRequestToolError,
   dependencies: forgeDependencies,
 })
@@ -776,7 +777,7 @@ const ReviewPullRequestTool = Tool.make("pull_request_review", {
     body: Schema.optional(Schema.String),
     comments: Schema.optional(Schema.Array(ReviewLineComment).check(Schema.isMaxLength(50))),
   }),
-  success: Schema.Struct(PullRequestIdentity),
+  success: orAwaitingApproval(Schema.Struct(PullRequestIdentity)),
   failure: PullRequestToolError,
   dependencies: forgeDependencies,
 })
@@ -805,7 +806,7 @@ const MergePullRequestTool = Tool.make("pull_request_merge", {
       }),
     ),
   }),
-  success: MergePullRequestResult,
+  success: orAwaitingApproval(MergePullRequestResult),
   failure: PullRequestToolError,
   dependencies: forgeDependencies,
 })
@@ -870,7 +871,7 @@ const RerunChecksTool = Tool.make("ci_rerun", {
     ...ThreadPullRequestInput.fields,
     check: Schema.optional(TrimmedNonEmptyString),
   }),
-  success: RerunChecksResult,
+  success: orAwaitingApproval(RerunChecksResult),
   failure: PullRequestToolError,
   dependencies: forgeDependencies,
 })

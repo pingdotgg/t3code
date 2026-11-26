@@ -113,6 +113,27 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("resolveWorkEntryToolPresentation", () => {
+  it("shows a call that ended waiting for the person's approval as still under way", () => {
+    const entry: WorkLogPresentationEntry = {
+      id: "merge",
+      createdAt: "2026-11-25T00:00:00.000Z",
+      tone: "tool",
+      label: "T3-code.pull_request_merge",
+      toolLifecycleStatus: "completed",
+      itemType: "dynamic_tool",
+      toolData: { output: { status: "awaiting_approval", next: "Call again to wait." } },
+    };
+    expect(resolveWorkEntryToolPresentation(entry)?.displayName).toBe("Merging a pull request");
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
+    // Once the same call returns its result, the row reads as done.
+    expect(
+      resolveWorkEntryToolPresentation({
+        ...entry,
+        toolData: { output: { number: 5, state: "merged" } },
+      })?.displayName,
+    ).toBe("Merged a pull request");
+  });
+
   it("shows returned MCP errors as failures even in the live activity row", () => {
     const entry: WorkLogPresentationEntry = {
       id: "clone",

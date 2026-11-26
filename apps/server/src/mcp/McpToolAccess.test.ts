@@ -22,6 +22,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { orAwaitingApproval } from "./awaitingApproval.ts";
 import * as McpClientInput from "./McpClientInput.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -550,7 +551,12 @@ const outsideProbe = Effect.fn("outsideProbe")(function* (
 ) {
   const ran: Array<string> = [];
   const forwarded: Array<string> = [];
-  const OutsideToolkit = Toolkit.make(Tool.make("acts_outside", linkedProbe));
+  const OutsideToolkit = Toolkit.make(
+    Tool.make("acts_outside", {
+      ...linkedProbe,
+      success: orAwaitingApproval(linkedProbe.success),
+    }),
+  );
   const toolkit = yield* OutsideToolkit.pipe(
     Effect.provide(
       McpToolAccess.HandlersLayer.layer(

@@ -1707,7 +1707,7 @@ describe("source control tools", () => {
               .pipe(client.provide(sessions), Effect.flip);
             expect(refused).toMatchObject({ code: "capability_denied" });
             expect((refused as { readonly message: string }).message).toMatch(
-              /^Not done: ".+" needs the user's approval below Full access, and this agent's client cannot ask for it\. Tell the user; they can do it themselves or switch this thread to Full access\.$/,
+              /^Not done: ".+" needs the user's approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now\. Call again during a turn\.$/,
             );
             expect(Ref.getUnsafe(client.request)).toBeUndefined();
           }

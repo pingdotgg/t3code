@@ -169,19 +169,32 @@ model.
   does any other approval while the answer stays in the projection and nothing is delivered to
   the provider session. No provider client is trusted for it: the approval is the request's
   recorded decision, which only `runtime-request.respond` sets. A call waits a bounded time for
-  the answer, since T3 Code does not set these clients' tool-call limits, and then fails saying
-  the person has not answered; the request stays, kept with the thread's MCP session under its
-  state, so the same call made again waits on it or finds its answer, and reading an answer
-  ends it. It closes when the turn that asked ends or is restarted, and expires with a server
-  restart like any pending request. An agent client that prompts for tool calls on its own
-  (Pi's extension) leaves the tools in `T3_MCP_TOOLS_ASKED_BY_T3` to this request.
-  Only where there is nowhere to show a request is the call refused: a thread with no turn
-  running, and an MCP client from outside, which has no thread and so needs full access.
+  the answer, since T3 Code does not set these clients' tool-call limits, and then returns
+  `{ status: "awaiting_approval", next }` ([`awaitingApproval`](../../apps/server/src/mcp/awaitingApproval.ts)),
+  which is part of each gated tool's result and not a failure: nothing was done, and clients
+  show the call as still under way while its request waits. The request stays, kept with the
+  thread's MCP session under its state, so the same call made again waits on it or finds its
+  answer, and reading an answer ends it. It closes when the turn that asked ends or is
+  restarted, and expires with a server restart like any pending request.
+  An agent client that prompts for tool calls on its own leaves the tools in
+  `T3_MCP_TOOLS_ASKED_BY_T3` to this request where the client names the call's MCP server and
+  tool in fields of their own: Pi's extension (by the path of the bridge that registered the
+  tool) and Kiro (`_meta.kiro.serverName` with `rawInput.tool_id`, answered with its one-time
+  choice). A title is the model's wording and is never read for this, so the other ACP agents
+  still show their own prompt before T3 Code's request.
+  Only where there is nowhere to show a request is the call refused, with a message that says
+  which: a thread with no turn running, and an MCP client from outside, which has no thread
+  and so needs full access.
   `preview_act` asks through the same gate (`actsAsCallerAsking`) for an upload alone, and only
   for files that are not the thread's own: each path is resolved through links and compared
   with the thread's folders, resolved the same way, and with its attachments, and a path that
   cannot be resolved or placed is outside. The request names those files and the origin of the
-  page they go to; both are in its state, so a page that has moved on asks again.
+  page they go to; those, every resolved path and the tab are its state. Like every gated
+  call it is read again once the answer is in, so a page that moved on, or a path that now
+  resolves elsewhere, sends nothing and asks again. What is sent is the resolved paths, not
+  the ones given, so a link changed afterwards does not change the file. A page that
+  navigates in the moment between that last read and the browser setting the files is not
+  caught.
   A call bound for a linked environment is not sent below Full access. What it would do
   (the pull request "the branch" has there, the checkout's push and hooks) can only be
   resolved there, and that environment has no one to ask, so there is nothing concrete to

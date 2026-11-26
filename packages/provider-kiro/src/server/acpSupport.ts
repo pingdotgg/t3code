@@ -12,7 +12,9 @@ import {
   acpPermissionDisposition,
   type AcpPermissionDisposition,
   type AcpRuntimePolicy,
+  unknownRecord,
 } from "@t3tools/provider-acp/server/clientPolicy";
+import { T3_MCP_TOOLS_ASKED_BY_T3 } from "@t3tools/shared/t3McpToolPresentation";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 /**
@@ -122,7 +124,38 @@ export function kiroPermissionDisposition(
   const offersOnce = request.options.some(
     (option) => option.kind === "allow_once" && option.optionId.trim().length > 0,
   );
-  return disposition === "allow" && !offersOnce ? "ask" : disposition;
+  if (disposition === "allow" && !offersOnce) return "ask";
+  // T3 Code asks the person about these tools itself, naming what the call would do, and holds
+  // the call until they answer. Asking here as well would ask twice for one action.
+  return disposition === "ask" &&
+    offersOnce &&
+    policy.runtimeMode !== "full-access" &&
+    kiroCallsToolAskedByT3(request.toolCall)
+    ? "allow"
+    : disposition;
+}
+
+const T3_MCP_SERVER = "t3-code";
+const TOOLS_ASKED_BY_T3 = new Set(T3_MCP_TOOLS_ASKED_BY_T3);
+
+/**
+ * Whether a tool call is one of the tools T3 Code asks about, going only by the two fields in
+ * which Kiro itself names the MCP server and the tool (`_meta.kiro.serverName`, and
+ * `rawInput.tool_id` as "<server>::<tool>"). A title is the model's wording and is not read.
+ */
+function kiroCallsToolAskedByT3(toolCall: {
+  readonly rawInput?: unknown;
+  readonly _meta?: unknown;
+}): boolean {
+  const meta = unknownRecord(unknownRecord(toolCall._meta)?.kiro);
+  const toolId = unknownRecord(toolCall.rawInput)?.tool_id;
+  const prefix = `${T3_MCP_SERVER}::`;
+  return (
+    meta?.serverName === T3_MCP_SERVER &&
+    typeof toolId === "string" &&
+    toolId.startsWith(prefix) &&
+    TOOLS_ASKED_BY_T3.has(toolId.slice(prefix.length))
+  );
 }
 
 export interface KiroAcpRuntimeInput extends Omit<

@@ -26,6 +26,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
+import { AwaitingApproval } from "../../awaitingApproval.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -176,6 +177,8 @@ const PreviewActTool = browserTool(
     success: Schema.Union([
       Schema.Struct({ ...PreviewAutomationSelectResult.fields, ...presentationFields }),
       PreviewActionResult,
+      // An upload of a file that is not the thread's own, while the person is asked about it.
+      AwaitingApproval,
     ]),
     failure: PreviewToolFailure,
     // An upload is placed against the thread's folders and attachments before it runs.

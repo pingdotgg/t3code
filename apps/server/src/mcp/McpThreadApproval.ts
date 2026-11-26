@@ -22,8 +22,17 @@ import type { Caller } from "./threadAccess.ts";
 export const ANSWER_WAIT = Duration.seconds(45);
 const POLL_INTERVAL = Duration.millis(500);
 
-/** "waiting": the person has not answered yet, and the request is still theirs to answer. */
-export type Answer = "accepted" | "declined" | "unconfirmed" | "waiting" | "unavailable";
+/**
+ * "waiting": the person has not answered yet, and the request is still theirs to answer.
+ * "no-turn": the thread has no turn running, so there is nowhere to show a request.
+ */
+export type Answer =
+  | "accepted"
+  | "declined"
+  | "unconfirmed"
+  | "waiting"
+  | "no-turn"
+  | "unavailable";
 
 type Threads = ThreadManagement.ThreadManagementService["Service"];
 type Sessions = McpProviderSessions.McpProviderSessions["Service"];
@@ -113,7 +122,7 @@ export const ask = Effect.fn("McpThreadApproval.ask")(function* (
       run.rootNodeId === null ||
       run.providerInstanceId !== thread.providerInstanceId
     ) {
-      return "unavailable";
+      return "no-turn";
     }
     const id = yield* sessions.recordApprovalRequest(thread.threadId, input);
     const raised = { id, threadId: thread.threadId };
@@ -138,8 +147,9 @@ export const ask = Effect.fn("McpThreadApproval.ask")(function* (
         ),
       );
     if (!shown) {
+      // The orchestrator refuses a request for a turn that ended since it was read.
       yield* sessions.forgetApprovalRequest(thread.threadId, id);
-      return "unavailable";
+      return "no-turn";
     }
     yield* closeWithItsRun(threads, sessions, raised, asked).pipe(
       Effect.ignoreCause({ log: true }),

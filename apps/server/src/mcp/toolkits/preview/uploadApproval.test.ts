@@ -53,6 +53,10 @@ const withThread = <A, E>(
     };
     /** The page operations that reached the browser. */
     readonly operations: ReadonlyArray<string>;
+    /** The files each upload that reached the browser carried. */
+    readonly uploaded: ReadonlyArray<ReadonlyArray<string>>;
+    /** The page the tab shows, and how many times it has been read. */
+    readonly page: { url: string; reads: number; onRead: () => void };
     readonly act: (
       input: Record<string, unknown>,
       reply?: { readonly action: string; readonly state: string },
@@ -108,17 +112,29 @@ const withThread = <A, E>(
 
     const shell = { ...liveThreadShell(threadId, { runtimeMode }), worktreePath: null };
     const operations: Array<string> = [];
+    const uploaded: Array<ReadonlyArray<string>> = [];
+    const page = { url: "https://forms.example/apply?step=2", reads: 0, onRead: () => {} };
     const services = Layer.mergeAll(
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(shell),
       }),
       Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({
-        invoke: ((request: { readonly operation: string }) =>
+        invoke: ((request: {
+          readonly operation: string;
+          readonly timeoutMs?: number;
+          readonly input: { readonly paths?: ReadonlyArray<string> };
+        }) =>
           Effect.sync(() => {
+            // The short read that places an upload; the one after an action is not counted.
             if (request.operation === "status") {
-              return { tabId: null, url: "https://forms.example/apply?step=2" };
+              if (request.timeoutMs !== 500) return { tabId: null, url: page.url };
+              const url = page.url;
+              page.reads += 1;
+              page.onRead();
+              return { tabId: null, url };
             }
             operations.push(request.operation);
+            if (request.operation === "upload") uploaded.push(request.input.paths ?? []);
             return {};
           })) as never,
       }),
@@ -156,6 +172,8 @@ const withThread = <A, E>(
       shell,
       paths,
       operations,
+      uploaded,
+      page,
       act: (input, reply) =>
         Effect.gen(function* () {
           const request = Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined);
@@ -204,13 +222,8 @@ const messageOf = (asked: McpSchema.InputRequired | undefined) =>
 it.effect("places a file by what it resolves to, and outside when it cannot be placed", () =>
   withThread("approval-required", ({ shell, paths }) =>
     Effect.gen(function* () {
-      expect(
-        yield* filesOutsideThread(shell, [
-          paths.inProject,
-          paths.inTrackedFolder,
-          paths.ownAttachment,
-        ]),
-      ).toEqual([]);
+      const own = [paths.inProject, paths.inTrackedFolder, paths.ownAttachment];
+      expect(yield* filesOutsideThread(shell, own)).toEqual({ outside: [], files: own });
       expect(
         yield* filesOutsideThread(shell, [
           paths.inProject,
@@ -222,14 +235,26 @@ it.effect("places a file by what it resolves to, and outside when it cannot be p
           "src/summary.pdf",
           `${paths.inProject}/../../../outside/keys.txt`,
         ]),
-      ).toEqual([
-        paths.elsewhere,
-        paths.elsewhere,
-        paths.otherThreadsAttachment,
-        paths.missing,
-        "src/summary.pdf",
-        paths.elsewhere,
-      ]);
+      ).toEqual({
+        outside: [
+          paths.elsewhere,
+          paths.elsewhere,
+          paths.otherThreadsAttachment,
+          paths.missing,
+          "src/summary.pdf",
+          paths.elsewhere,
+        ],
+        // What is sent is what was placed: the file a link or a relative step resolves to.
+        files: [
+          paths.inProject,
+          paths.elsewhere,
+          paths.elsewhere,
+          paths.otherThreadsAttachment,
+          paths.missing,
+          "src/summary.pdf",
+          paths.elsewhere,
+        ],
+      });
     }),
   ),
 );
@@ -245,7 +270,7 @@ it.effect("a thread whose folders cannot be read has every file outside", () =>
           }),
         ),
       ),
-      Effect.map((outside) =>
+      Effect.map(({ outside }) =>
         // Its own attachments are placed by the server's attachment folder alone.
         expect(outside).toEqual([paths.inProject, paths.inTrackedFolder]),
       ),
@@ -256,14 +281,14 @@ it.effect("a thread whose folders cannot be read has every file outside", () =>
 it.effect.each(["approval-required", "auto-accept-edits", "auto"] as const)(
   "an upload from outside a %s thread waits for the person, naming the file and the page",
   (runtimeMode) =>
-    withThread(runtimeMode, ({ paths, operations, act, answer }) =>
+    withThread(runtimeMode, ({ paths, operations, uploaded, act, answer }) =>
       Effect.gen(function* () {
         const upload = { action: "upload", paths: [paths.inProject, paths.linkToElsewhere] };
         const first = yield* act(upload);
         const message = messageOf(first.asked)!;
         expect(message).toMatch(
           new RegExp(
-            `^Upload ${paths.elsewhere.replaceAll(".", "\\.")} to https://forms\\.example\\? \\(request [0-9a-f]{8}\\)$`,
+            `^Upload "${paths.elsewhere.replaceAll(".", "\\.")}" to https://forms\\.example\\? \\(request [0-9a-f]{8}\\)$`,
           ),
         );
         expect(operations).toEqual([]);
@@ -278,13 +303,15 @@ it.effect.each(["approval-required", "auto-accept-edits", "auto"] as const)(
         yield* answer(messageOf(again.asked)!, true);
         yield* act(upload, { action: "accept", state: again.asked!.requestState! });
         expect(operations).toEqual(["upload"]);
+        // The link goes as the file the person was asked about.
+        expect(uploaded).toEqual([[paths.inProject, paths.elsewhere]]);
 
         // Other files are another request.
         const other = yield* act(
           { action: "upload", paths: [paths.otherThreadsAttachment] },
           { action: "accept", state: again.asked!.requestState! },
         );
-        expect(messageOf(other.asked)).toContain(`Upload ${paths.otherThreadsAttachment} to `);
+        expect(messageOf(other.asked)).toContain(`Upload "${paths.otherThreadsAttachment}" to `);
         expect(operations).toEqual(["upload"]);
       }),
     ),
@@ -302,7 +329,7 @@ it.effect("a declined upload sends nothing", () =>
       });
       expect(declined.result).toMatchObject({
         code: "capability_denied",
-        message: `Not done: the user declined "Upload ${paths.elsewhere} to https://forms.example".`,
+        message: `Not done: the user declined "Upload "${paths.elsewhere}" to https://forms.example".`,
       });
       expect(operations).toEqual([]);
     }),
@@ -330,6 +357,63 @@ it.effect("a Full access thread uploads any file unasked", () =>
       const sent = yield* act({ action: "upload", paths: [paths.elsewhere] });
       expect(sent.asked).toBeUndefined();
       expect(operations).toEqual(["upload"]);
+    }),
+  ),
+);
+
+it.effect.each([
+  ["while the person reads", "before"],
+  ["after their answer is read", "between"],
+] as const)("a page that moves on %s gets no file", ([, when]) =>
+  withThread("auto", ({ paths, operations, page, act, answer }) =>
+    Effect.gen(function* () {
+      const upload = { action: "upload", paths: [paths.elsewhere] };
+      const first = yield* act(upload);
+      yield* answer(messageOf(first.asked)!, true);
+      const moveOn = () => void (page.url = "https://elsewhere.example/drop");
+      // The answering call reads the page twice: for the answer, and again before it sends.
+      const from = page.reads;
+      if (when === "before") moveOn();
+      else page.onRead = () => (page.reads === from + 1 ? moveOn() : undefined);
+      const moved = yield* act(upload, { action: "accept", state: first.asked!.requestState! });
+      expect(operations).toEqual([]);
+      if (when === "before") {
+        // Another page is another request.
+        expect(messageOf(moved.asked)).toContain(" to https://elsewhere.example? (request ");
+      } else {
+        expect(moved.result).toMatchObject({
+          code: "capability_denied",
+          message: `Not done: what "Upload "${paths.elsewhere}" to https://forms.example" would do changed while the user was asked. Call again to ask.`,
+        });
+      }
+    }),
+  ),
+);
+
+it.effect("a link pointed elsewhere after it was placed sends the file that was placed", () =>
+  withThread("auto", ({ paths, uploaded, act }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // A link in the project to one of its own files: placed inside, so nobody is asked.
+      const link = path.join(path.dirname(paths.inProject), "latest.pdf");
+      yield* fileSystem.symlink(paths.inProject, link);
+      const sent = yield* act({ action: "upload", paths: [link] });
+      expect(sent.asked).toBeUndefined();
+      // What is sent is named by where the link led when it was placed, not by the link.
+      expect(uploaded).toEqual([[paths.inProject]]);
+    }),
+  ),
+);
+
+it.effect("a page with no origin of its own is named by its address, as data", () =>
+  withThread("auto", ({ paths, page, act }) =>
+    Effect.gen(function* () {
+      page.url = "data:text/html,<p>forms.example\u202e</p>";
+      const asked = yield* act({ action: "upload", paths: [paths.elsewhere] });
+      expect(messageOf(asked.asked)).toContain(
+        ' to "data:text/html,<p>forms.example\\u{202e}</p>"? (request ',
+      );
     }),
   ),
 );
