@@ -4151,7 +4151,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           subagent.transcriptEntryFingerprints.set(entry.itemId, fingerprint);
           const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
-          const nativeItemId = `${nativeTaskId}:transcript:${entry.itemId}`;
+          const nativeItemId = `${subagent.rootSessionId}:${nativeTaskId}:transcript:${entry.itemId}`;
           const now = yield* DateTime.now;
           const startedAt =
             subagent.transcriptStartedAt.get(entry.itemId) ?? entry.createdAt ?? now;
@@ -4445,8 +4445,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       : openEntry.kind === "tool"
                         ? {
                             ...openEntry,
-                            toolCall: { ...openEntry.toolCall, status: "completed" },
-                            projectedStatus: undefined,
+                            toolCall: { ...openEntry.toolCall, status: "failed" },
+                            projectedStatus: "interrupted",
                           }
                         : openEntry;
                   if (yield* projectSubagentTranscriptEntry(subagent, settled)) {

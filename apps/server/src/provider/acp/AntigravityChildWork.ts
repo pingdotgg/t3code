@@ -1080,24 +1080,19 @@ export const readAntigravitySubagentTranscript = Effect.fn("readAntigravitySubag
           });
         }),
       );
-      const flattened = perChild.flat();
-      if (!multiChild) return flattened;
-      return flattened
-        .map((entry, position) => ({ entry, position }))
-        .sort((left, right) => {
-          const leftMs =
-            left.entry.createdAt === undefined
-              ? undefined
-              : DateTime.toEpochMillis(left.entry.createdAt);
-          const rightMs =
-            right.entry.createdAt === undefined
-              ? undefined
-              : DateTime.toEpochMillis(right.entry.createdAt);
-          if (leftMs !== undefined && rightMs !== undefined && leftMs !== rightMs) {
-            return leftMs - rightMs;
-          }
-          return left.position - right.position;
+      if (!multiChild) return perChild.flat();
+      // Undated entries inherit their child's previous timestamp so the comparator stays total.
+      return perChild
+        .flatMap((entries) => {
+          let lastMs = 0;
+          return entries.map((entry) => {
+            lastMs =
+              entry.createdAt === undefined ? lastMs : DateTime.toEpochMillis(entry.createdAt);
+            return { entry, ms: lastMs };
+          });
         })
+        .map((keyed, position) => ({ ...keyed, position }))
+        .sort((left, right) => left.ms - right.ms || left.position - right.position)
         .map(({ entry }) => entry);
     };
     return yield* Effect.tryPromise({
