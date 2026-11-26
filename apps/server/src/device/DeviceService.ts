@@ -445,57 +445,57 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           }),
     );
 
-  const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
-    function* (hostId) {
-      const host = yield* resolveHost(hostId);
-      if (!(yield* readDeviceSettings).enabled) {
-        return yield* new DeviceHostUnavailableError({
-          hostId: host.id,
-          hostLabel: host.label,
-          reason:
-            "Device support is off. Enable it in the Device panel before installing or starting device tools.",
-        });
-      }
-      const ready = yield* host
-        .ensureReady((status, detail) =>
-          setHostStatus(host.id, { status, detail }).pipe(Effect.asVoid),
-        )
-        .pipe(
-          Effect.tapError((error) =>
-            setHostStatus(host.id, {
-              status: "failed",
-              detail:
-                (error._tag === "DeviceHostError" && actionableHostFailure(error)) || error.message,
+  const ensureReadiness = Effect.fn("DeviceService.readiness")(function* (
+    hostId: DeviceHostId | undefined,
+  ) {
+    const host = yield* resolveHost(hostId);
+    if (!(yield* readDeviceSettings).enabled) {
+      return yield* new DeviceHostUnavailableError({
+        hostId: host.id,
+        hostLabel: host.label,
+        reason:
+          "Device support is off. Enable it in the Device panel before installing or starting device tools.",
+      });
+    }
+    const ready = yield* host
+      .ensureReady((status, detail) =>
+        setHostStatus(host.id, { status, detail }).pipe(Effect.asVoid),
+      )
+      .pipe(
+        Effect.tapError((error) =>
+          setHostStatus(host.id, {
+            status: "failed",
+            detail:
+              (error._tag === "DeviceHostError" && actionableHostFailure(error)) || error.message,
+          }),
+        ),
+        Effect.mapError(
+          (error) =>
+            new DeviceHostUnavailableError({
+              hostId: host.id,
+              hostLabel: host.label,
+              reason:
+                error._tag === "NodeRuntimeUnavailableError"
+                  ? nodeRuntimeUnavailableMessage("Local device support")
+                  : (actionableHostFailure(error) ?? `Device support failed during ${error.step}.`),
+              cause: error,
             }),
-          ),
-          Effect.mapError(
-            (error) =>
-              new DeviceHostUnavailableError({
-                hostId: host.id,
-                hostLabel: host.label,
-                reason:
-                  error._tag === "NodeRuntimeUnavailableError"
-                    ? nodeRuntimeUnavailableMessage("Local device support")
-                    : (actionableHostFailure(error) ??
-                      `Device support failed during ${error.step}.`),
-                cause: error,
-              }),
-          ),
-        );
-      if (hosts.get(host.id) !== host)
-        return yield* new DeviceHostUnavailableError({
-          hostId: host.id,
-          hostLabel: host.label,
-          reason: "Host configuration changed. Retry the operation.",
-        });
-      const { state } = yield* SynchronizedRef.get(stateRef);
-      if (state.hostStatuses[host.id]?.status !== "ready") {
-        yield* setHostStatus(host.id, { status: "ready" });
-      }
-      return { hostId: host.id, ...ready };
-    },
-    lifecycleLock.withPermit,
-  );
+        ),
+      );
+    if (hosts.get(host.id) !== host)
+      return yield* new DeviceHostUnavailableError({
+        hostId: host.id,
+        hostLabel: host.label,
+        reason: "Host configuration changed. Retry the operation.",
+      });
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    if (state.hostStatuses[host.id]?.status !== "ready") {
+      yield* setHostStatus(host.id, { status: "ready" });
+    }
+    return { hostId: host.id, ...ready };
+  });
+  const readiness: DeviceService["Service"]["readiness"] = (hostId) =>
+    lifecycleLock.withPermit(ensureReadiness(hostId));
 
   const readinessIfSupported: DeviceService["Service"]["readinessIfSupported"] = Effect.fn(
     "DeviceService.readinessIfSupported",
@@ -975,19 +975,25 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
-  // Sessions retire before the power-off, while their agent-device sessions can still close the app;
-  // agent-device keeps a claim whose app close fails.
   const shutdown: DeviceService["Service"]["shutdown"] = Effect.fn("DeviceService.shutdown")(
     function* (input) {
-      const host = yield* resolveHost(input.hostId);
-      yield* publish((current) => ({
-        ...current,
-        sessions: current.sessions.filter(
-          (session) => !(session.hostId === host.id && session.deviceId === input.deviceId),
-        ),
-      }));
-      const ready = yield* readiness(host.id);
-      yield* shutdownDevice(ready, input.deviceId, input.platform);
+      const ready = yield* lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          const ready = yield* ensureReadiness(input.hostId);
+          const { state } = yield* SynchronizedRef.get(stateRef);
+          const ending = state.sessions.filter(
+            (session) => session.hostId === ready.hostId && session.deviceId === input.deviceId,
+          );
+          // Agent-device needs the running device to close its app. Keep the views until power-off succeeds.
+          yield* releaseLaunchers(ending);
+          yield* shutdownDevice(ready, input.deviceId, input.platform);
+          yield* publish((current) => ({
+            ...current,
+            sessions: current.sessions.filter((session) => !ending.includes(session)),
+          }));
+          return ready;
+        }),
+      );
       yield* refreshAfterShutdown(ready);
     },
   );
