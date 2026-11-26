@@ -163,3 +163,30 @@ it("shows the selected turn and agent below the map and returns to the turn's me
   });
   expect(useThreadMapViewStore.getState().mapThreadKeys.size).toBe(0);
 });
+
+it("fits the whole map when the opening view shows only the newest turns", async () => {
+  setup();
+  useThreadMapViewStore.setState({ mapThreadKeys: new Set() });
+  await using screen = await render(
+    <div className="flex h-[300px] w-[960px] flex-col">
+      <ThreadMap threadRef={threadRef} projection={fixture()} bottomInset={0} />
+    </div>,
+  );
+  const fitButton = screen.getByRole("button", { name: "Fit the map to view" });
+  const firstTurn = screen.getByRole("button", { name: /^Turn 1, Prompt/ });
+  await expect.element(firstTurn).toBeInTheDocument();
+  const inCanvas = () => {
+    const card = firstTurn.element();
+    // The scene is the transformed layer; the canvas that clips it is its parent.
+    const canvas = card.closest<HTMLElement>('[style*="scale("]')!.parentElement!;
+    const bounds = canvas.getBoundingClientRect();
+    const rect = card.getBoundingClientRect();
+    return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+  };
+
+  await expect.element(fitButton).toBeEnabled();
+  expect(inCanvas()).toBe(false);
+  await fitButton.click();
+  await expect.element(fitButton).toBeDisabled();
+  await expect.poll(inCanvas).toBe(true);
+});

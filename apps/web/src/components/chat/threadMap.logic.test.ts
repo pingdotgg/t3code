@@ -2,6 +2,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  ContextHandoffId,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -13,6 +14,7 @@ import {
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -379,6 +381,17 @@ describe("deriveThreadMap", () => {
       projection({
         runs: [run("woken", 1)],
         items: [
+          // A provider change hands context over just before the wake's notification.
+          {
+            ...itemBase("woken-handoff", "woken"),
+            type: "handoff",
+            contextHandoffId: ContextHandoffId.make("handoff"),
+            fromProviderThreadIds: [],
+            toProviderThreadId: ProviderThreadId.make("provider-thread"),
+            fromProviderInstanceIds: [],
+            toProviderInstanceId: providerInstanceId,
+            strategy: "full_thread_summary",
+          },
           {
             ...itemBase("woken-notification", "woken"),
             type: "notification",

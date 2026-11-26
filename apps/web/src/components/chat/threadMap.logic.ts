@@ -246,8 +246,10 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
     const openingItem = userItemByMessageId.get(run.userMessageId);
     const openingMessage = messageById.get(run.userMessageId);
     const opening = openingItem ?? openingMessage;
-    // A wake's message becomes a notification row, which has no message ID.
-    const openingNotification = items[0]?.type === "notification" ? items[0] : undefined;
+    // A wake's message becomes a notification row, which has no message ID. A provider
+    // handoff can come before it, so it need not be the turn's first item.
+    const openingNotification =
+      openingItem === undefined ? items.find((item) => item.type === "notification") : undefined;
     const prompt =
       openingNotification?.summary ??
       (opening === undefined

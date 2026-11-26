@@ -254,7 +254,17 @@ function ThreadMapCanvas({
     );
   };
   // Eases back to the opening view, which then follows new turns again.
-  const fit = () => setManual((current) => (current === null ? null : { view: null, glide: true }));
+  // The opening view can show only the newest turns of a long map; Fit shows all of it.
+  const fitted = size === null ? null : fitFleetLayout(layout, size);
+  const isFitted =
+    view !== null &&
+    fitted !== null &&
+    view.scale === fitted.scale &&
+    view.x === fitted.x &&
+    view.y === fitted.y;
+  const fit = () => {
+    if (fitted !== null && !isFitted) setView(fitted, true);
+  };
   const onWheel = useEffectEvent((event: WheelEvent) => {
     if (view === null) return;
     event.preventDefault();
@@ -434,7 +444,7 @@ function ThreadMapCanvas({
                 size="icon-xs"
                 variant="ghost"
                 aria-label={gt("Fit the map to view")}
-                disabled={manual === null || manual.view === null}
+                disabled={isFitted}
                 onClick={fit}
               />
             }
