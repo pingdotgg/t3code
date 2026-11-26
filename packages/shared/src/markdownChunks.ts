@@ -135,7 +135,7 @@ function hasDefinitionLabel(lines: readonly string[], start: number): boolean {
 }
 
 function endsDefinitionRun(line: string) {
-  // Plain Remark does not recognize the preview's display math blocks.
+  // The preview treats display math as a block even when plain Remark would consume its opener.
   return (
     BLANK_LINE.test(line) ||
     ATX_HEADING.test(line) ||
