@@ -3,7 +3,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 import type { EnvironmentPresentation } from "../../state/environments";
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider, T3ProjectFile } from "@t3tools/contracts";
 import {
   scopedThreadKey,
   scopeProjectRef,
@@ -17,16 +17,20 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { environmentSummaries } from "../../state/presentation";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
+  readProjectFile:
+    vi.fn<(environmentId: EnvironmentId, root: string) => Promise<T3ProjectFile | null>>(),
   pickedEnvironmentId: null as EnvironmentId | null,
   refreshSelection: vi.fn<(ids: readonly EnvironmentId[]) => Promise<EnvironmentId | null>>(),
 }));
@@ -49,8 +53,24 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../hooks/useScratchProject", () => ({ useScratchProject: () => ({}) }));
 
+vi.mock("../../lib/t3ProjectFileDefaults", () => ({
+  peekT3ProjectFile: () => undefined,
+  readT3ProjectFile: resources.readProjectFile,
+}));
+vi.mock(import("../../state/presentation"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentSummaries: {
+      ...actual.environmentSummaries,
+      connectedEnvironmentIdsAtom: Atom.make<readonly EnvironmentId[]>([]),
+    },
+  };
+});
+
 function setup() {
   resources.refreshSelection.mockReset();
+  resources.readProjectFile.mockReset();
   resources.projects = [];
   resources.pickedEnvironmentId = null;
   const a = EnvironmentId.make("machine-a");
@@ -165,6 +185,7 @@ function RoutingProbe({ input, onPrepared }: HarnessProps) {
       ))}
       <span>{draft?.environmentId}</span>
       <button
+        disabled={routing.isEnvironmentChanging}
         onClick={async () => {
           const ready = await routing.refreshBeforeSend();
           onPrepared?.(ready);
@@ -396,3 +417,40 @@ it("keeps a workspace the user picked when the draft switches machine by hand", 
   await expect.element(screen.getByText(b)).toBeInTheDocument();
   expect(store.getDraftSession(draftId)?.envMode).toBe("local");
 });
+
+it.each(["deleted", "moved"] as const)(
+  "checks the destination again when the project was %s during the default read",
+  async (change) => {
+    const { a, b, draftId, input, store } = fanoutSetup();
+    const firstRead = Promise.withResolvers<T3ProjectFile | null>();
+    resources.readProjectFile.mockImplementation((_environmentId, root) =>
+      root === "/workspace/moved"
+        ? Promise.resolve({ defaultThreadEnvMode: "worktree" })
+        : firstRead.promise,
+    );
+    store.setDraftThreadContext(draftId, { envMode: "local" });
+
+    await using screen = await render(
+      <Harness input={{ ...input, automaticEnvironment: false }} />,
+    );
+    const connectedIds = environmentSummaries.connectedEnvironmentIdsAtom;
+    using _connected = { [Symbol.dispose]: appAtomRegistry.mount(connectedIds) };
+    await act(async () => appAtomRegistry.set(connectedIds, [b]));
+    await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+    const send = screen.getByRole("button", { name: "Send", exact: true });
+    await expect.element(send).toBeDisabled();
+    await act(async () => {
+      resources.projects = resources.projects.flatMap((project) => {
+        if (project.environmentId !== b) return [project];
+        return change === "deleted" ? [] : [{ ...project, workspaceRoot: "/workspace/moved" }];
+      });
+      firstRead.resolve({ defaultThreadEnvMode: "local" });
+    });
+    await expect.element(send).toBeEnabled();
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      environmentId: change === "deleted" ? a : b,
+      envMode: change === "deleted" ? "local" : "worktree",
+    });
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("Keep this prompt");
+  },
+);

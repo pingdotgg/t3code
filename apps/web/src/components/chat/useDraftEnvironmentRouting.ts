@@ -32,7 +32,7 @@ import {
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
 import { currentClientMetadata } from "../../connection/platform";
-import { useProjects } from "../../state/entities";
+import { readProject, useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
@@ -336,13 +336,31 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return currentDraft;
     };
     // `triagePrompt` is the prompt the target machine prepared for a triage draft.
-    const retarget = async (project: (typeof allProjects)[number], triagePrompt?: string) => {
+    const retarget = async (
+      project: (typeof allProjects)[number],
+      triagePrompt?: string,
+    ): Promise<void> => {
       const draft = readSwitchingDraft();
       if (!draft) return;
       const projectRef = scopeProjectRef(target.environmentId, project.id);
+      const workspaceRoot = readProject(projectRef)?.workspaceRoot;
       const defaultWorkspace = await retargetDraftWorkspace(draft, projectRef);
       const currentDraft = readSwitchingDraft();
       if (!currentDraft) return;
+      const destination = readProject(projectRef);
+      if (!destination) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: m(msg("Could not switch machine")),
+            description: m(msg("This project is no longer available.")),
+          }),
+        );
+        return;
+      }
+      if (destination.workspaceRoot !== workspaceRoot) {
+        return retarget(destination, triagePrompt);
+      }
       const workspace =
         currentDraft.workspaceExplicit || currentDraft.worktreePath !== null
           ? {}
@@ -356,7 +374,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       carryFanoutSelections(currentDraft, target.environmentId);
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(
-          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+          deriveLogicalProjectKeyFromSettings(destination, projectGroupingSettings),
           projectRef,
           draftId,
           { environmentSelection: "manual", loadBalancedEnvironmentId: null, ...workspace },
