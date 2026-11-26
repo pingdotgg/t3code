@@ -64,7 +64,7 @@ const iceServerSchema = Schema.Struct({
   credential: Schema.optionalKey(Schema.String),
 });
 const webRtcSettingsSchema = Schema.Struct({
-  transport: Schema.Literal("webrtc"),
+  transport: Schema.optionalKey(Schema.Unknown),
   iceServers: Schema.optionalKey(Schema.Array(iceServerSchema)),
   iceTransportPolicy: Schema.optionalKey(Schema.Literals(["all", "relay"])),
 });
@@ -894,12 +894,7 @@ export function createDeviceStreamClient(
     }
   };
 
-  /**
-   * serve-sim can be locked to WebRTC (an Expo Simulator always is), and then
-   * refuses AVCC and MJPEG; serve-emu advertises WebRTC the same way. An
-   * unreadable answer keeps the default path.
-   */
-  const probeWebRtc = async (): Promise<WebRtcSettings | null> => {
+  const probeStreamSettings = async (): Promise<WebRtcSettings | null> => {
     const probe = new AbortController();
     const timeout = setTimeout(() => probe.abort(), TRANSPORT_PROBE_TIMEOUT_MS);
     try {
@@ -917,6 +912,16 @@ export function createDeviceStreamClient(
     } finally {
       clearTimeout(timeout);
     }
+  };
+
+  /**
+   * serve-sim can be locked to WebRTC (an Expo Simulator always is), and then
+   * refuses AVCC and MJPEG; serve-emu advertises WebRTC the same way. An
+   * unreadable answer keeps the default path.
+   */
+  const probeWebRtc = async () => {
+    const settings = await probeStreamSettings();
+    return settings?.transport === "webrtc" ? settings : null;
   };
 
   const webRtcUrl = (action: "offer" | "close") =>
@@ -1100,13 +1105,14 @@ export function createDeviceStreamClient(
 
   const startIosWithoutWebCodecs = async () => {
     const session = generation;
+    const feedGeneration = videoGeneration;
     if (typeof RTCPeerConnection === "undefined" || target.preferMjpeg || target.panelId)
       return fallBackToMjpeg();
     // serve-sim answers WebRTC offers whatever transport /api reports; a
-    // hub started without `--transport` reports "http". The probe only
-    // supplies ICE servers when there are any.
-    const settings = (await probeWebRtc()) ?? { transport: "webrtc" as const };
-    if (stopped || generation !== session) return;
+    // hub started without `--transport` reports "http" and may still carry
+    // ICE servers.
+    const settings = (await probeStreamSettings()) ?? {};
+    if (stopped || generation !== session || videoGeneration !== feedGeneration) return;
     mjpegIfWebRtcStalls = true;
     // The probe used part of the first-frame window; the WebRTC attempt gets its own.
     clearFrameTimer();

@@ -662,7 +662,9 @@ describe("WebRTC device streams", () => {
       addTransceiver = vi.fn(() => ({ setCodecPreferences: vi.fn() }));
       addEventListener = vi.fn();
       removeEventListener = vi.fn();
-      constructor() {
+      readonly config: unknown;
+      constructor(config: unknown) {
+        this.config = config;
         peers.push(this);
       }
     }
@@ -744,9 +746,12 @@ describe("WebRTC device streams", () => {
 
   it("streams an iOS simulator over WebRTC instead of MJPEG when WebCodecs is missing", async () => {
     // T3 Code's own device hub reports "http" and still answers WebRTC offers.
+    const iceServers = [{ urls: "turn:turn.test:3478", username: "u", credential: "c" }];
     const { client, events, fetch, peers, videos, present, image } = setup("ios", {
       transport: "http",
       h264Fps: 60,
+      iceServers,
+      iceTransportPolicy: "relay",
     });
     client.start();
     await vi.advanceTimersByTimeAsync(0);
@@ -756,6 +761,7 @@ describe("WebRTC device streams", () => {
       `${serveSim}/api?device=session-1&hostId=eas`,
       `${serveSim}/helper/session-1/webrtc/offer?hostId=eas`,
     ]);
+    expect(peers[0]?.config).toEqual({ iceServers, iceTransportPolicy: "relay" });
     peers[0]?.ontrack?.({ streams: [{}], track: {} });
     videos[0]?.callback?.();
     expect(present).toHaveBeenCalledWith(videos[0], 400, 800);
@@ -865,7 +871,7 @@ describe("WebRTC device streams", () => {
   });
 
   it("restarts the iOS WebRTC feed when Duo panels are cleared without WebCodecs", async () => {
-    const { client, fetch, sockets } = setup("ios");
+    const { client, fetch, sockets, peers, videos, present } = setup("ios");
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     // A screen config (tag 0x82) with a hinge lets the viewer enter Duo.
@@ -882,13 +888,25 @@ describe("WebRTC device streams", () => {
     message.set(config, 1);
     sockets[0]!.onmessage?.({ data: message.buffer } as unknown as { data: string });
     const panel = { present: vi.fn(() => true) };
-    client.setDuoPanels({ cover: panel, inner: panel } as unknown as Parameters<
+    const panels = { cover: panel, inner: panel } as unknown as Parameters<
       typeof client.setDuoPanels
-    >[0]);
+    >[0];
+    client.setDuoPanels(panels);
     const mainOffer = `${serveSim}/helper/session-1/webrtc/offer?hostId=eas`;
     const offers = () => fetch.mock.calls.filter(([url]) => url === mainOffer).length;
     const before = offers();
     client.setDuoPanels(null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offers()).toBe(before + 1);
+    present.mockClear();
+    peers.at(-1)!.ontrack?.({ streams: [{}], track: {} });
+    videos.at(-1)!.callback?.();
+    expect(present).toHaveBeenCalledWith(videos.at(-1), 400, 800);
+
+    // Panels installed again while the restart probes /api keep the main feed closed.
+    client.setDuoPanels(panels);
+    client.setDuoPanels(null);
+    client.setDuoPanels(panels);
     await vi.advanceTimersByTimeAsync(0);
     expect(offers()).toBe(before + 1);
     client.stop();
