@@ -174,4 +174,29 @@ describe("EnvironmentsMap", () => {
     await userEvent.keyboard("{Escape}");
     await expect.element(settings).not.toBeInTheDocument();
   });
+
+  it("leaves Esc in the machine search to an IME composition", async () => {
+    await using _screen = await renderSettingsMap();
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    const search = page.getByRole("searchbox", { name: "Find a machine on the map" });
+
+    // Native search inputs clear on Escape even during IME composition.
+    await expect.element(search).toHaveAttribute("type", "text");
+    await search.fill("vm");
+    // An Escape that cancels an IME composition (Safari reports keyCode 229) belongs to the IME.
+    for (const composition of [
+      { isComposing: true, keyCode: 27 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      await act(() => {
+        search
+          .element()
+          .dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", ...composition, bubbles: true }),
+          );
+      });
+      await expect.element(search).toHaveValue("vm");
+      expect(settings.element()).toHaveAttribute("data-open");
+    }
+  });
 });
