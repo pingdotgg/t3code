@@ -975,7 +975,7 @@ export function AddProjectRepositoryScreen(props: {
   useEffect(() => () => pendingLookup.current?.abort(), []);
 
   const lookupRepository = async () => {
-    if (!environment || repositoryInput.trim().length === 0 || pendingLookup.current) return;
+    if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
     const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(
       source,
       repositoryInput,
@@ -1016,7 +1016,6 @@ export function AddProjectRepositoryScreen(props: {
       { signal: lookup.signal },
     );
     if (lookup.signal.aborted) return;
-    pendingLookup.current = null;
     if (AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     } else {
