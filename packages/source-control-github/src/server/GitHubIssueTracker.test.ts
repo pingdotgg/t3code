@@ -18,8 +18,11 @@ const DETAIL_RESPONSE = JSON.stringify({
     viewer: { login: "julius" },
     repository: {
       viewerPermission: "TRIAGE",
+      planningStatuses: null,
       issue: {
         __typename: "Issue",
+        viewerCanSetStatus: true,
+        status: null,
         number: 42,
         title: "Composer loses focus",
         url: "https://github.com/acme/web/issues/42",
@@ -130,6 +133,13 @@ const DETAIL_RESPONSE = JSON.stringify({
   },
 });
 
+/** A repository GitHub has not given issue statuses yet. */
+const NO_STATUSES = {
+  data: {
+    repository: { planningStatuses: null, issue: { viewerCanSetStatus: true, status: null } },
+  },
+};
+
 const decodeVariables = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -173,10 +183,12 @@ function tracker(onRequest: (variables: unknown) => void, templateRepository?: u
         HttpClient.make((request) => {
           if (request.body._tag !== "Uint8Array")
             return Effect.die("Expected a GraphQL JSON request.");
-          const { variables } = decodeVariables(new TextDecoder().decode(request.body.body));
-          onRequest(variables);
-          const body =
-            templateRepository !== undefined
+          const { query, variables } = decodeVariables(new TextDecoder().decode(request.body.body));
+          const statusRead = query.includes("query IssueStatuses");
+          if (!statusRead) onRequest(variables);
+          const body = statusRead
+            ? JSON.stringify(NO_STATUSES)
+            : templateRepository !== undefined
               ? JSON.stringify({ data: { repository: templateRepository } })
               : "labelsCursor" in variables
                 ? JSON.stringify({
@@ -266,7 +278,9 @@ describe("GitHubIssueTracker", () => {
           const { query, variables } = decodeVariables(text);
           expect(request.method).toBe("POST");
           const operation = query.match(/(?:query|mutation)\s+(\w+)/)?.[1];
-          if (operation === "IssueNodeId" || operation === "IssueCommentScope") {
+          if (operation === "IssueStatuses") {
+            response = NO_STATUSES;
+          } else if (operation === "IssueNodeId" || operation === "IssueCommentScope") {
             expect(variables).toMatchObject({ owner: "acme", name: "web" });
             response = {
               data: {
@@ -416,6 +430,236 @@ describe("GitHubIssueTracker", () => {
         ["PATCH", "https://api.github.com/repos/acme/web/issues/42", { state: "open" }],
         "AddReaction",
         "RemoveReaction",
+      ]);
+    }),
+  );
+
+  it.effect("moves an issue between the repository's issue statuses", () =>
+    Effect.gen(function* () {
+      const status = (id: string, name: string, key: string, stateReason: string | null) => ({
+        id,
+        name,
+        category: { key, state: stateReason === null ? "OPEN" : "CLOSED", stateReason },
+      });
+      const planningStatuses = {
+        nodes: [
+          status("IS_1", "Backlog", "backlog", null),
+          status("IS_2", "In review", "started", null),
+          status("IS_3", "Done", "completed", "COMPLETED"),
+          status("IS_4", "Duplicate", "duplicate", "DUPLICATE"),
+        ],
+      };
+      const fixture = JSON.parse(DETAIL_RESPONSE);
+      const page = { hasNextPage: false, endCursor: null };
+      Object.assign(fixture.data.repository.issue, {
+        state: "OPEN",
+        stateReason: null,
+        labels: { pageInfo: page, nodes: [] },
+        closedByPullRequestsReferences: { pageInfo: page, nodes: [] },
+      });
+      const writes: unknown[] = [];
+      const http = HttpClient.make((request) => {
+        if (request.body._tag !== "Uint8Array") return Effect.die("Expected a JSON request.");
+        const text = new TextDecoder().decode(request.body.body);
+        let response: unknown = {};
+        if (request.url === "https://api.github.com/graphql") {
+          const { query, variables } = decodeVariables(text);
+          const operation = query.match(/(?:query|mutation)\s+(\w+)/)?.[1];
+          if (operation === "IssueDetailWithStatus") {
+            fixture.data.repository.planningStatuses = planningStatuses;
+            Object.assign(fixture.data.repository.issue, {
+              viewerCanSetStatus: false,
+              status: planningStatuses.nodes[1],
+            });
+            response = fixture;
+          } else if (operation === "IssueStatuses") {
+            response = {
+              data: {
+                repository: {
+                  planningStatuses,
+                  issue: { viewerCanSetStatus: false, status: planningStatuses.nodes[1] },
+                },
+              },
+            };
+          } else if (operation === "IssueNodeId") {
+            response = {
+              data: {
+                repository: { issue: { id: "I_42", state: "OPEN", stateReason: null } },
+              },
+            };
+          } else {
+            writes.push([operation, variables]);
+            response = { data: { setIssueStatus: { clientMutationId: null } } };
+          }
+        } else {
+          writes.push([request.method, request.url, decodeBody(text)]);
+        }
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(response), {
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const api = yield* GitHubIssueTracker.make.pipe(Effect.provide(transport(http)));
+      const target = { cwd: "/w", host: "github.com", scope: "acme/web", key: "42" };
+
+      const issue = yield* api.getIssue(target);
+      expect(issue.state).toEqual({ category: "open", name: "In review" });
+      expect(issue.states).toEqual([
+        { category: "open", name: "Backlog" },
+        { category: "open", name: "In review" },
+        { category: "closed", name: "Done", closeReason: "completed" },
+        { category: "closed", name: "Duplicate", closeReason: "duplicate" },
+      ]);
+      expect(issue.viewerPermissions.setState).toBe(false);
+
+      yield* api.setState({ ...target, state: "Backlog" });
+      // Closing as a duplicate through a status needs the original issue, so it closes over REST.
+      yield* api.setState({ ...target, state: "Duplicate" });
+      expect(yield* Effect.flip(api.setState({ ...target, state: "Open" }))).toMatchObject({
+        operation: "setState",
+        reason: "failed",
+      });
+      expect(writes).toEqual([
+        ["SetIssueStatus", { issueId: "I_42", statusId: "IS_1" }],
+        [
+          "PATCH",
+          "https://api.github.com/repos/acme/web/issues/42",
+          { state: "closed", state_reason: "duplicate" },
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("never names issue statuses to an Enterprise server", () =>
+    Effect.gen(function* () {
+      const queries: string[] = [];
+      const http = HttpClient.make((request) => {
+        if (request.body._tag !== "Uint8Array") return Effect.die("Expected a JSON request.");
+        const { query } = decodeVariables(new TextDecoder().decode(request.body.body));
+        queries.push(query);
+        const page = { hasNextPage: false, endCursor: null };
+        const detail = JSON.parse(DETAIL_RESPONSE);
+        Object.assign(detail.data.repository.issue, {
+          labels: { pageInfo: page, nodes: [] },
+          closedByPullRequestsReferences: { pageInfo: page, nodes: [] },
+        });
+        const body = query.includes("query IssueSearch")
+          ? { data: { search: { pageInfo: page, nodes: [] } } }
+          : detail;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const api = yield* GitHubIssueTracker.make.pipe(Effect.provide(transport(http)));
+      const target = { cwd: "/w", host: "ghe.example.com", scope: "acme/web" };
+      yield* api.listIssues({
+        ...target,
+        state: "open",
+        involvement: "all",
+        sort: "updated",
+        limit: 10,
+      });
+      yield* api.getIssue({ ...target, key: "42" });
+      expect(queries).toHaveLength(2);
+      for (const query of queries) expect(query).not.toMatch(/status|planningStatuses/i);
+    }),
+  );
+
+  it.effect("reads an issue on github.com in one GraphQL query", () =>
+    Effect.gen(function* () {
+      const operations: string[] = [];
+      const http = HttpClient.make((request) => {
+        if (request.body._tag !== "Uint8Array") return Effect.die("Expected a JSON request.");
+        const { query } = decodeVariables(new TextDecoder().decode(request.body.body));
+        const operation = query.match(/(?:query|mutation)\s+(\w+)/)?.[1] ?? "";
+        operations.push(operation);
+        const page = { hasNextPage: false, endCursor: null };
+        const detail = JSON.parse(DETAIL_RESPONSE);
+        Object.assign(detail.data.repository.issue, {
+          labels: { pageInfo: page, nodes: [] },
+          closedByPullRequestsReferences: { pageInfo: page, nodes: [] },
+        });
+        const body = operation === "IssueStatuses" ? NO_STATUSES : detail;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const api = yield* GitHubIssueTracker.make.pipe(Effect.provide(transport(http)));
+      yield* api.getIssue({ cwd: "/w", host: "github.com", scope: "acme/web", key: "42" });
+      // Each query spends the viewer's shared GraphQL allowance; the sidebar reads every linked issue.
+      expect(operations).toHaveLength(1);
+    }),
+  );
+
+  it.effect("reads and lists issues without statuses when GitHub refuses the status fields", () =>
+    Effect.gen(function* () {
+      const operations: string[] = [];
+      const http = HttpClient.make((request) => {
+        if (request.body._tag !== "Uint8Array") return Effect.die("Expected a JSON request.");
+        const { query } = decodeVariables(new TextDecoder().decode(request.body.body));
+        const operation = query.match(/query\s+(\w+)/)?.[1] ?? "";
+        operations.push(operation);
+        const page = { hasNextPage: false, endCursor: null };
+        const detail = JSON.parse(DETAIL_RESPONSE);
+        Object.assign(detail.data.repository.issue, {
+          labels: { pageInfo: page, nodes: [] },
+          closedByPullRequestsReferences: { pageInfo: page, nodes: [] },
+        });
+        const body =
+          operation === "IssueSearchWithStatus" || operation === "IssueDetailWithStatus"
+            ? {
+                data: null,
+                errors: [{ message: "Field 'status' doesn't exist on type 'Issue'" }],
+              }
+            : operation === "IssueDetail"
+              ? detail
+              : { data: { search: { pageInfo: page, nodes: [] } } };
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const api = yield* GitHubIssueTracker.make.pipe(Effect.provide(transport(http)));
+      const listing = yield* api.listIssues({
+        cwd: "/w",
+        host: "github.com",
+        scope: "acme/web",
+        state: "open",
+        involvement: "all",
+        sort: "updated",
+        limit: 10,
+      });
+      expect(listing.items).toEqual([]);
+      const issue = yield* api.getIssue({
+        cwd: "/w",
+        host: "github.com",
+        scope: "acme/web",
+        key: "42",
+      });
+      expect(issue.key).toBe("42");
+      expect(operations).toEqual([
+        "IssueSearchWithStatus",
+        "IssueSearch",
+        "IssueDetailWithStatus",
+        "IssueDetail",
       ]);
     }),
   );

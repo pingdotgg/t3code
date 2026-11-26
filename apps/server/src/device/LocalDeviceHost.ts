@@ -17,6 +17,7 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -39,6 +40,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
+import { deviceHubNodeArgs } from "./deviceHubNodeArgs.ts";
 import {
   agentDeviceStateDir,
   type DeviceToolPaths,
@@ -53,6 +55,7 @@ import {
 } from "./DeviceToolchain.ts";
 
 const HUB_READY_TIMEOUT_MS = 30_000;
+const HUB_TOKEN_PATTERN = /\btoken=([\w.~-]+)/;
 const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
@@ -93,6 +96,7 @@ interface HubProcess {
   readonly child: ChildProcessSpawner.ChildProcessHandle;
   readonly scope: Scope.Closeable;
   readonly origin: string;
+  readonly token: string;
   readonly startedAtMillis: number;
   readonly emulatorExtraArgs: string | undefined;
   readonly emulatorStamp: string | undefined;
@@ -116,15 +120,9 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   const sdk = yield* androidSdk;
   if (!sdk.root)
     return "Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.";
+  // Connected phones need only adb; emulator tooling gates AVD listing alone.
   if (!sdk.adb)
     return `Android SDK Platform-Tools are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
-  if (!sdk.emulator)
-    return `Android Emulator is missing from ${sdk.root}. Install it in Android Studio's SDK Manager.`;
-  if (!sdk.avdmanager) {
-    if (sdk.legacyAvdmanager)
-      return `The Android SDK command-line tools in ${sdk.root} appear to be an older, unsupported version. Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.`;
-    return `Android SDK Command-line Tools (latest) are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
-  }
   return null;
 });
 
@@ -140,18 +138,12 @@ const androidSdk = Effect.gen(function* () {
   );
   const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
   const adbBinary = windows ? "adb.exe" : "adb";
-  const avdmanagerBinary = windows ? "avdmanager.bat" : "avdmanager";
   const inspect = Effect.fnUntraced(function* (root: string) {
     const adb = yield* exists(path.join(root, "platform-tools", adbBinary));
     const emulator = yield* exists(
       path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
     );
-    const avdmanager = yield* exists(
-      path.join(root, "cmdline-tools", "latest", "bin", avdmanagerBinary),
-    );
-    const legacyAvdmanager =
-      !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
-    return { root, adb, emulator, avdmanager, legacyAvdmanager };
+    return { root, adb, emulator };
   });
   const candidates = [
     ...explicit,
@@ -175,7 +167,7 @@ const androidSdk = Effect.gen(function* () {
   }
   // No real SDK anywhere: report what the configured root is missing.
   if (explicit[0]) return yield* inspect(explicit[0]);
-  return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
+  return { root: null, adb: false, emulator: false };
 });
 
 const deviceHostEnvironment = (
@@ -430,6 +422,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     yield* fs
       .makeDirectory(agentDeviceStateDir(path, config.stateDir), { recursive: true })
       .pipe(Effect.ignore);
+    // The hub records its token in this folder, kept with the rest of the server's state.
+    const hubStateDir = path.join(config.stateDir, "device", "hub");
+    yield* fs.makeDirectory(hubStateDir, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
     const port = yield* net.reserveLoopbackPort("127.0.0.1").pipe(
       Effect.mapError(
         (cause) =>
@@ -449,11 +444,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           ChildProcess.make(
             nodePath,
             [
-              hubTool.entryPath,
+              ...deviceHubNodeArgs(hubTool.entryPath, hostPlatform),
               "--port",
               String(port),
               "--host",
               "127.0.0.1",
+              // Only the server, which reads the token the hub prints, talks to the hub.
+              "--require-token",
               "--hide-sidebar",
               "--hide-boot-device",
               ...hubPlatformArguments(hostPlatform),
@@ -464,7 +461,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               shell: false,
               stdout: "pipe",
               stderr: "pipe",
-              env,
+              env: { ...env, EXPO_DEVICE_HUB_STATE_DIR: hubStateDir },
             },
           ),
         )
@@ -480,16 +477,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           ),
         );
       const startedAtMillis = yield* Clock.currentTimeMillis;
-      const hub: HubProcess = {
-        child,
-        scope,
-        origin,
-        startedAtMillis,
-        nodePath,
-        emulatorExtraArgs: env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS,
-        emulatorStamp: stamp,
-      };
-      yield* Effect.forkIn(observeHubOutput(hub), scope);
+      const announcedToken = yield* Deferred.make<string>();
+      yield* Effect.forkIn(observeHubOutput(child, announcedToken), scope);
       yield* waitForHttpReady({
         baseUrl: origin,
         path: "/readyz",
@@ -501,21 +490,56 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             cause: info.cause,
           }),
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      const token = yield* Deferred.await(announcedToken).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.millis(HUB_READY_TIMEOUT_MS),
+          orElse: () =>
+            Effect.fail(
+              new DeviceHost.DeviceHostError({
+                hostId,
+                step: "reading the device hub's session token",
+                cause: new Error("The device hub did not print a session token."),
+              }),
+            ),
+        }),
+      );
+      const hub: HubProcess = {
+        child,
+        scope,
+        origin,
+        token,
+        startedAtMillis,
+        nodePath,
+        emulatorExtraArgs: env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS,
+        emulatorStamp: stamp,
+      };
       yield* recordHub(hub, hubTool);
       yield* Effect.logInfo("Device hub started", { pid: Number(child.pid), port });
       return hub;
     }).pipe(Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)));
   });
 
-  const observeHubOutput = (hub: HubProcess) =>
-    hub.child.all.pipe(
+  // The hub generates its session token and prints it in its startup link; keep it out of logs.
+  const observeHubOutput = (
+    child: ChildProcessSpawner.ChildProcessHandle,
+    announcedToken: Deferred.Deferred<string>,
+  ) =>
+    child.all.pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.map((line) => line.trim()),
       Stream.filter((line) => line.length > 0),
-      Stream.runForEach((line) =>
-        Effect.logDebug("Device hub output", { pid: Number(hub.child.pid), output: line }),
-      ),
+      Stream.runForEach((line) => {
+        const token = HUB_TOKEN_PATTERN.exec(line)?.[1];
+        return (token === undefined ? Effect.void : Deferred.succeed(announcedToken, token)).pipe(
+          Effect.andThen(
+            Effect.logDebug("Device hub output", {
+              pid: Number(child.pid),
+              output: line.replace(HUB_TOKEN_PATTERN, "token=<redacted>"),
+            }),
+          ),
+        );
+      }),
       Effect.ignoreCause,
     );
 
@@ -905,14 +929,19 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     );
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
-    hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
+    hub: {
+      origin: running.hub.origin,
+      token: running.hub.token,
+    } satisfies DeviceHost.DeviceHubEndpoint,
     devices: makeDeviceHubOperations({
       hostId,
       origin: running.hub.origin,
+      token: running.hub.token,
       http: httpClient,
       run,
       platformAvailable: (platform) =>
         platformAvailability(platform).pipe(Effect.map((availability) => availability.available)),
+      avdsAvailable: currentSdk.pipe(Effect.map((sdk) => sdk.emulator)),
     }),
     nodePath: running.hub.nodePath,
     run,

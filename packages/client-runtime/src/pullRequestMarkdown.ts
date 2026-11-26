@@ -31,7 +31,8 @@ type PullRequestBodyTableCell = {
 };
 
 // `.` stops at the `\r` of a CRLF body, which is how GitHub stores one written in its web editor.
-const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)\r?$/u;
+// The marker is the whole run, so a line that is no fence is given up on in one pass.
+const FENCE_PATTERN = /^\s{0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)\r?$/u;
 /**
  * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
@@ -41,14 +42,16 @@ const VIDEO_TAG_MAX_LINES = 8;
 // A tab after up to three spaces still reaches the fourth column.
 const INDENTED_CODE_PATTERN = /^(?: {4}| {0,3}\t)/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
-const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)(?:$|[?#])/iu;
+const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)$/iu;
 const MARKDOWN_LINK_PATTERN = /^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/u;
-const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
+const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)$/iu;
 
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
+// Stops at the next `<`, so matching stays linear in the length of the line.
+const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^<>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
+const VIDEO_TAG_CLOSE_PATTERN = /<\/video>/iu;
 
 /** Bounded like `VIDEO_TAG_MAX_LINES`; room for a before/after table with several rows. */
 const TABLE_MAX_LINES = 64;
@@ -65,12 +68,12 @@ const TABLE_STRUCTURE_TAG_PATTERN =
 /** Rows are laid out independently, so a spanning cell would shift the cells after it. */
 const CELL_SPAN_PATTERN = /\b(?:col|row)span\b/iu;
 
-function isWebUrl(url: string): boolean {
+function webUrl(url: string): URL | null {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -79,11 +82,14 @@ function attachmentFromLine(
 ): { url: string; media: "video" | "image" | "unknown" } | null {
   const url =
     BARE_URL_PATTERN.exec(line.trim())?.[1] ?? MARKDOWN_LINK_PATTERN.exec(line.trim())?.[1];
-  if (url === undefined || !isWebUrl(url)) return null;
-  if (VIDEO_EXTENSION_PATTERN.test(url) || sourceControlClients.mediaUrl(url)?.kind === "video") {
+  if (url === undefined) return null;
+  // Only the path names the file: `report?file=demo.mp4` is a page, not a video.
+  const path = webUrl(url)?.pathname;
+  if (path === undefined) return null;
+  if (VIDEO_EXTENSION_PATTERN.test(path) || sourceControlClients.mediaUrl(url)?.kind === "video") {
     return { url, media: "video" };
   }
-  if (IMAGE_EXTENSION_PATTERN.test(url)) return { url, media: "image" };
+  if (IMAGE_EXTENSION_PATTERN.test(path)) return { url, media: "image" };
   return null;
 }
 
@@ -187,10 +193,11 @@ function withDefinitions(
     };
   }
   if (!segment.text.includes("[")) return segment;
+  const bomLength = segment.sourceOffset === 0 && segment.text.startsWith("\uFEFF") ? 1 : 0;
   return {
     ...segment,
-    text: definitions + segment.text,
-    sourceOffset: segment.sourceOffset - definitions.length,
+    text: definitions + segment.text.slice(bomLength),
+    sourceOffset: segment.sourceOffset + bomLength - definitions.length,
   };
 }
 
@@ -199,6 +206,21 @@ function withDefinitions(
  * list it was written in, as the client's Markdown parser reads them.
  */
 export type FindReferenceDefinitions = (body: string) => ReadonlyArray<string>;
+
+/** How much text the body's definitions may add across all the segments that lead with them. */
+const DEFINITIONS_MAX_ADDED_LENGTH = 256 * 1024;
+
+function segmentsWithReferences(segments: ReadonlyArray<PullRequestBodySegment>): number {
+  let count = 0;
+  for (const segment of segments) {
+    if (segment.kind === "markdown") count += segment.text.includes("[") ? 1 : 0;
+    else if (segment.kind === "table") {
+      for (const cells of segment.rows)
+        for (const cell of cells) count += segmentsWithReferences(cell.segments);
+    }
+  }
+  return count;
+}
 
 export function splitPullRequestBody(
   body: string,
@@ -211,6 +233,18 @@ export function splitPullRequestBody(
   const definitions = findDefinitions(body);
   if (definitions.length === 0) return segments;
   const leading = `${definitions.join("\n")}\n\n`;
+  // Past the budget the body renders as one document: its media stays links, its references resolve.
+  if (leading.length * segmentsWithReferences(segments) > DEFINITIONS_MAX_ADDED_LENGTH) {
+    const text = body.replace(/^(?:\r?\n)+/u, "");
+    return [
+      {
+        id: "markdown:0",
+        kind: "markdown",
+        text: text.trimEnd(),
+        sourceOffset: body.length - text.length,
+      },
+    ];
+  }
   return segments.map((segment) => withDefinitions(segment, leading));
 }
 
@@ -219,7 +253,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
   let markdownStart = 0;
-  let openFence: string | null = null;
+  let openFence: { readonly marker: string; readonly flushLeft: boolean } | null = null;
 
   // Blank lines around a run are dropped, but never leading spaces: four of them open an
   // indented code block, so trimming a run would silently turn code into prose.
@@ -232,7 +266,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       segments.push({
         id: `markdown:${segments.length}`,
         kind: "markdown",
-        text: text.replace(/\s+$/u, ""),
+        text: text.trimEnd(),
         sourceOffset,
       });
     }
@@ -255,14 +289,16 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       const fence = fenceMatch[1]!;
       // A fence closes only on the same marker, at least as long as the one that opened it,
       // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
-      // info string opening a nested fence, not a close.
+      // info string opening a nested fence, not a close. Under a fence opened at the margin, an
+      // indented-code line is content too: a tab-indented ``` there is part of the example.
       const closes =
         openFence !== null &&
-        fence[0] === openFence[0] &&
-        fence.length >= openFence.length &&
-        fenceMatch[2]!.trim().length === 0;
+        fence[0] === openFence.marker[0] &&
+        fence.length >= openFence.marker.length &&
+        fenceMatch[2]!.trim().length === 0 &&
+        !(openFence.flushLeft && INDENTED_CODE_PATTERN.test(line));
       if (openFence === null) {
-        openFence = fence;
+        openFence = { marker: fence, flushLeft: line.startsWith(fence) };
       } else if (closes) {
         openFence = null;
       }
@@ -298,13 +334,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     }
     const lastCandidate = Math.min(index + VIDEO_TAG_MAX_LINES, lines.length) - 1;
     let cursor = index;
-    while (cursor < lastCandidate && !VIDEO_TAG_END_PATTERN.test(lines[cursor]!)) {
+    while (cursor < lastCandidate && !VIDEO_TAG_CLOSE_PATTERN.test(lines[cursor]!)) {
       cursor += 1;
     }
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
       ? VIDEO_TAG_SRC_PATTERN.exec(lines.slice(index, cursor + 1).join("\n"))?.[1]
       : undefined;
-    if (source !== undefined && isWebUrl(source)) {
+    if (source !== undefined && webUrl(source) !== null) {
       flushMarkdown();
       segments.push({
         id: `attachment:${segments.length}`,
