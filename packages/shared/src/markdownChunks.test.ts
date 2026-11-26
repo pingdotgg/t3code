@@ -166,6 +166,8 @@ describe("splitMarkdown", () => {
     ["an ordered fence ending at an outdent", "1. ~~~md", "   ", ""],
     ["a fence starting an ordered list at two", "2. ```md", "   ", "   ```"],
     ["a fence on a list continuation", "- item\n\n    ```md", "  ", "    ```"],
+    ["an ordered sibling after lazy text", "1. item\nlazy text\n2. ```md", "   ", "   ```"],
+    ["an ordered fence after a setext heading", "Appendix\n===\n2. ```md", "   ", "   ```"],
   ])("ignores definitions in %s", (_, opener, indent, closer) => {
     const text = [
       "[Release notes][release]",
@@ -178,6 +180,41 @@ describe("splitMarkdown", () => {
       closer,
       " # Real references",
       "[real]: /real",
+    ].join("\n");
+
+    expect(splitMarkdown(text, 1).definitions).toBe("[real]: /real");
+  });
+
+  it.each([
+    ["- a", "  - ```md", "    ```", "  "],
+    ["1. a", "   1. ```md", "      ```", "   "],
+  ])("collects definitions after nested fences in %s", (parent, opener, closer, indent) => {
+    const text = [
+      "[Earlier][real]",
+      "",
+      parent,
+      "",
+      opener,
+      " ".repeat(closer.length - 3) + "code",
+      closer,
+      "",
+      `${indent}[real]: /real`,
+    ].join("\n");
+
+    expect(splitMarkdown(text, 1).definitions).toBe("[real]: /real");
+  });
+
+  it("ignores fence markers inside list HTML", () => {
+    const text = [
+      "[Earlier][real]",
+      "",
+      "- item",
+      "",
+      "    <pre>",
+      "    ```md",
+      "    </pre>",
+      "  # References",
+      "  [real]: /real",
     ].join("\n");
 
     expect(splitMarkdown(text, 1).definitions).toBe("[real]: /real");
