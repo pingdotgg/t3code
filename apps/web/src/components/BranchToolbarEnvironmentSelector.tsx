@@ -11,6 +11,7 @@ import { T, useGT } from "gt-react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { KaluwaMachineStateDot } from "./sidebar/KaluwaMachineChip";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   Select,
@@ -78,6 +79,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           className="size-3 shrink-0"
         />
         <ComposerContextLabel>{activeEnvironment?.label ?? gt("Run on")}</ComposerContextLabel>
+        {/* Fork: whether the thread's machine is reachable. */}
+        <KaluwaMachineStateDot environmentId={environmentId} />
       </span>
     );
     return (
@@ -126,6 +129,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           <ComposerContextLabel>
             <SelectValue />
           </ComposerContextLabel>
+          {/* Fork: whether the thread's machine is reachable. */}
+          {autoEnvironmentLabel ? null : <KaluwaMachineStateDot environmentId={environmentId} />}
         </TooltipTrigger>
         <TooltipPopup>
           {autoEnvironmentLabel ?? activeEnvironment?.label ?? gt("Run on")}

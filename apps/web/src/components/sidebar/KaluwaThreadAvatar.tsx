@@ -27,6 +27,8 @@ export function KaluwaThreadAvatar(props: {
   readonly showInstanceBadge: boolean;
   readonly status: KaluwaThreadAvatarStatus | null;
   readonly recede: boolean;
+  /** A sub-agent needs the user: a marker opposite the avatar's own pip. */
+  readonly childAttention?: "failed" | "approval" | "input" | null | undefined;
 }) {
   const { providerEntry, status } = props;
   return (
@@ -54,6 +56,9 @@ export function KaluwaThreadAvatar(props: {
         />
       ) : null}
       {status && PIP_STATUSES.has(status) ? <span className="kaluwa-av-pip" /> : null}
+      {props.childAttention ? (
+        <span className="kaluwa-av-subpip" data-kaluwa-status={props.childAttention} />
+      ) : null}
     </span>
   );
 }

@@ -41,6 +41,7 @@ import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
 import { IS_KALUWA_BUILD } from "../../kaluwa/kaluwaLook";
 import { KaluwaLookSettings } from "./KaluwaLookSettings";
 import { KaluwaBackdropSettings } from "./KaluwaBackdropSettings";
+import { KaluwaSidebarSettings } from "./KaluwaSidebarSettings";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: msg("Artwork"),
@@ -182,6 +183,9 @@ export function AppearanceSettingsPanel() {
 
       {/* Fork: Kaluwa's backdrop art. */}
       <KaluwaBackdropSettings />
+
+      {/* Fork: Kaluwa's folder tree: machines and sub-agents. */}
+      <KaluwaSidebarSettings />
 
       <SettingsSection id="appearance-interface" title={gt("Interface")}>
         <SettingsRow

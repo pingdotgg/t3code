@@ -413,6 +413,19 @@ export const VoiceTranscriptionDestination = Schema.Union([
 ]);
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
+// Fork: Kaluwa sidebar options (see components/settings/KaluwaSidebarSettings.tsx).
+export const KaluwaSidebarMachineIndicator = Schema.Literals([
+  "glyph",
+  "glyph-name",
+  "edge",
+  "off",
+]);
+export type KaluwaSidebarMachineIndicator = typeof KaluwaSidebarMachineIndicator.Type;
+export const KaluwaSidebarSubagents = Schema.Literals(["tree", "chip", "off"]);
+export type KaluwaSidebarSubagents = typeof KaluwaSidebarSubagents.Type;
+export const KaluwaSidebarChildAttention = Schema.Literals(["marker", "label", "off"]);
+export type KaluwaSidebarChildAttention = typeof KaluwaSidebarChildAttention.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -547,6 +560,16 @@ export const ClientSettingsSchema = Schema.Struct({
   boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  // Fork: Kaluwa's folder tree: machine chips, nested sub-agents, and the child-attention marker.
+  kaluwaSidebarMachineIndicator: KaluwaSidebarMachineIndicator.pipe(
+    Schema.withDecodingDefault(Effect.succeed("glyph-name" as const)),
+  ),
+  kaluwaSidebarSubagents: KaluwaSidebarSubagents.pipe(
+    Schema.withDecodingDefault(Effect.succeed("tree" as const)),
+  ),
+  kaluwaSidebarChildAttention: KaluwaSidebarChildAttention.pipe(
+    Schema.withDecodingDefault(Effect.succeed("marker" as const)),
   ),
   toolCallVisibility: ToolCallVisibility.pipe(
     Schema.withDecodingDefault(Effect.succeed("showAll" as const)),
@@ -2178,6 +2201,9 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),
+  kaluwaSidebarMachineIndicator: Schema.optionalKey(KaluwaSidebarMachineIndicator),
+  kaluwaSidebarSubagents: Schema.optionalKey(KaluwaSidebarSubagents),
+  kaluwaSidebarChildAttention: Schema.optionalKey(KaluwaSidebarChildAttention),
   toolCallVisibility: Schema.optionalKey(ToolCallVisibility),
   screenReaderAnnouncements: Schema.optionalKey(ScreenReaderAnnouncements),
   screenReaderWindowTitle: Schema.optionalKey(Schema.Boolean),

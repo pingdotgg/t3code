@@ -2956,6 +2956,352 @@ li:has(+ .kaluwa-folder-thread) > .kaluwa-folder-head-trunk {
   background: var(--kaluwa-st) linear-gradient(#fff, #fff) center / 1.2px 3.6px no-repeat;
 }
 
+/* Fork: Kaluwa's sub-agents nested in the folder tree, the child-attention marker, and the
+   machine chip on project folders. Sizes come from the sidebar mockup; colours use the theme's
+   swatches when it defines them. */
+:root {
+  --kaluwa-sub-row-h: 24px;
+  --kaluwa-sub-font: 10.5px;
+  --kaluwa-sub-indent: 14px;
+  --kaluwa-sub-avatar: 10px;
+}
+/* The parent avatar's centre, which child connectors hang from. Declared on the rows so the
+   faint ink follows a sidebar that sets its own foreground. */
+.kaluwa-folder-thread,
+.kaluwa-sub {
+  --kaluwa-faint: color-mix(in srgb, var(--sidebar-foreground) 45%, transparent);
+  --kaluwa-sub-x: calc(
+    var(--kaluwa-trunk-x) + var(--kaluwa-indent) + 4px + var(--kaluwa-ring-out) +
+      var(--kaluwa-avatar) / 2
+  );
+}
+.kaluwa-folder-thread:has(+ .kaluwa-sub)::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--kaluwa-sub-x) - var(--kaluwa-tree-w) / 2);
+  top: calc(50% + var(--kaluwa-avatar) / 2 + var(--kaluwa-ring-out) + 2px);
+  bottom: 0;
+  border-left: var(--kaluwa-tree-w) solid var(--kaluwa-tree-line);
+  pointer-events: none;
+}
+.kaluwa-folder-thread:has(+ .kaluwa-sub[data-pthru]) > .kaluwa-tree-trunk {
+  display: block;
+}
+.kaluwa-sub .kaluwa-av {
+  --kaluwa-avatar: var(--kaluwa-sub-avatar);
+  --kaluwa-badge-font: 6px;
+}
+.kaluwa-sub {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--kaluwa-sub-row-h);
+}
+.kaluwa-sub-pill {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  height: calc(var(--kaluwa-sub-row-h) - 2px);
+  margin-left: calc(var(--kaluwa-sub-x) + var(--kaluwa-sub-indent));
+  padding: 0 6px 0 calc(4px + var(--kaluwa-ring-out));
+  gap: calc(6px + var(--kaluwa-ring-out));
+  border-radius: 6px;
+}
+.kaluwa-sub-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--kaluwa-sub-font);
+  font-weight: var(--kaluwa-thread-weight);
+  color: color-mix(in srgb, var(--sidebar-foreground) 80%, transparent);
+}
+.kaluwa-sub-title b {
+  font-weight: inherit;
+}
+.kaluwa-sub-title em {
+  font-style: normal;
+  color: var(--kaluwa-faint);
+}
+.kaluwa-sub[data-kind="native"] .kaluwa-sub-title b {
+  font: 500 0.95em var(--font-mono);
+  letter-spacing: -0.01em;
+}
+.kaluwa-sub-pill[aria-current] .kaluwa-sub-title {
+  color: var(--sidebar-foreground);
+}
+.kaluwa-sub:is([data-kaluwa-status="done"], [data-kaluwa-status="idle"])
+  .kaluwa-sub-pill:not([aria-current])
+  .kaluwa-sub-title {
+  color: color-mix(in srgb, var(--sidebar-foreground) 55%, transparent);
+}
+.kaluwa-sub-meta {
+  flex: none;
+  font-size: calc(var(--kaluwa-sub-font) - 0.5px);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--kaluwa-st, var(--kaluwa-faint));
+}
+.kaluwa-sub[data-kind="native"][data-kaluwa-status="done"] .kaluwa-sub-meta {
+  color: var(--kaluwa-faint);
+  font-weight: 400;
+}
+.kaluwa-sub-ro {
+  display: inline-flex;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  margin-right: -2px;
+  color: var(--kaluwa-faint);
+}
+.kaluwa-sub-ro > svg {
+  width: 100%;
+  height: 100%;
+}
+/* A provider's own sub-agent: a dashed ring, since it lives inside its parent's turn. */
+.kaluwa-nat {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--kaluwa-sub-avatar);
+  height: var(--kaluwa-sub-avatar);
+  color: var(--kaluwa-st, var(--kaluwa-faint));
+}
+.kaluwa-nat-ring {
+  position: absolute;
+  inset: calc(var(--kaluwa-ring-out) * -1);
+  border: 1px dashed color-mix(in srgb, currentColor 85%, transparent);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.kaluwa-sub[data-kaluwa-status="working"] .kaluwa-nat-ring {
+  animation: kaluwa-spin calc(var(--kaluwa-spin) * 6) linear infinite;
+  will-change: transform;
+}
+.kaluwa-sub[data-kaluwa-status="done"] .kaluwa-nat-ring {
+  border-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.kaluwa-nat > i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.kaluwa-nat-check {
+  width: 80%;
+  height: 80%;
+  stroke-width: 3.5;
+  opacity: 0.75;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kaluwa-sub .kaluwa-nat-ring {
+    animation: none;
+  }
+}
+.kaluwa-sub-ptrunk,
+.kaluwa-sub-elbow,
+.kaluwa-sub-trunk {
+  position: absolute;
+  border: 0 solid var(--kaluwa-tree-line);
+  pointer-events: none;
+}
+.kaluwa-sub-ptrunk {
+  display: none;
+  left: var(--kaluwa-trunk-x);
+  top: 0;
+  bottom: 0;
+  border-left-width: var(--kaluwa-tree-w);
+}
+.kaluwa-sub[data-pthru] > .kaluwa-sub-ptrunk {
+  display: block;
+}
+.kaluwa-sub-elbow {
+  left: calc(var(--kaluwa-sub-x) - var(--kaluwa-tree-w) / 2);
+  top: 0;
+  height: 50%;
+  width: calc(var(--kaluwa-sub-indent) - 3px + var(--kaluwa-tree-w) / 2);
+  border-left-width: var(--kaluwa-tree-w);
+  border-bottom-width: var(--kaluwa-tree-w);
+  border-bottom-left-radius: min(var(--kaluwa-tree-radius), 6px);
+}
+.kaluwa-sub-trunk {
+  left: calc(var(--kaluwa-sub-x) - var(--kaluwa-tree-w) / 2);
+  top: calc(50% - min(var(--kaluwa-tree-radius), 6px));
+  bottom: 0;
+  border-left-width: var(--kaluwa-tree-w);
+}
+.kaluwa-sub[data-last] > .kaluwa-sub-trunk {
+  display: none;
+}
+.kaluwa-subtoggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--kaluwa-faint);
+  cursor: pointer;
+}
+.kaluwa-subtoggle:hover {
+  background: var(--sidebar-row-hover);
+  color: var(--sidebar-foreground);
+}
+.kaluwa-subtoggle[data-kaluwa-status] {
+  color: var(--kaluwa-st);
+}
+.kaluwa-subtoggle[data-kaluwa-mode="chip"] {
+  padding: 0 5px 0 4px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--kaluwa-st, var(--sidebar-foreground)) 14%, transparent);
+}
+.kaluwa-subtoggle-icon {
+  width: 11px;
+  height: 11px;
+}
+.kaluwa-subtoggle-chevron {
+  width: 9px;
+  height: 9px;
+  transition: transform 0.15s ease;
+}
+.kaluwa-subtoggle[aria-expanded="false"] .kaluwa-subtoggle-chevron {
+  transform: rotate(-90deg);
+}
+/* A child needs the user: a marker on the parent avatar, opposite its own pip. */
+.kaluwa-av-subpip {
+  position: absolute;
+  z-index: 2;
+  top: calc(var(--kaluwa-ring-out) * -1 - 1px);
+  left: calc(var(--kaluwa-ring-out) * -1 - 1px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--kaluwa-st);
+  box-shadow: 0 0 0 1.5px var(--sidebar);
+  pointer-events: none;
+}
+.kaluwa-av-subpip[data-kaluwa-status="approval"] {
+  border-radius: 1.5px;
+  transform: rotate(45deg) scale(0.9);
+}
+
+.kaluwa-machine-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  max-width: 9rem;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--sidebar-muted-foreground);
+  background: color-mix(in srgb, var(--sidebar-foreground) 7%, transparent);
+}
+.kaluwa-machine-chip-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.kaluwa-machine-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kaluwa-machine-chip-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--kaluwa-swatch-sage, #86b49a);
+  opacity: 0.85;
+}
+[data-kaluwa-machine-state="connecting"] > .kaluwa-machine-chip-dot {
+  background: var(--kaluwa-swatch-ochre, #d6b36a);
+}
+[data-kaluwa-machine-state="offline"] > .kaluwa-machine-chip-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--kaluwa-swatch-ash, #a8a29e);
+}
+.kaluwa-machine-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+.kaluwa-machine-chip-spacer {
+  flex: none;
+  width: 18px;
+}
+.kaluwa-machine-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 12rem;
+  max-width: 18rem;
+  font-size: 11.5px;
+}
+.kaluwa-machine-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.kaluwa-machine-card-tag {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.kaluwa-machine-card-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+}
+.kaluwa-machine-card-grid dt,
+.kaluwa-machine-card-also {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+.kaluwa-machine-card-grid dd {
+  margin: 0;
+}
+button:has(> .kaluwa-machine-edge) > .kaluwa-folder-icon {
+  border-radius: 5px;
+  box-shadow:
+    0 0 0 1.5px var(--sidebar),
+    0 0 0 3px var(--kaluwa-machine-color);
+}
+button:has(> .kaluwa-machine-edge[data-kaluwa-machine-color="0"]) {
+  --kaluwa-machine-color: var(--kaluwa-swatch-ash, #a8a29e);
+}
+button:has(> .kaluwa-machine-edge[data-kaluwa-machine-color="1"]) {
+  --kaluwa-machine-color: var(--kaluwa-swatch-steel, #7ea6c9);
+}
+button:has(> .kaluwa-machine-edge[data-kaluwa-machine-color="2"]) {
+  --kaluwa-machine-color: var(--kaluwa-swatch-plum, #b39ad6);
+}
+button:has(> .kaluwa-machine-edge[data-kaluwa-machine-color="3"]) {
+  --kaluwa-machine-color: var(--kaluwa-swatch-ochre, #d6b36a);
+}
+button:has(> .kaluwa-machine-edge[data-kaluwa-machine-color="4"]) {
+  --kaluwa-machine-color: var(--kaluwa-swatch-sage, #86b49a);
+}
+button:has(> .kaluwa-machine-edge[data-kaluwa-machine-color="5"]) {
+  --kaluwa-machine-color: var(--kaluwa-swatch-rose, #d9909f);
+}
+
 /* Fork: the command palette's current row was a 9% tint, nearly invisible on a black theme.
    In the base layer because important declarations in earlier layers beat the item's own
    important utilities, while unlayered ones lose to them. */

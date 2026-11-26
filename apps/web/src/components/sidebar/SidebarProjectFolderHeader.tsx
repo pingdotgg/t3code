@@ -13,6 +13,7 @@ import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { KaluwaMachineChip } from "./KaluwaMachineChip";
 
 const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
@@ -93,6 +94,8 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         <span className="kaluwa-folder-name min-w-0 flex-1 truncate text-sidebar-foreground">
           {group.displayName}
         </span>
+        {/* Fork: which machine the project lives on. */}
+        <KaluwaMachineChip group={group} collapsed={collapsed} />
         {dot ? (
           <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
             <span className="sr-only">{m(FOLDER_DOT_LABEL[dot])}</span>

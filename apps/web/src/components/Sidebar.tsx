@@ -285,6 +285,7 @@ import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
+import { KaluwaSubagentRows, useKaluwaRouteChildParent } from "./sidebar/KaluwaSubagentRows";
 import {
   SidebarDragBoundary,
   SidebarSectionHeader,
@@ -1143,6 +1144,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeThreadRef === null
       ? null
       : scopedThreadKey(resolveListedAncestorThreadRef(routeThreadRef, threads));
+  // Fork: a sub-agent nested in Kaluwa's folder tree highlights its own row, not its parent's.
+  const kaluwaRouteChildParent = useKaluwaRouteChildParent(routeThreadKey);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   // The open draft's first send names its thread in place; a finalized draft reached by
   // navigation resolves through its redirect instead, and still reveals.
@@ -3605,7 +3608,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
-                            isActive={routeRowThreadKey === threadKey}
+                            isActive={
+                              routeRowThreadKey === threadKey &&
+                              !(folderRow !== undefined && kaluwaRouteChildParent === threadKey)
+                            }
                             revealRef={
                               routeRowThreadKey === threadKey ? revealActiveRow : undefined
                             }
@@ -3689,13 +3695,26 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 onContextMenu={handleProjectFolderContextMenu}
                               />,
                             );
-                            for (const thread of folder.threads) {
+                            for (const [index, thread] of folder.threads.entries()) {
                               items.push(
                                 renderThreadRow(
                                   thread,
                                   "active",
                                   sidebarFolderRowId(folder.group.projectKey),
                                 ),
+                              );
+                              // Fork: Kaluwa nests a thread's sub-agents under it.
+                              const parentKey = threadShellKey(thread);
+                              items.push(
+                                <KaluwaSubagentRows
+                                  key={`kaluwa-subagents:${parentKey}`}
+                                  parentKey={parentKey}
+                                  parentLast={index === folder.threads.length - 1}
+                                  collapsed={folder.collapsed}
+                                  routeThreadKey={routeThreadKey}
+                                  providerEntriesByEnvironment={providerEntriesByEnvironment}
+                                  onOpen={navigateToThread}
+                                />,
                               );
                             }
                           }

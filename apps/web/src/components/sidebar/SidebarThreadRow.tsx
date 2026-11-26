@@ -141,6 +141,12 @@ import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
 import { useThreadIntentPrefetch } from "./useThreadIntentPrefetch";
 import { KaluwaFolderTreeLines, KaluwaThreadAvatar } from "./KaluwaThreadAvatar";
+import {
+  KaluwaChildAttentionLabel,
+  KaluwaSubagentToggle,
+  useKaluwaChildAttention,
+  useKaluwaChildAttentionLabel,
+} from "./KaluwaSubagentRows";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -801,7 +807,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     : null;
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarRowStatus({ ...thread, lastVisitedAt });
+  // Fork: with Kaluwa's child marker on, a folder row shows its own status; the marker shows the child's.
+  const kaluwaChild = useKaluwaChildAttention(
+    variant === "folder" || variant === "folder-multiline" ? threadKey : null,
+    thread.pendingSubagentRequest,
+  );
+  const kaluwaChildLabel = useKaluwaChildAttentionLabel();
+  const status = resolveSidebarRowStatus({
+    ...thread,
+    lastVisitedAt,
+    ...(kaluwaChild.ownStatus ? { pendingSubagentRequest: null } : {}),
+  });
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -1387,6 +1403,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   showInstanceBadge={showInstanceBadge}
                   status={topStatus?.icon ?? null}
                   recede={shouldRecede}
+                  childAttention={kaluwaChild.attention}
                 />
               ) : (
                 <span
@@ -1404,6 +1421,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {draftIndicator}
               {title}
               {pinIndicator}
+              {inFolder ? (
+                <KaluwaSubagentToggle
+                  parentKey={threadKey}
+                  pendingSubagentRequest={thread.pendingSubagentRequest}
+                />
+              ) : null}
               {multiline ? null : terminalStatusIcon}
               {multiline ? null : issueBadge}
               {isRegeneratingTitle ? (
@@ -1458,6 +1481,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           <T>Dismiss Woke notification</T>
                         </TooltipPopup>
                       </Tooltip>
+                    ) : inFolder &&
+                      kaluwaChildLabel &&
+                      kaluwaChild.attention !== null &&
+                      topStatus?.icon !== "approval" &&
+                      topStatus?.icon !== "input" &&
+                      topStatus?.icon !== "failed" ? (
+                      <KaluwaChildAttentionLabel attention={kaluwaChild.attention} />
                     ) : inFolder && topStatus ? (
                       // Folder rows have no status line, so the status takes the time slot.
                       // Fork: the word alone, in the avatar ring's colour (see index.css).
