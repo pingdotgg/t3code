@@ -243,19 +243,30 @@ describe("thread links", () => {
   });
 
   it("titles the next paragraph's thread link after a block HTML comment", () => {
-    for (const [open, comment, after] of [
-      ["", "", ""],
-      ["", "   ", ""],
-      ["> ", "> ", "> "],
-      ["- ", "  ", "  "],
-    ]) {
-      const source = `${open}Note \`\n${comment}<!-- comment -->\n${after}<t3-thread://v2/elsewhere/abc> \``;
+    const link = "<t3-thread://v2/elsewhere/abc>";
+    const cases = [
+      ...[
+        ["", "", ""],
+        ["", "   ", ""],
+        ["> ", "> ", "> "],
+        ["- ", "  ", "  "],
+      ].flatMap(([open, comment, after]) => [
+        `${open}Note \`\n${comment}<!-- comment -->\n${after}${link} \``,
+        `${open}Note \`\n${comment}<!-- \` -->\n${after}${link} \``,
+      ]),
+      `Note \`\n<!-- comment --> \`\n${link} \``,
+      `Note \`\n<!--\n\`\n-->\n${link} \``,
+      `Note \`\n<!--\n\`\`\`\n-->\n${link} \``,
+      `> Note \`\n> <!--\n> \`\n> -->\n> ${link} \``,
+      `> Note \`\n> <!-- \`\n${link} \``,
+      `- <!-- \` -->\n  ${link} \``,
+      `- Note \`\n  <!--\n  \`\n  -->\n  ${link} \``,
+      `- Note \`\n  <!-- \`\n\n${link} \``,
+    ];
+    for (const source of cases) {
       expect(threadLinkRefs(source, EnvironmentId.make("here"))).toEqual([ref("elsewhere", "abc")]);
       expect(relabelThreadLinks(source, EnvironmentId.make("here"), () => "Design notes")).toBe(
-        source.replace(
-          "<t3-thread://v2/elsewhere/abc>",
-          "[Design notes](t3-thread://v2/elsewhere/abc)",
-        ),
+        source.replace(link, "[Design notes](t3-thread://v2/elsewhere/abc)"),
       );
     }
   });
@@ -275,6 +286,13 @@ describe("thread links", () => {
       ["> Use `example", "==="],
     ]) {
       const source = [...markdown, "<t3-thread://v2/local/t1> end`"].join("\n");
+      expect(threadLinkRefs(source, local)).toEqual([]);
+      expect(relabelThreadLinks(source, local, () => "New")).toBe(source);
+    }
+    for (const source of [
+      "<!-- ` -->\n`<t3-thread://v2/local/t1>`",
+      "```html\n<!--\n```\n`<t3-thread://v2/local/t1>`",
+    ]) {
       expect(threadLinkRefs(source, local)).toEqual([]);
       expect(relabelThreadLinks(source, local, () => "New")).toBe(source);
     }
