@@ -262,6 +262,7 @@ it("keeps the repository list reachable after Show more expands it", async () =>
                 onTaskFolderChange={() => {}}
                 explainsEmpty={false}
                 showActions={false}
+                showChanges={false}
               />
             )
           }
