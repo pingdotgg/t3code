@@ -10525,7 +10525,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: {
           ...currentOwner,
-          delegatedCompletion: { ...currentOwner.delegatedCompletion, disposition: "open" },
+          delegatedCompletion: {
+            ...currentOwner.delegatedCompletion,
+            disposition: "open",
+            reopenedAfterStop: true,
+          },
         },
       });
     }
@@ -15272,6 +15276,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     );
     const nextCohort = {
+      ...cohort,
       disposition: "open" as const,
       nextGeneration: generation + 1,
       delivery: {

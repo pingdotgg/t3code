@@ -41,6 +41,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { pendingStoppedDelegatedTasks } from "./RestartBackgroundNote.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -2379,10 +2380,8 @@ it.effect(
       yield* orchestrator.recoverDelegatedTasks;
       const interrupted = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
       assert.equal(interrupted.status, "interrupted");
-      assert.equal(
-        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
-        "interrupted",
-      );
+      const childTask = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      assert.equal(childTask.status, "interrupted");
 
       // The user presses Resume on the stopped child.
       const resumeMessageId = MessageId.make("message:stop-resume-child:resume");
@@ -2441,5 +2440,18 @@ it.effect(
       assert.equal(followup?.status, "completed");
       // The resume came after the Stop, so its result is owed to the parent like any follow-up's.
       assert.notEqual(followup?.completionDelivery?.state, "disposed");
+      // Reopening the cohort for the follow-up must not drop the Stop note for the interrupted task.
+      const parentProjection = yield* orchestrator.getThreadProjection(parentThreadId);
+      assert.deepEqual(
+        pendingStoppedDelegatedTasks({
+          providerThreadId: parentRun.providerThreadId,
+          runs: parentProjection.runs,
+          providerTurns: parentProjection.providerTurns,
+          attempts: parentProjection.attempts,
+          subagents: parentProjection.subagents,
+          compactionMessageIds: new Set(),
+        }).map((task) => task.id),
+        [childTask.id],
+      );
     }).pipe(Effect.provide(layerTest)),
 );
