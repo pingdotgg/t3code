@@ -32,10 +32,11 @@ export const isChangeRequestCloseCommand = (command: string) =>
   );
 
 // A quoted or bare shell word. An unclosed quote, as Codex's `/bin/zsh -lc "gh pr merge 19"`
-// leaves after the match, runs to the end. A closed one inside a word stays in that word and is
-// unquoted before matching, so `--id="19"` names 19 and `--subject="20"` names none.
+// leaves after the match, runs to the end. A closed one right after `=` stays in that word and is
+// unquoted before matching, so `--id="19"` names 19 and `--subject="20"` names none, while the
+// wrapper's closing quote in `-lc "gh pr merge 19" > "log"` still ends the word `19`.
 const SHELL_WORD =
-  /"((?:\\[\s\S]|[^"\\])*)"?|'([^']*)'?|((?:\\[\s\S]|[^\s"'\\]|"(?:\\[\s\S]|[^"\\])*"|'[^']*')+)/gu;
+  /"((?:\\[\s\S]|[^"\\])*)"?|'([^']*)'?|((?:\\[\s\S]|[^\s"'\\])+(?:(?<==)(?:"(?:\\[\s\S]|[^"\\])*"|'[^']*'))?)/gu;
 // A whole word that names one, so a number inside `--subject "Release 20"` does not. Of the
 // hosts' close commands only Azure's selects one with a flag, so `--subject=2026` and
 // `--body=<pull request URL>` are option text.

@@ -61,6 +61,8 @@ it.each([
   ["gh pr merge 19 --squash", [19]],
   ['gh pr merge "19" --squash', [19]],
   ['/bin/zsh -lc "gh pr merge 19"', [19]],
+  ['/bin/zsh -lc "gh pr merge 19" > "merge.log"', [19]],
+  [`/bin/zsh -lc 'gh pr merge 19' > 'merge.log'`, [19]],
   ['gh pr merge 19 --squash --subject "Release 20"', [19]],
   [`/bin/zsh -lc "gh pr merge 19 --subject 'Release 20'"`, [19]],
   ["gh pr merge 19 --body 'see https://github.com/o/r/pull/20'", [19]],
