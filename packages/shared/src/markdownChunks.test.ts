@@ -118,6 +118,14 @@ describe("splitMarkdown", () => {
       "# literal",
       "</div>",
       "",
+      '<p class="lead">text',
+      "# literal",
+      "</p>",
+      "",
+      '<span class="box">',
+      "# literal",
+      "</span>",
+      "",
       "<details>",
       "<summary>Answer</summary>",
       "",
@@ -171,8 +179,22 @@ describe("splitMarkdown", () => {
     ]);
   });
 
-  it("treats an autolink line as a paragraph, so a following fence still opens", () => {
-    const text = ["<https://example.com>", "```md", "", "# literal", "```", "", "after"].join("\n");
+  it("treats an autolink or inline HTML line as a paragraph, so a following fence still opens", () => {
+    const text = [
+      "<https://example.com>",
+      "```md",
+      "",
+      "# literal",
+      "```",
+      "",
+      "<b>bold</b> text",
+      "```md",
+      "",
+      "# literal",
+      "```",
+      "",
+      "after",
+    ].join("\n");
     expect(starts(text)).toEqual(["<https://example.com>", "after"]);
   });
 

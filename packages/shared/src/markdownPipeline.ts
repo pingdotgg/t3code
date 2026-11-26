@@ -99,11 +99,11 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
-  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
   remarkNormalizeListItemIndentation,
+  remarkLinkAbsoluteFilePaths,
   remarkCodexDirectives,
   remarkBreakAroundImageLines,
   remarkPreserveCodeMeta,
@@ -116,11 +116,11 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkKeepLeadingWhitespace,
-  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
   remarkNormalizeListItemIndentation,
+  remarkLinkAbsoluteFilePaths,
   remarkCodexDirectives,
   remarkBreakAroundImageLines,
   remarkBreaks,
@@ -594,12 +594,11 @@ function remarkPreserveCodeMeta() {
 function remarkNormalizeLinksAndTagInlineCode() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
-      if (
-        (node.type === "link" || node.type === "definition") &&
-        typeof node.url === "string" &&
-        /^[A-Za-z]:[\\/]/.test(node.url)
-      ) {
-        node.url = `file:///${node.url.replaceAll("\\", "/")}`;
+      if ((node.type === "link" || node.type === "definition") && typeof node.url === "string") {
+        const path = node.url.replace(/%5C/gi, "\\");
+        if (/^[A-Za-z]:[\\/]/.test(path)) {
+          node.url = `file:///${path.replaceAll("\\", "/")}`;
+        }
       }
       if (node.type === "inlineCode" && !insideLink) {
         node.data = {
