@@ -406,7 +406,13 @@ Third}`;
                 { output_type: "display_data", data: { "text/markdown": ["| a |\n", "|---|"] } },
                 { data: { "text/plain": "plain wins", "text/markdown": "**markdown**" } },
                 { data: { "text/plain": "", "text/markdown": "**ready**" } },
-                { data: { "text/plain": "\u001b[0m", "text/markdown": "ANSI fallback" } },
+                {
+                  data: {
+                    "text/plain":
+                      "\u001b[0m\u001b[2K\u001b[?25l\u001b]0;title\u0007\u001b]0;title\u001b\\",
+                    "text/markdown": "ANSI fallback",
+                  },
+                },
               ],
             },
           ],
