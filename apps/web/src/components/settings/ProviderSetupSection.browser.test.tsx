@@ -286,21 +286,12 @@ describe("Antigravity setup", () => {
     });
     expect(screen.button("Sign in")?.disabled).toBe(true);
     expect(setup.startAuth).not.toHaveBeenCalled();
-    expect(screen.button("Update Antigravity")).toBeNull();
-    expect(screen.button("Reinstall Antigravity")).toBeNull();
-    expect(screen.button("Install managed runtime")).toBeNull();
-    expect(screen.button("Install Antigravity")).toBeNull();
     expect(screen.button("Remove downloaded runtime")).toBeNull();
-    expect(
-      screen.occurrences(
-        "Uses the custom binary path below. Clear it to manage installation in T3 Code.",
-      ),
-    ).toBe(1);
     expect(screen.occurrences("Automatic installation unavailable.")).toBe(0);
     expect(screen.occurrences("Managed runtime failed.")).toBe(0);
   });
 
-  it("hides managed update and removal actions for an installed custom binary path", async () => {
+  it("hides a shared managed download for an installed custom binary path", async () => {
     resetSetup();
     setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
     setup.installation = {
@@ -325,20 +316,6 @@ describe("Antigravity setup", () => {
     expect(screen.occurrences("Installed.")).toBe(1);
     expect(screen.occurrences("Downloading")).toBe(0);
     expect(screen.button("Cancel installation")).toBeNull();
-    expect(screen.button("Update Antigravity")).toBeNull();
-    expect(screen.button("Remove downloaded runtime")).toBeNull();
-
-    setup.installation = {
-      ...setup.installation,
-      operationId: null,
-      phase: "idle",
-      downloadedBytes: 0,
-      totalBytes: null,
-      message: "Managed runtime failed.",
-    };
-    await publish();
-    expect(screen.occurrences("Installed.")).toBe(1);
-    expect(screen.occurrences("Managed runtime failed.")).toBe(0);
     expect(screen.button("Update Antigravity")).toBeNull();
     expect(screen.button("Remove downloaded runtime")).toBeNull();
   });

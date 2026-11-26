@@ -132,14 +132,12 @@ function ProviderSetupActions({
   const pendingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const usesCustomBinary = Boolean(binaryPath?.trim());
-  const canManageInstall = !usesCustomBinary && Boolean(provider.setup?.canInstall);
   const authActive =
     auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
   const installActive =
-    !usesCustomBinary &&
-    (installation?.phase === "downloading" ||
-      installation?.phase === "extracting" ||
-      installation?.phase === "verifying");
+    installation?.phase === "downloading" ||
+    installation?.phase === "extracting" ||
+    installation?.phase === "verifying";
   const installed =
     provider.installed || (!usesCustomBinary && installation?.installedVersion != null);
   const queryError = authQuery.error ?? (usesCustomBinary ? null : installQuery.error);
@@ -276,7 +274,7 @@ function ProviderSetupActions({
                 ) : null}
                 <div className="grid min-h-7 grid-cols-[1.75rem_minmax(0,1fr)] gap-2">
                   <div className="col-start-2 row-start-1 grid">
-                    {installActive && installation?.operationId ? (
+                    {installActive && installation.operationId ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -291,7 +289,7 @@ function ProviderSetupActions({
                       >
                         <T>Cancel installation</T>
                       </Button>
-                    ) : !installActive && canManageInstall ? (
+                    ) : !installActive && provider.setup?.canInstall ? (
                       <Button
                         size="sm"
                         variant="outline"
