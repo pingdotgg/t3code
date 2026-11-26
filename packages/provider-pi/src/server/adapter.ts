@@ -1,6 +1,10 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeUtil from "node:util";
-import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { readToolOutputImage } from "@t3tools/shared/toolOutput";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
@@ -543,19 +547,51 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const startConnection = Effect.fnUntraced(function* (sessionPath?: string) {
         const connectionScope = yield* Scope.fork(scope, "sequential");
         return yield* Effect.gen(function* () {
+          const baseEnvironment: NodeJS.ProcessEnv = {
+            ...options.environment,
+            ...input.sessionEnvironmentOverride,
+            T3CODE_THREAD_ID: input.threadId,
+          };
+          let sandboxPiAgentDir: string | undefined;
+          if (processSandbox.enabled) {
+            const configuredAgentDir = baseEnvironment.PI_CODING_AGENT_DIR?.trim();
+            if (configuredAgentDir !== undefined && configuredAgentDir.length > 0) {
+              sandboxPiAgentDir = configuredAgentDir;
+            } else {
+              const safeInstanceId =
+                options.instanceId.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^\.+$/, "default") ||
+                "default";
+              sandboxPiAgentDir = path.join(host.paths.stateDir, "providers", "pi", safeInstanceId);
+              yield* fileSystem.makeDirectory(sandboxPiAgentDir, { recursive: true });
+              baseEnvironment.PI_CODING_AGENT_DIR = sandboxPiAgentDir;
+            }
+          }
           const launch = buildPiRpcLaunch({
             launchArgs: resolvedLaunchArgs.args,
             // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
-            environment: {
-              ...options.environment,
-              ...input.sessionEnvironmentOverride,
-              T3CODE_THREAD_ID: input.threadId,
-            },
+            environment: baseEnvironment,
             mcpSession,
             extensionPath,
             sessionPath,
             runtimeMode: input.runtimePolicy.runtimeMode,
           });
+          const sessionDir = sessionPath !== undefined ? path.dirname(sessionPath) : undefined;
+          const resolvedAgentDir =
+            sandboxPiAgentDir !== undefined ? path.resolve(sandboxPiAgentDir) : undefined;
+          const resolvedCwd = path.resolve(cwd);
+          const needsSeparateSessionDirBind =
+            sessionDir !== undefined &&
+            (() => {
+              const resolvedSessionDir = path.resolve(sessionDir);
+              const insideAgentDir =
+                resolvedAgentDir !== undefined &&
+                (resolvedSessionDir === resolvedAgentDir ||
+                  resolvedSessionDir.startsWith(`${resolvedAgentDir}${path.sep}`));
+              const insideCwd =
+                resolvedSessionDir === resolvedCwd ||
+                resolvedSessionDir.startsWith(`${resolvedCwd}${path.sep}`);
+              return !insideAgentDir && !insideCwd;
+            })();
           const sandboxedLaunch = processSandbox.enabled
             ? yield* processSandbox
                 .wrap({
@@ -564,8 +600,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   cwd,
                   env: launch.env,
                   extraRoBinds: [extensionPath],
-                  ...(sessionPath !== undefined
-                    ? { extraRwBinds: [path.dirname(sessionPath)] }
+                  ...(sandboxPiAgentDir !== undefined
+                    ? { extraProviderProfileDirs: [sandboxPiAgentDir] }
+                    : {}),
+                  ...(needsSeparateSessionDirBind && sessionDir !== undefined
+                    ? { extraRwBinds: [sessionDir] }
                     : {}),
                   name: "pi",
                   threadId: input.threadId,
@@ -580,13 +619,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       }),
                   ),
                 )
-            : { command: options.settings.binaryPath || "pi", args: launch.args };
+            : {
+                command: options.settings.binaryPath || "pi",
+                args: launch.args,
+                hostEnv: launch.env,
+              };
+          const effectiveEnv = processSandbox.enabled
+            ? (sandboxedLaunch.hostEnv ?? sanitizeHostEnvForSandboxLaunch(launch.env) ?? {})
+            : launch.env;
           const scopedLaunch = yield* agentScope.wrap({
             command: sandboxedLaunch.command,
             args: sandboxedLaunch.args,
             name: "pi",
             threadId: input.threadId,
-            env: launch.env,
+            env: effectiveEnv,
           });
           // Finalizers run in reverse order: reap detached work after terminating Pi.
           const scopeUnit = scopedLaunch.unit;
@@ -599,7 +645,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             command: scopedLaunch.command,
             args: scopedLaunch.args,
             cwd,
-            env: launch.env,
+            env: effectiveEnv,
           });
           // Its tools carry T3CODE_THREAD_ID, so port discovery must scan while Pi runs.
           const trackAgent = host.trackAgent;

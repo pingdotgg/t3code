@@ -5,6 +5,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { makeAcpClientTerminals } from "@t3tools/provider-acp/server/clientTerminals";
@@ -24,9 +25,11 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
+import { resolveClaudeSandboxExtraRoBinds } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
   buildBwrapArgs,
   buildBwrapProbeArgs,
@@ -164,15 +167,19 @@ describe("bwrapSandbox pure helpers", () => {
     const configIdx = args.indexOf("/srv/repos/app/.git/config");
     const maskIdx = args.indexOf("/srv/repos/app/.git/worktrees");
     const wtGitIdx = args.indexOf("/srv/repos/app/.git/worktrees/wt-alice");
+    const wtConfigIdx = args.indexOf("/srv/repos/app/.git/worktrees/wt-alice/config.worktree");
     expect(commonIdx).toBeGreaterThan(-1);
     expect(hooksIdx).toBeGreaterThan(commonIdx);
     expect(args[hooksIdx - 1]).toBe("--tmpfs");
     expect(configIdx).toBeGreaterThan(commonIdx);
-    expect(args[configIdx - 1]).toBe("--ro-bind-try");
+    expect(args[configIdx - 1]).toBe("--ro-bind");
     expect(maskIdx).toBeGreaterThan(commonIdx);
     expect(args[maskIdx - 1]).toBe("--tmpfs");
     expect(wtGitIdx).toBeGreaterThan(maskIdx);
     expect(args[wtGitIdx - 1]).toBe("--bind");
+    expect(wtConfigIdx).toBeGreaterThan(wtGitIdx);
+    expect(args[wtConfigIdx - 2]).toBe("--ro-bind");
+    expect(args[wtConfigIdx - 1]).toBe("/dev/null");
 
     // Deduplicated profile bind and already-covered OS binds (/usr, /opt) are not duplicated.
     const profileOccurrences = args.filter(
@@ -204,6 +211,7 @@ describe("bwrapSandbox pure helpers", () => {
       GEMINI_HOME: "/var/lib/t3runner/userdata/providers/antigravity/hash1",
       CODEX_HOME: "/var/lib/t3runner/userdata/team-profiles/codex/hash2",
       CLAUDE_CONFIG_DIR: "/var/lib/t3runner/userdata/team-profiles/claudeAgent/hash3",
+      PI_CODING_AGENT_DIR: "/var/lib/t3runner/userdata/providers/pi/default",
       T3_TEAM_PROFILE_DIR: "/var/lib/t3runner/userdata/team-profiles/pi/hash4",
       GIT_ASKPASS: "/tmp/t3-turn-a/askpass.sh",
       GH_CONFIG_DIR: "/tmp/t3-turn-a/gh",
@@ -216,6 +224,7 @@ describe("bwrapSandbox pure helpers", () => {
       "/var/lib/t3runner/userdata/providers/antigravity/hash1",
       "/var/lib/t3runner/userdata/team-profiles/codex/hash2",
       "/var/lib/t3runner/userdata/team-profiles/claudeAgent/hash3",
+      "/var/lib/t3runner/userdata/providers/pi/default",
       "/var/lib/t3runner/userdata/team-profiles/pi/hash4",
     ]);
     expect(extracted.helperRoPaths).toEqual([
@@ -234,16 +243,25 @@ describe("bwrapSandbox pure helpers", () => {
       LD_LIBRARY_PATH: "/tmp/evil-libs",
       LD_AUDIT: "/tmp/audit.so",
       BASH_ENV: "/tmp/evil.sh",
+      "BASH_FUNC_evil%%": "() { id; }",
       ENV: "/tmp/evil.sh",
       GCONV_PATH: "/tmp/gconv",
+      LOCPATH: "/tmp/locales",
       NODE_OPTIONS: "--require /tmp/evil.js",
+      CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
       TERM: "xterm-256color",
     });
 
     expect(sanitized).toEqual({
       PATH: "/usr/bin:/bin",
+      CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
       TERM: "xterm-256color",
     });
+  });
+
+  it("resolves Claude Agent SDK extra RO bind directories without throwing", () => {
+    const binds = resolveClaudeSandboxExtraRoBinds(undefined);
+    expect(binds.some((dir) => dir.includes("claude-agent-sdk"))).toBe(true);
   });
 
   it("classifies user-namespace and AppArmor probe stderr accurately", () => {
@@ -314,14 +332,34 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           expect(wrapped.args).not.toContain(wtBob);
           expect(wrapped.args).not.toContain(wtBobGitDir);
 
-          // Hooks masked via tmpfs, config bound RO, and sibling worktrees masked via tmpfs.
+          // Hooks masked via tmpfs, config & absent config.worktree locked RO, and sibling worktrees masked via tmpfs.
           const hooksIdx = wrapped.args.indexOf(NodePath.join(mainGitDir, "hooks"));
           expect(hooksIdx).toBeGreaterThan(-1);
           expect(wrapped.args[hooksIdx - 1]).toBe("--tmpfs");
 
           const configIdx = wrapped.args.indexOf(NodePath.join(mainGitDir, "config"));
           expect(configIdx).toBeGreaterThan(-1);
-          expect(wrapped.args[configIdx - 1]).toBe("--ro-bind-try");
+          expect(wrapped.args[configIdx - 1]).toBe("--ro-bind");
+
+          const wtConfigPath = NodePath.join(wtAliceGitDir, "config.worktree");
+          const absentWtConfigIdx = wrapped.args.indexOf(wtConfigPath);
+          expect(absentWtConfigIdx).toBeGreaterThan(-1);
+          expect(wrapped.args[absentWtConfigIdx - 2]).toBe("--ro-bind");
+          expect(wrapped.args[absentWtConfigIdx - 1]).toBe("/dev/null");
+
+          // When config.worktree already exists, bind the existing file read-only (not /dev/null).
+          NodeFS.writeFileSync(wtConfigPath, "[core]\n\tsparseCheckout = true\n");
+          const wrappedWithWtConfig = yield* wrapCommandWithBwrap({
+            bwrapBinaryPath: "/usr/bin/bwrap",
+            command: "/bin/sh",
+            args: ["-c", "git status"],
+            cwd: wtAlice,
+            ownStateDir,
+          });
+          const presentWtConfigIdx = wrappedWithWtConfig.args.indexOf(wtConfigPath);
+          expect(presentWtConfigIdx).toBeGreaterThan(-1);
+          expect(wrappedWithWtConfig.args[presentWtConfigIdx - 1]).toBe("--ro-bind");
+          expect(wrappedWithWtConfig.args[presentWtConfigIdx + 1]).toBe(wtConfigPath);
 
           const maskIdx = wrapped.args.indexOf(NodePath.join(mainGitDir, "worktrees"));
           expect(maskIdx).toBeGreaterThan(-1);
@@ -364,27 +402,115 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
       }),
   );
 
-  it.effect("does not add extra git binds for a regular repo with a .git directory", () =>
-    Effect.gen(function* () {
-      const root = makeTempFixtureDir("t3-bwrap-regular-git-");
-      try {
-        const repoDir = NodePath.join(root, "repo");
-        NodeFS.mkdirSync(NodePath.join(repoDir, ".git", "objects"), { recursive: true });
-        NodeFS.writeFileSync(NodePath.join(repoDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+  it.effect(
+    "locks .git/hooks, .git/config, and sibling .git/worktrees for ordinary .git directory repos",
+    () =>
+      Effect.gen(function* () {
+        const root = makeTempFixtureDir("t3-bwrap-regular-git-");
+        try {
+          const repoDir = NodePath.join(root, "repo");
+          const gitDir = NodePath.join(repoDir, ".git");
+          NodeFS.mkdirSync(NodePath.join(gitDir, "objects"), { recursive: true });
+          NodeFS.mkdirSync(NodePath.join(gitDir, "worktrees", "wt-other"), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(gitDir, "HEAD"), "ref: refs/heads/main\n");
 
-        const wrapped = yield* wrapCommandWithBwrap({
-          bwrapBinaryPath: "/usr/bin/bwrap",
-          command: "/bin/sh",
-          args: ["-c", "true"],
-          cwd: repoDir,
-        });
+          // Absent .git/config is locked with --ro-bind /dev/null so it cannot be created.
+          const withoutConfig = yield* wrapCommandWithBwrap({
+            bwrapBinaryPath: "/usr/bin/bwrap",
+            command: "/bin/sh",
+            args: ["-c", "true"],
+            cwd: repoDir,
+          });
+          const bindTargets = withoutConfig.args.filter(
+            (_, idx) => withoutConfig.args[idx - 1] === "--bind",
+          );
+          expect(bindTargets).toEqual([repoDir]);
+          const hooksIdx = withoutConfig.args.indexOf(NodePath.join(gitDir, "hooks"));
+          expect(hooksIdx).toBeGreaterThan(-1);
+          expect(withoutConfig.args[hooksIdx - 1]).toBe("--tmpfs");
+          const absentConfigIdx = withoutConfig.args.indexOf(NodePath.join(gitDir, "config"));
+          expect(absentConfigIdx).toBeGreaterThan(-1);
+          expect(withoutConfig.args[absentConfigIdx - 2]).toBe("--ro-bind");
+          expect(withoutConfig.args[absentConfigIdx - 1]).toBe("/dev/null");
+          const worktreesIdx = withoutConfig.args.indexOf(NodePath.join(gitDir, "worktrees"));
+          expect(worktreesIdx).toBeGreaterThan(-1);
+          expect(withoutConfig.args[worktreesIdx - 1]).toBe("--tmpfs");
 
-        const bindTargets = wrapped.args.filter((_, idx) => wrapped.args[idx - 1] === "--bind");
-        expect(bindTargets).toEqual([repoDir]);
-      } finally {
-        NodeFS.rmSync(root, { recursive: true, force: true });
-      }
-    }),
+          // Present .git/config is bound read-only directly.
+          const configPath = NodePath.join(gitDir, "config");
+          NodeFS.writeFileSync(configPath, "[core]\n\trepositoryformatversion = 0\n");
+          const withConfig = yield* wrapCommandWithBwrap({
+            bwrapBinaryPath: "/usr/bin/bwrap",
+            command: "/bin/sh",
+            args: ["-c", "true"],
+            cwd: repoDir,
+          });
+          const presentConfigIdx = withConfig.args.indexOf(configPath);
+          expect(presentConfigIdx).toBeGreaterThan(-1);
+          expect(withConfig.args[presentConfigIdx - 1]).toBe("--ro-bind");
+          expect(withConfig.args[presentConfigIdx + 1]).toBe(configPath);
+        } finally {
+          NodeFS.rmSync(root, { recursive: true, force: true });
+        }
+      }),
+  );
+
+  it.effect(
+    "auto-binds npm package node_modules tree and non-system shebang interpreter RO for external script CLIs without widening unsafe roots",
+    () =>
+      Effect.gen(function* () {
+        const root = makeTempFixtureDir("t3-bwrap-ext-cli-");
+        try {
+          const fakeHome = NodePath.join(root, "home", "runner");
+          const toolsRoot = NodePath.join(fakeHome, ".local", "npm-global");
+          const nodeModulesDir = NodePath.join(toolsRoot, "lib", "node_modules");
+          const pkgDir = NodePath.join(nodeModulesDir, "@acme", "pi-cli");
+          const scriptPath = NodePath.join(pkgDir, "dist", "cli.js");
+          const nodeBinDir = NodePath.join(fakeHome, ".nvm", "v22", "bin");
+          const fakeNode = NodePath.join(nodeBinDir, "node");
+          const cwd = NodePath.join(root, "worktrees", "wt-1");
+          NodeFS.mkdirSync(NodePath.dirname(scriptPath), { recursive: true });
+          NodeFS.mkdirSync(nodeBinDir, { recursive: true });
+          NodeFS.mkdirSync(cwd, { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(pkgDir, "package.json"), '{"name":"@acme/pi-cli"}\n');
+          NodeFS.writeFileSync(scriptPath, "#!/usr/bin/env node\nconsole.log('ok');\n", {
+            mode: 0o755,
+          });
+          NodeFS.writeFileSync(fakeNode, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+          const wrapped = yield* wrapCommandWithBwrap({
+            bwrapBinaryPath: "/usr/bin/bwrap",
+            command: scriptPath,
+            args: ["--mode", "rpc"],
+            cwd,
+            env: { HOME: fakeHome, PATH: `${nodeBinDir}:/usr/bin:/bin` },
+          });
+          const roBinds = wrapped.args.filter((_, idx) => wrapped.args[idx - 1] === "--ro-bind");
+          expect(roBinds).toContain(scriptPath);
+          expect(roBinds).toContain(nodeModulesDir);
+          expect(roBinds).toContain(fakeNode);
+          expect(roBinds).not.toContain(fakeHome);
+
+          // Must never widen to HOME even if a stray package.json sits directly inside HOME.
+          NodeFS.writeFileSync(NodePath.join(fakeHome, "package.json"), "{}\n");
+          const homeScript = NodePath.join(fakeHome, "tool.js");
+          NodeFS.writeFileSync(homeScript, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+          const wrappedHomeScript = yield* wrapCommandWithBwrap({
+            bwrapBinaryPath: "/usr/bin/bwrap",
+            command: homeScript,
+            args: [],
+            cwd,
+            env: { HOME: fakeHome, PATH: "/usr/bin:/bin" },
+          });
+          const homeRoBinds = wrappedHomeScript.args.filter(
+            (_, idx) => wrappedHomeScript.args[idx - 1] === "--ro-bind",
+          );
+          expect(homeRoBinds).toContain(homeScript);
+          expect(homeRoBinds).not.toContain(fakeHome);
+        } finally {
+          NodeFS.rmSync(root, { recursive: true, force: true });
+        }
+      }),
   );
 
   it.effect(
@@ -406,6 +532,7 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             "team__team-1__codex",
             "shadow",
           );
+          const piProfileDir = NodePath.join(ownStateDir, "providers", "pi", "pi-default");
           const hubBase = NodePath.join(root, "t3hub");
           const hubUserdata = NodePath.join(hubBase, "userdata");
           const validCwd = NodePath.join(runnerBase, "worktrees", "wt-alice");
@@ -415,6 +542,7 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           NodeFS.writeFileSync(sqlitePath, "sqlite");
           NodeFS.mkdirSync(isolatedCodexProfile, { recursive: true });
           NodeFS.mkdirSync(managedShadowHome, { recursive: true });
+          NodeFS.mkdirSync(piProfileDir, { recursive: true });
           NodeFS.mkdirSync(hubUserdata, { recursive: true });
           NodeFS.writeFileSync(NodePath.join(hubUserdata, "statev2.sqlite"), "hub-db");
           NodeFS.mkdirSync(validCwd, { recursive: true });
@@ -494,7 +622,7 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             );
           }
 
-          // Managed Codex 4-segment shadow home + shared team profile ARE allowed as providerProfileDirs...
+          // Managed Codex 4-segment shadow home + shared team profile + Pi profile ARE allowed as providerProfileDirs...
           const allowedManaged = yield* wrapCommandWithBwrap({
             bwrapBinaryPath: "/usr/bin/bwrap",
             command: "/bin/sh",
@@ -502,10 +630,11 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             cwd: validCwd,
             ownStateDir,
             forbiddenUserdataDirs: [hubBase, hubUserdata],
-            env: { CODEX_HOME: managedShadowHome },
+            env: { CODEX_HOME: managedShadowHome, PI_CODING_AGENT_DIR: piProfileDir },
             providerProfileDirs: [isolatedCodexProfile],
           });
           expect(allowedManaged.args).toContain(managedShadowHome);
+          expect(allowedManaged.args).toContain(piProfileDir);
           expect(allowedManaged.args).toContain(isolatedCodexProfile);
           expect(allowedManaged.args).not.toContain(ownStateDir);
           // Process args containing __managed-chatgpt-token MUST NEVER trigger a --bind of siblingDir!
@@ -749,16 +878,22 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           NodeFS.mkdirSync(codexProfile, { recursive: true });
           NodeFS.mkdirSync(codexShadow, { recursive: true });
 
-          // 3. Codex spawn integration: explicit extraSocketPaths + shadow/shared profile binds.
+          // 3. Codex spawn integration: explicit extraSocketPaths + shadow/shared profile binds + extendEnv: false.
           const codexCmd = yield* makeCodexAppServerSpawnCommand({
             command: fakeCodex,
             args: ["app-server"],
             cwd: wtDir,
             env: { PATH: binDir, CODEX_HOME: codexShadow },
+            extendEnv: true,
             extraProviderProfileDirs: [codexProfile],
             extraSocketPaths: [realSocket],
             threadId: "thread-1",
           }).pipe(
+            Effect.provideService(HostProcess.Environment, {
+              PATH: binDir,
+              LD_PRELOAD: `${wtDir}/evil.so`,
+              NODE_OPTIONS: "--require /tmp/evil.js",
+            }),
             Effect.provideService(ProcessSandbox, enabledSandbox),
             Effect.provideService(AgentScope, AgentScope.defaultValue()),
           );
@@ -774,6 +909,9 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             expect(codexCmd.args).not.toContain(stateDir);
             expect(codexCmd.args).not.toContain(siblingDir);
             expect(codexCmd.args.at(-1)).toBe("app-server");
+            expect(codexCmd.options.extendEnv).toBe(false);
+            expect(codexCmd.options.env?.LD_PRELOAD).toBeUndefined();
+            expect(codexCmd.options.env?.NODE_OPTIONS).toBeUndefined();
           }
 
           // 4. ACP client terminals: LD_PRELOAD must NOT enter host env (only --setenv inside bwrap),
@@ -960,6 +1098,75 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
         }
       }),
   );
+
+  it.effect(
+    "disables core.fsmonitor and core.hooksPath on host GitVcsDriver when teamBwrapSandbox is enabled",
+    () =>
+      Effect.gen(function* () {
+        const root = makeTempFixtureDir("t3-bwrap-host-git-");
+        try {
+          const baseDir = NodePath.join(root, "runner");
+          const mainRepo = NodePath.join(root, "repo");
+          const wtAlice = NodePath.join(root, "worktrees", "wt-alice");
+          const markerFile = NodePath.join(root, "fsmonitor-pwned");
+          const evilScript = NodePath.join(root, "evil-fsmonitor.sh");
+          NodeFS.mkdirSync(mainRepo, { recursive: true });
+          NodeFS.writeFileSync(evilScript, `#!/bin/sh\ntouch "${markerFile}"\n`, { mode: 0o755 });
+
+          NodeChildProcess.execFileSync("git", ["init", "-b", "main"], { cwd: mainRepo });
+          NodeChildProcess.execFileSync("git", ["config", "user.name", "Test"], { cwd: mainRepo });
+          NodeChildProcess.execFileSync("git", ["config", "user.email", "test@example.com"], {
+            cwd: mainRepo,
+          });
+          NodeFS.writeFileSync(NodePath.join(mainRepo, "README.md"), "init\n");
+          NodeChildProcess.execFileSync("git", ["add", "README.md"], { cwd: mainRepo });
+          NodeChildProcess.execFileSync("git", ["commit", "-m", "init"], { cwd: mainRepo });
+          NodeChildProcess.execFileSync("git", ["config", "extensions.worktreeConfig", "true"], {
+            cwd: mainRepo,
+          });
+          NodeChildProcess.execFileSync("git", ["worktree", "add", "-b", "alice", wtAlice], {
+            cwd: mainRepo,
+          });
+          // Plant hostile core.fsmonitor in both shared repo config and per-worktree config.worktree.
+          NodeChildProcess.execFileSync("git", ["config", "core.fsmonitor", evilScript], {
+            cwd: mainRepo,
+          });
+          NodeChildProcess.execFileSync(
+            "git",
+            ["config", "--worktree", "core.fsmonitor", evilScript],
+            { cwd: wtAlice },
+          );
+
+          const sandboxServerConfigLayer = Layer.effect(
+            ServerConfig.ServerConfig,
+            Effect.gen(function* () {
+              const cfg = yield* ServerConfig.ServerConfig;
+              return { ...cfg, teamBwrapSandbox: true };
+            }),
+          ).pipe(Layer.provide(ServerConfig.layerTest(mainRepo, baseDir)));
+
+          const driverLayer = GitVcsDriver.layer.pipe(
+            Layer.provide(sandboxServerConfigLayer),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          );
+
+          const statusOnMain = yield* Effect.gen(function* () {
+            const vcs = yield* GitVcsDriver.GitVcsDriver;
+            return yield* vcs.status({ cwd: mainRepo });
+          }).pipe(Effect.provide(driverLayer));
+          const statusOnWt = yield* Effect.gen(function* () {
+            const vcs = yield* GitVcsDriver.GitVcsDriver;
+            return yield* vcs.status({ cwd: wtAlice });
+          }).pipe(Effect.provide(driverLayer));
+
+          expect(statusOnMain.refName).toBe("main");
+          expect(statusOnWt.refName).toBe("alice");
+          expect(NodeFS.existsSync(markerFile)).toBe(false);
+        } finally {
+          NodeFS.rmSync(root, { recursive: true, force: true });
+        }
+      }),
+  );
 });
 
 it.live.skipIf(REAL_BWRAP_BINARY === null)(
@@ -1002,6 +1209,7 @@ it.live.skipIf(REAL_BWRAP_BINARY === null)(
           `touch "$HOME/scratch-ok" && echo "HOME_WRITABLE"`,
           `if echo "tamper" > "${wtAlice}/.git" 2>/dev/null; then echo "LEAK_DOTGIT_RW"; else echo "DOTGIT_RO"; fi`,
           `if echo "tamper" >> "${mainRepo}/.git/config" 2>/dev/null; then echo "LEAK_CONFIG_RW"; else echo "CONFIG_RO"; fi`,
+          `if echo "[core]" > "${mainRepo}/.git/worktrees/wt-alice/config.worktree" 2>/dev/null; then echo "LEAK_WTCONFIG_RW"; else echo "WTCONFIG_RO"; fi`,
           `git -c user.name=Alice -c user.email=alice@example.com add alice.txt && git -c user.name=Alice -c user.email=alice@example.com commit -m "alice commit" >/dev/null && echo "GIT_COMMIT_OK"`,
         ].join("; ");
 
@@ -1025,6 +1233,7 @@ it.live.skipIf(REAL_BWRAP_BINARY === null)(
         expect(output.stdout).toContain("HOME_WRITABLE");
         expect(output.stdout).toContain("DOTGIT_RO");
         expect(output.stdout).toContain("CONFIG_RO");
+        expect(output.stdout).toContain("WTCONFIG_RO");
         expect(output.stdout).toContain("GIT_COMMIT_OK");
         expect(output.stdout).not.toContain("LEAK_");
       } finally {

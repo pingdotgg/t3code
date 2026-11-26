@@ -70,8 +70,14 @@ import type {
   AskUserQuestionInput,
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess and resolves bundled package dirs on disk.
 import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- resolves bundled SDK/platform package directories for bwrap RO binds.
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- pure path joins/dirnames for Claude SDK RO bind discovery.
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -82,7 +88,11 @@ import {
   MCP_APP_OUTPUT_KEY,
   mcpAppToolResourceUri,
 } from "@t3tools/shared/mcpApp";
-import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import * as ProviderProcesses from "../../process/providerProcesses.ts";
 import * as SpawnWorker from "../../process/SpawnWorker.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -382,6 +392,50 @@ function mergeClaudeStreamUsage(
 }
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
+
+export function resolveClaudeSandboxExtraRoBinds(
+  binaryPath: string | undefined,
+): ReadonlyArray<string> {
+  const dirs = new Set<string>();
+  const addDirWithRealpath = (targetPath: string) => {
+    if (!NodePath.isAbsolute(targetPath)) return;
+    dirs.add(NodePath.dirname(targetPath));
+    try {
+      const real = NodeFS.realpathSync(targetPath);
+      dirs.add(NodePath.dirname(real));
+    } catch {
+      // Keep lexical dirname when realpath is unavailable.
+    }
+  };
+  if (binaryPath !== undefined) {
+    addDirWithRealpath(binaryPath);
+  }
+  try {
+    const sdkEntryUrl = import.meta.resolve("@anthropic-ai/claude-agent-sdk");
+    if (sdkEntryUrl.startsWith("file://")) {
+      const sdkEntryPath = NodeURL.fileURLToPath(sdkEntryUrl);
+      addDirWithRealpath(sdkEntryPath);
+      const requireFromSdk = NodeModule.createRequire(sdkEntryPath);
+      const arch = HostProcess.Architecture.defaultValue();
+      for (const pkgName of [
+        `@anthropic-ai/claude-agent-sdk-linux-${arch}`,
+        `@anthropic-ai/claude-agent-sdk-linux-${arch}-musl`,
+      ]) {
+        for (const subpath of ["/package.json", "/claude", ""]) {
+          try {
+            addDirWithRealpath(requireFromSdk.resolve(`${pkgName}${subpath}`));
+            break;
+          } catch {
+            // Optional platform package may not be installed on this host.
+          }
+        }
+      }
+    }
+  } catch {
+    // Best-effort resolution; explicit binaryPath or system RO binds still apply.
+  }
+  return [...dirs];
+}
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 const CLAUDE_BOOT_TIMEOUT = "5 minutes";
@@ -1745,27 +1799,10 @@ export const layerQueryRunner: Layer.Layer<
       const isNativeBinary =
         binaryPath !== undefined &&
         !CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext));
-      const claudeExtraRoBinds = (() => {
-        if (!processSandbox.enabled || isNativeBinary) return [] as Array<string>;
-        const dirs = new Set<string>();
-        if (binaryPath !== undefined && path.isAbsolute(binaryPath)) {
-          dirs.add(path.dirname(binaryPath));
-        }
-        try {
-          const sdkPackageUrl = import.meta.resolve("@anthropic-ai/claude-agent-sdk/package.json");
-          if (sdkPackageUrl.startsWith("file://")) {
-            const sdkPkgDir = path.dirname(new URL(sdkPackageUrl).pathname);
-            dirs.add(sdkPkgDir);
-            const scopeDir = path.dirname(sdkPkgDir);
-            if (path.basename(scopeDir) === "@anthropic-ai") {
-              dirs.add(scopeDir);
-            }
-          }
-        } catch {
-          // Best-effort resolution; explicit binaryPath or system RO binds still apply.
-        }
-        return [...dirs];
-      })();
+      const claudeExtraRoBinds =
+        processSandbox.enabled && !isNativeBinary
+          ? resolveClaudeSandboxExtraRoBinds(binaryPath)
+          : [];
       const nativeSandboxLaunch =
         isNativeBinary && processSandbox.enabled
           ? yield* processSandbox
@@ -1799,7 +1836,6 @@ export const layerQueryRunner: Layer.Layer<
                     ? Effect.succeed({
                         command: wrapped.command,
                         prefixArgs: wrapped.prefixArgs,
-                        hostEnv: wrapped.hostEnv,
                       })
                     : Effect.fail(
                         queryRunnerError(
@@ -1878,10 +1914,17 @@ export const layerQueryRunner: Layer.Layer<
       let processExited = false;
       let processExit: Promise<void> | undefined;
       const spawnClaudeCodeProcess = (rawSpawnOptions: ClaudeSpawnOptions) => {
+        // Sanitize rawSpawnOptions.env directly so SDK-injected vars (e.g. CLAUDE_CODE_ENTRYPOINT) are preserved.
+        const sanitizedEnv =
+          processSandbox.enabled && rawSpawnOptions.env !== undefined
+            ? (sanitizeHostEnvForSandboxLaunch(rawSpawnOptions.env) ?? {})
+            : rawSpawnOptions.env;
         // Apply script/bundled-SDK sandbox wrapping before delegating to default or custom spawners.
         const spawnOptions =
           scriptSandboxPrefix === undefined
-            ? rawSpawnOptions
+            ? processSandbox.enabled && sanitizedEnv !== undefined
+              ? { ...rawSpawnOptions, env: sanitizedEnv }
+              : rawSpawnOptions
             : {
                 ...rawSpawnOptions,
                 command: scriptSandboxPrefix.command,
@@ -1890,9 +1933,7 @@ export const layerQueryRunner: Layer.Layer<
                   rawSpawnOptions.command,
                   ...rawSpawnOptions.args,
                 ],
-                ...(scriptSandboxPrefix.hostEnv === undefined
-                  ? {}
-                  : { env: scriptSandboxPrefix.hostEnv }),
+                ...(sanitizedEnv === undefined ? {} : { env: sanitizedEnv }),
               };
         const child = spawnProcess(spawnOptions);
         spawnedProcess = child;

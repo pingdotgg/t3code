@@ -47,7 +47,11 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import { toolOutputImages, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import {
   makePiAdapterV2,
@@ -7446,5 +7450,91 @@ process.stdout.write('{"type":"ready"}\\n');
         yield* Fiber.join(closing);
         assert.isTrue(closedBeforeGrace);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "provisions persistent PI_CODING_AGENT_DIR and passes sanitized hostEnv when ProcessSandbox is enabled",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const host = yield* ProviderHost.ProviderHost;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-sandbox-cwd-" });
+        const spawnedEnvs: Array<Readonly<Record<string, unknown>> | undefined> = [];
+        const wrapCalls: Array<{
+          readonly env?: NodeJS.ProcessEnv | undefined;
+          readonly extraProviderProfileDirs?: ReadonlyArray<string> | undefined;
+        }> = [];
+        const fakeSpawner = ChildProcessSpawner.make((command) => {
+          if (command._tag === "StandardCommand") {
+            spawnedEnvs.push(command.options.env);
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(FAKE_PID),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        });
+        const sandbox = {
+          enabled: true,
+          wrap: (input: {
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+            readonly env?: NodeJS.ProcessEnv | undefined;
+            readonly extraProviderProfileDirs?: ReadonlyArray<string> | undefined;
+          }) => {
+            wrapCalls.push({
+              env: input.env,
+              extraProviderProfileDirs: input.extraProviderProfileDirs,
+            });
+            return Effect.succeed({
+              command: "/usr/bin/bwrap",
+              args: ["--unshare-pid", "--", input.command, ...input.args],
+              hostEnv: sanitizeHostEnvForSandboxLaunch(input.env),
+            });
+          },
+        };
+
+        const adapter = yield* makePiAdapterV2({
+          instanceId: PI_INSTANCE_ID,
+          settings: { enabled: true, binaryPath: "/usr/bin/pi", launchArgs: "", customModels: [] },
+          environment: {
+            PATH: "/usr/bin:/bin",
+            LD_PRELOAD: `${cwd}/evil.so`,
+          },
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, fakeSpawner),
+          Effect.provideService(ProcessSandbox, sandbox),
+        );
+
+        yield* adapter.openSession({
+          threadId: THREAD_ID,
+          providerSessionId: SESSION_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          }),
+        });
+
+        assert.equal(wrapCalls.length, 1);
+        const expectedDir = `${host.paths.stateDir}/providers/pi/${PI_INSTANCE_ID}`;
+        assert.equal(wrapCalls[0]?.env?.PI_CODING_AGENT_DIR, expectedDir);
+        assert.deepEqual(wrapCalls[0]?.extraProviderProfileDirs, [expectedDir]);
+        assert.isTrue(yield* fileSystem.exists(expectedDir));
+        assert.equal(spawnedEnvs.length, 1);
+        assert.equal(spawnedEnvs[0]?.LD_PRELOAD, undefined);
+        assert.equal(spawnedEnvs[0]?.PI_CODING_AGENT_DIR, expectedDir);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 });

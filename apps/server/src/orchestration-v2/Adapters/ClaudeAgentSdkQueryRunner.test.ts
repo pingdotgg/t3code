@@ -23,7 +23,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -1249,4 +1253,162 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       assert.equal(runningAgents, 0);
     }).pipe(Effect.provide(runner));
   });
+
+  it.effect(
+    "preserves SDK-injected env vars and strips LD_PRELOAD when wrapping script CLIs via ProcessSandbox",
+    () =>
+      Effect.gen(function* () {
+        const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-sandbox-script-"));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+        );
+        const scriptCli = NodePath.join(dir, "cli.mjs");
+        NodeFS.writeFileSync(scriptCli, "process.stdin.resume();\n");
+
+        const capturedSpawn = yield* Deferred.make<{
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+          readonly env: Record<string, string | undefined> | undefined;
+        }>();
+        const wrappedInputs: Array<{
+          readonly extraRoBinds?: ReadonlyArray<string> | undefined;
+          readonly extraHelperPaths?: ReadonlyArray<string> | undefined;
+        }> = [];
+        const stubSandbox = {
+          enabled: true,
+          wrap: (input: {
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+            readonly env?: NodeJS.ProcessEnv | undefined;
+            readonly extraRoBinds?: ReadonlyArray<string> | undefined;
+            readonly extraHelperPaths?: ReadonlyArray<string> | undefined;
+          }) => {
+            wrappedInputs.push({
+              extraRoBinds: input.extraRoBinds,
+              extraHelperPaths: input.extraHelperPaths,
+            });
+            return Effect.succeed({
+              command: "/usr/bin/bwrap",
+              args: ["--unshare-pid", "--", input.command, ...input.args],
+              prefixArgs: ["--unshare-pid", "--"],
+              hostEnv: sanitizeHostEnvForSandboxLaunch(input.env),
+            });
+          },
+        };
+
+        const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation((params) => {
+          const fakeChild = Object.assign(new NodeEvents.EventEmitter(), {
+            stdin: new NodeStream.PassThrough(),
+            stdout: new NodeStream.PassThrough(),
+            stderr: new NodeStream.PassThrough(),
+            killed: false,
+            exitCode: null as number | null,
+            signalCode: null as NodeJS.Signals | null,
+            kill: () => true,
+          });
+          params.options?.spawnClaudeCodeProcess?.({
+            command: process.execPath,
+            args: [scriptCli, "--output-format", "stream-json"],
+            cwd: dir,
+            env: {
+              ...params.options.env,
+              CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
+              CLAUDE_AGENT_SDK_VERSION: "0.3.321",
+            },
+            signal: new AbortController().signal,
+          });
+          return {
+            [Symbol.asyncIterator]: () => ({
+              next: () => new Promise(() => {}),
+            }),
+            close: () => {
+              fakeChild.exitCode = 0;
+              fakeChild.emit("exit", 0, null);
+            },
+            interrupt: async () => {},
+            setPermissionMode: async () => {},
+            setModel: async () => {},
+            setMaxThinkingTokens: async () => {},
+            applyFlagSettings: async () => {},
+            initializationResult: async () => ({}),
+            supportedCommands: async () => [],
+            supportedModels: async () => [],
+            supportedAgents: async () => [],
+            mcpServerStatus: async () => [],
+            accountInfo: async () => ({}),
+            rewindFiles: async () => ({ canRewind: false }),
+            reconnectMcpServer: async () => {},
+            toggleMcpServer: async () => {},
+            setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
+            streamInput: async () => {},
+            stopTask: async () => {},
+            return: async () => ({ done: true as const, value: undefined }),
+          } as unknown as ReturnType<typeof ClaudeSdk.query>;
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+
+        const runnerLayer = forkRunnerLayer.pipe(
+          Layer.provide(Layer.succeed(ProcessSandbox, stubSandbox)),
+        );
+        const session = yield* Effect.gen(function* () {
+          const runner = yield* ClaudeAgentSdkQueryRunner;
+          return yield* runner.open({
+            threadId: ThreadId.make("thread-sandbox-script"),
+            providerSessionId: ProviderSessionId.make("session-sandbox-script"),
+            options: {
+              sessionId: "native-session-sandbox-script",
+              model: "claude-sonnet-4-6",
+              tools: [],
+              permissionMode: "default",
+              cwd: dir,
+              pathToClaudeCodeExecutable: scriptCli,
+              env: {
+                PATH: "/usr/bin:/bin",
+                LD_PRELOAD: `${dir}/evil.so`,
+                NODE_OPTIONS: "--require /tmp/evil.js",
+              },
+              spawnClaudeCodeProcess: (spawnOpts) => {
+                Deferred.doneUnsafe(
+                  capturedSpawn,
+                  Effect.succeed({
+                    command: spawnOpts.command,
+                    args: spawnOpts.args,
+                    env: spawnOpts.env,
+                  }),
+                );
+                return Object.assign(new NodeEvents.EventEmitter(), {
+                  stdin: new NodeStream.PassThrough(),
+                  stdout: new NodeStream.PassThrough(),
+                  stderr: new NodeStream.PassThrough(),
+                  killed: false,
+                  exitCode: 0,
+                  signalCode: null,
+                  kill: () => true,
+                }) as unknown as ClaudeSdk.SpawnedProcess;
+              },
+            },
+          });
+        }).pipe(Effect.provide(runnerLayer));
+
+        const spawned = yield* Deferred.await(capturedSpawn);
+        assert.equal(spawned.command, "/usr/bin/bwrap");
+        assert.deepEqual(spawned.args.slice(0, 4), [
+          "--unshare-pid",
+          "--",
+          process.execPath,
+          scriptCli,
+        ]);
+        // SDK-injected vars survive while host loader vars are stripped.
+        assert.equal(spawned.env?.CLAUDE_CODE_ENTRYPOINT, "sdk-ts");
+        assert.equal(spawned.env?.CLAUDE_AGENT_SDK_VERSION, "0.3.321");
+        assert.equal(spawned.env?.LD_PRELOAD, undefined);
+        assert.equal(spawned.env?.NODE_OPTIONS, undefined);
+        assert.isTrue(
+          wrappedInputs[0]?.extraRoBinds?.some((entry) => entry.includes("claude-agent-sdk")) ??
+            false,
+        );
+        assert.deepEqual(wrappedInputs[0]?.extraHelperPaths, [scriptCli]);
+        yield* session.close;
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 });

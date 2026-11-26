@@ -95,6 +95,7 @@ const UNSAFE_HOST_SANDBOX_ENV_KEYS = new Set([
   "GETCONF_DIR",
   "HOSTALIASES",
   "LOCALDOMAIN",
+  "LOCPATH",
   "RES_OPTIONS",
   "ENV",
   "BASH_ENV",
@@ -123,7 +124,11 @@ export function sanitizeHostEnvForSandboxLaunch(
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) continue;
     const upper = key.toUpperCase();
-    if (upper.startsWith("LD_") || UNSAFE_HOST_SANDBOX_ENV_KEYS.has(upper)) {
+    if (
+      upper.startsWith("LD_") ||
+      upper.startsWith("BASH_FUNC_") ||
+      UNSAFE_HOST_SANDBOX_ENV_KEYS.has(upper)
+    ) {
       continue;
     }
     sanitized[key] = value;

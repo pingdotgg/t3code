@@ -52,6 +52,7 @@ const PROVIDER_PROFILE_ENV_VARS: ReadonlyArray<string> = [
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
   "OPENCODE_CONFIG_DIR",
+  "PI_CODING_AGENT_DIR",
   "T3_TEAM_PROFILE_DIR",
 ];
 
@@ -72,7 +73,22 @@ const TURN_SOCKET_ENV_VARS: ReadonlyArray<string> = [
 ];
 
 const ALLOWED_OWN_STATE_PROFILE_PARENTS = new Set(["team-profiles", "providers"]);
+const UNSAFE_WIDEN_RO_ROOTS = new Set([
+  "/",
+  "/tmp",
+  "/var",
+  "/var/tmp",
+  "/home",
+  "/root",
+  "/etc",
+  "/run",
+  "/srv",
+  "/mnt",
+  "/media",
+  "/data",
+]);
 const MAX_GITDIR_FILE_BYTES = 8_192;
+const MAX_SHEBANG_BYTES = 256;
 const SANDBOX_SCRATCH_HOME = "/tmp/t3-home";
 
 export const BwrapUnavailableReason = Schema.Literals([
@@ -175,6 +191,17 @@ export interface BwrapGitWorktreeBinds {
   readonly maskWorktreesDir: string;
   readonly hooksDir: string;
   readonly configFile: string;
+  readonly configFileExists?: boolean | undefined;
+  readonly worktreeConfigFile?: string | undefined;
+  readonly worktreeConfigFileExists?: boolean | undefined;
+}
+
+export interface BwrapRegularGitRepoBinds {
+  readonly gitDir: string;
+  readonly hooksDir: string;
+  readonly configFile: string;
+  readonly configFileExists: boolean;
+  readonly maskWorktreesDir?: string | undefined;
 }
 
 export interface BwrapSandboxPlan {
@@ -182,6 +209,7 @@ export interface BwrapSandboxPlan {
   readonly cwd: string;
   readonly chdir: string;
   readonly gitWorktree?: BwrapGitWorktreeBinds | undefined;
+  readonly gitRepo?: BwrapRegularGitRepoBinds | undefined;
   readonly roSystemBinds?: ReadonlyArray<string> | undefined;
   readonly roTrySystemBinds?: ReadonlyArray<string> | undefined;
   readonly providerProfileDirs: ReadonlyArray<string>;
@@ -618,186 +646,422 @@ const canonicalizeAndValidateBindPath = Effect.fn("bwrapSandbox.validateBindPath
   },
 );
 
-/**
- * Resolves linked git worktree metadata with O_NOFOLLOW and bidirectional `<worktreeGitDir>/gitdir`
- * verification so a tampered `.git` file cannot mount a foreign repo or bypass sibling masking.
- */
-const resolveGitWorktreeCommonDir = Effect.fn("bwrapSandbox.resolveGitWorktreeCommonDir")(
-  function* (input: {
-    readonly canonicalCwd: string;
-    readonly ownStateRoots: ReadonlyArray<string>;
-    readonly foreignForbiddenRoots: ReadonlyArray<string>;
-  }): Effect.fn.Return<BwrapGitWorktreeBinds | undefined, BwrapSandboxPathError> {
-    const dotGitPath = NodePath.posix.join(input.canonicalCwd, ".git");
-    const dotGitStat = yield* Effect.promise(async () => {
+type BwrapGitMetadataResolution =
+  | { readonly kind: "linked_worktree"; readonly binds: BwrapGitWorktreeBinds }
+  | { readonly kind: "regular_repo"; readonly binds: BwrapRegularGitRepoBinds };
+
+const inspectOptionalGitRegularFile = Effect.fn("bwrapSandbox.inspectOptionalGitRegularFile")(
+  function* (filePath: string): Effect.fn.Return<boolean, BwrapSandboxPathError> {
+    const stat = yield* Effect.promise(async () => {
       try {
-        return await NodeFSP.lstat(dotGitPath);
+        return await NodeFSP.lstat(filePath);
       } catch {
         return undefined;
       }
     });
+    if (stat === undefined) return false;
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      return yield* new BwrapSandboxPathError({
+        reason: "invalid_git_worktree",
+        role: "git_common_dir",
+        path: filePath,
+      });
+    }
+    return true;
+  },
+);
 
-    if (dotGitStat === undefined || dotGitStat.isDirectory()) {
+const inspectOptionalGitSubdir = Effect.fn("bwrapSandbox.inspectOptionalGitSubdir")(function* (
+  dirPath: string,
+): Effect.fn.Return<boolean, BwrapSandboxPathError> {
+  const stat = yield* Effect.promise(async () => {
+    try {
+      return await NodeFSP.lstat(dirPath);
+    } catch {
       return undefined;
     }
-
-    if (dotGitStat.isSymbolicLink() || !dotGitStat.isFile()) {
-      return yield* new BwrapSandboxPathError({
-        reason: "invalid_git_worktree",
-        role: "git_common_dir",
-        path: dotGitPath,
-      });
-    }
-
-    const rawGitFile = yield* Effect.tryPromise({
-      try: () => readRegularFileNoFollow(dotGitPath, MAX_GITDIR_FILE_BYTES),
-      catch: (cause) =>
-        new BwrapSandboxPathError({
-          reason: "invalid_git_worktree",
-          role: "git_common_dir",
-          path: dotGitPath,
-          cause,
-        }),
-    });
-
-    const firstLine = rawGitFile.split(/\r?\n/, 1)[0]?.trim() ?? "";
-    const match = /^gitdir:\s*(.+)$/.exec(firstLine);
-    const rawGitDirTarget = match?.[1]?.trim();
-    if (
-      rawGitDirTarget === undefined ||
-      rawGitDirTarget.length === 0 ||
-      rawGitDirTarget.includes("\0")
-    ) {
-      return yield* new BwrapSandboxPathError({
-        reason: "invalid_git_worktree",
-        role: "git_common_dir",
-        path: dotGitPath,
-      });
-    }
-
-    const resolvedGitDirInput = NodePath.posix.isAbsolute(rawGitDirTarget)
-      ? rawGitDirTarget
-      : NodePath.posix.resolve(input.canonicalCwd, rawGitDirTarget);
-
-    const worktreeGitDir = yield* canonicalizeAndValidateBindPath({
-      rawPath: resolvedGitDirInput,
+  });
+  if (stat === undefined) return false;
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
       role: "git_common_dir",
-      ownStateRoots: input.ownStateRoots,
-      foreignForbiddenRoots: input.foreignForbiddenRoots,
-      expectedType: "directory",
+      path: dirPath,
     });
+  }
+  return true;
+});
 
-    // Linked worktrees must have a non-symlink commondir file pointing to the shared `.git` directory.
-    const commonDirFile = NodePath.posix.join(worktreeGitDir, "commondir");
-    const rawCommonDir = yield* Effect.tryPromise({
-      try: async () => (await readRegularFileNoFollow(commonDirFile, MAX_GITDIR_FILE_BYTES)).trim(),
-      catch: (cause) =>
-        new BwrapSandboxPathError({
-          reason: "invalid_git_worktree",
-          role: "git_common_dir",
-          path: commonDirFile,
-          cause,
-        }),
+/**
+ * Resolves git metadata locks for both regular `.git/` repositories and linked git worktrees
+ * (O_NOFOLLOW + bidirectional `gitdir` verification) so hooks, configs, and sibling worktrees stay locked.
+ */
+const resolveGitMetadata = Effect.fn("bwrapSandbox.resolveGitMetadata")(function* (input: {
+  readonly canonicalCwd: string;
+  readonly ownStateRoots: ReadonlyArray<string>;
+  readonly foreignForbiddenRoots: ReadonlyArray<string>;
+}): Effect.fn.Return<BwrapGitMetadataResolution | undefined, BwrapSandboxPathError> {
+  const dotGitPath = NodePath.posix.join(input.canonicalCwd, ".git");
+  const dotGitStat = yield* Effect.promise(async () => {
+    try {
+      return await NodeFSP.lstat(dotGitPath);
+    } catch {
+      return undefined;
+    }
+  });
+
+  if (dotGitStat === undefined) {
+    return undefined;
+  }
+
+  if (dotGitStat.isSymbolicLink()) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
+      role: "git_common_dir",
+      path: dotGitPath,
     });
-    if (rawCommonDir.length === 0 || rawCommonDir.includes("\0")) {
+  }
+
+  if (dotGitStat.isDirectory()) {
+    const canonicalGitDir = yield* Effect.promise(() => tryRealpath(dotGitPath));
+    if (canonicalGitDir === undefined) {
       return yield* new BwrapSandboxPathError({
+        reason: "invalid_git_worktree",
+        role: "git_common_dir",
+        path: dotGitPath,
+      });
+    }
+    const hooksDir = NodePath.posix.join(canonicalGitDir, "hooks");
+    const configFile = NodePath.posix.join(canonicalGitDir, "config");
+    const worktreesDir = NodePath.posix.join(canonicalGitDir, "worktrees");
+    yield* inspectOptionalGitSubdir(hooksDir);
+    const configFileExists = yield* inspectOptionalGitRegularFile(configFile);
+    const hasWorktreesDir = yield* inspectOptionalGitSubdir(worktreesDir);
+    return {
+      kind: "regular_repo",
+      binds: {
+        gitDir: canonicalGitDir,
+        hooksDir,
+        configFile,
+        configFileExists,
+        ...(hasWorktreesDir ? { maskWorktreesDir: worktreesDir } : {}),
+      },
+    };
+  }
+
+  if (!dotGitStat.isFile()) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
+      role: "git_common_dir",
+      path: dotGitPath,
+    });
+  }
+
+  const rawGitFile = yield* Effect.tryPromise({
+    try: () => readRegularFileNoFollow(dotGitPath, MAX_GITDIR_FILE_BYTES),
+    catch: (cause) =>
+      new BwrapSandboxPathError({
+        reason: "invalid_git_worktree",
+        role: "git_common_dir",
+        path: dotGitPath,
+        cause,
+      }),
+  });
+
+  const firstLine = rawGitFile.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  const match = /^gitdir:\s*(.+)$/.exec(firstLine);
+  const rawGitDirTarget = match?.[1]?.trim();
+  if (
+    rawGitDirTarget === undefined ||
+    rawGitDirTarget.length === 0 ||
+    rawGitDirTarget.includes("\0")
+  ) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
+      role: "git_common_dir",
+      path: dotGitPath,
+    });
+  }
+
+  const resolvedGitDirInput = NodePath.posix.isAbsolute(rawGitDirTarget)
+    ? rawGitDirTarget
+    : NodePath.posix.resolve(input.canonicalCwd, rawGitDirTarget);
+
+  const worktreeGitDir = yield* canonicalizeAndValidateBindPath({
+    rawPath: resolvedGitDirInput,
+    role: "git_common_dir",
+    ownStateRoots: input.ownStateRoots,
+    foreignForbiddenRoots: input.foreignForbiddenRoots,
+    expectedType: "directory",
+  });
+
+  // Linked worktrees must have a non-symlink commondir file pointing to the shared `.git` directory.
+  const commonDirFile = NodePath.posix.join(worktreeGitDir, "commondir");
+  const rawCommonDir = yield* Effect.tryPromise({
+    try: async () => (await readRegularFileNoFollow(commonDirFile, MAX_GITDIR_FILE_BYTES)).trim(),
+    catch: (cause) =>
+      new BwrapSandboxPathError({
         reason: "invalid_git_worktree",
         role: "git_common_dir",
         path: commonDirFile,
-      });
-    }
-
-    const resolvedCommonInput = NodePath.posix.isAbsolute(rawCommonDir)
-      ? rawCommonDir
-      : NodePath.posix.resolve(worktreeGitDir, rawCommonDir);
-    const commonDir = yield* canonicalizeAndValidateBindPath({
-      rawPath: resolvedCommonInput,
+        cause,
+      }),
+  });
+  if (rawCommonDir.length === 0 || rawCommonDir.includes("\0")) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
       role: "git_common_dir",
-      ownStateRoots: input.ownStateRoots,
-      foreignForbiddenRoots: input.foreignForbiddenRoots,
-      expectedType: "directory",
+      path: commonDirFile,
     });
+  }
 
-    // Require worktreeGitDir to be a direct child of `<commonDir>/worktrees/` (never commonDir itself).
-    const worktreesParent = NodePath.posix.join(commonDir, "worktrees");
-    if (
-      worktreeGitDir === commonDir ||
-      NodePath.posix.dirname(worktreeGitDir) !== worktreesParent
-    ) {
-      return yield* new BwrapSandboxPathError({
-        reason: "invalid_git_worktree",
-        role: "git_common_dir",
-        path: worktreeGitDir,
-      });
-    }
+  const resolvedCommonInput = NodePath.posix.isAbsolute(rawCommonDir)
+    ? rawCommonDir
+    : NodePath.posix.resolve(worktreeGitDir, rawCommonDir);
+  const commonDir = yield* canonicalizeAndValidateBindPath({
+    rawPath: resolvedCommonInput,
+    role: "git_common_dir",
+    ownStateRoots: input.ownStateRoots,
+    foreignForbiddenRoots: input.foreignForbiddenRoots,
+    expectedType: "directory",
+  });
 
-    // Bidirectional check: `<worktreeGitDir>/gitdir` must point back to `<canonicalCwd>/.git`.
-    const backPointerFile = NodePath.posix.join(worktreeGitDir, "gitdir");
-    const rawBackPointer = yield* Effect.tryPromise({
-      try: async () =>
-        (await readRegularFileNoFollow(backPointerFile, MAX_GITDIR_FILE_BYTES)).trim(),
-      catch: (cause) =>
-        new BwrapSandboxPathError({
-          reason: "invalid_git_worktree",
-          role: "git_common_dir",
-          path: backPointerFile,
-          cause,
-        }),
+  // Require worktreeGitDir to be a direct child of `<commonDir>/worktrees/` (never commonDir itself).
+  const worktreesParent = NodePath.posix.join(commonDir, "worktrees");
+  if (worktreeGitDir === commonDir || NodePath.posix.dirname(worktreeGitDir) !== worktreesParent) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
+      role: "git_common_dir",
+      path: worktreeGitDir,
     });
-    if (rawBackPointer.length === 0 || rawBackPointer.includes("\0")) {
-      return yield* new BwrapSandboxPathError({
+  }
+
+  // Bidirectional check: `<worktreeGitDir>/gitdir` must point back to `<canonicalCwd>/.git`.
+  const backPointerFile = NodePath.posix.join(worktreeGitDir, "gitdir");
+  const rawBackPointer = yield* Effect.tryPromise({
+    try: async () => (await readRegularFileNoFollow(backPointerFile, MAX_GITDIR_FILE_BYTES)).trim(),
+    catch: (cause) =>
+      new BwrapSandboxPathError({
         reason: "invalid_git_worktree",
         role: "git_common_dir",
         path: backPointerFile,
-      });
-    }
-    const resolvedBackPointerInput = NodePath.posix.isAbsolute(rawBackPointer)
-      ? rawBackPointer
-      : NodePath.posix.resolve(worktreeGitDir, rawBackPointer);
-    const resolvedBackPointer = yield* Effect.promise(() => tryRealpath(resolvedBackPointerInput));
-    const canonicalDotGit = yield* Effect.promise(() => tryRealpath(dotGitPath));
-    if (
-      resolvedBackPointer === undefined ||
-      canonicalDotGit === undefined ||
-      resolvedBackPointer !== canonicalDotGit
-    ) {
-      return yield* new BwrapSandboxPathError({
-        reason: "invalid_git_worktree",
-        role: "git_common_dir",
-        path: backPointerFile,
-      });
-    }
-
-    // Confirm commonDir is a genuine git metadata directory (contains HEAD + objects/), never a working tree.
-    const isGitMetadataDir = yield* Effect.promise(async () => {
-      try {
-        const [headStat, objectsStat] = await Promise.all([
-          NodeFSP.stat(NodePath.posix.join(commonDir, "HEAD")),
-          NodeFSP.stat(NodePath.posix.join(commonDir, "objects")),
-        ]);
-        return headStat.isFile() && objectsStat.isDirectory();
-      } catch {
-        return false;
-      }
+        cause,
+      }),
+  });
+  if (rawBackPointer.length === 0 || rawBackPointer.includes("\0")) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
+      role: "git_common_dir",
+      path: backPointerFile,
     });
-    if (!isGitMetadataDir) {
-      return yield* new BwrapSandboxPathError({
-        reason: "invalid_git_worktree",
-        role: "git_common_dir",
-        path: commonDir,
-      });
-    }
+  }
+  const resolvedBackPointerInput = NodePath.posix.isAbsolute(rawBackPointer)
+    ? rawBackPointer
+    : NodePath.posix.resolve(worktreeGitDir, rawBackPointer);
+  const resolvedBackPointer = yield* Effect.promise(() => tryRealpath(resolvedBackPointerInput));
+  const canonicalDotGit = yield* Effect.promise(() => tryRealpath(dotGitPath));
+  if (
+    resolvedBackPointer === undefined ||
+    canonicalDotGit === undefined ||
+    resolvedBackPointer !== canonicalDotGit
+  ) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
+      role: "git_common_dir",
+      path: backPointerFile,
+    });
+  }
 
-    return {
+  // Confirm commonDir is a genuine git metadata directory (contains HEAD + objects/), never a working tree.
+  const isGitMetadataDir = yield* Effect.promise(async () => {
+    try {
+      const [headStat, objectsStat] = await Promise.all([
+        NodeFSP.stat(NodePath.posix.join(commonDir, "HEAD")),
+        NodeFSP.stat(NodePath.posix.join(commonDir, "objects")),
+      ]);
+      return headStat.isFile() && objectsStat.isDirectory();
+    } catch {
+      return false;
+    }
+  });
+  if (!isGitMetadataDir) {
+    return yield* new BwrapSandboxPathError({
+      reason: "invalid_git_worktree",
+      role: "git_common_dir",
+      path: commonDir,
+    });
+  }
+
+  const hooksDir = NodePath.posix.join(commonDir, "hooks");
+  const configFile = NodePath.posix.join(commonDir, "config");
+  const worktreeConfigFile = NodePath.posix.join(worktreeGitDir, "config.worktree");
+  yield* inspectOptionalGitSubdir(hooksDir);
+  const configFileExists = yield* inspectOptionalGitRegularFile(configFile);
+  const worktreeConfigFileExists = yield* inspectOptionalGitRegularFile(worktreeConfigFile);
+
+  return {
+    kind: "linked_worktree",
+    binds: {
       dotGitFile: canonicalDotGit,
       commonDir,
       worktreeGitDir,
       maskWorktreesDir: worktreesParent,
-      hooksDir: NodePath.posix.join(commonDir, "hooks"),
-      configFile: NodePath.posix.join(commonDir, "config"),
-    };
-  },
-);
+      hooksDir,
+      configFile,
+      configFileExists,
+      worktreeConfigFile,
+      worktreeConfigFileExists,
+    },
+  };
+});
+
+function isSafeExternalRoDir(input: {
+  readonly dir: string;
+  readonly canonicalCwd: string;
+  readonly homeDir: string | undefined;
+  readonly ownStateRoots: ReadonlyArray<string>;
+  readonly foreignForbiddenRoots: ReadonlyArray<string>;
+}): boolean {
+  const normalized = normalizePosixPath(input.dir);
+  if (UNSAFE_WIDEN_RO_ROOTS.has(normalized)) return false;
+  if (isCoveredBySystemRoBinds(normalized)) return false;
+  if (input.homeDir !== undefined && isSameOrAncestor(normalized, input.homeDir)) return false;
+  if (
+    isSameOrAncestor(normalized, input.canonicalCwd) ||
+    isSameOrDescendant(normalized, input.canonicalCwd)
+  ) {
+    return false;
+  }
+  return (
+    assertLexicalPathNotForbidden({
+      candidate: normalized,
+      role: "executable",
+      ownStateRoots: input.ownStateRoots,
+      foreignForbiddenRoots: input.foreignForbiddenRoots,
+    }) === undefined
+  );
+}
+
+async function readShebangInterpreterPath(
+  executablePath: string,
+  env: NodeJS.ProcessEnv | undefined,
+): Promise<string | undefined> {
+  try {
+    const handle = await NodeFSP.open(executablePath, NodeFS.constants.O_RDONLY);
+    try {
+      const buffer = Buffer.alloc(MAX_SHEBANG_BYTES);
+      const { bytesRead } = await handle.read(buffer, 0, MAX_SHEBANG_BYTES, 0);
+      const header = buffer.subarray(0, bytesRead).toString("utf8");
+      if (!header.startsWith("#!")) return undefined;
+      const line = header.slice(2).split(/\r?\n/, 1)[0]?.trim() ?? "";
+      if (line.length === 0) return undefined;
+      const tokens = line.split(/\s+/).filter((token) => token.length > 0);
+      const first = tokens[0];
+      if (first === undefined) return undefined;
+      if (first === "/usr/bin/env" || first === "/bin/env") {
+        const prog = tokens
+          .slice(1)
+          .find((token) => !token.startsWith("-") && !token.includes("="));
+        if (prog === undefined) return undefined;
+        if (NodePath.posix.isAbsolute(prog)) return prog;
+        const pathEntries = (env?.PATH ?? "").split(":").filter((entry) => entry.length > 0);
+        for (const entry of pathEntries) {
+          if (!NodePath.posix.isAbsolute(entry)) continue;
+          const candidate = NodePath.posix.join(entry, prog);
+          try {
+            const stat = await NodeFSP.stat(candidate);
+            if (stat.isFile()) return candidate;
+          } catch {
+            // Try next PATH entry.
+          }
+        }
+        return undefined;
+      }
+      return NodePath.posix.isAbsolute(first) ? first : undefined;
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+async function discoverExternalExecutablePackageDir(input: {
+  readonly canonicalExecutable: string;
+  readonly canonicalCwd: string;
+  readonly homeDir: string | undefined;
+  readonly ownStateRoots: ReadonlyArray<string>;
+  readonly foreignForbiddenRoots: ReadonlyArray<string>;
+}): Promise<string | undefined> {
+  let cursor = NodePath.posix.dirname(input.canonicalExecutable);
+  let packageDir: string | undefined;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (UNSAFE_WIDEN_RO_ROOTS.has(cursor)) break;
+    if (await pathExists(NodePath.posix.join(cursor, "package.json"))) {
+      packageDir = cursor;
+      break;
+    }
+    const parent = NodePath.posix.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  if (packageDir === undefined) return undefined;
+
+  // Prefer the enclosing `node_modules` tree when a CLI script lives inside a package installation.
+  let candidate = packageDir;
+  const pkgParent = NodePath.posix.dirname(packageDir);
+  let nodeModulesDir: string | undefined;
+  if (NodePath.posix.basename(pkgParent) === "node_modules") {
+    nodeModulesDir = pkgParent;
+  } else if (
+    NodePath.posix.basename(pkgParent).startsWith("@") &&
+    NodePath.posix.basename(NodePath.posix.dirname(pkgParent)) === "node_modules"
+  ) {
+    nodeModulesDir = NodePath.posix.dirname(pkgParent);
+  }
+  if (nodeModulesDir !== undefined) {
+    const maybePnpmPkg = NodePath.posix.dirname(nodeModulesDir);
+    const maybePnpmDir = NodePath.posix.dirname(maybePnpmPkg);
+    const maybeOuterNm = NodePath.posix.dirname(maybePnpmDir);
+    const bestNm =
+      NodePath.posix.basename(maybePnpmDir) === ".pnpm" &&
+      NodePath.posix.basename(maybeOuterNm) === "node_modules"
+        ? maybeOuterNm
+        : nodeModulesDir;
+    if (
+      isSafeExternalRoDir({
+        dir: bestNm,
+        canonicalCwd: input.canonicalCwd,
+        homeDir: input.homeDir,
+        ownStateRoots: input.ownStateRoots,
+        foreignForbiddenRoots: input.foreignForbiddenRoots,
+      })
+    ) {
+      candidate = bestNm;
+    } else if (
+      bestNm !== nodeModulesDir &&
+      isSafeExternalRoDir({
+        dir: nodeModulesDir,
+        canonicalCwd: input.canonicalCwd,
+        homeDir: input.homeDir,
+        ownStateRoots: input.ownStateRoots,
+        foreignForbiddenRoots: input.foreignForbiddenRoots,
+      })
+    ) {
+      candidate = nodeModulesDir;
+    }
+  }
+
+  return isSafeExternalRoDir({
+    dir: candidate,
+    canonicalCwd: input.canonicalCwd,
+    homeDir: input.homeDir,
+    ownStateRoots: input.ownStateRoots,
+    foreignForbiddenRoots: input.foreignForbiddenRoots,
+  })
+    ? candidate
+    : undefined;
+}
 
 /**
  * Extracts explicit mount candidates solely from server-trusted environment variables.
@@ -955,7 +1219,7 @@ function buildBwrapPrefixArgs(
   // Thread workspace / worktree (always RW).
   pushRw(plan.cwd);
 
-  // Linked git worktree common-dir: lock down `.git` pointer, shared hooks, shared config, and sibling worktree dirs.
+  // Linked git worktree common-dir: lock down `.git` pointer, shared hooks, shared/worktree configs, and sibling worktree dirs.
   if (plan.gitWorktree !== undefined) {
     const dotGit = normalizePosixPath(plan.gitWorktree.dotGitFile);
     const commonDir = normalizePosixPath(plan.gitWorktree.commonDir);
@@ -963,25 +1227,52 @@ function buildBwrapPrefixArgs(
     const wtGitDir = normalizePosixPath(plan.gitWorktree.worktreeGitDir);
     const hooksDir = normalizePosixPath(plan.gitWorktree.hooksDir);
     const configFile = normalizePosixPath(plan.gitWorktree.configFile);
+    const wtConfigFile = normalizePosixPath(
+      plan.gitWorktree.worktreeConfigFile ?? NodePath.posix.join(wtGitDir, "config.worktree"),
+    );
 
     args.push("--ro-bind", dotGit, dotGit);
     pushRw(commonDir);
     // Isolate shared hooks on a private ephemeral tmpfs so writes never affect host or sibling worktrees.
     args.push("--tmpfs", hooksDir);
-    // Prevent modifying shared git config (core.fsmonitor, core.hooksPath, core.sshCommand).
-    args.push("--ro-bind-try", configFile, configFile);
+    // Lock shared git config (or bind /dev/null when absent) so core.fsmonitor/hooksPath cannot be modified or created.
+    if (plan.gitWorktree.configFileExists === false) {
+      args.push("--ro-bind", "/dev/null", configFile);
+    } else {
+      args.push("--ro-bind", configFile, configFile);
+    }
     // Hide all sibling `.git/worktrees/*` entries, then re-bind strictly this worktree's metadata dir.
     args.push("--tmpfs", maskDir);
     mountedRw.add(wtGitDir);
     args.push("--bind", wtGitDir, wtGitDir);
     args.push(
-      "--ro-bind-try",
+      "--ro-bind",
       NodePath.posix.join(wtGitDir, "gitdir"),
       NodePath.posix.join(wtGitDir, "gitdir"),
-      "--ro-bind-try",
+      "--ro-bind",
       NodePath.posix.join(wtGitDir, "commondir"),
       NodePath.posix.join(wtGitDir, "commondir"),
     );
+    if (plan.gitWorktree.worktreeConfigFileExists === true) {
+      args.push("--ro-bind", wtConfigFile, wtConfigFile);
+    } else {
+      args.push("--ro-bind", "/dev/null", wtConfigFile);
+    }
+  }
+
+  // Ordinary `.git/` repository: lock hooks and config (and mask sibling `.git/worktrees` when present).
+  if (plan.gitRepo !== undefined) {
+    const hooksDir = normalizePosixPath(plan.gitRepo.hooksDir);
+    const configFile = normalizePosixPath(plan.gitRepo.configFile);
+    args.push("--tmpfs", hooksDir);
+    if (plan.gitRepo.configFileExists) {
+      args.push("--ro-bind", configFile, configFile);
+    } else {
+      args.push("--ro-bind", "/dev/null", configFile);
+    }
+    if (plan.gitRepo.maskWorktreesDir !== undefined) {
+      args.push("--tmpfs", normalizePosixPath(plan.gitRepo.maskWorktreesDir));
+    }
   }
 
   for (const profileDir of plan.providerProfileDirs) {
@@ -1058,11 +1349,13 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     }
   }
 
-  const gitWorktree = yield* resolveGitWorktreeCommonDir({
+  const gitMetadata = yield* resolveGitMetadata({
     canonicalCwd,
     ownStateRoots,
     foreignForbiddenRoots,
   });
+  const gitWorktree = gitMetadata?.kind === "linked_worktree" ? gitMetadata.binds : undefined;
+  const gitRepo = gitMetadata?.kind === "regular_repo" ? gitMetadata.binds : undefined;
 
   const extracted = extractSandboxBindsFromEnv(input.env);
 
@@ -1135,7 +1428,8 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     helperPaths.push(validated);
   }
 
-  // If the target executable is a trusted server-configured absolute path outside OS RO binds and cwd, bind it read-only.
+  // If the target executable is a trusted server-configured absolute path outside OS RO binds and cwd,
+  // bind the executable, its package/node_modules tree (when safe), and any non-system shebang interpreter RO.
   if (
     input.allowExternalExecutableBind !== false &&
     NodePath.posix.isAbsolute(input.command) &&
@@ -1165,6 +1459,75 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       }
       extraRoBinds.push(normalizedCmd);
     }
+
+    const normalizedHome =
+      input.env?.HOME !== undefined && NodePath.posix.isAbsolute(input.env.HOME)
+        ? normalizePosixPath(input.env.HOME)
+        : undefined;
+    const packageRoDir = yield* Effect.promise(() =>
+      discoverExternalExecutablePackageDir({
+        canonicalExecutable: validatedExecutable,
+        canonicalCwd,
+        homeDir: normalizedHome,
+        ownStateRoots,
+        foreignForbiddenRoots,
+      }),
+    );
+    if (packageRoDir !== undefined) {
+      const validatedPkgDir = yield* canonicalizeAndValidateBindPath({
+        rawPath: packageRoDir,
+        role: "executable",
+        ownStateRoots,
+        foreignForbiddenRoots,
+        expectedType: "directory",
+      });
+      if (!isCoveredBySystemRoBinds(validatedPkgDir)) {
+        extraRoBinds.push(validatedPkgDir);
+      }
+    }
+
+    const shebangInterpreter = yield* Effect.promise(() =>
+      readShebangInterpreterPath(validatedExecutable, input.env),
+    );
+    if (
+      shebangInterpreter !== undefined &&
+      !isCoveredBySystemRoBinds(shebangInterpreter) &&
+      !isSameOrDescendant(shebangInterpreter, canonicalCwd)
+    ) {
+      const validatedInterpreter = yield* canonicalizeAndValidateBindPath({
+        rawPath: shebangInterpreter,
+        role: "executable",
+        ownStateRoots,
+        foreignForbiddenRoots,
+        expectedType: "file",
+      }).pipe(
+        Effect.catchIf(
+          (err) => err.reason === "missing_path",
+          () => Effect.undefined,
+        ),
+      );
+      if (validatedInterpreter !== undefined) {
+        if (!isCoveredBySystemRoBinds(validatedInterpreter)) {
+          extraRoBinds.push(validatedInterpreter);
+        }
+        const normalizedInterp = normalizePosixPath(shebangInterpreter);
+        if (
+          normalizedInterp !== validatedInterpreter &&
+          !isCoveredBySystemRoBinds(normalizedInterp)
+        ) {
+          const lexicalInterpError = assertLexicalPathNotForbidden({
+            candidate: normalizedInterp,
+            role: "executable",
+            ownStateRoots,
+            foreignForbiddenRoots,
+          });
+          if (lexicalInterpError !== undefined) {
+            return yield* lexicalInterpError;
+          }
+          extraRoBinds.push(normalizedInterp);
+        }
+      }
+    }
   }
 
   const prefixArgs = buildBwrapPrefixArgs({
@@ -1172,6 +1535,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     cwd: canonicalCwd,
     chdir: canonicalChdir,
     ...(gitWorktree === undefined ? {} : { gitWorktree }),
+    ...(gitRepo === undefined ? {} : { gitRepo }),
     providerProfileDirs,
     toolCacheDirs,
     extraRwBinds,

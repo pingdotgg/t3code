@@ -1038,7 +1038,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { worktreesDir, worktreeCheckoutCacheDir } = yield* ServerConfig.ServerConfig;
+  const { worktreesDir, worktreeCheckoutCacheDir, teamBwrapSandbox } =
+    yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
   const random = yield* SecureRandom.SecureRandom;
@@ -1092,7 +1093,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...trace2Monitor.env,
         };
         const env = { ...baseEnv, ...serverGitConfigEnv(baseEnv, hostPlatform) };
-        const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
+        const longPathEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
+        // Under --team-bwrap-sandbox, prevent untrusted workspace .git/config or hooks (including
+        // freshly `git init`'d repos) from executing host commands during server-side git calls.
+        const sandboxSafeEnv =
+          teamBwrapSandbox === true
+            ? (() => {
+                const noFsMonitor = {
+                  ...longPathEnv,
+                  ...gitConfigEnv(longPathEnv, "core.fsmonitor", "false", hostPlatform),
+                };
+                return {
+                  ...noFsMonitor,
+                  ...gitConfigEnv(noFsMonitor, "core.hooksPath", "/dev/null", hostPlatform),
+                };
+              })()
+            : longPathEnv;
+        const spawnEnv = sandboxSafeEnv;
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         const spawnError = (cause: unknown) =>
           new GitCommandError({

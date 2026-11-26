@@ -52,7 +52,11 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
-import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   COMPUTER_USE_TOOL_SOURCE,
@@ -1806,14 +1810,20 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   readonly extraProviderProfileDirs?: ReadonlyArray<string> | undefined;
   readonly extraSocketPaths?: ReadonlyArray<string> | undefined;
   readonly extraHelperPaths?: ReadonlyArray<string> | undefined;
+  readonly extraRoBinds?: ReadonlyArray<string> | undefined;
 }) {
   const processSandbox = yield* ProcessSandbox;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const sandboxInputEnv =
+    processSandbox.enabled && input.extendEnv === true
+      ? { ...hostEnvironment, ...input.env }
+      : input.env;
   const sandboxed = processSandbox.enabled
     ? yield* processSandbox.wrap({
         command: input.command,
         args: input.args,
         cwd: input.cwd,
-        env: input.env,
+        env: sandboxInputEnv,
         name: "codex",
         threadId: input.threadId,
         ...(input.extraProviderProfileDirs === undefined
@@ -1825,9 +1835,13 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
         ...(input.extraHelperPaths === undefined
           ? {}
           : { extraHelperPaths: input.extraHelperPaths }),
+        ...(input.extraRoBinds === undefined ? {} : { extraRoBinds: input.extraRoBinds }),
       })
     : { command: input.command, args: input.args, hostEnv: input.env };
-  const effectiveEnv = processSandbox.enabled ? sandboxed.hostEnv : input.env;
+  const effectiveEnv = processSandbox.enabled
+    ? (sandboxed.hostEnv ?? sanitizeHostEnvForSandboxLaunch(sandboxInputEnv) ?? {})
+    : input.env;
+  const effectiveExtendEnv = processSandbox.enabled ? false : input.extendEnv;
   const launch = yield* (yield* AgentScope).wrap({
     command: sandboxed.command,
     args: sandboxed.args,
@@ -1838,12 +1852,12 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   });
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
     ...(effectiveEnv === undefined ? {} : { env: effectiveEnv }),
-    ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+    ...(effectiveExtendEnv === undefined ? {} : { extendEnv: effectiveExtendEnv }),
   });
   return ChildProcess.make(spawnCommand.command, spawnCommand.args, {
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     ...(effectiveEnv === undefined ? {} : { env: effectiveEnv }),
-    ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+    ...(effectiveExtendEnv === undefined ? {} : { extendEnv: effectiveExtendEnv }),
     shell: spawnCommand.shell,
     forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
   });
@@ -2037,6 +2051,9 @@ export const layerAppServerClientFactory: Layer.Layer<
           ...(input.sandboxBinds?.helperPaths === undefined
             ? {}
             : { extraHelperPaths: input.sandboxBinds.helperPaths }),
+          ...(input.sandboxBinds?.extraRoBinds === undefined
+            ? {}
+            : { extraRoBinds: input.sandboxBinds.extraRoBinds }),
         }).pipe(
           Effect.provideService(AgentScope, agentScope),
           Effect.provideService(ProcessSandbox, processSandbox),

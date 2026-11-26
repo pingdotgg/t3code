@@ -25,7 +25,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
-import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  ProcessSandbox,
+  sanitizeHostEnvForSandboxLaunch,
+} from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as Cause from "effect/Cause";
@@ -1821,13 +1825,16 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     }),
                 ),
               )
-          : { command: options.settings.binaryPath || "muse", args: [] };
+          : { command: options.settings.binaryPath || "muse", args: [], hostEnv: environment };
+        const effectiveEnv = processSandbox.enabled
+          ? (sandboxedLaunch.hostEnv ?? sanitizeHostEnvForSandboxLaunch(environment))
+          : environment;
         const launch = yield* agentScope.wrap({
           command: sandboxedLaunch.command,
           args: sandboxedLaunch.args,
           name: "muse",
           threadId: input.threadId,
-          env: environment,
+          env: effectiveEnv,
         });
         // Finalizers run in reverse order: reap detached work after closing the host.
         const scopeUnit = launch.unit;
@@ -1843,7 +1850,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               binaryPath: launch.command,
               launchArgs: launch.args,
               cwd,
-              environment,
+              environment: effectiveEnv,
               runtimeMode: input.runtimePolicy.runtimeMode,
               onProcessExit: (exit) => {
                 Deferred.doneUnsafe(processExited, Effect.succeed(exit));

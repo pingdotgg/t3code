@@ -94,6 +94,7 @@ export interface CodexManagedSandboxBinds {
   readonly socketPaths?: ReadonlyArray<string> | undefined;
   readonly providerProfileDirs?: ReadonlyArray<string> | undefined;
   readonly helperPaths?: ReadonlyArray<string> | undefined;
+  readonly extraRoBinds?: ReadonlyArray<string> | undefined;
 }
 
 export interface CodexEffectiveRuntime {
@@ -216,6 +217,10 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       invocation.command,
       ...(invocation.entrypoint === undefined ? [] : [invocation.entrypoint]),
     ];
+    const extraRoBinds =
+      invocation.entrypoint !== undefined && path.isAbsolute(invocation.entrypoint)
+        ? [path.dirname(invocation.entrypoint)]
+        : [];
     return {
       config: decodeSettings({
         enabled: options.enabled,
@@ -231,6 +236,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
         providerProfileDirs:
           homeLayout.sharedHomePath !== homePath ? [homeLayout.sharedHomePath] : [],
         helperPaths,
+        extraRoBinds,
       },
     } satisfies CodexEffectiveRuntime;
   });
