@@ -26,7 +26,7 @@ export const settings = makeProviderSettingsSchema({
     Schema.annotateKey({
       title: "CI rerun command",
       description:
-        "A command on the CI host that queues a rerun, given the repository ID and the commit, such as patchbay-ci-rerun.",
+        "A command on the CI host that queues a rerun, given the repository ID and the commit, such as radicle-ci-rerun.",
     }),
   ),
 });
