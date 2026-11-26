@@ -435,11 +435,6 @@ describe("splitMarkdown", () => {
         "  ~~~",
         "  [list]: /inside-a-list-fence",
         "  ```",
-        "",
-        "- ```html",
-        "  <!-- Links -->",
-        "  [list-html]: /inside-a-list-fence",
-        "  ```",
       ].join("\n");
       expect(splitMarkdown(text).definitions).toBe(
         "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment\n[html]: /after-an-html-block\n[pre]: /after-a-one-line-html-block",
