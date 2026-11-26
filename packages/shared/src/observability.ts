@@ -582,6 +582,8 @@ function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unk
   return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
 }
 
+const SLOW_SQLITE_SPAN_NANOS = 10_000_000n;
+
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
   readonly name: string;
@@ -636,18 +638,20 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (!this.sampled) return;
-    if (
-      this.sampleFastSqliteSpans &&
-      this.attributes.get("db.system.name") === "sqlite" &&
-      ExitRuntime.isSuccess(traceExit) &&
-      this.events.length === 0 &&
-      endTime - this.status.startTime < 10_000_000n &&
-      !this.traceId.endsWith("00")
-    )
-      return;
+    if (this.sampled && !(this.sampleFastSqliteSpans && this.isRoutineSqlite(endTime, traceExit))) {
+      this.push(spanToTraceRecord(this));
+    }
+  }
 
-    this.push(spanToTraceRecord(this));
+  // Keeps every SQLite span for ~1/256 of trace IDs so routine SQL stays visible in context.
+  private isRoutineSqlite(endTime: bigint, exit: Exit.Exit<unknown, unknown>): boolean {
+    return (
+      this.attributes.get("db.system.name") === "sqlite" &&
+      ExitRuntime.isSuccess(exit) &&
+      this.events.length === 0 &&
+      endTime - this.status.startTime < SLOW_SQLITE_SPAN_NANOS &&
+      !this.traceId.endsWith("00")
+    );
   }
 
   attribute(key: string, value: unknown): void {

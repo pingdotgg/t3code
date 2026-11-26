@@ -21,7 +21,7 @@ Logs emitted inside an active span (`Effect.log*`) attach as span events unless 
 
 Event-loop stalls (>2 s) write `server.eventLoop.stall` spans and append to `event-loop-stalls.ndjson` beside the trace file. SQLite spans carry `db.connection` (`writer`/`reader`) and `db.lock_wait_ms` (queue wait off the event loop—subtract it before blaming query speed). Metrics live only in-process unless OTLP export is enabled.
 
-By default the local server file keeps SQLite failures, spans with events, spans lasting at least 10 ms, and fast successes for approximately one in 256 trace IDs. Counts and percentiles for SQL in local summaries therefore describe a biased sample. With timing disabled, the duration rule cannot identify slow operations. Set `T3CODE_TRACE_MIN_LEVEL=Debug` for complete local SQL tracing. The local sampling rule does not filter OTLP export.
+At the default trace level the local server file drops fast (<10 ms), successful SQLite spans without events, except in about one in 256 traces, so local SQL counts and percentiles are a biased sample. `T3CODE_TRACE_MIN_LEVEL=Debug` keeps every SQLite span. OTLP export is never sampled.
 
 ## Local OTLP stack (Grafana LGTM)
 
