@@ -2098,7 +2098,7 @@ function acpSubagentTranscriptEntryFingerprint(entry: AcpSubagentTranscriptEntry
 }
 
 const ACP_SUBAGENT_TRANSCRIPT_POLL_MS = [1_000, 2_000, 5_000] as const;
-// Antigravity subagents can message the parent (triggering idle) before writing their closing reply.
+// A subagent can report idle to its parent before its transcript records the closing reply.
 const ACP_SUBAGENT_TRAILING_DRAIN_POLL_MS = [
   500, 1_000, 1_500, 2_000, 2_000, 3_000, 4_000, 5_000, 5_000, 6_000,
 ] as const;
