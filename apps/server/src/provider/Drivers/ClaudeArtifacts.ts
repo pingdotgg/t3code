@@ -78,7 +78,7 @@ export function makeClaudeArtifactListTracker() {
   const listCallIds = new Set<string>();
   const pages: string[] = [];
   let lastToolError: string | undefined;
-  let followUps = 0;
+  let requestedToken: string | undefined;
 
   const finish = (): ClaudeArtifactListStep => {
     if (pages.length === 0) {
@@ -153,11 +153,19 @@ export function makeClaudeArtifactListTracker() {
         const last = pages.at(-1);
         const pageToken =
           last === undefined ? undefined : parseClaudeArtifactListPage(last).nextPageToken;
-        if (pageToken !== undefined && pages.length < MAX_PAGES && followUps < MAX_PAGES) {
-          followUps += 1;
-          return { _tag: "followUp", pageToken };
+        if (pageToken === undefined) return finish();
+        // A token asked for once that is still the last page's means paging stopped advancing.
+        if (pageToken === requestedToken || pages.length >= MAX_PAGES) {
+          return {
+            _tag: "done",
+            result: {
+              _tag: "failed",
+              message: lastToolError ?? "Claude stopped before the last page of artifacts.",
+            },
+          };
         }
-        return finish();
+        requestedToken = pageToken;
+        return { _tag: "followUp", pageToken };
       }
       default:
         return { _tag: "continue" };

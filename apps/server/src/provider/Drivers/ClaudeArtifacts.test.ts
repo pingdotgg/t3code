@@ -48,6 +48,19 @@ describe("makeClaudeArtifactListTracker", () => {
     });
   });
 
+  it("fails instead of keeping a partial list when the next page never arrives", () => {
+    const tracker = makeClaudeArtifactListTracker();
+    tracker.onMessage(toolUse("t1", { action: "list" }));
+    tracker.onMessage(toolResult("t1", PAGE_ONE));
+    expect(tracker.onMessage(result())).toEqual({ _tag: "followUp", pageToken: "tok2" });
+    tracker.onMessage(toolUse("t2", { action: "list", page_token: "tok2" }));
+    tracker.onMessage(toolResult("t2", "Invalid page_token.", true));
+    expect(tracker.onMessage(result())).toEqual({
+      _tag: "done",
+      result: { _tag: "failed", message: "Invalid page_token." },
+    });
+  });
+
   it("reports a signed-out account when Claude Code offers no Artifact tool", () => {
     const step = makeClaudeArtifactListTracker().onMessage(init(["Read"]));
     expect(step).toMatchObject({ _tag: "done", result: { _tag: "signedOut" } });

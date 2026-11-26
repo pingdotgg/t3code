@@ -75,12 +75,20 @@ describe("parseClaudeArtifactListPage", () => {
       skippedLines: 0,
       nextPageToken: undefined,
     });
-    expect(
-      parseClaudeArtifactListPage("No artifacts, published by you or shared with you."),
-    ).toMatchObject({
+    expect(parseClaudeArtifactListPage("No published or shared artifacts yet.")).toMatchObject({
       hasList: true,
       artifacts: [],
     });
+  });
+
+  it("reads a full page's Showing header", () => {
+    const page = parseClaudeArtifactListPage(
+      `Showing 1 of at least 201 artifacts, published by you or shared with you (newest first):
+- (mine) A — https://claude.ai/artifact/A
+(More exist: pass \`page_token\` "next" with the same \`scope\` to list the next ones.)`,
+    );
+    expect(page).toMatchObject({ hasList: true, nextPageToken: "next" });
+    expect(page.artifacts).toHaveLength(1);
   });
 });
 

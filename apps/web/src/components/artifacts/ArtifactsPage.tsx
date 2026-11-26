@@ -131,11 +131,12 @@ export function ArtifactsPage() {
       fail(error instanceof Error ? error.message : undefined);
       return;
     }
+    const threadRef = await startBrowserThread(gt("Could not open the artifact"), () => {});
     // Without a scratch thread to host the browser pane, the system browser still opens it.
-    const threadRef = await startBrowserThread(gt("Could not open the artifact"), () => {
+    if (threadRef === null) {
       void readLocalApi()?.shell.openExternal(artifact.url);
-    });
-    if (threadRef === null) return;
+      return;
+    }
     const result = await openUrlInPreview({ threadRef, url: artifact.url, openPreview, profileId });
     if (result._tag === "Failure") {
       fail(thrownErrorMessage(squashAtomCommandFailure(result), m) ?? undefined);

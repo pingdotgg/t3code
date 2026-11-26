@@ -22,11 +22,12 @@ const PAGE = `2 artifacts, published by you or shared with you:
 function fakeInstance(
   id: string,
   results: Array<Effect.Effect<ProviderArtifactListResult>>,
-  options: { readonly enabled?: boolean; readonly lists?: boolean } = {},
+  options: { readonly enabled?: boolean; readonly lists?: boolean; readonly home?: string } = {},
 ) {
   const calls = { count: 0 };
   const instance = {
     instanceId: ProviderInstanceId.make(id),
+    continuationIdentity: { continuationKey: `claude:home:${options.home ?? `/home/${id}`}` },
     displayName: `Claude ${id}`,
     enabled: options.enabled ?? true,
     ...(options.lists === false
@@ -109,6 +110,21 @@ describe("ClaudeArtifacts", () => {
       expect(uplifted.calls.count).toBe(2);
       expect(bark.calls.count).toBe(1);
     }).pipe(Effect.provide(layerWith([uplifted.instance, bark.instance])));
+  });
+
+  it.effect("drops an account's list when its instance is pointed at another Claude home", () => {
+    const before = fakeInstance("claudeAgent", [pages(PAGE)], { home: "/a" });
+    const after = fakeInstance("claudeAgent", [], { home: "/b" });
+    const instances = [before.instance];
+    return Effect.gen(function* () {
+      const service = yield* ClaudeArtifacts.ClaudeArtifacts;
+      yield* service.refresh({});
+      instances[0] = after.instance;
+      expect((yield* service.snapshot).accounts[0]).toMatchObject({
+        status: "idle",
+        artifacts: [],
+      });
+    }).pipe(Effect.provide(layerWith(instances)));
   });
 
   it.effect("reports an error, not an empty list, when the tool returned no list", () => {

@@ -7,7 +7,6 @@ import {
   ClaudeArtifactsError,
   type ClaudeArtifactsRefreshInput,
   type ClaudeArtifactsSnapshot,
-  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import type {
   ProviderArtifactListResult,
@@ -46,6 +45,10 @@ type ArtifactInstance = ProviderInstance & {
 const listsArtifacts = (instance: ProviderInstance): instance is ArtifactInstance =>
   instance.enabled && instance.listArtifactPages !== undefined;
 
+/** An instance id can be pointed at another account; its continuation key names the account. */
+const accountKey = (instance: ProviderInstance) =>
+  `${instance.instanceId}\0${instance.continuationIdentity.continuationKey}`;
+
 /** The new entry for an account; a failed fetch keeps the last good list. */
 function nextCachedAccount(
   previous: CachedAccount,
@@ -80,8 +83,8 @@ const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   // Fetches outlive the request that started them, so a closed client never strands a waiter.
   const scope = yield* Effect.scope;
-  const cache = yield* Ref.make(new Map<ProviderInstanceId, CachedAccount>());
-  const inFlight = new Map<ProviderInstanceId, Deferred.Deferred<void>>();
+  const cache = yield* Ref.make(new Map<string, CachedAccount>());
+  const inFlight = new Map<string, Deferred.Deferred<void>>();
 
   const accounts = registry.listInstances.pipe(Effect.map((all) => all.filter(listsArtifacts)));
 
@@ -91,7 +94,7 @@ const make = Effect.gen(function* () {
       accounts: (yield* accounts).map((instance) => ({
         instanceId: instance.instanceId,
         displayName: instance.displayName ?? instance.instanceId,
-        ...(entries.get(instance.instanceId) ?? IDLE),
+        ...(entries.get(accountKey(instance)) ?? IDLE),
       })),
     } satisfies ClaudeArtifactsSnapshot;
   });
@@ -103,10 +106,8 @@ const make = Effect.gen(function* () {
     const fetchedAt = DateTime.formatIso(yield* DateTime.now);
     yield* Ref.update(cache, (entries) => {
       const next = new Map(entries);
-      next.set(
-        instance.instanceId,
-        nextCachedAccount(entries.get(instance.instanceId) ?? IDLE, result, fetchedAt),
-      );
+      const key = accountKey(instance);
+      next.set(key, nextCachedAccount(entries.get(key) ?? IDLE, result, fetchedAt));
       return next;
     });
   });
@@ -115,13 +116,14 @@ const make = Effect.gen(function* () {
   const refreshAccount = Effect.fn("ClaudeArtifacts.refreshAccount")(function* (
     instance: ArtifactInstance,
   ) {
-    const running = inFlight.get(instance.instanceId);
+    const key = accountKey(instance);
+    const running = inFlight.get(key);
     if (running !== undefined) return yield* Deferred.await(running);
     const done = yield* Deferred.make<void>();
-    inFlight.set(instance.instanceId, done);
+    inFlight.set(key, done);
     yield* fetchAccount(instance).pipe(
       Effect.ensuring(
-        Effect.sync(() => inFlight.delete(instance.instanceId)).pipe(
+        Effect.sync(() => inFlight.delete(key)).pipe(
           Effect.andThen(Deferred.succeed(done, undefined)),
         ),
       ),

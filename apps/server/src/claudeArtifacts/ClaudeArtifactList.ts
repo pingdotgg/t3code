@@ -10,7 +10,10 @@ export interface ClaudeArtifactListPage {
   readonly nextPageToken: string | undefined;
 }
 
-const LIST_HEADER = /^(?:\d+|No) artifacts?\b/im;
+// Claude Code's headers: "3 artifacts, ...", "Showing 200 of at least 201 artifacts, ...",
+// and for an empty list "No published or shared artifacts yet."
+const LIST_HEADER =
+  /^(?:(?:Showing \d+ of (?:at least )?)?\d+ (?:published )?artifacts?\b|No [^\n]*artifacts[^\n]* yet\.)/im;
 const NEXT_PAGE = /\(More exist: pass `page_token` "([^"\s]+)"/;
 // `- (mine, web page, pinned) Title — https://claude.ai/artifact/ID — updated 2026-11-18`
 const ITEM =
