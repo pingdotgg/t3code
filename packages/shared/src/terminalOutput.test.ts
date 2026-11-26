@@ -58,6 +58,14 @@ describe("appendTerminalOutput", () => {
     expect(feed(frames).text).toBe("layer a: done\nlayer b: done\n");
   });
 
+  it("preserves scrolled-off output on the first redraw after resuming a cleared screen", () => {
+    const history = "Build started\n";
+    const source = feed([history + "working\n".repeat(63), "\u001b[2J", "Progress: 10%"]);
+    const redraw = "\u001b[1A\r\u001b[2KProgress: 20%";
+    expect(appendTerminalOutput(source, redraw).text).toBe(history + "Progress: 20%");
+    expect(feed([terminalOutputResumeText(source), redraw]).text).toBe(history + "Progress: 20%");
+  });
+
   it("treats CRLF as one newline even when the pair is split across chunks", () => {
     const state = feed(["one\r", "\ntwo\r\n"]);
     expect(state.text).toBe("one\ntwo\n");
