@@ -5392,6 +5392,67 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             const heads = yield* runGit(repo.repoDir, ["ls-remote", "--heads", remote]);
             expect(heads.stdout).not.toContain("feature/");
           }
+          // Nor to where the remote led when the person was asked.
+          const original = yield* runGit(repo.repoDir, ["ls-remote", "--heads", repo.remoteDir]);
+          expect(original.stdout).not.toContain("feature/");
+        }),
+      );
+
+      it.effect("an approval to open without a push is for the branch its remote has", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+          yield* runGit(repo.repoDir, ["push", "origin", "feature/hooked:feature/elsewhere"]);
+          const approved = yield* repo.opening();
+          expect(approved).toMatchObject({ push: null, headRef: "origin/feature/hooked" });
+
+          // The same commit, tracked from another branch of the remote: another pull request.
+          yield* runGit(repo.repoDir, ["fetch", "origin"]);
+          yield* runGit(repo.repoDir, [
+            "branch",
+            "--set-upstream-to=origin/feature/elsewhere",
+            "feature/hooked",
+          ]);
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(CHANGED);
+        }),
+      );
+
+      it.effect("a push address is named without anything a URL may carry beside it", () =>
+        Effect.gen(function* () {
+          const repo = yield* hookedRepo();
+          yield* runGit(repo.repoDir, [
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            "https://user:secret@example.com/org/repo.git?token=secret#secret",
+          ]);
+          const approved = yield* repo.opening();
+          expect(approved.push?.urls).toEqual(["https://example.com/org/repo.git"]);
+          expect(approved.key).not.toContain("secret");
+        }),
+      );
+
+      it.effect("a private push goes to a remote that pushes to the companion alone", () =>
+        Effect.gen(function* () {
+          const companionDir = yield* createBareRemote();
+          const elsewhere = yield* createBareRemote();
+          const repo = yield* hookedRepo({
+            privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
+          });
+          // A remote that fetches from the companion and pushes somewhere else.
+          yield* runGit(repo.repoDir, ["remote", "add", "mirror", companionDir]);
+          yield* runGit(repo.repoDir, ["remote", "set-url", "--push", "mirror", elsewhere]);
+          const approved = yield* repo.opening();
+          const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+          expect(refused.message).toContain(
+            "does not push only to pingdotgg/codething-mvp.private",
+          );
+          for (const remote of [companionDir, elsewhere]) {
+            const heads = yield* runGit(repo.repoDir, ["ls-remote", "--heads", remote]);
+            expect(heads.stdout).toBe("");
+          }
         }),
       );
 
@@ -5759,6 +5820,28 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(actions).toMatchObject([
         { repository: "pingdotgg/codething-mvp", number: 7, action: "draft" },
       ]);
+
+      // Under an approval to open one, a pull request already open is handed back as it is.
+      const untouched: Array<PullRequestActionInput> = [];
+      const asked = yield* makeManager({
+        providerScenario: { prListSequence: [[open], [open], [open], [open]] },
+        pullRequests: {
+          summary: () => Effect.succeed({ isDraft: false } as never),
+          runAction: (action) => Effect.sync(() => void untouched.push(action)),
+        },
+      });
+      const approved = yield* asked.manager.pullRequestOpening({ cwd: repoDir });
+      expect(approved).toMatchObject({ push: null, headRef: "origin/feature/unpushed" });
+      const handedBack = yield* asked.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
+        draft: true,
+        approved,
+      });
+      expect(handedBack).toMatchObject({ status: "opened_existing", number: 7 });
+      expect(untouched).toEqual([]);
 
       // A draft of a PR the host does not list yet fails, so a retry drafts it.
       const unlisted = yield* makeManager({

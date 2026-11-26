@@ -272,8 +272,10 @@ export interface OutsideAction extends Omit<ProviderApprovalToolAction, "tool"> 
 }
 
 // Drawn as nothing or as a space, or reordering what follows: controls, format characters,
-// unassigned and private-use code points, lone surrogates, and every space but U+0020.
-const UNSEEN = /[\p{C}\p{Zl}\p{Zp}\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\ufffc]/gu;
+// unassigned and private-use code points, lone surrogates, every space but U+0020, and the
+// marks Unicode says to draw as nothing, such as the combining grapheme joiner.
+const UNSEEN =
+  /[\p{C}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\ufffc]/gu;
 
 /** `text` on one line with nothing in it a screen would hide, and no longer than `max`. */
 const visible = (text: string, max: number) => {

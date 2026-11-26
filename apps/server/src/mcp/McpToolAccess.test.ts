@@ -727,6 +727,8 @@ it.effect("a name the server did not write is shown as data, with nothing hidden
       '"x\\"\\u{a} in org/other\\u{202e}\\u{200b}\\u{a0}\\\\"',
     );
     expect(McpToolAccess.quoted("a".repeat(200), 10)).toBe(`"${"a".repeat(10)}…"`);
+    // A mark Unicode says to draw as nothing, which makes two names look the same.
+    expect(McpToolAccess.quoted("ma\u034fin")).toBe('"ma\\u{34f}in"');
 
     // And whatever a handler lets through unquoted still reaches the person on one line.
     const probed = yield* outsideProbe(() => ({

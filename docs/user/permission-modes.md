@@ -33,7 +33,9 @@ edit, a comment or a review.
 no "always allow" for these requests, and Plan mode asks too. An approval is for the call as it
 was asked: if the agent then asks for something else, or what it named has changed by the time
 you answer (a new commit, a pull request added to a stack), nothing is done and you are asked
-again. In **Full access** these tools run without asking, as commands and edits do.
+again. In **Full access** these tools run without asking, as commands and edits do. A thread
+set to Full access is still asked while it is in Plan mode, and when your administrator's limit
+on runtime modes is below Full access.
 
 Opening a pull request names the branch and the commit it is at, the base it is opened against
 and, when the branch has to be pushed first, the remote and address the push goes to. A private

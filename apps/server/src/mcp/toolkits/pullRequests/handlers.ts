@@ -330,7 +330,11 @@ const openingAsks = (opening: GitManager.PullRequestOpening, isPrivate: boolean)
   const branch = `${McpToolAccess.quoted(opening.branch)} at ${shortCommit(opening.head)}`;
   const base = `into ${McpToolAccess.quoted(opening.baseBranch)}`;
   const { push } = opening;
-  if (push === null) return { action: "Open", target: `a pull request for ${branch} ${base}` };
+  if (push === null) {
+    // Nothing is pushed, so the pull request is of the branch as its remote has it.
+    const on = opening.headRef === null ? "" : ` (${McpToolAccess.quoted(opening.headRef)})`;
+    return { action: "Open", target: `a pull request for ${branch}${on} ${base}` };
+  }
   const to =
     push.remoteName === null
       ? // Its host makes the companion when first asked to, so it has no name to show yet.
@@ -1229,12 +1233,18 @@ const make = Effect.gen(function* () {
             identity === undefined
               ? undefined
               : (sourceControlDefinitions.repositorySelector(identity) ?? undefined);
+          const host =
+            identity === undefined
+              ? undefined
+              : (sourceControlDefinitions.changeRequestHost(identity, identity.provider) ??
+                undefined);
           const asks: McpToolAccess.OutsideAction = {
             // A Full access call asks nobody, so it reads nothing to name.
             ...(opening === undefined
               ? { action: "Open", target: "a pull request" }
               : { ...openingAsks(opening, input.private === true), binds: opening.key }),
             ...(repository === undefined ? {} : { repository }),
+            ...(host === undefined ? {} : { host }),
             ...(pushHooks === undefined || hooks === undefined
               ? {}
               : { pushHooks, also: pushHooksClause(pushHooks, hooks) }),
@@ -1297,47 +1307,47 @@ const make = Effect.gen(function* () {
         }
         const located = yield* locate(input);
         const { target, ref } = located;
+        // Before anything is asked or written: a name that matches nobody ends the call here,
+        // and who a name resolved to is part of what is approved.
+        const reviewers =
+          input.requestReviewers === undefined
+            ? undefined
+            : yield* Effect.forEach(input.requestReviewers, (name) => reviewerNamed(ref, name));
         const run = Effect.gen(function* () {
           if (input.title !== undefined || input.body !== undefined) {
-            yield* pullRequests
-              .update({
-                ...ref,
-                ...(input.title === undefined ? {} : { title: input.title }),
-                ...(input.body === undefined ? {} : { body: input.body }),
-              })
-              .pipe(Effect.mapError(forgeFailure));
+            yield* pullRequests.update({
+              ...ref,
+              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.body === undefined ? {} : { body: input.body }),
+            });
           }
           for (const [labels, applied] of [
             [input.addLabels, true],
             [input.removeLabels, false],
           ] as const) {
-            if (labels !== undefined) {
-              yield* pullRequests
-                .setLabels({ ...ref, labels, applied })
-                .pipe(Effect.mapError(forgeFailure));
-            }
+            if (labels !== undefined) yield* pullRequests.setLabels({ ...ref, labels, applied });
           }
-          if (input.requestReviewers !== undefined) {
-            const reviewers = yield* Effect.forEach(input.requestReviewers, (name) =>
-              reviewerNamed(ref, name),
-            );
-            yield* pullRequests
-              .requestReviewers({ ...ref, reviewers, requested: true })
-              .pipe(Effect.mapError(forgeFailure));
+          if (reviewers !== undefined) {
+            yield* pullRequests.requestReviewers({ ...ref, reviewers, requested: true });
           }
           if (input.ready !== undefined) {
-            yield* pullRequests
-              .runAction({ ...ref, action: input.ready ? "ready" : "draft" })
-              .pipe(Effect.mapError(forgeFailure));
+            yield* pullRequests.runAction({ ...ref, action: input.ready ? "ready" : "draft" });
           }
           if (input.state !== undefined) {
-            yield* pullRequests
-              .runAction({ ...ref, action: input.state === "closed" ? "close" : "reopen" })
-              .pipe(Effect.mapError(forgeFailure));
+            yield* pullRequests.runAction({
+              ...ref,
+              action: input.state === "closed" ? "close" : "reopen",
+            });
           }
           return identityOf(target);
-        });
-        return { asks: asksOf(updateAction(input), located), run };
+        }).pipe(Effect.mapError(forgeFailure));
+        return {
+          asks: {
+            ...asksOf(updateAction(input), located),
+            ...(reviewers === undefined ? {} : { binds: reviewers }),
+          },
+          run,
+        };
       }),
     ),
     pull_request_respond: McpToolAccess.actsOutsideThread("pull_request_respond", (input) =>
@@ -1420,7 +1430,9 @@ const make = Effect.gen(function* () {
               : { expectedHeadSha: input.expectedHeadSha }),
           })
           .pipe(Effect.mapError(forgeFailure), Effect.as(identityOf(target)));
-        return { asks: asksOf(reviewAction(input), located), run };
+        // Where each line comment lands in the diff as it is now. A diff that has moved on by
+        // the time the person answers places them elsewhere, and so is asked about again.
+        return { asks: { ...asksOf(reviewAction(input), located), binds: comments }, run };
       }),
     ),
     pull_request_merge: McpToolAccess.actsOutsideThread("pull_request_merge", (input) =>
