@@ -6,6 +6,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { readPendingWorkspaceDefault } from "~/lib/draftWorkspaceDefaults";
 import { ToastProvider } from "../ui/toast";
 import { usePullRequestActionRunner, usePullRequestHandoffs } from "./usePullRequestActions";
 
@@ -218,6 +219,8 @@ it("moves the draft the user typed into during a checkout onto the checkout", as
   await expect.poll(() => state.prepareThread.mock.calls.length).toBe(1);
   const opened = DraftId.make("draft-opened");
   useComposerDraftStore.getState().setPrompt(opened, "Review this pull request");
+  // A send from this draft waits for the checkout.
+  expect(readPendingWorkspaceDefault(opened)).not.toBeNull();
   await act(async () => {
     prepared.resolve({
       _tag: "Success",
@@ -239,4 +242,5 @@ it("moves the draft the user typed into during a checkout onto the checkout", as
     branch: "pr-1",
     worktreePath: "/repo-worktrees/pr-1",
   });
+  expect(readPendingWorkspaceDefault(opened)).toBeNull();
 });
