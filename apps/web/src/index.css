@@ -2346,6 +2346,16 @@ code {
   overflow-wrap: break-word;
 }
 
+/* Words sizes each formula with STIX Two Math's metrics; another math font's glyphs overrun the box. */
+@font-face {
+  font-family: "STIX Two Math";
+  src:
+    local("STIX Two Math"),
+    local("STIXTwoMath-Regular"),
+    url("./markdown/fonts/STIXTwoMath-Regular.woff2") format("woff2");
+  font-display: block;
+}
+
 .chat-markdown [data-markdown-math] {
   font-weight: normal;
   font-style: normal;
