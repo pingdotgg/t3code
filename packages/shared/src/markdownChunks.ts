@@ -93,9 +93,28 @@ const hasFrontmatterClose = (lines: readonly string[]) =>
 // A one-line link reference definition; footnotes are left alone so each piece does not grow
 // a footnote section.
 const LINK_DEFINITION =
-  /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|[^\s<]\S*)(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
+  /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
+
+function isLinkDefinition(line: string): boolean {
+  const match = LINK_DEFINITION.exec(line);
+  if (!match) return false;
+  const bareDestination = match[1];
+  if (bareDestination === undefined) return true;
+  let depth = 0;
+  for (let i = 0; i < bareDestination.length; i++) {
+    const ch = bareDestination[i];
+    if (ch === "\\") {
+      i++;
+    } else if (ch === "(") {
+      depth++;
+    } else if (ch === ")" && --depth < 0) {
+      return false;
+    }
+  }
+  return depth === 0;
+}
 
 export interface SplitMarkdown {
   readonly chunks: readonly MarkdownChunk[];
@@ -151,7 +170,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
-        (first || afterBlankLine || afterDefinition || afterHeading) && LINK_DEFINITION.test(line);
+        (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
       afterDefinition = definition;
       if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
         definitions.push(line.trim());

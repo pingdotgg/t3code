@@ -247,6 +247,21 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown("---\n[rule]: /after-leading-rule\n\n# A").definitions).toBe(
       "[rule]: /after-leading-rule",
     );
+    const unbalanced = [
+      "[x]: /docs/example)",
+      "[after]: /continues-paragraph",
+      "",
+      "[open]: /docs/example(",
+      "",
+      "[bs]: /docs/example\\\\)",
+      "",
+      "[balanced]: /docs/example(a(b))",
+      "[escaped]: /docs/example\\)",
+      "[angle]: </docs/example)>",
+    ];
+    expect(splitMarkdown(unbalanced.join("\n")).definitions).toBe(
+      "[balanced]: /docs/example(a(b))\n[escaped]: /docs/example\\)\n[angle]: </docs/example)>",
+    );
   });
 });
 
