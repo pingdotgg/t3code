@@ -462,7 +462,7 @@ export const OpenCodeDriver: ProviderDriver<
       };
       // Subscribe before the caller reads: OpenCode sends no events from before a subscription.
       const scope = yield* Scope.fork(driverScope);
-      const release = Scope.close(scope, Exit.void).pipe(Effect.andThen(stopFollowing));
+      const release = stopFollowing.pipe(Effect.andThen(Scope.close(scope, Exit.void)));
       const events = yield* connection.events.pipe(
         Effect.provideService(Scope.Scope, scope),
         Effect.option,
