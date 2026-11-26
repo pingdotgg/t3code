@@ -57,6 +57,15 @@ describe("importPastedComposerText", () => {
     );
   });
 
+  it("drops a leading BOM so a fenced link example stays literal and the link after it a chip", () => {
+    const fenced = "~~~\n<t3-thread://v2/env-1/thread-1>\n~~~";
+    const text = importPastedComposerText(
+      clipboard({ "text/plain": `\uFEFF${fenced}\n<t3-thread://v2/env-1/thread-1>` }),
+      importAll([]),
+    );
+    expect(text).toBe(`${fenced}\n${chip("Thread")}`);
+  });
+
   it("imports CRLF and CR clipboard text with LF line breaks", () => {
     expect(
       importPastedComposerText(clipboard({ "text/plain": "x\r\n\r\ny\rz" }), () => new Map()),
