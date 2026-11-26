@@ -39,6 +39,27 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
+  it.effect.each([78, 80, 81, 82, 86, 92, 99, 103])(
+    "forgets the removed Bots migration recorded as %i and runs the later ones",
+    (id) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: id - 1 });
+        yield* sql`ALTER TABLE projection_projects ADD COLUMN bot_json TEXT`;
+        yield* sql`
+        INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, 'ProjectionProjectBot')
+      `;
+
+        yield* runMigrations();
+
+        // Every migration from the oldest recorded Bots id on runs, including upstream's at that id.
+        assert.deepStrictEqual(
+          (yield* history).filter(([migrationId]) => migrationId >= 78),
+          migrationManifest.filter(([migrationId]) => migrationId >= 78),
+        );
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

@@ -310,6 +310,24 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   });
 });
 
+// The fork's removed Bots feature recorded this migration (as 103, or an older id before upstream
+// claimed it). The rows go so those ids stay free for upstream's migrations; its bot_json column stays.
+export const REMOVED_BOT_MIGRATION_NAME = "ProjectionProjectBot";
+
+const forgetRemovedBotMigration = Effect.fn("forgetRemovedBotMigration")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (tables.length === 0) return;
+  // The read keeps the write lock off every startup once the rows are gone.
+  const rows = yield* sql`
+    SELECT 1 FROM effect_sql_migrations WHERE name = ${REMOVED_BOT_MIGRATION_NAME} LIMIT 1
+  `;
+  if (rows.length === 0) return;
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = ${REMOVED_BOT_MIGRATION_NAME}`;
+});
+
 const latestMigrationId = Math.max(...migrationEntries.map(([id]) => id));
 
 // Mirrors the Migrator, which runs only ids above the highest recorded, plus the V2-preview reconciliation.
@@ -338,6 +356,7 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  yield* forgetRemovedBotMigration();
   const progress = yield* Effect.serviceOption(DatabaseMigrationProgress.DatabaseMigrationProgress);
   // The desktop waits past its readiness budget until the finished line follows this one.
   const hasPending = yield* hasPendingMigrations();
