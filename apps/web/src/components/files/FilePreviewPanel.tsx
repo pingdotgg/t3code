@@ -793,13 +793,19 @@ function useFileLineReveal(
           cancelGuard();
           return;
         }
-        const targetTop = resolveScrollTarget(line);
+        // CodeView's file element holds only its mounted rows, so only a mounted row places the line.
+        const targetTop =
+          scroller === "codeView" &&
+          !(fileContainer.shadowRoot ?? fileContainer).querySelector(`[data-line="${line}"]`)
+            ? null
+            : resolveScrollTarget(line);
         if (
           targetTop !== null &&
           Math.abs(scrollContainer.scrollTop - targetTop) > REVEAL_GUARD_TOLERANCE_PX
         ) {
           scrollContainer.scrollTop = targetTop;
         }
+        if (scroller === "codeView") state.revealedScrollTop = scrollContainer.scrollTop;
         guardFrameId = requestAnimationFrame(holdTarget);
       };
       guardFrameId = requestAnimationFrame(holdTarget);
@@ -828,15 +834,11 @@ function useFileLineReveal(
         state.handledRequestId = revealRequestId;
         if (scroller === "codeView") {
           // That window's geometry cannot place the line, so the viewer scrolls to it.
+          // It centers its estimate of the line, and rows it mounts on arrival can still move it.
           instance.scrollToLine(line, "center", (result) => {
             if (result !== "settled") return;
-            // The viewer centers its estimate of the line; the mounted row is where it really is.
-            const root = fileContainer.shadowRoot ?? fileContainer;
-            const settledTop = root.querySelector(`[data-line="${line}"]`)
-              ? resolveScrollTarget(line)
-              : null;
-            if (settledTop !== null) scrollContainer.scrollTop = settledTop;
             state.revealedScrollTop = scrollContainer.scrollTop;
+            guardScrollTarget(line);
           });
           return;
         }
