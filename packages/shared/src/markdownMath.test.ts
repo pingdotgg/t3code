@@ -33,6 +33,13 @@ function text(markdown: string) {
 }
 
 describe("chat math parsing", () => {
+  it("keeps original source offsets after a leading byte-order mark", () => {
+    const source = "\uFEFFSee $x$ now";
+    const expected = [{ start: 5, end: 8, source: "$x$" }];
+    expect(markdownMathRanges(source)).toMatchObject(expected);
+    expect(markdownMathRanges(source, parse(source))).toMatchObject(expected);
+  });
+
   it("keeps GFM autolink destinations intact while restoring literal dollars", () => {
     const source = "Query www.example.com/?$select=id and $x$.";
     const link = collect(parse(source)).find((node) => node.type === "link");

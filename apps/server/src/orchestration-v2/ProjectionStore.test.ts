@@ -764,7 +764,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
     const found = yield* store
       .getThreadRecords(
         threadId,
-        ["runs", "nodes", "subagents", "messages", "attempts", "providerTurns"],
+        ["runs", "nodes", "subagents", "messages", "attempts", "providerTurns", "checkpoints"],
         {
           runIds: [RunId.make("run:idle-compaction:4")],
           nodeIds: [nodeId],
@@ -772,6 +772,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
           messageIds: [MessageId.make("message:idle-compaction:4")],
           attemptIds: [RunAttemptId.make("attempt:idle-compaction")],
           providerTurnIds: [ProviderTurnId.make("turn:idle-old")],
+          checkpointIds: [CheckpointId.make("checkpoint:idle-compaction")],
         },
       )
       .pipe(Effect.withTracer(byId.tracer));
@@ -791,9 +792,15 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       })
       .pipe(Effect.withTracer(byId.tracer));
     for (const [table, index] of [
-      ...["runs", "nodes", "subagents", "messages", "run_attempts", "provider_turns"].map(
-        (name) => [name, `sqlite_autoindex_orchestration_v2_projection_${name}_1`] as const,
-      ),
+      ...[
+        "runs",
+        "nodes",
+        "subagents",
+        "messages",
+        "run_attempts",
+        "provider_turns",
+        "checkpoints",
+      ].map((name) => [name, `sqlite_autoindex_orchestration_v2_projection_${name}_1`] as const),
       ["subagents", "orchestration_v2_projection_subagents_child_thread_idx"],
       ["turn_items", "orchestration_v2_projection_turn_items_node_ordinal_idx"],
     ] as const) {
@@ -839,6 +846,27 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .join("\n");
       for (const seek of seeks) assert.include(plan, seek);
     }
+    // Live items found by status alone: sorted by ordinal, SQLite would fetch every row of the thread.
+    const live = traceSqlStatements();
+    const liveItems = yield* store
+      .getThreadRecords(threadId, ["turnItems"], {
+        turnItemStatuses: ["pending", "running", "waiting"],
+      })
+      .pipe(Effect.withTracer(live.tracer));
+    assert.deepEqual(
+      liveItems.turnItems.map((item) => item.id),
+      ["item:idle-compaction:rolled-back"],
+    );
+    const liveQuery = live.statements.find((statement) =>
+      statement.includes("FROM orchestration_v2_projection_turn_items"),
+    );
+    assert.isDefined(liveQuery);
+    assert.include(
+      (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${liveQuery}`))
+        .map((row) => row.detail)
+        .join("\n"),
+      "USING COVERING INDEX orchestration_v2_projection_turn_items_thread_type_idx",
+    );
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
       ["turn:idle-newest"],
@@ -3981,6 +4009,29 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
+  );
+  it.effect("keeps a run's explicit queue marker through a run.updated that omits it", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("explicit-queue-stale-update");
+      const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const update = (id: string, payload: typeof run) =>
+        store.apply({
+          id: EventId.make(`event:explicit-queue-stale-update:${id}`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          providerInstanceId,
+          occurredAt: now,
+          payload,
+        });
+      yield* update("marked", { ...run, explicitQueue: true });
+      yield* update("completed", { ...run, status: "completed", completedAt: now });
+      const updated = (yield* store.getThreadProjection(threadId)).runs[0];
+      assert.equal(updated?.status, "completed");
+      assert.equal(updated?.explicitQueue, true);
+    }),
   );
   it.effect("records restart-cancelled work without regressing a run that completed since", () =>
     Effect.gen(function* () {

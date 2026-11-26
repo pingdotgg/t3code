@@ -244,7 +244,8 @@ function redactMessage(message: string): string {
       /\b[\w-]*(?:token|password|secret|credential|api[_-]?key)[\w-]*\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       "[redacted credential]",
     )
-    .slice(0, 512);
+    .slice(0, 512)
+    .replace(/\p{Surrogate}$/u, "");
 }
 
 function summarizeCause(cause: unknown, depth: number): string {
@@ -281,7 +282,9 @@ function summarizeCause(cause: unknown, depth: number): string {
 
 export function describeUpdateErrorCause(cause: unknown): string {
   try {
-    return summarizeCause(cause, 0).slice(0, 1024);
+    return summarizeCause(cause, 0)
+      .slice(0, 1024)
+      .replace(/\p{Surrogate}$/u, "");
   } catch {
     return "UnknownError";
   }

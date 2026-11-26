@@ -1462,7 +1462,7 @@ function ScheduledTaskDestination({
             <ComboboxEmpty>
               <T>No threads found.</T>
             </ComboboxEmpty>
-            <ComboboxList className="max-h-72">
+            <ComboboxList scrollAreaClassName="max-h-72">
               {items.map((value, index) => (
                 <ComboboxItem key={value} index={index} value={value}>
                   <span className="block truncate">

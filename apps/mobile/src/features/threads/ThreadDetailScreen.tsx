@@ -607,7 +607,7 @@ function ThreadDetailBody(
       Dialog.alert(
         gt("Turn stopped; the agent process kept running"),
         gt(
-          "{count, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {count} working thread. Stop those to free it.} other {It is shared with {count} working threads. Stop those to free it.}}",
+          "{count, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {count} working thread. Stop that thread to free it.} other {It is shared with {count} working threads. Stop those to free it.}}",
           { count: others },
         ),
       );
