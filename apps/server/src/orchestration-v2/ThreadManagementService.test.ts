@@ -315,6 +315,106 @@ it.effect.each([
   }).pipe(Effect.provide(layerTest));
 });
 
+it.effect(
+  "sendToThread forwards createdBy to worktreeRestore and refuses above maxRuntimeMode before restoring",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:thread-management:ceiling");
+      const threadId = ThreadId.make("thread:thread-management:ceiling");
+      const runSend = (
+        managedPolicy: Parameters<typeof ServerSettings.layerTest>[1],
+        createdBy: "agent" | "user",
+      ) =>
+        Effect.gen(function* () {
+          const restoreCalls: Array<{ readonly createdBy?: string | undefined }> = [];
+          const dispatched: Array<string> = [];
+          const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
+            Layer.provide(
+              Layer.succeed(ThreadWorktreeRestore, {
+                takeRecreated: () => Effect.undefined,
+                restore: (_thread, options) =>
+                  Effect.sync(() => {
+                    restoreCalls.push({ createdBy: options?.createdBy });
+                  }),
+              }),
+            ),
+            Layer.provide(
+              Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+                ensureTranscript: () =>
+                  Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+              }),
+            ),
+            Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+            Layer.provide(
+              Layer.mock(Orchestrator.OrchestratorV2)({
+                getThreadRecords: () =>
+                  Effect.succeed({
+                    thread: {
+                      id: threadId,
+                      projectId,
+                      deletedAt: null,
+                      archivedAt: null,
+                      runtimeMode: "full-access",
+                      interactionMode: "default",
+                      worktreePath: "/worktrees/greendale",
+                      branch: "t3/greendale",
+                      modelSelection: {
+                        instanceId: ProviderInstanceId.make("codex"),
+                        model: "test",
+                      },
+                    },
+                    runs: [],
+                    providerTurns: [],
+                    messages: [],
+                    turnItems: [],
+                  } as unknown as OrchestrationV2ThreadProjection),
+                dispatch: (command) =>
+                  Effect.sync(() => {
+                    dispatched.push(command.type);
+                    return { sequence: 1, storedEvents: [] } as never;
+                  }),
+              }),
+            ),
+            Layer.provide(ServerSettings.layerTest({}, managedPolicy)),
+            Layer.provideMerge(layerReceiptsTest),
+          );
+          const error = yield* Effect.gen(function* () {
+            const threads = yield* ThreadManagementService.ThreadManagementService;
+            return yield* Effect.flip(
+              threads.sendToThread({
+                projectId,
+                threadId,
+                commandId: CommandId.make(`command:thread-management:ceiling:${createdBy}`),
+                messageId: MessageId.make(`message:thread-management:ceiling:${createdBy}`),
+                text: "Reply with ok.",
+                attachments: [],
+                mode: "auto",
+                createdBy,
+                creationSource: createdBy === "agent" ? "mcp" : "web",
+              }),
+            );
+          }).pipe(Effect.provide(layerTest));
+          return { error, restoreCalls, dispatched };
+        });
+
+      const forwarded = yield* runSend(undefined, "agent");
+      expect(forwarded.restoreCalls).toEqual([{ createdBy: "agent" }]);
+      expect(forwarded.dispatched).toEqual(["message.dispatch"]);
+
+      const refused = yield* runSend(
+        {
+          organization: "Greendale",
+          lockedSettings: [],
+          limits: { maxRuntimeMode: "approval-required" },
+        },
+        "user",
+      );
+      expect(refused.error).toBeInstanceOf(Orchestrator.OrchestratorRuntimeModeAboveCeilingError);
+      expect(refused.restoreCalls).toEqual([]);
+      expect(refused.dispatched).toEqual([]);
+    }),
+);
+
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-restart");

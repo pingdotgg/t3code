@@ -52,6 +52,7 @@ import { AgentScope, agentScopeLauncherScript } from "@t3tools/shared/AgentScope
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { appLinkUrl } from "@t3tools/shared/appLinks";
+import { isNetworkPath } from "@t3tools/shared/path";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
@@ -84,6 +85,7 @@ import type {
 } from "playwright-core";
 
 import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
+import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -686,6 +688,7 @@ const CLIPBOARD_SCRIPT = `(() => {
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const isServerInternalPath = yield* makeIsServerInternalPath;
   const host = { platform: yield* HostProcess.Platform, arch: yield* HostProcess.Architecture };
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -1721,13 +1724,55 @@ const make = Effect.gen(function* () {
     return true;
   };
   const uploadFiles = async (tab: ServerTab, input: PreviewAutomationUploadInput) => {
-    const relative = input.paths.find((path) => !NodePath.isAbsolute(path));
-    if (relative !== undefined)
-      throw new ServerBrowserPage.ServerBrowserOperationError({
-        tag: "PreviewAutomationExecutionError",
-        message: `Upload paths must be absolute: ${relative}`,
-      });
-    if (await ServerBrowserPage.setInputFiles(tab.page, input)) return undefined;
+    const resolvedPaths: Array<string> = [];
+    for (const filePath of input.paths) {
+      if (isNetworkPath(filePath)) {
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: `Upload paths cannot be network paths: ${filePath}`,
+        });
+      }
+      if (!NodePath.isAbsolute(filePath)) {
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: `Upload paths must be absolute: ${filePath}`,
+        });
+      }
+      let realPath: string;
+      try {
+        realPath = await NodeFSP.realpath(filePath);
+      } catch {
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: `Upload file does not exist or cannot be read: ${filePath}`,
+        });
+      }
+      if (isNetworkPath(realPath) || (await runPromise(isServerInternalPath(realPath)))) {
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: `Upload path is not allowed: ${filePath}`,
+        });
+      }
+      let info: Awaited<ReturnType<typeof NodeFSP.lstat>>;
+      try {
+        info = await NodeFSP.lstat(realPath);
+      } catch {
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: `Upload file does not exist or cannot be read: ${filePath}`,
+        });
+      }
+      if (!info.isFile()) {
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: `Upload path must be a regular file: ${filePath}`,
+        });
+      }
+      resolvedPaths.push(realPath);
+    }
+    if (await ServerBrowserPage.setInputFiles(tab.page, { ...input, paths: resolvedPaths })) {
+      return undefined;
+    }
     const open = tab.fileChooser;
     if (!open)
       throw new ServerBrowserPage.ServerBrowserOperationError({
@@ -1735,13 +1780,13 @@ const make = Effect.gen(function* () {
         message:
           "No file picker is open. Click the page's upload control first, or pass the file input's locator.",
       });
-    if (input.paths.length > 1 && !open.chooser.isMultiple())
+    if (resolvedPaths.length > 1 && !open.chooser.isMultiple())
       throw new ServerBrowserPage.ServerBrowserOperationError({
         tag: "PreviewAutomationExecutionError",
         message: "This file picker accepts one file.",
       });
-    if (input.paths.length > 0)
-      await open.chooser.setFiles([...input.paths], {
+    if (resolvedPaths.length > 0)
+      await open.chooser.setFiles(resolvedPaths, {
         timeout: input.timeoutMs ?? NAVIGATION_TIMEOUT_MS,
       });
     if (tab.fileChooser === open) closeFileChooser(tab);

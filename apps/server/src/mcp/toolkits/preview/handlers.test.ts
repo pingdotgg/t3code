@@ -20,9 +20,10 @@ import {
   parseThreadSegmentFromAttachmentId,
 } from "../../../attachmentStore.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
+import { liveThreadShell, liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { claimPreviewRecording, layerStandard } from "./handlers.ts";
 import { PreviewStandardToolkit } from "./tools.ts";
@@ -100,6 +101,107 @@ it.effect("preview_open navigates the opened tab to a dev server in one tool cal
       ),
     ),
   ),
+);
+
+it.effect.each([
+  {
+    label: "approval-required thread",
+    runtimeMode: "approval-required" as const,
+    interactionMode: "default" as const,
+    allowed: false,
+  },
+  {
+    label: "plan-mode thread",
+    runtimeMode: "full-access" as const,
+    interactionMode: "plan" as const,
+    allowed: false,
+  },
+  {
+    label: "full-access default thread",
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    allowed: true,
+  },
+])(
+  "preview_act(upload) for $label (allowed=$allowed)",
+  ({ runtimeMode, interactionMode, allowed }) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const connected = yield* Deferred.make<void>();
+      const requests: PreviewAutomationRequest[] = [];
+      const events = yield* broker.connect({
+        clientId: "client-upload",
+        environmentId: scope.environmentId,
+        supportedOperations: ["status", "upload"],
+      });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        requests.push(event.request);
+        return broker.respond({
+          clientId: "client-upload",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result:
+            event.request.operation === "status"
+              ? {
+                  available: true,
+                  visible: false,
+                  tabId: null,
+                  url: null,
+                  title: null,
+                  loading: false,
+                }
+              : {},
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      const toolkit = yield* PreviewStandardToolkit.pipe(
+        Effect.provide(McpToolAccess.HandlersLayer.layer(layerStandard)),
+      );
+      const outcome = yield* toolkit
+        .handle("preview_act", {
+          action: "upload",
+          paths: ["/tmp/greendale-syllabus.txt"],
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.result);
+      if (allowed) {
+        expect(outcome).toMatchObject({ _tag: "Success" });
+        expect(requests.map((request) => request.operation)).toContain("upload");
+      } else {
+        expect(outcome._tag).toBe("Failure");
+        if (outcome._tag === "Failure") {
+          expect(outcome.failure).toMatchObject({
+            _tag: "OrchestratorMcpFailure",
+            code: "capability_denied",
+          });
+        }
+        expect(requests).toEqual([]);
+      }
+    }).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment-upload"),
+        requestNamespace: "provider-session-upload",
+        thread: {
+          threadId: ThreadId.make("thread-upload"),
+          providerSessionId: "provider-session-upload",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["preview"] as const),
+        issuedAt: 1,
+      }),
+      Effect.provide(
+        Layer.mergeAll(
+          PreviewAutomationBroker.layer,
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (threadId) =>
+              Effect.succeed(liveThreadShell(threadId, { runtimeMode, interactionMode })),
+          }),
+        ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      ),
+    ),
 );
 
 describe("claimPreviewRecording", () => {

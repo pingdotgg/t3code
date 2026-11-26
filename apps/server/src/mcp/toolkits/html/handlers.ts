@@ -22,29 +22,38 @@ const toFailure = (error: { readonly _tag: string; readonly message: string }) =
     message: error.message,
   });
 
-// The server reads the file for the caller, so only a thread that reads files without asking may
-// pass a path; a supervised thread passes the HTML its provider already let it read.
+// The server reads local files for the caller, so only a full-access thread may pass a path or
+// have local images inlined; a supervised thread passes inline HTML without host file reads.
 const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
   readonly html?: string | undefined;
   readonly path?: string | undefined;
 }) {
-  if (input.html !== undefined && input.path === undefined) {
-    return { html: input.html } satisfies HtmlRender.HtmlRenderSource;
-  }
-  if (input.path === undefined || input.html !== undefined) {
+  const hasHtml = input.html !== undefined;
+  const hasPath = input.path !== undefined;
+  if (hasHtml === hasPath) {
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
       message: "Pass exactly one of html or path.",
     });
   }
   const { limits } = yield* loadCaller();
-  if (limits.runtimeMode !== "full-access") {
+  const allowLocalImages = limits.runtimeMode === "full-access";
+  if (input.html !== undefined) {
+    return {
+      source: { html: input.html } satisfies HtmlRender.HtmlRenderSource,
+      allowLocalImages,
+    };
+  }
+  if (!allowLocalImages) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
       message: "Pass html instead of path: only full-access threads may pass a path.",
     });
   }
-  return { path: input.path } satisfies HtmlRender.HtmlRenderSource;
+  return {
+    source: { path: input.path! } satisfies HtmlRender.HtmlRenderSource,
+    allowLocalImages,
+  };
 });
 
 const handlers = {
@@ -52,9 +61,9 @@ const handlers = {
   html_preview: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const htmlRender = yield* HtmlRender.HtmlRender;
-      const source = yield* pageSource(input);
+      const { source, allowLocalImages } = yield* pageSource(input);
       const { png, ...preview } = yield* htmlRender
-        .preview({ ...source, width: input.width, appearance: input.appearance })
+        .preview({ ...source, width: input.width, appearance: input.appearance, allowLocalImages })
         .pipe(Effect.mapError(toFailure));
       return {
         ...preview,
@@ -72,9 +81,15 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "html_render");
       const htmlRender = yield* HtmlRender.HtmlRender;
-      const source = yield* pageSource(input);
+      const { source, allowLocalImages } = yield* pageSource(input);
       const reference = yield* htmlRender
-        .publish({ ...source, threadId: thread.threadId, title: input.title, height: input.height })
+        .publish({
+          ...source,
+          threadId: thread.threadId,
+          title: input.title,
+          height: input.height,
+          allowLocalImages,
+        })
         .pipe(Effect.mapError(toFailure));
       return {
         htmlRender: reference,

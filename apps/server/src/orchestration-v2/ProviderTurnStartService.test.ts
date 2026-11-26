@@ -3592,3 +3592,147 @@ effectIt.effect("rejects citation expansion before opening a provider session", 
     expect(harness.projection().messages[0]?.text).toBe(text);
   }),
 );
+
+effectIt.effect(
+  "refuses a thread above maxRuntimeMode before restoring a missing worktree or running setup scripts",
+  () =>
+    Effect.gen(function* () {
+      const worktreePath = `${managedWorktreesDir}/project/feature-ceiling`;
+      const threadId = ThreadId.make("thread_provider_turn_start_ceiling");
+      const runId = RunId.make("run_provider_turn_start_ceiling");
+      const attemptId = RunAttemptId.make("attempt_provider_turn_start_ceiling");
+      const rootNodeId = NodeId.make("node_provider_turn_start_ceiling");
+      const providerThreadId = ProviderThreadId.make("provider_thread_ceiling");
+      const providerSessionId = ProviderSessionId.make("provider_session_ceiling");
+      const messageId = MessageId.make("message_provider_turn_start_ceiling");
+      const checkpointScopeId = CheckpointScopeId.make("checkpoint_scope_ceiling");
+      const projection = {
+        thread: {
+          id: threadId,
+          projectId: ProjectId.make("project_provider_turn_start_ceiling"),
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/ceiling",
+          worktreePath,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        },
+        runs: [
+          {
+            id: runId,
+            threadId,
+            status: "starting",
+            rootNodeId,
+            activeAttemptId: attemptId,
+            providerThreadId,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            userMessageId: messageId,
+            ordinal: 1,
+          },
+        ],
+        nodes: [{ id: rootNodeId, checkpointScopeId }],
+        attempts: [{ id: attemptId }],
+        providerThreads: [{ id: providerThreadId, providerSessionId }],
+        messages: [
+          {
+            id: messageId,
+            role: "user",
+            text: "Continue",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        ],
+        checkpointScopes: [{ id: checkpointScopeId }],
+        contextHandoffs: [],
+        contextTransfers: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const createWorktree = vi.fn(() => Effect.succeed({} as never));
+      const runForThread = vi.fn(() => Effect.succeed({ status: "no-script" as const }));
+      const settledEvents: Array<OrchestrationV2DomainEvent> = [];
+      const writeIfRunCurrent = vi.fn<EventSink.EventSinkV2["Service"]["writeIfRunCurrent"]>(
+        ({ events }) => {
+          settledEvents.push(...events);
+          return Effect.succeed({ committed: true, storedEvents: [] } as never);
+        },
+      );
+      const layer = ProviderTurnStart.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({ runForThread }),
+            Layer.mock(ThreadWorktreeRestore)({
+              takeRecreated: () =>
+                Effect.succeed({
+                  project: {
+                    id: ProjectId.make("project_provider_turn_start_ceiling"),
+                    workspaceRoot: "/tmp/provider-turn-start-project",
+                  } as never,
+                  worktreePath,
+                }),
+            }),
+            Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+            Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+            IdAllocator.layer,
+            Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
+            Layer.succeed(FileSystem.FileSystem, {
+              exists: () => Effect.succeed(false),
+              realPath: (target: string) => Effect.succeed(normalize(target)),
+            } as never),
+            Path.layer,
+            Layer.mock(ServerConfig.ServerConfig)({
+              worktreesDir: managedWorktreesDir,
+            } as ServerConfig.ServerConfig["Service"]),
+            ServerSettings.layerTest(
+              {},
+              {
+                organization: "Greendale",
+                lockedSettings: [],
+                limits: { maxRuntimeMode: "approval-required" },
+              },
+            ),
+            layerNoTaskFolders,
+            Layer.mock(GitWorkflow.GitWorkflowService)({
+              pruneWorktrees: () => Effect.void,
+              createWorktree,
+              listLocalBranchNames: () => Effect.succeed(["feature/ceiling"]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+            }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadRecords: () => Effect.succeed(projection),
+              getTurnStartContext: () => Effect.succeed({ ...projection, hasConversation: true }),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+            Layer.mock(ProviderAuthService.ProviderAuthService)({
+              tryHandlePromptCommand: () => Effect.succeed(false),
+            }),
+            Layer.mock(RunExecutionService.RunExecutionServiceV2)({}),
+            Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+            Layer.mock(ProviderUsageAnalytics.ProviderTurnAnalytics)({
+              runSettled: () => Effect.void,
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* ProviderTurnStart.ProviderTurnStartServiceV2;
+        yield* service.start({ threadId, runId, willRetry: false });
+      }).pipe(Effect.provide(layer));
+
+      expect(createWorktree).not.toHaveBeenCalled();
+      expect(runForThread).not.toHaveBeenCalled();
+      expect(settledEvents).toContainEqual(
+        expect.objectContaining({
+          type: "turn-item.updated",
+          payload: expect.objectContaining({
+            type: "error",
+            title: "Thread mode is above the policy limit",
+          }),
+        }),
+      );
+    }),
+);

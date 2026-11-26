@@ -1,8 +1,12 @@
 import {
+  isRuntimeModeAbove,
   ThreadId,
+  type OrchestrationV2Actor,
   type OrchestrationV2LinkOrigin,
   type Project,
   type ProjectId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
   type TerminalCwdNotFoundError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -17,6 +21,7 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { scratchFolderRoot } from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
@@ -59,6 +64,12 @@ interface WorktreeThread {
   readonly worktreePath: string | null;
   readonly branch: string | null;
   readonly linkOrigin?: OrchestrationV2LinkOrigin | undefined;
+  readonly runtimeMode?: RuntimeMode | undefined;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
+}
+
+export interface RestoreWorktreeOptions {
+  readonly createdBy?: OrchestrationV2Actor | undefined;
 }
 
 export const makeRestoreMissingWorktree = Effect.gen(function* () {
@@ -68,6 +79,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   // Storage cleanup prunes idle No project folders, which have no branch to restore from.
   // An empty folder, only directly inside the No project's own root, lets the thread run again.
@@ -193,18 +205,35 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     });
   });
 
-  return Effect.fn("restoreMissingWorktree")(function* (thread: WorktreeThread) {
+  return Effect.fn("restoreMissingWorktree")(function* (
+    thread: WorktreeThread,
+    options?: RestoreWorktreeOptions,
+  ) {
     const { worktreePath, branch } = thread;
     if (worktreePath === null) return;
     if (branch === null) return yield* recreateScratchFolder(thread, worktreePath);
     // A task folder can miss one repository's worktree while the thread's own folder is there.
     const taskFolder = yield* taskFolders.find(worktreePath).pipe(Effect.orElseSucceed(() => null));
     if (taskFolder !== null) {
+      const maxRuntimeMode = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
+      const projectCommands =
+        options?.createdBy === "agent"
+          ? thread.runtimeMode !== undefined && thread.interactionMode !== undefined
+            ? TaskFolders.projectCommandsForAgent(
+                thread.linkOrigin,
+                { runtimeMode: thread.runtimeMode, interactionMode: thread.interactionMode },
+                maxRuntimeMode,
+              )
+            : "agent-below-full-access"
+          : thread.runtimeMode !== undefined &&
+              isRuntimeModeAbove(thread.runtimeMode, maxRuntimeMode)
+            ? "request-not-permitted"
+            : TaskFolders.projectCommandsForLink(thread.linkOrigin);
       return yield* taskFolders
         .restore({
           taskFolder,
           branch,
-          projectCommands: TaskFolders.projectCommandsForLink(thread.linkOrigin),
+          projectCommands,
           recreate: (checkout) =>
             Effect.logWarning("recreating missing worktree", {
               threadId: thread.id,
@@ -262,6 +291,7 @@ export class ThreadWorktreeRestore extends Context.Service<
   {
     readonly restore: (
       thread: WorktreeThread,
+      options?: RestoreWorktreeOptions,
     ) => Effect.Effect<void, WorktreeRecreateError | WorktreeRecreateNoBaseError>;
     /** A checkout this service recreated for the thread whose setup has not run yet. */
     readonly takeRecreated: (threadId: ThreadId) => Effect.Effect<RecreatedWorktree | undefined>;
@@ -277,19 +307,21 @@ export const layerThreadWorktreeRestore = Layer.effect(
     // Sends restore before dispatch, so turn start finds the checkout present and runs setup from here.
     const recreated = new Map<ThreadId, RecreatedWorktree>();
     return {
-      restore: Effect.fn("ThreadWorktreeRestore.restore")(function* (thread: WorktreeThread) {
+      restore: Effect.fn("ThreadWorktreeRestore.restore")(function* (
+        thread: WorktreeThread,
+        options?: RestoreWorktreeOptions,
+      ) {
         const result = yield* thread.worktreePath === null
-          ? restore(thread)
-          : withWorkspaceLease(path.resolve(thread.worktreePath), restore(thread));
+          ? restore(thread, options)
+          : withWorkspaceLease(path.resolve(thread.worktreePath), restore(thread, options));
         if (result !== undefined) recreated.set(thread.id, result);
       }),
-      takeRecreated: Effect.fn("ThreadWorktreeRestore.takeRecreated")(function* (
-        threadId: ThreadId,
-      ) {
-        const result = recreated.get(threadId);
-        recreated.delete(threadId);
-        return result;
-      }),
+      takeRecreated: (threadId: ThreadId) =>
+        Effect.sync(() => {
+          const result = recreated.get(threadId);
+          recreated.delete(threadId);
+          return result;
+        }),
     };
   }),
 );

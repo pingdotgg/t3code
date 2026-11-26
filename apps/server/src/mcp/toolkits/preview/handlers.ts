@@ -34,6 +34,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { assertFullAccess, loadCaller } from "../../threadAccess.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
 /** Whether a preview the agent
@@ -234,18 +235,26 @@ const handlers = {
     );
   }),
   preview_act: McpToolAccess.actsAsCaller(({ action, ...input }) =>
-    decodeActInput[action](input).pipe(
-      Effect.mapError(
-        (cause) => new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message }),
-      ),
-      Effect.flatMap((decoded) =>
-        invokeTargeted<object>(
-          action,
-          decoded,
-          "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
+    Effect.gen(function* () {
+      if (action === "upload") {
+        const caller = yield* loadCaller();
+        yield* assertFullAccess(
+          caller,
+          "Only full-access threads in default mode may upload local files.",
+        );
+      }
+      const decoded = yield* decodeActInput[action](input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message }),
         ),
-      ),
-    ),
+      );
+      return yield* invokeTargeted<object>(
+        action,
+        decoded,
+        "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
+      );
+    }),
   ),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(

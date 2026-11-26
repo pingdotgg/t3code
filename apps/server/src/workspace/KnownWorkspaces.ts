@@ -127,13 +127,9 @@ export const make = Effect.gen(function* () {
         return real !== null && listed.includes(real);
       });
       for (const { worktreePath, projectId } of threads) {
-        // Relative paths use server cwd; managed paths still need resolution to reject symlinks elsewhere.
+        // Managed worktrees already matched above after symlink resolution; only Git-listed worktrees remain.
         if (!path.isAbsolute(worktreePath)) continue;
         if (!within(yield* resolveRoot(worktreePath))) continue;
-        const lexical = path.resolve(worktreePath);
-        if (managedDirectories.some((directory) => isWithinRoot(path, lexical, directory))) {
-          return true;
-        }
         if (yield* isProjectWorktree(projectId, worktreePath)) return true;
       }
       return false;

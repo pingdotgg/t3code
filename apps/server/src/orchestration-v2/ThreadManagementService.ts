@@ -15,6 +15,7 @@ import {
   isDelegatedAppThread,
   isListedThreadLineage,
   isOrchestrationV2WorkActive,
+  isRuntimeModeAbove,
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
@@ -949,11 +950,30 @@ const make = Effect.gen(function* () {
       };
     }
 
+    const managedPolicy = serverSettings.managedPolicy;
+    const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
+    if (
+      managedPolicy !== undefined &&
+      maxRuntimeMode !== undefined &&
+      target.thread.runtimeMode !== undefined &&
+      isRuntimeModeAbove(target.thread.runtimeMode, maxRuntimeMode) &&
+      !(yield* hasReceipt(input.commandId))
+    ) {
+      return yield* new Orchestrator.OrchestratorRuntimeModeAboveCeilingError({
+        commandId: input.commandId,
+        threadId: input.threadId,
+        refused: "turn",
+        runtimeMode: target.thread.runtimeMode,
+        maxRuntimeMode,
+        organization: managedPolicy.organization,
+      });
+    }
+
     // Turn start would fail on its own after the send reported success; a replay keeps its answer.
     // A live steer and a receipt replay without a target turn need no workspace.
     if (!missingSteeringTarget && dispatchMode.type !== "steer_active") {
       yield* worktreeRestore
-        .restore(target.thread)
+        .restore(target.thread, { createdBy: input.createdBy })
         .pipe(
           Effect.catch((cause) =>
             hasReceipt(input.commandId).pipe(

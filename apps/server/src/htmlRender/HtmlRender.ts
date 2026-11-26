@@ -26,10 +26,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { openMediaFile } from "../assets/MediaFile.ts";
+import { openMediaFile, readMediaFileHeader } from "../assets/MediaFile.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
@@ -146,12 +145,16 @@ export interface HtmlPreview {
 export class HtmlRender extends Context.Service<
   HtmlRender,
   {
-    readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
+    readonly prepare: (
+      html: string,
+      options?: { readonly allowLocalImages?: boolean | undefined },
+    ) => Effect.Effect<string, HtmlRenderPrepareError>;
     readonly publish: (
       input: HtmlRenderSource & {
         readonly threadId: ThreadId;
         readonly title: string;
         readonly height: number;
+        readonly allowLocalImages?: boolean | undefined;
       },
     ) => Effect.Effect<
       HtmlRenderReference,
@@ -164,6 +167,7 @@ export class HtmlRender extends Context.Service<
       input: HtmlRenderSource & {
         readonly width?: number | undefined;
         readonly appearance?: ThemeAppearance | undefined;
+        readonly allowLocalImages?: boolean | undefined;
       },
     ) => Effect.Effect<
       HtmlPreview,
@@ -267,19 +271,48 @@ const afterDoctype = (text: string, from: number) => {
   return -1;
 };
 
-const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (html: string) {
+const IMAGE_HEADER_BYTES = 4096;
+
+const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
+  html: string,
+  isServerInternalPath: (filePath: string) => Effect.Effect<boolean>,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const references = findLocalImages(html);
   const files = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
-    (path) =>
-      fileSystem.stat(filePathFor(path)).pipe(
-        Effect.map((info) => ({
-          path,
-          size: info.type === "File" ? Number(info.size) : undefined,
-        })),
-        Effect.orElseSucceed(() => ({ path, size: undefined })),
-      ),
+    (referencePath) =>
+      Effect.gen(function* () {
+        const rawPath = filePathFor(referencePath);
+        if (isNetworkPath(referencePath) || isNetworkPath(rawPath)) {
+          return { path: referencePath, realPath: undefined, size: undefined };
+        }
+        const realPath = yield* fileSystem.realPath(rawPath).pipe(Effect.option);
+        if (
+          Option.isNone(realPath) ||
+          isNetworkPath(realPath.value) ||
+          (yield* isServerInternalPath(realPath.value))
+        ) {
+          return { path: referencePath, realPath: undefined, size: undefined };
+        }
+        // Validate regular file and image header bytes before disclosing size on oversized files.
+        const inspected = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const opened = yield* openMediaFile(realPath.value).pipe(Effect.option);
+            if (Option.isNone(opened) || opened.value === null) return undefined;
+            const header = yield* readMediaFileHeader(
+              realPath.value,
+              opened.value,
+              IMAGE_HEADER_BYTES,
+            ).pipe(Effect.option);
+            if (Option.isNone(header) || !isImageBytes(header.value)) return undefined;
+            return Number(opened.value.info.size);
+          }),
+        );
+        return inspected === undefined
+          ? { path: referencePath, realPath: undefined, size: undefined }
+          : { path: referencePath, realPath: realPath.value, size: inspected };
+      }),
     { concurrency: 8 },
   );
   const oversized = files.find((file) => file.size !== undefined && file.size > MAX_IMAGE_BYTES);
@@ -305,12 +338,33 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   // Files can grow after stat; bound each read and stop when accumulated images cannot fit.
   let readBytes = 0;
   const images = yield* Effect.forEach(
-    files.filter((file) => file.size !== undefined),
+    files.filter(
+      (file): file is { readonly path: string; readonly realPath: string; readonly size: number } =>
+        file.realPath !== undefined && file.size !== undefined,
+    ),
     (file) =>
       Effect.gen(function* () {
-        const read = yield* fileSystem
-          .stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 })
-          .pipe(Stream.mkUint8Array, Effect.option);
+        const read = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const opened = yield* openMediaFile(file.realPath).pipe(Effect.option);
+            if (Option.isNone(opened) || opened.value === null) return Option.none<Uint8Array>();
+            const limit = Math.min(Number(opened.value.info.size), MAX_IMAGE_BYTES + 1);
+            return yield* Effect.tryPromise(async () => {
+              const buffer = Buffer.alloc(limit);
+              let filled = 0;
+              while (filled < buffer.length) {
+                const { bytesRead } = await opened.value.handle.read(
+                  buffer,
+                  filled,
+                  buffer.length - filled,
+                );
+                if (bytesRead === 0) break;
+                filled += bytesRead;
+              }
+              return buffer.subarray(0, filled);
+            }).pipe(Effect.option);
+          }),
+        );
         if (Option.isNone(read) || !isImageBytes(read.value)) return [];
         const bytes = read.value;
         if (bytes.byteLength > MAX_IMAGE_BYTES) {
@@ -486,12 +540,26 @@ const make = Effect.gen(function* () {
     "path" in input ? readPageFile(input.path) : Effect.succeed(input.html);
 
   // The bootstrap goes in first so its head scan never runs over inlined image data.
-  const inline = (html: string) =>
-    inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
+  const inline = (html: string, allowLocalImages: boolean) => {
+    const bootstrapped = injectHtmlRenderBootstrap(html);
+    if (!allowLocalImages) {
+      const sizeBytes = Buffer.byteLength(bootstrapped);
+      if (sizeBytes > MAX_PAGE_BYTES) {
+        return Effect.fail(new HtmlRenderPageTooLargeError({ sizeBytes }));
+      }
+      return Effect.succeed({ html: bootstrapped, missing: [] as ReadonlyArray<string> });
+    }
+    return inlineLocalImages(bootstrapped, isServerInternalPath).pipe(
+      Effect.provideContext(services),
+    );
+  };
 
-  const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
+  const prepare = Effect.fn("HtmlRender.prepare")(function* (
+    html: string,
+    options?: { readonly allowLocalImages?: boolean | undefined },
+  ) {
     yield* rejectViewportHeight(html);
-    const inlined = yield* inline(html);
+    const inlined = yield* inline(html, options?.allowLocalImages ?? true);
     if (inlined.missing.length > 0) {
       return yield* new HtmlRenderImagesNotFoundError({ paths: inlined.missing });
     }
@@ -503,10 +571,11 @@ const make = Effect.gen(function* () {
       readonly threadId: ThreadId;
       readonly title: string;
       readonly height: number;
+      readonly allowLocalImages?: boolean | undefined;
     },
   ) {
     const source = yield* readSource(input);
-    const html = yield* prepare(source);
+    const html = yield* prepare(source, { allowLocalImages: input.allowLocalImages ?? false });
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
     const attachmentId = createAttachmentId(input.threadId, "html");
     const filePath =
@@ -563,6 +632,7 @@ const make = Effect.gen(function* () {
     input: HtmlRenderSource & {
       readonly width?: number | undefined;
       readonly appearance?: ThemeAppearance | undefined;
+      readonly allowLocalImages?: boolean | undefined;
     },
   ) {
     const width = Math.min(
@@ -572,7 +642,7 @@ const make = Effect.gen(function* () {
     const appearance = input.appearance ?? "dark";
     const source = yield* readSource(input);
     yield* rejectViewportHeight(source);
-    const inlined = yield* inline(source);
+    const inlined = yield* inline(source, input.allowLocalImages ?? false);
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(
       appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,

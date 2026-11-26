@@ -6,6 +6,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { it } from "@effect/vitest";
 import {
   type BrowserRecordingFrameRate,
@@ -4718,4 +4719,72 @@ it.live("a page's title change without navigation reaches its session", () =>
       });
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "upload rejects network paths, server internal paths, symlinks to secrets, and non-regular files",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        const page = contexts[0]!.page;
+
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-upload-guard-" });
+        const allowedFile = path.join(tempDir, "notes.txt");
+        yield* fs.writeFileString(allowedFile, "Troy Barnes study notes");
+        const realAllowedFile = yield* fs.realPath(allowedFile);
+
+        yield* fs.makeDirectory(config.secretsDir, { recursive: true });
+        const secretFile = path.join(config.secretsDir, "token.txt");
+        yield* fs.writeFileString(secretFile, "top-secret");
+
+        yield* fs.makeDirectory(config.stateDir, { recursive: true });
+        const sqliteFile = path.join(config.stateDir, "statev2.sqlite");
+        yield* fs.writeFileString(sqliteFile, "sqlite-data");
+
+        const subdir = path.join(tempDir, "folder");
+        yield* fs.makeDirectory(subdir);
+
+        const rejected: Array<string> = [
+          secretFile,
+          sqliteFile,
+          subdir,
+          path.join(tempDir, "missing.txt"),
+          "//attacker.test/share/a.txt",
+        ];
+        if (symlinksSupported) {
+          const symlinkToSecret = path.join(tempDir, "link-to-secret.txt");
+          yield* fs.symlink(secretFile, symlinkToSecret);
+          rejected.push(symlinkToSecret);
+        }
+
+        page.openFileChooser();
+        for (const candidate of rejected) {
+          const error = yield* broker
+            .invoke<void>({
+              scope,
+              tabId,
+              operation: "upload",
+              input: { paths: [candidate] },
+            })
+            .pipe(Effect.flip);
+          expect(error._tag, candidate).toBe("PreviewAutomationExecutionError");
+        }
+        expect(page.setChooserFiles).not.toHaveBeenCalled();
+
+        yield* broker.invoke<void>({
+          scope,
+          tabId,
+          operation: "upload",
+          input: { paths: [allowedFile] },
+        });
+        expect(page.setChooserFiles).toHaveBeenCalledWith(
+          [realAllowedFile],
+          expect.objectContaining({ timeout: expect.any(Number) }),
+        );
+      }),
+    ).pipe(Effect.provide(layer)),
 );

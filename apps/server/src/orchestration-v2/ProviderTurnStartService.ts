@@ -16,6 +16,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isDeliveredProviderTurn,
+  isRuntimeModeAbove,
   parseGoalCommand,
   RunId,
   RunAttemptId,
@@ -321,6 +322,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const worktreeRestore = yield* ThreadWorktreeRestore;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
@@ -851,7 +853,31 @@ export const layer: Layer.Layer<
           return;
         }
       }
-      const recreateResult = yield* Effect.result(restoreMissingWorktree(projection.thread));
+      const managedPolicy = serverSettings.managedPolicy;
+      const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
+      if (
+        managedPolicy !== undefined &&
+        maxRuntimeMode !== undefined &&
+        projection.thread.runtimeMode !== undefined &&
+        isRuntimeModeAbove(projection.thread.runtimeMode, maxRuntimeMode)
+      ) {
+        const error = new RuntimePolicy.RuntimePolicyAboveCeilingError({
+          threadId: projection.thread.id,
+          runtimeMode: projection.thread.runtimeMode,
+          maxRuntimeMode,
+          organization: managedPolicy.organization,
+        });
+        yield* settleStartFailure({
+          signal: "runtime-mode-above-ceiling",
+          title: "Thread mode is above the policy limit",
+          error,
+          message: error.message,
+        });
+        return;
+      }
+      const recreateResult = yield* Effect.result(
+        restoreMissingWorktree(projection.thread, { createdBy: providerMessage.createdBy }),
+      );
       if (recreateResult._tag === "Failure") {
         if (input.willRetry === true) return yield* recreateResult.failure;
         yield* settleStartFailure({
