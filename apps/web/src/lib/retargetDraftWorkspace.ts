@@ -180,7 +180,7 @@ export function resolveDraftWorkspace(
 export function retargetDraftWorkspace(
   draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
   projectRef: ScopedProjectRef,
-  project: EnvironmentProject,
+  project: EnvironmentProject | null,
 ) {
   return draft.workspaceExplicit || draft.worktreePath !== null
     ? { workspace: {}, applyProjectFile: cancelPendingWorkspaceDefault }

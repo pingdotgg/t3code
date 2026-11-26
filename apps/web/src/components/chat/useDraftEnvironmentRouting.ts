@@ -7,6 +7,7 @@ import { useScratchProject } from "../../hooks/useScratchProject";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   type EnvironmentId,
+  type ScopedProjectRef,
   type ProviderDriverKind,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
@@ -32,13 +33,16 @@ import {
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
 import { currentClientMetadata } from "../../connection/platform";
-import { useProjects } from "../../state/entities";
+import { readProject, useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
 import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { retargetDraftWorkspace } from "../../lib/retargetDraftWorkspace";
+import {
+  retargetDraftWorkspace,
+  waitForPendingWorkspaceDefault,
+} from "../../lib/retargetDraftWorkspace";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
@@ -75,6 +79,28 @@ function carryFanoutSelections(
     selectionsOn(environmentId),
     appAtomRegistry.get(selectionsOn(draft.environmentId)),
   );
+}
+
+function retargetAutomaticDraft(
+  draftId: DraftId,
+  draft: DraftSessionState,
+  projectRef: ScopedProjectRef,
+  branch?: string | null,
+) {
+  const projectChanged =
+    draft.environmentId !== projectRef.environmentId || draft.projectId !== projectRef.projectId;
+  const target = projectChanged
+    ? retargetDraftWorkspace(draft, projectRef, readProject(projectRef))
+    : null;
+  carryFanoutSelections(draft, projectRef.environmentId);
+  useComposerDraftStore.getState().setDraftThreadContext(draftId, {
+    projectRef,
+    environmentSelection: "auto",
+    loadBalancedEnvironmentId: projectRef.environmentId,
+    ...(branch !== undefined ? { branch } : {}),
+    ...target?.workspace,
+  });
+  target?.applyProjectFile(draftId);
 }
 
 /**
@@ -163,9 +189,10 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return null;
     const originalDraft = getDraftSession(draftId);
     const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
-    return loadBalancing.refreshSelection(loadBalancingCandidates).then((environmentId) => {
+    return loadBalancing.refreshSelection(loadBalancingCandidates).then(async (environmentId) => {
       const current = readRouting();
       if (
+        !originalDraft ||
         current.input.draftId !== draftId ||
         !current.input.automaticEnvironment ||
         current.input.composerHasAttachments ||
@@ -194,17 +221,20 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         return false;
       }
       const projectRef = scopeProjectRef(target.environmentId, target.projectId);
-      if (originalDraft) carryFanoutSelections(originalDraft, target.environmentId);
-      // The send must read the target project's composer and provider context after retargeting.
+      // Dispatch reads the destination's composer and workspace after routing settles.
       flushSync(() =>
-        setDraftThreadContext(draftId, {
-          projectRef,
-          environmentSelection: "auto",
-          loadBalancedEnvironmentId: target.environmentId,
-          branch: originalDraft?.branch ?? null,
-        }),
+        retargetAutomaticDraft(draftId, originalDraft, projectRef, originalDraft.branch),
       );
-      return true;
+      const workspace = waitForPendingWorkspaceDefault(draftId);
+      if (workspace === null) return true;
+      await workspace;
+      const routedDraft = getDraftSession(draftId);
+      return (
+        readRouting().input.draftId === draftId &&
+        routedDraft?.environmentId === projectRef.environmentId &&
+        routedDraft.projectId === projectRef.projectId &&
+        routedDraft.promotedTo == null
+      );
     });
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
@@ -215,12 +245,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     );
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
-    if (draft) carryFanoutSelections(draft, target.environmentId);
-    setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: target.environmentId,
-    });
+    if (draft)
+      retargetAutomaticDraft(
+        draftId,
+        draft,
+        scopeProjectRef(target.environmentId, target.projectId),
+      );
   }, [
     needsLoadBalancing,
     loadBalancing.pending,
@@ -229,7 +259,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     logicalProjectEnvironments,
     sendInFlightRef,
     getDraftSession,
-    setDraftThreadContext,
   ]);
   const onAutoEnvironment = () => {
     if (envLocked || !draftId || sendInFlightRef.current) return;

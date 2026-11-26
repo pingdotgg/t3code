@@ -3,7 +3,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 import type { EnvironmentPresentation } from "../../state/environments";
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider, T3ProjectFile } from "@t3tools/contracts";
 import {
   scopedThreadKey,
   scopeProjectRef,
@@ -13,6 +13,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   EnvironmentId,
+  GitRefName,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -23,10 +24,13 @@ import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { BranchToolbarBranchSelector } from "../BranchToolbarBranchSelector";
+import { waitForPendingWorkspaceDefault } from "../../lib/retargetDraftWorkspace";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
+  projectFiles: new Map<EnvironmentId, Promise<T3ProjectFile | null>>(),
   pickedEnvironmentId: null as EnvironmentId | null,
   refreshSelection: vi.fn<(ids: readonly EnvironmentId[]) => Promise<EnvironmentId | null>>(),
 }));
@@ -39,24 +43,82 @@ vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
     refreshSelection: resources.refreshSelection,
   }),
 }));
-vi.mock("../../state/entities", () => ({
-  useProjects: () => resources.projects,
-  readThreadShells: () => [],
-  readProject: (ref: { environmentId: EnvironmentId; projectId: ProjectId }) =>
+vi.mock("../../state/entities", async (original) => {
+  const actual = await original<typeof import("../../state/entities")>();
+  const readProject: typeof actual.readProject = (ref) =>
     resources.projects.find(
       (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
-    ) ?? null,
+    ) ?? null;
+  return {
+    ...actual,
+    useProjects: () => resources.projects,
+    readThreadShells: () => [],
+    readProject,
+    useProject: (ref: Parameters<typeof actual.useProject>[0]) => (ref ? readProject(ref) : null),
+  };
+});
+vi.mock("../../state/session", async (original) => ({
+  ...(await original<typeof import("../../state/session")>()),
+  readEnvironmentScope: () => true,
+  useEnvironmentScope: () => true,
 }));
+vi.mock("../../state/query", async (original) => ({
+  ...(await original<typeof import("../../state/query")>()),
+  useEnvironmentQuery: () => ({ data: null }),
+}));
+vi.mock("../../state/queries", async (original) => ({
+  ...(await original<typeof import("../../state/queries")>()),
+  usePaginatedBranches: () => ({
+    refs: [
+      { name: GitRefName.make("feature"), current: false, isDefault: false, worktreePath: null },
+    ],
+    data: { totalCount: 1, nextCursor: null },
+    refresh: () => {},
+  }),
+}));
+vi.mock("../../state/use-atom-command", async (original) => ({
+  ...(await original<typeof import("../../state/use-atom-command")>()),
+  useAtomCommand: () => async () => ({ _tag: "Success", value: { refName: "feature" } }),
+}));
+vi.mock("../../lib/t3ProjectFileDefaults", () => ({
+  peekT3ProjectFile: () => undefined,
+  readT3ProjectFile: (environmentId: EnvironmentId) =>
+    resources.projectFiles.get(environmentId) ?? Promise.resolve(null),
+}));
+vi.mock("../../state/presentation", async (original) => {
+  const actual = await original<typeof import("../../state/presentation")>();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    environmentSummaries: {
+      ...actual.environmentSummaries,
+      connectedEnvironmentIdsAtom: Atom.make(() =>
+        resources.projects.map((project) => project.environmentId),
+      ),
+    },
+  };
+});
+
 vi.mock("../../hooks/useScratchProject", () => ({ useScratchProject: () => ({}) }));
 
 function setup() {
   resources.refreshSelection.mockReset();
-  resources.projects = [];
+  resources.projectFiles.clear();
   resources.pickedEnvironmentId = null;
   const a = EnvironmentId.make("machine-a");
   const b = EnvironmentId.make("machine-b");
   const draftId = DraftId.make("fresh-routing-draft");
   const projectId = ProjectId.make("project");
+  resources.projects = [a, b].map((environmentId) => ({
+    environmentId,
+    id: projectId,
+    title: "Project",
+    workspaceRoot: "/workspace/project",
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-11-10T01:00:00.000Z",
+    updatedAt: "2026-11-10T01:00:00.000Z",
+  }));
   const store = useComposerDraftStore.getState();
   store.clearDraftThread(draftId);
   store.setProjectDraftThreadId(scopeProjectRef(a, projectId), draftId, {
@@ -132,6 +194,7 @@ function setup() {
 interface HarnessProps {
   input: Parameters<typeof useDraftEnvironmentRouting>[0];
   onPrepared?: (ready: boolean | null) => void;
+  showBranchPicker?: boolean;
 }
 
 function Harness(props: HarnessProps) {
@@ -142,7 +205,7 @@ function Harness(props: HarnessProps) {
   );
 }
 
-function RoutingProbe({ input, onPrepared }: HarnessProps) {
+function RoutingProbe({ input, onPrepared, showBranchPicker }: HarnessProps) {
   const routing = useDraftEnvironmentRouting(input);
   const draft = useComposerDraftStore((state) => state.getDraftSession(input.draftId!));
   const selections = useAtomValue(
@@ -164,6 +227,16 @@ function RoutingProbe({ input, onPrepared }: HarnessProps) {
         </button>
       ))}
       <span>{draft?.environmentId}</span>
+      {showBranchPicker && draft && input.draftId ? (
+        <BranchToolbarBranchSelector
+          environmentId={draft.environmentId}
+          threadId={draft.threadId}
+          draftId={input.draftId}
+          envLocked={false}
+          startFromOrigin={false}
+          onStartFromOriginChange={() => {}}
+        />
+      ) : null}
       <button
         onClick={async () => {
           const ready = await routing.refreshBeforeSend();
@@ -193,6 +266,7 @@ it("refreshes a stored automatic choice before sending an unsent draft", async (
   store.setDraftThreadContext(draftId, {
     branch: "main",
     envMode: "worktree",
+    workspaceExplicit: true,
     environmentSelection: "auto",
   });
   await using screen = await render(
@@ -210,6 +284,39 @@ it("refreshes a stored automatic choice before sending an unsent draft", async (
   expect(store.getComposerDraft(draftId)?.prompt).toBe("Keep this prompt");
   expect(appAtomRegistry.get(destinationSelections)).toEqual(selections);
 });
+
+it.each(["initial routing", "pre-send refresh"] as const)(
+  "loads the destination workspace default during %s",
+  async (route) => {
+    const { b, draftId, input, store } = setup();
+    const destinationFile = Promise.withResolvers<T3ProjectFile | null>();
+    resources.projectFiles.set(b, destinationFile.promise);
+    const onPrepared = vi.fn();
+    if (route === "initial routing") {
+      resources.pickedEnvironmentId = b;
+      store.setDraftThreadContext(draftId, { loadBalancedEnvironmentId: null });
+    }
+    await using screen = await render(
+      <Harness
+        input={{ ...input, draftThread: store.getDraftSession(draftId) }}
+        onPrepared={onPrepared}
+      />,
+    );
+    if (route === "pre-send refresh") {
+      await screen.getByRole("button", { name: "Send" }).click();
+    }
+    await expect.element(screen.getByText(b)).toBeInTheDocument();
+    expect(store.getDraftSession(draftId)?.envMode).toBe("local");
+    expect(onPrepared).not.toHaveBeenCalled();
+
+    await act(async () => {
+      destinationFile.resolve({ defaultThreadEnvMode: "worktree" });
+      await destinationFile.promise;
+    });
+    expect(store.getDraftSession(draftId)?.envMode).toBe("worktree");
+    if (route === "pre-send refresh") expect(onPrepared).toHaveBeenCalledWith(true);
+  },
+);
 
 it.each(["manual", "attachments", "promoted"] as const)(
   "keeps the machine for %s drafts",
@@ -266,16 +373,6 @@ it("abandons a refresh when the draft changes while resources are in flight", as
 function fanoutSetup() {
   const routing = setup();
   const { a, b, draftId, input, store } = routing;
-  resources.projects = [a, b].map((environmentId) => ({
-    environmentId,
-    id: input.draftThread!.projectId,
-    title: "Project",
-    workspaceRoot: "/workspace/project",
-    defaultModelSelection: null,
-    scripts: [],
-    createdAt: "2026-11-10T01:00:00.000Z",
-    updatedAt: "2026-11-10T01:00:00.000Z",
-  }));
   const threadId = input.draftThread!.threadId;
   const selectionsOn = (environmentId: EnvironmentId) =>
     draftFanoutSelectionsAtom(scopedThreadKey(scopeThreadRef(environmentId, threadId)));
@@ -395,4 +492,31 @@ it("keeps a workspace the user picked when the draft switches machine by hand", 
   await screen.getByRole("button", { name: `Switch to ${b}` }).click();
   await expect.element(screen.getByText(b)).toBeInTheDocument();
   expect(store.getDraftSession(draftId)?.envMode).toBe("local");
+});
+
+it("keeps the current checkout when a branch is picked before a manually selected machine's default loads", async () => {
+  const { b, draftId, input, store } = fanoutSetup();
+  const destinationFile = Promise.withResolvers<T3ProjectFile | null>();
+  resources.projectFiles.set(b, destinationFile.promise);
+  await using screen = await render(
+    <Harness
+      showBranchPicker
+      input={{ ...input, automaticEnvironment: false, draftThread: store.getDraftSession(draftId) }}
+    />,
+  );
+  await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+  await expect.element(screen.getByText(b)).toBeInTheDocument();
+  const pending = waitForPendingWorkspaceDefault(draftId);
+  expect(pending).not.toBeNull();
+
+  await screen.getByRole("combobox", { name: /Branch:/ }).click();
+  await screen.getByRole("option", { name: "feature" }).click();
+  expect(store.getDraftSession(draftId)?.branch).toBe("feature");
+  expect(waitForPendingWorkspaceDefault(draftId)).toBeNull();
+
+  await act(async () => {
+    destinationFile.resolve({ defaultThreadEnvMode: "worktree" });
+    await pending;
+  });
+  expect(store.getDraftSession(draftId)).toMatchObject({ branch: "feature", envMode: "local" });
 });
