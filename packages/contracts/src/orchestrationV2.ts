@@ -26,6 +26,7 @@ import {
   hasUnknownUnionTag,
   isUnknownUnionMember,
   NonNegativeInt,
+  OrchestrationClientOrigin,
   PlanId,
   PositiveInt,
   ProjectId,
@@ -2414,6 +2415,7 @@ export type OrchestrationV2ShellStreamItem = typeof OrchestrationV2ShellStreamIt
 export const OrchestrationV2StoredEvent = Schema.Struct({
   sequence: NonNegativeInt,
   commandId: Schema.NullOr(CommandId),
+  origin: Schema.optional(OrchestrationClientOrigin),
   event: OrchestrationV2DomainEvent,
 });
 export type OrchestrationV2StoredEvent = typeof OrchestrationV2StoredEvent.Type;

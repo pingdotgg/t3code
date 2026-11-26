@@ -37,6 +37,46 @@ const layerTest = OrchestrationEventStore.layer.pipe(
 const layer = it.layer(layerTest);
 
 layer("OrchestrationEventStore", (it) => {
+  it.effect("persists and replays the authenticated client origin", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:client-origin");
+      const event: OrchestrationV2DomainEvent = {
+        id: EventId.make("event:client-origin"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("tool:client-origin"),
+          type: "command_execution",
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "running",
+          title: "Origin test",
+          input: "true",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      };
+      const [stored] = yield* store.appendAgentEvents({
+        origin: { surface: "web", appVersion: "1.2.3" },
+        events: [event],
+      });
+
+      assert.deepEqual(stored?.origin, { surface: "web", appVersion: "1.2.3" });
+      const [replayed] = yield* store.readAgentEvents({ threadId }).pipe(Stream.runCollect);
+      assert.deepEqual(replayed?.origin, { surface: "web", appVersion: "1.2.3" });
+    }),
+  );
+
   it.effect("retains only shell metadata from oversized replay and live application events", () =>
     Effect.gen(function* () {
       const store = yield* OrchestrationEventStore.OrchestrationEventStore;

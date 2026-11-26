@@ -43,6 +43,7 @@ import {
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationV2Command,
+  type OrchestrationClientOrigin,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type MessageId,
@@ -113,6 +114,7 @@ import { RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
+import { CurrentClientOrigin } from "./orchestration-v2/ClientOrigin.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -1424,6 +1426,7 @@ export const layerWsRpc = (
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: { readonly secretReferences: boolean },
+  clientOrigin?: OrchestrationClientOrigin,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -1992,7 +1995,10 @@ export const layerWsRpc = (
                             "creationSource" in command ? command.creationSource : "web",
                         }),
                       )
-                  ).pipe(Effect.provide(intakeContext)),
+                  ).pipe(
+                    Effect.provide(intakeContext),
+                    Effect.provideService(CurrentClientOrigin, clientOrigin),
+                  ),
                 )
                 .pipe(
                   Effect.tap((result) =>
@@ -3617,6 +3623,16 @@ export const layer = Layer.unwrap(
           ];
         }
         const clientAnalyticsProps = readClientAnalyticsProps(request);
+        const clientOrigin: OrchestrationClientOrigin | undefined =
+          isClientSurface(clientAnalyticsProps.surface) === false
+            ? undefined
+            : {
+                surface: clientAnalyticsProps.surface,
+                ...(typeof clientAnalyticsProps.appVersion === "string" &&
+                clientAnalyticsProps.appVersion.length > 0
+                  ? { appVersion: clientAnalyticsProps.appVersion }
+                  : {}),
+              };
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
@@ -3654,6 +3670,7 @@ export const layer = Layer.unwrap(
               serverBrowser,
               reportProfiles,
               readSettingsClient(url.value),
+              clientOrigin,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.

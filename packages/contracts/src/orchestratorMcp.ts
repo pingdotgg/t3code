@@ -10,6 +10,7 @@ import {
   MessageId,
   NodeId,
   NonNegativeInt,
+  OrchestrationClientOrigin,
   PositiveInt,
   ProjectId,
   RunId,
@@ -572,6 +573,169 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
+
+export const OrchestratorApprovalKind = Schema.Literals(["receipt", "disposition"]);
+export type OrchestratorApprovalKind = typeof OrchestratorApprovalKind.Type;
+
+export const OrchestratorApprovalScopeEnvironment = Schema.Literals([
+  "production",
+  "non_production",
+]);
+export type OrchestratorApprovalScopeEnvironment = typeof OrchestratorApprovalScopeEnvironment.Type;
+
+export const ORCHESTRATOR_APPROVAL_OPTIONS = [
+  "Approve this exact scope",
+  "Do not approve (Recommended)",
+] as const;
+
+export const ORCHESTRATOR_APPROVAL_ISSUER = "t3-environment" as const;
+export const ORCHESTRATOR_APPROVAL_AUDIENCE = "claude-review-gate" as const;
+
+const OrchestratorApprovalRepository = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+);
+const OrchestratorApprovalHead = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
+const OrchestratorApprovalDigest = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/));
+const OrchestratorApprovalBody = Schema.String.check(Schema.isMaxLength(65_536));
+const OrchestratorApprovalScope = Schema.Json;
+
+const OrchestratorApprovalFields = {
+  repository: OrchestratorApprovalRepository,
+  pullRequest: PositiveInt,
+  head: OrchestratorApprovalHead,
+  reviewDigest: OrchestratorApprovalDigest,
+  kind: OrchestratorApprovalKind,
+  scopeEnvironment: OrchestratorApprovalScopeEnvironment,
+  scope: OrchestratorApprovalScope,
+  body: OrchestratorApprovalBody,
+} as const;
+
+interface OrchestratorApprovalQuestionFields {
+  readonly repository: string;
+  readonly pullRequest: number;
+  readonly head: string;
+  readonly reviewDigest: string;
+  readonly kind: OrchestratorApprovalKind;
+  readonly scopeEnvironment: OrchestratorApprovalScopeEnvironment;
+  readonly scope: Schema.Json;
+  readonly body: string;
+}
+
+function canonicalApprovalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalApprovalJson);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [key, canonicalApprovalJson((value as Record<string, unknown>)[key])]),
+    );
+  }
+  return value;
+}
+
+export function orchestratorApprovalQuestion(input: OrchestratorApprovalQuestionFields): string {
+  return [
+    `Approve this exact Claude Review ${input.kind} for ${input.repository} PR #${input.pullRequest} at ${input.head}?`,
+    "",
+    `Review digest: ${input.reviewDigest}`,
+    `Scope environment: ${input.scopeEnvironment}`,
+    "",
+    "Exact scope:",
+    JSON.stringify(canonicalApprovalJson(input.scope), null, 2),
+    "",
+    "Exact comment body:",
+    input.body,
+  ].join("\n");
+}
+
+export const OrchestratorApprovalQuestionInput = Schema.Struct({
+  action: Schema.Literal("question"),
+  ...OrchestratorApprovalFields,
+});
+export type OrchestratorApprovalQuestionInput = typeof OrchestratorApprovalQuestionInput.Type;
+
+export const OrchestratorApprovalReceiptInput = Schema.Struct({
+  action: Schema.Literal("receipt"),
+  threadId: ThreadId,
+  requestId: RuntimeRequestId,
+  ...OrchestratorApprovalFields,
+});
+export type OrchestratorApprovalReceiptInput = typeof OrchestratorApprovalReceiptInput.Type;
+
+export const OrchestratorApprovalInput = Schema.Union([
+  OrchestratorApprovalQuestionInput,
+  OrchestratorApprovalReceiptInput,
+]);
+export type OrchestratorApprovalInput = typeof OrchestratorApprovalInput.Type;
+
+export const OrchestratorApprovalQuestionResult = Schema.Struct({
+  action: Schema.Literal("question"),
+  question: Schema.String,
+  options: Schema.Array(
+    Schema.Union([
+      Schema.Literal(ORCHESTRATOR_APPROVAL_OPTIONS[0]),
+      Schema.Literal(ORCHESTRATOR_APPROVAL_OPTIONS[1]),
+    ]),
+  ),
+});
+export type OrchestratorApprovalQuestionResult = typeof OrchestratorApprovalQuestionResult.Type;
+
+export const OrchestratorApprovalReceiptPayload = Schema.Struct({
+  schema: Schema.Literal("t3-user-input-approval/v1"),
+  iss: Schema.Literal(ORCHESTRATOR_APPROVAL_ISSUER),
+  aud: Schema.Literal(ORCHESTRATOR_APPROVAL_AUDIENCE),
+  iat: NonNegativeInt,
+  exp: NonNegativeInt,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  threadLink: Schema.String,
+  requestId: RuntimeRequestId,
+  requestEventId: Schema.String,
+  requestSequence: NonNegativeInt,
+  answerEventId: Schema.String,
+  answerSequence: NonNegativeInt,
+  turnItemEventId: Schema.String,
+  turnItemSequence: NonNegativeInt,
+  repository: OrchestratorApprovalRepository,
+  pullRequest: PositiveInt,
+  head: OrchestratorApprovalHead,
+  reviewDigest: OrchestratorApprovalDigest,
+  kind: OrchestratorApprovalKind,
+  scopeEnvironment: OrchestratorApprovalScopeEnvironment,
+  scope: OrchestratorApprovalScope,
+  body: OrchestratorApprovalBody,
+  bodySha256: OrchestratorApprovalDigest,
+  question: Schema.String,
+  options: Schema.Array(
+    Schema.Union([
+      Schema.Literal(ORCHESTRATOR_APPROVAL_OPTIONS[0]),
+      Schema.Literal(ORCHESTRATOR_APPROVAL_OPTIONS[1]),
+    ]),
+  ),
+  answer: Schema.Literal(ORCHESTRATOR_APPROVAL_OPTIONS[0]),
+  answerSource: Schema.Literal("explicit_nondefault"),
+  origin: OrchestrationClientOrigin,
+  openedAt: IsoDateTime,
+  answeredAt: IsoDateTime,
+  issuedAt: IsoDateTime,
+  expiresAt: IsoDateTime,
+});
+export type OrchestratorApprovalReceiptPayload = typeof OrchestratorApprovalReceiptPayload.Type;
+
+export const OrchestratorApprovalReceiptResult = Schema.Struct({
+  action: Schema.Literal("receipt"),
+  token: Schema.String,
+  publicKey: Schema.String,
+  keyFingerprint: OrchestratorApprovalDigest,
+  payload: OrchestratorApprovalReceiptPayload,
+});
+export type OrchestratorApprovalReceiptResult = typeof OrchestratorApprovalReceiptResult.Type;
+
+export const OrchestratorApprovalResult = Schema.Union([
+  OrchestratorApprovalQuestionResult,
+  OrchestratorApprovalReceiptResult,
+]);
+export type OrchestratorApprovalResult = typeof OrchestratorApprovalResult.Type;
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
