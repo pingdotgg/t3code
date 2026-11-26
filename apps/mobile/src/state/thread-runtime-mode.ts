@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { beginRuntimeModePickSave } from "@t3tools/client-runtime/state/runtime-mode-picks";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
@@ -35,12 +36,13 @@ export function selectThreadRuntimeMode(
   // next message instead.
   if (
     !thread ||
-    thread.runtimeMode === runtimeMode ||
     threadRuntimeIsActive(thread.runtime) ||
     !readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
   ) {
     return;
   }
+  const settle = beginRuntimeModePickSave(threadKey, thread.runtimeMode, runtimeMode);
+  if (settle === null) return;
   void runAtomCommand(
     appAtomRegistry,
     threadEnvironment.setRuntimeMode,
@@ -50,10 +52,10 @@ export function selectThreadRuntimeMode(
     },
     { label: "change permission mode", reportFailure: true, reportDefect: true },
   ).then((result) => {
+    const releasable = settle(result._tag === "Success");
     // Released on the reply, so a later change from another client shows.
-    if (result._tag === "Success") {
-      releaseComposerDraftRuntimeMode(threadKey, runtimeMode);
-    } else {
+    if (releasable !== null) releaseComposerDraftRuntimeMode(threadKey, releasable);
+    if (result._tag !== "Success") {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
         m(msg("Could not apply permission mode")),

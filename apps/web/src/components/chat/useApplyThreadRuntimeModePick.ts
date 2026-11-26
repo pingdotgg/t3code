@@ -3,6 +3,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { RegistryContext } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { beginRuntimeModePickSave } from "@t3tools/client-runtime/state/runtime-mode-picks";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -27,24 +28,25 @@ export function useApplyThreadRuntimeModePick() {
   });
   return async (target: ComposerThreadTarget, runtimeMode: RuntimeMode) => {
     if (typeof target === "string") return;
-    if (useComposerDraftStore.getState().draftThreadsByThreadKey[scopedThreadKey(target)]) return;
+    const threadKey = scopedThreadKey(target);
+    if (useComposerDraftStore.getState().draftThreadsByThreadKey[threadKey]) return;
     const thread = registry.get(environmentThreadShells.threadShellAtom(target));
     // A mode change can end the provider session, so a busy thread takes the pick with its
     // next message instead.
-    if (!thread || thread.runtimeMode === runtimeMode || threadRuntimeIsActive(thread.runtime)) {
-      return;
-    }
+    if (!thread || threadRuntimeIsActive(thread.runtime)) return;
+    const settle = beginRuntimeModePickSave(threadKey, thread.runtimeMode, runtimeMode);
+    if (settle === null) return;
     const result = await setRuntimeMode({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, runtimeMode, createdAt: new Date().toISOString() },
     });
-    if (result._tag === "Success") {
-      // Released on the reply, so a later change from another client shows.
-      const store = useComposerDraftStore.getState();
-      if (store.getComposerDraft(target)?.runtimeMode === runtimeMode) {
-        store.setRuntimeMode(target, null);
-      }
-    } else if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+    const releasable = settle(result._tag === "Success");
+    // Released on the reply, so a later change from another client shows.
+    const store = useComposerDraftStore.getState();
+    if (releasable !== null && store.getComposerDraft(target)?.runtimeMode === releasable) {
+      store.setRuntimeMode(target, null);
+    }
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
