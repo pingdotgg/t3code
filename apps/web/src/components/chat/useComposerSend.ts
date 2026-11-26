@@ -128,12 +128,14 @@ import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
 import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import {
+  clearPendingLocalThreadViewId,
   clearTeamDraftAccessOptions,
   readTeamDraftAccessOptions,
   readTeamEnvironmentStateFromRegistry,
   readTeamThreadNoteMode,
   readTeamThreadNotesForSend,
   readTeamThreadPostPermission,
+  setPendingLocalThreadViewId,
   setTeamThreadNoteMode,
   teamEnvironment,
 } from "../../state/team";
@@ -1746,6 +1748,10 @@ export function useComposerSend(input: ComposerSendInput) {
         }
       }
       if (failure === null) {
+        if (isLocalDraftThread && teamDraftAccess?.viewId) {
+          // Preserve restricted-View selection when TeamLocalThreadSyncCoordinator mirrors a local draft.
+          setPendingLocalThreadViewId(threadIdForSend, teamDraftAccess.viewId);
+        }
         if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
         const startPromise = startThreadTurn({
           environmentId,
@@ -1799,6 +1805,9 @@ export function useComposerSend(input: ComposerSendInput) {
         const startResult = await startPromise;
         if (startResult._tag === "Failure") {
           failure = startResult;
+          if (isLocalDraftThread && teamDraftAccess?.viewId) {
+            clearPendingLocalThreadViewId(threadIdForSend);
+          }
           if (localNoteReservation !== null) {
             void releaseAcceptedTeamNotes({
               environmentId: localNoteReservation.teamEnvironmentId,
@@ -1811,7 +1820,7 @@ export function useComposerSend(input: ComposerSendInput) {
         } else {
           turnStartSucceeded = true;
           if (localNoteReservation !== null) {
-            await consumeAcceptedTeamNotes({
+            const consumeInput = {
               environmentId: localNoteReservation.teamEnvironmentId,
               input: {
                 threadId: threadIdForSend,
@@ -1819,7 +1828,11 @@ export function useComposerSend(input: ComposerSendInput) {
                 acceptedNotes: localNoteReservation.refs,
                 reservationToken: localNoteReservation.reservationToken,
               },
-            });
+            };
+            const consumed = await consumeAcceptedTeamNotes(consumeInput);
+            if (consumed._tag === "Failure" && !isAtomCommandInterrupted(consumed)) {
+              await consumeAcceptedTeamNotes(consumeInput);
+            }
           } else if (shouldFinalizeLocalTeamNotes && teamNotesSendCtx?.teamEnvironmentId) {
             // Re-anchor any pending notes that arrived concurrently with a normal local prompt send.
             void consumeAcceptedTeamNotes({

@@ -820,6 +820,28 @@ export class TeamRepository extends Context.Service<
       readonly threadId: ThreadId;
       readonly targetTurnId: string;
     }) => Effect.Effect<ReadonlyArray<TeamThreadNote>, TeamRepositoryError>;
+    readonly enqueuePendingRemoteRevocation: (input: {
+      readonly id: string;
+      readonly teamId: TeamId;
+      readonly environmentId: EnvironmentId;
+      readonly subjectPrefix: string;
+      readonly unlinkAfterRevoke: boolean;
+      readonly createdAt: string;
+    }) => Effect.Effect<void, TeamRepositoryError>;
+    readonly listPendingRemoteRevocations: (teamId: TeamId) => Effect.Effect<
+      ReadonlyArray<{
+        readonly id: string;
+        readonly teamId: TeamId;
+        readonly environmentId: EnvironmentId;
+        readonly subjectPrefix: string;
+        readonly unlinkAfterRevoke: boolean;
+        readonly createdAt: string;
+      }>,
+      TeamRepositoryError
+    >;
+    readonly deletePendingRemoteRevocation: (
+      id: string,
+    ) => Effect.Effect<void, TeamRepositoryError>;
   }
 >()("t3/team/TeamRepository") {}
 
@@ -2890,6 +2912,70 @@ const make = Effect.gen(function* () {
               return rows.map(mapThreadNoteRow);
             }),
           ),
+        );
+      },
+    ),
+
+    enqueuePendingRemoteRevocation: Effect.fn("TeamRepository.enqueuePendingRemoteRevocation")(
+      function* (input) {
+        yield* runSql(
+          "enqueuePendingRemoteRevocation",
+          sql`
+            INSERT INTO team_pending_remote_revocations (
+              id, team_id, environment_id, subject_prefix, unlink_after_revoke, created_at
+            )
+            VALUES (
+              ${input.id},
+              ${input.teamId},
+              ${input.environmentId},
+              ${input.subjectPrefix},
+              ${input.unlinkAfterRevoke ? 1 : 0},
+              ${input.createdAt}
+            )
+            ON CONFLICT(team_id, environment_id, subject_prefix) DO UPDATE SET
+              unlink_after_revoke = MAX(unlink_after_revoke, excluded.unlink_after_revoke)
+          `,
+        );
+      },
+    ),
+
+    listPendingRemoteRevocations: Effect.fn("TeamRepository.listPendingRemoteRevocations")(
+      function* (teamId) {
+        const rows = yield* runSql(
+          "listPendingRemoteRevocations",
+          sql<{
+            readonly id: string;
+            readonly team_id: string;
+            readonly environment_id: string;
+            readonly subject_prefix: string;
+            readonly unlink_after_revoke: number;
+            readonly created_at: string;
+          }>`
+            SELECT id, team_id, environment_id, subject_prefix, unlink_after_revoke, created_at
+            FROM team_pending_remote_revocations
+            WHERE team_id = ${teamId}
+            ORDER BY created_at ASC
+          `,
+        );
+        return rows.map((row) => ({
+          id: row.id,
+          teamId: TeamId.make(row.team_id),
+          environmentId: EnvironmentId.make(row.environment_id),
+          subjectPrefix: row.subject_prefix,
+          unlinkAfterRevoke: row.unlink_after_revoke === 1,
+          createdAt: row.created_at,
+        }));
+      },
+    ),
+
+    deletePendingRemoteRevocation: Effect.fn("TeamRepository.deletePendingRemoteRevocation")(
+      function* (id) {
+        yield* runSql(
+          "deletePendingRemoteRevocation",
+          sql`
+            DELETE FROM team_pending_remote_revocations
+            WHERE id = ${id}
+          `,
         );
       },
     ),

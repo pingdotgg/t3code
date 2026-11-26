@@ -50,6 +50,9 @@ function buildLocalSyncPayload(input: {
       ? detailState.value.data.value
       : null;
 
+  // Defer run mirroring until authoritative thread detail loads so we never fabricate ordinal: 1
+  // for a multi-run thread's latest run (which would collide with real run #1 on SQLite's
+  // unique (thread_id, ordinal) index).
   const runs: TeamSyncLocalThreadInput["runs"] = detail
     ? detail.runs.map((run) => ({
         id: run.id as string,
@@ -59,18 +62,7 @@ function buildLocalSyncPayload(input: {
         createdAt: DateTime.formatIso(run.requestedAt),
         completedAt: run.completedAt ? DateTime.formatIso(run.completedAt) : null,
       }))
-    : shell.latestRun
-      ? [
-          {
-            id: shell.latestRun.runId as string,
-            ordinal: 1,
-            status: shell.latestRun.status === "preparing" ? "starting" : shell.latestRun.status,
-            userMessageId: `msg:${shell.latestRun.runId}`,
-            createdAt: shell.latestRun.startedAt ?? shell.createdAt,
-            completedAt: shell.latestRun.completedAt ?? null,
-          },
-        ]
-      : [];
+    : [];
 
   const messages: TeamSyncLocalThreadInput["messages"] = detail
     ? detail.messages
@@ -152,6 +144,14 @@ interface SyncEntry {
 
 const RETRY_BASE_MS = 2_000;
 const RETRY_MAX_MS = 30_000;
+const MAX_SYNC_RETRIES = 6;
+const PERMANENT_SYNC_ERROR_CODES = new Set(["forbidden", "invalid_input", "not_found"]);
+
+function isPermanentSyncError(failure: unknown): boolean {
+  if (typeof failure !== "object" || failure === null) return false;
+  const code = "code" in failure ? (failure as { readonly code?: unknown }).code : undefined;
+  return typeof code === "string" && PERMANENT_SYNC_ERROR_CODES.has(code);
+}
 
 /**
  * Coordinates two Milestone 5 background flows at app root:
@@ -250,18 +250,66 @@ export function TeamLocalThreadSyncCoordinator() {
       latestEntryByKeyRef.current.set(syncKey, entry);
     }
 
-    // Drop subscriptions for threads that are no longer tracked.
-    for (const [syncKey, unsubscribe] of subscriptionsByKeyRef.current) {
-      if (!currentEntriesByKey.has(syncKey)) {
+    // Propagate archive/delete transitions when a previously-synced thread disappears from active
+    // `threadShells` (ShellStream removes archived & deleted threads via `thread.removed`).
+    const disappearedEntries: Array<SyncEntry> = [];
+    for (const [syncKey, previousEntry] of latestEntryByKeyRef.current) {
+      if (currentEntriesByKey.has(syncKey)) continue;
+      const localProjectStillExists = localProjectsById.has(previousEntry.shell.projectId);
+      const wasSynced = syncedShellFingerprintByKeyRef.current.has(syncKey);
+      if (localProjectStillExists && wasSynced) {
+        disappearedEntries.push(previousEntry);
+      }
+      const unsubscribe = subscriptionsByKeyRef.current.get(syncKey);
+      if (unsubscribe) {
         unsubscribe();
         subscriptionsByKeyRef.current.delete(syncKey);
-        latestEntryByKeyRef.current.delete(syncKey);
-        const timer = retryTimerByKeyRef.current.get(syncKey);
-        if (timer !== undefined) {
-          clearTimeout(timer);
-          retryTimerByKeyRef.current.delete(syncKey);
-        }
       }
+      latestEntryByKeyRef.current.delete(syncKey);
+      syncedShellFingerprintByKeyRef.current.delete(syncKey);
+      syncedPayloadFingerprintByKeyRef.current.delete(syncKey);
+      retryAttemptsByKeyRef.current.delete(syncKey);
+      const timer = retryTimerByKeyRef.current.get(syncKey);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        retryTimerByKeyRef.current.delete(syncKey);
+      }
+    }
+
+    for (const previousEntry of disappearedEntries) {
+      const detailResult = appAtomRegistry.get(
+        environmentThreadStateAtom(previousEntry.localEnvironmentId, previousEntry.shell.id),
+      );
+      const detailState = AsyncResult.value(detailResult);
+      const detail =
+        Option.isSome(detailState) && Option.isSome(detailState.value.data)
+          ? detailState.value.data.value
+          : null;
+      const nowIso = new Date().toISOString();
+      const deletedAt =
+        detail?.thread.deletedAt != null ? DateTime.formatIso(detail.thread.deletedAt) : null;
+      const archivedAt =
+        detail?.thread.archivedAt != null
+          ? DateTime.formatIso(detail.thread.archivedAt)
+          : deletedAt === null
+            ? nowIso
+            : null;
+      const closingPayload = buildLocalSyncPayload({
+        localEnvironmentId: previousEntry.localEnvironmentId,
+        localEnvironmentLabel: previousEntry.localEnvironmentLabel,
+        teamProjectId: previousEntry.teamProjectId,
+        defaultViewId: previousEntry.defaultViewId,
+        shell: {
+          ...previousEntry.shell,
+          updatedAt: nowIso,
+          archivedAt,
+          deletedAt,
+        },
+      });
+      void syncLocalThread({
+        environmentId: previousEntry.teamEnvironmentId,
+        input: closingPayload,
+      });
     }
 
     const releaseSubscriptionIfSettled = (syncKey: string) => {
@@ -319,15 +367,17 @@ export function TeamLocalThreadSyncCoordinator() {
             retryAttemptsByKeyRef.current.delete(syncKey);
             clearPendingLocalThreadViewId(entry.shell.id);
             releaseSubscriptionIfSettled(syncKey);
-          } else {
+          } else if (!isPermanentSyncError(result.cause)) {
             const attempt = (retryAttemptsByKeyRef.current.get(syncKey) ?? 0) + 1;
-            retryAttemptsByKeyRef.current.set(syncKey, attempt);
-            const delayMs = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
-            const timer = setTimeout(() => {
-              retryTimerByKeyRef.current.delete(syncKey);
-              triggerSync(syncKey);
-            }, delayMs);
-            retryTimerByKeyRef.current.set(syncKey, timer);
+            if (attempt <= MAX_SYNC_RETRIES) {
+              retryAttemptsByKeyRef.current.set(syncKey, attempt);
+              const delayMs = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
+              const timer = setTimeout(() => {
+                retryTimerByKeyRef.current.delete(syncKey);
+                triggerSync(syncKey);
+              }, delayMs);
+              retryTimerByKeyRef.current.set(syncKey, timer);
+            }
           }
         })
         .finally(() => {

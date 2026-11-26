@@ -27,6 +27,7 @@ describe("team sidecar migrations", () => {
         "team_environments",
         "team_invites",
         "team_members",
+        "team_pending_remote_revocations",
         "team_project_meta",
         "team_relay_binding",
         "team_schema_migrations",

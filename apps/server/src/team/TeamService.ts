@@ -293,11 +293,13 @@ export class TeamService extends Context.Service<
       readonly sessionId: AuthSessionId;
       readonly payload: TeamUpdateMemberRoleInput;
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) => Effect.Effect<TeamMember, TeamOperationError>;
     readonly updateMemberStatus: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamUpdateMemberStatusInput;
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) => Effect.Effect<TeamMember, TeamOperationError>;
     readonly createInvite: (input: {
       readonly sessionId: AuthSessionId;
@@ -601,7 +603,19 @@ export class TeamService extends Context.Service<
     }) => Effect.Effect<TeamDetachEnvironmentResult, TeamOperationError>;
     readonly getRemotePairingSubject: (
       sessionId: AuthSessionId,
-    ) => Effect.Effect<Option.Option<string>>;
+    ) => Effect.Effect<Option.Option<string>, EnvironmentAuthorizationError>;
+    readonly assertCanAccessLocalEnvironment: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly revokeRemoteEnvironmentBeforeUnlink: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) => Effect.Effect<{ readonly unlinkedAllowed: boolean }>;
+    readonly drainPendingRemoteRevocations: (input: {
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) => Effect.Effect<void>;
     readonly canActorAccessEnvironment: (
       actor: TeamActor,
       environmentId: EnvironmentId,
@@ -725,32 +739,90 @@ const make = Effect.gen(function* () {
   };
 
   const remoteSubjectForMember = (teamId: TeamId, memberId: TeamMemberId): string =>
-    `${PeerClientPairing.TEAM_MEMBER_REMOTE_SUBJECT_PREFIX}${teamId}:${memberId}`;
+    `${PeerClientPairing.TEAM_MEMBER_REMOTE_SUBJECT_PREFIX}${teamId}:${memberId}:`;
 
   const remoteSubjectPrefixForTeam = (teamId: TeamId): string =>
     `${PeerClientPairing.TEAM_MEMBER_REMOTE_SUBJECT_PREFIX}${teamId}:`;
 
-  const revokeRemoteMemberGrantsForEnvironments = (input: {
+  const drainPendingRemoteRevocations = Effect.fn("TeamService.drainPendingRemoteRevocations")(
+    function* (input: {
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) {
+      if (!input.peerClientPairing) return;
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isNone(workspaceOption)) return;
+      const pending = yield* repository
+        .listPendingRemoteRevocations(workspaceOption.value.id)
+        .pipe(Effect.orElseSucceed(() => []));
+      for (const item of pending) {
+        const result = yield* input.peerClientPairing.revokeSubject(
+          item.environmentId,
+          item.subjectPrefix,
+        );
+        if (result.ok || result.reason === "unknown_link") {
+          yield* repository.deletePendingRemoteRevocation(item.id).pipe(Effect.ignore);
+          if (item.unlinkAfterRevoke && result.ok && input.peerLinks) {
+            yield* input.peerLinks.unlink(item.environmentId).pipe(Effect.ignore);
+          }
+        }
+      }
+    },
+  );
+
+  const revokeRemoteMemberGrantsForEnvironments = Effect.fn(
+    "TeamService.revokeRemoteMemberGrantsForEnvironments",
+  )(function* (input: {
+    readonly teamId: TeamId;
     readonly peerClientPairing: PeerClientPairing.PeerClientPairing["Service"] | undefined;
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     readonly environmentIds: ReadonlyArray<EnvironmentId>;
     readonly subjectPrefixes: ReadonlyArray<string>;
-  }) => {
-    const { peerClientPairing, environmentIds, subjectPrefixes } = input;
-    if (!peerClientPairing || environmentIds.length === 0 || subjectPrefixes.length === 0) {
-      return Effect.void;
-    }
-    return Effect.forEach(
+    readonly unlinkAfterRevoke?: boolean;
+  }) {
+    const {
+      teamId,
+      peerClientPairing,
+      peerLinks,
       environmentIds,
-      (environmentId) =>
-        Effect.forEach(
-          subjectPrefixes,
-          (subjectPrefix) =>
-            peerClientPairing.revokeSubject(environmentId, subjectPrefix).pipe(Effect.ignore),
-          { discard: true },
-        ),
-      { discard: true },
-    );
-  };
+      subjectPrefixes,
+      unlinkAfterRevoke = false,
+    } = input;
+    if (!peerClientPairing || environmentIds.length === 0 || subjectPrefixes.length === 0) {
+      return { allSucceeded: true };
+    }
+    let allSucceeded = true;
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const uniqueEnvIds = Array.from(new Set(environmentIds));
+    for (const environmentId of uniqueEnvIds) {
+      for (const subjectPrefix of subjectPrefixes) {
+        const result = yield* peerClientPairing.revokeSubject(environmentId, subjectPrefix);
+        if (!result.ok && result.reason !== "unknown_link") {
+          allSucceeded = false;
+          const pendingId = yield* random
+            .uuidV4()
+            .pipe(Effect.orElseSucceed(() => `${environmentId}:${subjectPrefix}`));
+          yield* repository
+            .enqueuePendingRemoteRevocation({
+              id: pendingId,
+              teamId,
+              environmentId,
+              subjectPrefix,
+              unlinkAfterRevoke,
+              createdAt: nowIso,
+            })
+            .pipe(Effect.ignore);
+        }
+      }
+    }
+    yield* drainPendingRemoteRevocations({
+      peerClientPairing,
+      ...(peerLinks !== undefined ? { peerLinks } : {}),
+    });
+    return { allSucceeded };
+  });
 
   const resolveLocalEnvironmentIdentity = Effect.fn("TeamService.resolveLocalEnvironmentIdentity")(
     function* () {
@@ -1267,6 +1339,7 @@ const make = Effect.gen(function* () {
     readonly sessionId: AuthSessionId;
     readonly payload: TeamUpdateMemberRoleInput;
     readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
   }) {
     const team = yield* requireWorkspace();
     const actor = yield* requireActiveMember(input.sessionId);
@@ -1354,11 +1427,23 @@ const make = Effect.gen(function* () {
       const envs = yield* repository
         .listEnvironments(team.id)
         .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+      const registeredEnvIds = new Set(envs.map((env) => env.environmentId));
       const revokedEnvIds = envs
         .filter((env) => !env.isDefault && !canMemberAccessTeamEnvironment(updatedMember, env))
         .map((env) => env.environmentId);
+      // Demoting an admin/owner also revokes their sessions on unregistered peer links.
+      if (input.peerLinks && !isTeamAdminOrOwner(updatedMember)) {
+        const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
+        for (const peer of allPeers) {
+          if (!registeredEnvIds.has(peer.environmentId)) {
+            revokedEnvIds.push(peer.environmentId);
+          }
+        }
+      }
       yield* revokeRemoteMemberGrantsForEnvironments({
+        teamId: team.id,
         peerClientPairing: input.peerClientPairing,
+        ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
         environmentIds: revokedEnvIds,
         subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
       });
@@ -1372,6 +1457,7 @@ const make = Effect.gen(function* () {
     readonly sessionId: AuthSessionId;
     readonly payload: TeamUpdateMemberStatusInput;
     readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
   }) {
     const team = yield* requireWorkspace();
     const actor = yield* requireActiveMember(input.sessionId);
@@ -1449,9 +1535,18 @@ const make = Effect.gen(function* () {
         const envs = yield* repository
           .listEnvironments(team.id)
           .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+        const targetEnvIds = envs.filter((env) => !env.isDefault).map((env) => env.environmentId);
+        if (input.peerLinks) {
+          const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
+          for (const peer of allPeers) {
+            targetEnvIds.push(peer.environmentId);
+          }
+        }
         yield* revokeRemoteMemberGrantsForEnvironments({
+          teamId: team.id,
           peerClientPairing: input.peerClientPairing,
-          environmentIds: envs.filter((env) => !env.isDefault).map((env) => env.environmentId),
+          ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
+          environmentIds: targetEnvIds,
           subjectPrefixes: [remoteSubjectForMember(team.id, updated.value.id)],
         });
       }
@@ -3174,8 +3269,6 @@ const make = Effect.gen(function* () {
         return command;
       case "thread.archive":
       case "thread.unarchive":
-      case "thread.settle":
-      case "thread.auto-settle":
       case "thread.unsettle":
       case "thread.snooze":
       case "thread.unsnooze":
@@ -3196,8 +3289,9 @@ const make = Effect.gen(function* () {
         yield* assertActorCanPostInThread(actor, command.threadId);
         return command;
       default:
-        // Fail closed for all remaining execution-capable commands (e.g. prepared-run.retry,
-        // queue.resume, checkpoint.rollback, provider.switch, runtime/model mode mutations).
+        // Fail closed for all remaining execution-capable commands (including thread.settle /
+        // thread.auto-settle which close terminals and execute project settle scripts,
+        // prepared-run.retry, queue.resume, checkpoint.rollback, provider.switch, etc.).
         yield* assertActorCanPostInThread(actor, command.threadId);
         yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
         return command;
@@ -4624,6 +4718,7 @@ const make = Effect.gen(function* () {
         .filter((member) => !canMemberAccessTeamEnvironment(member, updated.value))
         .map((member) => remoteSubjectForMember(team.id, member.id));
       yield* revokeRemoteMemberGrantsForEnvironments({
+        teamId: team.id,
         peerClientPairing: input.peerClientPairing,
         environmentIds: [updated.value.environmentId],
         subjectPrefixes: revokedSubjects,
@@ -4670,14 +4765,21 @@ const make = Effect.gen(function* () {
         }),
       );
     if (detached) {
+      const shouldUnlink = input.payload.unlinkPeer !== false;
+      let revocationComplete = true;
       if (input.peerClientPairing) {
-        yield* revokeRemoteMemberGrantsForEnvironments({
+        const outcome = yield* revokeRemoteMemberGrantsForEnvironments({
+          teamId: team.id,
           peerClientPairing: input.peerClientPairing,
+          ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
           environmentIds: [input.payload.environmentId],
           subjectPrefixes: [remoteSubjectPrefixForTeam(team.id)],
+          unlinkAfterRevoke: shouldUnlink,
         });
+        revocationComplete = outcome.allSucceeded;
       }
-      if (input.payload.unlinkPeer !== false && input.peerLinks !== undefined) {
+      // Retain the peer link when the remote is unreachable so pending revocations can drain later.
+      if (shouldUnlink && revocationComplete && input.peerLinks !== undefined) {
         yield* input.peerLinks.unlink(input.payload.environmentId).pipe(Effect.ignore);
       }
       yield* publish({
@@ -4693,24 +4795,78 @@ const make = Effect.gen(function* () {
     return { detached } satisfies TeamDetachEnvironmentResult;
   });
 
+  const revokeRemoteEnvironmentBeforeUnlink = Effect.fn(
+    "TeamService.revokeRemoteEnvironmentBeforeUnlink",
+  )(function* (input: {
+    readonly environmentId: EnvironmentId;
+    readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+  }) {
+    const workspaceOption = yield* repository
+      .getWorkspace()
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    if (Option.isNone(workspaceOption) || !input.peerClientPairing) {
+      return { unlinkedAllowed: true };
+    }
+    const outcome = yield* revokeRemoteMemberGrantsForEnvironments({
+      teamId: workspaceOption.value.id,
+      peerClientPairing: input.peerClientPairing,
+      ...(input.peerLinks !== undefined ? { peerLinks: input.peerLinks } : {}),
+      environmentIds: [input.environmentId],
+      subjectPrefixes: [remoteSubjectPrefixForTeam(workspaceOption.value.id)],
+      unlinkAfterRevoke: true,
+    });
+    return { unlinkedAllowed: outcome.allSucceeded };
+  });
+
   const getRemotePairingSubject = Effect.fn("TeamService.getRemotePairingSubject")(function* (
     sessionId: AuthSessionId,
   ) {
-    return yield* Effect.gen(function* () {
-      const workspaceOption = yield* repository.getWorkspace();
-      if (Option.isNone(workspaceOption)) return Option.none<string>();
-      const team = workspaceOption.value;
-      const memberOption = yield* repository.getMemberForSession(sessionId);
-      if (
-        Option.isNone(memberOption) ||
-        memberOption.value.teamId !== team.id ||
-        memberOption.value.status !== "active"
-      ) {
-        return Option.none<string>();
-      }
-      return Option.some(remoteSubjectForMember(team.id, memberOption.value.id));
-    }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.getRemotePairingSubject(getWorkspace) failed", { cause }),
+      ),
+      Effect.mapError(() =>
+        teamPostAuthError("Could not resolve team membership for remote environment pairing."),
+      ),
+    );
+    if (Option.isNone(workspaceOption)) return Option.none<string>();
+    const team = workspaceOption.value;
+    const memberOption = yield* repository.getMemberForSession(sessionId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.getRemotePairingSubject(getMemberForSession) failed", {
+          cause,
+        }),
+      ),
+      Effect.mapError(() =>
+        teamPostAuthError("Could not resolve team membership for remote environment pairing."),
+      ),
+    );
+    if (
+      Option.isNone(memberOption) ||
+      memberOption.value.teamId !== team.id ||
+      memberOption.value.status !== "active"
+    ) {
+      return yield* teamPostAuthError("This session is not bound to an active team member.");
+    }
+    return Option.some(remoteSubjectForMember(team.id, memberOption.value.id));
   });
+
+  const assertCanAccessLocalEnvironment = Effect.fn("TeamService.assertCanAccessLocalEnvironment")(
+    function* (sessionId: AuthSessionId) {
+      const workspaceOption = yield* repository.getWorkspace().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertCanAccessLocalEnvironment(getWorkspace) failed", {
+            cause,
+          }),
+        ),
+        Effect.mapError(() => teamPostAuthError("Could not verify team environment permissions.")),
+      );
+      if (Option.isNone(workspaceOption)) return;
+      const localEnv = yield* resolveLocalEnvironmentIdentity();
+      yield* assertActorCanAccessEnvironment(sessionActor(sessionId), localEnv.environmentId);
+    },
+  );
 
   const canActorAccessEnvironment = Effect.fn("TeamService.canActorAccessEnvironment")(function* (
     actor: TeamActor,
@@ -4999,7 +5155,9 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.mapError(toInternalError));
     }
     // Record turn attributions, relink msg:<userMessageId> note anchors to mirrored run IDs, and
-    // re-anchor any pending notes whenever a brand-new local run lands (covers offline/race sends).
+    // re-anchor pending notes once for the highest-ordinal brand-new local run.
+    let highestInsertedRun: { readonly ordinal: number; readonly mirroredRunId: string } | null =
+      null;
     for (const run of input.payload.runs) {
       const mirroredRunId = localSyncMirroredRunId(input.payload.threadId, run.id);
       const mirroredMessageId = localSyncMirroredMessageId(
@@ -5015,6 +5173,9 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.orElseSucceed(() => false));
       if (inserted) {
+        if (highestInsertedRun === null || run.ordinal >= highestInsertedRun.ordinal) {
+          highestInsertedRun = { ordinal: run.ordinal, mirroredRunId };
+        }
         yield* publish({
           version: 1,
           type: "turnAttributed",
@@ -5046,17 +5207,17 @@ const make = Effect.gen(function* () {
       for (const note of [...relinkedRaw, ...relinkedMirrored]) {
         yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
       }
-      if (inserted) {
-        const reanchored = yield* repository
-          .reanchorPendingNotesForNewTurn({
-            teamId: team.id,
-            threadId: input.payload.threadId,
-            targetTurnId: mirroredRunId,
-          })
-          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
-        for (const note of reanchored) {
-          yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
-        }
+    }
+    if (highestInsertedRun !== null) {
+      const reanchored = yield* repository
+        .reanchorPendingNotesForNewTurn({
+          teamId: team.id,
+          threadId: input.payload.threadId,
+          targetTurnId: highestInsertedRun.mirroredRunId,
+        })
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
+      for (const note of reanchored) {
+        yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
       }
     }
     yield* publish({
@@ -5878,6 +6039,9 @@ const make = Effect.gen(function* () {
     updateEnvironment,
     detachEnvironment,
     getRemotePairingSubject,
+    assertCanAccessLocalEnvironment,
+    revokeRemoteEnvironmentBeforeUnlink,
+    drainPendingRemoteRevocations,
     canActorAccessEnvironment,
     assertActorCanAccessEnvironment,
     assertCanAccessEnvironment,

@@ -1,4 +1,8 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -32,6 +36,7 @@ import { useProjects, waitForThreadShell } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { environmentThreadStateAtom, threadEnvironment } from "~/state/threads";
 import {
+  clearPendingLocalThreadViewId,
   closeTeamForkDialog,
   setPendingLocalThreadViewId,
   setTeamDraftViewId,
@@ -227,6 +232,10 @@ export function TeamForkThreadDialogHost() {
       return;
     }
 
+    if (option.isLocal && inheritedTeamViewId !== null) {
+      clearPendingLocalThreadViewId(targetThreadId);
+    }
+
     if (!isAtomCommandInterrupted(result)) {
       // Fallback: open a draft on the target environment pre-populated with portable handoff text.
       const draftResult = await handleNewThread(
@@ -235,7 +244,11 @@ export function TeamForkThreadDialogHost() {
       if (draftResult) {
         useComposerDraftStore.getState().setPrompt(draftResult.draftId, handoffPrompt);
         if (inheritedTeamViewId !== null) {
-          setTeamDraftViewId(draftResult.draftId, inheritedTeamViewId);
+          // Index by routeThreadKey (matching ChatView & useComposerSend), not draftId.
+          const draftRouteThreadKey = scopedThreadKey(
+            scopeThreadRef(option.environmentId, draftResult.threadId),
+          );
+          setTeamDraftViewId(draftRouteThreadKey, inheritedTeamViewId);
         }
         closeTeamForkDialog();
         toastManager.add({

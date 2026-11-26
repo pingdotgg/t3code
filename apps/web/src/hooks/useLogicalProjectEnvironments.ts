@@ -39,7 +39,12 @@ export function useLogicalProjectEnvironments(
   );
   const teamAssignment = resolveProjectTeamAssignment({ project: activeProject, teamStates });
   const isEnvBlockedByTeamAcl = (environmentId: EnvironmentId): boolean => {
-    if (!teamAssignment || environmentId === primaryEnvironmentId) return false;
+    if (
+      !teamAssignment ||
+      (environmentId === primaryEnvironmentId && environmentId !== teamAssignment.teamEnvironmentId)
+    ) {
+      return false;
+    }
     // Fail closed: TeamService omits restricted environments from non-admin members' snapshot.
     const teamEnv = teamAssignment.teamState.environmentById.get(environmentId);
     if (!teamEnv) return true;

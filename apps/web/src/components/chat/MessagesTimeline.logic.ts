@@ -2960,6 +2960,14 @@ function rowAnchorTurnIds(row: MessagesTimelineRow): ReadonlyArray<string> {
   return [];
 }
 
+function decodeLocalSyncSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 function resolveNoteAnchorIndex(
   anchorTurnId: string | null,
   lastIndexByAnchor: ReadonlyMap<string, number>,
@@ -2967,15 +2975,20 @@ function resolveNoteAnchorIndex(
   if (anchorTurnId === null) return undefined;
   const direct = lastIndexByAnchor.get(anchorTurnId);
   if (direct !== undefined) return direct;
-  // Local-synced projections namespace run/message IDs as `local-sync:<threadId>:run:<rawId>` on
-  // the Team Server while the owner's local server keeps `<rawId>`.
+  // Local-synced projections namespace run/message IDs as
+  // `local-sync:<encodedThreadId>:run:<encodedRawId>` on the Team Server while the owner's local
+  // server keeps `<rawId>`.
   const runMarkerIndex = anchorTurnId.indexOf(":run:");
   if (anchorTurnId.startsWith("local-sync:") && runMarkerIndex !== -1) {
-    return lastIndexByAnchor.get(anchorTurnId.slice(runMarkerIndex + ":run:".length));
+    return lastIndexByAnchor.get(
+      decodeLocalSyncSegment(anchorTurnId.slice(runMarkerIndex + ":run:".length)),
+    );
   }
   const msgMarkerIndex = anchorTurnId.indexOf(":msg:");
   if (anchorTurnId.startsWith("local-sync:") && msgMarkerIndex !== -1) {
-    return lastIndexByAnchor.get(`msg:${anchorTurnId.slice(msgMarkerIndex + ":msg:".length)}`);
+    return lastIndexByAnchor.get(
+      `msg:${decodeLocalSyncSegment(anchorTurnId.slice(msgMarkerIndex + ":msg:".length))}`,
+    );
   }
   return undefined;
 }

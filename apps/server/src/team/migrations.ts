@@ -261,6 +261,20 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
             execution_environment_label TEXT NOT NULL
           )
         `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_pending_remote_revocations (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            environment_id TEXT NOT NULL,
+            subject_prefix TEXT NOT NULL,
+            unlink_after_revoke INTEGER NOT NULL DEFAULT 0 CHECK (unlink_after_revoke IN (0, 1)),
+            created_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_team_pending_remote_revocations_unique
+            ON team_pending_remote_revocations (team_id, environment_id, subject_prefix)
+        `;
     }),
   },
 ];

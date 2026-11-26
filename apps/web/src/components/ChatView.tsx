@@ -2944,7 +2944,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (reservationToken !== null) {
-      await consumeAcceptedTeamNotesForCard({
+      const consumeInput = {
         environmentId: teamThreadContext.teamEnvironmentId,
         input: {
           threadId: activeThread.id,
@@ -2952,7 +2952,11 @@ export default function ChatView(props: ChatViewProps) {
           acceptedNotes: [acceptedRef],
           reservationToken,
         },
-      });
+      };
+      const consumed = await consumeAcceptedTeamNotesForCard(consumeInput);
+      if (consumed._tag === "Failure" && !isAtomCommandInterrupted(consumed)) {
+        await consumeAcceptedTeamNotesForCard(consumeInput);
+      }
     }
   };
   const onDispatchAcceptedTeamNoteStable = useStableCallback(onDispatchAcceptedTeamNote);

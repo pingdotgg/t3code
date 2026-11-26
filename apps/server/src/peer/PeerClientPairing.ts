@@ -96,12 +96,16 @@ export class PeerClientPairing extends Context.Service<
     ) => Effect.Effect<PeerLinkClientPairingResult, PeerLinkError>;
     /**
      * Revokes any direct client sessions and pending pairing links on a linked environment whose
-     * subject starts with `subjectPrefix` (must begin with `team-member:`).
+     * subject starts with `subjectPrefix` (must begin with `team-member:`). Reports `ok: false`
+     * when the remote environment could not be reached or refused so callers can retain and retry.
      */
     readonly revokeSubject: (
       environmentId: EnvironmentId,
       subjectPrefix: string,
-    ) => Effect.Effect<PeerLinkRevokeSubjectResult>;
+    ) => Effect.Effect<
+      | ({ readonly ok: true } & PeerLinkRevokeSubjectResult)
+      | { readonly ok: false; readonly reason: string }
+    >;
   }
 >()("t3/peer/PeerClientPairing") {}
 
@@ -323,13 +327,23 @@ const make = Effect.gen(function* () {
   const revokeSubject: PeerClientPairing["Service"]["revokeSubject"] = Effect.fn(
     "PeerClientPairing.revokeSubject",
   )(function* (environmentId, subjectPrefix) {
-    const empty: PeerLinkRevokeSubjectResult = { revokedSessions: 0, revokedPairingLinks: 0 };
-    if (!subjectPrefix.startsWith(TEAM_MEMBER_REMOTE_SUBJECT_PREFIX)) return empty;
-    if (!(yield* links.enabled)) return empty;
+    if (!subjectPrefix.startsWith(TEAM_MEMBER_REMOTE_SUBJECT_PREFIX)) {
+      return { ok: false as const, reason: "invalid_subject_prefix" };
+    }
+    if (!(yield* links.enabled)) {
+      return { ok: false as const, reason: "disabled" };
+    }
     const stored = yield* links.get(environmentId).pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(stored) || stored.value.access !== "full-access") return empty;
+    if (Option.isNone(stored)) {
+      return { ok: false as const, reason: "unknown_link" };
+    }
+    if (stored.value.access !== "full-access") {
+      return { ok: false as const, reason: "link_access" };
+    }
     const resolved = yield* links.resolve(environmentId).pipe(Effect.option);
-    if (Option.isNone(resolved)) return empty;
+    if (Option.isNone(resolved)) {
+      return { ok: false as const, reason: "unreachable" };
+    }
     const peer = resolved.value;
     const api = yield* HttpApiClient.make(ClientPairingApi, { baseUrl: peer.url }).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -341,13 +355,14 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.timeout(PeerLinks.probeTimeout(peer.url)),
+        Effect.map((result) => ({ ok: true as const, ...result })),
         Effect.tapError((cause) =>
           Effect.logWarning("PeerClientPairing.revokeSubject failed", {
             environmentId,
             cause,
           }),
         ),
-        Effect.orElseSucceed(() => empty),
+        Effect.orElseSucceed(() => ({ ok: false as const, reason: "request_failed" })),
       );
   });
 

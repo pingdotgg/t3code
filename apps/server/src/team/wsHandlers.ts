@@ -58,6 +58,7 @@ export function makeTeamWsRpcHandlers(
         ...(deps?.peerClientPairing !== undefined
           ? { peerClientPairing: deps.peerClientPairing }
           : {}),
+        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
       }),
     [TEAM_WS_METHODS.teamUpdateMemberStatus]: (
       payload: Parameters<typeof teamService.updateMemberStatus>[0]["payload"],
@@ -68,6 +69,7 @@ export function makeTeamWsRpcHandlers(
         ...(deps?.peerClientPairing !== undefined
           ? { peerClientPairing: deps.peerClientPairing }
           : {}),
+        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
       }),
     [TEAM_WS_METHODS.teamCreateInvite]: (
       payload: Parameters<typeof teamService.createInvite>[0]["payload"],

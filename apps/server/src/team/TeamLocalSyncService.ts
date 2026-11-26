@@ -19,18 +19,22 @@ import type * as EventSink from "../orchestration-v2/EventSink.ts";
 import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 /**
- * Deterministically namespaces mirrored run/message/turn-item IDs under the owning `threadId` so
- * a malicious or colliding local client payload can never overwrite another thread's projection
- * rows (ProjectionStore upserts globally on `run_id` / `message_id`).
+ * Deterministically namespaces mirrored run/message/turn-item IDs under the owning `threadId`
+ * using `encodeURIComponent` (which percent-encodes `:` and `%`) so `(threadId, kind, rawId)` is
+ * bijective and collision-free across all possible custom IDs.
  */
 export const localSyncMirroredRunId = (threadId: ThreadId, rawRunId: string): RunId =>
-  RunId.make(`local-sync:${threadId}:run:${rawRunId}`);
+  RunId.make(`local-sync:${encodeURIComponent(threadId)}:run:${encodeURIComponent(rawRunId)}`);
 
 export const localSyncMirroredMessageId = (threadId: ThreadId, rawMessageId: string): MessageId =>
-  MessageId.make(`local-sync:${threadId}:msg:${rawMessageId}`);
+  MessageId.make(
+    `local-sync:${encodeURIComponent(threadId)}:msg:${encodeURIComponent(rawMessageId)}`,
+  );
 
 const localSyncMirroredTurnItemId = (threadId: ThreadId, rawMessageId: string): TurnItemId =>
-  TurnItemId.make(`local-sync:${threadId}:item:${rawMessageId}`);
+  TurnItemId.make(
+    `local-sync:${encodeURIComponent(threadId)}:item:${encodeURIComponent(rawMessageId)}`,
+  );
 
 /**
  * Mirrors a member's local-environment team thread into the Team Server's orchestration
@@ -179,6 +183,8 @@ export const mirrorLocalThreadSnapshotToEventSink = Effect.fn(
       });
     } else if (
       prevRun.status !== runPayload.status ||
+      prevRun.ordinal !== runPayload.ordinal ||
+      prevRun.userMessageId !== runPayload.userMessageId ||
       (prevRun.completedAt !== null ? DateTime.toEpochMillis(prevRun.completedAt) : null) !==
         (runPayload.completedAt !== null ? DateTime.toEpochMillis(runPayload.completedAt) : null)
     ) {

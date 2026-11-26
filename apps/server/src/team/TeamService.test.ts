@@ -42,6 +42,7 @@ import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import { localSyncMirroredMessageId, localSyncMirroredRunId } from "./TeamLocalSyncService.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
 import { recordTeamDispatchEvents, recordTeamThreadLaunch } from "./wsHandlers.ts";
@@ -2386,7 +2387,7 @@ describe("TeamService", () => {
         expect(retried.reservationToken).not.toBeNull();
         yield* team.releaseNoteReservationByToken(retried.reservationToken!);
 
-        // 6. Local-synced threads block execution-capable metadata continuations and queue.resume too.
+        // 6. Local-synced threads block execution-capable metadata continuations and thread.settle too.
         const continuationHijackExit = yield* Effect.exit(
           team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, {
             type: "thread.metadata.update",
@@ -2399,6 +2400,23 @@ describe("TeamService", () => {
           }),
         );
         expect(continuationHijackExit._tag).toBe("Failure");
+
+        const settleHijackExit = yield* Effect.exit(
+          team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, {
+            type: "thread.settle",
+            commandId: CommandId.make("cmd-settle-hijack"),
+            threadId: bobLocalThreadId,
+          }),
+        );
+        expect(settleHijackExit._tag).toBe("Failure");
+
+        // Bijective encoding prevents collisions on custom IDs containing `:run:` / `:msg:`.
+        expect(localSyncMirroredRunId(ThreadId.make("a"), "b:run:c")).not.toBe(
+          localSyncMirroredRunId(ThreadId.make("a:run:b"), "c"),
+        );
+        expect(localSyncMirroredMessageId(ThreadId.make("a"), "b:msg:c")).not.toBe(
+          localSyncMirroredMessageId(ThreadId.make("a:msg:b"), "c"),
+        );
 
         // 7. syncLocalThread rejects spoofing registered team environment IDs or unassigned projects.
         const spoofedEnvExit = yield* Effect.exit(
@@ -2487,6 +2505,10 @@ describe("TeamService", () => {
         expect((yield* Effect.exit(team.assertCanExecuteOnThreadEnvironment(sid, tid)))._tag).toBe(
           "Failure",
         );
+        expect((yield* Effect.exit(team.assertCanAccessLocalEnvironment(sid)))._tag).toBe(
+          "Failure",
+        );
+        expect((yield* Effect.exit(team.getRemotePairingSubject(sid)))._tag).toBe("Failure");
         expect((yield* Effect.exit(team.assertCanLaunchThread({ sessionId: sid })))._tag).toBe(
           "Failure",
         );

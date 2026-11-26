@@ -312,7 +312,7 @@ it.effect(
           AuthOrchestrationOperateScope,
         ]);
         const otherClient = yield* a.client([AuthOrchestrationReadScope]);
-        const memberSubject = "team-member:team-1:member-eve";
+        const memberSubject = "team-member:team-1:member-eve:";
 
         const memberIssued = yield* a.pairing.request(
           { environmentId: box.environmentId },
@@ -337,7 +337,7 @@ it.effect(
           {
             sessionId: otherClient.sessionId,
             scopes: otherClient.scopes,
-            teamMemberSubject: "team-member:team-1:member-clara",
+            teamMemberSubject: "team-member:team-1:member-eve2:",
           },
         );
         if (otherIssued.type !== "credential") return yield* Effect.die(otherIssued);
@@ -358,18 +358,22 @@ it.effect(
 
         const beforeSessions = yield* b.auth.listSessions();
         expect(beforeSessions.some((s) => s.subject === memberSubject)).toBe(true);
-        expect(beforeSessions.some((s) => s.subject === "team-member:team-1:member-clara")).toBe(
+        expect(beforeSessions.some((s) => s.subject === "team-member:team-1:member-eve2:")).toBe(
           true,
         );
 
-        // Revoking member-eve kills both her active session AND her unredeemed pending pairing on box.
+        // Revoking member-eve: kills both her active session AND her unredeemed pending pairing on
+        // box without prefix-colliding with member-eve2:.
         const revoked = yield* a.pairing.revokeSubject(box.environmentId, memberSubject);
-        expect(revoked.revokedSessions).toBeGreaterThanOrEqual(1);
-        expect(revoked.revokedPairingLinks).toBeGreaterThanOrEqual(1);
+        expect(revoked.ok).toBe(true);
+        if (revoked.ok) {
+          expect(revoked.revokedSessions).toBeGreaterThanOrEqual(1);
+          expect(revoked.revokedPairingLinks).toBeGreaterThanOrEqual(1);
+        }
 
         const afterSessions = yield* b.auth.listSessions();
         expect(afterSessions.some((s) => s.subject === memberSubject)).toBe(false);
-        expect(afterSessions.some((s) => s.subject === "team-member:team-1:member-clara")).toBe(
+        expect(afterSessions.some((s) => s.subject === "team-member:team-1:member-eve2:")).toBe(
           true,
         );
 

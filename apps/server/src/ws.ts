@@ -2179,23 +2179,18 @@ export const layerWsRpc = (
                     sessionId: currentSessionId,
                     command: normalizedCommand,
                   });
-                const preparedThreadId = yield* prepareTeamDispatchAttribution(
-                  teamService,
-                  currentSessionId,
-                  effectiveCommand,
-                ).pipe(
-                  Effect.onError(() =>
-                    reservationToken !== null
-                      ? teamService.releaseNoteReservationByToken(reservationToken)
-                      : Effect.void,
-                  ),
-                );
-                yield* teamService.prepareTurnAttributionForCommand(
-                  currentSessionId,
-                  effectiveCommand,
-                );
-                return yield* startup
-                  .enqueueCommand(
+                let preparedThreadId: ThreadId | null = null;
+                return yield* Effect.gen(function* () {
+                  preparedThreadId = yield* prepareTeamDispatchAttribution(
+                    teamService,
+                    currentSessionId,
+                    effectiveCommand,
+                  );
+                  yield* teamService.prepareTurnAttributionForCommand(
+                    currentSessionId,
+                    effectiveCommand,
+                  );
+                  return yield* startup.enqueueCommand(
                     (effectiveCommand.type === "prepared-run.retry"
                       ? threadLaunch.retryPreparation(effectiveCommand)
                       : ThreadMessageIntake.dispatchCommand(
@@ -2212,59 +2207,59 @@ export const layerWsRpc = (
                           },
                         )
                     ).pipe(Effect.provide(intakeContext)),
-                  )
-                  .pipe(
-                    Effect.onError(() =>
-                      Effect.all([
-                        preparedThreadId !== null
-                          ? teamService.rollbackPreparedThreadAttribution(preparedThreadId)
-                          : Effect.void,
-                        reservationToken !== null
-                          ? teamService.releaseNoteReservationByToken(reservationToken)
-                          : Effect.void,
-                      ]).pipe(Effect.asVoid),
-                    ),
-                    Effect.tap((result) =>
-                      result.replayed
-                        ? reservationToken !== null
-                          ? teamService.releaseNoteReservationByToken(reservationToken)
-                          : Effect.void
-                        : recordTeamDispatchEvents(
-                            teamService,
-                            currentSessionId,
-                            result.storedEvents,
-                            effectiveCommand,
-                            reservationToken,
-                          ).pipe(
-                            Effect.andThen(
-                              effectiveCommand.type === "run.interrupt" ||
-                                effectiveCommand.type === "subagent.stop"
+                  );
+                }).pipe(
+                  Effect.onError(() =>
+                    Effect.all([
+                      preparedThreadId !== null
+                        ? teamService.rollbackPreparedThreadAttribution(preparedThreadId)
+                        : Effect.void,
+                      reservationToken !== null
+                        ? teamService.releaseNoteReservationByToken(reservationToken)
+                        : Effect.void,
+                    ]).pipe(Effect.asVoid),
+                  ),
+                  Effect.tap((result) =>
+                    result.replayed
+                      ? reservationToken !== null
+                        ? teamService.releaseNoteReservationByToken(reservationToken)
+                        : Effect.void
+                      : recordTeamDispatchEvents(
+                          teamService,
+                          currentSessionId,
+                          result.storedEvents,
+                          effectiveCommand,
+                          reservationToken,
+                        ).pipe(
+                          Effect.andThen(
+                            effectiveCommand.type === "run.interrupt" ||
+                              effectiveCommand.type === "subagent.stop"
+                              ? teamService.notifyTurnInterrupted({
+                                  actor: { kind: "session", sessionId: currentSessionId },
+                                  threadId: effectiveCommand.threadId,
+                                  runId: effectiveCommand.runId,
+                                  reason: "interrupt",
+                                })
+                              : effectiveCommand.type === "thread.stop"
                                 ? teamService.notifyTurnInterrupted({
                                     actor: { kind: "session", sessionId: currentSessionId },
                                     threadId: effectiveCommand.threadId,
-                                    runId: effectiveCommand.runId,
-                                    reason: "interrupt",
+                                    reason: "stop",
                                   })
-                                : effectiveCommand.type === "thread.stop"
+                                : effectiveCommand.type === "queued-message.promote-to-steer"
                                   ? teamService.notifyTurnInterrupted({
                                       actor: { kind: "session", sessionId: currentSessionId },
                                       threadId: effectiveCommand.threadId,
-                                      reason: "stop",
+                                      runId: effectiveCommand.targetRunId,
+                                      reason: "promote_to_steer",
                                     })
-                                  : effectiveCommand.type === "queued-message.promote-to-steer"
-                                    ? teamService.notifyTurnInterrupted({
-                                        actor: { kind: "session", sessionId: currentSessionId },
-                                        threadId: effectiveCommand.threadId,
-                                        runId: effectiveCommand.targetRunId,
-                                        reason: "promote_to_steer",
-                                      })
-                                    : Effect.void,
-                            ),
-                            Effect.andThen(recordClientCommandAnalytics(effectiveCommand)),
+                                  : Effect.void,
                           ),
-                    ),
-                    Effect.map((result) => ({ sequence: result.sequence })),
-                  );
+                          Effect.andThen(recordClientCommandAnalytics(effectiveCommand)),
+                        ),
+                  ),
+                  Effect.map((result) => ({ sequence: result.sequence })),
+                );
               }).pipe(
                 Effect.mapError((cause) => {
                   if (cause._tag === "EnvironmentAuthorizationError") return cause;
@@ -2282,6 +2277,9 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) =>
           teamService.assertCanUseWorkflows(currentSessionId).pipe(
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+            ),
             Effect.andThen(teamService.assertCanInterruptThread(currentSessionId, input.threadId)),
             Effect.andThen(threadManagement.stopWorkflow(input)),
             Effect.tap(() =>
@@ -2293,7 +2291,8 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
-          teamService.assertCanInterruptThread(currentSessionId, input.threadId).pipe(
+          teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId).pipe(
+            Effect.andThen(teamService.assertCanInterruptThread(currentSessionId, input.threadId)),
             Effect.andThen(threadManagement.forceStopThread(input)),
             Effect.tap(() =>
               teamService.notifyTurnInterrupted({
@@ -2862,11 +2861,17 @@ export const layerWsRpc = (
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+            ),
             Effect.andThen(secretRequests.answer(input)),
           ),
         [WS_METHODS.agentFeedbackAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
+            Effect.andThen(
+              teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+            ),
             Effect.andThen(feedbackStore.answer(input)),
           ),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
@@ -3098,7 +3103,12 @@ export const layerWsRpc = (
         [WS_METHODS.mcpAppsCallTool]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
-            .pipe(Effect.andThen(mcpAppRequests.callTool(input))),
+            .pipe(
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(mcpAppRequests.callTool(input)),
+            ),
         [WS_METHODS.mcpAppsToolInfo]: (input) =>
           teamService
             .assertCanReadThread(currentSessionId, input.threadId)
@@ -3109,6 +3119,12 @@ export const layerWsRpc = (
             .pipe(
               Effect.andThen(
                 teamService.assertCanPostInThread(currentSessionId, input.conversationThreadId),
+              ),
+              Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(
+                  currentSessionId,
+                  input.conversationThreadId,
+                ),
               ),
               Effect.andThen(mcpAppRequests.updateModelContext(input)),
             ),
@@ -3287,7 +3303,20 @@ export const layerWsRpc = (
               "Only owner and admin members can unlink remote environments.",
               "team:environment:write",
             )
-            .pipe(Effect.andThen(peerLinks.unlink(environmentId))),
+            .pipe(
+              Effect.andThen(
+                teamService.revokeRemoteEnvironmentBeforeUnlink({
+                  environmentId,
+                  peerClientPairing,
+                  peerLinks,
+                }),
+              ),
+              Effect.flatMap(({ unlinkedAllowed }) =>
+                unlinkedAllowed
+                  ? peerLinks.unlink(environmentId)
+                  : Effect.succeed({ removed: false, endedThere: false }),
+              ),
+            ),
         [WS_METHODS.peerLinksSubscribeThread]: (input) =>
           Stream.unwrap(
             teamService
@@ -3310,6 +3339,11 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.peerLinksPairClient]: (input) =>
           teamService.assertCanAccessEnvironment(currentSessionId, input.environmentId).pipe(
+            Effect.andThen(
+              teamService
+                .drainPendingRemoteRevocations({ peerClientPairing, peerLinks })
+                .pipe(Effect.ignore),
+            ),
             Effect.andThen(teamService.getRemotePairingSubject(currentSessionId)),
             Effect.flatMap((subjectOption) =>
               peerClientPairing.request(input, {
@@ -3860,6 +3894,9 @@ export const layerWsRpc = (
             .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
               Effect.andThen(
+                teamService.assertCanExecuteOnThreadEnvironment(currentSessionId, input.threadId),
+              ),
+              Effect.andThen(
                 worktreeSetupTracker
                   .cancel(input.threadId)
                   .pipe(Effect.map((cancelled) => ({ cancelled }))),
@@ -3868,17 +3905,24 @@ export const layerWsRpc = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
         [WS_METHODS.vcsPull]: (input) =>
-          gitWorkflow.pullCurrentBranch(input.cwd).pipe(
-            Effect.matchCauseEffect({
-              onFailure: (cause) => Effect.failCause(cause),
-              onSuccess: (result) =>
-                refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
-            }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              gitWorkflow.pullCurrentBranch(input.cwd).pipe(
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Effect.failCause(cause),
+                  onSuccess: (result) =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.ignore({ log: true }),
+                      Effect.as(result),
+                    ),
+                }),
+              ),
+            ),
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
           Stream.unwrap(
             (input.threadId === undefined
-              ? Effect.void
+              ? teamService.assertCanAccessLocalEnvironment(currentSessionId)
               : teamService
                   .assertCanPostInThread(currentSessionId, input.threadId)
                   .pipe(
@@ -3953,63 +3997,79 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
-          (input.mode === "local"
-            ? assertCheckoutIdle("GitWorkflowService.preparePullRequestThread", input.cwd)
-            : Effect.void
-          ).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              input.mode === "local"
+                ? assertCheckoutIdle("GitWorkflowService.preparePullRequestThread", input.cwd)
+                : Effect.void,
+            ),
             Effect.andThen(gitWorkflow.preparePullRequestThread(input)),
             Effect.tap(() => refreshGitStatus(input.cwd)),
           ),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           // A project that tracks repositories gets a task folder, as its new worktree threads do.
-          taskFolders.createForProjectFolder(input, { projectCommands }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitCommandError({
-                  operation: "TaskFolders.create",
-                  command: "git worktree add",
-                  cwd: input.cwd,
-                  detail: cause.detail,
-                }),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              taskFolders.createForProjectFolder(input, { projectCommands }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new GitCommandError({
+                      operation: "TaskFolders.create",
+                      command: "git worktree add",
+                      cwd: input.cwd,
+                      detail: cause.detail,
+                    }),
+                ),
+                Effect.filterOrElse(
+                  (created) => created !== null,
+                  () => gitWorkflow.createWorktree(input),
+                ),
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+              ),
             ),
-            Effect.filterOrElse(
-              (created) => created !== null,
-              () => gitWorkflow.createWorktree(input),
-            ),
-            Effect.tap(() => refreshGitStatus(input.cwd)),
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           // A thread's worktree may be a task folder: its repositories' worktrees go with it.
-          taskFolders
-            .removeIfTaskFolder({ path: input.path, force: input.force === true, projectCommands })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new GitCommandError({
-                    operation: "TaskFolders.remove",
-                    command: "git worktree remove",
-                    cwd: input.cwd,
-                    detail: cause.detail,
-                  }),
-              ),
-              Effect.flatMap((removed) =>
-                removed ? Effect.void : gitWorkflow.removeWorktree(input),
-              ),
-              // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
-              // second refresh would queue behind this one and reread an unchanged repository.
-              // Subscribers of the removed checkout learn it is no longer a repository.
-              Effect.tap(() =>
-                vcsStatusBroadcaster
-                  .refreshLocalStatus(input.path)
-                  .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
-              ),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              taskFolders
+                .removeIfTaskFolder({
+                  path: input.path,
+                  force: input.force === true,
+                  projectCommands,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new GitCommandError({
+                        operation: "TaskFolders.remove",
+                        command: "git worktree remove",
+                        cwd: input.cwd,
+                        detail: cause.detail,
+                      }),
+                  ),
+                  Effect.flatMap((removed) =>
+                    removed ? Effect.void : gitWorkflow.removeWorktree(input),
+                  ),
+                  // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
+                  // second refresh would queue behind this one and reread an unchanged repository.
+                  // Subscribers of the removed checkout learn it is no longer a repository.
+                  Effect.tap(() =>
+                    vcsStatusBroadcaster
+                      .refreshLocalStatus(input.path)
+                      .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
+                  ),
+                ),
             ),
+          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
-          (input.switchRef
-            ? assertCheckoutIdle("GitWorkflowService.createRef", input.cwd)
-            : Effect.void
-          ).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              input.switchRef
+                ? assertCheckoutIdle("GitWorkflowService.createRef", input.cwd)
+                : Effect.void,
+            ),
             Effect.andThen(gitWorkflow.createRef(input)),
             Effect.tap(() =>
               input.switchRef
@@ -4018,12 +4078,16 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
-          assertCheckoutIdle("GitWorkflowService.switchRef", input.cwd).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(assertCheckoutIdle("GitWorkflowService.switchRef", input.cwd)),
             Effect.andThen(gitWorkflow.switchRef(input)),
             Effect.tap(() => vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)),
           ),
         [WS_METHODS.vcsInit]: (input) =>
-          vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(vcsProvisioning.initRepository(input)),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
@@ -4246,9 +4310,15 @@ export const layerWsRpc = (
               ),
               Effect.andThen(deviceService.close(input)),
             ),
-        [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
+        [WS_METHODS.deviceShutdown]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deviceService.shutdown(input))),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
-        [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
+        [WS_METHODS.deviceAction]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deviceService.action(input))),
         [WS_METHODS.subscribeDeviceState]: (_input) =>
           DeviceService.stateStream(deviceService).pipe(
             Stream.mapEffect((state) =>

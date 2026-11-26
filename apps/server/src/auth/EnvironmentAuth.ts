@@ -1767,27 +1767,30 @@ export const make = Effect.gen(function* () {
 
   const revokeGrantsBySubjectPrefix: EnvironmentAuth["Service"]["revokeGrantsBySubjectPrefix"] =
     Effect.fn("EnvironmentAuth.revokeGrantsBySubjectPrefix")(function* (subjectPrefix) {
-      const [activeSessions, activeLinks] = yield* Effect.all([
-        listSessions(),
-        bootstrapCredentials
+      // Serialize with connect/bootstrap issuance and bump otherSessionRevocations so any
+      // in-flight pairing redemption aborts in issueUnlessOthersRevokedSince instead of racing past.
+      return yield* Effect.gen(function* () {
+        yield* Ref.update(otherSessionRevocations, (count) => count + 1);
+        const activeLinks = yield* bootstrapCredentials
           .listActive()
-          .pipe(Effect.mapError((cause) => new ServerAuthPairingLinksListError({ cause }))),
-      ]);
-      let revokedSessions = 0;
-      for (const session of activeSessions) {
-        if (!session.subject.startsWith(subjectPrefix)) continue;
-        if (yield* revokeClient(session.sessionId)) {
-          revokedSessions += 1;
+          .pipe(Effect.mapError((cause) => new ServerAuthPairingLinksListError({ cause })));
+        let revokedPairingLinks = 0;
+        for (const link of activeLinks) {
+          if (!link.subject.startsWith(subjectPrefix)) continue;
+          if (yield* revokePairingLink(link.id)) {
+            revokedPairingLinks += 1;
+          }
         }
-      }
-      let revokedPairingLinks = 0;
-      for (const link of activeLinks) {
-        if (!link.subject.startsWith(subjectPrefix)) continue;
-        if (yield* revokePairingLink(link.id)) {
-          revokedPairingLinks += 1;
+        const activeSessions = yield* listSessions();
+        let revokedSessions = 0;
+        for (const session of activeSessions) {
+          if (!session.subject.startsWith(subjectPrefix)) continue;
+          if (yield* revokeClient(session.sessionId)) {
+            revokedSessions += 1;
+          }
         }
-      }
-      return { revokedSessions, revokedPairingLinks };
+        return { revokedSessions, revokedPairingLinks };
+      }).pipe(connectTrustLock.withPermits(1));
     });
 
   yield* revokePairedClientsThePolicyDisallows(managedPolicy, {
