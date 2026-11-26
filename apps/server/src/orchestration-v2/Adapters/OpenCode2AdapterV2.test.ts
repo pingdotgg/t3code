@@ -293,6 +293,19 @@ const supervisedRules = [
   ...buildPaths,
   ...mcpRules,
 ];
+// Plan asks for everything it did not explicitly allow, so nothing but the plan agent's own paths writes.
+const planRules = (paths: ReadonlyArray<unknown>) => [
+  out("session.update", {
+    sessionID: SESSION,
+    permissions: [
+      ...supervisedRules.slice(0, 3),
+      { action: "edit", resource: "*", effect: "deny" },
+      ...paths,
+      ...mcpRules,
+    ],
+  }),
+  reply("session.update", null),
+];
 
 const shellAsk = {
   data: {
@@ -333,6 +346,7 @@ const resumed = (
     readonly contextUsage?: OrchestrationV2ProviderThread["contextUsage"];
     readonly external?: boolean;
     readonly supervised?: boolean;
+    readonly interactionMode?: "plan";
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly borrowers?: { current: number };
@@ -406,7 +420,12 @@ const resumed = (
       },
       threadId,
       modelSelection: bigPickle,
-      runtimePolicy: policy(options?.supervised === true ? "approval-required" : "full-access"),
+      runtimePolicy: {
+        ...policy(options?.supervised === true ? "approval-required" : "full-access"),
+        ...(options?.interactionMode === undefined
+          ? {}
+          : { interactionMode: options.interactionMode }),
+      },
     });
     return { runtime, thread };
   });
@@ -482,6 +501,32 @@ const nativeGoal = (status: "active" | "paused" | "complete") => ({
 });
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
+  it.effect("a Plan turn in Full access asks before shell commands that write", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("agent.list", "<any>"),
+          reply("agent.list", agentList),
+          ...planRules(buildPaths),
+          out("session.switchAgent", { sessionID: SESSION, agent: "<any>" }),
+          reply("session.switchAgent", null),
+          // The plan agent's rules are already cached, so the rewrite carries only the mode's own rules.
+          ...planRules([]),
+          out("session.prompt", { sessionID: SESSION, id: "<any>", text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { interactionMode: "plan" },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        runtimePolicy: { ...policy(), interactionMode: "plan" },
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
