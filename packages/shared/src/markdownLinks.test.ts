@@ -37,6 +37,8 @@ describe("inlineCodeFilePathCandidate", () => {
     ["src/http.ts:42-64", "src/http.ts:42-64"],
     ["http.ts:42-64", "http.ts:42-64"],
     ["src/a.ts#section", null],
+    ["src/a.ts#section#L10", null],
+    ["C#/a.cs#L10", "C#/a.cs#L10"],
     ["src/a.ts#L10-L20-extra", null],
     [String.raw`C:\My Files\a.ts#section`, null],
     ["origin/main", null],

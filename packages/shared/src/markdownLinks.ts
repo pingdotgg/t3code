@@ -209,17 +209,23 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
   }
 
   const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
-  const hasPosition = INLINE_CODE_POSITION_PATTERN.test(candidate);
-  if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
-  if (ELIDED_PATH_SEGMENT_PATTERN.test(candidate.replace(INLINE_CODE_POSITION_PATTERN, "")))
+  const position = INLINE_CODE_POSITION_PATTERN.exec(candidate)?.[0];
+  const hasPosition = position !== undefined;
+  const withoutPosition = candidate.replace(INLINE_CODE_POSITION_PATTERN, "");
+  if (
+    position?.startsWith("#") &&
+    withoutPosition.split(PATH_SEPARATOR_PATTERN).at(-1)?.includes("#")
+  ) {
     return null;
+  }
+  if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
+  if (ELIDED_PATH_SEGMENT_PATTERN.test(withoutPosition)) return null;
 
   const hasExplicitPathShape =
     RELATIVE_PATH_PREFIX_PATTERN.test(candidate) ||
     candidate.startsWith("/") ||
     isWindowsAbsolutePath(candidate);
   if (!hasExplicitPathShape) {
-    const withoutPosition = candidate.replace(INLINE_CODE_POSITION_PATTERN, "");
     // Markdown destinations accept `patches/`. Inline code still needs a
     // file-shaped final segment, so a trailing slash stays plain code.
     if (withoutPosition.endsWith("/")) return null;
