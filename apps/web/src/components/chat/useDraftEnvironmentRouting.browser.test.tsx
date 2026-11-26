@@ -24,6 +24,7 @@ import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
+import { readProjects } from "../../state/entities";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
@@ -448,10 +449,7 @@ it.each(["deleted", "unpaired", "moved"] as const)(
           return change === "deleted" ? [] : [{ ...project, workspaceRoot: "/workspace/moved" }];
         });
       }
-      const visibleProjects = resources.projects.filter(
-        (project) => project.environmentId !== resources.unpaired,
-      );
-      for (const listener of resources.projectListeners) listener(visibleProjects);
+      for (const listener of resources.projectListeners) listener(readProjects());
     });
     await expect.element(send).toBeEnabled();
     expect(store.getDraftSession(draftId)).toMatchObject({
