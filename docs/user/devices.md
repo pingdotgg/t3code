@@ -43,7 +43,9 @@ Use simulators/emulators on another macOS or Linux machine (e.g., a Mac build ho
 
 ## Simlock hosts (alpha)
 
-Connect to a [Simlock](https://incubator.callstack.com/simlock/) device pool (requires Simlock `main` at commit `6316e10`+ with `capabilities.stream.enabled` and `capabilities.input.enabled`):
+Connect to a [Simlock](https://incubator.callstack.com/simlock/) device pool running a build that includes [iOS simulator input support](https://github.com/callstackincubator/simlock/commit/6316e10395c1eaa6cd77e2aac361456372306f2a), with `capabilities.stream.enabled` and `capabilities.input.enabled`. Follow [Simlock's agent-device compatibility requirements](https://incubator.callstack.com/simlock/docs/using-devices/agent-device#before-you-start) for the gateway and workers; T3 manages its own client.
+
+Upgrade the gateway and workers together, keeping their agent-device RPC protocol compatible with T3's client.
 
 1. Enable **Settings → Labs → Simlock device hosts (alpha)** and **Settings → Devices → Use devices**.
 2. Choose **Add source → Simlock pool** with an agent token (`simlock --gateway token create --role agent`) over HTTPS or Tailscale (give each T3 server its own token; treat it like worker shell access).
