@@ -148,6 +148,7 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
         const isOwnActive = current.current?.anchor === anchor && current.current.open;
         const isOwnPending = pending.current?.anchor === anchor;
         if (isOwnActive || isOwnPending) {
+          // Moving back onto an enclosing trigger fires no pointerenter there, so restore it here.
           const ancestor = findHoveredAncestor(relatedTarget);
           if (ancestor) {
             const [parentAnchor, parentEntry] = ancestor;
@@ -180,17 +181,15 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
       },
       hide,
       dismiss(anchor) {
-        if (pending.current?.anchor === anchor) clearTimer();
-        if (current.current?.anchor !== anchor || !current.current.open) return;
         clearTimer();
-        lastClosedAt.current = 0;
+        if (current.current?.anchor !== anchor) return;
+        if (current.current.open) lastClosedAt.current = 0;
         commit({ ...current.current, open: false });
       },
       release(anchor) {
         hovered.current.delete(anchor);
         if (pending.current?.anchor === anchor) clearTimer();
         if (current.current?.anchor === anchor && current.current.open) {
-          clearTimer();
           commit({ ...current.current, open: false });
         }
       },

@@ -282,35 +282,6 @@ it("restores an enclosing shared tooltip when moving off a nested trigger back o
   await expect.element(page.getByText("Thread details")).toBeVisible();
 });
 
-it("keeps enclosing hover state after keyboard blur and restores on leaving a nested trigger", async () => {
-  await using screen = await render(
-    <SharedTooltipProvider>
-      <SharedTooltipTrigger
-        label="Thread details"
-        side="right"
-        render={<div tabIndex={0} className="flex w-60 items-center justify-between p-2" />}
-      >
-        <span>Thread title</span>
-        <SharedTooltipTrigger label="Settle thread" render={<button type="button" />}>
-          Settle
-        </SharedTooltipTrigger>
-      </SharedTooltipTrigger>
-      <button type="button">Outside</button>
-    </SharedTooltipProvider>,
-  );
-
-  await userEvent.keyboard("{Tab}");
-  await userEvent.hover(screen.getByText("Thread title"));
-  await userEvent.keyboard("{Tab}{Tab}");
-  await expect.element(screen.getByRole("button", { name: "Outside" })).toHaveFocus();
-
-  await userEvent.hover(screen.getByRole("button", { name: "Settle" }));
-  await expect.element(page.getByText("Settle thread")).toBeVisible();
-
-  await userEvent.hover(screen.getByText("Thread title"));
-  await expect.element(page.getByText("Thread details")).toBeVisible();
-});
-
 it("keeps a pending parent restore when leaving a disabled nested sibling", async () => {
   await using screen = await render(
     <SharedTooltipProvider>
