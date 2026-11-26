@@ -6514,8 +6514,7 @@ body {
   height: 1lh;
 }
 
-/* Past one line the actions drop to the bottom corner, so the text keeps their column clear
-   (the first line's width is unchanged); a float can't follow the last line there. */
+/* Past one line the actions stay in the top corner while text keeps their column clear. */
 .composer-prompt-body[data-composer-multiline]
   :is([data-composer-empty="false"] [data-testid="composer-editor"]),
 .composer-prompt-body[data-composer-multiline]
@@ -6536,7 +6535,7 @@ body {
 
 .composer-prompt-body[data-composer-overflow]
   [data-testid="composer-editor"]::-webkit-scrollbar-track {
-  margin-bottom: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
+  margin-top: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
 }
 
 /* A suffix that would run under the actions or past the edge stays hidden, as text never wraps for it. */
