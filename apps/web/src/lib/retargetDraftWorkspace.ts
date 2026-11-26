@@ -10,7 +10,8 @@ import { flushSync } from "react-dom";
 
 import { type DraftId, type DraftSessionState, useComposerDraftStore } from "../composerDraftStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { readThreadShells } from "../state/entities";
+import { readProject, readThreadShells } from "../state/entities";
+import { readEnvironment } from "../state/environments";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -56,7 +57,7 @@ function clearPendingWorkspaceDefault(draftId: DraftId): void {
   pendingWorkspaceDefaults.delete(draftId);
 }
 
-function supersedePendingWorkspaceDefault(draftId: DraftId): void {
+export function dropPendingWorkspaceDefault(draftId: DraftId): void {
   pendingWorkspaceDefaults.get(draftId)?.superseded.resolve(false);
   pendingWorkspaceDefaults.delete(draftId);
 }
@@ -82,42 +83,58 @@ export async function withDraftBranchChoice(
   }
 }
 
+type WorkspaceServerConfig = Pick<ServerConfig, "settings" | "newProjectsRoot">;
+
+function resolveDraftWorkspace(
+  projectRef: ScopedProjectRef,
+  project: EnvironmentProject | null | undefined,
+  serverConfig: WorkspaceServerConfig | null | undefined,
+  projectFile: T3ProjectFile | null,
+) {
+  const projectSettings = resolveProjectSettings(
+    serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+    projectRef.projectId,
+    project ?? null,
+    projectFile,
+  );
+  const envMode = resolveNewThreadEnvMode({
+    projectSettings,
+    workspaceRoot: project?.workspaceRoot ?? null,
+    newProjectsRoot: serverConfig?.newProjectsRoot,
+    projectHasThreads:
+      readThreadShells().some(
+        (thread) =>
+          thread.environmentId === projectRef.environmentId &&
+          thread.projectId === projectRef.projectId,
+      ) ||
+      readUnloadedThreadCount(
+        [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
+        [],
+      ) > 0,
+  });
+  return {
+    envMode,
+    startFromOrigin: resolveNewDraftStartFromOrigin({
+      envMode,
+      newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
+    }),
+  };
+}
+
 /** Resolve the workspace immediately, then register a cold file read after the draft is written. */
 export function prepareDraftWorkspaceDefault(
   projectRef: ScopedProjectRef,
   project: EnvironmentProject | undefined,
-  serverConfig: Pick<ServerConfig, "settings" | "newProjectsRoot"> | undefined,
+  serverConfig: WorkspaceServerConfig | undefined,
 ) {
   const settings = serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
-  const projectSettings = resolveProjectSettings(settings, project?.id ?? null, project);
-  const workspaceFor = (projectFile: T3ProjectFile | null) => {
-    const envMode = resolveNewThreadEnvMode({
-      projectSettings: resolveProjectSettings(settings, project?.id ?? null, project, projectFile),
-      workspaceRoot: project?.workspaceRoot ?? null,
-      newProjectsRoot: serverConfig?.newProjectsRoot,
-      projectHasThreads:
-        readThreadShells().some(
-          (thread) =>
-            thread.environmentId === projectRef.environmentId &&
-            thread.projectId === projectRef.projectId,
-        ) ||
-        readUnloadedThreadCount(
-          [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
-          [],
-        ) > 0,
-    });
-    return {
-      envMode,
-      startFromOrigin: resolveNewDraftStartFromOrigin({
-        envMode,
-        newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
-      }),
-    };
-  };
+  const workspaceFor = (projectFile: T3ProjectFile | null) =>
+    resolveDraftWorkspace(projectRef, project, serverConfig, projectFile);
 
   const consultProjectFile =
     project !== undefined &&
-    projectSettings.settings.defaultThreadEnvMode === null &&
+    resolveProjectSettings(settings, projectRef.projectId, project).settings
+      .defaultThreadEnvMode === null &&
     appAtomRegistry
       .get(environmentSummaries.connectedEnvironmentIdsAtom)
       .includes(projectRef.environmentId);
@@ -126,7 +143,7 @@ export function prepareDraftWorkspaceDefault(
     : null;
   const workspace = workspaceFor(projectFile ?? null);
   if (!consultProjectFile || projectFile !== undefined) {
-    return { workspace, applyProjectFile: supersedePendingWorkspaceDefault };
+    return { workspace, applyProjectFile: dropPendingWorkspaceDefault };
   }
 
   return {
@@ -171,26 +188,63 @@ export function prepareDraftWorkspaceDefault(
         superseded: Promise.withResolvers<false>(),
         branchActions,
       };
-      supersedePendingWorkspaceDefault(draftId);
+      dropPendingWorkspaceDefault(draftId);
       pendingWorkspaceDefaults.set(draftId, pending);
     },
   };
 }
 
-/**
- * The workspace for a draft moving to another project or machine: the default a new thread
- * there starts with, unless the user chose one, which carries over.
- */
-export function retargetDraftWorkspace(
+/** The workspace for a draft moved to another project, applied without waiting on its t3.json. */
+export function retargetMovedDraftWorkspace(
   draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
   projectRef: ScopedProjectRef,
   project: EnvironmentProject,
 ) {
   return draft.workspaceExplicit || draft.worktreePath !== null
-    ? { workspace: {}, applyProjectFile: supersedePendingWorkspaceDefault }
+    ? { workspace: {}, applyProjectFile: dropPendingWorkspaceDefault }
     : prepareDraftWorkspaceDefault(
         projectRef,
         project,
         appAtomRegistry.get(environmentServerConfigsAtom).get(projectRef.environmentId),
       );
+}
+
+async function newThreadWorkspace(projectRef: ScopedProjectRef, signal: AbortSignal) {
+  let project = readProject(projectRef);
+  let serverConfig = readEnvironment(projectRef.environmentId)?.serverConfig;
+  let projectFile: T3ProjectFile | null = null;
+  const workspaceRoot = project?.workspaceRoot;
+  if (
+    workspaceRoot &&
+    resolveProjectSettings(
+      serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+      projectRef.projectId,
+      project,
+    ).settings.defaultThreadEnvMode === null
+  ) {
+    const cached = peekT3ProjectFile(projectRef.environmentId, workspaceRoot);
+    if (cached === undefined) {
+      // A paired project can appear before its connection summary reports connected.
+      projectFile = await readT3ProjectFile(projectRef.environmentId, workspaceRoot, signal);
+      project = readProject(projectRef);
+      serverConfig = readEnvironment(projectRef.environmentId)?.serverConfig;
+    } else {
+      projectFile = cached;
+    }
+  }
+  return resolveDraftWorkspace(projectRef, project, serverConfig, projectFile);
+}
+
+/**
+ * The workspace for a draft moving to another machine, once the destination's t3.json is
+ * read: the default a new thread there starts with, unless the user chose one, which carries over.
+ */
+export async function retargetDraftWorkspace(
+  draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
+  projectRef: ScopedProjectRef,
+  signal: AbortSignal,
+): Promise<{ envMode?: DraftSessionState["envMode"]; startFromOrigin?: boolean }> {
+  return draft.workspaceExplicit || draft.worktreePath !== null
+    ? {}
+    : newThreadWorkspace(projectRef, signal);
 }
