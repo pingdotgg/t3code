@@ -427,6 +427,37 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps an uploaded JSON file's body out of the prompt and leaves it readable by path",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeAttachmentFixture();
+        const json = {
+          ...textAttachment,
+          name: "sample.json",
+          mimeType: "application/json",
+        } satisfies ChatAttachment;
+        const body = JSON.stringify({
+          items: Array.from({ length: 2268 }, (_, id) => ({
+            id,
+            value: `sample-${String(id).padStart(4, "0")}`,
+          })),
+        });
+        const upload = yield* fixture.write(json, body);
+        const input = `Reply with OK. Leave the attached file unread. ${upload.filePath}`;
+
+        const prompt = yield* buildAntigravityPrompt({
+          input,
+          attachments: [json],
+          resolveAttachmentPath: fixture.resolve,
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
+        });
+
+        expect(prompt).toEqual([{ type: "text", text: input }]);
+        expect(yield* fixture.fs.readFileString(upload.filePath)).toBe(body);
+      }),
+  );
+
   it.effect("keeps a Shift-JIS CSV as a file path instead of failing the prompt", () =>
     Effect.gen(function* () {
       const fixture = yield* makeAttachmentFixture();
