@@ -122,16 +122,27 @@ it.each([
   expect(matchAgentAnswer([{ id: "claude" }, { id: "codex" }], answer)?.id).toBe(picked);
 });
 
-it.effect.each([
-  { label: "Ctrl+C", key: "\x03" },
-  { label: "Ctrl+D", key: "\x04" },
-])("returns undefined when the agent picker is cancelled with $label", ({ key }) =>
+it.effect.each(
+  [
+    { label: "Ctrl+C", bytes: "\x03", picked: undefined },
+    { label: "Ctrl+D", bytes: "\x04", picked: undefined },
+    { label: "an invalid choice and Ctrl+C", bytes: "9\r\x03", picked: undefined },
+    { label: "an invalid choice and Ctrl+D", bytes: "9\r\x04", picked: undefined },
+    { label: "a valid choice and Ctrl+D", bytes: "2\r\x04", picked: "codex" },
+  ].flatMap((row) => [
+    { ...row, timing: "during the prompt" },
+    { ...row, timing: "after the prompt" },
+  ]),
+)("the agent picker returns $picked for $label typed $timing", ({ bytes, picked, timing }) =>
   Effect.gen(function* () {
     const input = new NodeStream.PassThrough();
     const output = Object.assign(new NodeStream.PassThrough(), { isTTY: true });
-    output.once("data", () => input.write(key));
+    output.once("data", () => {
+      if (timing === "during the prompt") input.write(bytes);
+      else process.nextTick(() => input.write(bytes));
+    });
 
-    const picked = yield* pickAgent(
+    const agent = yield* pickAgent(
       [
         { id: "claude", label: "Claude Code" },
         { id: "codex", label: "Codex" },
@@ -140,7 +151,48 @@ it.effect.each([
       output,
     );
 
-    assert.isUndefined(picked);
+    assert.strictEqual(agent?.id, picked);
+  }),
+);
+
+it.effect("the agent picker keeps Backspace editing on a dumb terminal", () =>
+  Effect.gen(function* () {
+    vi.stubEnv("TERM", "dumb");
+    const input = new NodeStream.PassThrough();
+    const output = Object.assign(new NodeStream.PassThrough(), { isTTY: true });
+    output.once("data", () => input.write("9\x7f2\r"));
+
+    const agent = yield* pickAgent(
+      [
+        { id: "claude", label: "Claude Code" },
+        { id: "codex", label: "Codex" },
+      ],
+      input,
+      output,
+    );
+
+    assert.strictEqual(agent?.id, "codex");
+  }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs()))),
+);
+
+it.effect.each([
+  { label: "no answer", lines: [], picked: undefined },
+  { label: "an invalid answer", lines: ["99\n"], picked: undefined },
+  { label: "an invalid answer and then a valid one", lines: ["9\n", "2\n"], picked: "codex" },
+])("the agent picker returns $picked when input ends after $label", ({ lines, picked }) =>
+  Effect.gen(function* () {
+    const input = NodeStream.Readable.from(lines.map((line) => Promise.resolve(line)));
+
+    const agent = yield* pickAgent(
+      [
+        { id: "claude", label: "Claude Code" },
+        { id: "codex", label: "Codex" },
+      ],
+      input,
+      new NodeStream.PassThrough(),
+    );
+
+    assert.strictEqual(agent?.id, picked);
   }),
 );
 

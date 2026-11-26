@@ -104,15 +104,29 @@ export const pickAgent = <Agent extends { readonly id: string; readonly label: s
 ) =>
   Effect.promise(async () => {
     const readline = NodeReadlinePromises.createInterface({ input, output });
+    // Readline settles a pending question on close only for Ctrl+C or Ctrl+D, and asking after
+    // a close throws, so ended input aborts the question and no question follows a close.
+    const ended = new AbortController();
+    const onEnd = () => ended.abort();
+    input.once("end", onEnd);
+    let isClosed = false;
+    readline.once("close", () => {
+      isClosed = true;
+    });
     try {
       const menu = agents
         .map((agent, index) => `  [${String(index + 1)}] ${agent.label}`)
         .join("\n");
       for (;;) {
-        const answer = await readline.question(`Run triage with:\n${menu}\n> `);
+        const answer = await readline.question(`Run triage with:\n${menu}\n> `, {
+          signal: ended.signal,
+        });
         const picked = matchAgentAnswer(agents, answer);
         if (picked !== undefined) {
           return picked;
+        }
+        if (isClosed) {
+          return undefined;
         }
       }
     } catch (error) {
@@ -121,6 +135,7 @@ export const pickAgent = <Agent extends { readonly id: string; readonly label: s
       }
       throw error;
     } finally {
+      input.removeListener("end", onEnd);
       readline.close();
     }
   });
