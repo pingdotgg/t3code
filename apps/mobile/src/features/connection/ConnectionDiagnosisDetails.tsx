@@ -9,6 +9,7 @@ import {
   presentConnectionDiagnosis,
   type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
+import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import Constants from "expo-constants";
 import { AsyncResult } from "effect/reactivity";
@@ -20,6 +21,7 @@ import { Button } from "../../components/ui/Button";
 import { environmentCatalog } from "../../connection/catalog";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 
 const HOP_MARK = { ok: "✓", failed: "✕", unchecked: "–" } as const;
 
@@ -33,6 +35,7 @@ export function useConnectionDiagnosis(
     useAtomValue(environmentCatalog.stateAtom(environmentId)),
     () => AVAILABLE_CONNECTION_STATE,
   );
+  const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   if (presentation === null || !presentation.entry.enabled) return { diagnosis: null, state };
   const phase = presentation.connection.phase;
   if (phase === "connected" || phase === "unsupported") return { diagnosis: null, state };
@@ -43,6 +46,9 @@ export function useConnectionDiagnosis(
       hostLabel: presentation.entry.target.label,
       state,
       via: relayOnly ? "relay" : "direct",
+      relayRegistration: hasRelayRoute(presentation.entry)
+        ? Discovery.relayEnvironmentRegistration(discovery, environmentId)
+        : "unknown",
       clientVersion: Constants.expoConfig?.version,
       serverVersion: presentation.serverConfig?.environment.serverVersion,
     },
