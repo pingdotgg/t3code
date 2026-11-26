@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorAgentSdkProcessRunner from "./CursorAgentSdkProcessRunner.ts";
+import { scrubCursorWorkerEnvironment } from "./CursorAgentSdkWorker.ts";
 import {
   deserializeRunResult,
   deserializeWorkerError,
@@ -64,6 +65,7 @@ rl.on("line", (line) => {
       return;
     }
     // Emit an early delta before the send response to verify parent buffering/ordering.
+    send({ type: "startupPhase", sendId: req.id, phase: "plugins" });
     send({ type: "delta", sendId: req.id, update: { type: "text-delta", text: "early-" } });
     send({ type: "response", id: req.id, ok: true, result: { runId: "run-worker-1", agentId: "agent-worker-1" } });
     if (mode === "cancel") {
@@ -243,6 +245,23 @@ describe("CursorAgentSdkWorkerProtocol", () => {
   });
 });
 
+describe("scrubCursorWorkerEnvironment", () => {
+  it("removes the AppImage runtime env the worker inherited before agent shells see it", () => {
+    const env: NodeJS.ProcessEnv = {
+      APPIMAGE: "/home/ada/T3-Code.AppImage",
+      APPDIR: "/tmp/.mount_T3-test",
+      ARGV0: "T3-Code.AppImage",
+      OWD: "/home/ada",
+      ELECTRON_RUN_AS_NODE: "1",
+      LD_LIBRARY_PATH: "/tmp/.mount_T3-test/usr/lib",
+      PATH: "/tmp/.mount_T3-test/usr/bin:/usr/bin",
+      CURSOR_API_KEY: "key",
+    };
+    scrubCursorWorkerEnvironment(env);
+    assert.deepStrictEqual(env, { PATH: "/usr/bin", CURSOR_API_KEY: "key" });
+  });
+});
+
 describe("CursorAgentSdkProcessRunner", () => {
   const writeFakeWorker = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -308,8 +327,10 @@ describe("CursorAgentSdkProcessRunner", () => {
 
           const receivedDeltas: Array<string> = [];
           const firstDeltaGate = yield* Deferred.make<void>();
+          const startupPhases: Array<string> = [];
           const run = yield* session.send({
             message: "hi",
+            onStartupPhase: (phase) => Effect.sync(() => startupPhases.push(phase)),
             onDelta: (update) =>
               Effect.gen(function* () {
                 const text = (update as { readonly text?: string }).text ?? "";
@@ -320,6 +341,7 @@ describe("CursorAgentSdkProcessRunner", () => {
               }),
           });
           assert.equal(run.runId, "run-worker-1");
+          assert.deepEqual(startupPhases, ["plugins"]);
           yield* Deferred.await(firstDeltaGate);
 
           const steerOutcome = yield* run.steer!("change course");

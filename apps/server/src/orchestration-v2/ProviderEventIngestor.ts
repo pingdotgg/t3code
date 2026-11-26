@@ -683,9 +683,10 @@ export const layer: Layer.Layer<
             }
             case "background_work.updated":
               return [];
+            case "background_work.lost":
             case "command_output.delta":
             case "prompt_suggestion.updated":
-              // The session manager serves these to clients before ingestion.
+              // The session manager handles these before ingestion.
               return [];
             case "turn.terminal":
               const dismissed = yield* dismissNativeUserInputs(
@@ -736,6 +737,9 @@ export const layer: Layer.Layer<
                 yield* makeDomainEvent(input, {
                   type: "turn-item.updated",
                   payload: makeProviderFailureTurnItem({
+                    ...(input.event.failureItemId === undefined
+                      ? {}
+                      : { id: input.event.failureItemId }),
                     driver: input.event.driver,
                     threadId: input.threadId,
                     runId: input.runId ?? null,

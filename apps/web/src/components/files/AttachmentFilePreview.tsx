@@ -284,6 +284,11 @@ export function AttachmentFilePreview(props: {
     });
   };
 
+  const basename = props.name.split(/[\\/]/).at(-1) ?? "";
+  const dotIndex = basename.lastIndexOf(".");
+  const extension =
+    dotIndex > 0 && dotIndex < basename.length - 1 ? basename.slice(dotIndex + 1) : null;
+
   const body = failure ? (
     <FileSurfaceFailure
       message={failure}
@@ -396,12 +401,12 @@ export function AttachmentFilePreview(props: {
         <T>No preview for this file</T>
       </p>
       <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-        {props.name.split(".").at(-1) ? (
+        {extension ? (
           <T>
-            Save it to open in an app that supports <Var>{props.name.split(".").at(-1)}</Var> files.
+            Save it to open in an app that supports <Var>{extension}</Var> files.
           </T>
         ) : (
-          <T>Save it to open in an app that supports this format files.</T>
+          <T>Save it to open in an app that supports this format.</T>
         )}
       </p>
     </div>
