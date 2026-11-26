@@ -426,14 +426,12 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                     onKeyDown={(event) => {
                       // Enter would otherwise submit the clone.
                       if (event.key === "Enter") event.preventDefault();
-                      if (event.key !== "Escape" || event.defaultPrevented) return;
-                      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-                      const composing = event.nativeEvent.isComposing || event.keyCode === 229;
-                      if (!composing && !fileQuery && !event.repeat) return;
-                      event.stopPropagation();
-                      if (composing) return;
-                      event.preventDefault();
-                      setFileQuery("");
+                      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                      if (event.key === "Escape" && (fileQuery || event.repeat)) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setFileQuery("");
+                      }
                     }}
                     spellCheck={false}
                     autoComplete="off"
