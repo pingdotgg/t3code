@@ -20,6 +20,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -577,6 +578,35 @@ it.effect("mark unread leaves a future snooze untouched", () =>
       ...visited,
       lastVisitedAt: DateTime.subtract(completedAt, { milliseconds: 1 }),
     });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+// A scheduled run continues work the user already snoozed, like a background wake, so it must
+// not end the snooze before the selected wake time.
+it.effect("a bound scheduled task run leaves the thread snoozed", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, snoozedUntil } = yield* completeAndSnoozeThread(
+      "scheduled-task-keeps-snooze",
+      60,
+    );
+    yield* TestClock.adjust("1 minute");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("scheduled-run"),
+      threadId,
+      messageId: MessageId.make("scheduled-run"),
+      text: "Reply with OK",
+      scheduledTaskId: ScheduledTaskId.make("task:scheduled-run"),
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const afterRun = yield* projections.getThread(threadId);
+    assert.deepEqual(afterRun.snoozedUntil, snoozedUntil);
+    assert.isNotNull(afterRun.snoozedAt);
   }).pipe(Effect.provide(layerTest)),
 );
 
