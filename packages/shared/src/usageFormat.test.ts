@@ -83,6 +83,49 @@ describe("usage source messages", () => {
     ]);
   });
 
+  describe("shared Windows and WSL warning counts", () => {
+    const windows = malformedSource(3, {
+      fingerprint: {
+        hostId: "MainPC",
+        provider: "claude",
+        resolvedHomePath: "C:\\Users\\user\\.claude\\projects",
+        volumeId: "1280555009:3659174697951285",
+        physicalSourceId: "physical-claude-projects",
+      },
+    });
+    const wsl = malformedSource(3, {
+      fingerprint: {
+        ...windows.fingerprint,
+        resolvedHomePath: "/mnt/c/Users/user/.claude/projects",
+        volumeId: "112:3659174697951287",
+      },
+    });
+
+    it("counts the same malformed records once across Windows and WSL", () => {
+      for (const sources of [
+        [windows, wsl],
+        [wsl, windows],
+      ]) {
+        expect(usageSourceMessages(sources)).toEqual([
+          "3 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
+        ]);
+      }
+    });
+
+    it("keeps sources distinct without a shared alias or with different providers", () => {
+      const { physicalSourceId: _omitted, ...legacy } = wsl.fingerprint;
+      for (const fingerprint of [
+        legacy,
+        { ...wsl.fingerprint, physicalSourceId: "other-directory" },
+        { ...wsl.fingerprint, provider: "codex" as const },
+      ]) {
+        expect(usageSourceMessages([windows, { ...wsl, fingerprint }])).toEqual([
+          "6 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
+        ]);
+      }
+    });
+  });
+
   it("retains other diagnostics beside the combined warning", () => {
     const source = malformedSource(1);
     const readFailure = "2 transcript path(s) could not be read; usage may be incomplete.";
