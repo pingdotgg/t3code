@@ -3622,7 +3622,7 @@ html.dark[data-kaluwa-look]
 }
 .kaluwa-tab:hover {
   color: var(--foreground);
-  background: var(--kaluwa-tab-hover);
+  background-color: var(--kaluwa-tab-hover);
 }
 .kaluwa-tab[aria-selected="true"] {
   color: var(--foreground);
@@ -3704,7 +3704,7 @@ html.dark[data-kaluwa-look]
 /* Pill: the active tab is a raised fill with the Lift highlight; hairlines split the rest. */
 .kaluwa-tabs[data-tab-style="pill"] .kaluwa-tab[aria-selected="true"] {
   --sidebar: var(--kaluwa-tab-fill);
-  background: var(--kaluwa-tab-fill);
+  background-color: var(--kaluwa-tab-fill);
   box-shadow:
     inset 0 0 0 1px var(--border),
     inset 0 1px 0 var(--kaluwa-hl, transparent),
@@ -3739,7 +3739,7 @@ html.dark[data-kaluwa-look]
 .kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab[aria-selected="true"] {
   z-index: 2;
   border-color: var(--border);
-  background: var(--background);
+  background-color: var(--background);
 }
 .kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab[aria-selected="true"]::before,
 .kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab[aria-selected="true"]::after {
@@ -3780,7 +3780,7 @@ html.dark[data-kaluwa-look]
 .kaluwa-tabs[data-tab-style="line"] .kaluwa-tab {
   height: auto;
   border-radius: 0;
-  background: none;
+  background-color: transparent;
 }
 .kaluwa-tabs[data-tab-style="line"] .kaluwa-tab[aria-selected="true"]::after {
   content: "";
@@ -3791,4 +3791,126 @@ html.dark[data-kaluwa-look]
   height: 2px;
   border-radius: 2px 2px 0 0;
   background: var(--primary);
+}
+
+/* Pinned tabs: icon only, at the start, with no close button. */
+.kaluwa-tab[data-pinned] {
+  flex: none;
+  justify-content: center;
+  min-width: 0;
+  width: calc(var(--kaluwa-tab-height, 30px) + 4px);
+  padding: 0;
+}
+.kaluwa-tab[data-pinned] :is(.kaluwa-tab-title, .kaluwa-tab-env, .kaluwa-tab-close) {
+  display: none;
+}
+
+/* Tab groups: a chip in the group's palette colour, and a line of it under each of its tabs. */
+[data-kaluwa-group-color="steel"] {
+  --kaluwa-group: var(--kaluwa-swatch-steel, #7ea6c9);
+}
+[data-kaluwa-group-color="clay"] {
+  --kaluwa-group: var(--kaluwa-swatch-clay, #d9826a);
+}
+[data-kaluwa-group-color="ochre"] {
+  --kaluwa-group: var(--kaluwa-swatch-ochre, #d6b36a);
+}
+[data-kaluwa-group-color="sage"] {
+  --kaluwa-group: var(--kaluwa-swatch-sage, #86b49a);
+}
+[data-kaluwa-group-color="plum"] {
+  --kaluwa-group: var(--kaluwa-swatch-plum, #b39ad6);
+}
+[data-kaluwa-group-color="rose"] {
+  --kaluwa-group: var(--kaluwa-swatch-rose, #d9909f);
+}
+[data-kaluwa-group-color="lagoon"] {
+  --kaluwa-group: var(--kaluwa-swatch-lagoon, #6fb3b8);
+}
+[data-kaluwa-group-color="dusk"] {
+  --kaluwa-group: var(--kaluwa-swatch-dusk, #8f95d6);
+}
+[data-kaluwa-group-color="ash"] {
+  --kaluwa-group: var(--kaluwa-swatch-ash, #a8a29e);
+}
+.kaluwa-tab[data-kaluwa-group-color] {
+  background-image: linear-gradient(var(--kaluwa-group), var(--kaluwa-group));
+  background-position: center bottom 1px;
+  background-repeat: no-repeat;
+  background-size: calc(100% - 10px) 2px;
+}
+.kaluwa-tab-group-chip {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  align-items: center;
+  gap: 5px;
+  max-width: 10rem;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--kaluwa-group) 70%, var(--foreground));
+  background: color-mix(in srgb, var(--kaluwa-group) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kaluwa-group) 40%, transparent);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+.kaluwa-tab-group-chip:hover {
+  background: color-mix(in srgb, var(--kaluwa-group) 30%, transparent);
+}
+.kaluwa-tab-group-chip:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.kaluwa-tab-group-chip[data-unnamed] {
+  margin-inline: 3px;
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--kaluwa-group);
+}
+.kaluwa-tab-group-chip[data-unnamed][data-collapsed] {
+  width: auto;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  color: var(--background);
+}
+.kaluwa-tab-group-chip[data-dragging] {
+  z-index: 3;
+}
+.kaluwa-tab-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kaluwa-tab-group-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.kaluwa-tab-group-input,
+.kaluwa-tab-title-input {
+  min-width: 0;
+  border: 0;
+  border-radius: 4px;
+  outline: none;
+  font: inherit;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+.kaluwa-tab-group-input {
+  width: 8rem;
+  padding: 1px 4px;
+}
+.kaluwa-tab-title-input {
+  flex: 1;
+  padding: 2px 4px;
 }

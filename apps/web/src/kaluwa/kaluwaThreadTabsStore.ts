@@ -13,8 +13,8 @@ import {
 } from "./kaluwaThreadTabs.logic";
 
 const STORAGE_KEY = "kaluwa:thread-tabs:v1";
-// A "+" or middle-click arms the next route change to open a tab instead of replacing one. The
-// arm expires so a navigation that never happens cannot hijack a later sidebar click.
+// A "+" or middle-click arms the next route change to open a new tab even when threads open in
+// the current tab. The arm expires so a navigation that never happens cannot hijack a later sidebar click.
 const NEW_TAB_ARM_MS = 5_000;
 
 const listeners = new Set<() => void>();
@@ -50,11 +50,23 @@ export function disarmNewThreadTab(): void {
   newTabArmedUntil = 0;
 }
 
-/** The route shows `key` now; `current` is the pruned tab list it applies to. */
-export function applyThreadTabRoute(current: ThreadTabsState, key: ThreadTabKey): void {
-  const newTab = Date.now() < newTabArmedUntil;
+/**
+ * The route shows `key` now; `current` is the pruned tab list it applies to. A thread opens in
+ * a new tab when that is the setting or a "+" or middle-click armed one.
+ */
+export function applyThreadTabRoute(
+  current: ThreadTabsState,
+  key: ThreadTabKey,
+  options: { readonly openInNewTab: boolean; readonly replaceActive: boolean },
+): void {
+  const armed = Date.now() < newTabArmedUntil;
   newTabArmedUntil = 0;
-  writeThreadTabs(followThreadTabRoute(current, key, { newTab }));
+  writeThreadTabs(
+    followThreadTabRoute(current, key, {
+      newTab: options.openInNewTab || armed,
+      replaceActive: options.replaceActive && !armed,
+    }),
+  );
 }
 
 function subscribe(listener: () => void): () => void {

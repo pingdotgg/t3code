@@ -73,6 +73,7 @@ const THREAD_TAB_KEYBINDING_COMMANDS = [
   "threadTab.close",
   "threadTab.next",
   "threadTab.previous",
+  "threadTab.reopen",
   ...THREAD_TAB_JUMP_KEYBINDING_COMMANDS,
 ] as const;
 

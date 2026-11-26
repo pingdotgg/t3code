@@ -8,6 +8,10 @@ import { IS_KALUWA_BUILD } from "./kaluwaLook";
 export const KALUWA_TAB_STYLES = ["pill", "folder", "line"] as const;
 export type KaluwaTabStyle = (typeof KALUWA_TAB_STYLES)[number];
 
+/** Where a thread opened from the sidebar, search or a link goes. */
+export const KALUWA_TAB_OPEN_MODES = ["new-tab", "current-tab"] as const;
+export type KaluwaTabOpenMode = (typeof KALUWA_TAB_OPEN_MODES)[number];
+
 export const KALUWA_TAB_RADIUS_LIMITS = [0, 16] as const;
 export const KALUWA_TAB_HEIGHT_LIMITS = [24, 40] as const;
 
@@ -18,6 +22,7 @@ export type KaluwaTabsSettings = Readonly<{
   radius: number;
   /** Tab height in px. */
   height: number;
+  openIn: KaluwaTabOpenMode;
 }>;
 
 export const DEFAULT_KALUWA_TABS_SETTINGS: KaluwaTabsSettings = {
@@ -25,6 +30,7 @@ export const DEFAULT_KALUWA_TABS_SETTINGS: KaluwaTabsSettings = {
   style: "pill",
   radius: 8,
   height: 30,
+  openIn: "new-tab",
 };
 
 const STORAGE_KEY = "kaluwa:tabs:v1";
@@ -49,13 +55,14 @@ export function parseKaluwaTabsSettings(raw: string | null): KaluwaTabsSettings 
     style: KALUWA_TAB_STYLES.find((style) => style === value.style) ?? d.style,
     radius: clampInteger(value.radius, KALUWA_TAB_RADIUS_LIMITS, d.radius),
     height: clampInteger(value.height, KALUWA_TAB_HEIGHT_LIMITS, d.height),
+    openIn: KALUWA_TAB_OPEN_MODES.find((mode) => mode === value.openIn) ?? d.openIn,
   };
 }
 
 const listeners = new Set<() => void>();
 let current: KaluwaTabsSettings | null = null;
 
-function readKaluwaTabsSettings(): KaluwaTabsSettings {
+export function readKaluwaTabsSettings(): KaluwaTabsSettings {
   if (current !== null) return current;
   let raw: string | null = null;
   try {

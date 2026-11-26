@@ -6,12 +6,14 @@ import type { CSSProperties } from "react";
 import {
   DEFAULT_KALUWA_TABS_SETTINGS,
   KALUWA_TAB_HEIGHT_LIMITS,
+  KALUWA_TAB_OPEN_MODES,
   KALUWA_TAB_RADIUS_LIMITS,
   KALUWA_TAB_STYLES,
   resetKaluwaTabsSettings,
   updateKaluwaTabsSettings,
   useKaluwaTabsSettings,
   type KaluwaTabsSettings,
+  type KaluwaTabOpenMode,
   type KaluwaTabStyle,
 } from "../../kaluwa/kaluwaTabsSettings";
 import { Switch } from "../ui/switch";
@@ -87,6 +89,42 @@ function PixelSliderRow({
   );
 }
 
+function OpenInRow({ settings }: { readonly settings: KaluwaTabsSettings }) {
+  const gt = useGT();
+  const title = gt("Open threads in");
+  const labels: Record<KaluwaTabOpenMode, string> = {
+    "new-tab": gt("New tab", { $context: "where an opened thread goes" }),
+    "current-tab": gt("Current tab", { $context: "where an opened thread goes" }),
+  };
+  return (
+    <SettingsRow
+      devicePreference
+      title={title}
+      description={gt(
+        "Where a thread opened from the sidebar, search or a link goes. A thread that is already open switches to its tab.",
+      )}
+      resetAction={<ResetAction field="openIn" title={title} settings={settings} />}
+      control={
+        <ToggleGroup
+          aria-label={title}
+          variant="segmented"
+          value={[settings.openIn]}
+          onValueChange={(next) => {
+            const openIn = KALUWA_TAB_OPEN_MODES.find((option) => option === next[0]);
+            if (openIn) updateKaluwaTabsSettings({ openIn });
+          }}
+        >
+          {KALUWA_TAB_OPEN_MODES.map((mode) => (
+            <Toggle key={mode} value={mode}>
+              {labels[mode]}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+      }
+    />
+  );
+}
+
 export function KaluwaTabsSettingsRows() {
   const gt = useGT();
   const settings = useKaluwaTabsSettings();
@@ -103,7 +141,7 @@ export function KaluwaTabsSettingsRows() {
         devicePreference
         title={enabledTitle}
         description={gt(
-          "Show open threads as tabs in the titlebar. A sidebar click opens a thread in the current tab; the + button or a middle-click opens a new one.",
+          "Show open threads as tabs in the titlebar. Right-click a tab to pin it, group it or close several at once.",
         )}
         resetAction={<ResetAction field="enabled" title={enabledTitle} settings={settings} />}
         control={
@@ -114,6 +152,7 @@ export function KaluwaTabsSettingsRows() {
           />
         }
       />
+      <OpenInRow settings={settings} />
       <SettingsRow
         devicePreference
         title={styleTitle}

@@ -166,6 +166,11 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     command: "threadTab.close",
     when: "kaluwaTabs && !terminalFocus && !kaluwaPanelFocus",
   },
+  {
+    key: "mod+shift+t",
+    command: "threadTab.reopen",
+    when: "kaluwaTabs && !terminalFocus && !kaluwaPanelFocus",
+  },
   { key: "ctrl+tab", command: "threadTab.next", when: "kaluwaTabs" },
   { key: "ctrl+shift+tab", command: "threadTab.previous", when: "kaluwaTabs" },
   ...THREAD_TAB_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({

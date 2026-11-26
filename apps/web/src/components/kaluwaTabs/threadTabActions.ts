@@ -15,12 +15,13 @@ import {
   resolveDefaultProjectRef,
 } from "../../hooks/useHandleNewThread";
 import { getClientSettings } from "../../hooks/useSettings";
+import { readKaluwaTabsSettings } from "../../kaluwa/kaluwaTabsSettings";
 import {
-  closeThreadTab,
-  moveThreadTab,
+  closeThreadTabs,
   parseThreadTabKey,
   pruneThreadTabs,
   relativeThreadTab,
+  reopenClosedThreadTabs,
   threadTabAt,
   threadTabKeyForDraft,
   threadTabKeyForThread,
@@ -79,7 +80,7 @@ function livenessInput(
 }
 
 /** The stored tabs minus any whose thread or draft is gone, read now. */
-function readLiveThreadTabs(): ThreadTabsState {
+export function readLiveThreadTabs(): ThreadTabsState {
   const drafts = useComposerDraftStore.getState();
   return pruneThreadTabs(
     readThreadTabs(),
@@ -105,10 +106,34 @@ export function useLiveThreadTabs(): ThreadTabsState {
   );
 }
 
+/** Whether `key` is the thread the active draft tab was just sent as. */
+function isActiveDraftSentAs(state: ThreadTabsState, key: ThreadTabKey): boolean {
+  const active = state.active === null ? null : parseThreadTabKey(state.active);
+  const next = parseThreadTabKey(key);
+  if (active?.kind !== "draft" || next?.kind !== "thread") return false;
+  const drafts = useComposerDraftStore.getState();
+  const session = drafts.draftThreadsByThreadKey[active.draftId];
+  const promoted = session?.promotedTo ?? drafts.promotedDraftRedirects[active.draftId] ?? null;
+  const sentAs =
+    promoted ??
+    (session ? { environmentId: session.environmentId, threadId: session.threadId } : null);
+  return sentAs !== null && threadTabKeyForThread(sentAs) === key;
+}
+
 /** Applies the route the router shows now, as the strip does when it changes. */
 export function syncThreadTabRoute(router: AnyRouter): void {
   const key = readRouteTabKey(router);
-  if (key !== null) applyThreadTabRoute(readLiveThreadTabs(), key);
+  if (key === null) return;
+  const live = readLiveThreadTabs();
+  applyThreadTabRoute(live, key, {
+    openInNewTab: readKaluwaTabsSettings().openIn === "new-tab",
+    replaceActive: isActiveDraftSentAs(live, key),
+  });
+}
+
+/** Applies a change to the live tab list. */
+export function updateThreadTabs(change: (state: ThreadTabsState) => ThreadTabsState): void {
+  writeThreadTabs(change(readLiveThreadTabs()));
 }
 
 function navigateToThreadTab(router: AnyRouter, key: ThreadTabKey): void {
@@ -127,7 +152,7 @@ function navigateToThreadTab(router: AnyRouter, key: ThreadTabKey): void {
 export function activateThreadTab(router: AnyRouter, key: ThreadTabKey): void {
   const live = readLiveThreadTabs();
   if (!live.tabs.includes(key)) return;
-  writeThreadTabs({ tabs: live.tabs, active: key });
+  writeThreadTabs({ ...live, active: key });
   navigateToThreadTab(router, key);
 }
 
@@ -166,9 +191,14 @@ export async function openNewThreadTab(
   syncThreadTabRoute(router);
 }
 
-/** Closes a tab; the active one hands over to its neighbour, and the last leaves a new thread. */
-export function closeThreadTabAndFollow(router: AnyRouter, key: ThreadTabKey): void {
-  const { state, activate } = closeThreadTab(readLiveThreadTabs(), key);
+/** Closes tabs; the active one hands over to its neighbour, and closing the last leaves a new thread. */
+export function closeThreadTabsAndFollow(
+  router: AnyRouter,
+  keys: ReadonlyArray<ThreadTabKey>,
+): void {
+  const live = readLiveThreadTabs();
+  const { state, activate } = closeThreadTabs(live, keys);
+  if (state === live) return;
   writeThreadTabs(state);
   if (activate !== null) navigateToThreadTab(router, activate);
   else if (state.tabs.length === 0) void openNewThreadTab(router, { inNewTab: false });
@@ -176,16 +206,19 @@ export function closeThreadTabAndFollow(router: AnyRouter, key: ThreadTabKey): v
 
 export function closeActiveThreadTab(router: AnyRouter): void {
   const { active } = readLiveThreadTabs();
-  if (active !== null) closeThreadTabAndFollow(router, active);
+  if (active !== null) closeThreadTabsAndFollow(router, [active]);
+}
+
+/** Reopens the last closed tabs and shows the first of them. */
+export function reopenClosedThreadTab(router: AnyRouter): void {
+  const { state, activate } = reopenClosedThreadTabs(readLiveThreadTabs());
+  writeThreadTabs(state);
+  if (activate !== null) navigateToThreadTab(router, activate);
 }
 
 export function activateRelativeThreadTab(router: AnyRouter, delta: 1 | -1): void {
   const key = relativeThreadTab(readLiveThreadTabs(), delta);
   if (key !== null) activateThreadTab(router, key);
-}
-
-export function moveThreadTabTo(key: ThreadTabKey, toIndex: number): void {
-  writeThreadTabs(moveThreadTab(readLiveThreadTabs(), key, toIndex));
 }
 
 const SIDEBAR_THREAD_ROW_SELECTOR = "[data-app-sidebar] [data-thread-item]";
@@ -223,6 +256,7 @@ export function registerThreadTabStrip(router: AnyRouter): () => void {
     {
       "threadTab.new": run(() => void openNewThreadTab(router)),
       "threadTab.close": run(() => closeActiveThreadTab(router)),
+      "threadTab.reopen": run(() => reopenClosedThreadTab(router)),
       "threadTab.next": (event) => {
         claim(event);
         activateRelativeThreadTab(router, 1);
