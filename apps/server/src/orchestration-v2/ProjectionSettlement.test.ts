@@ -578,3 +578,50 @@ it.effect("sql: a finished subagent waits for its active parent to hold the resu
     assert.deepEqual(new Set(yield* ids()), new Set([parent, child]));
   }).pipe(Effect.provide(layerSql)),
 );
+
+it.effect("sql: a provider-native subagent with no run settles once its task ends", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("native-parent");
+    const child = yield* createThread("native-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const ids = () =>
+      store.getSettlementCandidates().pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    const taskId = NodeId.make("node:native-task");
+    for (const status of ["running", "completed"] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:native-task:${status}`),
+        type: "subagent.updated",
+        threadId: parent,
+        nodeId: taskId,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: taskId,
+          threadId: parent,
+          runId: null,
+          parentNodeId: NodeId.make("node:native-parent"),
+          origin: "provider_native",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId: child,
+          nativeTaskRef: null,
+          prompt: "Explore",
+          title: null,
+          model: null,
+          status,
+          result: status === "completed" ? "Done" : null,
+          startedAt: old,
+          completedAt: status === "completed" ? old : null,
+          updatedAt: now,
+        },
+      });
+      if (status === "running") assert.deepEqual(yield* ids(), [parent]);
+    }
+    assert.deepEqual(new Set(yield* ids()), new Set([parent, child]));
+  }).pipe(Effect.provide(layerSql)),
+);
