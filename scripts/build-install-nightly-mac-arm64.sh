@@ -37,8 +37,13 @@ APP_NAME="T3 Code (Nightly).app"
 OUTPUT_DIR="$REPO_ROOT/release"
 SIGN_IDENTITY=${T3CODE_NIGHTLY_SIGN_IDENTITY:-T3 Code Nightly Local Signing}
 SIGN_STATE_DIR=${T3CODE_NIGHTLY_SIGN_DIR:-$HOME/.t3/nightly-signing}
+case "$SIGN_STATE_DIR" in
+  /*) ;;
+  *) SIGN_STATE_DIR="$PWD/$SIGN_STATE_DIR" ;;
+esac
 SIGN_KEYCHAIN="$SIGN_STATE_DIR/signing.keychain-db"
 SIGN_PASSWORD_FILE="$SIGN_STATE_DIR/keychain-password"
+SEARCH_LIST_LOCK="${TMPDIR:-/tmp}/t3-nightly-signing-search-list.$(id -u).lock"
 
 fail() {
   printf '\nbuild-install-nightly: %s\n' "$1" >&2
@@ -61,6 +66,73 @@ has_signing_identity() {
     grep -F "\"$SIGN_IDENTITY\"" >/dev/null
 }
 
+keychain_in_search_list() {
+  security list-keychains -d user |
+    sed -e 's/^[[:space:]]*//' -e 's/^"//' -e 's/"$//' |
+    grep -Fxq "$SIGN_KEYCHAIN"
+}
+
+acquire_search_list_lock() {
+  waited=0
+  while ! mkdir "$SEARCH_LIST_LOCK" 2>/dev/null; do
+    owner=
+    if [ -f "$SEARCH_LIST_LOCK/pid" ]; then
+      owner=$(cat "$SEARCH_LIST_LOCK/pid" 2>/dev/null || true)
+    fi
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -rf "$SEARCH_LIST_LOCK" 2>/dev/null || true
+      continue
+    fi
+    [ "$waited" -ge 300 ] && fail "timed out waiting for $SEARCH_LIST_LOCK"
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  printf '%s' "$$" >"$SEARCH_LIST_LOCK/pid" || {
+    rm -rf "$SEARCH_LIST_LOCK" 2>/dev/null || true
+    fail "could not write $SEARCH_LIST_LOCK/pid"
+  }
+}
+
+release_search_list_lock() {
+  rm -rf "$SEARCH_LIST_LOCK" 2>/dev/null || true
+}
+
+ensure_keychain_in_search_list() {
+  keychain_in_search_list && return 0
+  acquire_search_list_lock
+  status=0
+  if ! keychain_in_search_list; then
+    old_keychains=$(security list-keychains -d user |
+      sed -e 's/^[[:space:]]*//' -e 's/^"//' -e 's/"$//')
+    IFS='
+'
+    set -- $old_keychains
+    unset IFS
+    # codesign only searches keychains on the user search list. Keep this one
+    # there so signing never has to restore a temporarily edited list.
+    security list-keychains -d user -s "$SIGN_KEYCHAIN" "$@" || status=1
+  fi
+  release_search_list_lock
+  [ "$status" -eq 0 ] ||
+    fail "could not add $SIGN_KEYCHAIN to the keychain search list"
+}
+
+read_keychain_password() {
+  [ -f "$SIGN_PASSWORD_FILE" ] ||
+    fail "missing $SIGN_PASSWORD_FILE for $SIGN_KEYCHAIN"
+  keychain_password=$(cat "$SIGN_PASSWORD_FILE") ||
+    fail "could not read $SIGN_PASSWORD_FILE"
+  [ -n "$keychain_password" ] ||
+    fail "empty $SIGN_PASSWORD_FILE for $SIGN_KEYCHAIN"
+}
+
+unlock_keychain() {
+  read_keychain_password
+  security -i >/dev/null <<EOF || fail "could not unlock $SIGN_KEYCHAIN"
+unlock-keychain -p "$keychain_password" "$SIGN_KEYCHAIN"
+EOF
+}
+
 create_signing_identity() {
   say "Creating local code-signing identity \"$SIGN_IDENTITY\""
   mkdir -p "$SIGN_STATE_DIR" || fail "could not create $SIGN_STATE_DIR"
@@ -68,8 +140,7 @@ create_signing_identity() {
 
   keychain_password=
   if [ -f "$SIGN_PASSWORD_FILE" ]; then
-    keychain_password=$(cat "$SIGN_PASSWORD_FILE") ||
-      fail "could not read $SIGN_PASSWORD_FILE"
+    read_keychain_password
   fi
   if [ -z "$keychain_password" ]; then
     keychain_password=$(openssl rand -hex 32) ||
@@ -94,38 +165,43 @@ create_signing_identity() {
 
     # OpenSSL 3+ needs legacy algorithms for macOS's PKCS#12 importer;
     # LibreSSL rejects the flag, so fall back to a plain export.
-    if ! openssl pkcs12 -export -legacy -inkey "$tmp_dir/key.pem" -in "$tmp_dir/cert.pem" \
-      -out "$tmp_dir/cert.p12" -passout pass:"$keychain_password" >/dev/null 2>&1; then
-      openssl pkcs12 -export -inkey "$tmp_dir/key.pem" -in "$tmp_dir/cert.pem" \
-        -out "$tmp_dir/cert.p12" -passout pass:"$keychain_password" >/dev/null 2>&1 ||
+    if ! printf '%s' "$keychain_password" |
+      openssl pkcs12 -export -legacy -inkey "$tmp_dir/key.pem" -in "$tmp_dir/cert.pem" \
+        -out "$tmp_dir/cert.p12" -passout stdin >/dev/null 2>&1; then
+      printf '%s' "$keychain_password" |
+        openssl pkcs12 -export -inkey "$tmp_dir/key.pem" -in "$tmp_dir/cert.pem" \
+          -out "$tmp_dir/cert.p12" -passout stdin >/dev/null 2>&1 ||
         fail "could not package the signing certificate"
     fi
 
-    security create-keychain -p "$keychain_password" "$SIGN_KEYCHAIN" ||
-      fail "could not create $SIGN_KEYCHAIN"
+    # security(1) has no passphrase-file input; feed commands through -i so
+    # passwords stay out of the process arguments.
+    security -i >/dev/null <<EOF || fail "could not create $SIGN_KEYCHAIN"
+create-keychain -p "$keychain_password" "$SIGN_KEYCHAIN"
+EOF
     chmod 600 "$SIGN_KEYCHAIN" || fail "could not secure $SIGN_KEYCHAIN"
-    security unlock-keychain -p "$keychain_password" "$SIGN_KEYCHAIN" ||
-      fail "could not unlock $SIGN_KEYCHAIN"
-    security import "$tmp_dir/cert.p12" -k "$SIGN_KEYCHAIN" -P "$keychain_password" \
-      -T /usr/bin/codesign -T /usr/bin/security >/dev/null ||
-      fail "could not import the signing certificate"
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
-      -k "$keychain_password" "$SIGN_KEYCHAIN" >/dev/null 2>&1 ||
-      fail "could not authorize codesign for $SIGN_KEYCHAIN"
+    security -i >/dev/null <<EOF || fail "could not unlock $SIGN_KEYCHAIN"
+unlock-keychain -p "$keychain_password" "$SIGN_KEYCHAIN"
+EOF
+    security -i >/dev/null <<EOF || fail "could not import the signing certificate"
+import "$tmp_dir/cert.p12" -k "$SIGN_KEYCHAIN" -P "$keychain_password" -T /usr/bin/codesign -T /usr/bin/security
+EOF
+    security -i >/dev/null <<EOF || fail "could not authorize codesign for $SIGN_KEYCHAIN"
+set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$SIGN_KEYCHAIN"
+EOF
   )
 
   has_signing_identity ||
     fail "created $SIGN_KEYCHAIN but it does not contain \"$SIGN_IDENTITY\""
+  ensure_keychain_in_search_list
 }
 
 ensure_signing_identity() {
   if [ -f "$SIGN_KEYCHAIN" ]; then
-    [ -f "$SIGN_PASSWORD_FILE" ] ||
-      fail "missing $SIGN_PASSWORD_FILE for $SIGN_KEYCHAIN"
-    security unlock-keychain -p "$(cat "$SIGN_PASSWORD_FILE")" \
-      "$SIGN_KEYCHAIN" || fail "could not unlock $SIGN_KEYCHAIN"
+    unlock_keychain
     has_signing_identity ||
       fail "$SIGN_KEYCHAIN does not contain \"$SIGN_IDENTITY\"; remove $SIGN_STATE_DIR and retry"
+    ensure_keychain_in_search_list
     return 0
   fi
   create_signing_identity
@@ -135,19 +211,10 @@ sign_app() {
   app=$1
   ensure_signing_identity
 
-  old_keychains=$(security list-keychains -d user |
-    sed -e 's/^[[:space:]]*//' -e 's/^"//' -e 's/"$//')
-  IFS='
-'
-  set -- $old_keychains
-  unset IFS
-  security list-keychains -d user -s "$SIGN_KEYCHAIN" "$@"
-
   say "Signing $(basename "$app") with \"$SIGN_IDENTITY\""
   status=0
   codesign --force --deep --sign "$SIGN_IDENTITY" --keychain "$SIGN_KEYCHAIN" "$app" ||
     status=$?
-  security list-keychains -d user -s "$@"
   security lock-keychain "$SIGN_KEYCHAIN" 2>/dev/null || true
   [ "$status" -eq 0 ] || fail "could not sign $app"
 
@@ -612,7 +679,12 @@ if app_is_running "$target_app"; then
   launch=1
   if is_true "${T3CODE_NIGHTLY_NO_LAUNCH:-}"; then launch=0; fi
   launchctl submit -l "$label" -o "$log_path" -e "$log_path" -- \
-    /usr/bin/env PATH="$PATH" /bin/sh "$SELF" --finish-install \
+    /usr/bin/env \
+    PATH="$PATH" \
+    T3CODE_NIGHTLY_SIGN_IDENTITY="$SIGN_IDENTITY" \
+    T3CODE_NIGHTLY_SIGN_DIR="$SIGN_STATE_DIR" \
+    T3CODE_NIGHTLY_KEEP_ARTIFACTS="${T3CODE_NIGHTLY_KEEP_ARTIFACTS:-}" \
+    /bin/sh "$SELF" --finish-install \
     "$dmg_path" "$nightly_version" "$install_dir" "$target_app" "$launch" ||
     fail "could not start the background installer"
 
