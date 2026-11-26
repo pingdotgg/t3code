@@ -14,11 +14,13 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { envTrampoline, supportsEnvChdir } from "@t3tools/shared/envTrampoline";
@@ -678,7 +680,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -702,6 +704,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       },
     });
   }
+
+  // Started alongside `--version`; the scope interrupts it on the early returns below.
+  const probeFiber = resolveCapabilities
+    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result, Effect.forkScoped)
+    : undefined;
 
   const versionProbe = yield* runClaudeCommand(
     claudeSettings,
@@ -780,9 +787,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
-  const probeResult = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result)
-    : undefined;
+  const probeResult = probeFiber ? yield* Fiber.join(probeFiber) : undefined;
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
@@ -908,7 +913,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
     },
   });
-});
+}, Effect.scoped);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
