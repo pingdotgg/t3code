@@ -46,12 +46,10 @@ const serveLinkThread = Effect.gen(function* () {
   const live = yield* Queue.unbounded<OrchestrationV2StoredEvent, Cause.Done>();
   const closed = yield* Deferred.make<void>();
   const base = Layer.mergeAll(
-    NodeServices.layer,
-    NodeCrypto.layer,
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-link-thread-http-" }),
     ManagedPolicy.layerTest(),
     Sqlite.layerMemory,
-  );
+  ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   const storage = ServerSecretStore.layer.pipe(Layer.provideMerge(base));
   const settingsLayer = ServerSettings.layer.pipe(Layer.provideMerge(storage));
   const authContext = yield* Layer.build(

@@ -240,7 +240,6 @@ const withAuthenticatedServer = <E>(
     Effect.scoped,
     Effect.provide(
       Layer.mergeAll(
-        NodeHttpServer.layerTest,
         Layer.mock(SpeechService)({ startStream }),
         EnvironmentAuth.layer.pipe(
           Layer.provide(ManagedPolicy.layerTest()),
@@ -249,7 +248,10 @@ const withAuthenticatedServer = <E>(
           Layer.provide(ServerEnvironment.layerIdentity),
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-speech-stream-" })),
         ),
-      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
     ),
   );
 
