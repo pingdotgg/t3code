@@ -294,3 +294,26 @@ it("filters actions and allows additional shortcuts for assigned commands", asyn
     .element(screen.getByRole("combobox", { name: "Command", exact: true }))
     .toHaveTextContent("Composer: Cycle Host");
 });
+
+it("shortcut pills show the same keys as the shortcut label for default bindings", async () => {
+  await using screen = await render(<KeybindingsSettingsPanel />);
+  await expect
+    .element(screen.getByRole("button", { name: /^Edit shortcut for Terminal: Previous:/ }).first())
+    .toBeVisible();
+  const pills = (name: RegExp) =>
+    screen
+      .getByRole("button", { name })
+      .elements()
+      .map((button) =>
+        [...button.querySelectorAll("kbd:not([data-slot='kbd-group'])")]
+          .map((key) => key.textContent)
+          .join(" "),
+      );
+
+  expect(pills(/^Edit shortcut for Terminal: Previous:/).toSorted()).toEqual([
+    "Ctrl Alt [",
+    "Shift Meta [",
+  ]);
+  expect(pills(/^Edit shortcut for Queue: Edit Last Queued Message:/)).toEqual(["Alt Up"]);
+  expect(pills(/^Edit shortcut for Focus Next Workspace Area: F6$/)).toEqual(["F6"]);
+});
