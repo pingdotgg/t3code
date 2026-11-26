@@ -255,3 +255,26 @@ it("shows the shared tooltip when keyboard focus lands on a control inside a wra
   await expect.element(screen.getByRole("button", { name: "Maximize" })).toHaveFocus();
   await expect.element(page.getByText("Maximize panel")).toBeVisible();
 });
+
+it("restores the enclosing trigger's tooltip when the pointer leaves a nested trigger back onto it", async () => {
+  await using screen = await render(
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger label="Thread details" render={<div className="flex gap-8 p-4" />}>
+        <span>Thread title</span>
+        <SharedTooltipTrigger label="Settle thread" render={<button type="button" />}>
+          Settle
+        </SharedTooltipTrigger>
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>,
+  );
+  const title = screen.getByText("Thread title");
+  await userEvent.hover(title);
+  await expect.element(page.getByText("Thread details")).toBeVisible();
+
+  await userEvent.hover(screen.getByRole("button", { name: "Settle" }));
+  await expect.element(page.getByText("Settle thread")).toBeVisible();
+
+  // Back onto the row, which is still hovered, so its own tooltip should come back.
+  await userEvent.hover(title);
+  await expect.element(page.getByText("Thread details")).toBeVisible();
+});
