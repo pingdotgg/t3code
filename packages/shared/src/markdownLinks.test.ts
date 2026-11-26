@@ -92,6 +92,13 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
 
+  // regression: #43523 agents link host files as `sandbox:/abs/path`
+  it("recognizes a sandbox: link to an absolute path as that file", () => {
+    expect(parseMarkdownFileLink("sandbox:/tmp/t3-sandbox-link-checklist.txt")?.path).toBe(
+      "/tmp/t3-sandbox-link-checklist.txt",
+    );
+  });
+
   it.each([
     "app/routes/posts.$postId.tsx",
     "pages/posts/[id].tsx",
