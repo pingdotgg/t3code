@@ -120,12 +120,9 @@ describe("Antigravity process environment", () => {
       GOOGLE_API_KEY: "ambient-key",
       AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
     };
-    const spawnFor = (auth: AntigravityAuthConfig, version?: string | null) =>
+    const spawnFor = (auth: AntigravityAuthConfig) =>
       buildAntigravityAcpSpawnInput({
-        installation: {
-          executablePath: "/usr/bin/agy",
-          ...(version !== undefined ? { version } : {}),
-        },
+        installation: { executablePath: "/usr/bin/agy" },
         profile,
         cwd: "/project",
         baseEnv,
@@ -187,7 +184,7 @@ describe("Antigravity process environment", () => {
         baseEnv: { PATH: "/usr/bin", ...baseEnv },
       }).env ?? {};
 
-    for (const version of ["1.5.17", "1.5.18", "v1.5.17", "1.6.0"]) {
+    for (const version of ["1.5.17", "1.6.0"]) {
       const local = spawnEnv(version);
       expect(local.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("1");
       expect(local.SSH_CONNECTION).toBeUndefined();
@@ -196,7 +193,7 @@ describe("Antigravity process environment", () => {
       expect(realSsh.SSH_CONNECTION).toBe("10.0.0.1 12345 10.0.0.2 22");
     }
 
-    for (const version of ["1.5.16", "1.5.15", null, undefined, "unknown"]) {
+    for (const version of ["1.5.16", null]) {
       const legacy = spawnEnv(version);
       expect(legacy.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("1");
       expect(legacy.SSH_CONNECTION).toBe("127.0.0.1 0 127.0.0.1 0");

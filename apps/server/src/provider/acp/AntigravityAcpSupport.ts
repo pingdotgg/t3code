@@ -79,7 +79,7 @@ export const antigravityServesT3Code = (version: string) => {
 };
 
 /** Prefer `terminal-login` when advertised so personal OAuth never opens a host browser in ACP sessions. */
-export function antigravityAuthMethodId(
+function antigravityAuthMethodId(
   authMethod: AntigravityAuthMethod,
   initializeResult: EffectAcpSchema.InitializeResponse,
 ): string {
