@@ -14,6 +14,9 @@ import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import { forgejoHeadBranch } from "./forgejoPullRequests.ts";
 
+/** Forgejo marks a draft by its title; these are its default `WORK_IN_PROGRESS_PREFIXES`. */
+export const WIP_TITLE = /^\s*(?:\[WIP\]|WIP:)\s*/i;
+
 export const ForgejoUser = Schema.Struct({
   login: Schema.String,
   full_name: Schema.optional(Schema.NullOr(Schema.String)),
@@ -140,7 +143,7 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
     baseBranch: pr.base.ref,
     headRepositoryNameWithOwner: pr.head.repo?.full_name ?? null,
     state: pr.merged ? "merged" : pr.state === "closed" ? "closed" : "open",
-    isDraft: pr.draft ?? /^(?:\[WIP\]|WIP:)/i.test(pr.title),
+    isDraft: pr.draft ?? WIP_TITLE.test(pr.title),
     // A false value also covers drafts and unfinished or failed conflict checks.
     mergeability: pr.mergeable === true ? "mergeable" : "unknown",
     additions: pr.additions ?? 0,
