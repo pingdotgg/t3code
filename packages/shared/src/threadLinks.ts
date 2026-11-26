@@ -33,10 +33,13 @@ const fencedCode = (char: "`" | "~", name: string) => {
   const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
   return String.raw`^[ \t]*${LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]*${LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
 };
-// A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, or deeper blockquote.
+// A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, rule,
+// setext underline, or deeper blockquote.
 const SPAN_BREAK_LINE =
   /[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|`{3,}[^`\r\n]*\r?$|~{3,})/my;
 const LINE_PREFIX = /([ \t]*)(>|(?:[-*+]|\d{1,9}[.)])[ \t]+)?/y;
+const THEMATIC_BREAK = /^(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
+const SETEXT_UNDERLINE = /^(?:-+|=+)[ \t]*\r?$/;
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
@@ -56,7 +59,7 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
 );
 
 function codeSpanLines(markdown: string) {
-  const lines: Array<{ start: number; depth: number }> = [];
+  const lines: Array<{ start: number; depth: number; breaksSpan: boolean }> = [];
   const listIndents: number[] = [];
   let paragraphDepth: number | undefined;
   let start = 0;
@@ -93,10 +96,21 @@ function codeSpanLines(markdown: string) {
       }
     }
     const content = line.slice(offset);
+    const text = content.trimStart();
+    const indent = content.slice(0, content.length - text.length).replace(/\t/g, "    ").length;
+    const containerIndent = hasList ? 0 : (listIndents[depth] ?? 0);
+    const lazy = indent < containerIndent || depth < (paragraphDepth ?? 0);
+    // Rules and setext underlines end a paragraph unless indented as code; a lazy line is never an underline.
+    const breaksSpan =
+      !hasList &&
+      (lazy ? indent : indent - containerIndent) <= 3 &&
+      (THEMATIC_BREAK.test(text) ||
+        (paragraphDepth !== undefined && !lazy && SETEXT_UNDERLINE.test(text)));
     const endsParagraph =
+      breaksSpan ||
       /^(?:[ \t\r]*$|[ \t]*#{1,6}(?:[ \t]|$)|[ \t]*`{3,}[^`]*$|[ \t]*~{3,})/.test(content);
     const effectiveDepth = endsParagraph || hasList ? depth : Math.max(depth, paragraphDepth ?? 0);
-    lines.push({ start, depth: effectiveDepth });
+    lines.push({ start, depth: effectiveDepth, breaksSpan });
     paragraphDepth = endsParagraph ? undefined : effectiveDepth;
     start += line.length + 1;
   }
@@ -120,7 +134,8 @@ function findCodeSpanEnd(
     } else if (markdown[i] === "\n") {
       lineIndex++;
       SPAN_BREAK_LINE.lastIndex = i + 1;
-      if (SPAN_BREAK_LINE.test(markdown) || lines[lineIndex]!.depth > openDepth) return -1;
+      const line = lines[lineIndex]!;
+      if (SPAN_BREAK_LINE.test(markdown) || line.breaksSpan || line.depth > openDepth) return -1;
     }
   }
   return -1;
