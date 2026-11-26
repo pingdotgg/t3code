@@ -401,7 +401,11 @@ const scanRoot = Effect.fnUntraced(function* (
  */
 export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* (
   workspaceRoot: string,
-): Effect.fn.Return<ReadonlyArray<ProjectTrackedFolder>, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  ReadonlyArray<ProjectTrackedFolder>,
+  WorkspaceFoldersError,
+  FileSystem.FileSystem | Path.Path
+> {
   const path = yield* Path.Path;
   const root = path.resolve(expandHomePath(workspaceRoot.trim(), yield* HostProcess.HomeDirectory));
   return yield* discoverIn(root).pipe(
@@ -427,14 +431,22 @@ const discoverIn = Effect.fnUntraced(function* (root: string) {
   if (ignored.some((entry) => isWithinRoot(path, root, entry))) return [];
   const isIgnored = (folderPath: string) =>
     ignored.some((entry) => folderPath === entry || isWithinRoot(path, folderPath, entry));
-  // A scan that met a stuck listing missed what lies behind it.
-  const previous = () =>
-    callsRefused(root)
-      ? lastDiscovered.get(root)?.filter((folder) => !isIgnored(folder.path))
-      : undefined;
+  // A scan that met a stuck call missed what lies behind it, so the last full one stands in.
+  // Without one it fails: an empty result would read as the repositories being gone.
+  const previous = Effect.fnUntraced(function* () {
+    const kept = lastDiscovered.get(root);
+    if (kept === undefined) {
+      return yield* new WorkspaceFoldersError({
+        operation: "scan",
+        detail: `${root} cannot be read until a stuck call returns.`,
+      });
+    }
+    return kept.filter((folder) => !isIgnored(folder.path));
+  });
   // Uncapped: the folders outside the project are dropped below, and must not use up the room.
   const scan = yield* scanRoot(root, Number.POSITIVE_INFINITY).pipe(Effect.option);
-  if (Option.isNone(scan)) return previous() ?? [];
+  if (callsRefused(root)) return yield* previous();
+  if (Option.isNone(scan)) return [];
   const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
     scan.value.folders.filter((folder) => folder.isGitRepository && !isIgnored(folder.path)),
@@ -448,8 +460,7 @@ const discoverIn = Effect.fnUntraced(function* (root: string) {
       ),
     { concurrency: DETECTION_CONCURRENCY },
   );
-  const kept = previous();
-  if (kept !== undefined) return kept;
+  if (callsRefused(root)) return yield* previous();
   const found = inside.map((folder) => ({
     path: folder.path,
     name: folder.name,
@@ -486,7 +497,12 @@ export const projectFolders = Effect.fn("WorkspaceFolders.projectFolders")(funct
   never,
   FileSystem.FileSystem | Path.Path
 > {
-  return mergeProjectFolders(yield* discoverFolders(project.workspaceRoot), project.trackedFolders);
+  const discovered = yield* discoverFolders(project.workspaceRoot).pipe(
+    Effect.orElseSucceed(() =>
+      project.trackedFolders.filter((folder) => folder.discovered === true),
+    ),
+  );
+  return mergeProjectFolders(discovered, project.trackedFolders);
 });
 
 /** Whether two tracked lists name the same folders in the same order. */

@@ -332,10 +332,18 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         for (let pass = 0; pass < 4; pass++) assert.deepEqual(yield* discover(home), found);
         assert.deepEqual(yield* discover(root("other")), [path.join(root("other"), "web")]);
         // Two stuck calls are the most there can be, however many projects hold one. Other roots
-        // then make none either, and keep what they found.
-        assert.deepEqual(yield* discoverPastDeadline("work"), []);
-        assert.deepEqual(yield* discover(root("spare")), []);
-        assert.deepEqual(yield* discover(root("extra")), []);
+        // then make none either, and keep what they found. One with nothing found yet fails
+        // rather than report no repositories, so a project keeps the ones it stored.
+        yield* Effect.flip(discoverPastDeadline("work"));
+        yield* Effect.flip(discover(root("spare")));
+        const stored = { path: path.join(root("extra"), "kept"), name: "kept", discovered: true };
+        assert.deepEqual(
+          yield* WorkspaceFolders.projectFolders({
+            workspaceRoot: root("extra"),
+            trackedFolders: [stored],
+          }).pipe(Effect.provideService(FileSystem.FileSystem, hanging)),
+          [stored],
+        );
         assert.deepEqual(yield* discover(root("other")), [path.join(root("other"), "web")]);
         assert.equal(yield* fileSystem.readFileString(probe), "free");
       }),

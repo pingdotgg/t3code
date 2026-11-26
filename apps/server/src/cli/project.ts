@@ -453,7 +453,7 @@ const projectAddCommand = Command.make("add", {
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
         // Found here, not by a running server: this command runs on the server's machine.
-        const found = yield* discoverFolders(workspaceRoot);
+        const found = yield* discoverFolders(workspaceRoot).pipe(Effect.orElseSucceed(() => []));
         if (named.length > PROJECT_TRACKED_FOLDERS_MAX) {
           return yield* new ProjectTooManyTrackedFoldersError({
             operation: "addProject",
