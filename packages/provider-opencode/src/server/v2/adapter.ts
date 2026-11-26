@@ -4941,7 +4941,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   "text",
                   () => part.text,
                   true,
-                  undefined,
+                  "final_answer",
                   message.time.created,
                 );
               }
