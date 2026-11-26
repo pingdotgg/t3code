@@ -628,10 +628,9 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
       checkedAt.delete(session.sessionId);
     });
 
-  const pendingStops = new Map<
-    RunningSession,
-    Deferred.Deferred<Exit.Exit<void, Effect.Error<ReturnType<typeof stopSession>>> | undefined>
-  >();
+  // Undefined when the attempt's owner was interrupted.
+  type StopResult = Exit.Exit<void, Effect.Error<ReturnType<typeof stopSession>>> | undefined;
+  const pendingStops = new Map<RunningSession, Deferred.Deferred<StopResult>>();
 
   const stopTracked = Effect.fn("EasDeviceHost.stopTracked")(function* (
     expo: ExpoApi,
@@ -650,9 +649,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
         }
         if (sessions.get(session.sessionId) !== session) return;
         // Publish the pending result without yielding between the lookup and registration.
-        const result = Deferred.makeUnsafe<
-          Exit.Exit<void, Effect.Error<ReturnType<typeof stopSession>>> | undefined
-        >();
+        const result = Deferred.makeUnsafe<StopResult>();
         pendingStops.set(session, result);
         const stop = stopSession(expo, session.sessionId, session.name);
         yield* restore(
