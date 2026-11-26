@@ -3,7 +3,7 @@
  */
 import { closeThreadSurface } from "../components/ThreadSurfaceTab";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useClosedViewStore } from "../closedViewStore";
+import { useClosedViewStore, WORKFLOWS_PAGE_REF } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { getLayoutBehavior } from "./layoutBehavior";
 import {
@@ -186,10 +186,20 @@ export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } 
       return;
     }
   }
-  if (location && (tab?.content.kind === "issues" || tab?.content.kind === "pull-requests")) {
+  if (
+    location &&
+    (tab?.content.kind === "issues" ||
+      tab?.content.kind === "pull-requests" ||
+      tab?.content.kind === "workflows")
+  ) {
     useClosedViewStore.getState().remember({
       kind: "page",
-      threadRef: tab.content.kind === "issues" ? ISSUES_PANEL_REF : PULL_REQUESTS_PANEL_REF,
+      threadRef:
+        tab.content.kind === "issues"
+          ? ISSUES_PANEL_REF
+          : tab.content.kind === "pull-requests"
+            ? PULL_REQUESTS_PANEL_REF
+            : WORKFLOWS_PAGE_REF,
       page: tab.content.kind,
       ...(tab.content.href === undefined ? {} : { href: tab.content.href }),
       paneId: location.pane.id,

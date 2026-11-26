@@ -117,7 +117,7 @@ export function ReopenClosedViewShortcut() {
     const { drop, restore } = planNextReopen(useClosedViewStore.getState().entries, (entry) => {
       const ref = entry.threadRef;
       const panel = selectThreadRightPanelState(panelsByThread, ref);
-      if (isGlobalPullRequests(ref) || isGlobalIssues(ref)) {
+      if (entry.kind === "page" || isGlobalPullRequests(ref) || isGlobalIssues(ref)) {
         return {
           environmentKnown: true,
           catalogReady: true,
@@ -157,7 +157,8 @@ export function ReopenClosedViewShortcut() {
     const ref = restore.threadRef;
     const globalPullRequests = isGlobalPullRequests(ref);
     const globalIssues = isGlobalIssues(ref);
-    const thread = globalPullRequests || globalIssues ? null : readThreadShell(ref);
+    const thread =
+      restore.kind === "page" || globalPullRequests || globalIssues ? null : readThreadShell(ref);
     const owner = thread ?? drafts.getDraftThreadByRef(ref);
     const ownerProject = owner
       ? scopeProjectRef(ref.environmentId, owner.projectId)

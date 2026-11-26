@@ -1,9 +1,11 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ChatFileAttachment,
+  EnvironmentId,
   INCOGNITO_BROWSER_PROFILE_ID,
   PreviewSessionSnapshot,
   ScopedThreadRef,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
@@ -15,13 +17,18 @@ import { randomUUID } from "./lib/utils";
 import { decodeThreadSurface, type RightPanelSurface } from "./rightPanelStore";
 import type { DraftId } from "./composerDraftStore";
 
+export const WORKFLOWS_PAGE_REF = scopeThreadRef(
+  EnvironmentId.make("workflows-page"),
+  ThreadId.make("workflows-page"),
+);
+
 export type ClosedView =
   | { kind: "chat"; threadRef: ScopedThreadRef; draftId?: DraftId; paneId: string; index: number }
   /** A list page tab; `threadRef` is its list panel's sentinel ref. */
   | {
       kind: "page";
       threadRef: ScopedThreadRef;
-      page: "issues" | "pull-requests";
+      page: "issues" | "pull-requests" | "workflows";
       href?: string;
       paneId: string;
       index: number;
@@ -81,7 +88,7 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
   }
   if (view.kind === "page") {
     return (
-      (view.page === "issues" || view.page === "pull-requests") &&
+      (view.page === "issues" || view.page === "pull-requests" || view.page === "workflows") &&
       (view.href === undefined || typeof view.href === "string") &&
       typeof view.paneId === "string" &&
       Number.isSafeInteger(view.index) &&

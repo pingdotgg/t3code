@@ -109,6 +109,7 @@ describe("reopening a closed list page", () => {
   it.each([
     { kind: "issues", href: "/issues?status=closed" },
     { kind: "pull-requests", href: "/pull-requests?state=merged" },
+    { kind: "workflows", href: "/workflows" },
   ] as const)("puts the $kind tab back where it was, with its URL", async (content) => {
     using layout = setup([other, content, parent]);
     useClosedViewStore.setState({ entries: [] });
