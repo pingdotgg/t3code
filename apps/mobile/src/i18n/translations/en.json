@@ -5720,5 +5720,10 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
-  "46d614fa7b4bf1e5": "Workflow runs"
+  "46d614fa7b4bf1e5": "Workflow runs",
+  "45fa271ea0e1ac8e": "Beta",
+  "e4e91d155cb6a9b4": "Boring sidebar (group by project)",
+  "3a678332fc7142f7": "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
+  "ac1e5c94d1ad3c6a": "Two-line folder rows",
+  "f079556d67367fe7": "Show folder threads on two lines: the title, then the branch, pull request, and agent."
 }

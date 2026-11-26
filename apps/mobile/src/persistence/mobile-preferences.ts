@@ -175,6 +175,8 @@ export interface Preferences {
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
+  readonly boringSidebarEnabled?: boolean;
+  readonly boringSidebarMultilineRows?: boolean;
   readonly workingShelfEnabled?: boolean;
   /** The kind of question the Workflows tab's Needs you list was last narrowed to. */
   readonly workflowQuestionKind?: string;
@@ -271,6 +273,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
+    boringSidebarEnabled?: boolean;
+    boringSidebarMultilineRows?: boolean;
     workingShelfEnabled?: boolean;
     workflowQuestionKind?: string;
     useLastProjectForNewThreads?: boolean;
@@ -421,6 +425,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isToolCallVisibility(parsed.toolCallVisibility)) {
     preferences.toolCallVisibility = parsed.toolCallVisibility;
+  }
+  if (typeof parsed.boringSidebarEnabled === "boolean") {
+    preferences.boringSidebarEnabled = parsed.boringSidebarEnabled;
+  }
+  if (typeof parsed.boringSidebarMultilineRows === "boolean") {
+    preferences.boringSidebarMultilineRows = parsed.boringSidebarMultilineRows;
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;

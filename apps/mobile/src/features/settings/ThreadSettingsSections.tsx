@@ -37,6 +37,11 @@ import {
 export function SettingsLabsRouteScreen() {
   const gt = useGT();
   const insets = useSafeAreaInsets();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : null;
+  const boringSidebarEnabled = preferences?.boringSidebarEnabled === true;
 
   return (
     <SettingsScreen title={gt("Labs")}>
@@ -47,6 +52,32 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <SettingsSection title={gt("Beta")}>
+          <SettingsSwitchRow
+            label={gt("Boring sidebar (group by project)")}
+            subtitle={gt(
+              "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
+            )}
+            value={boringSidebarEnabled}
+            disabled={!preferencesReady}
+            onValueChange={(value) => {
+              void savePreferences({ boringSidebarEnabled: value });
+            }}
+          />
+          {boringSidebarEnabled ? (
+            <SettingsSwitchRow
+              label={gt("Two-line folder rows")}
+              subtitle={gt(
+                "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
+              )}
+              value={preferences?.boringSidebarMultilineRows === true}
+              disabled={!preferencesReady}
+              onValueChange={(value) => {
+                void savePreferences({ boringSidebarMultilineRows: value });
+              }}
+            />
+          ) : null}
+        </SettingsSection>
         <MachineBetaSection
           title={gt("Linked environments")}
           icon="link"
@@ -218,6 +249,10 @@ export function WorkingSectionSettings() {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
     AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
+
+  if (AsyncResult.isSuccess(preferences) && preferences.value.boringSidebarEnabled === true) {
+    return null;
+  }
 
   return (
     <View className="gap-3">

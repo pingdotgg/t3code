@@ -41,6 +41,8 @@ import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
 
 import { relativeTime } from "../../lib/time";
+import type { HomeProjectScope } from "../home/homeThreadList";
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { m, type MessageResolver } from "../../i18n/messages";
 
@@ -446,9 +448,27 @@ export interface ThreadListV2Layout {
   readonly contentOnlyThreadKeys: ReadonlySet<string>;
 }
 
+export interface ThreadListV2ProjectFolders {
+  readonly scopes: ReadonlyArray<HomeProjectScope>;
+  readonly collapsedKeys: readonly string[];
+  readonly multiline: boolean;
+  readonly selectedThreadKey: string | null;
+  readonly scoped: boolean;
+}
+
+export interface ThreadListV2ProjectFolderListItem {
+  readonly type: "v2-project-folder";
+  readonly key: string;
+  readonly projectKey: string;
+  readonly title: string;
+  readonly count: number;
+  readonly expanded: boolean;
+}
+
 export interface ThreadListV2ThreadListItem {
   readonly type: "v2-thread";
   readonly key: string;
+  readonly folderRow?: "single-line" | "two-line";
   readonly item: ThreadListV2Item;
   readonly snoozeWakeLabelText: string | undefined;
   readonly timeLabel: string;
@@ -495,6 +515,7 @@ export interface ThreadListV2SettledShelfListItem {
 
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
+  | ThreadListV2ProjectFolderListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
@@ -505,6 +526,7 @@ export function isThreadListV2ListItem(value: {
 }): value is ThreadListV2ListItem {
   return (
     value.type === "v2-thread" ||
+    value.type === "v2-project-folder" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
@@ -518,10 +540,19 @@ export function threadListV2ListItemsAreEqual(
   item: ThreadListV2ListItem,
 ): boolean {
   switch (item.type) {
+    case "v2-project-folder":
+      return (
+        previous.type === "v2-project-folder" &&
+        previous.key === item.key &&
+        previous.title === item.title &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded
+      );
     case "v2-thread":
       return (
         previous.type === "v2-thread" &&
         previous.key === item.key &&
+        previous.folderRow === item.folderRow &&
         previous.item.thread === item.item.thread &&
         previous.item.variant === item.item.variant &&
         previous.item.snoozed === item.item.snoozed &&
@@ -590,9 +621,68 @@ function resolveThreadListV2ItemTimeLabel(
   );
 }
 
+function groupActiveThreadRows(
+  rows: readonly ThreadListV2ThreadListItem[],
+  folders: ThreadListV2ProjectFolders,
+): ThreadListV2ListItem[] {
+  const pinned: ThreadListV2ThreadListItem[] = [];
+  const ungrouped: ThreadListV2ThreadListItem[] = [];
+  const rowsByScope = new Map(
+    folders.scopes.map((scope) => [scope.key, [] as ThreadListV2ThreadListItem[]]),
+  );
+  const scopeByProject = new Map(
+    folders.scopes.flatMap((scope) =>
+      scope.projectRefs.map(
+        (ref) => [scopedProjectKey(ref.environmentId, ref.projectId), scope.key] as const,
+      ),
+    ),
+  );
+  for (const row of rows) {
+    if (row.item.pinned) {
+      pinned.push(row);
+      continue;
+    }
+    const thread = row.item.thread;
+    const scopeKey = scopeByProject.get(scopedProjectKey(thread.environmentId, thread.projectId));
+    const folderRows = scopeKey === undefined ? undefined : rowsByScope.get(scopeKey);
+    (folderRows ?? ungrouped).push(row);
+  }
+
+  const collapsed = new Set(folders.collapsedKeys);
+  const grouped = folders.scopes.flatMap((scope): ThreadListV2ListItem[] => {
+    const folderRows = rowsByScope.get(scope.key) ?? [];
+    if (folderRows.length === 0 && !folders.scoped && !(scope.pinned && !scope.archived)) {
+      return [];
+    }
+    const expanded = !collapsed.has(scope.key);
+    return [
+      {
+        type: "v2-project-folder",
+        key: `v2-project-folder:${scope.key}`,
+        projectKey: scope.key,
+        title: scope.title,
+        count: folderRows.length,
+        expanded,
+      },
+      ...folderRows
+        .filter(
+          ({ item: { thread } }) =>
+            expanded ||
+            scopedThreadKey(thread.environmentId, thread.id) === folders.selectedThreadKey,
+        )
+        .map((row): ThreadListV2ThreadListItem => ({
+          ...row,
+          folderRow: folders.multiline ? "two-line" : "single-line",
+        })),
+    ];
+  });
+  return [...pinned, ...grouped, ...ungrouped];
+}
+
 export function buildThreadListV2ListItems(input: {
   readonly items: ReadonlyArray<ThreadListV2Item>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+  readonly projectFolders?: ThreadListV2ProjectFolders | null;
   readonly workingCount?: number;
   readonly workingShelfExpanded?: boolean;
   readonly workingShelfHeaderIndex?: number | null;
@@ -611,7 +701,7 @@ export function buildThreadListV2ListItems(input: {
 }): ThreadListV2ListItem[] {
   const resolve = input.resolve ?? m;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
-  const threadItems = input.items.map((item): ThreadListV2ListItem => {
+  const threadItems = input.items.map((item): ThreadListV2ThreadListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow }, resolve)
@@ -658,7 +748,13 @@ export function buildThreadListV2ListItems(input: {
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
-  const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
+  const activeRows = threadItems.slice(0, activeEnd);
+  const result: ThreadListV2ListItem[] = [
+    ...pendingItems,
+    ...(input.projectFolders
+      ? groupActiveThreadRows(activeRows, input.projectFolders)
+      : activeRows),
+  ];
   const shelfDisabled = input.shelfPreferencesLoading === true;
   if (workingShelfHeaderIndex !== null && workingCount > 0) {
     result.push({

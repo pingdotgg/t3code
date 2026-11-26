@@ -5712,5 +5712,10 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "45fa271ea0e1ac8e": "Bêta",
+  "e4e91d155cb6a9b4": "Barre latérale classique (regrouper par projet)",
+  "3a678332fc7142f7": "Regroupe les fils de la barre latérale dans des dossiers de projet. Les fils épinglés restent en haut, les fils reportés et clos restent sous les dossiers.",
+  "ac1e5c94d1ad3c6a": "Lignes de dossier sur deux lignes",
+  "f079556d67367fe7": "Affiche les fils des dossiers sur deux lignes : le titre, puis la branche, la pull request et l’agent."
 }

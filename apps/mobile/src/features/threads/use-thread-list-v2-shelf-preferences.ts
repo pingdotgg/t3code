@@ -12,7 +12,30 @@ export function useThreadListV2ShelfPreferences() {
     loaded && preferencesResult.value.threadListSnoozedShelfExpanded === true;
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
-  const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
+  const projectFolderPreferences =
+    loaded && preferencesResult.value.boringSidebarEnabled === true
+      ? {
+          collapsedKeys: preferencesResult.value.collapsedProjectGroups ?? [],
+          multiline: preferencesResult.value.boringSidebarMultilineRows === true,
+        }
+      : null;
+  const workingShelfEnabled =
+    projectFolderPreferences === null &&
+    loaded &&
+    preferencesResult.value.workingShelfEnabled !== false;
+  const toggleProjectFolder = (key: string) => {
+    if (!loaded) return;
+    void savePreferences({
+      transform: (current) => {
+        const collapsedKeys = current.collapsedProjectGroups ?? [];
+        return {
+          collapsedProjectGroups: collapsedKeys.includes(key)
+            ? collapsedKeys.filter((collapsedKey) => collapsedKey !== key)
+            : [...collapsedKeys, key],
+        };
+      },
+    });
+  };
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
@@ -44,6 +67,8 @@ export function useThreadListV2ShelfPreferences() {
 
   return {
     loaded,
+    projectFolderPreferences,
+    toggleProjectFolder,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,

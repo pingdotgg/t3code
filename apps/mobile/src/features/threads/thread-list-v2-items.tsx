@@ -78,6 +78,8 @@ import { threadCanArchive } from "../home/threadArchive";
 import { useCanShareWithGuest } from "./useCanShareWithGuest";
 import {
   threadListV2ShowMoreAccessibilityLabel,
+  type ThreadListV2ProjectFolderListItem,
+  type ThreadListV2ThreadListItem,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
@@ -387,6 +389,46 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="settled" />;
 });
+
+export function ThreadListV2ProjectFolder(props: {
+  readonly item: ThreadListV2ProjectFolderListItem;
+  readonly pane: "screen" | "sidebar";
+  readonly onToggle: (projectKey: string) => void;
+}) {
+  const gt = useGT();
+  const { count, expanded, projectKey, title } = props.item;
+  const sidebar = props.pane === "sidebar";
+  const tint = sidebar ? "accent-drawer-foreground-muted" : "accent-foreground-muted";
+  const label = expanded || count === 0 ? title : gt("{label} ({count})", { label: title, count });
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      className={cn(
+        "min-h-[44px] flex-row items-center gap-2 active:opacity-60",
+        sidebar ? "px-3" : "px-5",
+      )}
+      onPress={() => props.onToggle(projectKey)}
+    >
+      <SymbolView
+        name={expanded ? "chevron.down" : "chevron.right"}
+        size={10}
+        tintColorClassName={tint}
+      />
+      <SymbolView name="folder.fill" size={16} tintColorClassName={tint} />
+      <Text
+        className={cn(
+          "min-w-0 flex-1 text-sm font-t3-medium",
+          sidebar ? "text-drawer-foreground" : "text-foreground",
+        )}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
 
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
   readonly pane?: "screen" | "sidebar";
@@ -742,6 +784,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
+  readonly folderRow?: ThreadListV2ThreadListItem["folderRow"];
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
@@ -811,6 +854,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const {
     thread,
     variant,
+    folderRow,
     onSelectThread,
     onOpenThreadPullRequests,
     onDeleteThread,
@@ -892,7 +936,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     props.snoozeWakeLabelText === undefined ? undefined : m(props.snoozeWakeLabelText);
   const rowAccessibilityLabel = threadListV2RowAccessibilityLabel(
     {
-      title: thread.title,
+      title:
+        folderRow === "two-line" && thread.branch
+          ? [thread.title, thread.branch].join(", ")
+          : thread.title,
       variant,
       woke: showsWoke,
       // Working and waiting rows show only an icon and a duration, so name them for speech.
@@ -1373,11 +1420,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
+  const titleTextInset = folderRow ? 18 : props.project ? projectIconSize + 8 : 0;
   const cardContent = (
     <>
-      <View className="flex-row items-start gap-2">
-        {props.project ? (
+      <View
+        className="flex-row items-start gap-2"
+        style={folderRow ? { paddingLeft: titleTextInset } : undefined}
+      >
+        {props.project && !folderRow ? (
           <View className="justify-center" style={{ height: titleLineHeight }}>
             <ProjectFavicon
               environmentId={thread.environmentId}
@@ -1398,7 +1448,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : rowAppearance.foregroundClassName,
             isRegeneratingTitle && "opacity-55",
           )}
-          numberOfLines={2}
+          numberOfLines={folderRow ? 1 : 2}
           onTextLayout={
             Platform.OS === "android"
               ? ({ nativeEvent }) => {
@@ -1510,8 +1560,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           />
         </View>
       ) : null}
+    </>
+  );
+  const cardMetadata = (
+    <>
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
+        {folderRow === "two-line" ? (
+          <Text
+            className={cn(
+              "min-w-0 flex-1 text-xs",
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : rowAppearance.tertiaryForegroundClassName,
+            )}
+            numberOfLines={1}
+            ellipsizeMode="middle"
+            style={{ fontFamily: MONO_FONT }}
+          >
+            {thread.branch}
+          </Text>
+        ) : (rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
           <Text
             className={cn(
               "flex-1 text-xs",
@@ -1634,11 +1702,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </>
   );
 
-  const fadedCardContent = recede ? (
-    <View style={{ opacity: 0.55 }}>{cardContent}</View>
-  ) : (
-    cardContent
+  const card = (
+    <>
+      {cardContent}
+      {folderRow === "single-line" ? null : cardMetadata}
+    </>
   );
+  const fadedCardContent = recede ? <View style={{ opacity: 0.55 }}>{card}</View> : card;
 
   const rowContent = (close: () => void) =>
     variant === "card" ? (
@@ -1663,10 +1733,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         style={rowAppearance.cardStyle}
       >
         {sidebarPane ? (
-          fadedCardContent
+          folderRow === "single-line" ? (
+            <View className="min-h-6 justify-center">{fadedCardContent}</View>
+          ) : (
+            fadedCardContent
+          )
         ) : (
           <View>
-            <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{fadedCardContent}</View>
+            <View
+              className={cn(
+                THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
+                folderRow === "single-line" && "min-h-[44px] justify-center",
+              )}
+            >
+              {fadedCardContent}
+            </View>
             {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
               <View className="ml-5 h-px bg-border-subtle" />
             ) : null}

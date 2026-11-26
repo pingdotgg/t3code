@@ -860,6 +860,79 @@ describe("buildThreadListV2ListItems", () => {
     now: NOW,
   });
 
+  it("keeps pinned and shelf rows outside project folders and retains the selected row when collapsed", () => {
+    const projectId = ProjectId.make("project-1");
+    const thread = (id: string, fields: Partial<EnvironmentThreadShell> = {}) =>
+      makeThread({ id: ThreadId.make(id), title: id, projectId, ...fields });
+    const layout = buildThreadListV2Items({
+      threads: [
+        thread("pinned", { pinnedAt: NOW }),
+        thread("selected"),
+        thread("other"),
+        thread("snoozed", { snoozedUntil: "2026-06-03T09:00:00.000Z" }),
+        thread("settled", { settledOverride: "settled", settledAt: NOW }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const project = {
+      environmentId,
+      id: projectId,
+      title: "Project",
+      workspaceRoot: "/projects/project-1",
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const scope = {
+      key: "project",
+      title: project.title,
+      projectRefs: [{ environmentId, projectId }],
+      representative: project,
+      projects: [project],
+      pinned: false,
+      archived: false,
+    };
+    const input = {
+      ...layout,
+      pendingTasks: [],
+      projectFolders: {
+        scopes: [scope],
+        collapsedKeys: [scope.key],
+        multiline: true,
+        selectedThreadKey: `${environmentId}:selected`,
+        scoped: false,
+      },
+    };
+
+    const collapsed = buildThreadListV2ListItems(input);
+    expect(
+      collapsed.map((item) => (item.type === "v2-thread" ? item.item.thread.id : item.type)),
+    ).toEqual([
+      "pinned",
+      "v2-project-folder",
+      "selected",
+      "v2-snoozed-shelf",
+      "v2-settled-shelf",
+      "settled",
+    ]);
+    expect(collapsed[1]).toMatchObject({ expanded: false, count: 2 });
+    expect(collapsed[2]).toMatchObject({ folderRow: "two-line" });
+
+    const expanded = buildThreadListV2ListItems({
+      ...input,
+      projectFolders: { ...input.projectFolders, collapsedKeys: [], multiline: false },
+    });
+    expect(expanded[1]).toMatchObject({ expanded: true, count: 2 });
+    expect(expanded.slice(2, 4)).toMatchObject([
+      { folderRow: "single-line" },
+      { folderRow: "single-line" },
+    ]);
+  });
+
   it("leads the list with unsent drafts and queued tasks, preserving section dividers", () => {
     const items = buildThreadListV2ListItems({
       items: layout.items,

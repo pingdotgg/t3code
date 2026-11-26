@@ -5718,5 +5718,10 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
-  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen",
+  "45fa271ea0e1ac8e": "Beta",
+  "e4e91d155cb6a9b4": "Schlichte Seitenleiste (nach Projekt gruppieren)",
+  "3a678332fc7142f7": "Threads in der Seitenleiste in Projektordnern gruppieren. Angeheftete Threads bleiben oben, Zurückgestellte und Erledigte bleiben unter den Ordnern.",
+  "ac1e5c94d1ad3c6a": "Zweizeilige Ordnerzeilen",
+  "f079556d67367fe7": "Ordner-Threads zweizeilig anzeigen: den Titel, darunter Branch, Pull Request und Agent."
 }
