@@ -66,6 +66,7 @@ import {
   CLAUDE_BACKGROUND_TASK_WAKE_FOLLOW_UP_PROMPT,
   CLAUDE_BACKGROUND_TASK_WAKE_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_wake/input.ts";
+import { CLAUDE_BACKGROUND_TASK_LAST_REQUEST_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_last_request/input.ts";
 import {
   DENIED_WRITE_POLICY,
   TOOL_CALL_DENIED_WRITE_PROMPT,
@@ -199,6 +200,13 @@ const CLAUDE_RECORDINGS = {
     queryMode: "streaming",
     enableTools: true,
     backgroundWakeCounts: [1, 0],
+  },
+  claude_background_task_last_request: {
+    prompts: [CLAUDE_BACKGROUND_TASK_LAST_REQUEST_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_background_task_last_request/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+    backgroundWakeCounts: [1],
   },
   claude_background_monitor_wake: {
     prompts: [CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT],

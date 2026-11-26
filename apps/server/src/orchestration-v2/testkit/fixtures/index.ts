@@ -15,6 +15,8 @@ import { assertClaudeBackgroundTaskInterruptOutput } from "./claude_background_t
 import { claudeBackgroundMonitorWakeInput } from "./claude_background_monitor_wake/input.ts";
 import { assertClaudeBackgroundMonitorWakeOutput } from "./claude_background_monitor_wake/output.ts";
 import { claudeBackgroundTaskWakeInput } from "./claude_background_task_wake/input.ts";
+import { claudeBackgroundTaskLastRequestInput } from "./claude_background_task_last_request/input.ts";
+import { assertClaudeBackgroundTaskLastRequestOutput } from "./claude_background_task_last_request/output.ts";
 import { assertClaudeBackgroundTaskWakeOutput } from "./claude_background_task_wake/output.ts";
 import {
   claudeCompactAfterPeerTurnInput,
@@ -442,6 +444,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CLAUDE_MODEL_SELECTION,
         runContinuationWorker: true,
         assertOutput: assertClaudeBackgroundTaskWakeOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_background_task_last_request",
+    buildInput: claudeBackgroundTaskLastRequestInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_background_task_last_request/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeBackgroundTaskLastRequestOutput,
       },
     ],
   },
