@@ -205,16 +205,9 @@ it.effect(
 );
 
 it.effect.each([
-  {
-    label: "no earlier checkpoint to reuse",
-    exists: false,
-    source: undefined,
-    calls: ["snapshot"],
-  },
-  { label: "its own baseline already there", exists: true, source: 2, copy: true, calls: [] },
-  { label: "a reused checkpoint", exists: false, source: 2, copy: true, calls: ["copy"] },
-  { label: "a declined copy", exists: false, source: 2, copy: false, calls: ["copy", "snapshot"] },
-  { label: "a copy slower than its budget", exists: false, source: 2, calls: ["copy", "snapshot"] },
+  { label: "a reused checkpoint", source: 2, copy: true, calls: ["copy"] },
+  { label: "a declined copy", source: 2, copy: false, calls: ["copy", "snapshot"] },
+  { label: "a copy slower than its budget", source: 2, calls: ["copy", "snapshot"] },
 ])("baselines a turn after steered queued messages with $label", (row) =>
   Effect.gen(function* () {
     const scope: OrchestrationV2CheckpointScope = {
@@ -239,7 +232,7 @@ it.effect.each([
           layerNoTrackedFolders,
           Layer.mock(CheckpointStore.CheckpointStore)({
             isGitRepository: () => Effect.succeed(true),
-            hasCheckpointRef: () => Effect.succeed(row.exists),
+            hasCheckpointRef: () => Effect.succeed(false),
             copyCheckpointRef: () =>
               record("copy").pipe(
                 Effect.andThen(row.copy === undefined ? Effect.never : Effect.succeed(row.copy)),

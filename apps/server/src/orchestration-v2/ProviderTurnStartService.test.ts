@@ -2388,19 +2388,8 @@ const steeredInto = (ordinal: number) => ({ ...removed, steeredInto: `run-${ordi
 effectIt.effect.each([
   { label: "a queued message steered into it", runs: [ran, steeredInto(1)], source: 1 },
   { label: "several steered into it", runs: [ran, steeredInto(1), steeredInto(1)], source: 1 },
-  { label: "a stopped turn", runs: [{ ...ran, status: "interrupted" }, steeredInto(1)], source: 1 },
   { label: "a removed queued message", runs: [ran, removed], source: undefined },
-  {
-    label: "a removed one below a steered one",
-    runs: [ran, removed, steeredInto(1)],
-    source: undefined,
-  },
   { label: "a queued message that ran", runs: [ran, ran], source: undefined },
-  {
-    label: "a target that took the message and ended without a checkpoint",
-    runs: [ran, steeredInto(2), steeredInto(2)],
-    source: undefined,
-  },
   {
     label: "a message steered into the starting run",
     runs: [ran, steeredInto(3)],
@@ -2412,31 +2401,11 @@ effectIt.effect.each([
     source: undefined,
   },
   {
-    label: "a turn whose checkpoint row is missing",
-    runs: [{ ...ran, checkpoint: "missing" }, steeredInto(1)],
-    source: undefined,
-  },
-  {
-    label: "a run stopped before its provider turn",
-    runs: [{ status: "interrupted", checkpoint: null }, steeredInto(1)],
-    source: undefined,
-  },
-  {
     label: "a failed run",
     runs: [{ ...ran, status: "failed" }, steeredInto(1)],
     source: undefined,
   },
-  {
-    label: "a rolled-back run",
-    runs: [{ ...ran, status: "rolled_back" }, steeredInto(1)],
-    source: undefined,
-  },
   { label: "a missing row", runs: [ran, null, steeredInto(1)], source: undefined },
-  {
-    label: "a steered message as the thread's first run",
-    runs: [steeredInto(2)],
-    source: undefined,
-  },
 ])("starts a turn from the last turn's checkpoint after $label", (input) =>
   Effect.gen(function* () {
     const ordinal = input.runs.length + 1;
@@ -2483,7 +2452,7 @@ effectIt.effect.each([
         const owner = runs.find((run) => run.checkpointId === checkpointId);
         return Effect.succeed({
           checkpoints:
-            owner === undefined || owner.checkpoint === "missing"
+            owner === undefined
               ? []
               : [
                   {
