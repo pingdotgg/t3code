@@ -745,7 +745,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
                 <View>
                   <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{rowContent}</View>
                   {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
-                    <View className="ml-5 h-px bg-border-subtle" />
+                    <View className="ms-5 h-px bg-border-subtle" />
                   ) : null}
                 </View>
               )}
@@ -1632,7 +1632,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             {providerNameLabel ? (
               <Text
                 className={cn(
-                  "ml-1.5 text-xs",
+                  "ms-1.5 text-xs",
                   selected
                     ? selectedThreadRowColors.mutedForegroundClassName
                     : rowAppearance.tertiaryForegroundClassName,
@@ -1687,7 +1687,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <View>
             <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{fadedCardContent}</View>
             {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
-              <View className="ml-5 h-px bg-border-subtle" />
+              <View className="ms-5 h-px bg-border-subtle" />
             ) : null}
           </View>
         )}

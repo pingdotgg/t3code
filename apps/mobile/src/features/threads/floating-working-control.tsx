@@ -225,7 +225,7 @@ export function FloatingWorkingControl(props: {
           style={{ maxWidth: availableLabelWidth * 0.5 }}
           className="h-11 flex-row items-center px-3 active:opacity-70"
         >
-          {hasStatus ? <View className="absolute left-0 h-4 w-px bg-border" /> : null}
+          {hasStatus ? <View className="absolute start-0 h-4 w-px bg-border" /> : null}
           <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
             {extensionStatus.label}
           </Text>
@@ -278,7 +278,9 @@ export function FloatingWorkingControl(props: {
           onLayout={(event) => setAgentsWidth(settleWidth(event.nativeEvent.layout.width))}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
         >
-          {hasStatus || hasPreview ? <View className="absolute left-0 h-4 w-px bg-border" /> : null}
+          {hasStatus || hasPreview ? (
+            <View className="absolute start-0 h-4 w-px bg-border" />
+          ) : null}
           <SymbolView name="person.2" size={13} tintColorClassName="accent-foreground" />
           <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {agents.label}
@@ -298,7 +300,7 @@ export function FloatingWorkingControl(props: {
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
           {hasStatus || hasPreview || hasAgents ? (
-            <View className="absolute left-0 h-4 w-px bg-border" />
+            <View className="absolute start-0 h-4 w-px bg-border" />
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground" />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>

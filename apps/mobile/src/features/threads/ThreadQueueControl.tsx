@@ -392,7 +392,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     })}
                     disabled={!controls.canSend}
                     onPress={() => void act(run.id, "steer")}
-                    className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"
+                    className="shrink-0 justify-center self-stretch ps-4 active:opacity-70 disabled:opacity-40"
                   >
                     <View className="min-h-9 flex-row items-center gap-1.5 rounded-full bg-primary px-4">
                       <SymbolView

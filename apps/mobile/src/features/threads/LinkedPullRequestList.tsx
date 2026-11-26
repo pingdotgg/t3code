@@ -187,7 +187,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           ) : null}
           {additions + deletions > 0 || snapshot?.updatedAt ? (
             <View
-              className="-ml-1.5 flex-row flex-wrap items-center gap-x-1.5 overflow-hidden"
+              className="-ms-1.5 flex-row flex-wrap items-center gap-x-1.5 overflow-hidden"
               style={{ height: metaLineHeight, flexShrink: 100 }}
             >
               <View className="w-0" />
