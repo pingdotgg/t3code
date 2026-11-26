@@ -944,6 +944,42 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
+  it.effect("cuts a long failure message without splitting an emoji", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: `${"a".repeat(298)}🚀 and the rest of the error`,
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:long-failure:create",
+          thread: "thread:title:long-failure",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:long-failure:message",
+          threadId,
+          text: "Some conversation",
+        });
+        const requestId = yield* armRegeneration({
+          command: "command:title:long-failure:1",
+          threadId,
+        });
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+        const projection = yield* threads.getThreadProjection(threadId);
+        assert.equal(projection.thread.lastTitleRegeneration?.message, `${"a".repeat(298)}…`);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("records an unchanged outcome when the model keeps the current title", () =>
     Effect.gen(function* () {
       const harness = makeHarness({

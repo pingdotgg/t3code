@@ -98,6 +98,10 @@ const listCommand = Command.make("list", {
     ),
     Flag.optional,
   ),
+  tag: Flag.String("tag").pipe(
+    Flag.withDescription("Only runs their workflow tagged with this."),
+    Flag.optional,
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("List workflow runs, newest first."),
@@ -110,6 +114,7 @@ const listCommand = Command.make("list", {
           {
             action: "list",
             ...(Option.isSome(flags.status) ? { status: flags.status.value } : {}),
+            ...(Option.isSome(flags.tag) ? { tag: flags.tag.value } : {}),
           },
           RunsResult,
         );
@@ -278,6 +283,10 @@ const signalCommand = Command.make("signal", {
 
 const questionsCommand = Command.make("questions", {
   ...projectLocationFlags,
+  kind: Flag.String("kind").pipe(
+    Flag.withDescription("Only questions of this kind, as their workflow's `asks` names it."),
+    Flag.optional,
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("List the questions runs are waiting on a person to answer."),
@@ -287,12 +296,14 @@ const questionsCommand = Command.make("questions", {
       Effect.fn("cli.workflow.questions")(function* (tools) {
         const { questions } = yield* tools.call(
           "t3_workflow",
-          { action: "questions" },
+          { action: "questions", ...(Option.isSome(flags.kind) ? { kind: flags.kind.value } : {}) },
           QuestionsResult,
         );
         if (flags.json) return yield* printJson(questions);
         for (const question of questions) {
-          yield* Console.log(`${question.runId}  ${question.name}`);
+          yield* Console.log(
+            [question.runId, question.name, question.kind ?? ""].join("  ").trimEnd(),
+          );
           yield* printJson(question.request);
         }
       }),

@@ -3,7 +3,9 @@ import {
   type WorkflowHook,
   WorkflowQuestion,
   type WorkflowRunReference,
+  applyWorkflowRunsUpdate,
   type WorkflowRunsSnapshot,
+  type WorkflowRunsUpdate,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
@@ -54,12 +56,23 @@ export class WorkflowInputError extends Schema.TaggedError<WorkflowInputError>()
   }
 }
 
+/** A hook that has started as many runs as it may for now. */
+export class WorkflowHookBusyError extends Schema.TaggedError<WorkflowHookBusyError>()(
+  "WorkflowHookBusyError",
+  { hook: Schema.String },
+) {
+  override get message(): string {
+    return `Hook ${this.hook} has started as many runs as it may in a minute.`;
+  }
+}
+
 export { WorkflowQuestion };
 
 export type WorkflowError =
   | WorkflowNotRegisteredError
   | WorkflowRunNotFoundError
-  | WorkflowInputError;
+  | WorkflowInputError
+  | WorkflowHookBusyError;
 
 export class Workflows extends Context.Service<
   Workflows,
@@ -107,6 +120,8 @@ export class Workflows extends Context.Service<
     >;
     readonly list: (filter?: {
       readonly status?: WorkflowStore.WorkflowRunStatus;
+      /** Only runs their workflow tagged with this. */
+      readonly tag?: string;
     }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>, WorkflowInputError>;
     /** The run once `done` holds for it. Looks now, then on every change to the run. */
     readonly waitFor: (
@@ -124,6 +139,7 @@ export class Workflows extends Context.Service<
     /**
      * Start the run a request to a hook asks for. Nothing, for a hook or token that is not known.
      * `deliveryId` names the delivery when its carrier vouches for one, so its retry is one run.
+     * A hook starts a bounded number of new runs a minute and is busy past that.
      */
     readonly deliver: (delivery: {
       readonly hookId: string;
@@ -141,8 +157,8 @@ export class Workflows extends Context.Service<
     /** Set a key of the store from outside a run, as a person flipping a switch does. */
     readonly storeSet: (key: string, value: Schema.Json) => Effect.Effect<void, WorkflowInputError>;
     readonly storeDelete: (key: string) => Effect.Effect<void, WorkflowInputError>;
-    /** Recent runs and open questions, now and again after every change. */
-    readonly watch: Stream.Stream<WorkflowRunsSnapshot>;
+    /** Recent runs and open questions now, then what changed of them after every change. */
+    readonly watch: Stream.Stream<WorkflowRunsUpdate>;
     /** How much is going on, now and again whenever a count changes. */
     readonly counts: Stream.Stream<WorkflowCounts>;
     /**
@@ -192,6 +208,18 @@ export const disabled = Workflows.of({
   sweep: Effect.void,
 });
 export const layerDisabled = Layer.succeed(Workflows, disabled);
+
+/** What `watch` sends, as the whole list every time: for a client that did not ask for changes. */
+export const wholeLists = (updates: Stream.Stream<WorkflowRunsUpdate>) =>
+  updates.pipe(
+    Stream.mapAccum(
+      (): WorkflowRunsSnapshot | undefined => undefined,
+      (list, update) => {
+        const next = applyWorkflowRunsUpdate(list, update);
+        return [next, [next]] as const;
+      },
+    ),
+  );
 
 export const OFF =
   'Workflows are off on this server. Turn them on in its Settings → Labs → Workflows, or without a desktop, set "workflowsEnabled": true in userdata/settings.json in its T3 home (~/.t3 by default).';
