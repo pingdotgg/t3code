@@ -68,7 +68,9 @@ const CAPABILITY_REJECTION_MESSAGES: Record<string, (provider: string) => string
 };
 
 function providerDisplayName(instanceId: string): string {
-  const known = PROVIDER_DISPLAY_NAMES[instanceId as ProviderDriverKind];
+  const known = Object.hasOwn(PROVIDER_DISPLAY_NAMES, instanceId)
+    ? PROVIDER_DISPLAY_NAMES[instanceId as ProviderDriverKind]
+    : undefined;
   if (known !== undefined) return known;
   const trimmed = instanceId.replace(/Agent$/i, "").trim();
   if (trimmed.length === 0) return instanceId;
