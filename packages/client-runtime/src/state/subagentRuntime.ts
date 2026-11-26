@@ -194,7 +194,7 @@ export function promptTitle(prompt: string): string {
   if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
     end -= 1;
   }
-  return `${prompt.slice(0, end)}...`;
+  return `${prompt.slice(0, end).trimEnd()}...`;
 }
 
 export function workflowMemberModelSelection(

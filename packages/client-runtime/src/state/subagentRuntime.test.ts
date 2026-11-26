@@ -159,11 +159,15 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     },
   );
 
-  it("titles an untitled subagent from its prompt without splitting an emoji", () => {
-    const [untitled] = projectedSubagentsToRuntime([
+  it("titles an untitled subagent from its prompt without splitting an emoji or ending in a space", () => {
+    const [untitled, atSpace, beforeEmoji] = projectedSubagentsToRuntime([
       subagent({ title: null, prompt: `${"a".repeat(76)}😀 and more work.` }),
+      subagent({ id: "space", title: null, prompt: `${"a".repeat(76)} and more work.` }),
+      subagent({ id: "emoji", title: null, prompt: `${"a".repeat(75)} 😀 and more work.` }),
     ]);
     expect(untitled?.title).toBe(`${"a".repeat(76)}...`);
+    expect(atSpace?.title).toBe(`${"a".repeat(76)}...`);
+    expect(beforeEmoji?.title).toBe(`${"a".repeat(75)}...`);
   });
 });
 
