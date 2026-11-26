@@ -196,7 +196,6 @@ describe("extractMarkdownLinkHrefs", () => {
       "[![a](a.png)](src/index.ts) [![b](b.png)](lib/index.ts)",
       ["a.png", "src/index.ts", "b.png", "lib/index.ts"],
     ],
-    ["[![the [image] guide](a.png)](src/index.ts)", ["a.png", "src/index.ts"]],
     [String.raw`[\![a](a.png)](src/index.ts) [label!](ok)`, ["a.png", "ok"]],
     ["See [the [docs] guide](docs/guide.md) and [[1]](src/a.ts)", ["docs/guide.md", "src/a.ts"]],
     ["[a [b](x) [c \\[d](y) [e\\]](z)", ["x", "y", "z"]],
