@@ -1,3 +1,26 @@
+diff --git a/android/src/main/java/com/reactnativekeyboardcontroller/listeners/KeyboardAnimationCallback.kt b/android/src/main/java/com/reactnativekeyboardcontroller/listeners/KeyboardAnimationCallback.kt
+--- a/android/src/main/java/com/reactnativekeyboardcontroller/listeners/KeyboardAnimationCallback.kt
++++ b/android/src/main/java/com/reactnativekeyboardcontroller/listeners/KeyboardAnimationCallback.kt
+@@ -66,6 +66,7 @@
+   // state variables
+   private var persistentKeyboardHeight = getCurrentKeyboardHeight()
+   private var prevKeyboardHeight = getCurrentKeyboardHeight()
++  private var hasSyncedInitialState = false
+   private var isKeyboardVisible = false
+   private var isTransitioning = false
+   private var duration = 0
+@@ -176,7 +177,10 @@
+     // always verify insets, because sometimes default lifecycle methods may not be invoked
+     // (when we press "Share" on Android 16, when Modal closes keyboard, when permission Alert presented etc.)
+     val newHeight = getCurrentKeyboardHeight(insets)
+-    if (prevKeyboardHeight != newHeight && !isMoving && !isSuspended) {
++    // A callback for a recreated activity starts at the current height, so a keyboard JS still
++    // counts as open (it closed while the old activity was gone) is never reported. Sync once.
++    if ((prevKeyboardHeight != newHeight || !hasSyncedInitialState) && !isMoving && !isSuspended) {
++      hasSyncedInitialState = true
+       Logger.w(
+         TAG,
+         "detected desynchronized state - force updating it: $newHeight",
 diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift b/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
 index cdbd63359be9c04fbb0cb30b3cbd1e399bb72d9a..41a72bcc5ebde85237e6aa6bd8240712fdebc0cd 100644
 --- a/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
@@ -19,7 +42,7 @@ diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.
 index 545a5b20f6caac289afdfd11cd7596d57de14122..fbdc9840113ee8caaac685d6f14d7d9f3c725c75 100644
 --- a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
 +++ b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
-@@ -8,6 +8,12 @@
+@@ -8,11 +8,17 @@
  extension KeyboardMovementObserver {
    @objc func keyboardWillAppear(_ notification: Notification) {
      guard !UIResponder.isKeyboardPreloading else { return }
@@ -32,7 +55,13 @@ index 545a5b20f6caac289afdfd11cd7596d57de14122..fbdc9840113ee8caaac685d6f14d7d9f
  
      let (duration, frame) = notification.keyboardMetaData()
      if let keyboardFrame = frame {
-@@ -36,8 +42,40 @@ extension KeyboardMovementObserver {
+       tag = UIResponder.current.reactViewTag
+-      let keyboardHeight = keyboardFrame.cgRectValue.size.height
++      let keyboardHeight = heightOverlappingWindow(keyboardFrame.cgRectValue)
+       self.keyboardHeight = keyboardHeight
+       self.notification = notification
+ 
+@@ -36,8 +42,47 @@ extension KeyboardMovementObserver {
      }
    }
  
@@ -60,6 +89,13 @@ index 545a5b20f6caac289afdfd11cd7596d57de14122..fbdc9840113ee8caaac685d6f14d7d9f
 +    return frame.width.rounded() < screen.width.rounded() || frame.maxY.rounded() < dockedBottom.rounded()
 +  }
 +
++  // the frame is screen-relative; a resized iPadOS window ends above the screen's bottom and covers only part of it
++  private func heightOverlappingWindow(_ frame: CGRect) -> CGFloat {
++    guard let window = UIApplication.shared.activeWindow else { return frame.height }
++    let windowFrame = window.convert(window.bounds, to: window.screen.coordinateSpace)
++    return max(0, min(frame.maxY, windowFrame.maxY) - max(frame.minY, windowFrame.minY))
++  }
++
 +  private func hideIfKeyboardShown(_ notification: Notification) {
 +    let targetHeight = self.notification?.keyboardMetaData().1?.cgRectValue.height ?? 0
 +    if targetHeight > 0 {
@@ -73,6 +109,15 @@ index 545a5b20f6caac289afdfd11cd7596d57de14122..fbdc9840113ee8caaac685d6f14d7d9f
      let (duration, _) = notification.keyboardMetaData()
      tag = UIResponder.current.reactViewTag
      self.notification = notification
+@@ -62,7 +107,7 @@ extension KeyboardMovementObserver {
+ 
+     let (duration, frame) = notification.keyboardMetaData()
+     if let keyboardFrame = frame {
+-      let keyboardHeight = keyboardFrame.cgRectValue.size.height
++      let keyboardHeight = heightOverlappingWindow(keyboardFrame.cgRectValue)
+       tag = UIResponder.current.reactViewTag
+       self.keyboardHeight = keyboardHeight
+ 
 diff --git a/ios/observers/movement/observer/KeyboardMovementObserver.swift b/ios/observers/movement/observer/KeyboardMovementObserver.swift
 index ae97d611a7f727ebbb0e17eabbb3294e1cc76a2f..2ea1d2ddd3fac6ad418d97c700ab885fe645951f 100644
 --- a/ios/observers/movement/observer/KeyboardMovementObserver.swift
