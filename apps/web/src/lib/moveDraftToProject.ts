@@ -41,11 +41,11 @@ export function moveDraftToProject(draftId: DraftId, project: EnvironmentProject
   );
   if (session.environmentId !== project.environmentId || session.projectId !== project.id) {
     const current = { envMode: session.envMode, startFromOrigin: session.startFromOrigin };
+    // A send waits on this; a read stuck on a reconnecting machine falls back to no project file.
     trackPendingWorkspaceDefault(
       draftId,
       projectRef,
       current,
-      // A send waits on this; a read stuck on a reconnecting machine falls back to no project file.
       retargetDraftWorkspace(session, projectRef, AbortSignal.timeout(5_000)).then((workspace) => ({
         ...current,
         ...workspace,
