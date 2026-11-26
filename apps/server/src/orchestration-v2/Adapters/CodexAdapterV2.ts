@@ -8192,13 +8192,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           threadId: string,
           codexInput: ReturnType<typeof toCodexInput>,
         ) {
-          goalsPausedForWake.delete(threadId);
+          const pausedForWake = goalsPausedForWake.delete(threadId);
           // Hold fast first turns until activation.
           const activation = { stopped: false };
           goalActivations.set(threadId, activation);
           yield* Effect.gen(function* () {
-            yield* applyThreadName(threadId, turnInput.appThread.title);
-            yield* startNativeTurn(turnInput, yield* codexInput);
+            yield* Effect.gen(function* () {
+              yield* applyThreadName(threadId, turnInput.appThread.title);
+              yield* startNativeTurn(turnInput, yield* codexInput);
+            }).pipe(
+              // A wake turn that never started leaves the goal waiting for the next wake.
+              Effect.onError(() =>
+                Effect.sync(() => {
+                  if (pausedForWake && !activation.stopped) goalsPausedForWake.add(threadId);
+                }),
+              ),
+            );
             if (activation.stopped) return;
             const { goal } = yield* client.request("thread/goal/set", {
               threadId,

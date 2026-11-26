@@ -13243,6 +13243,72 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect("keeps a goal waiting for the wake when the wake turn fails to start", () =>
+      Effect.gen(function* () {
+        const text = "Child finished";
+        const wakeTurn = "worker-wake-turn";
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: wakeTurn,
+          prompt: text,
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "durable-goal-failed-wake-start",
+          entries: [
+            ...sessionStart,
+            ...request(
+              3,
+              "thread/goal/get",
+              { threadId: nativeThreadId },
+              { goal: codexGoal("paused", 10) },
+            ),
+            ...withReplayRequestId(preamble.slice(5, 6), 4),
+            {
+              type: "emit_inbound",
+              label: "turn/start",
+              frame: { id: 4, error: { code: -32600, message: "turn start failed" } },
+            },
+            ...withReplayRequestId(preamble.slice(5), 5),
+            ...request(
+              6,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "active" },
+              { goal: codexGoal("active", 10) },
+            ),
+            notification("goal resumed", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: wakeTurn,
+              goal: codexGoal("active", 10),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const input = yield* goalTurnInput(
+          {
+            ...harness,
+            providerThread: {
+              ...harness.providerThread,
+              goal: { objective, status: "paused", resumeOnWake: true },
+            },
+          },
+          text,
+        );
+        yield* Effect.flip(harness.runtime.startTurn(input));
+        yield* harness.runtime.startTurn(input);
+        yield* harness.until(() => providerGoals(harness.events).at(-1) === "active");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("stops a turn Codex starts while the expiry pause is in flight", () =>
       Effect.gen(function* () {
         const prompt = "Keep going";
