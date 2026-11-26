@@ -421,8 +421,8 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   });
   const canActivate = (text: string) => fixture.surfaceOptions.at(-1)!.canActivateLink!(text);
   const validate = (text: string) => fixture.surfaceOptions.at(-1)!.validateLink!(text);
-  const hover = (text: string | null) =>
-    act(() => fixture.surfaceOptions.at(-1)!.onLinkHover!(text));
+  const hover = (text: string | null, fallback?: string) =>
+    act(() => fixture.surfaceOptions.at(-1)!.onLinkHover!(text, fallback));
 
   expect(canActivate("https://example.com")).toBe(true);
   for (const branch of ["t3/fix-html-image-details", "t3/fix-html-…mage-details"]) {
@@ -450,6 +450,32 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
     await hover(path);
     expect(canActivate(path)).toBe(true);
   }
+  const grepHit = Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+    AsyncResult.initial(),
+  );
+  fixture.metadata.set(key("/repo/src/a.js:1:function"), grepHit);
+  fixture.metadata.set(
+    key("/repo/src/a.js"),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "file" }),
+    ),
+  );
+  await hover("./src/a.js:1:function", "./src/a.js:1");
+  expect(canActivate("./src/a.js:1")).toBe(false);
+  await act(async () => {
+    appAtomRegistry.set(grepHit, AsyncResult.success(null));
+  });
+  expect(canActivate("./src/a.js:1:function")).toBe(false);
+  expect(canActivate("./src/a.js:1")).toBe(true);
+  fixture.metadata.set(
+    key("/repo/src:1:22:DD"),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "directory" }),
+    ),
+  );
+  await hover("/repo/src:1:22:DD", "/repo/src:1:22");
+  expect(canActivate("/repo/src:1:22:DD")).toBe(true);
+  expect(canActivate("/repo/src:1:22")).toBe(false);
   await hover(null);
   expect(canActivate("/repo/src")).toBe(false);
   fixture.metadata.set(

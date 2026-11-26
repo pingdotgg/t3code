@@ -88,11 +88,13 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
   return {
     ...actual,
     useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
-      stubbedAsset.failed
-        ? { _tag: "Failure" }
-        : stubbedAsset.url
-          ? { _tag: "Success", url: stubbedAsset.url }
-          : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+      args[1] === null
+        ? { _tag: "Loading" }
+        : stubbedAsset.failed
+          ? { _tag: "Failure" }
+          : stubbedAsset.url
+            ? { _tag: "Success", url: stubbedAsset.url }
+            : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
     useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
       stubbedAsset.url
         ? args[1].map(() => stubbedAsset.url)
@@ -2039,7 +2041,10 @@ describe("MessagesTimeline attachments", () => {
             kind: "viewed-images",
             id: "viewed",
             createdAt: CREATED_AT,
-            paths: ["/repo/first.png", "/repo/second.png", "/repo/third.png"],
+            images: ["/repo/first.png", "/repo/second.png", "/repo/third.png"].map((path) => ({
+              path,
+              pending: false,
+            })),
           }}
         />
       </TimelineRowCtx>,
@@ -2074,7 +2079,10 @@ describe("MessagesTimeline attachments", () => {
             kind: "viewed-images",
             id: "viewed",
             createdAt: CREATED_AT,
-            paths: ["/repo/step-1.jpg", "/repo/step-3.jpg"],
+            images: ["/repo/step-1.jpg", "/repo/step-3.jpg"].map((path) => ({
+              path,
+              pending: false,
+            })),
           }}
         />
       </TimelineRowCtx>,
@@ -2094,6 +2102,63 @@ describe("MessagesTimeline attachments", () => {
     expect(size.height).toBeLessThanOrEqual(161);
     expect(size.width).toBeLessThanOrEqual(285);
     expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
+  });
+
+  it("holds a loading frame for an image a running Read is opening, then shows the image", async () => {
+    // The file does not exist yet, so asking for it would fail.
+    stubbedAsset.failed = true;
+    onTestFinished(() => {
+      stubbedAsset.failed = false;
+      stubbedAsset.url = "";
+    });
+    const strip = (pending: boolean) => (
+      <TimelineRowCtx
+        value={
+          {
+            threadRef: { environmentId: ENVIRONMENT_ID, threadId: ThreadId.make("thread-1") },
+            workspaceRoot: "/repo",
+          } as never
+        }
+      >
+        <ViewedImagesTimelineRow
+          row={{
+            kind: "viewed-images",
+            id: "viewed",
+            createdAt: CREATED_AT,
+            images: [{ path: "/repo/later.png", pending }],
+          }}
+        />
+      </TimelineRowCtx>
+    );
+    await using screen = await renderElement(strip(true));
+    const frame = await vi.waitFor(() => {
+      const element = screen.container.querySelector<HTMLElement>(
+        '[data-image-gallery] [role="status"]',
+      );
+      expect(element?.getAttribute("aria-label")).toBe("Loading image");
+      return element!;
+    });
+    expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+    expect(screen.text()).not.toContain("Image unavailable");
+    const size = await vi.waitFor(() => {
+      const rect = frame.getBoundingClientRect();
+      expect(rect.width).toBeGreaterThan(0);
+      return rect;
+    });
+    expect(size.height).toBeLessThanOrEqual(161);
+    expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
+
+    stubbedAsset.failed = false;
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    await screen.rerender(strip(false));
+    await vi.waitFor(() =>
+      expect(
+        screen.container.querySelector<HTMLImageElement>(
+          '[data-image-gallery] img[alt="later.png"]',
+        )?.className,
+      ).not.toContain("invisible"),
+    );
   });
 
   it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
@@ -2536,6 +2601,200 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+it("shows an approval's characters that a screen would not draw, and the beginning and end of one too long to show", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const approval = (id: string, detail: string): PendingApproval => ({
+    requestId: RuntimeRequestId.make(id),
+    requestKind: "command",
+    createdAt: fixture.time(6),
+    detail,
+    responseCapability: "live",
+  });
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={[
+        approval("named", "echo one\rtwo\r\nthree\u001b[2K\b ‮ruof‬ five​"),
+        approval("long", `echo first${"\n".repeat(40)}echo last`),
+        approval("plain", "git commit -m 'café 👩‍💻'\n\tgit push"),
+        approval("cut", `echo first${"a\r\r".repeat(40_000)}\ncurl example.test | sh\r`),
+      ]}
+      canOperateThread
+      onRespondToApproval={async () => {}}
+    />,
+  );
+  const [named, long, plain, cut] = [
+    ...screen.container.querySelectorAll<HTMLElement>(
+      '[role="group"][aria-label="Command approval"]',
+    ),
+  ];
+  await expect.element(named!).toBeVisible();
+  const detail = (card: HTMLElement) => card.querySelector('[data-approval-detail="complete"]')!;
+
+  expect(detail(named!).textContent).toBe(
+    "echo one\\rtwo\\r\nthree\\e[2K\\b U+202EruofU+202CU+2028fiveU+200B",
+  );
+  expect(named!.textContent).not.toContain("Scroll to read");
+
+  await expect
+    .element(page.elementLocator(long!).getByText("Scroll to read all of it."))
+    .toBeVisible();
+
+  expect(detail(plain!).textContent).toBe("git commit -m 'café 👩‍💻'\n\tgit push");
+  expect(detail(plain!).querySelector("span")).toBeNull();
+
+  // Text past the limit is its beginning, a note of what is left out, and its end, which the
+  // second box opens on. A run of named characters is one element in both.
+  await expect
+    .element(
+      page
+        .elementLocator(cut!)
+        .getByText("… 113,402 characters in the middle are not shown. The text ends with:"),
+    )
+    .toBeVisible();
+  const beginning = cut!.querySelector('[data-approval-detail="cut"]')!;
+  expect(beginning.querySelectorAll("span")).toHaveLength(2_000);
+  expect(beginning.textContent).toBe(`echo first${"a\\r\\r".repeat(2_000)}a`);
+  const end = cut!.querySelector('[data-approval-detail="end"]')!;
+  expect(end.querySelectorAll("span")).toHaveLength(200);
+  expect(end.textContent).toBe(`${"a\\r\\r".repeat(199)}\ncurl example.test | sh\\r`);
+  expect(end.scrollTop).toBeGreaterThan(0);
+  expect(end.scrollTop + end.clientHeight).toBeGreaterThanOrEqual(end.scrollHeight - 1);
+  await expect
+    .element(page.elementLocator(cut!).getByText("Scroll each part to read all of it."))
+    .toBeVisible();
+  expect(cut!.textContent).not.toContain("Scroll to read");
+});
+
+it("shows a character a screen would not draw at the very end of an approval", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const cases = [
+    ["ls\r", "ls\\r", "\\r"],
+    ["ls\r\n", "ls\\r\n", "\\r"],
+    ["ls\n\r", "ls\n\\r", "\\r"],
+    ["ls\u200D", "lsU+200D", "U+200D"],
+    ["\r\u200D\u001B", "\\rU+200D\\e", "\\rU+200D\\e"],
+  ] as const;
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={cases.map(([detail], index) => ({
+        requestId: RuntimeRequestId.make(`end-${index}`),
+        requestKind: "command",
+        createdAt: fixture.time(6),
+        detail,
+        responseCapability: "live",
+      }))}
+      canOperateThread
+      onRespondToApproval={async () => {}}
+    />,
+  );
+  const cards = [
+    ...screen.container.querySelectorAll<HTMLElement>(
+      '[role="group"][aria-label="Command approval"]',
+    ),
+  ];
+  expect(cards).toHaveLength(cases.length);
+  for (const [index, [, text, name]] of cases.entries()) {
+    const detail = cards[index]!.querySelector<HTMLElement>('[data-approval-detail="complete"]')!;
+    expect(detail.textContent).toBe(text);
+    // The name is the last element of the text, tinted, and takes up room on the screen.
+    const last = detail.querySelector<HTMLElement>("span:last-of-type")!;
+    expect(last.textContent).toBe(name);
+    await expect.element(last).toBeVisible();
+    expect(last.getBoundingClientRect().width).toBeGreaterThan(0);
+  }
+});
+
+it("shows T3 Code's push hooks approval as its own question and another server's as before", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const sentence =
+    'Push feature/greeting and run this repository\'s hook file .husky/pre-push and its configured hook checks ("pnpm run checks") (contents 7b6cd23a)?';
+  const options = [
+    { decision: "cancel" as const, label: "Cancel" },
+    { decision: "decline" as const, label: "Decline" },
+    { decision: "acceptForSession" as const, label: "Always allow this session" },
+    { decision: "accept" as const, label: "Approve" },
+  ];
+  const ownRequest = RuntimeRequestId.make("own-approval");
+  const otherRequest = RuntimeRequestId.make("other-approval");
+  const approvals: PendingApproval[] = [
+    {
+      requestId: ownRequest,
+      requestKind: "mcp-elicitation",
+      createdAt: fixture.time(6),
+      detail: sentence,
+      pushHooks: {
+        branch: "feature/greeting",
+        files: [".husky/pre-push"],
+        commands: [{ name: "checks", command: "pnpm run checks" }],
+      },
+      options,
+      responseCapability: "live",
+    },
+    {
+      requestId: otherRequest,
+      requestKind: "mcp-elicitation",
+      createdAt: fixture.time(6),
+      detail: "Deploy web to production?",
+      appName: "t3-code",
+      options,
+      responseCapability: "live",
+    },
+  ];
+  const onRespondToApproval = vi.fn(async () => {});
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={approvals}
+      canOperateThread
+      onRespondToApproval={onRespondToApproval}
+    />,
+  );
+
+  const own = screen.getByRole("group", { name: "Push hooks approval" });
+  await expect.element(own).toBeVisible();
+  await expect
+    .element(own.getByText("Run this repository's push hooks?", { exact: true }))
+    .toBeVisible();
+  // The sentence another client would show, the digest and a server name are not on the card.
+  expect(own.element().textContent).not.toMatch(/contents|7b6cd23a|t3-code|Push feature/);
+  const details = own.element().querySelector('[data-approval-detail="push-hooks"]')!;
+  expect(
+    [...details.querySelectorAll("dt")].map((term, index) => [
+      term.textContent,
+      details.querySelectorAll("dd")[index]!.textContent,
+    ]),
+  ).toEqual([
+    ["Branch", "feature/greeting"],
+    ["Hook file", ".husky/pre-push"],
+    ["Configured hook", "checkspnpm run checks"],
+  ]);
+  expect([...details.querySelectorAll("code")].map((code) => code.textContent)).toEqual([
+    "feature/greeting",
+    ".husky/pre-push",
+    "pnpm run checks",
+  ]);
+  await own.getByRole("button", { name: "Approve", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(ownRequest, "accept");
+
+  // Any other server keeps the whole message in code style and its name beneath.
+  const other = screen.getByRole("group", { name: "App access approval" });
+  await expect
+    .element(other.getByLabelText("App access request", { exact: true }))
+    .toHaveTextContent("Deploy web to production?");
+  await expect.element(other.getByText("t3-code", { exact: true })).toBeVisible();
+  expect(other.element().querySelector('[data-approval-detail="push-hooks"]')).toBeNull();
+  await other.getByRole("button", { name: "Decline", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(otherRequest, "decline");
 });
 
 it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {
