@@ -13,7 +13,10 @@ import { cn } from "../../lib/utils";
 import { Popover, PopoverPopup, PopoverCreateHandle } from "../ui/popover";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { useChatCanvas } from "./ChatCanvasContext";
-import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
+import {
+  THREAD_DETAILS_CARD_GAP,
+  resolveThreadDetailsCardDensity,
+} from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 
@@ -21,15 +24,16 @@ export function ThreadDetailsCard({
   threadRef,
   anchor,
   handle,
+  contentKey,
   onContextMenu,
-  onFocusRequest,
   children,
 }: {
   threadRef: ScopedThreadRef;
   anchor: RefObject<Element | null>;
   handle: ReturnType<typeof PopoverCreateHandle>;
+  /** Changes when the set of rendered items changes, so cached heights are measured again. */
+  contentKey: string;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
-  onFocusRequest?: () => boolean;
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
   const gt = useGT();
@@ -45,9 +49,15 @@ export function ThreadDetailsCard({
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
   );
+  const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}:${contentKey}`;
+  const [measurements, setMeasurements] = useState({
+    key: measurementKey,
+    heights: { full: 0, compact: 0 },
+  });
+  const contentHeights =
+    measurements.key === measurementKey ? measurements.heights : { full: 0, compact: 0 };
   const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
-  // Cards scroll at full density so workspace controls and sections never disappear.
-  const density = "full";
+  const density = resolveThreadDetailsCardDensity(height, contentHeights);
   const measureDetailsCard = canvas?.measureDetailsCard;
   const cardWidth = preferredPlacement?.width;
   // The mode derives from canvas measurements, the preview frame and the
@@ -61,16 +71,31 @@ export function ThreadDetailsCard({
   }, [mode, popoverOpen, threadRef]);
   const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
   const { environmentId, threadId } = threadRef;
+  // Re-measures when the density or measurement key changes, so each density's
+  // height is measured once it renders.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the card's DOM height via ResizeObserver and reports it to the canvas
   useLayoutEffect(() => {
     const element = contentElement;
-    if (!element) return;
+    if (!element || density === "essential") return;
     const measure = () => {
-      const frame = element.closest<HTMLElement>("[data-thread-details-frame]");
+      const frame = element.closest<HTMLElement>("[data-thread-details-card]");
       const next = element.offsetHeight + (frame ? frame.offsetHeight - frame.clientHeight : 0);
+      // PR and issue lists, servers, repositories, lineage, side chats and automations scroll as they grow.
+      // Counting them toward density would hide the section and workspace controls when the user asks to see more.
+      const lists = element.querySelectorAll<HTMLElement>(
+        "[data-thread-relationships-panel], [data-thread-side-chats-panel], [data-thread-details-pr-list], [data-thread-details-issue-list], [data-thread-automations-panel], [data-thread-details-server-overflow], [data-thread-details-repository-overflow]",
+      );
+      const fittingHeight =
+        next - Array.from(lists).reduce((sum, list) => sum + list.offsetHeight, 0);
+      setMeasurements((current) => {
+        const heights = current.key === measurementKey ? current.heights : { full: 0, compact: 0 };
+        return current.key === measurementKey && heights[density] === fittingHeight
+          ? current
+          : { key: measurementKey, heights: { ...heights, [density]: fittingHeight } };
+      });
       // Only the laid-out DOM knows the full card height, and the canvas keeps preview
       // frames clear of it, so it is reported from this measure effect.
-      if (cardWidth !== undefined) {
+      if (density === "full" && cardWidth !== undefined) {
         measureDetailsCard?.({
           threadRef: { environmentId, threadId },
           width: cardWidth,
@@ -80,22 +105,28 @@ export function ThreadDetailsCard({
     };
     measure();
     return observeResize(element, measure);
-  }, [contentElement, cardWidth, measureDetailsCard, environmentId, threadId]);
+  }, [
+    contentElement,
+    density,
+    measurementKey,
+    cardWidth,
+    measureDetailsCard,
+    environmentId,
+    threadId,
+  ]);
   const card = (
     <div
       className={cn(
-        "isolate grid min-w-0 max-h-full grid-rows-[minmax(0,1fr)]",
+        "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
-      style={{ height }}
+      style={placement ? { maxHeight: height } : undefined}
       onContextMenu={onContextMenu}
-      data-thread-details-frame
+      data-thread-details-card
     >
-      <ScrollArea scrollFade orientation="vertical" className="min-h-0 min-w-0">
-        <div ref={setContentElement} className="min-w-0 overflow-x-clip">
-          {children(density)}
-        </div>
+      <ScrollArea scrollFade className="min-h-0">
+        <div ref={setContentElement}>{children(density)}</div>
       </ScrollArea>
     </div>
   );
@@ -134,7 +165,6 @@ export function ThreadDetailsCard({
           }}
           data-density={density}
           data-thread-details-panel="inline"
-          data-sidebar-slide-track="end"
         >
           {card}
         </aside>
@@ -147,7 +177,6 @@ export function ThreadDetailsCard({
         role="dialog"
         data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
         initialFocus={() => {
-          if (onFocusRequest?.()) return false;
           requestWorkspaceFocus({ area: "details" });
           return false;
         }}

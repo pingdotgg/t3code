@@ -3,7 +3,7 @@ import {
   workflowReferenceLabel,
   workflowReferencePullRequest,
 } from "@t3tools/client-runtime/workflows";
-import type { EnvironmentId, WorkflowRunReference } from "@t3tools/contracts";
+import type { EnvironmentId, WorkflowRunReference, WorkflowRunSubject } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { T } from "gt-react";
 import { CircleCheckIcon, CircleDotIcon, ExternalLinkIcon, LinkIcon } from "lucide-react";
@@ -16,15 +16,21 @@ import { IssueDetailPanel } from "../issue/IssueDetailPanel";
 import { readIssueListPreferences } from "../issue/issueListPreferences";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 
-/** The mark a reference wears: its kind's icon, in the ink its state has on its own page. */
-function referenceGlyph(reference: WorkflowRunReference) {
+/** A reference, or a run's subject, which says nothing of where it stands. */
+type Shown = WorkflowRunSubject & Partial<Pick<WorkflowRunReference, "state">>;
+
+/**
+ * The mark a reference wears: its kind's icon, in the ink its state has on its own page. A
+ * subject says nothing of its state, so its mark wears none.
+ */
+function referenceGlyph(reference: Shown) {
+  const unknown = reference.state === undefined ? { toneClassName: "text-muted-foreground" } : {};
   if (workflowReferencePullRequest(reference) !== null) {
     const state =
       reference.state === "closed" || reference.state === "merged" ? reference.state : "open";
-    return PULL_REQUEST_STATE_PRESENTATION[state];
+    return { ...PULL_REQUEST_STATE_PRESENTATION[state], ...unknown };
   }
   if (workflowReferenceIssue(reference) !== null) {
     return reference.state === "closed"
@@ -32,12 +38,16 @@ function referenceGlyph(reference: WorkflowRunReference) {
           Icon: CircleCheckIcon,
           toneClassName: PULL_REQUEST_STATE_PRESENTATION.merged.toneClassName,
         }
-      : { Icon: CircleDotIcon, toneClassName: PULL_REQUEST_STATE_PRESENTATION.open.toneClassName };
+      : {
+          Icon: CircleDotIcon,
+          toneClassName: PULL_REQUEST_STATE_PRESENTATION.open.toneClassName,
+          ...unknown,
+        };
   }
   return { Icon: LinkIcon, toneClassName: "text-muted-foreground" };
 }
 
-export function WorkflowReferenceMark({ reference }: { readonly reference: WorkflowRunReference }) {
+export function WorkflowReferenceMark({ reference }: { readonly reference: Shown }) {
   const glyph = referenceGlyph(reference);
   return <glyph.Icon aria-hidden className={cn("size-3 shrink-0", glyph.toneClassName)} />;
 }
@@ -49,7 +59,7 @@ export function WorkflowReferenceChip({
   small = false,
   onOpen,
 }: {
-  readonly reference: WorkflowRunReference;
+  readonly reference: Shown;
   /** It shows in the pane now, so another click closes it. */
   readonly open: boolean;
   /** On a step, where the label is enough. */
@@ -60,18 +70,21 @@ export function WorkflowReferenceChip({
   const title = reference.title === label ? "" : reference.title;
   const name = title === "" ? label : `${label} ${title}`;
   return (
-    <Button
-      variant={open ? "secondary" : "pill"}
-      size={small ? "chip" : "xs-pill"}
+    <button
+      type="button"
       aria-pressed={open}
       aria-label={name}
-      className="min-w-0 max-w-72"
+      className={cn(
+        "inline-flex min-w-0 max-w-72 cursor-pointer items-center gap-1.5 rounded-full border bg-card text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none",
+        small ? "py-px ps-1.5 pe-2 text-2xs" : "py-0.5 ps-2 pe-2.5 text-xs",
+        open ? "border-primary ring-1 ring-primary" : "border-border",
+      )}
       onClick={onOpen}
     >
       <WorkflowReferenceMark reference={reference} />
       <span className="shrink-0 text-muted-foreground">{label}</span>
       {small || title === "" ? null : <span className="min-w-0 truncate">{title}</span>}
-    </Button>
+    </button>
   );
 }
 
@@ -162,27 +175,24 @@ export function WorkflowReferencePanel({
   }
   // A kind this client does not know yet: what the run knows of it, and where it lives.
   return (
-    <div className="space-y-3 p-4">
-      <div className="space-y-1.5">
-        <h3 className="text-title break-words">
-          {reference.title === "" ? workflowReferenceLabel(reference) : reference.title}
-        </h3>
-        <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <WorkflowReferenceMark reference={reference} />
-            <span>{reference.kind}</span>
-          </span>
-          {reference.state === null ? null : (
-            <Badge variant="secondary" size="sm">
-              {reference.state}
-            </Badge>
-          )}
-        </div>
-      </div>
+    <div className="space-y-2 p-4">
+      <h3 className="text-base font-semibold break-words">
+        {reference.title === "" ? workflowReferenceLabel(reference) : reference.title}
+      </h3>
+      <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <WorkflowReferenceMark reference={reference} />
+        <span>{reference.kind}</span>
+        {reference.state === null ? null : (
+          <>
+            <span aria-hidden>·</span>
+            <span>{reference.state}</span>
+          </>
+        )}
+      </p>
       {reference.url === null ? null : (
         <Button
           size="sm"
-          variant="secondary"
+          variant="outline"
           render={<a href={reference.url} target="_blank" rel="noreferrer" />}
         >
           <T>Open</T>

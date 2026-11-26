@@ -120,20 +120,6 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
   return (next.observedAt ?? -Infinity) >= (current.observedAt ?? -Infinity);
 }
 
-// Retry a shared flight canceled by its previous reader after that flight leaves the cache.
-const getShared = Effect.fn("PullRequestService.getShared")(
-  function* <Key, A, E, R>(cache: Cache.Cache<Key, A, E, R>, key: Key) {
-    return yield* Cache.get(cache, key);
-  },
-  (effect, cache, key) =>
-    effect.pipe(
-      Effect.catchCauseIf(
-        (cause) => Cause.hasInterruptsOnly(cause),
-        (_cause) => Cache.get(cache, key),
-      ),
-    ),
-);
-
 // Providers request one extra row; 99 stays within GitHub/GitLab's 100-row API limit.
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
 const REPOSITORY_CONCURRENCY = 12;
@@ -1321,10 +1307,10 @@ export const make = Effect.gen(function* () {
           const roots =
             viewerRoots.get(host) ?? forHost.map(({ project }) => project.workspaceRoot);
           const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
-          if (options?.allowPaused === true) return getShared(viewerFlights, key);
+          if (options?.allowPaused === true) return Cache.get(viewerFlights, key);
           // Check pauses outside the shared lookup so background reads cannot spawn repeated failing CLIs and extend the pause.
           return rateLimits.check({ provider: api.kind, host }).pipe(
-            Effect.flatMap(() => getShared(viewerFlights, key)),
+            Effect.flatMap(() => Cache.get(viewerFlights, key)),
             Effect.catch((error) =>
               Effect.succeed<ResolvedViewer>({
                 host,
@@ -2096,9 +2082,6 @@ export const make = Effect.gen(function* () {
                 : { overviewThreads: activity.overviewThreads }),
               commits: activity.commits,
               ...(activity.reactions === undefined ? {} : { reactions: activity.reactions }),
-              ...(activity.reviewRequests === undefined
-                ? {}
-                : { reviewRequests: activity.reviewRequests }),
             })),
           ),
       ),
@@ -2876,21 +2859,20 @@ export const make = Effect.gen(function* () {
           );
         }
         return viewerPermissionsOf(project, input, "labelCandidates").pipe(
-          Effect.flatMap(
-            (viewer): Effect.Effect<PullRequestLabelCandidateList, PullRequestError> =>
-              viewer.labels === false
-                ? Effect.fail(
-                    new PullRequestOperationError({
-                      operation: "labelCandidates",
-                      detail: LABEL_CHANGE_REFUSAL,
-                    }),
-                  )
-                : list({
-                    cwd: project.project.workspaceRoot,
-                    repository: project.repository,
-                    host: project.host,
-                    number: input.number,
-                  }).pipe(Effect.mapError(toPullRequestError("labelCandidates"))),
+          Effect.flatMap((viewer): Effect.Effect<PullRequestLabelCandidateList, PullRequestError> =>
+            viewer.labels === false
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "labelCandidates",
+                    detail: LABEL_CHANGE_REFUSAL,
+                  }),
+                )
+              : list({
+                  cwd: project.project.workspaceRoot,
+                  repository: project.repository,
+                  host: project.host,
+                  number: input.number,
+                }).pipe(Effect.mapError(toPullRequestError("labelCandidates"))),
           ),
         );
       }),
@@ -3359,7 +3341,13 @@ export const make = Effect.gen(function* () {
         ? null
         : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
     ]);
-    return getShared(listCache, key);
+    // A replacement reader can join a lookup still finishing its previous reader's cancellation.
+    return Cache.get(listCache, key).pipe(
+      Effect.catchCauseIf(
+        (cause) => Cause.hasInterruptsOnly(cause),
+        (_cause) => Cache.get(listCache, key),
+      ),
+    );
   };
 
   const checksCache = yield* Cache.makeWith(
@@ -3445,6 +3433,9 @@ export const make = Effect.gen(function* () {
                 state: value.state,
                 checks: value.checks,
                 observedAt: value.observedAt,
+                ...(value.workflowApprovalsRequired === undefined
+                  ? {}
+                  : { workflowApprovalsRequired: value.workflowApprovalsRequired }),
               });
             }
             recordStats(
@@ -3568,7 +3559,7 @@ export const make = Effect.gen(function* () {
   const detail: PullRequestService["Service"]["detail"] = (input) => {
     const key = refCacheKey(input);
     // Skip reads older than strict summaries; caching them would preserve regressions without asking the host again.
-    const read = getShared(detailCache, key).pipe(
+    const read = Cache.get(detailCache, key).pipe(
       Effect.tap((value) => {
         if (value.state === "merged") noteMerged(input);
         const summary = summaryFromDetail(value, lastGoodSummary.peek(key));
@@ -3638,7 +3629,7 @@ export const make = Effect.gen(function* () {
     return Cache.getSuccess(detailCache, key).pipe(
       Effect.flatMap(
         Option.match({
-          onNone: () => getShared(previewCache, key),
+          onNone: () => Cache.get(previewCache, key),
           onSome: (detail) => Effect.succeed(previewFields(detail)),
         }),
       ),
@@ -3646,7 +3637,7 @@ export const make = Effect.gen(function* () {
   };
   const activity: PullRequestService["Service"]["activity"] = (input) => {
     const key = refCacheKey(input);
-    return getShared(activityCache, key);
+    return Cache.get(activityCache, key);
   };
 
   const diffCache = yield* Cache.makeWith(
@@ -3728,7 +3719,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.uninterruptible,
     );
-    const read = getShared(diffCache, key).pipe(
+    const read = Cache.get(diffCache, key).pipe(
       Effect.ensuring(evictDiffs),
       Effect.ensuring(Effect.sync(armDiffSweep)),
     );
@@ -3783,7 +3774,7 @@ export const make = Effect.gen(function* () {
   const filesViewed: PullRequestService["Service"]["filesViewed"] = (input) =>
     canonicalRef(input).pipe(
       Effect.flatMap((ref) =>
-        getShared(filesViewedCache, JSON.stringify([refCacheKey(ref), filesViewedEpoch(ref)])),
+        Cache.get(filesViewedCache, JSON.stringify([refCacheKey(ref), filesViewedEpoch(ref)])),
       ),
     );
 
@@ -3830,7 +3821,12 @@ export const make = Effect.gen(function* () {
     }
     if (missing.size === 0) return { stats: held };
     const key = statsBatchKey(missing.values());
-    const { result, at } = yield* getShared(listStatsCache, key);
+    const { result, at } = yield* Cache.get(listStatsCache, key).pipe(
+      Effect.catchCauseIf(
+        (cause) => Cause.hasInterruptsOnly(cause),
+        (_cause) => Cache.get(listStatsCache, key),
+      ),
+    );
     for (const [key, ref] of missing) {
       const stat = result.stats.find(
         (stat) =>
@@ -4235,9 +4231,9 @@ export const make = Effect.gen(function* () {
     notifyLinkedThreadsChanged,
     refreshAfterTurn,
     detail: credentialCached(detail),
-    checks: credentialCached((input) => getShared(checksCache, refCacheKey(input))),
+    checks: credentialCached((input) => Cache.get(checksCache, refCacheKey(input))),
     watchFingerprint: credentialCached((input) =>
-      getShared(watchFingerprintCache, refCacheKey(input)),
+      Cache.get(watchFingerprintCache, refCacheKey(input)),
     ),
     activity: credentialCached(activity),
     changes,

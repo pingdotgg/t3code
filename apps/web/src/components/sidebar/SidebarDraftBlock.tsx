@@ -4,7 +4,7 @@ import { contextMenuSourceOf } from "../../contextMenuSource";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { composerFileLinksToPlainText } from "@t3tools/shared/composerInlineTokens";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { SquarePenIcon, XIcon } from "lucide-react";
 import {
   memo,
@@ -13,16 +13,13 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
+import { terminalContextDisplayLabels } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { textDirection } from "~/textDirection";
 import { useTerminalLabelsByThreadKey } from "~/state/terminalSessions";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
-import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -32,12 +29,11 @@ import {
 } from "../../composerDraftStore";
 import {
   draftPenClassName,
+  draftSurfaceClassName,
   JUMP_HINT_SLOT_CLASS_NAME,
   JumpHintBadge,
-  SIDEBAR_CARD_BODY_CLASS_NAME,
-  SIDEBAR_CARD_META_LINE_CLASS_NAME,
-  SIDEBAR_CARD_PROJECT_LABEL_CLASS_NAME,
 } from "./SidebarThreadRow";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const EMPTY_COMPOSER_PARTS = {
   prompt: "",
@@ -63,7 +59,7 @@ export function useDraftTerminalLabels(): ReadonlyMap<string, string> {
   );
 }
 
-function draftTerminalLabel(
+export function draftTerminalLabel(
   session: DraftSessionState,
   terminalLabels: ReadonlyMap<string, string>,
 ): string | null {
@@ -76,8 +72,6 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   terminalLabel: string | null;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
-  environmentLabel: string | null;
-  environmentMachine: EnvironmentMachineKind;
   isActive: boolean;
   jumpLabel: string | null;
   onNavigate: (draftId: DraftId) => void;
@@ -91,10 +85,18 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const { draftId, onContextMenu, onDiscard, onNavigate } = props;
   const composer = props.composer ?? EMPTY_COMPOSER_PARTS;
   const gt = useGT();
+  const resolve = useMessages();
+  const terminalLabels = terminalContextDisplayLabels(composer.terminalContexts, resolve);
   const promptPreview =
     assistantCitationsToPlainText(
       composerFileLinksToPlainText(
-        replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label),
+        replaceComposerContextReferences(
+          composer.prompt,
+          (occurrence) =>
+            (occurrence.kind === "terminal"
+              ? terminalLabels.get(occurrence.contextId)
+              : undefined) ?? occurrence.label,
+        ),
       ),
     )
       .trim()
@@ -155,79 +157,49 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         aria-current={accessibility.current}
         data-testid="sidebar-draft-row"
         className={cn(
-          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-control text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          props.isActive
-            ? "surface-sidebar-row-selected"
-            : "bg-transparent hover:surface-sidebar-row-hover active:surface-sidebar-row-active",
+          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
         )}
         onClick={handleActivate}
         onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
       >
-        <div className={SIDEBAR_CARD_BODY_CLASS_NAME}>
+        <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
+            <SquarePenIcon aria-hidden className={draftPenClassName} />
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
-            {props.projectDisplayName ? (
-              <span className={SIDEBAR_CARD_PROJECT_LABEL_CLASS_NAME}>
-                {props.projectDisplayName}
-              </span>
-            ) : (
-              <span className="flex-1" />
-            )}
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+              {props.projectDisplayName}
+            </span>
             <span
               className={cn(
                 "ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end",
                 props.jumpLabel && JUMP_HINT_SLOT_CLASS_NAME,
               )}
             >
-              <span className="pointer-events-none inline-flex opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100 motion-reduce:transition-none">
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost-muted"
-                        size="icon-micro"
-                        aria-label={gt("Discard draft")}
-                        onClick={handleDiscard}
-                      />
-                    }
+              <SharedTooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={gt("Discard draft")}
+                    onClick={handleDiscard}
+                    className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
                   >
-                    <XIcon aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">
+                    <XIcon className="size-3" />
+                  </button>
+                }
+                label={
+                  <>
                     <T>Discard draft</T>
-                  </TooltipPopup>
-                </Tooltip>
-              </span>
+                  </>
+                }
+              />
               {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
             </span>
           </div>
-          <div className="mt-1 flex min-w-0 items-center gap-1.5">
-            <span
-              className="min-w-0 flex-1 truncate text-start text-label leading-5 text-(--sidebar-thread-title-foreground)"
-              dir={textDirection(preview)}
-            >
-              {preview}
-            </span>
-          </div>
-          <div className={SIDEBAR_CARD_META_LINE_CLASS_NAME}>
-            {props.environmentLabel !== null ? (
-              <>
-                <EnvironmentMachineIcon
-                  aria-hidden
-                  kind={props.environmentMachine}
-                  className="size-3.5 shrink-0 text-icon-muted"
-                />
-                <span className="min-w-0 flex-1 truncate">{props.environmentLabel}</span>
-              </>
-            ) : null}
-            <span className="inline-flex shrink-0 items-center gap-1">
-              <SquarePenIcon aria-hidden className={draftPenClassName} />
-              <T>Draft</T>
-            </span>
-          </div>
+          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
         </div>
       </div>
     </li>
@@ -295,8 +267,6 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   jumpLabelByDraftId: ReadonlyMap<DraftId, string> | null;
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
-  environmentLabelById?: ReadonlyMap<EnvironmentId, string>;
-  environmentMachineById?: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (
@@ -336,10 +306,6 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             terminalLabel={draftTerminalLabel(session, props.terminalLabels)}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
-            environmentLabel={props.environmentLabelById?.get(session.environmentId) ?? null}
-            environmentMachine={
-              props.environmentMachineById?.get(session.environmentId) ?? "server"
-            }
             isActive={draftId === props.routeDraftId}
             jumpLabel={props.jumpLabelByDraftId?.get(draftId) ?? null}
             onNavigate={props.onNavigateToDraft}

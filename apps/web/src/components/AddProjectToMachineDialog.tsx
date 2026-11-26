@@ -40,6 +40,7 @@ import { seedDraftModelSelection } from "../lib/seedDraftModelSelection";
 import { newProjectId } from "../lib/utils";
 import { readProject, subscribeProject, useProject } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { holdProjectCloneToasts, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { useDebouncedValue } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
@@ -223,6 +224,11 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     }
     setSubmitting(true);
     setError(null);
+    const requestedId = newProjectId();
+    // The clone list can arrive before the start reply.
+    const releaseToastHold = holdProjectCloneToasts(
+      scopeProjectRef(target.environmentId, requestedId),
+    );
     try {
       const projectId = await addProjectToMachine({
         source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
@@ -231,18 +237,23 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
           project.workspaceRoot,
         ),
         target: { environmentId: target.environmentId, label: target.label },
-        projectId: newProjectId(),
+        projectId: requestedId,
         title: project.title,
         remoteUrl,
         destinationPath: destinationPath.trim(),
         files: [...selectedFiles.keys()],
       });
-      close();
-      openClonedProject(scopeProjectRef(target.environmentId, projectId));
+      if (useRequest.getState().request === request) {
+        const targetRef = scopeProjectRef(target.environmentId, projectId);
+        silenceProjectCloneToasts(targetRef);
+        close();
+        openClonedProject(targetRef);
+      }
     } catch (cause) {
       setError(thrownErrorMessage(cause, m) ?? gt("Could not start the clone."));
       setSubmitting(false);
     }
+    releaseToastHold();
   };
 
   return (
@@ -274,18 +285,18 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
           <DialogPanel>
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
               <div className="flex min-w-0 flex-col gap-1">
-                <span className="flex min-w-0 items-center gap-1.5 text-label">
+                <span className="flex min-w-0 items-center gap-1.5 font-medium text-sm">
                   <EnvironmentMachineIcon
                     kind={resolveEnvironmentMachineKind(source?.serverConfig ?? null)}
                     className="size-3.5 shrink-0"
                   />
                   <span className="truncate">{source?.label ?? gt("This machine")}</span>
                 </span>
-                <span className="flex min-w-0 font-mono text-muted-foreground text-meta">
+                <span className="flex min-w-0 font-mono text-muted-foreground text-xs">
                   <MiddleTruncate value={project?.workspaceRoot ?? ""} />
                 </span>
               </div>
-              <div className="flex w-28 flex-col items-center gap-0.5 text-muted-foreground text-meta">
+              <div className="flex w-28 flex-col items-center gap-0.5 text-muted-foreground text-xs">
                 {/* oxlint-disable-next-line t3code/no-untranslated-copy -- git command name */}
                 <span>git clone</span>
                 <span className="flex w-full items-center">
@@ -327,14 +338,14 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                     </SelectPopup>
                   </Select>
                 ) : (
-                  <span className="flex min-w-0 items-center gap-1.5 text-label">
+                  <span className="flex min-w-0 items-center gap-1.5 font-medium text-sm">
                     {target ? (
                       <EnvironmentMachineIcon kind={target.machine} className="size-3.5 shrink-0" />
                     ) : null}
                     <span className="truncate">{target?.label ?? gt("No machine available")}</span>
                   </span>
                 )}
-                <span className="flex min-w-0 font-mono text-muted-foreground text-meta">
+                <span className="flex min-w-0 font-mono text-muted-foreground text-xs">
                   <MiddleTruncate value={destinationPath} />
                 </span>
               </div>
@@ -357,9 +368,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   <Toggle value="https">HTTPS</Toggle>
                 </ToggleGroup>
               ) : null}
-              <span className="truncate font-mono text-muted-foreground text-meta">
-                {remoteUrl}
-              </span>
+              <span className="truncate font-mono text-muted-foreground text-xs">{remoteUrl}</span>
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -387,14 +396,12 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   </Label>
                   {copyable.length > 0 ? (
                     <>
-                      <span className="flex flex-col items-end gap-0.5 text-muted-foreground text-meta">
-                        <span>
-                          {gt("{selected} of {total}", {
-                            selected: selectedFiles.size,
-                            total: allIgnoredFiles.data?.files.length ?? 0,
-                          })}
-                        </span>
-                        {selectedBytes > 0 ? <span>{formatBytes(selectedBytes)}</span> : null}
+                      <span className="text-muted-foreground text-xs">
+                        {gt("{selected} of {total}", {
+                          selected: selectedFiles.size,
+                          total: allIgnoredFiles.data?.files.length ?? 0,
+                        })}
+                        {selectedBytes > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
                       </span>
                       <Button type="button" variant="ghost" size="xs" onClick={toggleShownFiles}>
                         {allCopyableSelected
@@ -405,26 +412,35 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   ) : null}
                 </div>
                 {canSearchFiles && (allIgnoredFiles.data?.truncated || fileQuery.length > 0) ? (
+                  // Native search inputs clear on Escape even during IME composition.
                   <Input
                     size="sm"
-                    type="search"
+                    type="text"
+                    role="searchbox"
+                    enterKeyHint="search"
                     aria-label={gt("Search ignored files")}
                     placeholder={gt("Search ignored files")}
                     value={fileQuery}
                     maxLength={256}
                     onChange={(event) => setFileQuery(event.target.value)}
-                    // Enter would otherwise submit the clone.
                     onKeyDown={(event) => {
+                      // Enter would otherwise submit the clone.
                       if (event.key === "Enter") event.preventDefault();
+                      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                      if (event.key === "Escape" && (fileQuery || event.repeat)) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setFileQuery("");
+                      }
                     }}
                     spellCheck={false}
                     autoComplete="off"
                   />
                 ) : null}
                 {ignoredFiles.error ? (
-                  <p className="text-destructive-foreground text-meta">{ignoredFiles.error}</p>
+                  <p className="text-destructive-foreground text-xs">{ignoredFiles.error}</p>
                 ) : files.length === 0 ? (
-                  <p className="text-muted-foreground text-meta">
+                  <p className="text-muted-foreground text-xs">
                     {!ignoredFiles.isSuccess
                       ? gt("Finding ignored files…")
                       : searching
@@ -445,7 +461,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   </div>
                 )}
                 {ignoredFiles.data?.truncated ? (
-                  <p className="text-muted-foreground text-meta">
+                  <p className="text-muted-foreground text-xs">
                     {canSearchFiles
                       ? gt(
                           "{count, plural, one {Showing the first {count} files. Search to find the rest.} other {Showing the first {count} files. Search to find the rest.}}",
@@ -459,7 +475,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                         )}
                   </p>
                 ) : null}
-                <p className="text-muted-foreground text-meta">
+                <p className="text-muted-foreground text-xs">
                   <T>
                     Files are copied after the clone finishes. Folders git ignores whole, like
                     node_modules, are left out.
@@ -468,10 +484,10 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               </div>
             ) : null}
 
-            {error ? <p className="text-destructive-foreground text-body">{error}</p> : null}
+            {error ? <p className="text-destructive-foreground text-sm">{error}</p> : null}
           </DialogPanel>
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={close}>
+            <Button type="button" variant="outline" onClick={close}>
               <T>Cancel</T>
             </Button>
             <Button type="submit" disabled={unavailable || submitting}>
@@ -527,14 +543,14 @@ function IgnoredFileRow({
   const gt = useGT();
   const tooLarge = file.byteLength > COPYABLE_FILE_MAX_BYTES;
   return (
-    <label className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-body not-last:border-b has-disabled:cursor-not-allowed has-disabled:opacity-64">
+    <label className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-sm not-last:border-b has-disabled:cursor-not-allowed has-disabled:opacity-64">
       <Checkbox
         checked={checked}
         disabled={tooLarge || disabled}
         onCheckedChange={onCheckedChange}
       />
-      <span className="min-w-0 flex-1 truncate font-mono text-meta">{file.path}</span>
-      <span className="shrink-0 text-muted-foreground text-meta tabular-nums">
+      <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
+      <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
         {tooLarge ? gt("Over 1 MB") : formatBytes(file.byteLength)}
       </span>
     </label>

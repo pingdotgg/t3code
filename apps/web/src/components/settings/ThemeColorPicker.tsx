@@ -1,12 +1,13 @@
 import { msg, T, useGT, useMessages } from "gt-react";
-import { memo, useEffect, useState, useRef, type ReactElement } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { hexToHsv, hsvToHex, type HsvColor } from "../../lib/color";
 import { ColorHueSlider, ColorSaturationValuePlane } from "../ui/color-picker";
+import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 const THEME_ROLE_LABELS: Partial<Record<ThemeColorRole, string>> = {
   canvas: msg("Background"),
   toolbar: msg("Toolbar background"),
@@ -192,8 +193,8 @@ function ThemeColorPickerPanel({
         />
         <div className="grid grid-cols-[1fr_1.2fr] gap-2">
           <label className="grid min-w-0 gap-1">
-            <span className="px-1 text-3xs font-semibold text-muted-foreground">
-              {gt("Hex", { $context: "hexadecimal color value" })}
+            <span className="px-1 text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
+              HEX
             </span>
             <span className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <span
@@ -218,7 +219,9 @@ function ThemeColorPickerPanel({
             </span>
           </label>
           <label className="grid min-w-0 gap-1">
-            <span className="px-1 text-3xs font-semibold text-muted-foreground">RGB</span>
+            <span className="px-1 text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
+              RGB
+            </span>
             <span className="flex min-w-0 items-center rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <input
                 aria-label={gt("{label} picker RGB value", { label })}
@@ -243,25 +246,22 @@ function ThemeColorPickerPanel({
   );
 }
 
-/**
- * Opens the color picker from any trigger, so the editor's swatch cards,
- * list rows and the legacy round swatch share one picker.
- */
-export function ThemeColorPopover({
+function ThemeColorPicker({
   label,
   value,
   onChange,
   onEditStart,
   onEditCancel,
-  trigger,
+  onInteract,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   onEditStart?: () => void;
   onEditCancel?: () => void;
-  trigger: ReactElement<Record<string, unknown>>;
+  onInteract?: () => void;
 }) {
+  const gt = useGT();
   const [committer] = useState(createFrameCommitter);
   // Escape reverts the edit, so commits after it (the pending frame flushed on close, or a drag
   // still firing through the exit animation) are dropped instead of landing on the restored colors.
@@ -272,6 +272,15 @@ export function ThemeColorPopover({
   return (
     <Popover
       onOpenChange={(open, eventDetails) => {
+        // Base UI's dismiss skips composing keys but not a bare keyCode 229 from an IME.
+        if (
+          !open &&
+          eventDetails.reason === "escape-key" &&
+          eventDetails.event instanceof KeyboardEvent &&
+          eventDetails.event.keyCode === 229
+        ) {
+          return eventDetails.cancel();
+        }
         cancelledRef.current = !open && eventDetails.reason === "escape-key";
         if (open) {
           onEditStart?.();
@@ -281,7 +290,27 @@ export function ThemeColorPopover({
         if (cancelledRef.current) onEditCancel?.();
       }}
     >
-      <PopoverTrigger render={trigger} />
+      <SharedTooltipTrigger
+        render={
+          <PopoverTrigger
+            render={
+              <button
+                aria-label={gt("Choose {label} color", { label })}
+                className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                onFocus={onInteract}
+                onPointerDown={onInteract}
+                type="button"
+              >
+                <span
+                  className="absolute inset-0 rounded-full shadow-sm"
+                  style={{ backgroundColor: value }}
+                />
+              </button>
+            }
+          />
+        }
+        label={gt("Choose {label} color", { label })}
+      />
       <PopoverPopup
         align="end"
         padding="none"
@@ -302,56 +331,6 @@ export function ThemeColorPopover({
   );
 }
 
-/**
- * The hex value as plain mono text that stays typeable: any CSS color the
- * theme format accepts can still be entered, not only what the picker makes.
- */
-export function ThemeColorHexInput({
-  label,
-  value,
-  onChange,
-  onFocus,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  onFocus?: () => void;
-}) {
-  const gt = useGT();
-  const editorValue = value.trim().toLowerCase().startsWith("oklch(")
-    ? (themeColorToHex(value) ?? value)
-    : value;
-  // While focused the input shows the typed text, not the committed value: a guided palette
-  // rewrites the committed color, and echoing that mid-edit would replace the user's keystrokes.
-  const [hexDraft, setHexDraft] = useState<string | null>(null);
-  const hexText = hexDraft ?? editorValue;
-  return (
-    <input
-      aria-invalid={!isThemeColor(hexText)}
-      aria-label={gt("{label} hex value", { label })}
-      className="w-[8.5ch] min-w-0 shrink-0 rounded-sm bg-transparent font-mono text-meta text-dim-foreground uppercase tabular-nums outline-none placeholder:normal-case hover:text-muted-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring aria-invalid:text-destructive"
-      onBlur={() => {
-        if (hexDraft !== null && isShortHexColor(hexDraft)) onChange(hexDraft);
-        setHexDraft(null);
-      }}
-      onChange={(event) => {
-        const nextValue = event.currentTarget.value;
-        setHexDraft(nextValue);
-        // Shorthand is usually a longer hex mid-deletion, so commit it on blur instead.
-        if (!isShortHexColor(nextValue)) onChange(nextValue);
-      }}
-      onFocus={() => {
-        setHexDraft(editorValue);
-        onFocus?.();
-      }}
-      spellCheck={false}
-      value={hexText}
-    />
-  );
-}
-
-/** One color row in the advanced editor: swatch opens the picker, the label
- *  toggles where the color is used, the hex stays typeable. */
 export const ThemeColorField = memo(function ThemeColorField({
   role,
   value,
@@ -376,72 +355,79 @@ export const ThemeColorField = memo(function ThemeColorField({
   const gt = useGT();
   const messages = useMessages();
   const label = customLabel ?? getThemeRoleLabel(role, messages);
-  const swatchValue = isThemeColor(value) ? value : "#000000";
+  const isColorValue = isThemeColor(value);
+  const swatchValue = isColorValue ? value : "#000000";
+  const editorValue = value.trim().toLowerCase().startsWith("oklch(")
+    ? (themeColorToHex(value) ?? value)
+    : value;
+  // While focused the input shows the typed text, not the committed value: a guided palette
+  // rewrites the committed color, and echoing that mid-edit would replace the user's keystrokes.
+  const [hexDraft, setHexDraft] = useState<string | null>(null);
+  const hexText = hexDraft ?? editorValue;
 
   return (
     <div
       className={cn(
-        "flex min-h-11 min-w-0 items-center gap-2.5 rounded-item border border-transparent px-2 py-1.5 transition-colors hover:bg-foreground/[0.04]",
-        selected && "border-foreground/12 bg-foreground/6 hover:bg-foreground/6",
+        "flex min-h-11 min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 transition-[background-color,box-shadow]",
+        selected && "bg-accent/60 inset-ring inset-ring-ring",
       )}
       data-theme-color-role={role}
     >
-      <ThemeColorPopover
-        onEditCancel={() => onEditCancel?.(role)}
-        onEditStart={() => onEditStart?.(role)}
-        label={label}
-        onChange={(nextValue) => onChange(role, nextValue)}
-        value={swatchValue}
-        trigger={
+      <SharedTooltipTrigger
+        render={
           <button
-            aria-label={gt("Choose {label} color", { label })}
-            className="group flex size-4.5 shrink-0 cursor-pointer outline-none"
-            onFocus={() => onSelect?.(role)}
-            onPointerDown={() => onSelect?.(role)}
+            aria-label={
+              selected ? gt("Hide {label} usage", { label }) : gt("Show {label} usage", { label })
+            }
+            aria-pressed={selected}
+            className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            onClick={() => onToggleSelected?.(role)}
             type="button"
           >
-            <span
-              className={cn(
-                "size-full rounded-badge border group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring",
-                isThemeColor(value)
-                  ? "border-foreground/15"
-                  : "border-dashed border-destructive/70",
-              )}
-              style={isThemeColor(value) ? { backgroundColor: swatchValue } : undefined}
-            />
+            <span className="min-w-0 flex-1 truncate">{label}</span>
           </button>
         }
-      />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              aria-label={
-                selected ? gt("Hide {label} usage", { label }) : gt("Show {label} usage", { label })
-              }
-              aria-pressed={selected}
-              className="group flex min-w-0 flex-1 cursor-pointer text-left outline-none"
-              onClick={() => onToggleSelected?.(role)}
-              type="button"
-            >
-              <span className="truncate rounded-sm text-body text-foreground group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring">
-                {label}
-              </span>
-            </button>
-          }
-        />
-        <TooltipPopup side="top">
-          {selected
+        label={
+          selected
             ? gt("Hide where {label} is used", { label })
-            : gt("Show where {label} is used", { label })}
-        </TooltipPopup>
-      </Tooltip>
-      <ThemeColorHexInput
-        label={label}
-        onChange={(nextValue) => onChange(role, nextValue)}
-        onFocus={() => onSelect?.(role)}
-        value={value}
+            : gt("Show where {label} is used", { label })
+        }
       />
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <ThemeColorPicker
+          label={label}
+          onChange={(nextValue) => onChange(role, nextValue)}
+          onEditCancel={() => onEditCancel?.(role)}
+          onEditStart={() => onEditStart?.(role)}
+          onInteract={() => onSelect?.(role)}
+          value={swatchValue}
+        />
+        <Input
+          aria-invalid={!isThemeColor(hexText)}
+          aria-label={gt("{label} hex value", { label })}
+          className="w-28 shrink-0"
+          font="mono"
+          id={`${role}-hex`}
+          nativeInput
+          onBlur={() => {
+            if (hexDraft !== null && isShortHexColor(hexDraft)) onChange(role, hexDraft);
+            setHexDraft(null);
+          }}
+          onChange={(event) => {
+            const nextValue = event.currentTarget.value;
+            setHexDraft(nextValue);
+            // Shorthand is usually a longer hex mid-deletion, so commit it on blur instead.
+            if (!isShortHexColor(nextValue)) onChange(role, nextValue);
+          }}
+          onFocus={() => {
+            setHexDraft(editorValue);
+            onSelect?.(role);
+          }}
+          onPointerDown={() => onSelect?.(role)}
+          size="compact"
+          value={hexText}
+        />
+      </div>
     </div>
   );
 });

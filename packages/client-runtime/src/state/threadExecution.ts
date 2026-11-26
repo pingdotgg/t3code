@@ -228,7 +228,6 @@ function summarizeThreadRun(
           ? {}
           : providerStarting(run, session, phase, providers)
         : { turnEnded: true }),
-    ...(run.workspacePreparation?.type === "worktree" ? { preparedWorktree: true as const } : {}),
     ...(run.sourcePlanRef === undefined ? {} : { sourcePlanRef: run.sourcePlanRef }),
   };
 }
@@ -313,7 +312,6 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
-  "thinking",
   "thought_level",
 ];
 
@@ -514,15 +512,12 @@ export function deriveThreadStructureRuntime(
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
   const failureItem = latestRootProviderFailureItem(latestRunProjection, projection.turnItems);
   const sessionError = providerSession?.lastError ?? null;
-  const awaitingBackgroundWork =
-    !usageLimitedRun && backgroundWorkHoldsRun && latestRunProjection?.status !== "failed";
   return {
     status: usageLimitedRun
       ? "failed"
-      : awaitingBackgroundWork
+      : backgroundWorkHoldsRun && latestRunProjection?.status !== "failed"
         ? "idle"
         : (activityRun?.status ?? "idle"),
-    ...(awaitingBackgroundWork ? { awaitingBackgroundWork } : {}),
     activeRunId,
     activityStartedAt:
       liveActivityRun === null

@@ -213,9 +213,6 @@ describe("groupIssues", () => {
     );
     const [group] = groupIssues(held, "", []);
     expect(group!.rows.map((row) => row.displayKey)).toEqual(["#1", "#2"]);
-    const [again] = groupIssues(held, "", []);
-    expect(again!.rows.every((row, index) => row === group!.rows[index])).toBe(true);
-    expect(group!.rows.map((row) => row.environmentId)).toEqual([environmentId, environmentId]);
   });
 
   it("keeps same-keyed issues from two Linear workspaces apart", () => {

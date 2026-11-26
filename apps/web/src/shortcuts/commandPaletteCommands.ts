@@ -3,21 +3,19 @@ import { msg } from "gt-react";
 
 import {
   dispatchCommandPalette,
-  leaveCommandPaletteOverlay,
   isCommandPaletteMounted,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
 import { overlayModeForCommand } from "../components/CommandPalette.logic";
-import { notifyThemeSaveFailure } from "../components/CommandPaletteThemeItems";
+import { APPEARANCE_OPTIONS, notifyThemeSaveFailure } from "../components/CommandPaletteThemeItems";
 import { toggleThemeEditorForTheme } from "../components/settings/themeEditorStore";
 import { toastManager } from "../components/ui/toast";
-import { APPEARANCE_CHOICES, getThemeSnapshot, setAppearanceChoice } from "../hooks/useTheme";
+import { getThemeSnapshot, setAppearanceMode } from "../hooks/useTheme";
 import { m } from "../i18n/messages";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
-import { openLayerMatches } from "../lib/openLayers";
 
 function consume(event: KeyboardEvent): void {
   event.preventDefault();
@@ -30,6 +28,7 @@ const toggleOverlay =
     const mode = overlayModeForCommand(command);
     if (mode === null) return false;
     consume(event);
+    if (event.repeat) return;
     dispatchCommandPalette({ _tag: "ToggleMode", mode });
   };
 
@@ -59,7 +58,7 @@ export function installCommandPaletteCommands(
         if (!open || mode === "command") return false;
         consume(event);
         if (event.repeat) return;
-        leaveCommandPaletteOverlay();
+        dispatchCommandPalette({ _tag: "BackToCommand" });
       },
     },
   );
@@ -69,14 +68,10 @@ export function installCommandPaletteCommands(
       "appearance.cycle": (event) => {
         consume(event);
         if (event.repeat) return;
-        const { appearanceMode, blackChrome } = getThemeSnapshot();
-        const appearanceChoice =
-          appearanceMode === "light" && blackChrome ? "black-chrome" : appearanceMode;
-        const currentIndex = APPEARANCE_CHOICES.findIndex(
-          (option) => option.choice === appearanceChoice,
-        );
-        const next = APPEARANCE_CHOICES[(currentIndex + 1) % APPEARANCE_CHOICES.length]!;
-        if (!setAppearanceChoice(next.choice)) {
+        const { appearanceMode } = getThemeSnapshot();
+        const index = APPEARANCE_OPTIONS.findIndex((option) => option.mode === appearanceMode);
+        const nextMode = APPEARANCE_OPTIONS[(index + 1) % APPEARANCE_OPTIONS.length]!.mode;
+        if (!setAppearanceMode(nextMode)) {
           notifyThemeSaveFailure();
           return;
         }
@@ -84,9 +79,9 @@ export function installCommandPaletteCommands(
           id: "appearance-cycle",
           title: m(
             msg(
-              "{mode, select, system {Appearance: System} light {Appearance: Light} blackChrome {Appearance: Black chrome} other {Appearance: Dark}}",
+              "{mode, select, system {Appearance: System} light {Appearance: Light} other {Appearance: Dark}}",
             ),
-            { mode: next.choice === "black-chrome" ? "blackChrome" : next.choice },
+            { mode: nextMode },
           ),
           timeout: 1500,
         });
@@ -98,11 +93,13 @@ export function installCommandPaletteCommands(
       },
       "themeEditor.toggle": (event) => {
         consume(event);
+        if (event.repeat) return;
         const { theme, themeHalves, resolvedTheme } = getThemeSnapshot();
         toggleThemeEditorForTheme({ theme, themeHalves, initialAppearance: resolvedTheme });
       },
       "usage.open": (event) => {
         consume(event);
+        if (event.repeat) return;
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         void router.navigate({ to: "/usage" });
       },
@@ -112,11 +109,7 @@ export function installCommandPaletteCommands(
     },
     {
       ...options,
-      when: () =>
-        isCommandPaletteMounted() &&
-        !openLayerMatches(
-          '[data-slot="dialog-popup"][data-open]:not([data-app-modal]), [data-slot="alert-dialog-popup"][data-open]',
-        ),
+      when: isCommandPaletteMounted,
       context: () => {
         const threadRef = readRouteThreadRef();
         return {

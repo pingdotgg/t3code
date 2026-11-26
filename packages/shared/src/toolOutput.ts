@@ -25,6 +25,7 @@ const MAX_PARSED_BYTES = 16_384;
 const MAX_METADATA_BYTES = 8_192;
 const MAX_ID_LENGTH = 256;
 const MAX_THREADS = 100;
+const MAX_PULL_REQUEST_ITEMS = 100;
 const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
@@ -56,6 +57,10 @@ interface CompactToolOutput {
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
   linkedCount?: number;
   unlinkedCount?: number;
+  created?: boolean;
+  state?: "open" | "closed" | "merged";
+  guides?: Array<{ outcome: "started" | "running" | "failed" }>;
+  checks?: Array<{ rerun: boolean }>;
   sentMessage?: string;
 }
 
@@ -127,6 +132,21 @@ function boundedId(value: unknown): string | undefined {
   return Array.from(value).join("");
 }
 
+// All or nothing: a partial list would make the summary report wrong counts.
+function readEntries<T>(
+  value: unknown,
+  read: (entry: { readonly [key: string]: unknown }) => T | undefined,
+): T[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_PULL_REQUEST_ITEMS) return undefined;
+  const entries: T[] = [];
+  for (const entry of value) {
+    const compact = Predicate.isObject(entry) ? read(entry) : undefined;
+    if (compact === undefined) return undefined;
+    entries.push(compact);
+  }
+  return entries;
+}
+
 export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
@@ -146,6 +166,20 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       const count = data[key];
       if (typeof count === "number" && Number.isSafeInteger(count)) output[key] = count;
     }
+    if (typeof data.created === "boolean") output.created = data.created;
+    if (data.state === "open" || data.state === "closed" || data.state === "merged") {
+      output.state = data.state;
+    }
+    const guides = readEntries(data.guides, (entry) =>
+      entry.outcome === "started" || entry.outcome === "running" || entry.outcome === "failed"
+        ? ({ outcome: entry.outcome } as const)
+        : undefined,
+    );
+    if (guides !== undefined) output.guides = guides;
+    const checks = readEntries(data.checks, (entry) =>
+      typeof entry.rerun === "boolean" ? { rerun: entry.rerun } : undefined,
+    );
+    if (checks !== undefined) output.checks = checks;
     if (
       typeof data.sentMessage === "string" &&
       data.sentMessage.trim() !== "" &&
@@ -196,6 +230,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     delete output.threads;
     delete output.threadId;
     delete output.status;
+    delete output.guides;
+    delete output.checks;
   }
   const app = output[MCP_APP_OUTPUT_KEY];
   if (app?.csp !== undefined && oversized()) {
@@ -302,32 +338,6 @@ export function toolOutputIndicatesFailure(text: string): boolean {
       /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
       /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text))
   );
-}
-
-const TEST_COMMAND_PATTERN =
-  /(?:^|[\s;&|(/])(?:vitest|jest|pytest|mocha|ava|rspec|phpunit|ctest|playwright\s+test|(?:bun|deno|go|cargo|dotnet|mix|swift|npm|pnpm|yarn|vp)\s+(?:run\s+)?test(?::\S+)?|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?t(?:est)?)(?=$|[\s;&|)])/i;
-
-/** Whether a shell command runs a test suite, so a failure reads as failing tests. */
-export function commandRunsTests(command: string): boolean {
-  return TEST_COMMAND_PATTERN.test(command);
-}
-
-/**
- * Failed test count from common runner summaries (vitest, jest, bun, pytest,
- * cargo, go). Undefined when the output names no count.
- */
-export function countFailedTests(output: string): number | undefined {
-  const summary =
-    /^\s*Tests?:?\s+(\d+)\s+failed\b/im.exec(output) ??
-    /^\s*(\d+)\s+fail\b/m.exec(output) ??
-    /\btest result: FAILED\.[^\n]*?\b(\d+) failed\b/i.exec(output) ??
-    /^=+[^\n]*?\b(\d+) failed\b[^\n]*=+\s*$/m.exec(output);
-  if (summary) {
-    const count = Number(summary[1]);
-    return Number.isSafeInteger(count) && count > 0 ? count : undefined;
-  }
-  const goFailures = output.match(/^\s*--- FAIL: /gm)?.length ?? 0;
-  return goFailures > 0 ? goFailures : undefined;
 }
 
 /** Whether a command failed. A reported exit code outranks text in its output. */

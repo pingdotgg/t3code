@@ -1,5 +1,3 @@
-import { useId } from "react";
-import { tooltipSafeFinalFocus } from "./focus-return";
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 import { useRender } from "@base-ui/react/use-render";
 
@@ -59,8 +57,6 @@ function AlertDialogPopup({
   bottomStickOnMobile?: boolean;
   portalContainer?: AlertDialogPrimitive.Portal.Props["container"];
 }) {
-  const defaultId = useId();
-  const popupId = props.id ?? defaultId;
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
   const popup = useRender({
     ref: popupRef,
@@ -76,8 +72,6 @@ function AlertDialogPopup({
         initialFocus={initialFocus}
         render={renderRetainedPopup}
         {...props}
-        id={popupId}
-        finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
       />
     ),
   });
@@ -97,7 +91,7 @@ function AlertDialogHeader({ className, ...props }: React.ComponentProps<"div">)
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-col gap-1.5 px-5 pt-5 pb-4 text-center sm:text-left",
+        "flex min-h-0 flex-col gap-2 p-6 text-center max-sm:pb-4 sm:text-left",
         className,
       )}
       data-slot="alert-dialog-header"
@@ -116,11 +110,12 @@ function AlertDialogFooter({
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-5 pb-4 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
+        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
+        variant === "default" && "border-t bg-muted/72 py-4",
+        variant === "bare" && "pb-6",
         className,
       )}
       data-slot="alert-dialog-footer"
-      data-variant={variant}
       {...props}
     />
   );
@@ -129,10 +124,7 @@ function AlertDialogFooter({
 function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Props) {
   return (
     <AlertDialogPrimitive.Title
-      className={cn(
-        "wrap-anywhere shrink-0 text-label [font-size:0.9375rem] font-semibold text-strong-foreground leading-snug",
-        className,
-      )}
+      className={cn("wrap-anywhere shrink-0 font-semibold text-xl leading-snug", className)}
       data-slot="alert-dialog-title"
       {...props}
     />
@@ -143,7 +135,7 @@ function AlertDialogDescription({ className, ...props }: AlertDialogPrimitive.De
   return (
     <AlertDialogPrimitive.Description
       className={cn(
-        "wrap-anywhere max-h-[min(24rem,60dvh)] min-h-0 overflow-y-auto overscroll-contain text-muted-foreground text-body sm:[font-size:0.8125rem] leading-[1.45] select-text",
+        "wrap-anywhere max-h-[min(24rem,60dvh)] min-h-0 overflow-y-auto overscroll-contain text-muted-foreground text-sm select-text",
         className,
       )}
       data-slot="alert-dialog-description"

@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { LayoutPaneContext } from "~/layout/layoutPaneContext";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { isPreviewFocused } from "~/lib/previewFocus";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
@@ -59,11 +58,13 @@ function Chat(props: {
   composerKeys: string[];
   launcher?: { keys: string; received: string[] };
   finds?: string[];
+  scriptKeybindings?: ResolvedKeybindingsConfig;
+  scriptsRan?: string[];
 }) {
   useChatShortcuts({
     enabled: true,
     keybindings: [ctrl("f", "chat.find")],
-    scriptKeybindings: [],
+    scriptKeybindings: props.scriptKeybindings ?? [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
     // Type-to-focus only calls insertTextAtEnd, so the stand-in composer implements just that.
@@ -78,7 +79,8 @@ function Chat(props: {
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
     commands: { "chat.find": () => void props.finds?.push("main") },
-    fallback: () => undefined,
+    fallback: (command) =>
+      props.scriptsRan ? () => void props.scriptsRan?.push(command) : undefined,
   });
   return props.launcher ? <Launcher {...props.launcher} /> : null;
 }
@@ -144,6 +146,65 @@ it.each([
 
   expect(composerKeys).toEqual(composer);
   expect(received).toEqual(launcher);
+});
+
+function UnavailableTerminalCommand({
+  command,
+  owner,
+}: {
+  command: KeybindingCommand;
+  owner: "drawer" | "right-panel" | null;
+}) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: compileResolvedKeybindingsConfig([
+      { key: command === "terminal.previous" ? "cmd+shift+[" : "cmd+shift+]", command },
+    ]),
+    scriptKeybindings: [],
+    getShortcutContext: () => ({ ...shortcutContext, terminalFocus: owner !== null }),
+    threadFindActive: false,
+    composerRef: { current: null },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { [command]: () => false },
+    fallback: () => undefined,
+  });
+  return (
+    <div data-terminal-owner={owner ?? undefined}>
+      <input ref={focusOnMount} />
+    </div>
+  );
+}
+
+it.each([
+  ["terminal.previous", "drawer", true],
+  ["terminal.next", "drawer", true],
+  ["terminal.new", "drawer", false],
+  ["terminal.previous", "right-panel", true],
+  ["terminal.next", "right-panel", true],
+  ["terminal.previous", null, false],
+  ["terminal.next", null, false],
+] as const)("handles unavailable %s with focus owner %s", async (command, owner, prevented) => {
+  await using screen = await render(
+    <UnavailableTerminalCommand command={command} owner={owner} />,
+    options,
+  );
+  const input = screen.container.querySelector("input")!;
+  const received: string[] = [];
+  input.addEventListener("keydown", (event) => received.push(event.key));
+  const previous = command === "terminal.previous";
+  const key = previous ? "{" : "}";
+  const event = new KeyboardEvent("keydown", {
+    key,
+    code: previous ? "BracketLeft" : "BracketRight",
+    shiftKey: true,
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(prevented);
+  expect(received).toEqual(prevented ? [] : [key]);
 });
 
 const sideChatKeybindings: ResolvedKeybindingsConfig = [
@@ -304,7 +365,7 @@ function ChatWithSideChatPane(props: { ran: string[] }) {
   );
 }
 
-it("runs right panel commands from inside a side chat pane, once per press, but not thread commands", async () => {
+it("runs right panel commands from inside a side chat pane, but not thread commands", async () => {
   const ran: string[] = [];
   await using screen = await render(<ChatWithSideChatPane ran={ran} />, options);
 
@@ -314,22 +375,8 @@ it("runs right panel commands from inside a side chat pane, once per press, but 
   await userEvent.click(screen.getByRole("region", { name: "Conversation" }));
   await userEvent.keyboard("{Control>}{Alt>}B{/Alt}{/Control}");
   await userEvent.keyboard("q");
-  const toggleKey = (repeat: boolean) =>
-    new KeyboardEvent("keydown", {
-      key: "b",
-      code: "KeyB",
-      ctrlKey: true,
-      altKey: true,
-      repeat,
-      bubbles: true,
-      cancelable: true,
-    });
-  const passedThrough = [false, true, true, false].map((repeat) =>
-    screen.getByRole("region", { name: "Conversation" }).element().dispatchEvent(toggleKey(repeat)),
-  );
 
-  expect(ran).toEqual(["toggle", "close", "toggle", "toggle", "toggle"]);
-  expect(passedThrough).toEqual([false, false, false, false]);
+  expect(ran).toEqual(["toggle", "close", "toggle"]);
 });
 
 it("leaves keys to a focused video player with controls", async () => {
@@ -350,45 +397,35 @@ it("leaves keys to a focused video player with controls", async () => {
   expect(composerKeys).toEqual(["a"]);
 });
 
-// A chat beside its thread's focused surface tab, such as an open pull request.
-function RelatedChat(props: { copies: string[] }) {
-  useChatShortcuts({
-    enabled: true,
-    keybindings: [ctrl("c", "thread.copyReference", true)],
-    scriptKeybindings: [],
-    getShortcutContext: () => shortcutContext,
-    threadFindActive: false,
-    composerRef: { current: null },
-    branchToolbarRef: { current: null },
-    closeThreadFind: () => {},
-    commands: { "thread.copyReference": () => void props.copies.push("copy") },
-    fallback: () => undefined,
-  });
-  return null;
-}
-
-it("copies the thread's link while one of its surface tabs has focus", async () => {
-  const copies: string[] = [];
-  await using _screen = await render(
-    <LayoutPaneContext
-      value={{
-        tabId: null,
-        paneId: null,
-        split: true,
-        narrow: false,
-        leadingEdge: true,
-        trailingEdge: false,
-        focused: false,
-        related: true,
-        visible: true,
-      }}
-    >
-      <RelatedChat copies={copies} />
-    </LayoutPaneContext>,
+it("leaves project-script shortcuts alone inside a keybinding capture field", async () => {
+  const scriptsRan: string[] = [];
+  const prevented: boolean[] = [];
+  await using screen = await render(
+    <>
+      <Chat
+        composerKeys={[]}
+        scriptKeybindings={[ctrl("y", "script.build.run", true)]}
+        scriptsRan={scriptsRan}
+      />
+      <input
+        ref={focusOnMount}
+        aria-label="Keybinding"
+        data-keybinding-capture=""
+        readOnly
+        onKeyDown={(event) => {
+          if (event.key.toLowerCase() === "y") prevented.push(event.defaultPrevented);
+        }}
+      />
+      <button type="button">Outside</button>
+    </>,
     options,
   );
 
-  await userEvent.keyboard("{Control>}{Shift>}C{/Shift}{/Control}");
+  await userEvent.keyboard("{Control>}{Shift>}Y{/Shift}{/Control}");
+  expect(scriptsRan).toEqual([]);
+  expect(prevented).toEqual([false]);
 
-  expect(copies).toEqual(["copy"]);
+  await userEvent.click(screen.getByRole("button", { name: "Outside" }));
+  await userEvent.keyboard("{Control>}{Shift>}Y{/Shift}{/Control}");
+  expect(scriptsRan).toEqual(["script.build.run"]);
 });

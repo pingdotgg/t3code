@@ -1,4 +1,4 @@
-import type { KeybindingShortcut, KeybindingWhenNode } from "@t3tools/contracts";
+import type { KeybindingShortcut } from "@t3tools/contracts";
 
 // Matching only: the desktop preview guest bundles this file without the rest of the
 // keybindings module, so it stays free of parsing, defaults, and contracts runtime code.
@@ -152,22 +152,4 @@ export function matchesKeybindingShortcut(
     event,
     isMacPlatform(platform) && event.altKey ? keyboardLayoutMap : undefined,
   ).has(shortcut.key);
-}
-
-export function evaluateWhenNode(
-  node: KeybindingWhenNode,
-  context: Readonly<Record<string, boolean | undefined>>,
-): boolean {
-  switch (node.type) {
-    case "identifier":
-      if (node.name === "true") return true;
-      if (node.name === "false") return false;
-      return Boolean(context[node.name]);
-    case "not":
-      return !evaluateWhenNode(node.node, context);
-    case "and":
-      return evaluateWhenNode(node.left, context) && evaluateWhenNode(node.right, context);
-    case "or":
-      return evaluateWhenNode(node.left, context) || evaluateWhenNode(node.right, context);
-  }
 }

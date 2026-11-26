@@ -12,16 +12,10 @@ export function WizardPopup({
   size = "default",
   ...props
 }: Omit<ComponentProps<typeof DialogPopup>, "className" | "style"> & {
-  readonly size?: "default" | "wide" | "setup";
+  readonly size?: "default" | "wide";
 }) {
   return (
-    <DialogPopup
-      {...props}
-      className={cn(
-        size === "wide" ? "max-w-3xl" : "max-w-xl",
-        size === "setup" && "rounded-[16px]",
-      )}
-    >
+    <DialogPopup {...props} className={size === "wide" ? "max-w-3xl" : "max-w-xl"}>
       <ScrollArea className="*:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4">
         <div className="flex min-h-0 flex-col">{children}</div>
       </ScrollArea>
@@ -34,21 +28,14 @@ export function WizardHeader({
   description,
   identity,
   children,
-  layout = "stacked",
 }: {
-  readonly layout?: "stacked" | "inline";
   readonly title: ReactNode;
   readonly description?: ReactNode;
   readonly identity?: ReactNode;
   readonly children?: ReactNode;
 }) {
   return (
-    <DialogHeader
-      className={cn(
-        layout === "inline" &&
-          "flex-row flex-wrap items-center justify-between gap-3 pt-6 pr-14 pb-5 pl-6",
-      )}
-    >
+    <DialogHeader>
       <DialogTitle className={identity ? "sr-only" : undefined}>{title}</DialogTitle>
       {identity}
       {description ? <DialogDescription>{description}</DialogDescription> : null}
@@ -65,11 +52,7 @@ export function WizardFooter({
   readonly leading?: ReactNode;
 }) {
   return (
-    <DialogFooter
-      variant="bare"
-      // The banded panel ends at its fill, so the footer brings its own top gap.
-      className={cn("[[data-surface=default]+&]:pt-4", leading && "sm:justify-between")}
-    >
+    <DialogFooter variant="bare" className={leading ? "sm:justify-between" : undefined}>
       {leading}
       {leading ? (
         <div className="flex flex-col-reverse gap-2 sm:flex-row">{children}</div>
@@ -98,13 +81,24 @@ export function WizardSteps({
   const gt = useGT();
   const Step = onStepChange ? "button" : "div";
   return (
-    <ol className="flex shrink-0 items-center gap-1.5" aria-label={gt("Setup progress")}>
+    <ol
+      className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl bg-background p-1 ring-1 ring-black/5 dark:bg-white/4 dark:ring-white/5"
+      role="list"
+      aria-label={gt("Setup progress")}
+    >
       {steps.map((step, index) => (
-        <li key={step}>
+        <li key={step} className="min-w-0">
           <Step
             {...(onStepChange
               ? { type: "button" as const, disabled: isStepDisabled?.(index) }
               : {})}
+            className={cn(
+              "flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring max-sm:justify-center max-sm:px-2",
+              onStepChange &&
+                "cursor-pointer hover:bg-card disabled:cursor-default disabled:hover:bg-transparent",
+              index === currentStep &&
+                "bg-card text-foreground shadow-xs ring-1 ring-inset ring-black/5 hover:bg-card dark:shadow-none dark:ring-white/5",
+            )}
             aria-current={index === currentStep ? "step" : undefined}
             aria-label={
               index < currentStep && summaries?.[index]
@@ -116,30 +110,26 @@ export function WizardSteps({
                 : gt("{step}, step {number}", { step, number: index + 1 })
             }
             onClick={onStepChange ? () => onStepChange(index) : undefined}
-            className={cn(
-              "flex h-6 items-center gap-1.5 rounded-full border border-transparent ps-1 pe-2.5 text-meta outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              index === currentStep
-                ? "surface-card border-border text-strong-foreground"
-                : "text-muted-foreground",
-              onStepChange &&
-                index < currentStep &&
-                "cursor-pointer hover:text-foreground disabled:cursor-default",
-            )}
           >
             <span
               className={cn(
-                "grid size-4 shrink-0 place-items-center rounded-full text-micro",
+                "grid size-5 shrink-0 place-items-center rounded-full text-sm font-medium ring-1",
                 index < currentStep
-                  ? "bg-success/15 text-success"
+                  ? "bg-primary text-primary-foreground ring-primary"
                   : index === currentStep
-                    ? "bg-info/20 text-info-foreground"
-                    : "bg-foreground/5",
+                    ? "bg-primary/10 text-primary ring-primary/30"
+                    : "bg-card text-muted-foreground ring-black/10 dark:bg-white/5 dark:ring-white/10",
               )}
               aria-hidden
             >
-              {index < currentStep ? <CheckIcon className="size-3" /> : index + 1}
+              {index < currentStep ? <CheckIcon className="size-4 shrink-0" /> : index + 1}
             </span>
-            <span className="max-sm:hidden">
+            <span
+              className={cn(
+                "min-w-0 truncate text-sm font-medium max-sm:hidden",
+                index === currentStep ? "text-foreground" : "text-muted-foreground",
+              )}
+            >
               {step}
               {showSummaries && index < currentStep && summaries?.[index]
                 ? `: ${summaries[index]}`
@@ -155,22 +145,17 @@ export function WizardSteps({
 export function WizardPanel({
   children,
   holdHeight = false,
-  surface = "default",
   className,
 }: {
   readonly children: ReactNode;
   readonly holdHeight?: boolean;
-  readonly surface?: "default" | "bare" | "setup";
   readonly className?: string;
 }) {
   return (
     <div
       data-slot="dialog-panel"
-      data-surface={surface}
       className={cn(
-        "min-w-0 space-y-4 px-6 py-5",
-        surface === "default" && "bg-muted ring-1 ring-hairline",
-        surface === "setup" && "pt-0 pb-6",
+        "min-w-0 space-y-4 bg-background/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
         className,
       )}
     >

@@ -14,7 +14,7 @@ import { CommandPaletteTitleIcon } from "./CommandPaletteResults";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export function remoteProjectSourceIcon(
   source: AddProjectRemoteSource,
@@ -44,30 +44,28 @@ export function CommandPaletteSubmitButton(props: {
   readonly onSubmit: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            id={props.id}
-            variant="secondary"
-            size="xs"
-            className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
-            aria-label={props.ariaLabel}
-            disabled={props.disabled}
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            onClick={props.onSubmit}
-          />
-        }
-      >
-        <span>{props.label}</span>
-        <KbdGroup className="pointer-events-none -me-0.5">
-          <Kbd>{props.shortcutLabel}</Kbd>
-        </KbdGroup>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          id={props.id}
+          variant="outline"
+          size="xs"
+          className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
+          aria-label={props.ariaLabel}
+          disabled={props.disabled}
+          onMouseDown={(event) => {
+            event.preventDefault();
+          }}
+          onClick={props.onSubmit}
+        />
+      }
+      label={props.tooltip}
+    >
+      <span>{props.label}</span>
+      <KbdGroup className="pointer-events-none -me-0.5">
+        <Kbd>{props.shortcutLabel}</Kbd>
+      </KbdGroup>
+    </SharedTooltipTrigger>
   );
 }
 
@@ -111,7 +109,7 @@ export function NewProjectPublishHostPicker(props: {
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
           {props.targets.map((target) => (
-            <SelectItem key={target.definition.kind} value={target.definition.kind}>
+            <SelectItem key={target.definition.kind} hideIndicator value={target.definition.kind}>
               <span className="inline-flex items-center gap-1.5">
                 {sourceControlHostIcon(target.definition, "size-3.5")}
                 {target.definition.label}
@@ -167,16 +165,16 @@ export function RemoteRepositorySummary(props: {
 }) {
   return (
     <div className="shrink-0 p-2 pb-0">
-      <div className="px-2 py-1.5 text-meta text-dim-foreground">
+      <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
         <T>Repository</T>
       </div>
-      <div className="flex min-h-8 items-center gap-2 rounded-control px-2 py-1.5">
+      <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
         <CommandPaletteTitleIcon>
           {remoteProjectSourceIcon(props.source, ITEM_ICON_CLASS)}
         </CommandPaletteTitleIcon>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-strong-foreground text-sm">{props.title}</span>
-          <span className="truncate text-dim-foreground text-xs">{props.description}</span>
+          <span className="truncate text-foreground text-sm">{props.title}</span>
+          <span className="truncate text-muted-foreground/85 text-xs">{props.description}</span>
         </span>
       </div>
     </div>

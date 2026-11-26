@@ -1,15 +1,8 @@
 import type { EnvironmentIssueEntry } from "@t3tools/client-runtime/issue-list";
 import { MessageSquareIcon } from "lucide-react";
-import { memo, useState } from "react";
+import { memo } from "react";
 
 import { cn } from "~/lib/utils";
-import {
-  PAGE_ROW_CLASS,
-  PAGE_ROW_HOVER_CLASS,
-  PAGE_ROW_SKIP_CLASS,
-  PAGE_ROW_PRESS_CLASS,
-  PullRequestRowLabels,
-} from "../pullRequest/PullRequestRow";
 
 import {
   PULL_REQUEST_ROW_CLASS,
@@ -17,9 +10,10 @@ import {
   PullRequestRowAuthor,
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
-import { PullRequestActorAvatar } from "../pullRequest/pullRequestPresentation";
-import { TooltipPopup } from "../ui/tooltip";
-import { RowTooltip, RowTooltipsContext } from "../workItem/WorkItemRowTooltip";
+import {
+  PullRequestLabelChip,
+  PullRequestActorAvatar,
+} from "../pullRequest/pullRequestPresentation";
 import { IssueStateGlyph, issueTrackerPresentation } from "./issuePresentation";
 
 export type IssueRowTarget = Pick<
@@ -27,7 +21,7 @@ export type IssueRowTarget = Pick<
   "environmentId" | "projectId" | "tracker" | "host" | "scope" | "key" | "url"
 >;
 
-/** The pull request page row with an issue in it: state glyph, title and key over its meta. */
+/** The page row in the pull-request list's shape: state glyph, then key and title over meta. */
 function IssueRowImpl({
   entry,
   selected,
@@ -47,83 +41,70 @@ function IssueRowImpl({
   onSelect: (entry: IssueRowTarget) => void;
 }) {
   const tracker = issueTrackerPresentation(entry.tracker);
-  const [pointed, setPointed] = useState(false);
   return (
     <div
-      onPointerEnter={() => setPointed(true)}
       className={cn(
-        "flex items-center rounded-lg",
-        PAGE_ROW_SKIP_CLASS,
-        selected ? "bg-selection-subtle" : PAGE_ROW_HOVER_CLASS,
+        "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
+        selected ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
       <button
         type="button"
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(entry)}
-        className={cn(
-          PULL_REQUEST_ROW_CLASS,
-          PAGE_ROW_CLASS,
-          PAGE_ROW_PRESS_CLASS,
-          "min-w-0 flex-1",
-        )}
+        className={cn(PULL_REQUEST_ROW_CLASS, "@container/issue-row-meta px-3 py-2.5")}
       >
-        <RowTooltipsContext value={pointed}>
-          {/* Centred on the title line, in the pull request glyph's column. */}
-          <span className="mt-0.5 flex w-4 shrink-0 justify-center self-start">
-            <IssueStateGlyph state={entry.state} />
-          </span>
-          <PullRequestRowLines
-            number={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{entry.displayKey}</span>}
-            title={entry.title}
-            status={
-              <>
-                {entry.assignees.length > 0 ? (
-                  <span className="flex items-center -space-x-1">
-                    {entry.assignees.slice(0, 3).map((assignee) => (
-                      <PullRequestActorAvatar
-                        key={assignee.login}
-                        actor={assignee}
-                        className="ring-1 ring-background"
-                      />
-                    ))}
-                  </span>
-                ) : null}
-                {entry.commentCount > 0 ? (
-                  <span className="inline-flex items-center gap-0.5 tabular-nums text-muted-foreground">
-                    <MessageSquareIcon aria-hidden className="size-3" />
-                    {entry.commentCount}
-                  </span>
-                ) : null}
-              </>
-            }
-            metaClassName="@container/pr-row-meta"
-            meta={
-              <>
-                {showTracker ? (
-                  <RowTooltip
-                    render={<span className="inline-flex shrink-0" />}
-                    popup={<TooltipPopup>{tracker.providerName}</TooltipPopup>}
-                  >
-                    <tracker.Icon aria-label={tracker.providerName} className="size-3" />
-                  </RowTooltip>
-                ) : null}
-                <PullRequestRowAuthor
-                  actor={entry.author}
-                  className="min-w-3.5 max-w-40"
-                  labelClassName="sr-only @md/pr-row-meta:not-sr-only @md/pr-row-meta:truncate"
-                />
-                {showScope ? <span className="min-w-12 truncate">{entry.scope}</span> : null}
-                {environmentLabel ? (
-                  <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
-                ) : null}
-                {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
-              </>
-            }
-            updatedAt={entry.updatedAt}
-            layout="page"
-          />
-        </RowTooltipsContext>
+        <IssueStateGlyph state={entry.state} />
+        <PullRequestRowLines
+          number={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{entry.displayKey}</span>}
+          title={entry.title}
+          status={
+            <>
+              {entry.assignees.length > 0 ? (
+                <span className="flex items-center -space-x-1">
+                  {entry.assignees.slice(0, 3).map((assignee) => (
+                    <PullRequestActorAvatar
+                      key={assignee.login}
+                      actor={assignee}
+                      className="ring-1 ring-background"
+                    />
+                  ))}
+                </span>
+              ) : null}
+              {entry.commentCount > 0 ? (
+                <span className="inline-flex items-center gap-0.5 tabular-nums">
+                  <MessageSquareIcon aria-hidden className="size-3" />
+                  {entry.commentCount}
+                </span>
+              ) : null}
+            </>
+          }
+          meta={
+            <>
+              <PullRequestRowAuthor actor={entry.author} />
+              {showTracker ? (
+                <span className="inline-flex shrink-0 items-center gap-1">
+                  <tracker.Icon aria-hidden className="size-3" />
+                  <span className="sr-only">{tracker.providerName}</span>
+                </span>
+              ) : null}
+              {showScope ? <span className="truncate">{entry.scope}</span> : null}
+              {environmentLabel ? <span className="truncate">{environmentLabel}</span> : null}
+              {entry.labels.length > 0 ? (
+                <span className="hidden min-w-0 items-center gap-1 @xl/issue-row-meta:flex">
+                  {entry.labels.slice(0, 3).map((label, index) => (
+                    <PullRequestLabelChip key={label.name} label={label}>
+                      {index === 2 && entry.labels.length > 3 ? (
+                        <span className="shrink-0">+{entry.labels.length - 3}</span>
+                      ) : null}
+                    </PullRequestLabelChip>
+                  ))}
+                </span>
+              ) : null}
+            </>
+          }
+          updatedAt={entry.updatedAt}
+        />
       </button>
     </div>
   );

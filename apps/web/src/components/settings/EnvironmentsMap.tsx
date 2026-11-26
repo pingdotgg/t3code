@@ -32,7 +32,6 @@ import {
   TriangleAlertIcon,
   UnfoldVerticalIcon,
   FoldVerticalIcon,
-  LinkIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -41,7 +40,6 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
-  type ComponentProps,
   type ReactNode,
   useContext,
   useEffect,
@@ -70,16 +68,12 @@ import { relayEnvironmentDiscovery } from "~/state/relay";
 import { preparedConnectionsAtom, useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
-import { connectionPhaseTone } from "../connectionPhaseTone";
-import { StatusDot } from "../ui/status-dot";
+import { connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { Badge } from "../ui/badge";
-import { Button, ContentButton } from "../ui/button";
-import { Group, GroupSeparator } from "../ui/group";
+import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildFleetGraph,
   anchorFleetView,
@@ -96,7 +90,6 @@ import {
   fleetNodesInBox,
   fleetSearch,
   fleetLayoutWidth,
-  fleetSummary,
   fleetShapeKey,
   fleetStackPartial,
   fleetStacks,
@@ -142,12 +135,13 @@ import { LinkEnvironmentDialog, type LinkEnvironmentPrefill } from "./LinkedEnvi
 import { LinkSeveralEnvironmentsDialog } from "./LinkSeveralEnvironments";
 import { savedBackendStatus } from "./SavedEnvironmentRows";
 import { SettingsSearchTarget } from "./settingsLayout";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 type GT = ReturnType<typeof useGT>;
 type Messages = ReturnType<typeof useMessages>;
 
 /** One ordinal scale for access, read only to full access: a link's line gets heavier and darker. */
-const ACCESS_STROKE_WIDTHS = [1, 1.25, 1.5, 1.75, 2];
+const ACCESS_STROKE_WIDTHS = [1.25, 1.75, 2.25, 2.75, 3.5];
 const ACCESS_STROKE_OPACITIES = [0.4, 0.5, 0.62, 0.76, 0.9];
 /** Short maps get a short canvas; a tall one grows to this, then the fit shrinks it or it pans. */
 const CANVAS_HEIGHT = { min: 180, max: 840 };
@@ -159,8 +153,6 @@ const ARROW_ROVE: Record<string, FleetDirection> = {
 };
 const NO_STACKS: ReadonlySet<string> = new Set();
 const NO_SELECTION: ReadonlySet<string> = new Set();
-/** The link handle's size: the app's small round icon button, centred on the card's edge. */
-const HANDLE = 22;
 /** Search centres a machine at a scale it can be read at, however far out the map was. */
 const FOUND_MIN_SCALE = 0.85;
 
@@ -179,33 +171,35 @@ function healthDash(health: PeerLinkHealth): string | undefined {
 const byTrouble = (left: FleetLinkEdge, right: FleetLinkEdge) =>
   linkTroubleRank(left.health) - linkTroubleRank(right.health);
 
-/** A link's health as the map's controls style it: a machine's outline and a name's colour. */
-function healthState(
-  health: PeerLinkHealth,
-): "expired" | "failing" | "unreachable" | "expiring" | "ok" {
-  if (health.kind === "expired" || health.kind === "failing" || health.kind === "unreachable") {
-    return health.kind;
-  }
-  return health.expiresInDays === null ? "ok" : "expiring";
+/** A machine's outline carries its link's health too. */
+function healthBorder(health: PeerLinkHealth): string {
+  if (health.kind === "expired") return "border-dotted border-destructive/70";
+  if (health.kind === "failing") return "border-destructive/70";
+  if (health.kind === "unreachable") return "border-dashed border-foreground/35";
+  return health.expiresInDays === null ? "border-border" : "border-warning/70";
 }
 
 /** How each route state is drawn: the one in use stands out, the rest stay quiet. */
 const ROUTE_STYLES: Record<
   FleetRouteState,
-  {
-    readonly wire: string;
-    readonly width: number;
-    readonly dash?: string;
-    readonly badge: NonNullable<ComponentProps<typeof Badge>["variant"]>;
-  }
+  { readonly wire: string; readonly width: number; readonly dash?: string; readonly pill: string }
 > = {
-  "in-use": { wire: "text-success", width: 1.75, badge: "success" },
-  standby: { wire: "text-muted-foreground/60", width: 1, badge: "secondary" },
-  trying: { wire: "text-warning", width: 1, dash: "1 4", badge: "warning" },
-  down: { wire: "text-muted-foreground/60", width: 1, dash: "4 4", badge: "unavailable" },
-  idle: { wire: "text-muted-foreground/40", width: 1, dash: "4 4", badge: "unavailable" },
-  refused: { wire: "text-destructive/80", width: 1, dash: "4 4", badge: "error" },
-  offered: { wire: "text-muted-foreground/50", width: 1, dash: "1 4", badge: "outline" },
+  "in-use": {
+    wire: "text-success",
+    width: 1.75,
+    pill: "border-success/70 font-medium text-foreground",
+  },
+  standby: { wire: "text-muted-foreground/60", width: 1, pill: "border-border" },
+  trying: { wire: "text-warning", width: 1, dash: "1 4", pill: "border-warning/60" },
+  down: { wire: "text-muted-foreground/60", width: 1, dash: "4 4", pill: "border-dashed" },
+  idle: { wire: "text-muted-foreground/40", width: 1, dash: "4 4", pill: "border-dashed" },
+  refused: {
+    wire: "text-destructive/80",
+    width: 1,
+    dash: "4 4",
+    pill: "border-dashed border-destructive/60 text-destructive",
+  },
+  offered: { wire: "text-muted-foreground/50", width: 1, dash: "1 4", pill: "border-dotted" },
 };
 
 function routeKindLabel(kind: ConnectionRouteKind, gt: GT): string {
@@ -519,42 +513,42 @@ export function EnvironmentsMap(
   };
   return (
     <>
-      <SettingsSearchTarget id={props.footerId}>
-        <FleetCanvas
-          graph={graph}
-          stacks={stacks}
-          shapeKey={key}
-          environments={environments}
-          selection={selection}
-          selected={selected}
-          onSelect={select}
-          onTick={tick}
-          onClearTicked={() => setTicked(NO_SELECTION)}
-          onLink={requestLink}
-          onLinkSeveral={requestBatch}
-          dropped={dropped}
-          onLinkOne={requestOneLink}
-          onDismissDropped={() => setDropped(null)}
-          onToggleStack={toggleStack}
-          onFind={(stackId, memberId) => {
-            setPicked({ kind: "stack", id: stackId });
-            setFound(memberId);
-          }}
-        />
-      </SettingsSearchTarget>
-      <FleetDetails
-        {...props}
+      <FleetCanvas
         graph={graph}
         stacks={stacks}
+        shapeKey={key}
         environments={environments}
-        connectProblem={connectProblem}
         selection={selection}
-        found={found}
+        selected={selected}
         onSelect={select}
-        onLinkFrom={(sourceId) => requestLink(sourceId, null)}
-        onLinkBack={(edge) => requestOneLink(edge.to, edge.from)}
+        onTick={tick}
+        onClearTicked={() => setTicked(NO_SELECTION)}
+        onLink={requestLink}
+        onLinkSeveral={requestBatch}
+        dropped={dropped}
+        onLinkOne={requestOneLink}
+        onDismissDropped={() => setDropped(null)}
         onToggleStack={toggleStack}
+        onFind={(stackId, memberId) => {
+          setPicked({ kind: "stack", id: stackId });
+          setFound(memberId);
+        }}
       />
+      <SettingsSearchTarget id={props.footerId}>
+        <FleetDetails
+          {...props}
+          graph={graph}
+          stacks={stacks}
+          environments={environments}
+          connectProblem={connectProblem}
+          selection={selection}
+          found={found}
+          onSelect={select}
+          onLinkFrom={(sourceId) => requestLink(sourceId, null)}
+          onLinkBack={(edge) => requestOneLink(edge.to, edge.from)}
+          onToggleStack={toggleStack}
+        />
+      </SettingsSearchTarget>
       {linkRequest ? (
         <LinkEnvironmentDialog
           key={linkRequest.serial}
@@ -869,8 +863,11 @@ function FleetCanvas({
     if (event.key === "+" || event.key === "=") zoom(1.25);
     else if (event.key === "-") zoom(0.8);
     else if (event.key === "0") fit();
-    else if (event.key === "Escape") onSelect(null);
-    else return;
+    else if (event.key === "Escape" && selection !== null) {
+      // Base UI's dialog closes on a document Esc listener.
+      event.stopPropagation();
+      onSelect(null);
+    } else return;
     event.preventDefault();
   };
 
@@ -884,117 +881,124 @@ function FleetCanvas({
   const selectSeveral = gt("Shift-click or Shift-drag to select several");
 
   return (
-    <div className="flex flex-col gap-2 px-1.5 pt-2 pb-1.5">
-      <div className="flex flex-wrap items-center gap-2 px-0.5">
-        <InputGroup className="min-w-40 flex-1">
-          <InputGroupAddon>
-            <SearchIcon aria-hidden />
-          </InputGroupAddon>
-          <InputGroupInput
-            size="sm"
-            type="search"
-            value={query}
-            aria-label={gt("Find a machine on the map")}
-            placeholder={gt("Find a machine")}
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                goToFirstMatch();
-              } else if (event.key === "Escape" && query !== "") {
-                event.stopPropagation();
-                setQuery("");
-              }
-            }}
-          />
-        </InputGroup>
-        {matches === null ? null : (
-          <p role="status" className="min-w-0 text-caption text-muted-foreground">
-            {matchIds.length === 0
+    <>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-t-xl border-b border-border/60 bg-background/50 px-3 py-1.5">
+        <div className="w-48">
+          <InputGroup>
+            <InputGroupAddon>
+              <SearchIcon aria-hidden />
+            </InputGroupAddon>
+            {/* Native search inputs clear on Escape even during IME composition. */}
+            <InputGroupInput
+              size="sm"
+              type="text"
+              role="searchbox"
+              enterKeyHint="search"
+              value={query}
+              aria-label={gt("Find a machine on the map")}
+              placeholder={gt("Find a machine")}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                // Enter and Escape that belong to an IME must not drive the map or close Settings.
+                if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                  event.stopPropagation();
+                  return;
+                }
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  goToFirstMatch();
+                } else if (event.key === "Escape" && query !== "") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setQuery("");
+                }
+              }}
+            />
+          </InputGroup>
+        </div>
+        <p role="status" className="min-w-0 text-2xs text-muted-foreground">
+          {matches === null
+            ? null
+            : matchIds.length === 0
               ? gt("No machine by that name")
               : gt("{count, plural, one {# match} other {# matches}}", {
                   count: matchIds.length,
                   $context: "how many machines a search by name found",
                 })}
-          </p>
-        )}
-        {selected.size > 0 ? (
-          <span className="flex items-center gap-2 text-caption text-foreground">
-            <span role="status" className="tabular-nums">
-              {gt("{count, plural, one {# selected} other {# selected}}", {
-                count: selected.size,
-                $context: "how many machines are selected on a map",
-              })}
+        </p>
+        <div className="ml-auto flex items-center gap-2">
+          {selected.size > 0 ? (
+            <span className="flex items-center gap-1 text-2xs text-foreground">
+              <span role="status" className="tabular-nums">
+                {gt("{count, plural, one {# selected} other {# selected}}", {
+                  count: selected.size,
+                  $context: "how many machines are selected on a map",
+                })}
+              </span>
+              <Button size="xs" variant="ghost-muted" onClick={onClearTicked}>
+                {gt("Clear", { $context: "clears the selection of machines" })}
+              </Button>
             </span>
-            <Button size="sm" variant="secondary" onClick={onClearTicked}>
-              {gt("Clear", { $context: "clears the selection of machines" })}
-            </Button>
-          </span>
-        ) : null}
-        {sources.length === 0 ? null : source !== undefined ? (
-          <Tooltip>
-            <TooltipTrigger
+          ) : null}
+          {sources.length === 0 ? null : source !== undefined ? (
+            <SharedTooltipTrigger
               render={
-                <Button size="sm" variant="secondary" onClick={() => onLinkSeveral(source.id)}>
-                  <LinkIcon />
+                <Button size="xs" variant="outline" onClick={() => onLinkSeveral(source.id)}>
                   {gt("Link several…")}
                 </Button>
               }
+              label={selectSeveral}
             />
-            <TooltipPopup>{selectSeveral}</TooltipPopup>
-          </Tooltip>
-        ) : (
-          <Menu>
-            <Tooltip>
-              <TooltipTrigger
+          ) : (
+            <Menu>
+              <SharedTooltipTrigger
                 render={
                   <MenuTrigger
                     render={
-                      <Button size="sm" variant="secondary">
-                        <LinkIcon />
+                      <Button size="xs" variant="outline">
                         {gt("Link several…")}
                       </Button>
                     }
                   />
                 }
+                label={selectSeveral}
               />
-              <TooltipPopup>{selectSeveral}</TooltipPopup>
-            </Tooltip>
-            <MenuPopup align="end">
-              {sources.map((node) => (
-                <MenuItem key={node.id} onClick={() => onLinkSeveral(node.id)}>
-                  {gt("From {source}", {
-                    source: node.label,
-                    $context: "menu item: link several machines from this environment",
-                  })}
-                </MenuItem>
-              ))}
-            </MenuPopup>
-          </Menu>
-        )}
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button size="icon-sm" variant="secondary" aria-label={gt("How to use the map")}>
-                <CircleHelpIcon />
-              </Button>
-            }
-          />
-          <PopoverPopup align="end" width="sm" padding="compact">
-            <ul className="list-disc space-y-1 pl-4 text-meta text-muted-foreground">
-              <li>{gt("Select a machine to manage it.")}</li>
-              {sources.length === 0 ? null : (
-                <>
-                  <li>{gt("Drag a plus onto a machine to link them.")}</li>
-                  <li>{selectSeveral}</li>
-                </>
-              )}
-              <li>{gt("A link reaches one machine and stops there.")}</li>
-            </ul>
-          </PopoverPopup>
-        </Popover>
+              <MenuPopup align="end">
+                {sources.map((node) => (
+                  <MenuItem key={node.id} onClick={() => onLinkSeveral(node.id)}>
+                    {gt("From {source}", {
+                      source: node.label,
+                      $context: "menu item: link several machines from this environment",
+                    })}
+                  </MenuItem>
+                ))}
+              </MenuPopup>
+            </Menu>
+          )}
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button size="icon-xs" variant="ghost" aria-label={gt("How to use the map")}>
+                  <CircleHelpIcon />
+                </Button>
+              }
+            />
+            <PopoverPopup align="end" width="sm" padding="compact">
+              <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                <li>{gt("Select a machine to manage it.")}</li>
+                {sources.length === 0 ? null : (
+                  <>
+                    <li>{gt("Drag a plus onto a machine to link them.")}</li>
+                    <li>{selectSeveral}</li>
+                  </>
+                )}
+                <li>{gt("A link reaches one machine and stops there.")}</li>
+              </ul>
+            </PopoverPopup>
+          </Popover>
+        </div>
       </div>
       {dropped === null ? null : (
         <CodeOnlyNotice
@@ -1004,127 +1008,87 @@ function FleetCanvas({
           onDismiss={onDismissDropped}
         />
       )}
-      {/* One step deeper than the page surface; route badges and link pills share the same fill. */}
-      <div className="overflow-clip rounded-lg border border-border bg-(--map-canvas-background)">
-        <div
-          ref={setCanvas}
-          data-dragging={dragging || undefined}
-          data-glide={glide || undefined}
-          className="relative min-h-45 cursor-grab touch-none overflow-clip select-none data-dragging:cursor-grabbing data-glide:transition-[height,background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
-          style={
-            view === null || size === null
-              ? undefined
-              : {
-                  height: size.height,
-                  backgroundImage: "radial-gradient(circle, var(--border) 1px, transparent 1.5px)",
-                  backgroundSize: `${24 * view.scale}px ${24 * view.scale}px`,
-                  backgroundPosition: `${view.x}px ${view.y}px`,
-                }
-          }
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={(event) => endDrag(event, false)}
-          onPointerCancel={(event) => endDrag(event, true)}
-          onLostPointerCapture={(event) => endDrag(event, true)}
-          onKeyDown={onKeyDown}
-        >
-          {view === null ? null : (
-            <div
-              data-fleet-scene
-              className="absolute top-0 left-0 origin-top-left in-data-dragging:will-change-transform in-data-glide:transition-transform in-data-glide:duration-200 in-data-glide:ease-out motion-reduce:transition-none"
-              style={{
-                width: layout.width,
-                height: layout.height,
-                transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
-              }}
-            >
-              <FleetScene {...scene} layout={layout} matches={matches} onReveal={reveal} />
-            </div>
-          )}
-          {box === null ? null : (
-            <div
-              aria-hidden
-              style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
-              className="pointer-events-none absolute rounded-sm border border-primary bg-primary/10 forced-colors:border-2"
-            />
-          )}
-        </div>
-        {/* In the surface's corners, below the canvas: nothing on the map can end up under them. */}
-        <div className="flex items-center justify-between gap-3 px-2 pt-1 pb-2">
-          <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
-          <div className="flex shrink-0 items-center gap-2">
-            <FleetAttention graph={graph} />
-            <Group>
-              <Button
-                size="icon-xs"
-                variant="secondary"
-                aria-label={gt("Zoom out")}
-                onClick={() => zoom(0.8)}
-              >
-                <MinusIcon />
-              </Button>
-              <GroupSeparator />
-              <Button
-                size="icon-xs"
-                variant="secondary"
-                aria-label={gt("Zoom in")}
-                onClick={() => zoom(1.25)}
-              >
-                <PlusIcon />
-              </Button>
-              <GroupSeparator />
-              <Button
-                size="icon-xs"
-                variant="secondary"
-                aria-label={gt("Fit the map to view")}
-                disabled={held === null}
-                onClick={fit}
-              >
-                <MaximizeIcon />
-              </Button>
-            </Group>
+      <div
+        ref={setCanvas}
+        data-dragging={dragging || undefined}
+        data-glide={glide || undefined}
+        className="relative min-h-45 cursor-grab touch-none overflow-clip bg-background/50 select-none data-dragging:cursor-grabbing data-glide:transition-[height,background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
+        style={
+          view === null || size === null
+            ? undefined
+            : {
+                height: size.height,
+                backgroundImage: "radial-gradient(circle, var(--border) 1px, transparent 1.5px)",
+                backgroundSize: `${24 * view.scale}px ${24 * view.scale}px`,
+                backgroundPosition: `${view.x}px ${view.y}px`,
+              }
+        }
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={(event) => endDrag(event, false)}
+        onPointerCancel={(event) => endDrag(event, true)}
+        onLostPointerCapture={(event) => endDrag(event, true)}
+        // Safari does not focus a clicked button, so its keys would skip the map.
+        onClick={(event) =>
+          (event.target as Element)
+            .closest<HTMLElement>("button[data-fleet-item]")
+            ?.focus({ preventScroll: true })
+        }
+        onKeyDown={onKeyDown}
+      >
+        {view === null ? null : (
+          <div
+            data-fleet-scene
+            className="absolute top-0 left-0 origin-top-left in-data-dragging:will-change-transform in-data-glide:transition-transform in-data-glide:duration-200 in-data-glide:ease-out motion-reduce:transition-none"
+            style={{
+              width: layout.width,
+              height: layout.height,
+              transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+            }}
+          >
+            <FleetScene {...scene} layout={layout} matches={matches} onReveal={reveal} />
           </div>
+        )}
+        {box === null ? null : (
+          <div
+            aria-hidden
+            style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
+            className="pointer-events-none absolute rounded-sm border border-primary bg-primary/10 forced-colors:border-2"
+          />
+        )}
+      </div>
+      {/* Below the canvas, not over it: nothing on the map can end up under the controls. */}
+      <div className="flex items-center justify-between gap-3 bg-background/50 px-3 py-1">
+        <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
+        <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/60 bg-popover/90 p-0.5 shadow-xs/5">
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={gt("Zoom out")}
+            onClick={() => zoom(0.8)}
+          >
+            <MinusIcon />
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={gt("Zoom in")}
+            onClick={() => zoom(1.25)}
+          >
+            <PlusIcon />
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={gt("Fit the map to view")}
+            disabled={held === null}
+            onClick={fit}
+          >
+            <MaximizeIcon />
+          </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-/** Links in trouble, as one warning beside the legend; each is marked on the map itself. */
-function FleetAttention({ graph }: { readonly graph: FleetGraph }) {
-  const gt = useGT();
-  const summary = fleetSummary(graph);
-  const attention = graph.edges
-    .filter(isLinkEdge)
-    .filter((edge) => linkNeedsAttention(edge.health)).length;
-  if (attention === 0) return null;
-  const label = [
-    summary.links === null
-      ? gt("{machines, plural, one {# machine} other {# machines}}", { machines: summary.machines })
-      : gt(
-          "{machines, plural, one {# machine} other {# machines}}, {links, plural, =0 {no links} one {# link} other {# links}}",
-          { machines: summary.machines, links: summary.links },
-        ),
-    gt("{count, plural, one {# needs attention} other {# need attention}}", {
-      count: attention,
-      $context: "after a count of links: how many of those links have a problem",
-    }),
-  ].join(", ");
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={0}
-            aria-label={label}
-            className="inline-flex size-6 items-center justify-center rounded-badge text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-          />
-        }
-      >
-        <TriangleAlertIcon aria-hidden className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
+    </>
   );
 }
 
@@ -1144,7 +1108,7 @@ function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
   return (
     <ul
       aria-label={gt("How to read the lines")}
-      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-caption whitespace-nowrap text-muted-foreground"
+      className="flex min-w-0 items-center gap-x-3 overflow-clip text-2xs whitespace-nowrap text-muted-foreground"
     >
       <li className="flex items-center gap-1.5">
         {sample("in-use")}
@@ -1303,7 +1267,7 @@ function CodeOnlyNotice({
   return (
     <div
       role="status"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 bg-background/50 px-3 py-2 text-meta"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 bg-background/50 px-3 py-2 text-xs"
     >
       <p className="min-w-0 flex-1 basis-64 text-muted-foreground">
         {needsCodeText(machines.length, gt)}
@@ -1312,7 +1276,7 @@ function CodeOnlyNotice({
       <Menu>
         <MenuTrigger
           render={
-            <Button size="xs" variant="secondary">
+            <Button size="xs" variant="outline">
               {gt("Link one with a code…")}
             </Button>
           }
@@ -1454,6 +1418,13 @@ const FleetScene = memo(function FleetScene({
       "transition-opacity duration-150 motion-reduce:transition-none",
       dimmed && "opacity-25 forced-colors:opacity-40",
     );
+  // A name on a line stays solid when out of focus, so the lines under it never show through:
+  // its text and outline step back instead.
+  const fadeName = (dimmed: boolean) =>
+    cn(
+      "transition-colors duration-150 motion-reduce:transition-none",
+      dimmed && "border-border/50 font-normal text-muted-foreground/45",
+    );
   const routeLit = (edge: FleetRouteEdge) => lit === null || lit.edges.has(edge.id);
   // Painted last, so the routes in focus lie over the ones that are not.
   const routePaintOrder =
@@ -1495,7 +1466,7 @@ const FleetScene = memo(function FleetScene({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const direction = ARROW_ROVE[event.key];
     const from = (event.target as HTMLElement).closest<HTMLElement>("[data-fleet-node]");
-    if (event.key === "" && from !== null && tickable(from.dataset.fleetNode ?? "")) {
+    if (event.key === " " && from !== null && tickable(from.dataset.fleetNode ?? "")) {
       // Space ticks the machine for a batch link; Enter still opens its details.
       event.preventDefault();
       if (!event.repeat) onTick([from.dataset.fleetNode ?? ""], "toggle");
@@ -1516,8 +1487,6 @@ const FleetScene = memo(function FleetScene({
     type: "button" as const,
     "data-fleet-item": "",
     "data-fleet-node": target.id,
-    "data-drop-over": linkDrag?.overId === target.id ? "" : undefined,
-    "data-faded": nodeDimmed(target.id) ? "" : undefined,
     "aria-label": selected.has(target.id)
       ? gt("{label}, selected", { label, $context: "a machine ticked on a map" })
       : label,
@@ -1533,7 +1502,7 @@ const FleetScene = memo(function FleetScene({
     },
     // The keydown ticked the machine; without this the button would also click.
     onKeyUp: (event: KeyboardEvent<HTMLElement>) => {
-      if (event.key === "" && tickable(target.id)) event.preventDefault();
+      if (event.key === " " && tickable(target.id)) event.preventDefault();
     },
     onFocus: (event: FocusEvent<HTMLElement>) => {
       setRoving(target.id);
@@ -1544,6 +1513,12 @@ const FleetScene = memo(function FleetScene({
     onBlur: () => setHover(null),
     ...hoverProps(target),
   });
+  const nodeClass = (id: string) =>
+    cn(
+      "absolute flex cursor-pointer items-center text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-pressed:ring-2 aria-pressed:ring-primary aria-pressed:ring-inset forced-colors:focus-visible:outline-2 forced-colors:aria-pressed:outline-2",
+      fade(nodeDimmed(id)),
+      linkDrag?.overId === id && "ring-2 ring-primary ring-inset",
+    );
 
   const toScene = (event: PointerEvent<HTMLElement>) => {
     const bounds = event.currentTarget.closest("[data-fleet-scene]")?.getBoundingClientRect();
@@ -1624,7 +1599,7 @@ const FleetScene = memo(function FleetScene({
           key={column.id}
           aria-hidden
           style={{ left: column.x }}
-          className="absolute top-0 text-caption whitespace-nowrap text-muted-foreground"
+          className="absolute top-0 text-2xs font-medium whitespace-nowrap text-muted-foreground"
         >
           {titles[column.id]}
         </p>
@@ -1772,26 +1747,22 @@ const FleetScene = memo(function FleetScene({
         const geometry = layout.routes.get(edge.id);
         if (geometry === undefined) return null;
         const { pill } = geometry;
-        // The badge's tint sits on the map's own fill, so the wire running under it never shows.
         return (
           <span
             key={edge.id}
             aria-hidden
             style={{ left: pill.x, top: pill.y, width: pill.width, height: pill.height }}
             className={cn(
-              "absolute flex rounded-badge bg-(--map-canvas-background)",
+              "absolute flex items-center justify-center rounded-full border bg-background px-1.5 text-2xs leading-none text-muted-foreground",
+              routeLit(edge) && ROUTE_STYLES[edge.state].pill,
               // Lit routes sit over the others, whose wires pass beside them on the way in.
               routeLit(edge) && "z-1",
+              fadeName(!routeLit(edge)),
             )}
           >
-            <Badge
-              variant={routeLit(edge) ? ROUTE_STYLES[edge.state].badge : "quiet"}
-              className="size-full min-w-0"
-            >
-              <span className="truncate">
-                {edge.routeLabel ?? routeKindLabel(edge.routeKind, gt)}
-              </span>
-            </Badge>
+            <span className="truncate">
+              {edge.routeLabel ?? routeKindLabel(edge.routeKind, gt)}
+            </span>
           </span>
         );
       })}
@@ -1810,11 +1781,10 @@ const FleetScene = memo(function FleetScene({
           return null;
         }
         return (
-          <ContentButton
-            variant="fleet-route-pill"
+          <button
             key={edge.id}
+            type="button"
             data-fleet-item=""
-            data-on-demand={badge.onDemand ? "" : undefined}
             tabIndex={-1}
             aria-pressed={isSelected("edge", edge.id)}
             aria-label={linkName(edge, back, labelOf, gt, m)}
@@ -1827,9 +1797,12 @@ const FleetScene = memo(function FleetScene({
                 ? { left: badge.x }
                 : { right: layout.width - badge.x - badge.width }),
             }}
-            data-health={lit === null || lit.edges.has(edge.id) ? healthState(health) : undefined}
-            data-faded={lit !== null && !lit.edges.has(edge.id) ? "" : undefined}
-            className="absolute"
+            className={cn(
+              "absolute flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-1.5 text-2xs leading-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-pressed:border-primary aria-pressed:text-primary",
+              lit === null || lit.edges.has(edge.id) ? healthTone(health) : null,
+              badge.onDemand && "z-10 shadow-sm/5",
+              fadeName(lit !== null && !lit.edges.has(edge.id)),
+            )}
             onClick={() => onSelect(isSelected("edge", edge.id) ? null : target)}
             onFocus={() => setHover(target)}
             onBlur={() => setHover(null)}
@@ -1843,7 +1816,7 @@ const FleetScene = memo(function FleetScene({
               className={cn(lit !== null && !lit.edges.has(edge.id) && "opacity-45")}
             />
             <span className="truncate">{m(accessConfig[edge.link.access].label)}</span>
-          </ContentButton>
+          </button>
         );
       })}
       {stacks.map((stack) => {
@@ -1879,7 +1852,7 @@ const FleetScene = memo(function FleetScene({
                 count,
                 sources: stack.sources
                   .map((source) => nodeById.get(source.sourceId)?.label ?? "")
-                  .join(","),
+                  .join(", "),
                 summary,
               });
         const partial = fleetStackPartial(stack);
@@ -1901,7 +1874,7 @@ const FleetScene = memo(function FleetScene({
                   height: face.height,
                 }}
                 className={cn(
-                  "absolute rounded-lg border border-border surface-card-settings transition-opacity duration-200 ease-out motion-reduce:transition-none",
+                  "absolute rounded-lg border border-border bg-card transition-opacity duration-200 ease-out motion-reduce:transition-none",
                   group !== null && "border-dashed",
                   stack.expanded && "opacity-0",
                 )}
@@ -1917,31 +1890,33 @@ const FleetScene = memo(function FleetScene({
                 )}
               />
             )}
-            <ContentButton
-              variant="fleet-stack"
+            <button
               {...focusProps({ kind: "stack", id: stack.id }, face, spoken)}
-              data-partial={partialBand > 0 ? "" : undefined}
-              data-grouped={group !== null ? "" : undefined}
-              data-holds-selection={holdsSelection(stack) ? "" : undefined}
-              className="absolute"
+              className={cn(
+                nodeClass(stack.id),
+                "flex-col items-stretch overflow-clip rounded-lg border bg-card hover:border-foreground/50",
+                partialBand > 0 ? "border-warning/60" : "border-foreground/25",
+                group !== null && "border-dashed",
+                holdsSelection(stack) && "ring-2 ring-primary ring-inset forced-colors:outline-2",
+              )}
             >
               <span className="flex min-h-0 min-w-0 flex-1 flex-col justify-center px-2.5 pr-8">
                 <span className="flex items-center gap-1.5">
-                  <span className="truncate text-meta leading-4 text-foreground">
+                  <span className="truncate text-xs leading-4 font-semibold text-foreground">
                     {group ?? range}
                   </span>
                   {group === null ? null : (
-                    <span className="shrink-0 rounded-full bg-muted px-1.5 text-caption leading-4 text-muted-foreground tabular-nums forced-colors:border">
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 text-2xs leading-4 text-muted-foreground tabular-nums forced-colors:border">
                       {count}
                     </span>
                   )}
                 </span>
                 {group !== null ? (
-                  <span className="block truncate text-caption leading-4 text-muted-foreground">
+                  <span className="block truncate text-2xs leading-4 text-muted-foreground">
                     {range}
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1.5 text-caption leading-4 text-muted-foreground">
+                  <span className="flex items-center gap-1.5 text-2xs leading-4 text-muted-foreground">
                     {only !== undefined && stack.sources.length === 1 ? (
                       <AccessMeter access={only.access} className="text-foreground/70" />
                     ) : null}
@@ -1957,7 +1932,7 @@ const FleetScene = memo(function FleetScene({
                 // The headline of a stack that is partly down: its own band, never cut short.
                 <span
                   style={{ height: partialBand }}
-                  className="flex shrink-0 items-center gap-1.5 border-t border-warning/30 bg-warning/16 px-2.5 text-caption leading-none text-warning-foreground forced-colors:border-t-2"
+                  className="flex shrink-0 items-center gap-1.5 border-t border-warning/30 bg-warning/16 px-2.5 text-2xs leading-none font-semibold text-warning-foreground forced-colors:border-t-2"
                 >
                   <TriangleAlertIcon aria-hidden className="size-3 shrink-0 text-warning" />
                   <span className="shrink-0 whitespace-nowrap tabular-nums">
@@ -1975,9 +1950,9 @@ const FleetScene = memo(function FleetScene({
                   </span>
                 </span>
               )}
-            </ContentButton>
-            <ContentButton
-              variant="fleet-toggle"
+            </button>
+            <button
+              type="button"
               data-fleet-item=""
               tabIndex={stack.id === tabStop ? 0 : -1}
               aria-label={
@@ -1994,21 +1969,23 @@ const FleetScene = memo(function FleetScene({
                 left: face.x + face.width - 28,
                 top: face.y + (face.height - partialBand) / 2 - 11,
               }}
-              className="absolute"
+              className="absolute flex size-5.5 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
               onClick={() => onToggleStack(stack.id)}
             >
               <ToggleIcon aria-hidden className="size-3.5" />
-            </ContentButton>
+            </button>
             {more === null ? null : (
               // The rest are never drawn: the details list every machine, and can be searched.
-              <ContentButton
-                variant="fleet-more"
+              <button
+                type="button"
                 data-fleet-item=""
                 data-fleet-node={fleetMoreNodeId(stack.id)}
                 tabIndex={fleetMoreNodeId(stack.id) === tabStop ? 0 : -1}
                 style={{ left: more.x, top: more.y, width: more.width, height: more.height }}
-                data-appear=""
-                className="absolute"
+                className={cn(
+                  "absolute flex cursor-pointer items-center rounded-md border border-dashed border-foreground/30 px-2 text-2xs leading-none text-muted-foreground outline-none hover:border-foreground/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                  APPEAR,
+                )}
                 onClick={() => onSelect({ kind: "stack", id: stack.id })}
                 onFocus={() => setRoving(fleetMoreNodeId(stack.id))}
               >
@@ -2018,7 +1995,7 @@ const FleetScene = memo(function FleetScene({
                     $context: "a card standing for the machines of a group that are not drawn",
                   })}
                 </span>
-              </ContentButton>
+              </button>
             )}
           </div>
         );
@@ -2030,15 +2007,17 @@ const FleetScene = memo(function FleetScene({
         if (node.kind === "client") {
           const ClientIcon = isElectron ? AppWindowIcon : GlobeIcon;
           return (
-            <ContentButton
-              variant="fleet-client"
+            <button
               key={node.id}
               {...focusProps(target, rect, node.label)}
-              className="absolute"
+              className={cn(
+                nodeClass(node.id),
+                "gap-2 rounded-full border border-foreground/25 bg-card px-3.5 text-foreground hover:border-foreground/50",
+              )}
             >
               <ClientIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-              <span className="truncate text-meta">{node.label}</span>
-            </ContentButton>
+              <span className="truncate text-xs font-semibold">{node.label}</span>
+            </button>
           );
         }
         const incoming = links.filter((edge) => edge.to === node.id);
@@ -2051,8 +2030,7 @@ const FleetScene = memo(function FleetScene({
           const first = shown ?? incoming.toSorted(byTrouble)[0];
           const compact = rect.height < 32;
           return (
-            <ContentButton
-              variant="fleet-target"
+            <button
               key={node.id}
               {...focusProps(
                 target,
@@ -2066,12 +2044,14 @@ const FleetScene = memo(function FleetScene({
                       summary: linkSummary(edge, gt, m),
                     }),
                   ),
-                ].join(","),
+                ].join(", "),
               )}
-              data-compact={compact ? "" : undefined}
-              data-appear={compact ? "" : undefined}
-              data-health={first ? healthState(first.health) : undefined}
-              className="absolute"
+              className={cn(
+                nodeClass(node.id),
+                "gap-2 border bg-card text-foreground/90 hover:border-foreground/50 hover:text-foreground",
+                compact ? cn("rounded-md px-2", APPEAR) : "rounded-lg px-2.5",
+                first ? healthBorder(first.health) : "border-border",
+              )}
             >
               <span className="flex w-3 shrink-0 justify-center">
                 {first ? <HealthGlyph health={first.health} /> : null}
@@ -2080,7 +2060,7 @@ const FleetScene = memo(function FleetScene({
                 <span
                   className={cn(
                     "block truncate",
-                    compact ? "text-caption leading-none" : "text-meta leading-4",
+                    compact ? "text-2xs leading-none" : "text-xs leading-4 font-medium",
                   )}
                 >
                   {node.label}
@@ -2088,33 +2068,28 @@ const FleetScene = memo(function FleetScene({
                 {compact || !first ? null : (
                   <span
                     className={cn(
-                      "block truncate text-caption leading-4",
+                      "block truncate text-2xs leading-4",
                       first.health.kind === "reachable" && first.health.expiresInDays === null
                         ? "text-muted-foreground"
                         : healthTone(first.health),
                     )}
                   >
-                    {shown === undefined ? (
-                      gt("{count, plural, one {# link in} other {# links in}}", {
-                        count: incoming.length,
-                        $context:
-                          "how many machines hold a link to this machine; pairs with '# links out'",
-                      })
-                    ) : first.health.kind === "reachable" && first.health.expiresInDays === null ? (
-                      m(accessConfig[first.link.access].label)
-                    ) : (
-                      <>
-                        {m(accessConfig[first.link.access].label)}
-                        <span className="ms-1.5">{healthLabel(first.health, gt)}</span>
-                      </>
-                    )}
+                    {shown === undefined
+                      ? gt("{count, plural, one {# link in} other {# links in}}", {
+                          count: incoming.length,
+                          $context:
+                            "how many machines hold a link to this machine; pairs with '# links out'",
+                        })
+                      : first.health.kind === "reachable" && first.health.expiresInDays === null
+                        ? m(accessConfig[first.link.access].label)
+                        : `${m(accessConfig[first.link.access].label)} · ${healthLabel(first.health, gt)}`}
                   </span>
                 )}
               </span>
               {compact || !shown ? null : (
                 <AccessMeter access={shown.link.access} className="text-foreground/70" />
               )}
-            </ContentButton>
+            </button>
           );
         }
         if (rect.height < 32) {
@@ -2124,35 +2099,32 @@ const FleetScene = memo(function FleetScene({
               ? connectAvailabilityText(node.availability, gt)
               : connectionStateText(node, environmentById.get(node.id), false, gt);
           return (
-            <ContentButton
-              variant="fleet-available"
+            <button
               key={node.id}
               {...focusProps(target, rect, `${node.label}, ${state}`)}
-              data-appear=""
-              className="absolute"
+              className={cn(
+                nodeClass(node.id),
+                "gap-1.5 rounded-md border border-dashed border-foreground/25 bg-card px-2 text-foreground/90 hover:border-foreground/50 hover:text-foreground",
+                APPEAR,
+              )}
             >
-              <StatusDot
-                size="md"
-                tone={
+              <span
+                aria-hidden
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
                   node.kind === "environment" && node.enabled
-                    ? connectionPhaseTone(node.phase)
-                    : "neutral"
-                }
+                    ? connectionPhaseDotClassName(node.phase)
+                    : "bg-muted-foreground/40",
+                )}
               />
-              <span className="truncate text-caption leading-none">{node.label}</span>
-            </ContentButton>
+              <span className="truncate text-2xs leading-none">{node.label}</span>
+            </button>
           );
         }
         if (node.kind === "connect") {
-          const status = (
-            <>
-              {gt("Not added")}
-              <span className="ms-1.5">{connectAvailabilityText(node.availability, gt)}</span>
-            </>
-          );
+          const status = `${gt("Not added")} · ${connectAvailabilityText(node.availability, gt)}`;
           return (
-            <ContentButton
-              variant="fleet-account"
+            <button
               key={node.id}
               {...focusProps(
                 target,
@@ -2162,18 +2134,21 @@ const FleetScene = memo(function FleetScene({
                   status: connectAvailabilityText(node.availability, gt),
                 }),
               )}
-              className="absolute"
+              className={cn(
+                nodeClass(node.id),
+                "gap-2 rounded-lg border border-dashed border-foreground/30 bg-card/60 px-2.5 hover:border-foreground/55",
+              )}
             >
               <CloudIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-meta leading-4 text-foreground">
+                <span className="block truncate text-xs leading-4 font-semibold text-foreground">
                   {node.label}
                 </span>
-                <span className="block truncate text-caption leading-4 text-muted-foreground">
+                <span className="block truncate text-2xs leading-4 text-muted-foreground">
                   {status}
                 </span>
               </span>
-            </ContentButton>
+            </button>
           );
         }
         const environment = environmentById.get(node.id);
@@ -2197,8 +2172,7 @@ const FleetScene = memo(function FleetScene({
         const over = linkDrag?.overId === node.id;
         return (
           <div key={node.id}>
-            <ContentButton
-              variant="fleet-this"
+            <button
               {...focusProps(
                 target,
                 rect,
@@ -2209,11 +2183,14 @@ const FleetScene = memo(function FleetScene({
                     (edge) =>
                       `${edge.routeLabel ?? routeKindLabel(edge.routeKind, gt)}: ${routeStateLabel(edge.state, gt)}`,
                   ),
-                ].join(","),
+                ].join(", "),
               )}
-              data-dimmed={dimmed ? "" : undefined}
-              data-over={over ? "" : undefined}
-              className="absolute"
+              className={cn(
+                nodeClass(node.id),
+                "gap-2 rounded-lg border bg-card px-2.5 text-card-foreground shadow-sm/5 hover:border-foreground/45",
+                dimmed ? "border-dashed border-foreground/25" : "border-foreground/20",
+                over && "border-primary",
+              )}
             >
               <span
                 className={cn(
@@ -2222,17 +2199,23 @@ const FleetScene = memo(function FleetScene({
                 )}
               >
                 <EnvironmentMachineIcon kind={node.machine ?? "server"} className="size-3.5" />
-                <span className="absolute -right-1 -bottom-1 flex rounded-full border-2 border-card">
-                  <StatusDot tone={node.enabled ? connectionPhaseTone(node.phase) : "neutral"} />
-                </span>
+                <span
+                  aria-hidden
+                  className={cn(
+                    "absolute -right-1 -bottom-1 size-2.5 rounded-full border-2 border-card",
+                    node.enabled
+                      ? connectionPhaseDotClassName(node.phase)
+                      : "bg-muted-foreground/40",
+                  )}
+                />
               </span>
               <span className={cn("min-w-0 flex-1 pr-1.5", dimmed && "opacity-70")}>
-                <span className="line-clamp-2 text-meta leading-4 [overflow-wrap:anywhere]">
+                <span className="line-clamp-2 text-xs leading-4 font-semibold [overflow-wrap:anywhere]">
                   {node.label}
                 </span>
                 <span
                   className={cn(
-                    "block truncate text-caption leading-4",
+                    "block truncate text-2xs leading-4",
                     node.outgoing === "error" && node.phase === "connected"
                       ? "text-destructive"
                       : "text-muted-foreground",
@@ -2241,35 +2224,29 @@ const FleetScene = memo(function FleetScene({
                   {status}
                 </span>
               </span>
-            </ContentButton>
+            </button>
             {handle !== undefined && node.linking === "ready" ? (
-              <span
-                style={{ left: handle.x - HANDLE / 2, top: handle.y - HANDLE / 2 }}
-                className={cn("absolute flex", fade(nodeDimmed(node.id)))}
+              <button
+                type="button"
+                data-fleet-item=""
+                tabIndex={node.id === tabStop ? 0 : -1}
+                aria-label={gt("Link {label} to another machine", { label: node.label })}
+                style={{ left: handle.x - 9, top: handle.y - 9 }}
+                onFocus={(event) => {
+                  // Its own bounds: it straddles the card's edge, so the card can be in view
+                  // while half the handle is not.
+                  if (event.currentTarget.matches(":focus-visible")) {
+                    onReveal({ x: handle.x - 9, y: handle.y - 9, width: 18, height: 18 });
+                  }
+                }}
+                className={cn(
+                  "absolute flex size-4.5 cursor-crosshair touch-none items-center justify-center rounded-full bg-primary text-primary-foreground outline-none hover:scale-110 focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-inset motion-safe:transition-transform motion-safe:duration-150 forced-colors:border",
+                  fade(nodeDimmed(node.id)),
+                )}
+                {...handleProps(node.id)}
               >
-                <Button
-                  size="icon-xs-pill"
-                  variant="secondary"
-                  data-fleet-item=""
-                  tabIndex={node.id === tabStop ? 0 : -1}
-                  aria-label={gt("Link {label} to another machine", { label: node.label })}
-                  onFocus={(event) => {
-                    // Its own bounds: it straddles the card's edge, so the card can be in view
-                    // while half the handle is not.
-                    if (event.currentTarget.matches(":focus-visible")) {
-                      onReveal({
-                        x: handle.x - HANDLE / 2,
-                        y: handle.y - HANDLE / 2,
-                        width: HANDLE,
-                        height: HANDLE,
-                      });
-                    }
-                  }}
-                  {...handleProps(node.id)}
-                >
-                  <PlusIcon aria-hidden />
-                </Button>
-              </span>
+                <PlusIcon aria-hidden className="size-3" strokeWidth={2.5} />
+              </button>
             ) : null}
           </div>
         );
@@ -2311,7 +2288,7 @@ function DragHint({ x, y, children }: { x: number; y: number; children: ReactNod
     <p
       role="status"
       style={{ left: x + 14, top: y + 14 }}
-      className="pointer-events-none absolute z-10 rounded-md border border-border bg-popover px-2 py-1 text-caption whitespace-nowrap text-popover-foreground shadow-sm/5"
+      className="pointer-events-none absolute z-10 rounded-md border border-border bg-popover px-2 py-1 text-2xs whitespace-nowrap text-popover-foreground shadow-sm/5"
     >
       {children}
     </p>

@@ -1,4 +1,3 @@
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type {
   EnvironmentId,
   PullRequestRef,
@@ -6,7 +5,7 @@ import type {
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon, ClockIcon, RefreshCwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { ClockIcon, RefreshCwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { msg, T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
@@ -33,6 +32,7 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 import { mergeHeadPin, readableFailure } from "./pullRequestDetail.logic";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function PullRequestStackMenu({
   hostLabel,
@@ -43,7 +43,6 @@ export function PullRequestStackMenu({
   shownHeadSha,
   stale,
   canMerge,
-  conflictsWith = null,
   canRebase,
   canAutoMerge,
   preferAutoMerge,
@@ -54,19 +53,10 @@ export function PullRequestStackMenu({
   onActed,
   notice,
   onRetry,
-  syncedAt,
-  display = "both",
 }: {
   hostLabel: string;
   terminology: ChangeRequestTerminology;
   notice?: string | null;
-  /** Epoch milliseconds of the last successful stack read. */
-  syncedAt?: number | undefined;
-  /**
-   * The stack trigger, the "Merge stack" button, or both. The panel header shows the
-   * trigger beside the branch and the readiness card shows the merge button.
-   */
-  display?: "trigger" | "merge-button" | "both";
   onRetry?: (() => void) | undefined;
   stack: PullRequestStack;
   reference: PullRequestRef;
@@ -75,8 +65,6 @@ export function PullRequestStackMenu({
   shownHeadSha: string | undefined;
   stale: boolean;
   canMerge: boolean;
-  /** The base branch this pull request conflicts with; the stack cannot merge through it. */
-  conflictsWith?: string | null;
   canRebase: boolean;
   /** The host can arm auto-merge for this layer and the open layers below it. */
   canAutoMerge: boolean;
@@ -110,7 +98,6 @@ export function PullRequestStackMenu({
   const mergeDisabled =
     pending ||
     stale ||
-    conflictsWith !== null ||
     selectedLayer?.state !== "open" ||
     mergeLayers.some((layer) => !layer.headSha) ||
     mergeHasClosed ||
@@ -232,171 +219,132 @@ export function PullRequestStackMenu({
   const leadsWithAutoMerge = canAutoMerge && preferAutoMerge;
   return (
     <>
-      {display !== "merge-button" ? (
-        <Menu open={open} onOpenChange={setOpen}>
-          <Tooltip>
-            <TooltipTrigger
+      <Menu open={open} onOpenChange={setOpen}>
+        <SharedTooltipTrigger
+          render={
+            <MenuTrigger
               render={
-                <MenuTrigger
-                  render={
-                    <Button
-                      variant="success-outline"
-                      size="chip"
-                      aria-label={gt("Stack {number}, layer {position} of {size}", {
-                        number: stack.number,
-                        position,
-                        size: stack.layers.length,
-                      })}
-                    />
-                  }
-                >
-                  <PullRequestGlyph.stack aria-hidden className="size-3.5" /> {position}/
-                  {stack.layers.length}
-                  <ChevronDownIcon aria-hidden className="size-3" />
-                  {onRetry ? (
-                    <TriangleAlertIcon aria-hidden className="size-3 text-warning" />
-                  ) : null}
-                </MenuTrigger>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  aria-label={gt("Stack {number}, layer {position} of {size}", {
+                    number: stack.number,
+                    position,
+                    size: stack.layers.length,
+                  })}
+                />
+              }
+            >
+              <PullRequestGlyph.stack aria-hidden className="size-3.5" /> {position}/
+              {stack.layers.length}
+              {onRetry ? <TriangleAlertIcon aria-hidden className="size-3 text-warning" /> : null}
+            </MenuTrigger>
+          }
+          label={
+            <>
+              <T>
+                View stack #<Var>{stack.number}</Var>, layer <Var>{position}</Var> of{" "}
+                <Var>{stack.layers.length}</Var>
+              </T>
+              {notice ? ` · ${notice}` : null}
+            </>
+          }
+        />
+        <MenuPopup align="start">
+          <MenuGroup>
+            <PullRequestStackHeader number={stack.number} notice={notice} stale={!!onRetry} />
+            {onRetry ? (
+              <MenuItem onClick={onRetry}>
+                <T>Retry stack refresh</T>
+              </MenuItem>
+            ) : null}
+            <PullRequestStackLayers
+              stack={stack}
+              reference={reference}
+              pending={pending}
+              onSelect={
+                onSelect
+                  ? (target) => {
+                      setOpen(false);
+                      onSelect(target);
+                    }
+                  : undefined
               }
             />
-            <TooltipPopup>
-              <span className="flex flex-col gap-0.5">
-                <span>
+          </MenuGroup>
+          {canMerge || canRebase || canAutoMerge || canCancelAutoMerge ? (
+            <>
+              <MenuSeparator />
+              {canMerge && !autoMergeArmed ? (
+                <MenuItem disabled={mergeDisabled} onClick={() => setConfirmation("merge")}>
+                  <PullRequestGlyph.merged aria-hidden />
                   <T>
-                    View stack #<Var>{stack.number}</Var>, layer <Var>{position}</Var> of{" "}
-                    <Var>{stack.layers.length}</Var>
+                    Merge stack (<Var>{mergeLayers.length}</Var>)
                   </T>
-                </span>
-                {notice ? <span>{notice}</span> : null}
-              </span>
-            </TooltipPopup>
-          </Tooltip>
-          <MenuPopup align="start" className="w-[437px] max-w-[calc(100vw-2rem)]">
-            <MenuGroup>
-              <PullRequestStackHeader
-                number={stack.number}
-                onClose={() => setOpen(false)}
-                terminology={terminology}
-                size={stack.layers.length}
-                notice={notice}
-                stale={!!onRetry}
-              />
-              {onRetry ? (
-                <MenuItem onClick={onRetry}>
-                  <T>Retry stack refresh</T>
                 </MenuItem>
               ) : null}
-              <PullRequestStackLayers
-                stack={stack}
-                terminology={terminology}
-                reference={reference}
-                pending={pending}
-                syncedAt={syncedAt}
-                onSelect={
-                  onSelect
-                    ? (target) => {
-                        setOpen(false);
-                        onSelect(target);
-                      }
-                    : undefined
-                }
-              />
-            </MenuGroup>
-            {canMerge || canRebase || canAutoMerge || canCancelAutoMerge ? (
-              <>
-                <MenuSeparator />
-                {canMerge && !autoMergeArmed ? (
-                  <MenuItem disabled={mergeDisabled} onClick={() => setConfirmation("merge")}>
-                    <span className="flex size-4 shrink-0 items-center">
-                      <PullRequestGlyph.merged aria-hidden className="size-4" />
-                    </span>
-                    <T>
-                      Merge stack (<Var>{mergeLayers.length}</Var>)
-                    </T>
-                  </MenuItem>
-                ) : null}
-                {canAutoMerge && !autoMergeArmed ? (
-                  <MenuItem
-                    disabled={mergeDisabled}
-                    onClick={() => setConfirmation("enable-auto-merge")}
-                  >
-                    <span className="flex size-4 shrink-0 items-center">
-                      <ClockIcon aria-hidden className="size-4" />
-                    </span>
-                    <T>
-                      Auto-merge stack (<Var>{mergeLayers.length}</Var>)
-                    </T>
-                  </MenuItem>
-                ) : null}
-                {autoMergeArmed && canCancelAutoMerge ? (
-                  <MenuItem disabled={pending} onClick={() => void cancelAutoMerge()}>
-                    <span className="flex size-4 shrink-0 items-center">
-                      <XIcon aria-hidden className="size-4" />
-                    </span>
-                    <T>Cancel stack auto-merge</T>
-                  </MenuItem>
-                ) : null}
-                {canRebase ? (
-                  <MenuItem
-                    disabled={rebaseDisabled}
-                    onClick={() => setConfirmation("update-branch")}
-                  >
-                    <span className="flex size-4 shrink-0 items-center">
-                      <RefreshCwIcon aria-hidden className="size-4" />
-                    </span>
-                    <T>Rebase stack</T>
-                  </MenuItem>
-                ) : null}
-                {conflictsWith !== null ? (
-                  <p className="px-2 py-1 text-meta text-muted-foreground">
-                    <T>
-                      Resolve the conflicts with <Var>{conflictsWith}</Var> before merging.
-                    </T>
-                  </p>
-                ) : mergeHasClosed || mergeLayers.some((layer) => layer.isDraft) ? (
-                  <p className="px-2 py-1 text-meta text-muted-foreground">
-                    <T>Every layer being merged must be open and ready for review.</T>
-                  </p>
-                ) : null}
-              </>
-            ) : null}
-          </MenuPopup>
-        </Menu>
-      ) : null}
-      {display !== "trigger" &&
-      (leadsWithAutoMerge || canMerge) &&
-      !autoMergeArmed &&
-      conflictsWith === null &&
-      selectedLayer?.state === "open" ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className={display === "merge-button" ? "flex w-full" : "inline-flex"}>
-                <Button
-                  variant="default"
-                  className={display === "merge-button" ? "flex-1" : undefined}
-                  size={display === "merge-button" ? "sm" : "xs"}
-                  disabled={mergeDisabled && !stale}
-                  aria-disabled={mergeDisabled || undefined}
-                  aria-description={stale ? staleReason : undefined}
-                  onClick={
-                    mergeDisabled
-                      ? undefined
-                      : () => setConfirmation(leadsWithAutoMerge ? "enable-auto-merge" : "merge")
-                  }
+              {canAutoMerge && !autoMergeArmed ? (
+                <MenuItem
+                  disabled={mergeDisabled}
+                  onClick={() => setConfirmation("enable-auto-merge")}
                 >
-                  {leadsWithAutoMerge ? (
-                    <ClockIcon aria-hidden className="size-3.5" />
-                  ) : (
-                    <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                  )}
-                  {leadsWithAutoMerge ? <T>Auto-merge stack</T> : <T>Merge stack</T>}
-                </Button>
-              </span>
-            }
-          />
-          <TooltipPopup>
-            {stale
+                  <ClockIcon aria-hidden />
+                  <T>
+                    Auto-merge stack (<Var>{mergeLayers.length}</Var>)
+                  </T>
+                </MenuItem>
+              ) : null}
+              {autoMergeArmed && canCancelAutoMerge ? (
+                <MenuItem disabled={pending} onClick={() => void cancelAutoMerge()}>
+                  <XIcon aria-hidden />
+                  <T>Cancel stack auto-merge</T>
+                </MenuItem>
+              ) : null}
+              {canRebase ? (
+                <MenuItem
+                  disabled={rebaseDisabled}
+                  onClick={() => setConfirmation("update-branch")}
+                >
+                  <RefreshCwIcon aria-hidden />
+                  <T>Rebase stack</T>
+                </MenuItem>
+              ) : null}
+              {mergeHasClosed || mergeLayers.some((layer) => layer.isDraft) ? (
+                <p className="px-2 py-1 text-xs text-muted-foreground">
+                  <T>Every layer being merged must be open and ready for review.</T>
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </MenuPopup>
+      </Menu>
+      {(leadsWithAutoMerge || canMerge) && !autoMergeArmed && selectedLayer?.state === "open" ? (
+        <SharedTooltipTrigger
+          render={
+            <span className="inline-flex">
+              <Button
+                variant="default"
+                size="xs"
+                disabled={mergeDisabled && !stale}
+                aria-disabled={mergeDisabled || undefined}
+                aria-description={stale ? staleReason : undefined}
+                onClick={
+                  mergeDisabled
+                    ? undefined
+                    : () => setConfirmation(leadsWithAutoMerge ? "enable-auto-merge" : "merge")
+                }
+              >
+                {leadsWithAutoMerge ? (
+                  <ClockIcon aria-hidden className="size-3.5" />
+                ) : (
+                  <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+                )}
+                {leadsWithAutoMerge ? <T>Auto-merge stack</T> : <T>Merge stack</T>}
+              </Button>
+            </span>
+          }
+          label={
+            stale
               ? staleReason
               : gt(
                   "{count, plural, one {Merge stack through '#'{number} into {base} ({count} {term, select, mr {merge request} cr {change request} other {pull request}})} other {Merge stack through '#'{number} into {base} ({count} {term, select, mr {merge requests} cr {change requests} other {pull requests}})}}",
@@ -406,9 +354,9 @@ export function PullRequestStackMenu({
                     base: stack.base,
                     term: changeRequestTermKind(terminology),
                   },
-                )}
-          </TooltipPopup>
-        </Tooltip>
+                )
+          }
+        />
       ) : null}
       <Dialog
         open={confirmation !== null}
@@ -471,19 +419,19 @@ export function PullRequestStackMenu({
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <ul className="max-h-48 space-y-1 overflow-y-auto text-body">
+            <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
               {confirmationLayers.map((layer) => (
                 <li
                   key={layer.number}
-                  className="flex items-center gap-2 rounded-row surface-selected-soft px-3 py-2"
+                  className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2"
                 >
-                  <PullRequestStackLayerContent layer={layer} terminology={terminology} compact />
+                  <PullRequestStackLayerContent layer={layer} compact />
                 </li>
               ))}
             </ul>
           </DialogPanel>
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setConfirmation(null)}>
+            <Button variant="outline" onClick={() => setConfirmation(null)}>
               <T>Cancel</T>
             </Button>
             <Button onClick={() => void run()}>

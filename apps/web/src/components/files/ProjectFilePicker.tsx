@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { FileSearchIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useState, type ReactNode } from "react";
 
@@ -7,7 +6,6 @@ import type { MessageResolver } from "~/i18n/messages";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
-import { shortcutLabelForCommand } from "~/keybindings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -15,32 +13,16 @@ import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import { type CommandPaletteActionItem } from "../CommandPalette.logic";
 import { CommandPaletteResults } from "../CommandPaletteResults";
-import { Kbd } from "../ui/kbd";
 import {
   getProjectFilePickerMatches,
+  groupMatchRanges,
   PROJECT_FILE_PICKER_RESULT_LIMIT,
 } from "./ProjectFilePicker.logic";
 import { useProjectFilePickerQuery } from "./projectFilesQueryState";
 
 interface ProjectFilePickerProps {
   readonly setOpen: (open: boolean) => void;
-  /** What Esc does here: "Back" to the palette, or "Close". */
-  readonly escapeLabel: string;
 }
-
-/** The picker's own shortcut at the end of its field, as it is bound right now. */
-function FilePickerShortcutHint() {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const label = shortcutLabelForCommand(keybindings, "filePicker.toggle");
-  if (label === null) return null;
-  return <Kbd>{label}</Kbd>;
-}
-
-// The shortcut takes the esc key's place at the field's end, on the same lines.
-const FILE_PICKER_INPUT_PROPS = {
-  startAddon: <FileSearchIcon className="text-icon-muted" />,
-  endAddon: <FilePickerShortcutHint />,
-} as const;
 
 function HighlightedFuzzyText(props: {
   readonly active: boolean;
@@ -50,17 +32,17 @@ function HighlightedFuzzyText(props: {
   if (!props.active) return props.value;
 
   const parts: ReactNode[] = [];
-  let start = 0;
-  for (const index of props.indices) {
-    if (start < index) parts.push(props.value.slice(start, index));
+  let cursor = 0;
+  for (const [start, end] of groupMatchRanges(props.indices)) {
+    if (cursor < start) parts.push(props.value.slice(cursor, start));
     parts.push(
-      <strong className="font-semibold text-foreground" key={index}>
-        {props.value[index]}
+      <strong className="font-semibold text-foreground" key={start}>
+        {props.value.slice(start, end)}
       </strong>,
     );
-    start = index + 1;
+    cursor = end;
   }
-  if (start < props.value.length) parts.push(props.value.slice(start));
+  if (cursor < props.value.length) parts.push(props.value.slice(cursor));
 
   return <span className="text-muted-foreground">{parts}</span>;
 }
@@ -80,19 +62,19 @@ function getEmptyStateMessage(
   return isSearching ? resolve(msg("No matching files.")) : resolve(msg("No files found."));
 }
 
-function EmptyProjectFilePicker(props: { readonly escapeLabel: string }) {
+function EmptyProjectFilePicker() {
   const gt = useGT();
   return (
     <CommandPaletteContent
       aria-label={gt("File picker")}
-      escapeLabel={props.escapeLabel}
+      escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
       footerActionLabel={gt("Open file")}
-      inputProps={{ ...FILE_PICKER_INPUT_PROPS, disabled: true, placeholder: gt("Search files…") }}
+      inputProps={{ disabled: true, placeholder: gt("Search files…") }}
       mode="none"
       testId="project-file-picker"
       value=""
     >
-      <div className="py-10 text-center text-body text-muted-foreground">
+      <div className="py-10 text-center text-sm text-muted-foreground">
         <T>Open a project to search its files.</T>
       </div>
     </CommandPaletteContent>
@@ -121,55 +103,35 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     kind: "action",
     value: `file:${match.path}`,
     searchTerms: [match.name, match.path],
-    // One line per file: the name, then its folder dimmed beside it (pen D2Qond).
     title: (
-      <>
-        <HighlightedFuzzyText
-          active={hasMatchedQuery}
-          value={match.name}
-          indices={match.nameMatchIndices}
-        />
-        {match.path.includes("/") ? (
-          <span className="ms-2 text-xs font-normal text-dim-foreground">
-            <HighlightedFuzzyText
-              active={hasMatchedQuery}
-              value={match.path.slice(0, match.path.lastIndexOf("/"))}
-              indices={match.pathMatchIndices.filter(
-                (index) => index < match.path.lastIndexOf("/"),
-              )}
-            />
-          </span>
-        ) : null}
-      </>
-    ),
-    // A 16px file icon in the palette's 14px icon column: centered on it, label on its line.
-    icon: (
-      <PierreEntryIcon
-        className="-mx-px"
-        pathValue={match.path}
-        kind="file"
-        theme={resolvedTheme}
+      <HighlightedFuzzyText
+        active={hasMatchedQuery}
+        value={match.name}
+        indices={match.nameMatchIndices}
       />
     ),
+    description: (
+      <HighlightedFuzzyText
+        active={hasMatchedQuery}
+        value={match.path}
+        indices={match.pathMatchIndices}
+      />
+    ),
+    icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
     run: async () => {
       useRightPanelStore.getState().openFile(target.threadRef, match.path);
     },
   }));
 
   const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending, messages);
-  // `autoHighlight="always"` highlights the first row without reporting it, so
-  // a stale or cleared value falls back to that row.
-  const activeItemValue = items.some((item) => item.value === highlightedItemValue)
-    ? highlightedItemValue
-    : (items[0]?.value ?? null);
 
   return (
     <CommandPaletteContent
       aria-label={gt("File picker")}
       autoHighlight="always"
-      escapeLabel={props.escapeLabel}
+      escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
       footerActionLabel={gt("Open file")}
-      inputProps={{ ...FILE_PICKER_INPUT_PROPS, placeholder: gt("Search files…") }}
+      inputProps={{ placeholder: gt("Search files…") }}
       mode="none"
       onItemHighlighted={(value) => {
         setHighlightedItemValue(typeof value === "string" ? value : null);
@@ -183,8 +145,10 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
       value={query}
     >
       <CommandPaletteResults
-        groups={items.length > 0 ? [{ value: "project-files", label: "", items }] : []}
-        highlightedItemValue={activeItemValue}
+        groups={
+          items.length > 0 ? [{ value: "project-files", label: target.projectName, items }] : []
+        }
+        highlightedItemValue={highlightedItemValue}
         isActionsOnly={false}
         keybindings={keybindings}
         onExecuteItem={(item) => {
@@ -202,14 +166,8 @@ export function ProjectFilePicker(props: ProjectFilePickerProps) {
   const target = useActiveProjectTarget();
 
   if (!target) {
-    return <EmptyProjectFilePicker escapeLabel={props.escapeLabel} />;
+    return <EmptyProjectFilePicker />;
   }
 
-  return (
-    <OpenProjectFilePicker
-      setOpen={props.setOpen}
-      escapeLabel={props.escapeLabel}
-      target={target}
-    />
-  );
+  return <OpenProjectFilePicker setOpen={props.setOpen} target={target} />;
 }

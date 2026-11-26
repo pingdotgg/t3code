@@ -12,7 +12,6 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  readTimelineTopInset,
   timelineContentOverflowsViewport,
   readTimelinePosition,
   observeTimelineRun,
@@ -168,6 +167,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const {
     legendListRef,
     composerTimelineInset,
+    routeThreadKey,
     activeThreadKey,
     isServerThread,
     serverProjection,
@@ -186,7 +186,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   if (visit.threadKey !== activeThreadKey) {
     visit = {
       threadKey: activeThreadKey,
-      followEnd: !activeThreadKey || readTimelinePosition(activeThreadKey)?.atEnd !== false,
+      followEnd: readTimelinePosition(routeThreadKey)?.atEnd !== false,
     };
     setVisit(visit);
   }
@@ -266,10 +266,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     runId: activeActivityRun?.runId ?? null,
     queued: activeActivityRun?.status === "queued",
     messageId:
-      dispatchedUserItem?.item.type === "user_message" &&
-      dispatchedUserItem.item.retryOfRunId === undefined
-        ? dispatchedUserItem.item.messageId
-        : null,
+      dispatchedUserItem?.item.type === "user_message" ? dispatchedUserItem.item.messageId : null,
   });
   if (!sameRunObservation(runObservation.observation, observedRun)) {
     setObservedRun(runObservation.observation);
@@ -282,11 +279,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const timelineRealContentOverflowsViewport = () =>
     timelineContentOverflowsViewport(legendListRef.current?.getState(), {
       composerInset: composerTimelineInset,
-      anchorOffset:
-        CHAT_TIMELINE_ANCHOR_OFFSET +
-        readTimelineTopInset(legendListRef.current?.getScrollableNode()),
+      anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
     });
-
   const pageScrollControllerRef = useRef<ReturnType<typeof createPageScrollController> | null>(
     null,
   );
@@ -417,7 +411,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
             index: anchorIndex,
             animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
             viewPosition: 0,
-            viewOffset: CHAT_LIST_ANCHOR_OFFSET + readTimelineTopInset(list.getScrollableNode()),
+            viewOffset: CHAT_LIST_ANCHOR_OFFSET,
           })
           .then(() => {
             if (legendListRef.current === list && isPositioning()) {

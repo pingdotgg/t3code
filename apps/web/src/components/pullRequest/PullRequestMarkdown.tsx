@@ -176,7 +176,7 @@ function PullRequestBodySegmentView({
       href={segment.url}
       rel="noreferrer noopener"
       target="_blank"
-      className="flex items-center gap-2 rounded-control border border-border surface-card px-3 py-2 text-body hover:surface-ghost-hover"
+      className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
     >
       <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">
@@ -198,7 +198,6 @@ export function PullRequestMarkdown({
   lineBreaks,
   className,
   onTaskListChange,
-  gallery = true,
 }: {
   text: string;
   cwd: string;
@@ -208,7 +207,6 @@ export function PullRequestMarkdown({
   className?: string;
   /** `markerOffset` is into `text`. Checkboxes stay read-only without it. */
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
-  gallery?: boolean;
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
@@ -219,7 +217,7 @@ export function PullRequestMarkdown({
         "space-y-3 [&_[data-markdown-details]]:border-0 [&_[data-markdown-details-summary]]:text-foreground/80 [&_[data-markdown-details-summary]>svg]:text-muted-foreground/60",
         className,
       )}
-      data-image-gallery={gallery ? "" : undefined}
+      data-image-gallery
     >
       {segments.map((segment) => (
         <PullRequestBodySegmentView

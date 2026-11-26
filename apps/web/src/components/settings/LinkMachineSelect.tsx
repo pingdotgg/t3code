@@ -77,7 +77,7 @@ export function LinkMachineSelect({
   const labelId = useId();
   return (
     <div className="space-y-1.5">
-      <span id={labelId} className="block text-caption text-foreground">
+      <span id={labelId} className="block text-xs font-medium text-foreground">
         <T>Machine</T>
       </span>
       <Select
@@ -102,14 +102,14 @@ export function LinkMachineSelect({
         </SelectTrigger>
         <SelectPopup alignItemWithTrigger={false}>
           {machines.map((machine) => (
-            <SelectItem key={machine.environmentId} value={machine.environmentId}>
+            <SelectItem key={machine.environmentId} value={machine.environmentId} hideIndicator>
               <span className="flex min-w-0 items-center justify-between gap-3">
                 <MachineName machine={machine} />
                 <LinkMachineBadge machine={machine} />
               </span>
             </SelectItem>
           ))}
-          <SelectItem value={ANOTHER_ADDRESS}>
+          <SelectItem value={ANOTHER_ADDRESS} hideIndicator>
             <T>Another address…</T>
           </SelectItem>
         </SelectPopup>

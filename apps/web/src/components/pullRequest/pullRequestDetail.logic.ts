@@ -29,6 +29,7 @@ import {
   type PullRequestContextMetadata,
   type PullRequestDetailView,
   type PullRequestMergeability,
+  type PullRequestReaction,
   type PullRequestMergeMethod,
   type PullRequestRef,
   type RepositoryIdentity,
@@ -52,6 +53,8 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
+
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: msg("Merge"),
@@ -336,8 +339,8 @@ export function classifyPullRequestChecks(
 export function describePullRequestChecks(
   checks: ReadonlyArray<PullRequestCheck>,
   resolve: MessageResolver = m,
-) {
-  if (checks.length === 0) return [resolve(msg("No checks reported"))];
+): string {
+  if (checks.length === 0) return resolve(msg("No checks reported"));
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
@@ -346,21 +349,25 @@ export function describePullRequestChecks(
   const passed = checks.filter((check) => check.status === "success").length;
   const parts: string[] = [];
   const total = checks.length;
-  if (failed > 0) parts.push(resolve(msg("{failed} of {total} failing", { failed, total })));
+  if (pending > 0) parts.push(resolve(msg("{pending} of {total} running", { pending, total })));
   if (actionRequired > 0) {
     parts.push(
       resolve(msg("{actionRequired} of {total} awaiting action", { actionRequired, total })),
     );
   }
-  if (pending > 0) parts.push(resolve(msg("{pending} of {total} running", { pending, total })));
-  if (parts.length === 0) {
-    return [
-      passed === total
-        ? resolve(msg("All checks passed"))
-        : resolve(msg("{passed} of {total} passing", { passed, total })),
-    ];
+  if (failed > 0) {
+    parts.push(
+      parts.length > 0
+        ? resolve(msg("{failed} failed", { failed }))
+        : resolve(msg("{failed} of {total} failing", { failed, total })),
+    );
   }
-  return parts;
+  if (parts.length === 0) {
+    return passed === total
+      ? resolve(msg("All checks passed"))
+      : resolve(msg("{passed} of {total} passing", { passed, total }));
+  }
+  return parts.join(" · ");
 }
 
 export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) {
@@ -475,65 +482,23 @@ export function latestPullRequestReviewOutcomes(
   return [...latest.values()].filter((entry) => entry.outcome !== "dismissed");
 }
 
-export interface PullRequestChangeRequestEntry {
-  /** The review that asked for changes, pinned at the top of the conversation. */
-  readonly comment: PullRequestComment;
-  /** Open threads on lines by the same reviewer, read below the pinned review. */
-  readonly openThreadCount: number;
-  /** When the author asked this reviewer again after the verdict, where the host says. */
-  readonly reRequestedAt: string | null;
-}
-
-export interface PullRequestConversationSummary {
-  readonly changeRequests: ReadonlyArray<PullRequestChangeRequestEntry>;
-  /** Unresolved threads on lines, oldest first, the order they were raised in. */
-  readonly openThreads: ReadonlyArray<PullRequestReviewThread>;
-}
-
-/**
- * What the Summary conversation leads with: each reviewer's standing request for changes, and
- * every thread still open on a line. A superseded request is not pinned, because the commits
- * after it may already answer it; it stays in the conversation below like any other review.
- */
-export function pullRequestConversationSummary(
-  detail: Pick<PullRequestDetailView, "comments" | "commits" | "reviewThreads" | "reviewRequests">,
-): PullRequestConversationSummary {
-  const openThreads = detail.reviewThreads
-    .filter((thread) => !thread.isResolved)
-    .toSorted(
-      (left, right) =>
-        instant(left.comments[0]?.createdAt ?? "") - instant(right.comments[0]?.createdAt ?? ""),
-    );
-  const standing = latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
-    (entry) => entry.outcome === "changes-requested" && !entry.stale,
-  );
-  const changeRequests = standing.flatMap((entry): PullRequestChangeRequestEntry[] => {
-    const comment = detail.comments.find(
-      (candidate) =>
-        candidate.createdAt === entry.at &&
-        pullRequestReviewOutcome(candidate.reviewState) === "changes-requested" &&
-        (candidate.author?.login ?? `ghost:${candidate.id}`) === entry.key,
-    );
-    if (comment === undefined) return [];
-    const login = entry.actor?.login.toLowerCase() ?? null;
-    const reRequestedAt =
-      login === null
-        ? null
-        : ((detail.reviewRequests ?? [])
-            .filter(
-              (event) =>
-                event.reviewer.login.toLowerCase() === login &&
-                instant(event.createdAt) > instant(entry.at),
-            )
-            .at(-1)?.createdAt ?? null);
-    const openThreadCount =
-      login === null
-        ? 0
-        : openThreads.filter((thread) => thread.comments[0]?.author?.login.toLowerCase() === login)
-            .length;
-    return [{ comment, openThreadCount, reRequestedAt }];
-  });
-  return { changeRequests, openThreads };
+export interface PullRequestTimelineEvent {
+  readonly id: string;
+  readonly at: string;
+  readonly kind: "opened" | "commit" | "comment" | "review" | "merged" | "closed";
+  readonly title: string;
+  readonly body: string | null;
+  readonly markdown: boolean;
+  readonly url: string | null;
+  readonly actor: PullRequestActor | null;
+  readonly commitAuthors: ReadonlyArray<PullRequestActor>;
+  readonly additions: number | null;
+  readonly deletions: number | null;
+  readonly path: string | null;
+  readonly reviewState: string | null;
+  readonly reactions: ReadonlyArray<PullRequestReaction>;
+  readonly comment?: PullRequestComment;
+  readonly thread?: PullRequestTimelineThread;
 }
 
 export interface PullRequestReplyAvailability {
@@ -542,21 +507,66 @@ export interface PullRequestReplyAvailability {
   readonly url: string | null;
 }
 
+export interface PullRequestTimelineThread
+  extends
+    Pick<
+      PullRequestConversationThread,
+      "id" | "path" | "line" | "isResolved" | "isOutdated" | "canResolve"
+    >,
+    PullRequestReplyAvailability {
+  readonly replies: ReadonlyArray<PullRequestTimelineEvent>;
+}
+
+export type PullRequestTimelineRow =
+  | { readonly kind: "event"; readonly event: PullRequestTimelineEvent }
+  | { readonly kind: "comments"; readonly events: ReadonlyArray<PullRequestTimelineEvent> };
+
+export function groupPullRequestTimelineConversations(
+  events: ReadonlyArray<PullRequestTimelineEvent>,
+): ReadonlyArray<PullRequestTimelineRow> {
+  const rows: PullRequestTimelineRow[] = [];
+  for (const event of events) {
+    if (
+      (event.kind === "comment" || event.kind === "review") &&
+      event.thread === undefined &&
+      pullRequestReviewOutcome(event.reviewState) === null
+    ) {
+      const last = rows.at(-1);
+      if (last?.kind === "comments") {
+        rows[rows.length - 1] = { kind: "comments", events: [...last.events, event] };
+      } else {
+        rows.push({ kind: "comments", events: [event] });
+      }
+    } else {
+      rows.push({ kind: "event", event });
+    }
+  }
+  return rows;
+}
+
 /** Marker-only bodies are empty; otherwise retain text, including fenced HTML comments. */
 export function visibleBody(body: string): string | null {
   return body.replace(/<!--[\s\S]*?-->/gu, "").trim().length === 0 ? null : body.trim();
 }
 
-/** A body flattened to one plain line, for the quiet peek under a collapsed entry. */
-export function pullRequestBodyPreview(body: string): string {
-  return body
-    .replace(/<!--[\s\S]*?-->/gu, "")
-    .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
-    .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
-    .replace(/^[\s>#*-]+/gmu, "")
-    .replace(/[*`]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
+function commentTimelineEvent(comment: PullRequestComment): PullRequestTimelineEvent {
+  return {
+    comment,
+    id: comment.id,
+    at: comment.createdAt,
+    kind: comment.kind === "review" ? "review" : "comment",
+    title: comment.kind === "review" ? "reviewed" : "commented",
+    body: visibleBody(comment.body),
+    markdown: true,
+    url: comment.url,
+    actor: comment.author,
+    commitAuthors: [],
+    additions: null,
+    deletions: null,
+    path: comment.path,
+    reviewState: comment.reviewState,
+    reactions: comment.reactions ?? [],
+  };
 }
 
 export type PullRequestConversationItem =
@@ -676,42 +686,6 @@ export function pagePullRequestConversationItems(
   return { shown, hidden: items.length - shown.length };
 }
 
-/** One entry on the timeline rail: pushes, checks and reviews, never the conversation. */
-export type PullRequestRailEntry =
-  | {
-      readonly kind: "opened" | "merged" | "closed";
-      readonly id: string;
-      readonly at: string;
-      readonly actor: PullRequestActor | null;
-    }
-  | {
-      readonly kind: "commit";
-      readonly id: string;
-      readonly at: string;
-      readonly commit: PullRequestCommit;
-    }
-  | {
-      readonly kind: "review-request";
-      readonly id: string;
-      readonly at: string;
-      readonly actor: PullRequestActor | null;
-      readonly reviewers: ReadonlyArray<PullRequestActor>;
-      /** Every reviewer named had already reviewed, so this asks them to look again. */
-      readonly again: boolean;
-    }
-  | {
-      readonly kind: "review";
-      readonly id: string;
-      readonly at: string;
-      readonly comment: PullRequestComment;
-      readonly outcome: PullRequestReviewOutcome;
-      /** The line threads this review opened, so the rail can point at them. */
-      readonly threads: ReadonlyArray<PullRequestReviewThread>;
-    };
-
-/** Line comments are drafted before the review is submitted, so they may predate it a little. */
-const REVIEW_THREAD_WINDOW_MS = 60_000;
-
 /**
  * A body as it reads, for text sent to the agent under a length bound. A bot's HTML-comment
  * bookkeeping would otherwise use up the bound before the remark got any of it. Comments in code
@@ -740,8 +714,8 @@ function readableBody(raw: string): string | null {
 }
 
 /**
- * The Timeline tab's rail, newest first: the pull request's lifecycle, each push, each time a
- * review was asked for, and each verdict. Plain comments are read in the Summary conversation.
+ * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
+ * merged pull request would misstate what happened.
  */
 export type PullRequestLinkSubject =
   | {
@@ -776,7 +750,7 @@ function markdownExcerpt(body: string): string | null {
   // Never end on a lone high surrogate.
   const last = text.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return `${text.slice(0, end)}…`;
+  return `${text.slice(0, end).trimEnd()}…`;
 }
 
 /** The comment or commit a pull request link names, for its hover card; null for the PR itself. */
@@ -813,93 +787,133 @@ export function pullRequestLinkSubject(
   };
 }
 
-export function buildPullRequestRail(
+/** Whether a link anchor names this event or a reply in its review thread. */
+export function pullRequestTimelineEventMatches(
+  event: PullRequestTimelineEvent,
+  anchor: string,
+): boolean {
+  return [event, ...(event.thread?.replies ?? [])].some((item) =>
+    pullRequestAnchorMatchesUrl(anchor, item.url),
+  );
+}
+
+export function buildPullRequestTimeline(
   detail: Pick<
     PullRequestDetailView,
-    | "createdAt"
-    | "author"
-    | "commits"
-    | "comments"
-    | "reviewThreads"
-    | "reviewRequests"
-    | "mergedAt"
-    | "closedAt"
-  >,
-): ReadonlyArray<PullRequestRailEntry> {
-  const verdicts = detail.comments
-    .flatMap((comment) => {
-      const outcome = pullRequestReviewOutcome(comment.reviewState);
-      return outcome === null ? [] : [{ comment, outcome }];
-    })
-    .toSorted((left, right) => instant(left.comment.createdAt) - instant(right.comment.createdAt));
-  const loginOf = (actor: PullRequestActor | null | undefined) =>
-    actor?.login.toLowerCase() ?? null;
-  const reviews = verdicts.map(({ comment, outcome }, index): PullRequestRailEntry => {
-    const login = loginOf(comment.author);
-    const previous = verdicts
-      .slice(0, index)
-      .findLast((entry) => loginOf(entry.comment.author) === login);
-    const from = previous
-      ? instant(previous.comment.createdAt) + REVIEW_THREAD_WINDOW_MS
-      : Number.NEGATIVE_INFINITY;
-    const to = instant(comment.createdAt) + REVIEW_THREAD_WINDOW_MS;
-    const threads =
-      login === null
-        ? []
-        : detail.reviewThreads.filter((thread) => {
-            const first = thread.comments[0];
-            if (first === undefined || loginOf(first.author) !== login) return false;
-            const at = instant(first.createdAt);
-            return at > from && at <= to;
-          });
-    return { kind: "review", id: comment.id, at: comment.createdAt, comment, outcome, threads };
-  });
-  // One row per press: a request for several reviewers at once lands as several events that share
-  // who asked and when.
-  const requests: PullRequestRailEntry[] = [];
-  for (const event of detail.reviewRequests ?? []) {
-    const last = requests.at(-1);
-    const reviewedBefore = verdicts.some(
-      (entry) =>
-        loginOf(entry.comment.author) === loginOf(event.reviewer) &&
-        instant(entry.comment.createdAt) < instant(event.createdAt),
-    );
-    if (
-      last?.kind === "review-request" &&
-      loginOf(last.actor) === loginOf(event.actor) &&
-      Math.abs(instant(last.at) - instant(event.createdAt)) < 5_000
-    ) {
-      requests[requests.length - 1] = {
-        ...last,
-        reviewers: [...last.reviewers, event.reviewer],
-        again: last.again && reviewedBefore,
-      };
-      continue;
-    }
-    requests.push({
-      kind: "review-request",
-      id: `request:${event.createdAt}:${event.reviewer.login}`,
-      at: event.createdAt,
-      actor: event.actor,
-      reviewers: [event.reviewer],
-      again: reviewedBefore,
-    });
-  }
+    "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
+  > &
+    Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
+  resolve: MessageResolver = m,
+): ReadonlyArray<PullRequestTimelineEvent> {
+  const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   return [
-    { kind: "opened" as const, id: "created", at: detail.createdAt, actor: detail.author },
-    ...detail.commits.map((commit): PullRequestRailEntry => ({
-      kind: "commit",
+    {
+      id: "created",
+      at: detail.createdAt,
+      kind: "opened" as const,
+      title: resolve(
+        msg(
+          "opened this {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term },
+        ),
+      ),
+      body: null,
+      markdown: false,
+      url: null,
+      actor: detail.author,
+      commitAuthors: [],
+      additions: null,
+      deletions: null,
+      path: null,
+      reviewState: null,
+      reactions: [],
+    },
+    ...detail.commits.map((commit) => ({
       id: commit.oid,
       at: commit.committedDate,
-      commit,
+      kind: "commit" as const,
+      title: resolve(msg("Commit {sha}", { sha: commit.oid.slice(0, 7) })),
+      body: commit.messageHeadline || null,
+      markdown: false,
+      url: null,
+      actor: commit.authors?.[0] ?? null,
+      commitAuthors: commit.authors ?? [],
+      additions: commit.additions ?? null,
+      deletions: commit.deletions ?? null,
+      path: null,
+      reviewState: null,
+      reactions: [],
     })),
-    ...requests,
-    ...reviews,
+    ...pullRequestConversationItems(detail.comments, [
+      ...(detail.reviewThreads ?? []),
+      ...(detail.overviewThreads ?? []),
+    ]).map((item) => {
+      if (item.kind === "comment") return commentTimelineEvent(item.comment);
+      return {
+        ...commentTimelineEvent(item.root),
+        thread: {
+          id: item.thread.id,
+          ...(item.thread.canResolve === undefined ? {} : { canResolve: item.thread.canResolve }),
+          path: item.thread.path,
+          line: item.thread.line,
+          isResolved: item.thread.isResolved,
+          isOutdated: item.thread.isOutdated,
+          replies: item.replies.map(commentTimelineEvent),
+          moreReplies: item.moreReplies,
+          hasMoreReplies: item.hasMoreReplies,
+          url: item.url,
+        },
+      };
+    }),
     ...(detail.mergedAt
-      ? [{ kind: "merged" as const, id: "merged", at: detail.mergedAt, actor: null }]
+      ? [
+          {
+            id: "merged",
+            at: detail.mergedAt,
+            kind: "merged" as const,
+            title: resolve(
+              msg(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} merged",
+                { term },
+              ),
+            ),
+            body: null,
+            markdown: false,
+            url: null,
+            actor: null,
+            commitAuthors: [],
+            additions: null,
+            deletions: null,
+            path: null,
+            reviewState: null,
+            reactions: [],
+          },
+        ]
       : []),
     ...(detail.closedAt && !detail.mergedAt
-      ? [{ kind: "closed" as const, id: "closed", at: detail.closedAt, actor: null }]
+      ? [
+          {
+            id: "closed",
+            at: detail.closedAt,
+            kind: "closed" as const,
+            title: resolve(
+              msg(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} closed",
+                { term },
+              ),
+            ),
+            body: null,
+            markdown: false,
+            url: null,
+            actor: null,
+            commitAuthors: [],
+            additions: null,
+            deletions: null,
+            path: null,
+            reviewState: null,
+            reactions: [],
+          },
+        ]
       : []),
   ].toSorted((left, right) => (instant(right.at) || 0) - (instant(left.at) || 0));
 }
@@ -916,7 +930,7 @@ function bounded(value: string): string {
   if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
     end -= 1;
   }
-  return `${trimmed.slice(0, end)}...`;
+  return `${trimmed.slice(0, end).trimEnd()}...`;
 }
 
 function boundedField(value: string): string {
@@ -1559,7 +1573,7 @@ export function readableFailure(failure: unknown, hint: string): string {
   let end = FAILURE_DETAIL_MAX_LENGTH - 1;
   const last = detail.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return `${detail.slice(0, end)}…`;
+  return `${detail.slice(0, end).trimEnd()}…`;
 }
 
 const isGitCommandError = Schema.is(GitCommandError);
@@ -1612,7 +1626,7 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "disable-auto-merge": false,
   revert: false,
   "delete-branch": false,
-  "approve-workflows": true,
+  "approve-workflows": false,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
@@ -1736,4 +1750,37 @@ export function resolveDisplayedPullRequestDetail(input: {
   return link !== undefined && (link.authority ?? link.host) === input.reference.host.toLowerCase()
     ? input.cached
     : null;
+}
+
+const OBSERVATION_STAMPS = new Set(["observedAt", "readAt"]);
+
+/**
+ * Whether two reads of a pull request differ only in when they were observed. Every refresh
+ * restamps those, so the panel keeps the detail it shows instead of re-rendering its whole tree.
+ */
+export function samePullRequestReadExceptStamps(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((item, index) => samePullRequestReadExceptStamps(item, right[index]))
+    );
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = (record: Record<string, unknown>) =>
+    Object.keys(record).filter((key) => !OBSERVATION_STAMPS.has(key));
+  const leftKeys = keys(leftRecord);
+  return (
+    leftKeys.length === keys(rightRecord).length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) &&
+        samePullRequestReadExceptStamps(leftRecord[key], rightRecord[key]),
+    )
+  );
 }

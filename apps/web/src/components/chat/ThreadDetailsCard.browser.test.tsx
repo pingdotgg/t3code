@@ -1,5 +1,5 @@
-import { StrictMode, createRef } from "react";
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { StrictMode } from "react";
+import { EnvironmentId, ProjectId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
@@ -8,9 +8,13 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
-import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
-import "../../index.css";
+import { ThreadRepositorySections } from "./ThreadRepositorySections";
+import { useThreadRepositoryPinsStore } from "../../threadRepositoryPinsStore";
+
+vi.mock(import("~/state/query"), async (original) => ({
+  ...(await original()),
+  useEnvironmentQuery: () => ({ data: null, error: null }) as never,
+}));
 
 const threadA: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment"),
@@ -21,13 +25,7 @@ const threadB: ScopedThreadRef = {
   threadId: ThreadId.make("thread-b"),
 };
 const container = { width: 1200, height: 800 };
-const placement = {
-  x: 928 - THREAD_DETAILS_CARD_GAP,
-  y: 0,
-  right: THREAD_DETAILS_CARD_GAP,
-  width: 272,
-  height: 400,
-} as const;
+const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
 
 function setup() {
   useRightPanelStore.setState({ threadPanelVisibilityByThreadKey: {} });
@@ -54,6 +52,7 @@ function Card({
   rows = 1,
   automationRows = 0,
   serverOverflowRows = 0,
+  issueListRows = 0,
 }: {
   threadRef: ScopedThreadRef;
   inline: boolean;
@@ -64,6 +63,8 @@ function Card({
   automationRows?: number;
   /** Rows of 100px that expanded server lists add, which density ignores. */
   serverOverflowRows?: number;
+  /** Rows of 100px that expanded linked issues add, which density ignores. */
+  issueListRows?: number;
 }) {
   return (
     // The web root renders in StrictMode, which re-runs ref callbacks on every mount.
@@ -74,13 +75,19 @@ function Card({
           lane: { padding: 48, minChatWidth: 640 },
           layout: resolveChatCanvasLayout({ container, preview: null }),
           previewKey: null,
+          registerTimeline: () => {},
           measureDetailsCard: () => {},
           detailsCardTopInset: 0,
           preferredDetailsCard: placement,
           detailsCardPlacement: inline ? placement : null,
         }}
       >
-        <ThreadDetailsCard threadRef={threadRef} anchor={fixture.anchor} handle={fixture.handle}>
+        <ThreadDetailsCard
+          threadRef={threadRef}
+          anchor={fixture.anchor}
+          handle={fixture.handle}
+          contentKey={String(rows)}
+        >
           {(density) => (
             <>
               <p style={{ height: density === "full" ? rows * 100 : 50 }}>
@@ -94,6 +101,9 @@ function Card({
                   data-thread-details-server-overflow
                   style={{ height: serverOverflowRows * 100 }}
                 />
+              ) : null}
+              {issueListRows > 0 ? (
+                <div data-thread-details-issue-list style={{ height: issueListRows * 100 }} />
               ) : null}
             </>
           )}
@@ -169,37 +179,18 @@ it("reopens after a normal close", async () => {
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
 });
 
-it("keeps every section at full density when the card needs to scroll", async () => {
+it("returns to full density when hidden items make the content fit", async () => {
   using fixture = setup();
-  useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using screen = await render(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
   const card = page.getByRole("region", { name: "Thread details" });
-  await expect.element(card).toHaveAttribute("data-density", "full");
-  const viewport = card.element().querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-  expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
-  viewport.scrollTop = viewport.scrollHeight;
-  expect(viewport.scrollTop).toBeGreaterThan(0);
+  await expect.element(card).toHaveAttribute("data-density", "compact");
 
   await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
   await expect.element(card).toHaveAttribute("data-density", "full");
-  await vi.waitFor(() => {
-    expect(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-start")).toBe(
-      "0px",
-    );
-    expect(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-end")).toBe("0px");
-  });
-  await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
-  await vi.waitFor(() => {
-    expect(viewport.scrollTop).toBe(0);
-    expect(
-      parseFloat(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-end")),
-    ).toBe(viewport.scrollHeight - viewport.clientHeight);
-  });
 });
 
 it("keeps full density when many automations make the content tall", async () => {
   using fixture = setup();
-  useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using _screen = await render(
     <Card threadRef={threadB} inline fixture={fixture} rows={2} automationRows={6} />,
   );
@@ -211,7 +202,6 @@ it("keeps full density when many automations make the content tall", async () =>
 
 it("stays full while expanded server rows overflow", async () => {
   using fixture = setup();
-  useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", true);
   await using _screen = await render(
     <Card threadRef={threadB} inline fixture={fixture} rows={2} serverOverflowRows={4} />,
   );
@@ -220,22 +210,69 @@ it("stays full while expanded server rows overflow", async () => {
     .toHaveAttribute("data-density", "full");
 });
 
-it("focuses the requested branch row when opening the details popover", async () => {
+it("stays full while expanded issue rows overflow", async () => {
   using fixture = setup();
-  const branch = createRef<HTMLButtonElement>();
   await using _screen = await render(
-    <ThreadDetailsCard
-      threadRef={threadB}
-      anchor={fixture.anchor}
-      handle={fixture.handle}
-      onFocusRequest={() => {
-        branch.current?.focus();
-        return true;
-      }}
-    >
-      {() => <ThreadDetailsControl ref={branch}>feature/current</ThreadDetailsControl>}
-    </ThreadDetailsCard>,
+    <Card threadRef={threadB} inline fixture={fixture} rows={2} issueListRows={6} />,
   );
-  await act(() => useRightPanelStore.getState().setThreadPanelOpen(threadB, "popover", true));
-  await expect.element(page.getByRole("button", { name: "feature/current" })).toHaveFocus();
+  await expect
+    .element(page.getByRole("region", { name: "Thread details" }))
+    .toHaveAttribute("data-density", "full");
+});
+
+it("keeps the repository list reachable after Show more expands it", async () => {
+  using fixture = setup();
+  for (let index = 1; index <= 30; index++) {
+    useThreadRepositoryPinsStore
+      .getState()
+      .pin(threadB, { repositoryPath: `/repos/repo-${index}`, name: `repo-${index}` });
+  }
+  await using _screen = await render(
+    <StrictMode>
+      <ChatCanvasContext
+        value={{
+          container,
+          lane: { padding: 48, minChatWidth: 640 },
+          layout: resolveChatCanvasLayout({ container, preview: null }),
+          previewKey: null,
+          registerTimeline: () => {},
+          measureDetailsCard: () => {},
+          detailsCardTopInset: 0,
+          preferredDetailsCard: placement,
+          detailsCardPlacement: placement,
+        }}
+      >
+        <ThreadDetailsCard
+          threadRef={threadB}
+          anchor={fixture.anchor}
+          handle={fixture.handle}
+          contentKey="repositories"
+        >
+          {(density) =>
+            // As ThreadDetailsPanel does, essential density drops the repository section.
+            density === "essential" ? null : (
+              <ThreadRepositorySections
+                environmentId={threadB.environmentId}
+                threadId={threadB.threadId}
+                projectId={ProjectId.make("project")}
+                isServerThread={false}
+                threadCwd="/repos"
+                taskFolder={null}
+                reachesTracked
+                onTaskFolderChange={() => {}}
+                explainsEmpty={false}
+                showActions={false}
+              />
+            )
+          }
+        </ThreadDetailsCard>
+      </ChatCanvasContext>
+    </StrictMode>,
+  );
+  await page.getByRole("button", { name: "Show 26 more" }).click();
+
+  await expect.element(page.getByRole("button", { name: "Show fewer" })).toBeVisible();
+  await expect
+    .element(page.getByRole("region", { name: "Thread details" }))
+    .not.toHaveAttribute("data-density", "essential");
 });

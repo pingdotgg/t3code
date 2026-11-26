@@ -4,7 +4,6 @@ import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { MENU_ROW_TEXT_CLASS } from "./menu-row-text";
 
 const Autocomplete = AutocompletePrimitive.Root;
 
@@ -29,7 +28,7 @@ function AutocompleteInput({
       {startAddon && (
         <div
           aria-hidden="true"
-          className="[&_svg]:-mx-0.5 pointer-events-none has-[button]:pointer-events-auto absolute inset-y-0 start-px z-10 flex items-center ps-[calc(--spacing(3)-1px)] has-[+[data-size=sm]]:ps-[calc(--spacing(2.5)-1px)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4"
+          className="[&_svg]:-mx-0.5 pointer-events-none has-[button]:pointer-events-auto absolute inset-y-0 start-px z-10 flex items-center ps-[calc(--spacing(3)-1px)] opacity-80 has-[+[data-size=sm]]:ps-[calc(--spacing(2.5)-1px)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4"
           data-slot="autocomplete-start-addon"
         >
           {startAddon}
@@ -39,11 +38,9 @@ function AutocompleteInput({
         className={cn(
           startAddon &&
             "data-[size=sm]:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(7.5)-1px)] *:data-[slot=autocomplete-input]:ps-[calc(--spacing(8.5)-1px)] sm:data-[size=sm]:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(7)-1px)] sm:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(8)-1px)]",
-          // Room for the trigger or clear button that follows the input.
-          (showTrigger || showClear) &&
-            (sizeValue === "sm"
-              ? "*:data-[slot=autocomplete-input]:pe-6.5"
-              : "*:data-[slot=autocomplete-input]:pe-7"),
+          sizeValue === "sm"
+            ? "has-[+[data-slot=autocomplete-trigger],+[data-slot=autocomplete-clear]]:*:data-[slot=autocomplete-input]:pe-6.5"
+            : "has-[+[data-slot=autocomplete-trigger],+[data-slot=autocomplete-clear]]:*:data-[slot=autocomplete-input]:pe-7",
           className,
         )}
         data-slot="autocomplete-input"
@@ -105,7 +102,7 @@ function AutocompletePopup({
       >
         <span
           className={cn(
-            "surface-popover kbd-in-popover relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-card transition-[scale,opacity]",
+            "relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg border bg-popover not-dark:bg-clip-padding shadow-lg/5 transition-[scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             className,
           )}
         >
@@ -123,18 +120,11 @@ function AutocompletePopup({
   );
 }
 
-function AutocompleteItem({
-  className,
-  children,
-  automaticHighlight = true,
-  ...props
-}: AutocompletePrimitive.Item.Props & { automaticHighlight?: boolean }) {
+function AutocompleteItem({ className, children, ...props }: AutocompletePrimitive.Item.Props) {
   return (
     <AutocompletePrimitive.Item
       className={cn(
-        `flex min-h-8 cursor-default select-none items-center gap-2 rounded-[8px] px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none data-disabled:pointer-events-none data-disabled:opacity-45 sm:min-h-7 [&_svg:not([class*='text-'])]:text-muted-foreground`,
-        automaticHighlight &&
-          "hover:surface-selected-soft data-selected:surface-selected-soft data-selected:text-strong-foreground data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground",
+        "flex min-h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-accent/50 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='text-'])]:text-muted-foreground",
         className,
       )}
       data-slot="autocomplete-item"
@@ -155,7 +145,7 @@ function AutocompleteGroup({ className, ...props }: AutocompletePrimitive.Group.
   );
 }
 
-const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 text-meta text-muted-foreground";
+const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 font-medium text-muted-foreground text-xs";
 
 function AutocompleteGroupLabel({ className, ...props }: AutocompletePrimitive.GroupLabel.Props) {
   return (
@@ -191,17 +181,32 @@ function AutocompleteListVirtualized({ className, ...props }: AutocompletePrimit
 function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.Props) {
   return (
     <AutocompletePrimitive.Empty
-      className={cn("not-empty:p-2 text-center text-body text-muted-foreground", className)}
+      className={cn(
+        "not-empty:p-2 text-center text-base text-muted-foreground sm:text-sm",
+        className,
+      )}
       data-slot="autocomplete-empty"
       {...props}
     />
   );
 }
 
-function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Props) {
+function AutocompleteList({
+  className,
+  scrollAreaClassName,
+  ...props
+}: AutocompletePrimitive.List.Props & {
+  /** Put height caps here, not on `className`: a capped list never resizes, so the scrollbar goes stale. */
+  scrollAreaClassName?: string;
+}) {
   return (
     // A flex column lets the viewport shrink with a height-capped parent instead of overflowing it.
-    <ScrollArea className="flex flex-col" scrollbarGutter scrollFade>
+    <ScrollArea
+      className={cn("flex flex-col", scrollAreaClassName)}
+      observeContent
+      scrollbarGutter
+      scrollFade
+    >
       <AutocompletePrimitive.List
         className={cn("not-empty:scroll-py-1 not-empty:p-1", className)}
         data-slot="autocomplete-list"

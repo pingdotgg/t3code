@@ -1,4 +1,3 @@
-import { appIconFileName, resolveAppIconId } from "@t3tools/shared/appIcons";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -34,8 +33,6 @@ export class DesktopAssets extends Context.Service<
     readonly resolveResourcePath: (
       fileName: string,
     ) => Effect.Effect<Option.Option<string>, DesktopAssetProbeError>;
-    /** The chosen icon's file for this platform, or none for the build's own icon. */
-    readonly resolveAppIconPath: (appIcon: string) => Effect.Effect<Option.Option<string>>;
   }
 >()("@t3tools/desktop/app/DesktopAssets") {}
 
@@ -122,26 +119,6 @@ const resolveIconPath = Effect.fn("desktop.assets.resolveIconPath")(function* (
   return yield* resolveResourcePath(`icon.${ext}`);
 });
 
-const resolveAppIconPath = Effect.fn("desktop.assets.resolveAppIconPath")(function* (
-  appIcon: string,
-): Effect.fn.Return<
-  Option.Option<string>,
-  never,
-  FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
-> {
-  const id = resolveAppIconId(appIcon);
-  if (id === null) return Option.none<string>();
-  const fileSystem = yield* FileSystem.FileSystem;
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const fileName = appIconFileName(id, environment.platform === "darwin" ? "macos" : "universal");
-  // Packaged builds read the web build's copy; development reads the source.
-  const iconPath = environment.isPackaged
-    ? environment.path.join(environment.clientAssetsDir, "app-icons", fileName)
-    : environment.path.join(environment.rootDir, "apps/web/public/app-icons", fileName);
-  const exists = yield* fileSystem.exists(iconPath).pipe(Effect.orElseSucceed(() => false));
-  return exists ? Option.some(iconPath) : Option.none<string>();
-});
-
 /** @public */
 export const make = Effect.gen(function* () {
   const context = yield* Effect.context<
@@ -160,9 +137,6 @@ export const make = Effect.gen(function* () {
         return yield* resolveResourcePath(fileName).pipe(Effect.provide(context));
       },
     ),
-    resolveAppIconPath: Effect.fn("desktop.assets.resolveAppIconPath.scoped")(function* (appIcon) {
-      return yield* resolveAppIconPath(appIcon).pipe(Effect.provide(context));
-    }),
   });
 });
 

@@ -1,96 +1,112 @@
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  fullAccessOverrideExplanation,
+  PUSH_HOOKS_APPROVAL_QUESTION,
+} from "@t3tools/client-runtime/state/thread-requests";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { T, useGT } from "gt-react";
-import { use, useState } from "react";
-import { InlineButton } from "../ui/button";
+import { T, useGT, useMessages, Var } from "gt-react";
+import { useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
-import { threadEnvironment } from "../../state/threads";
+import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { TimelineApprovalCard } from "./TimelinePendingApprovalRow";
-import { TimelineApprovalCtx } from "./timelineRowContext";
+import { ApprovalText } from "./ApprovalText";
+import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
+import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
 
-export function TimelineChildApprovalCard({
-  entry,
-  onOpenThread,
-  onAnswered,
-}: {
-  readonly entry: ChildThreadApproval;
-  readonly onOpenThread?: (() => void) | undefined;
-  readonly onAnswered?: (() => void) | null | undefined;
-}) {
+function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const gt = useGT();
+  const messages = useMessages();
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { approval } = entry;
   return (
-    <TimelineApprovalCard
-      approval={approval}
-      title={gt("Approval needed from {title}", { title: entry.title })}
-      ariaLabel={gt("Approval from {title}", { title: entry.title })}
-      headerTrailing={
-        onOpenThread ? (
-          <InlineButton onClick={onOpenThread}>
-            <T>Open subagent</T>
-          </InlineButton>
-        ) : null
-      }
-      disabled={!canRespond}
-      isResponding={responding}
-      unavailableMessage={
-        <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
-      }
-      error={error}
-      onAnswered={onAnswered}
-      onRespond={async (requestId, decision) => {
-        if (!canRespond || responding) return;
-        setResponding(true);
-        setError(null);
-        const result = await respond({
-          environmentId: entry.thread.environmentId,
-          input: { threadId: entry.thread.threadId, requestId, decision },
-        });
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const failure = squashAtomCommandFailure(result);
-          setError(
-            failure instanceof Error ? failure.message : gt("Failed to submit approval decision."),
-          );
-        }
-        setResponding(false);
-        return result;
-      }}
-    />
+    <section
+      aria-label={gt("Approval from {title}", { title: entry.title })}
+      className="rounded-lg border border-border bg-background p-3 text-xs"
+    >
+      <p className="mb-2 font-medium">
+        <T>
+          Approval needed from <Var>{entry.title}</Var>
+        </T>
+      </p>
+      {approval.pushHooks ? (
+        <>
+          <p className="mb-1">{messages(PUSH_HOOKS_APPROVAL_QUESTION)}</p>
+          <PushHooksApprovalDetails pushHooks={approval.pushHooks} />
+        </>
+      ) : (
+        <ApprovalText text={approval.detail || approval.requestKind} />
+      )}
+      {approval.appName ? <p className="mt-2 text-muted-foreground">{approval.appName}</p> : null}
+      {approval.responseCapability !== "live" ? (
+        <p className="mt-2 text-warning">
+          <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
+        </p>
+      ) : null}
+      {approval.reason ? <p className="mt-2 text-muted-foreground">{approval.reason}</p> : null}
+      {approval.fullAccessOverride ? (
+        <p className="mt-2 text-muted-foreground">
+          {fullAccessOverrideExplanation(approval.fullAccessOverride, messages)}
+        </p>
+      ) : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <ComposerPendingApprovalActions
+          presentation="inline"
+          requestId={approval.requestId}
+          isResponding={responding}
+          canRespond={approval.responseCapability === "live"}
+          disabled={!canRespond}
+          options={approval.options}
+          onRespondToApproval={async (requestId, decision) => {
+            if (!canRespond || responding) return;
+            setResponding(true);
+            setError(null);
+            const result = await respond({
+              environmentId: entry.thread.environmentId,
+              input: { threadId: entry.thread.threadId, requestId, decision },
+            });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const failure = squashAtomCommandFailure(result);
+              setError(
+                failure instanceof Error
+                  ? failure.message
+                  : gt("Failed to submit approval decision."),
+              );
+            }
+            setResponding(false);
+            return result;
+          }}
+        />
+      </div>
+      {error !== null ? (
+        <p role="alert" className="mt-2 text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
-/** Pending approvals belonging to one subagent, rendered beneath its parent timeline row. */
-export function SubagentPendingApprovals({
-  childThreadKey,
-  onOpenThread,
-}: {
-  readonly childThreadKey: string;
-  readonly onOpenThread?: (() => void) | undefined;
-}) {
-  const { childApprovalsByThreadKey, onApprovalAnswered } = use(TimelineApprovalCtx);
-  const entries = childApprovalsByThreadKey.get(childThreadKey);
-  if (!entries || entries.length === 0) return null;
+export function ChildThreadApprovals({ threadRef }: { threadRef: ScopedThreadRef | null }) {
+  const approvals = useAtomValue(childThreadApprovalsAtom(threadRef));
+  if (approvals.length === 0) return null;
   return (
-    <div className="mt-1 flex min-w-0 flex-col gap-2">
-      {entries.map((entry) => (
-        <TimelineChildApprovalCard
+    <div className="mb-2 flex max-h-80 flex-col gap-2 overflow-auto">
+      {approvals.map((entry) => (
+        <ChildApproval
           key={JSON.stringify([
             entry.thread.environmentId,
             entry.thread.threadId,
             entry.approval.requestId,
           ])}
           entry={entry}
-          onOpenThread={onOpenThread}
-          onAnswered={onApprovalAnswered}
         />
       ))}
     </div>

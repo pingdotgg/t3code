@@ -200,10 +200,7 @@ export function FontFamilyPicker({
         void listRef.current?.scrollIndexIntoView?.({ index: eventDetails.index, animated: false });
       }}
     >
-      <ComboboxTrigger
-        aria-label={ariaLabel}
-        render={<SelectButton variant="well" size="compact" />}
-      >
+      <ComboboxTrigger aria-label={ariaLabel} render={<SelectButton size="sm" />}>
         {selectedFamily.length === 0 ? defaultFamily : selectedFamily}
       </ComboboxTrigger>
       <ComboboxPopup align="end" className="flex w-72 flex-col">

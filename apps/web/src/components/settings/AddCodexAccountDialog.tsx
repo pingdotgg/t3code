@@ -123,7 +123,6 @@ export function AddCodexAccountDialog({
                 description={gt("Shown in the provider list and model picker.")}
                 control={
                   <Input
-                    size="settings"
                     aria-label={gt("Account name")}
                     value={name}
                     disabled={pending}
@@ -138,12 +137,12 @@ export function AddCodexAccountDialog({
         </WizardPanel>
         <WizardFooter>
           {instanceId ? (
-            <Button variant="secondary" onClick={onClose}>
+            <Button variant="outline" onClick={onClose}>
               <T>Finish later</T>
             </Button>
           ) : (
             <>
-              <Button variant="secondary" disabled={pending} onClick={onClose}>
+              <Button variant="outline" disabled={pending} onClick={onClose}>
                 <T>Cancel</T>
               </Button>
               <Button

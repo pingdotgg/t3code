@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { flushSync } from "react-dom";
 import { create } from "zustand";
 
 import {
@@ -20,11 +19,6 @@ export const useCommandPaletteStore = create<CommandPaletteUiState>(() => INITIA
 
 let returnFocus: { element: HTMLElement | null; href: string; focusRequest: number } | null = null;
 
-export const commandPaletteFocus = {
-  openerRef: { current: null as HTMLElement | null },
-  dismissedRef: { current: false },
-};
-
 export function dispatchCommandPalette(action: CommandPaletteUiAction): void {
   const state = useCommandPaletteStore.getState();
   const next = reduceCommandPaletteUiState(state, action);
@@ -36,19 +30,7 @@ export function dispatchCommandPalette(action: CommandPaletteUiAction): void {
       focusRequest: getWorkspaceFocusRequestVersion(),
     };
   }
-  commandPaletteFocus.dismissedRef.current = false;
-  const active = typeof document === "undefined" ? null : document.activeElement;
-  if (
-    typeof HTMLElement !== "undefined" &&
-    active instanceof HTMLElement &&
-    !active.closest("[data-command-palette]")
-  ) {
-    commandPaletteFocus.openerRef.current = active === document.body ? null : active;
-  }
-  // Commit and focus the input before the next trusted key event.
-  flushSync(() => {
-    useCommandPaletteStore.setState(next, true);
-  });
+  useCommandPaletteStore.setState(next, true);
 }
 
 /**
@@ -64,15 +46,6 @@ export function getCommandPaletteReturnFocus(): HTMLElement | boolean {
     return false;
   const { element } = returnFocus;
   return element?.isConnected && !element.matches(":disabled") ? element : true;
-}
-
-export function leaveCommandPaletteOverlay(): void {
-  if (useCommandPaletteStore.getState().parentSearch) {
-    dispatchCommandPalette({ _tag: "BackToCommand" });
-  } else {
-    dispatchCommandPalette({ _tag: "SetOpen", open: false });
-    commandPaletteFocus.dismissedRef.current = true;
-  }
 }
 
 /** The element the palette opened from, while focus is still inside the palette. */

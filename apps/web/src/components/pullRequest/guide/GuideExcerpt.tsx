@@ -25,7 +25,6 @@ import {
 } from "~/reviewCommentContext";
 
 import { DiffCommentAnnotation } from "../../diffs/DiffCommentAnnotation";
-import { DiffFileBasename } from "../../diffs/DiffFileHeaderParts";
 import { DIFF_VIEW_UNSAFE_CSS } from "../../diffs/StyledDiffCodeView";
 import { Button } from "../../ui/button";
 import {
@@ -124,7 +123,7 @@ export function GuideExcerpt({
   return (
     <figure className="flex min-w-0 flex-col gap-1.5">
       {excerpt.caption.trim() !== "" ? (
-        <figcaption className="text-meta text-muted-foreground">
+        <figcaption className="text-xs text-muted-foreground">
           <GuideProse text={excerpt.caption} plain />
         </figcaption>
       ) : null}
@@ -141,13 +140,13 @@ export function GuideExcerpt({
           onOpenFile={onOpenFile}
         />
       ) : loading ? (
-        <p className="rounded-lg border border-border/60 px-3 py-2 text-meta text-muted-foreground">
+        <p className="rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
           <T>
             Loading <Var>{excerpt.path}</Var>...
           </T>
         </p>
       ) : (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2 text-meta text-muted-foreground">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
           <span className="min-w-0 truncate">
             <T>
               <span className="font-mono text-foreground">
@@ -156,7 +155,7 @@ export function GuideExcerpt({
               lines <Var>{excerpt.start}</Var>-<Var>{excerpt.end}</Var> are not in the loaded diff.
             </T>
           </span>
-          <Button size="xs" variant="secondary" onClick={() => onOpenFile(excerpt.path)}>
+          <Button size="xs" variant="outline" onClick={() => onOpenFile(excerpt.path)}>
             <T>Open in Code</T>
           </Button>
         </div>
@@ -266,11 +265,10 @@ function ExcerptDiff({
         options={options}
         lineAnnotations={annotations}
         selectedLines={draft?.range ?? null}
-        renderHeaderPrefix={() => <DiffFileBasename path={excerpt.path} />}
         renderAnnotation={(annotation) => (
           <div className="font-sans">
             {annotation.metadata.markers.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1 text-meta">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1 text-xs">
                 {annotation.metadata.markers.map((entry) => (
                   <span key={entry.marker} className="inline-flex items-center gap-1.5">
                     <GuideNoteMarker marker={entry.marker} />
@@ -298,7 +296,7 @@ function ExcerptDiff({
           </div>
         )}
         renderHeaderMetadata={() => (
-          <span className="flex items-center gap-2 text-meta text-muted-foreground">
+          <span className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="tabular-nums">
               {excerpt.side === "old"
                 ? gt(

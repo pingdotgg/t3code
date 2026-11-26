@@ -28,6 +28,18 @@ function contrastRatio(first: string, second: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+function mixThemeColors(first: string, second: string, firstWeight: number): string {
+  const channels = [first, second].map((value) => {
+    const hex = themeColorToHex(value)?.slice(1, 7);
+    if (!hex) throw new Error(`Expected a theme color, received ${value}`);
+    return [0, 1, 2].map((channel) => Number.parseInt(hex.slice(channel * 2, channel * 2 + 2), 16));
+  });
+  const mixed = channels[0]!.map((channel, index) =>
+    Math.round(channel * firstWeight + channels[1]![index]! * (1 - firstWeight)),
+  );
+  return `#${mixed.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
 const builtInThemeModes = [
   T3_CHAT_THEME,
   GROVE_THEME,
@@ -42,17 +54,20 @@ describe("clerkAppearance", () => {
   it.each(builtInThemeModes)("keeps Clerk text readable across a built-in palette", (colors) => {
     expect(clerkAppearance.variables).toMatchObject({
       colorForeground: "var(--contrast-foreground)",
-      colorBackground: "var(--popover)",
+      colorBackground: "var(--card)",
       colorMutedForeground: "var(--contrast-muted-foreground)",
-      colorMuted: "var(--popover)",
+      colorMuted: "color-mix(in srgb, var(--card) 98%, var(--contrast-foreground))",
       colorInputForeground: "var(--contrast-foreground)",
       colorInput: "var(--secondary)",
-      colorPrimary: "var(--contrast-strong-foreground)",
-      colorPrimaryForeground: "var(--popover)",
+      colorPrimary: "var(--update-foreground)",
+      colorPrimaryForeground: "var(--card)",
     });
+    const mutedSurface = mixThemeColors(colors.surface, colors.text, 0.98);
+
     expect(contrastRatio(colors.text, colors.surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(colors.mutedForeground, colors.surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(colors.mutedForeground, mutedSurface)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(colors.text, colors.secondary)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(colors.updateForeground, colors.surface)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(colors.errorForeground, colors.surface)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(colors.warningForeground, colors.surface)).toBeGreaterThanOrEqual(4.5);
   });

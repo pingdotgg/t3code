@@ -69,13 +69,13 @@ export function ProviderWizardAuthenticationStep({
               }
               control={
                 isDiscovering ? (
-                  <Button disabled size="sm" variant="secondary">
+                  <Button disabled size="sm" variant="outline">
                     <T>Sign in</T>
                   </Button>
                 ) : provider?.setup?.documentationUrl ? (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     render={
                       <a href={provider.setup.documentationUrl} target="_blank" rel="noreferrer" />
                     }
@@ -91,7 +91,7 @@ export function ProviderWizardAuthenticationStep({
       <WizardFooter>
         <Button
           size="sm"
-          variant={signedIn ? "default" : "secondary"}
+          variant={signedIn ? "default" : "outline"}
           disabled={active}
           onClick={onFinish}
         >

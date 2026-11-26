@@ -18,6 +18,47 @@ const state = vi.hoisted(() => ({
   configLoaded: true,
 }));
 
+// The read of t3.json is a cache: a re-read is the only way to see what is on disk now.
+const t3File = vi.hoisted(() => ({
+  disk: "",
+  cached: "",
+  listeners: new Set<() => void>(),
+}));
+
+vi.mock(import("~/components/files/projectFilesQueryState"), async (importOriginal) => {
+  const actual = await importOriginal();
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...actual,
+    useProjectFileQuery: ((_environmentId: unknown, _cwd: string, relativePath: string | null) => {
+      const contents = useSyncExternalStore(
+        (listener) => {
+          t3File.listeners.add(listener);
+          return () => t3File.listeners.delete(listener);
+        },
+        () => t3File.cached,
+      );
+      const refresh = () => {
+        t3File.cached = t3File.disk;
+        for (const listener of t3File.listeners) listener();
+      };
+      const data =
+        relativePath === "t3.json" && contents !== ""
+          ? { relativePath, contents, byteLength: contents.length, truncated: false }
+          : null;
+      return {
+        data,
+        error: null,
+        isPending: false,
+        readError: null,
+        isNotFile: false,
+        isFile: data !== null,
+        refresh,
+      };
+    }) as never,
+  };
+});
+
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useProject: ((ref: unknown) =>
@@ -87,20 +128,13 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsPanel } from "./ThreadDetailsPanel";
-import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment"),
   threadId: ThreadId.make("thread"),
 };
 const container = { width: 1200, height: 800 };
-const placement = {
-  x: 928 - THREAD_DETAILS_CARD_GAP,
-  y: 0,
-  right: THREAD_DETAILS_CARD_GAP,
-  width: 272,
-  height: 400,
-} as const;
+const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
 const linkedPullRequest: ThreadPullRequestLink = {
   host: "github.com",
   repository: "pingdotgg/t3code",
@@ -144,11 +178,13 @@ function Panel({
   fixture,
   draftEnvMode,
   onMachines = false,
+  withScripts = false,
 }: {
   fixture: ReturnType<typeof setup>;
   /** Renders an unsent draft in this mode instead of a started thread. */
   draftEnvMode?: "local" | "worktree";
   onMachines?: boolean;
+  withScripts?: boolean;
 }) {
   const noop = () => {};
   const scriptResult = async () => ({ ok: true }) as never;
@@ -159,6 +195,7 @@ function Panel({
         lane: { padding: 48, minChatWidth: 640 },
         layout: resolveChatCanvasLayout({ container, preview: null }),
         previewKey: null,
+        registerTimeline: noop,
         measureDetailsCard: noop,
         detailsCardTopInset: 0,
         preferredDetailsCard: placement,
@@ -175,7 +212,7 @@ function Panel({
         worktreePath={draftEnvMode === undefined ? state.folder : null}
         isServerThread={draftEnvMode === undefined}
         activeProjectName={state.workspaceRoot === SCRATCH_ROOT ? "No project" : "plain"}
-        activeProjectScripts={undefined}
+        activeProjectScripts={withScripts ? [] : undefined}
         preferredScriptId={null}
         keybindings={[]}
         availableEditors={[]}
@@ -197,13 +234,7 @@ function Panel({
         onAddProjectScript={scriptResult}
         onUpdateProjectScript={scriptResult}
         onDeleteProjectScript={scriptResult}
-        usage={{
-          providerInstanceId: null,
-          model: null,
-          providers: [],
-          sources: [],
-          contextWindow: null,
-        }}
+        usage={{} as never}
       />
     </ChatCanvasContext>
   );
@@ -225,10 +256,8 @@ it("offers no git controls in a No project thread, but shows its linked pull req
 it("shows Current checkout where no worktree can come from, even when New worktree is the default", async () => {
   using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: SCRATCH_ROOT });
   await using _screen = await render(<Panel fixture={fixture} draftEnvMode="worktree" />);
-  await page.getByRole("button", { name: "Run on: Run on" }).click();
-  await expect.element(page.getByText(SCRATCH_ROOT)).toBeVisible();
-  await expect.element(page.getByText("New worktree")).not.toBeInTheDocument();
-  await expect.element(page.getByRole("button", { name: /Workspace:/ })).not.toBeInTheDocument();
+  await expect.element(page.getByLabelText("Run context: Current checkout")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Run context/ })).not.toBeInTheDocument();
 });
 
 it("offers only machines where no worktree can come from and several machines exist", async () => {
@@ -236,10 +265,9 @@ it("offers only machines where no worktree can come from and several machines ex
   await using _screen = await render(
     <Panel fixture={fixture} draftEnvMode="worktree" onMachines />,
   );
-  await page.getByRole("button", { name: "Run on: This Mac" }).click();
+  await page.getByRole("button", { name: "Run context: This Mac, Current checkout" }).click();
   await expect.element(page.getByText("Run on")).toBeVisible();
   await expect.element(page.getByText("New worktree")).not.toBeInTheDocument();
-  await expect.element(page.getByRole("button", { name: /Workspace:/ })).not.toBeInTheDocument();
 });
 
 it("shows a linked pull request in a folder that is not a git repository", async () => {
@@ -265,4 +293,25 @@ it("offers no Initialize Git before the server config says where No project live
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();
+});
+
+it("lists the t3.json actions on disk when the actions menu opens again after the file changed", async () => {
+  using fixture = setup({ workspaceRoot: "/work/plain", folder: "/work/plain" });
+  const t3Json = (name: string) =>
+    JSON.stringify({ scripts: [{ name, command: `npm run dev -- --port ${name.slice(-4)}` }] });
+  t3File.disk = t3Json("Dev 4100");
+  t3File.cached = t3File.disk;
+  await using _screen = await render(<Panel fixture={fixture} withScripts />);
+
+  const chooser = page.getByRole("button", { name: "Choose project action" });
+  await chooser.click();
+  await expect.element(page.getByRole("menuitem", { name: /Dev 4100/ })).toBeVisible();
+  await chooser.click();
+  await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
+
+  // A setup hook rewrites this checkout's t3.json outside T3 Code.
+  t3File.disk = t3Json("Dev 4200");
+
+  await chooser.click();
+  await expect.element(page.getByRole("menuitem", { name: /Dev 4200/ })).toBeVisible();
 });

@@ -134,12 +134,12 @@ export function SkillChipPopover(props: {
       accessibleLabel={gt("Skill {label}", { label: props.label })}
       copyMarkdown={props.copyMarkdown}
     >
-      <div className="space-y-3 p-2 text-body">
-        <p className="text-label">{props.label}</p>
+      <div className="space-y-3 p-2 text-sm">
+        <p className="font-medium">{props.label}</p>
         <p>{props.description || gt("No description is available for this skill.")}</p>
         {props.onViewInstructions ? (
           <PopoverClose
-            render={<Button variant="secondary" size="sm" />}
+            render={<Button variant="outline" size="sm" />}
             onClick={props.onViewInstructions}
           >
             <T>View instructions</T>
@@ -150,7 +150,6 @@ export function SkillChipPopover(props: {
   );
 }
 
-/** The skill glyph; the surrounding chip sizes and colors its svg. */
 export function SkillChipIcon() {
   return (
     <span

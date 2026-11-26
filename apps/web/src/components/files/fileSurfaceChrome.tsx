@@ -1,41 +1,26 @@
-import { FileWarning, RotateCw } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { T, useGT } from "gt-react";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "~/components/ui/empty";
-
 import { Spinner } from "~/components/ui/spinner";
 import { Button } from "~/components/ui/button";
 import { Toggle } from "~/components/ui/toggle";
-import { Toggle as ToggleGroupItem, ToggleGroup } from "~/components/ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 export const FILE_SURFACE_SUBHEADER_CLASS =
-  "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-divider bg-background ps-4 pe-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-divider";
+  "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent";
 
 export const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 
 export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
-  :host {
-    --code-background: var(--code-surface, var(--background));
-  }
-
   diffs-container {
-    --diffs-bg: var(--code-surface, var(--background)) !important;
-    --diffs-light-bg: var(--code-surface, var(--background)) !important;
-    --diffs-dark-bg: var(--code-surface, var(--background)) !important;
-    background-color: var(--code-surface, var(--background)) !important;
+    --diffs-bg: var(--code-background, var(--background)) !important;
+    --diffs-light-bg: var(--code-background, var(--background)) !important;
+    --diffs-dark-bg: var(--code-background, var(--background)) !important;
+    background-color: var(--code-background, var(--background)) !important;
     color: var(--code-foreground, var(--foreground)) !important;
   }
 
@@ -83,95 +68,36 @@ export function FileSurfaceAction(props: {
 }) {
   const pressed = props.pressed;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          pressed === undefined ? (
-            <Button
-              type="button"
-              className="shrink-0"
-              disabled={props.disabled ?? false}
-              onClick={props.onPress}
-              aria-label={props.label}
-              variant="ghost"
-              size="icon-sm"
-            >
-              {props.children}
-            </Button>
-          ) : (
-            <Toggle
-              className="shrink-0"
-              pressed={pressed}
-              disabled={props.disabled ?? false}
-              onPressedChange={props.onPress}
-              aria-label={props.label}
-              variant="ghost"
-              size="sm"
-            >
-              {props.children}
-            </Toggle>
-          )
-        }
-      />
-      <TooltipPopup>{props.label}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-export type FileRenderedMode = "markdown" | "mermaid" | "html" | "table";
-
-/**
- * The Preview/Source switch for files that have a rendered view. Workspace
- * files and attachments share it so both headers read the same.
- */
-export function FileRenderedViewToggle(props: {
-  readonly mode: FileRenderedMode;
-  readonly rendered: boolean;
-  readonly onRenderedChange: (rendered: boolean) => void;
-}) {
-  const gt = useGT();
-  const { mode } = props;
-  return (
-    <ToggleGroup
-      aria-label={gt("File view")}
-      className="shrink-0"
-      value={[props.rendered ? "rendered" : "source"]}
-      onValueChange={(value) => {
-        const next = value[0];
-        if (next === "rendered" || next === "source") props.onRenderedChange(next === "rendered");
-      }}
-    >
-      <ToggleGroupItem
-        aria-label={
-          mode === "mermaid"
-            ? gt("Show rendered diagram")
-            : mode === "markdown"
-              ? gt("Show rendered markdown")
-              : mode === "table"
-                ? gt("Show table")
-                : gt("Show rendered page")
-        }
-        value="rendered"
-      >
-        {mode === "table"
-          ? gt("Table", { $context: "view mode, rendered table" })
-          : gt("Preview", { $context: "view mode, rendered file" })}
-      </ToggleGroupItem>
-      <ToggleGroupItem
-        aria-label={
-          mode === "mermaid"
-            ? gt("Show Mermaid source")
-            : mode === "markdown"
-              ? gt("Show markdown source")
-              : mode === "table"
-                ? gt("Show source")
-                : gt("Show HTML source")
-        }
-        value="source"
-      >
-        {gt("Source", { $context: "view mode, file source" })}
-      </ToggleGroupItem>
-    </ToggleGroup>
+    <SharedTooltipTrigger
+      render={
+        pressed === undefined ? (
+          <Button
+            type="button"
+            className="shrink-0"
+            disabled={props.disabled ?? false}
+            onClick={props.onPress}
+            aria-label={props.label}
+            variant="ghost"
+            size="icon-sm"
+          >
+            {props.children}
+          </Button>
+        ) : (
+          <Toggle
+            className="shrink-0"
+            pressed={pressed}
+            disabled={props.disabled ?? false}
+            onPressedChange={props.onPress}
+            aria-label={props.label}
+            variant="ghost"
+            size="sm"
+          >
+            {props.children}
+          </Toggle>
+        )
+      }
+      label={props.label}
+    />
   );
 }
 
@@ -202,52 +128,25 @@ export function FileSurfaceLoading(props: { readonly className?: string }) {
   );
 }
 
-/**
- * A centered state for a file surface with nothing to show: an empty tree, no
- * search matches, a file without a preview, or a failed read. Same icon disc and
- * title as the browser's empty and unreachable states.
- */
-export function FileSurfaceState(props: {
-  readonly icon: ReactNode;
-  readonly title: string;
-  readonly description?: ReactNode;
-  readonly action?: ReactNode;
-  readonly role?: "status" | "alert";
-}) {
-  return (
-    <Empty size="compact" role={props.role ?? "status"} className="min-h-0">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">{props.icon}</EmptyMedia>
-        <EmptyTitle>{props.title}</EmptyTitle>
-        {props.description ? (
-          <EmptyDescription className="break-words">{props.description}</EmptyDescription>
-        ) : null}
-      </EmptyHeader>
-      {props.action ? <EmptyContent>{props.action}</EmptyContent> : null}
-    </Empty>
-  );
-}
-
 export function FileSurfaceFailure(props: {
-  readonly message: ReactNode;
-  readonly title?: string;
+  readonly message: string;
   readonly onRetry?: () => void;
 }) {
-  const gt = useGT();
   return (
-    <FileSurfaceState
+    <div
       role="alert"
-      icon={<FileWarning />}
-      title={props.title ?? gt("Can't open this file")}
-      description={props.message}
-      action={
-        props.onRetry ? (
-          <Button type="button" variant="secondary" size="sm" onClick={props.onRetry}>
-            <RotateCw />
-            <T>Try again</T>
-          </Button>
-        ) : undefined
-      }
-    />
+      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-xs leading-relaxed"
+    >
+      <p className="text-destructive">{props.message}</p>
+      {props.onRetry ? (
+        <button
+          type="button"
+          onClick={props.onRetry}
+          className="rounded-md border border-input px-2.5 py-1 text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <T>Try again</T>
+        </button>
+      ) : null}
+    </div>
   );
 }

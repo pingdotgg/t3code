@@ -5,6 +5,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { ComposerHandleContext, type ComposerHandleRef } from "../../composerHandleContext";
+import { ComposerContextPermissions } from "../ComposerContextPermissions";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
@@ -13,11 +14,8 @@ import {
   useComposerMenuProps,
 } from "./composerEventScope";
 import { ComposerFooterModeControls, ComposerPermissionsSection } from "./ComposerFooterControls";
-import {
-  resolveRuntimeModeOption,
-  resolveRuntimeModeOptions,
-  runtimeModeOptions,
-} from "./runtimeModeConfig";
+import { ComposerPickerFooter } from "./ComposerModelEffort";
+import { resolveRuntimeModeOption, runtimeModeOptions } from "./runtimeModeConfig";
 
 const options = runtimeModeOptions.map((mode) => resolveRuntimeModeOption(mode));
 
@@ -99,7 +97,7 @@ it("returns focus to the editor after a pick", async () => {
   await vi.waitFor(() => expect(handle.focusAtEnd).toHaveBeenCalled());
 });
 
-// Mirrors a composer popover that nests the Permissions menu, as the redesign's context strip does.
+// Mirrors the model picker: a composer popover whose footer nests the Permissions menu.
 function PickerWithPermissions() {
   const [mode, setMode] = useState<RuntimeMode>("full-access");
   const composerMenuProps = useComposerMenuProps();
@@ -109,7 +107,8 @@ function PickerWithPermissions() {
       <Popover>
         <PopoverTrigger>Model</PopoverTrigger>
         <PopoverPopup {...composerMenuProps}>
-          <ComposerFooterModeControls
+          <ComposerPickerFooter
+            traits={null}
             runtimeMode={mode}
             runtimeModeOptions={options}
             onRuntimeModeChange={setMode}
@@ -158,7 +157,7 @@ it("opens on the checked permission when composer.mode marked the trigger", asyn
 function PermissionsChip() {
   const [mode, setMode] = useState<RuntimeMode>("approval-required");
   return (
-    <div data-slot="composer-host">
+    <div data-slot="composer-shell">
       <button type="button" data-composer-shortcut="composer.effort composer.mode">
         Model
       </button>
@@ -186,12 +185,12 @@ it("returns focus to the editor when picking the default hides the chip", async 
 function ContextPermissions() {
   const [mode, setMode] = useState<RuntimeMode>("full-access");
   return (
-    <ComposerFooterModeControls
+    <ComposerContextPermissions
+      environmentId={null}
       runtimeMode={mode}
-      runtimeModeOptions={resolveRuntimeModeOptions(
-        ["approval-required", "full-access"],
-        undefined,
-      )}
+      supportedRuntimeModes={["approval-required", "full-access"]}
+      instanceId={undefined}
+      cwd={null}
       onRuntimeModeChange={setMode}
     />
   );

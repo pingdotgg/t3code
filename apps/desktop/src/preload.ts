@@ -46,23 +46,16 @@ try {
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
 const clientPlatform = process.platform;
 
-const macosMajorVersion =
-  clientPlatform === "darwin" ? Number.parseInt(process.getSystemVersion()) : 0;
-
 if (clientPlatform === "darwin") {
   // Native buttons ignore Chromium zoom; reserve native points even after reload.
-  const syncWindowGeometry = () => {
-    const rootStyle = document.documentElement.style;
-    const zoomFactor = webFrame.getZoomFactor();
-    rootStyle.setProperty("--desktop-window-controls-inset", `${90 / zoomFactor}px`);
-    // Measured from macOS 27 window captures; earlier releases draw other corners.
-    if (macosMajorVersion >= 27) {
-      rootStyle.setProperty("--desktop-window-corner-radius", `${31.5 / zoomFactor}px`);
-      rootStyle.setProperty("--desktop-window-corner-shape", "superellipse(2.12)");
-    }
+  const syncWindowControlInset = () => {
+    document.documentElement.style.setProperty(
+      "--desktop-window-controls-inset",
+      `${90 / webFrame.getZoomFactor()}px`,
+    );
   };
-  window.addEventListener("DOMContentLoaded", syncWindowGeometry, { once: true });
-  window.addEventListener("resize", syncWindowGeometry);
+  window.addEventListener("DOMContentLoaded", syncWindowControlInset, { once: true });
+  window.addEventListener("resize", syncWindowControlInset);
 }
 
 const syncHtmlFullscreen = () => {
@@ -111,6 +104,8 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  getDatabaseMigrationProgress: () =>
+    ipcRenderer.invoke(IpcChannels.GET_DATABASE_MIGRATION_PROGRESS_CHANNEL),
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {
@@ -254,7 +249,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
-  setBlackChrome: (enabled) => ipcRenderer.invoke(IpcChannels.SET_BLACK_CHROME_CHANNEL, enabled),
   showContextMenu: (items, position, source) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,
@@ -339,8 +333,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
     };
   },
-  setWindowButtonsVisible: (visible) =>
-    ipcRenderer.invoke(IpcChannels.SET_WINDOW_BUTTONS_VISIBLE_CHANNEL, visible),
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel, minimumVersion) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, { channel, minimumVersion }),
@@ -453,20 +445,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         profileId,
         tunnelLoopback,
       }),
-    setForwardedKeyChords: (shortcuts) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_FORWARDED_KEY_CHORDS_CHANNEL, { shortcuts }),
-    onForwardedKeyChord: (listener) => {
-      const wrappedListener = (_event: Electron.IpcRendererEvent, input: unknown) => {
-        if (typeof input !== "object" || input === null) return;
-        listener(input as Parameters<typeof listener>[0]);
-      };
-      ipcRenderer.on(IpcChannels.PREVIEW_FORWARDED_KEY_CHORD_CHANNEL, wrappedListener);
-      return () =>
-        ipcRenderer.removeListener(
-          IpcChannels.PREVIEW_FORWARDED_KEY_CHORD_CHANNEL,
-          wrappedListener,
-        );
-    },
     onTunnelAccessRequest: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
         if (typeof request !== "object" || request === null) return;

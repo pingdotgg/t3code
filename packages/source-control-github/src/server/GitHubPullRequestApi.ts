@@ -357,7 +357,7 @@ const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
         path?.length === 6 &&
         path[0] === "repository" &&
         path[1] === "pullRequest" &&
-        (path[2] === "reviewRequests" || path[2] === "reviewRequestEvents") &&
+        path[2] === "reviewRequests" &&
         path[3] === "nodes" &&
         typeof path[4] === "number" &&
         Number.isInteger(path[4]) &&
@@ -601,7 +601,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly headSha: string;
       readonly headBranch: string;
       readonly headRepositoryOwner: string;
-      readonly isCrossRepository: true;
+      readonly isCrossRepository: boolean;
     }) => Effect.Effect<ReadonlyArray<GitHubWorkflowRunApproval>, GitHubPullRequestApiError>;
 
     /** The head's workflow runs that have not finished, the latest 100. */
@@ -1730,6 +1730,7 @@ export const make = Effect.gen(function* () {
           run.head_branch === input.headBranch
             ? [
                 {
+                  pullRequestNumbers: run.pull_requests?.map((pr) => pr.number) ?? [],
                   id: run.id,
                   name: run.name?.trim() || `Workflow run ${run.id}`,
                   url: run.html_url?.trim() || null,
@@ -1771,7 +1772,7 @@ export const make = Effect.gen(function* () {
                 const exactHeads = heads.filter(
                   (pullRequest) =>
                     pullRequest.headSha === input.headSha &&
-                    pullRequest.isCrossRepository === true &&
+                    pullRequest.isCrossRepository === input.isCrossRepository &&
                     pullRequest.headRepositoryOwner?.toLowerCase() ===
                       input.headRepositoryOwner.toLowerCase(),
                 );
@@ -1816,7 +1817,24 @@ export const make = Effect.gen(function* () {
           ),
         ],
         { concurrency: 2 },
-      ).pipe(Effect.map(([, runs]) => runs));
+      ).pipe(
+        Effect.flatMap(([, runs]) =>
+          !input.isCrossRepository && runs.some((run) => run.pullRequestNumbers.length === 0)
+            ? Effect.fail(
+                workflowApprovalReadError(
+                  input.cwd,
+                  new Error("GitHub omitted workflow run pull-request associations."),
+                ),
+              )
+            : Effect.succeed(
+                runs.filter((run) =>
+                  run.pullRequestNumbers.length === 0
+                    ? input.isCrossRepository
+                    : run.pullRequestNumbers.includes(input.number),
+                ),
+              ),
+        ),
+      );
 
   const simpleActionMutations = {
     "disable-auto-merge": (pullRequestId: string) =>
@@ -2460,26 +2478,12 @@ export const make = Effect.gen(function* () {
           input,
           50,
           (requestedReviewers) =>
-            client.ReviewThreads({
-              owner,
-              name,
-              number: input.number,
-              requestedReviewers,
-              requestEvents: requestedReviewers > 0,
-            }),
+            client.ReviewThreads({ owner, name, number: input.number, requestedReviewers }),
         ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [...first.threads];
         const avatarsByLogin = new Map(first.avatarsByLogin);
         const botLogins = new Set(first.botLogins);
-        const {
-          reviewers,
-          reactions,
-          reactionsById,
-          editedAtById,
-          commits,
-          viewer,
-          reviewRequests,
-        } = first;
+        const { reviewers, reactions, reactionsById, editedAtById, commits, viewer } = first;
         const dismissalsByReviewId = new Map(first.dismissalsByReviewId);
         const dismissalCursor = first.nextDismissalCursor;
         let cursor = first.nextCursor;
@@ -2553,7 +2557,6 @@ export const make = Effect.gen(function* () {
           botLogins,
           commits,
           viewer,
-          reviewRequests,
         };
       },
     ),
@@ -2834,7 +2837,6 @@ export const make = Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         return getPullRequestDetail(input).pipe(
           Effect.flatMap((detail) => {
-            if (detail.isCrossRepository !== true) return Effect.void;
             if (detail.headSha == null || detail.headRepositoryOwner == null) {
               return Effect.fail(
                 new GitHubWorkflowApprovalHeadUnavailableError({
@@ -2851,7 +2853,7 @@ export const make = Effect.gen(function* () {
               headSha: expectedHeadSha,
               headBranch: expectedHeadBranch,
               headRepositoryOwner: expectedHeadRepositoryOwner,
-              isCrossRepository: true,
+              isCrossRepository: detail.isCrossRepository === true,
             }).pipe(
               Effect.flatMap((runs) =>
                 Effect.forEach(
@@ -2868,7 +2870,7 @@ export const make = Effect.gen(function* () {
                           );
                         }
                         if (
-                          current.isCrossRepository !== true ||
+                          current.isCrossRepository !== detail.isCrossRepository ||
                           current.headSha !== expectedHeadSha ||
                           current.headBranch !== expectedHeadBranch ||
                           current.headRepositoryOwner.toLowerCase() !==
@@ -2886,7 +2888,7 @@ export const make = Effect.gen(function* () {
                           headSha: current.headSha,
                           headBranch: current.headBranch,
                           headRepositoryOwner: current.headRepositoryOwner,
-                          isCrossRepository: true,
+                          isCrossRepository: detail.isCrossRepository === true,
                         });
                       }),
                       Effect.flatMap((currentRuns) =>
@@ -2897,6 +2899,7 @@ export const make = Effect.gen(function* () {
                                 operation: "approveWorkflowRun",
                                 method: "POST",
                                 path: `repos/${owner}/${name}/actions/runs/${run.id}/approve`,
+                                discardSuccessBody: true,
                               })
                               .pipe(Effect.asVoid)
                           : Effect.void,

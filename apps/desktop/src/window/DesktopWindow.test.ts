@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
-import { DEFAULT_CLIENT_SETTINGS, DesktopSnapShotId } from "@t3tools/contracts";
+import { DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -47,7 +47,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
+import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import {
@@ -122,7 +122,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn<(url: string) => Promise<void>>(() => Promise.resolve()),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -171,7 +171,9 @@ function makeFakeBrowserWindow() {
   };
 }
 
-const layerDesktopClientSettings = DesktopClientSettings.layerTest();
+const layerDesktopClientSettings = Layer.mock(DesktopClientSettings.DesktopClientSettings)({
+  get: Effect.succeedNone,
+});
 
 const layerElectronApp = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
@@ -184,7 +186,6 @@ const layerDesktopAssets = Layer.succeed(DesktopAssets.DesktopAssets, {
     png: Option.none<string>(),
   }),
   resolveResourcePath: () => Effect.succeed(Option.none<string>()),
-  resolveAppIconPath: () => Effect.succeed(Option.none<string>()),
 } satisfies DesktopAssets.DesktopAssets["Service"]);
 
 const layerDesktopServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
@@ -211,9 +212,7 @@ const layerElectronMenu = Layer.succeed(ElectronMenu.ElectronMenu, {
 
 const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
-  shouldUseDarkChrome: Effect.succeed(false),
   setSource: () => Effect.void,
-  setBlackChrome: () => Effect.void,
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
@@ -389,7 +388,6 @@ function layerTest(input: {
       ),
     ),
     Layer.merge(DesktopState.layer),
-    Layer.merge(layerDesktopClientSettings),
   );
 }
 
@@ -496,6 +494,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           }),
         ),
       ),
+      Layer.merge(DesktopState.layer),
     );
 
     return { layer, createCalls, mainWindow, revealedWindows } as const;
@@ -1368,9 +1367,9 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.syncAppearance;
       }).pipe(Effect.provide(layer));
 
-      assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#e4e4e4"]]);
+      assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
       assert.lengthOf(vi.mocked(framed.window.setTitleBarOverlay).mock.calls, 0);
-      assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#e4e4e4"]]);
+      assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
       assert.lengthOf(vi.mocked(overlay.window.setTitleBarOverlay).mock.calls, 1);
     }),
   );
@@ -1457,48 +1456,20 @@ describe("DesktopWindow", () => {
         if (!swipe) return;
         const history = fakeWindow.navigationHistory;
 
-        yield* Effect.promise(() => Promise.resolve(swipe({}, "left")));
+        swipe({}, "left");
         assert.equal(history.goBack.mock.calls.length, 1);
         assert.equal(history.goForward.mock.calls.length, 0);
-        yield* Effect.promise(() => Promise.resolve(swipe({}, "right")));
+        swipe({}, "right");
         assert.equal(history.goForward.mock.calls.length, 1);
 
-        yield* Effect.promise(() => Promise.resolve(swipe({}, "up")));
-        yield* Effect.promise(() => Promise.resolve(swipe({}, "down")));
+        swipe({}, "up");
+        swipe({}, "down");
         history.canGoBack.mockReturnValue(false);
         history.canGoForward.mockReturnValue(false);
-        yield* Effect.promise(() => Promise.resolve(swipe({}, "left")));
-        yield* Effect.promise(() => Promise.resolve(swipe({}, "right")));
+        swipe({}, "left");
+        swipe({}, "right");
         assert.equal(history.goBack.mock.calls.length, 1);
         assert.equal(history.goForward.mock.calls.length, 1);
-        assert.equal(
-          fakeWindow.send.mock.calls.filter(([channel]) => channel === MENU_ACTION_CHANNEL).length,
-          0,
-        );
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* settings.set({
-          ...DEFAULT_CLIENT_SETTINGS,
-          layoutThreeFingerSwipe: true,
-          scrollingWorkspacesEnabled: true,
-        });
-        history.canGoBack.mockReturnValue(true);
-        history.canGoForward.mockReturnValue(true);
-        for (const direction of ["left", "right", "up", "down"]) {
-          yield* Effect.promise(() => Promise.resolve(swipe({}, direction)));
-          assert.deepEqual(fakeWindow.send.mock.lastCall, [
-            MENU_ACTION_CHANNEL,
-            `layout-swipe-${direction}`,
-          ]);
-        }
-        assert.equal(history.goBack.mock.calls.length, 1);
-        assert.equal(history.goForward.mock.calls.length, 1);
-        yield* settings.set({ ...DEFAULT_CLIENT_SETTINGS, layoutThreeFingerSwipe: true });
-        fakeWindow.send.mockClear();
-        yield* Effect.promise(() => Promise.resolve(swipe({}, "left")));
-        yield* Effect.promise(() => Promise.resolve(swipe({}, "right")));
-        assert.equal(history.goBack.mock.calls.length, 2);
-        assert.equal(history.goForward.mock.calls.length, 2);
-        assert.equal(fakeWindow.send.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1587,13 +1558,17 @@ describe("DesktopWindow", () => {
           if (!willAttachWebview) {
             return yield* Effect.die("will-attach-webview listener was not registered");
           }
-          const webPreferences: Electron.WebPreferences = {};
+          const webPreferences: Electron.WebPreferences = { preload: "/repo/elsewhere/other.cjs" };
           willAttachWebview({ preventDefault: () => {} }, webPreferences, {
             partition: "persist:t3code-preview-test",
           });
 
           assert.deepEqual(webPreferences.additionalArguments, expected);
           assert.isTrue(webPreferences.contextIsolation);
+          assert.equal(
+            webPreferences.preload,
+            "/repo/apps/desktop/dist-electron/preview-pick-preload.cjs",
+          );
         }).pipe(Effect.provide(layer));
       }),
   );
@@ -1764,9 +1739,21 @@ describe("DesktopWindow", () => {
 
         yield* Effect.gen(function* () {
           const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          const state = yield* DesktopState.DesktopState;
+          const splashHtml = () =>
+            decodeURIComponent(String(splash.loadURL.mock.calls.at(-1)?.[0]).split(",")[1] ?? "");
 
           yield* desktopWindow.showConnectingSplash;
           assert.equal(yield* Ref.get(scenario.createCalls), 1);
+          yield* TestClock.adjust("1 second");
+          assert.include(splashHtml(), "Connecting to WSL…");
+          const initialLoads = splash.loadURL.mock.calls.length;
+          yield* TestClock.adjust("1 second");
+          assert.equal(splash.loadURL.mock.calls.length, initialLoads);
+
+          yield* Ref.set(state.databaseMigrationProgress, { current: 2, total: 7 });
+          yield* TestClock.adjust("1 second");
+          assert.include(splashHtml(), "Upgrading database (2 of 7)");
 
           const readyExit = yield* Effect.exit(
             desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")),
@@ -1775,11 +1762,24 @@ describe("DesktopWindow", () => {
           assert.equal(yield* Ref.get(scenario.createCalls), 2);
           assert.isTrue(Option.isNone(yield* Ref.get(scenario.mainWindow)));
 
+          yield* Ref.set(state.databaseMigrationProgress, { current: 3, total: 7 });
+          yield* TestClock.adjust("1 second");
+          assert.include(splashHtml(), "Upgrading database (3 of 7)");
+          yield* Ref.set(state.databaseMigrationProgress, null);
+          yield* TestClock.adjust("1 second");
+          assert.include(splashHtml(), "Connecting to WSL…");
+          assert.notInclude(splashHtml(), "Upgrading database");
+
           yield* desktopWindow.activate;
           assert.equal(yield* Ref.get(scenario.createCalls), 3);
           const registeredMain = yield* Ref.get(scenario.mainWindow);
           assert.isTrue(Option.isSome(registeredMain));
           assert.equal(Option.getOrThrow(registeredMain), main.window);
+          splash.windowListeners.get("closed")?.();
+          const loadsAtClose = splash.loadURL.mock.calls.length;
+          yield* Ref.set(state.databaseMigrationProgress, { current: 4, total: 7 });
+          yield* TestClock.adjust("2 seconds");
+          assert.equal(splash.loadURL.mock.calls.length, loadsAtClose);
         }).pipe(Effect.provide(scenario.layer));
       }),
   );

@@ -25,9 +25,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
@@ -211,12 +211,7 @@ export function ProviderAuthenticationSection({
               disabled={disabled}
               onValueChange={(value) => setMethodId(value ?? "")}
             >
-              <SelectTrigger
-                variant="well"
-                size="compact"
-                aria-label={gt("Sign-in method")}
-                className="w-44"
-              >
+              <SelectTrigger size="sm" aria-label={gt("Sign-in method")} className="w-44">
                 <SelectValue>
                   {auth?.methods?.find((method) => method.id === methodId)?.name ??
                     gt("Provider default")}
@@ -238,54 +233,54 @@ export function ProviderAuthenticationSection({
             <>
               <Button
                 size="sm"
-                variant="secondary"
+                variant="outline"
                 disabled={disabled}
                 onClick={() => void openBrowser()}
               >
                 <T>Open browser</T>
               </Button>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      aria-label={gt("Copy sign-in link")}
-                      size="icon-sm"
-                      variant="ghost-muted"
-                      disabled={disabled}
-                      onClick={() => {
-                        // Copy during the click to retain clipboard activation; consent must still be
-                        // recorded before use.
-                        const copied = writeTextToClipboard(url, {
-                          target: "Provider sign-in link",
-                          unavailableMessage: msg(
-                            "Clipboard API is unavailable while copying Provider sign-in link.",
-                          ),
-                          failureMessage: msg(
-                            "Failed to copy Provider sign-in link to the clipboard.",
-                          ),
-                        });
-                        void (async () => {
-                          await copied;
-                          if (interaction?.type === "browser" && interaction.requiresConsent)
-                            await send({ type: "browser", action: "accept" });
-                        })().catch(() => setError(gt("Could not copy the sign-in link.")));
-                      }}
-                    >
-                      <CopyIcon />
-                    </Button>
-                  }
-                />
-                <TooltipPopup>
-                  <T>Copy sign-in link</T>
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <Button
+                    aria-label={gt("Copy sign-in link")}
+                    size="icon-sm"
+                    variant="ghost-muted"
+                    disabled={disabled}
+                    onClick={() => {
+                      // Copy during the click to retain clipboard activation; consent must still be
+                      // recorded before use.
+                      const copied = writeTextToClipboard(url, {
+                        target: "Provider sign-in link",
+                        unavailableMessage: msg(
+                          "Clipboard API is unavailable while copying Provider sign-in link.",
+                        ),
+                        failureMessage: msg(
+                          "Failed to copy Provider sign-in link to the clipboard.",
+                        ),
+                      });
+                      void (async () => {
+                        await copied;
+                        if (interaction?.type === "browser" && interaction.requiresConsent)
+                          await send({ type: "browser", action: "accept" });
+                      })().catch(() => setError(gt("Could not copy the sign-in link.")));
+                    }}
+                  >
+                    <CopyIcon />
+                  </Button>
+                }
+                label={
+                  <>
+                    <T>Copy sign-in link</T>
+                  </>
+                }
+              />
             </>
           ) : null}
           <>
             {needsExternalSetup && provider.setup?.documentationUrl ? (
               <Button
                 size="sm"
-                variant="secondary"
+                variant="outline"
                 render={
                   <a href={provider.setup.documentationUrl} target="_blank" rel="noreferrer" />
                 }
@@ -309,7 +304,7 @@ export function ProviderAuthenticationSection({
             ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
               <Button
                 size="sm"
-                variant="secondary"
+                variant="outline"
                 disabled={disabled || !provider.enabled || !provider.installed || !auth}
                 onClick={() =>
                   void run(() =>
@@ -465,7 +460,7 @@ export function ProviderAuthenticationSection({
               <Button
                 type="submit"
                 size="sm"
-                variant="secondary"
+                variant="outline"
                 className="w-fit"
                 disabled={disabled}
               >
@@ -505,7 +500,7 @@ export function ProviderAuthenticationSection({
               <Button
                 type="submit"
                 size="sm"
-                variant="secondary"
+                variant="outline"
                 className="w-fit"
                 disabled={disabled || !values.callback?.trim()}
               >

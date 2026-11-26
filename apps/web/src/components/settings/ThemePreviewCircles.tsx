@@ -6,13 +6,13 @@ import {
   THEME_PREVIEW_RENDER_SPECS,
 } from "@t3tools/shared/themePreview";
 import { cn } from "../../lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getThemeColorsForMode,
   getThemeModes,
   type ThemeAppearance,
   type ThemeDefinition,
 } from "../../themePalette";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const THEME_PREVIEW_ROLES = [
   "sidebar",
@@ -43,15 +43,15 @@ const STANDARD_THEME_PREVIEW_COLORS: Record<
   light: {
     sidebar: "#fafafa",
     surface: "#ffffff",
-    accentSurface: "#f4f4f4",
-    messageSurface: "#e4e4e4",
+    accentSurface: "#f4f4f5",
+    messageSurface: "#e4e4e7",
     ...SHARED_STANDARD_THEME_PREVIEW_COLORS.light,
   },
   dark: {
-    sidebar: "#0f0f0f",
+    sidebar: "#0f0f10",
     surface: "#121212",
-    accentSurface: "#272727",
-    messageSurface: "#272727",
+    accentSurface: "#27272a",
+    messageSurface: "#27272a",
     ...SHARED_STANDARD_THEME_PREVIEW_COLORS.dark,
   },
 };
@@ -66,6 +66,13 @@ export const STANDARD_THEME_CARDS: ReadonlyArray<ThemeCardDefinition> = [
     })),
   },
 ];
+
+export function previewColorsOf(
+  card: ThemeCardDefinition,
+  mode: ThemeAppearance,
+): ThemeCardPreviewColors | null {
+  return card.previews.find((preview) => preview.mode === mode)?.colors ?? null;
+}
 
 export function getThemeCardDefinition(theme: ThemeDefinition): ThemeCardDefinition {
   return {
@@ -155,58 +162,55 @@ export function ThemePreviewCircles({
 }) {
   const gt = useGT();
   return (
-    <div className="flex h-24 items-center justify-center gap-1.5 px-3">
+    <div className="flex min-h-16 items-center justify-center gap-2.5 px-3 pt-3">
       {previews.map((preview) => {
         const mode = preview.mode;
         const isPicked = activeModes.includes(mode);
         return (
-          <Tooltip key={mode}>
-            <TooltipTrigger
-              render={
-                <button
-                  aria-label={
-                    mode === "light"
-                      ? gt("Use {label} light mode", { label })
-                      : gt("Use {label} dark mode", { label })
-                  }
-                  aria-pressed={isPicked}
-                  className={cn(
-                    "relative flex size-16 shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1 outline-none transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60",
-                    isPicked && "hover:scale-100",
-                  )}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSelectMode(mode);
-                  }}
-                  type="button"
-                >
-                  <ThemePreviewCircle colors={preview.colors} mode={mode} />
-                  {isPicked ? (
-                    <>
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute inset-0 rounded-full"
-                        style={{ boxShadow: "inset 0 0 0 2px var(--settings-active-rim)" }}
-                      />
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute bottom-0.5 right-0.5 flex size-5 items-center justify-center rounded-full border border-border/70 bg-background text-foreground shadow-sm"
-                      >
-                        {mode === "light" ? (
-                          <SunIcon className="size-3" />
-                        ) : (
-                          <MoonIcon className="size-3" />
-                        )}
-                      </span>
-                    </>
-                  ) : null}
-                </button>
-              }
-            />
-            <TooltipPopup>
-              {mode === "light" ? gt("Use for light mode only") : gt("Use for dark mode only")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            key={mode}
+            render={
+              <button
+                aria-label={
+                  mode === "light"
+                    ? gt("Use {label} light mode", { label })
+                    : gt("Use {label} dark mode", { label })
+                }
+                aria-pressed={isPicked}
+                className={cn(
+                  "relative flex size-[68px] shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1.5 outline-none transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60",
+                  isPicked && "hover:scale-100",
+                )}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectMode(mode);
+                }}
+                type="button"
+              >
+                <ThemePreviewCircle colors={preview.colors} mode={mode} />
+                {isPicked ? (
+                  <>
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 rounded-full"
+                      style={{ boxShadow: "inset 0 0 0 2px var(--ring)" }}
+                    />
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute bottom-0.5 right-0.5 flex size-5 items-center justify-center rounded-full border border-border/70 bg-background text-foreground shadow-sm"
+                    >
+                      {mode === "light" ? (
+                        <SunIcon className="size-3" />
+                      ) : (
+                        <MoonIcon className="size-3" />
+                      )}
+                    </span>
+                  </>
+                ) : null}
+              </button>
+            }
+            label={mode === "light" ? gt("Use for light mode only") : gt("Use for dark mode only")}
+          />
         );
       })}
     </div>

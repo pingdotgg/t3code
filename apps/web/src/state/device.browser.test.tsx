@@ -38,8 +38,7 @@ vi.mock(import("./use-atom-command"), () => {
   const run = () => Promise.resolve({ _tag: "Success", value: {} });
   return { useAtomCommand: (() => run) as never };
 });
-vi.mock(import("../components/device/DeviceHostUpdates"), async (original) => ({
-  ...(await original()),
+vi.mock(import("../components/device/DeviceHostUpdates"), () => ({
   DeviceHostUpdates: () => null,
 }));
 
@@ -173,6 +172,7 @@ it("reports a failed first device load and retries it", async () => {
         }}
         surface={{ id: "device", kind: "device" }}
         visible
+        onDismissSetup={() => undefined}
       />
     </RegistryContext.Provider>,
   );

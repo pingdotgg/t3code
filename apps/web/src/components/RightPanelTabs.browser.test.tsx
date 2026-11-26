@@ -1,12 +1,13 @@
 import "~/index.css";
 
 import { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import type { RightPanelSurface } from "~/rightPanelStore";
-import { render, stubGlobal } from "../../test/render";
+import { act, render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs, type RightPanelTabsProps } from "./RightPanelTabs";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -68,81 +69,79 @@ const surfaces: RightPanelSurface[] = Array.from({ length: 16 }, (_, index) => (
 }));
 
 describe("RightPanelTabs", () => {
-  it.each(["embedded", "inline"] as const)(
-    "%s: a flick that scrolls the tab strip to its left edge keeps the thread, and so does a swipe from the edge",
-    async (mode) => {
-      navigateHistory.mockReset();
-      const { bridge, scroll } = trackpad();
-      using _bridge = stubGlobal("desktopBridge", bridge);
-      using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-      const panel = document.createElement("div");
-      panel.style.cssText = "width: 320px; height: 200px; display: flex";
-      const noop = () => {};
-      await using screen = await render(
-        <>
-          <HistorySwipeNavigation />
-          <RightPanelTabs
-            mode={mode}
-            keybindings={[]}
-            surfaces={surfaces}
-            environmentId={null}
-            activeSurfaceId={null}
-            pendingSurfaceIds={new Set()}
-            previewSessions={{}}
-            desktopByTabId={{}}
-            terminalLabelsById={new Map(surfaces.map((surface) => [surface.id, "Terminal"]))}
-            onActivate={noop}
-            onCloseSurface={noop}
-            onCloseOtherSurfaces={noop}
-            onCloseSurfacesToRight={noop}
-            onCloseAllSurfaces={noop}
-            onCopyFilePath={noop}
-            onAddBrowser={noop}
-            onAddBrowserInProfile={noop}
-            onAddTerminal={noop}
-            onAddDiff={noop}
-            onAddFiles={noop}
-            onAddPullRequest={noop}
-            onAddPullRequests={noop}
-            onAddDevice={noop}
-            browserAvailable={false}
-            terminalAvailable
-            diffAvailable={false}
-            filesAvailable={false}
-            pullRequestAvailable={false}
-            pullRequestsAvailable={false}
-            deviceAvailable={false}
-          >
-            {null}
-          </RightPanelTabs>
-        </>,
-        { container: panel },
-      );
-      const viewport = screen.container.querySelector<HTMLElement>(
-        '[data-layout-tab-strip], [data-right-panel-tab-list] [data-slot="scroll-area-viewport"]',
-      )!;
-      expect(viewport.scrollWidth - viewport.clientWidth).toBeGreaterThan(120);
-      if (mode === "inline") {
-        viewport.scrollLeft = 120;
-        await userEvent.wheel(screen.getByRole("button", { name: "Scroll tabs right" }), {
-          delta: { x: 40 },
-        });
-        await vi.waitFor(() => expect(viewport.scrollLeft).toBe(160));
-      }
-      viewport.scrollLeft = 120;
+  it("a flick that scrolls the tab strip to its left edge keeps the thread, and so does a swipe from the edge", async () => {
+    navigateHistory.mockReset();
+    const { bridge, scroll } = trackpad();
+    using _bridge = stubGlobal("desktopBridge", bridge);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    const panel = document.createElement("div");
+    panel.style.cssText = "width: 320px; height: 200px; display: flex";
+    const noop = () => {};
+    await using screen = await render(
+      <>
+        <HistorySwipeNavigation />
+        <RightPanelTabs
+          mode="embedded"
+          keybindings={[]}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: false,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          })}
+          surfaces={surfaces}
+          environmentId={null}
+          activeSurfaceId={null}
+          pendingSurfaceIds={new Set()}
+          previewSessions={{}}
+          desktopByTabId={{}}
+          terminalLabelsById={new Map(surfaces.map((surface) => [surface.id, "Terminal"]))}
+          onActivate={noop}
+          onCloseSurface={noop}
+          onCloseOtherSurfaces={noop}
+          onCloseSurfacesToRight={noop}
+          onCloseAllSurfaces={noop}
+          onCopyFilePath={noop}
+          onAddBrowser={noop}
+          onAddBrowserInProfile={noop}
+          onAddTerminal={noop}
+          onAddDiff={noop}
+          onAddFiles={noop}
+          onAddPullRequest={noop}
+          onAddPullRequests={noop}
+          onAddDevice={noop}
+          browserAvailable={false}
+          terminalAvailable
+          diffAvailable={false}
+          filesAvailable={false}
+          pullRequestAvailable={false}
+          pullRequestsAvailable={false}
+          deviceAvailable={false}
+        >
+          {null}
+        </RightPanelTabs>
+      </>,
+      { container: panel },
+    );
+    const viewport = screen.container.querySelector<HTMLElement>(
+      '[data-right-panel-tab-list] [data-slot="scroll-area-viewport"]',
+    )!;
+    expect(viewport.scrollWidth - viewport.clientWidth).toBeGreaterThan(120);
+    viewport.scrollLeft = 120;
 
-      const momentum = Array.from({ length: 24 }, (_, index) => -60 * 0.85 ** index);
-      scroll(viewport.querySelector("[data-active-tab]")!, [-10, -20, -30, ...momentum]);
+    const momentum = Array.from({ length: 24 }, (_, index) => -60 * 0.85 ** index);
+    scroll(viewport.querySelector("[data-active-tab]")!, [-10, -20, -30, ...momentum]);
 
-      expect(viewport.scrollLeft).toBe(0);
-      expect(navigateHistory).not.toHaveBeenCalled();
+    expect(viewport.scrollLeft).toBe(0);
+    expect(navigateHistory).not.toHaveBeenCalled();
 
-      viewport.scrollLeft = 0;
-      scroll(viewport.querySelector("[data-active-tab]")!, [-40, -40, -40, -40, -40]);
+    viewport.scrollLeft = 0;
+    scroll(viewport.querySelector("[data-active-tab]")!, [-40, -40, -40, -40, -40]);
 
-      expect(navigateHistory).not.toHaveBeenCalled();
-    },
-  );
+    expect(navigateHistory).not.toHaveBeenCalled();
+  });
 });
 
 const BROWSER_SURFACE: RightPanelSurface = {
@@ -157,6 +156,14 @@ function panel(activeSurface: RightPanelSurface) {
   const props: RightPanelTabsProps = {
     mode: "inline",
     keybindings: [],
+    getShortcutContext: () => ({
+      terminalFocus: false,
+      terminalOpen: false,
+      previewFocus: false,
+      previewOpen: true,
+      isWeb: true,
+      isDesktop: false,
+    }),
     surfaces: [BROWSER_SURFACE, DIFF_SURFACE],
     environmentId: EnvironmentId.make("environment-local"),
     activeSurfaceId: activeSurface.id,
@@ -284,5 +291,62 @@ describe("device tab rename", () => {
     await userEvent.fill(input, "日本語");
     await userEvent.keyboard("{Enter}");
     expect(onRenameDevice).toHaveBeenCalledExactlyOnceWith(DEVICE_SURFACE.id, "日本語");
+  });
+});
+
+describe("add surface launcher", () => {
+  it("hides the button, closes the open menu and stops taking Mod+T and the desktop menu action once no surface can be added", async () => {
+    const menuListeners = new Set<(action: string) => void>();
+    using _bridge = stubGlobal("desktopBridge", {
+      onMenuAction: (listener: (action: string) => void) => {
+        menuListeners.add(listener);
+        return () => menuListeners.delete(listener);
+      },
+    });
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const tabs = (sideChatAvailable: boolean) => (
+      <RightPanelTabs
+        {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
+        open
+        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+        browserAvailable={false}
+        terminalAvailable={false}
+        diffAvailable={false}
+        filesAvailable={false}
+        pullRequestAvailable={false}
+        pullRequestsAvailable={false}
+        deviceAvailable={false}
+        onAddSideChat={() => {}}
+        sideChatAvailable={sideChatAvailable}
+      >
+        {null}
+      </RightPanelTabs>
+    );
+    const pressModT = async () => {
+      const event = new KeyboardEvent("keydown", {
+        key: "t",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(() => {
+        document.body.dispatchEvent(event);
+      });
+      return event.defaultPrevented;
+    };
+    await using screen = await render(tabs(true));
+    const addButton = screen.getByRole("button", { name: "Add panel surface" });
+
+    await expect.element(addButton).toBeInTheDocument();
+    expect(menuListeners.size).toBe(1);
+    expect(await pressModT()).toBe(true);
+    await expect.element(page.getByRole("menu")).toBeVisible();
+
+    await screen.rerender(tabs(false));
+    expect(addButton.query()).toBeNull();
+    expect(page.getByRole("menu").query()).toBeNull();
+    expect(menuListeners.size).toBe(0);
+    expect(await pressModT()).toBe(false);
+    expect(page.getByRole("menu").query()).toBeNull();
   });
 });

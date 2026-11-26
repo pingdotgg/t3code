@@ -10,9 +10,8 @@ export type StackedThreadToastOptions = {
   timeout?: number;
   priority?: "low" | "high";
   actionProps?: ComponentPropsWithoutRef<"button">;
-  /** Merged into `data`. */
   actionVariant?: ThreadToastData["actionVariant"];
-  data?: ThreadToastData;
+  data?: Omit<ThreadToastData, "actionLayout">;
 };
 
 export function stackedThreadToast(
@@ -20,7 +19,10 @@ export function stackedThreadToast(
 ): ToastManagerAddOptions<ThreadToastData> {
   const { type, title, description, timeout, priority, actionProps, actionVariant, data } = options;
 
-  const mergedData: ThreadToastData = { ...data };
+  const mergedData: ThreadToastData = {
+    ...(data !== undefined ? data : {}),
+    actionLayout: "stacked-end",
+  };
   if (actionVariant !== undefined) {
     mergedData.actionVariant = actionVariant;
   }

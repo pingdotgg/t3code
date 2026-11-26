@@ -2577,8 +2577,8 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
   }
 
   for (const output of [
-    { suffix: "", width: 660, height: 432 },
-    { suffix: "@2x", width: 1320, height: 864 },
+    { suffix: "", width: 640, height: 432 },
+    { suffix: "@2x", width: 1280, height: 864 },
   ] as const) {
     const targetPath = path.join(
       stageResourcesDir,
@@ -2825,6 +2825,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
+    // binary as Node, and that mode still accepts inspector flags.
+    electronFuses: {
+      enableNodeCliInspectArguments: false,
+      // Nothing signs an unsigned macOS build after the flip, which voids its ad hoc signature.
+      resetAdHocDarwinSignature: platform === "mac" && !signed,
+    },
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"
@@ -2932,15 +2939,15 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       title: `${resolveDesktopProductName(version)} ${version} Installer`,
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
-        width: 660,
+        width: 640,
         // DMG bounds include Finder's 32px title bar; keep that artwork strip clear.
         height: 432,
       },
       contents: [
-        { x: 180, y: 182, type: "file" },
-        { x: 480, y: 182, type: "link", path: "/Applications" },
+        { x: 166, y: 214, type: "file" },
+        { x: 474, y: 214, type: "link", path: "/Applications" },
       ],
-      iconSize: 128,
+      iconSize: 120,
       iconTextSize: 12,
     };
   }

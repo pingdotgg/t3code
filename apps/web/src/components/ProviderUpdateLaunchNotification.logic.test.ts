@@ -390,7 +390,7 @@ describe("getProviderUpdateRunToastView", () => {
       ]),
     ).toMatchObject({
       type: "success",
-      description: `OpenCode: ${message}\nLinux\nOpenCode: ${message}\nLaptop`,
+      description: `Linux · OpenCode: ${message}\nLaptop · OpenCode: ${message}`,
     });
     expect(
       getProviderUpdateSidebarPillView([updated], {
@@ -439,7 +439,7 @@ describe("getProviderUpdateRunToastView", () => {
     expect(view).toEqual({
       type: "error",
       title: "2 of 3 provider updates failed",
-      description: "Claude: npm exited with code 1.\nMac Studio\nCodex: WebSocket closed\nLaptop",
+      description: "Mac Studio · Claude: npm exited with code 1.\nLaptop · Codex: WebSocket closed",
     });
   });
 });

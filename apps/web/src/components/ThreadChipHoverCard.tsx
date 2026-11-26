@@ -11,7 +11,6 @@ import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadHoverCard } from "./ThreadHoverCard";
 import { ThreadPullRequestsMiniList } from "./ThreadStatusIndicators";
-import { CardSection } from "./ui/card-section";
 import { MiddleTruncate } from "./ui/middle-truncate";
 
 type ChipProject = NonNullable<ReturnType<typeof useProject>>;
@@ -47,11 +46,9 @@ export function ThreadChipHoverCard(props: {
       title={props.title}
       footer={
         supportsMultiplePullRequests && shell && shell.pullRequests.length > 0 ? (
-          <CardSection divided="top" padding="compact">
-            <div className="pl-0.5 text-meta text-muted-foreground">
-              <ThreadPullRequestsMiniList pullRequests={shell.pullRequests} />
-            </div>
-          </CardSection>
+          <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
+            <ThreadPullRequestsMiniList pullRequests={shell.pullRequests} />
+          </div>
         ) : null
       }
     >

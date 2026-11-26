@@ -9,7 +9,6 @@ import {
 import { AuthClientPresentationMetadata, ServerAuthDescriptor } from "./auth.ts";
 import {
   ForwardCompatibleArray,
-  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -29,7 +28,7 @@ import { ModelCapabilities, ProviderOptionDescriptor } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
-import { LayoutSettings, ServerSettings } from "./settings.ts";
+import { ServerSettings } from "./settings.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -165,6 +164,34 @@ export function isProviderWorkspaceSnapshotPending(
   return snapshot.slashCommandsPending === true || snapshot.modelsPending === true;
 }
 
+/** Whose settings keep a provider from running a mode; "settings" when the source is not known. */
+export const ProviderRuntimeModeLimitReason = Schema.Literals([
+  "managed-settings",
+  "user-settings",
+  "project-settings",
+  "settings",
+]);
+export type ProviderRuntimeModeLimitReason = typeof ProviderRuntimeModeLimitReason.Type;
+
+/**
+ * A mode a provider offers that cannot run in one folder. The mode stays selectable by every
+ * caller; clients show it as unavailable with the reason.
+ */
+export const ProviderRuntimeModeLimit = Schema.Struct({
+  mode: RuntimeMode,
+  reason: ProviderRuntimeModeLimitReason,
+});
+export type ProviderRuntimeModeLimit = typeof ProviderRuntimeModeLimit.Type;
+
+export const ProviderRuntimeModeLimitsInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  cwd: TrimmedNonEmptyString,
+});
+export const ProviderRuntimeModeLimitsResult = Schema.Struct({
+  limits: ForwardCompatibleArray(ProviderRuntimeModeLimit),
+});
+export type ProviderRuntimeModeLimitsResult = typeof ProviderRuntimeModeLimitsResult.Type;
+
 /** Unavailable snapshots must set installed and enabled false. */
 export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
 export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
@@ -282,6 +309,8 @@ export const ServerProvider = Schema.Struct({
   subProviders: Schema.optional(Schema.Array(ServerProviderSubProvider)),
   // Set for the one failed check that follows a ready one: pickers keep offering `models`.
   modelsRetained: Schema.optionalKey(Schema.Boolean),
+  // Set by a ready check whose `models` may lack some the provider still offers, so they are kept.
+  modelsIncomplete: Schema.optionalKey(Schema.Boolean),
   // Kept apart from `models` so clients that predate it never offer them.
   updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
@@ -384,6 +413,8 @@ export const ServerObservability = Schema.Struct({
   otlpLogsSource: Schema.optional(OtlpEndpointSource),
   otlpLogsVariable: Schema.optional(TrimmedNonEmptyString),
   otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Relay tracing policy for browsers opened from this server. */
+  relayTracingAllowed: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerObservability = typeof ServerObservability.Type;
 
@@ -723,11 +754,7 @@ export const ServerConfig = Schema.Struct({
   /** Hints only; verify each address answers as this environment. */
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
-  // Read-only migration source, using the same field older servers send.
-  settings: Schema.Struct({
-    ...ServerSettings.fields,
-    layout: ForwardCompatibleOptional(LayoutSettings),
-  }),
+  settings: ServerSettings,
   /** Present when an administrator's policy file manages this environment. */
   managedPolicy: Schema.optionalKey(ManagedPolicySummary),
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
@@ -770,11 +797,6 @@ export const ServerConfig = Schema.Struct({
    * subscription's first snapshot is fresh; later snapshots may repeat it.
    */
   serverTime: Schema.optionalKey(IsoDateTime),
-  /**
-   * The server user's home folder, where surfaces opened without a project
-   * (a terminal, the file browser) work. Absent on servers that predate it.
-   */
-  homeDirectory: Schema.optionalKey(TrimmedNonEmptyString),
   /**
    * Never sent in a config snapshot: the theme stream emits the current set
    * before any change, so a snapshot carrying it too would hand every
@@ -1021,6 +1043,18 @@ export class ServerProviderUpdateError extends Schema.TaggedError<ServerProvider
     return `Provider update failed for ${this.provider}: ${this.reason}`;
   }
 }
+
+export const DatabaseMigrationProgress = Schema.Struct({
+  current: Schema.Int.check(Schema.isGreaterThan(0)),
+  total: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type DatabaseMigrationProgress = typeof DatabaseMigrationProgress.Type;
+
+export const ServerStartupStatus = Schema.Struct({
+  status: Schema.Literal("starting"),
+  migration: Schema.NullOr(DatabaseMigrationProgress),
+});
+export type ServerStartupStatus = typeof ServerStartupStatus.Type;
 
 export const ServerNpmReleaseInput = Schema.Struct({
   spec: Schema.String.check(

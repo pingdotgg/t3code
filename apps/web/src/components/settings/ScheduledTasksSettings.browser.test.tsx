@@ -71,6 +71,16 @@ const state = vi.hoisted(() => ({
 }));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
+type TaskList = { readonly tasks: ReadonlyArray<ScheduledTask>; readonly timeZone: string };
+// The list each machine streams when several are in scope; unset machines are still loading.
+const taskLists = new Map<string, Atom.Writable<AsyncResult.AsyncResult<TaskList>>>();
+function taskList(id: string) {
+  const existing = taskLists.get(id);
+  if (existing) return existing;
+  const created = Atom.make<AsyncResult.AsyncResult<TaskList>>(AsyncResult.initial());
+  taskLists.set(id, created);
+  return created;
+}
 
 function setup() {
   state.connected = true;
@@ -82,6 +92,7 @@ function setup() {
   state.settings = DEFAULT_UNIFIED_SETTINGS;
   state.upsert.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   permissions.clear();
+  taskLists.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
   permissions.set("", Atom.make(false));
@@ -140,9 +151,9 @@ vi.mock(import("../../state/server"), async (original) => {
         ...actual.serverEnvironment.deleteScheduledTask,
         run: state.remove,
       },
-      scheduledTasksLive: (() =>
-        Atom.make(AsyncResult.success({ tasks: state.tasksLoaded ? [task] : [] }))) as never,
       providersValueAtom: (() => state.providers) as never,
+      scheduledTasksLive: (({ environmentId }: { environmentId: string }) =>
+        taskList(environmentId)) as never,
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
         run: state.upsert,
@@ -267,43 +278,6 @@ describe("ScheduledTasksSettings", () => {
     );
   });
 
-  it("opens templates on a permitted secondary environment", async () => {
-    setup();
-    state.secondary = true;
-    state.tasksLoaded = false;
-    const registry = AtomRegistry.make();
-    using _registry = { [Symbol.dispose]: () => registry.dispose() };
-    registry.set(permissions.get(environmentId)!, false);
-    await using screen = await render(
-      <RegistryContext.Provider value={registry}>
-        <ScheduledTasksSettings />
-      </RegistryContext.Provider>,
-    );
-    await screen.getByRole("button", { name: "Use template" }).first().click();
-    await expect.element(page.getByLabelText("Runs on")).toHaveTextContent("Secondary");
-  });
-
-  it.each([false, true])(
-    "hides templates when creation is denied with secondary=%s",
-    async (secondary) => {
-      setup();
-      state.secondary = secondary;
-      state.tasksLoaded = false;
-      const registry = AtomRegistry.make();
-      using _registry = { [Symbol.dispose]: () => registry.dispose() };
-      registry.set(permissions.get(environmentId)!, false);
-      registry.set(permissions.get(secondaryId)!, false);
-      await using screen = await render(
-        <RegistryContext.Provider value={registry}>
-          <ScheduledTasksSettings />
-        </RegistryContext.Provider>,
-      );
-      await expect
-        .element(screen.getByRole("button", { name: "Use template" }))
-        .not.toBeInTheDocument();
-    },
-  );
-
   it.each([false, true])(
     "keeps model options when the same model is reselected (existing task: %s)",
     async (editing) => {
@@ -386,6 +360,35 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(page.getByLabelText("Runs on")).toHaveTextContent("Secondary");
   });
 
+  it("waits for every machine before saying there are no tasks", async () => {
+    setup();
+    state.secondary = true;
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    registry.set(taskList(secondaryId), AsyncResult.success({ tasks: [], timeZone: "UTC" }));
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <ScheduledTasksSettings />
+      </RegistryContext.Provider>,
+    );
+    await expect
+      .element(screen.getByRole("status", { name: "Loading scheduled tasks…" }))
+      .toBeVisible();
+    await expect.element(screen.getByText("No scheduled tasks")).not.toBeInTheDocument();
+
+    await act(() =>
+      registry.set(
+        taskList(environmentId),
+        AsyncResult.success({ tasks: [task], timeZone: "UTC" }),
+      ),
+    );
+    await expect.element(screen.getByText("Review issues")).toBeVisible();
+    await expect.element(screen.getByText("No scheduled tasks")).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("status", { name: "Loading scheduled tasks…" }))
+      .not.toBeInTheDocument();
+  });
+
   it("keeps the permitted representative as the creation target", async () => {
     setup();
     state.secondary = true;
@@ -446,9 +449,7 @@ describe("ScheduledTasksSettings", () => {
     state.tasksLoaded = true;
     await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
 
-    await expect
-      .element(dialog.getByRole("heading", { name: "New scheduled task" }))
-      .toBeInTheDocument();
+    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
   });
 

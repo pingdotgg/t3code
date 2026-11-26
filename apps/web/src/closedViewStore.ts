@@ -13,19 +13,8 @@ import { decodeLinkedThreadSurface } from "./linkedThreadSurface";
 import { resolveStorage } from "./lib/storage";
 import { randomUUID } from "./lib/utils";
 import { decodeThreadSurface, type RightPanelSurface } from "./rightPanelStore";
-import type { DraftId } from "./composerDraftStore";
 
 export type ClosedView =
-  | { kind: "chat"; threadRef: ScopedThreadRef; draftId?: DraftId; paneId: string; index: number }
-  /** A list page tab; `threadRef` is its list panel's sentinel ref. */
-  | {
-      kind: "page";
-      threadRef: ScopedThreadRef;
-      page: "issues" | "pull-requests";
-      href?: string;
-      paneId: string;
-      index: number;
-    }
   | {
       kind: "panel-tab";
       threadRef: ScopedThreadRef;
@@ -50,10 +39,6 @@ const sameTarget = (entry: ClosedViewEntry, view: ClosedView): boolean => {
     return false;
   }
   switch (entry.kind) {
-    case "chat":
-      return view.kind === "chat" && entry.draftId === view.draftId;
-    case "page":
-      return view.kind === "page" && entry.page === view.page;
     case "panel-tab":
       return view.kind === "panel-tab" && entry.surface.id === view.surface.id;
     case "browser":
@@ -71,23 +56,6 @@ const isAttachment = Schema.is(ChatFileAttachment);
 const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
   const view = entry as ClosedViewEntry | null;
   if (!view || typeof view.id !== "string" || !isThreadRef(view.threadRef)) return false;
-  if (view.kind === "chat") {
-    return (
-      typeof view.paneId === "string" &&
-      Number.isSafeInteger(view.index) &&
-      view.index >= 0 &&
-      (view.draftId === undefined || typeof view.draftId === "string")
-    );
-  }
-  if (view.kind === "page") {
-    return (
-      (view.page === "issues" || view.page === "pull-requests") &&
-      (view.href === undefined || typeof view.href === "string") &&
-      typeof view.paneId === "string" &&
-      Number.isSafeInteger(view.index) &&
-      view.index >= 0
-    );
-  }
   if (view.kind === "browser") return isSnapshot(view.snapshot);
   if (view.kind !== "panel-tab") return false;
   const surface = view.surface;

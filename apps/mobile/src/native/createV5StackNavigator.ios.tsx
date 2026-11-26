@@ -251,7 +251,6 @@ export function V5CardStackView(
                     }
                   />
                   <NativeColumnContent
-                    insetTop={options.headerShown !== false}
                     backgroundColor={StyleSheet.flatten(options.contentStyle)?.backgroundColor}
                     insetHorizontally={
                       (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally

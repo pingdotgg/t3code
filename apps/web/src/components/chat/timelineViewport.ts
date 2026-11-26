@@ -1,7 +1,6 @@
 import { readHtmlRenderContentHeight } from "@t3tools/shared/htmlRender";
 
 import { isInSideChatPane } from "../../lib/sideChatPane";
-import { openLayerMatches } from "../../lib/openLayers";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import {
   eventPathContainsSelector,
@@ -75,7 +74,6 @@ const SCROLLBAR_HIT_PX = 16;
 export function attachTimelineViewport(
   scrollNode: HTMLElement,
   onFrameResize?: (frame: HTMLIFrameElement) => void,
-  ownsDocumentKeys?: () => boolean,
 ): TimelineViewport & {
   readonly dispose: () => void;
 } {
@@ -112,7 +110,6 @@ export function attachTimelineViewport(
       !(event.target instanceof Node) ||
       (!scrollNode.contains(event.target) &&
         ((event.target !== document.body && event.target !== document.documentElement) ||
-          ownsDocumentKeys?.() === false ||
           isInSideChatPane(scrollNode))) ||
       event.isComposing ||
       event.altKey ||
@@ -120,7 +117,7 @@ export function attachTimelineViewport(
       event.metaKey ||
       event.shiftKey ||
       eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR) ||
-      openLayerMatches(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) ||
+      document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) ||
       (scrollNode.contains(event.target) &&
         !isTimelineScrollTarget(event.target, scrollNode, direction === "up" ? -1 : 1))
     ) {

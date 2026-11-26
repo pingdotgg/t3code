@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { BotIcon, type LucideIcon } from "lucide-react";
@@ -59,7 +58,6 @@ export function ThreadRelationshipIcon({
   providerEntries = [],
   anyInstanceBadge = hasInstanceBadge(providerEntries),
   status,
-  badge,
   fallbackIcon: FallbackIcon = BotIcon,
 }: {
   driver?: ProviderDriverKind | undefined;
@@ -67,11 +65,8 @@ export function ThreadRelationshipIcon({
   providerEntries?: ReadonlyArray<ProviderInstanceEntry>;
   /** For rows that can't take `providerEntries` but sit in the same list as rows that do. */
   anyInstanceBadge?: boolean;
-  /** Omit where the row shows the state itself; null draws the idle dot. */
-  status?: string | null;
+  status: string | null;
   fallbackIcon?: LucideIcon;
-  /** A small mark on the logo's corner, such as the machine a remote task runs on. */
-  badge?: ReactNode;
 }) {
   const iconClassName = "size-4 shrink-0 text-muted-foreground";
   const entry = driver
@@ -95,30 +90,23 @@ export function ThreadRelationshipIcon({
       ) : (
         <FallbackIcon className={iconClassName} />
       )}
-      {status === undefined ? null : (
-        <span
-          className={cn(
-            "absolute -right-1 size-2 rounded-full border-2 border-card",
-            anyInstanceBadge ? "-top-1" : "-bottom-1",
-            status === "running" ||
-              status === "in_progress" ||
-              status === "pending" ||
-              status === "waiting"
-              ? "bg-info"
-              : status === "failed" || status === "error"
-                ? "bg-destructive"
-                : status === "completed"
-                  ? "bg-success"
-                  : "bg-dim-foreground",
-          )}
-          aria-hidden="true"
-        />
-      )}
-      {badge ? (
-        <span className="absolute -right-1.5 -bottom-1.5 flex size-3.5 items-center justify-center rounded-full bg-card text-muted-foreground">
-          {badge}
-        </span>
-      ) : null}
+      <span
+        className={cn(
+          "absolute -right-1 size-2 rounded-full border-2 border-card",
+          anyInstanceBadge ? "-top-1" : "-bottom-1",
+          status === "running" ||
+            status === "in_progress" ||
+            status === "pending" ||
+            status === "waiting"
+            ? "bg-info"
+            : status === "failed" || status === "error"
+              ? "bg-destructive"
+              : status === "completed"
+                ? "bg-success"
+                : "bg-muted-foreground/45",
+        )}
+        aria-hidden="true"
+      />
     </span>
   );
 }

@@ -32,8 +32,6 @@ interface VisitedShell {
 }
 
 export interface ThreadVisitTrackerOptions {
-  /** Persist dispatched watermarks when a layout tab unmounts its visible thread. */
-  readonly dispatchedVisits?: Map<string, string>;
   readonly threadShellAtom: (ref: ScopedThreadRef) => Atom.Atom<VisitedShell | null>;
   readonly sessionGenerationAtom: (environmentId: EnvironmentId) => Atom.Atom<number>;
   readonly visit: AtomCommand<
@@ -71,7 +69,7 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
       // Dedupe per watermark: the shell updates again before the command's echo
       // lands. It also keeps a mark-unread on the open thread sticky, since the
       // rewind leaves updatedAt untouched.
-      let lastDispatchedUpdatedAt: string | null = options.dispatchedVisits?.get(key) ?? null;
+      let lastDispatchedUpdatedAt: string | null = null;
       let lastAcceptedUpdatedAt: string | null = null;
       let retryPending = false;
       const sessionGenerationAtom = options.sessionGenerationAtom(ref.environmentId);
@@ -100,8 +98,6 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
         clearTimer();
         retryPending = false;
         lastDispatchedUpdatedAt = visitedAt;
-        options.dispatchedVisits?.clear();
-        options.dispatchedVisits?.set(key, visitedAt);
         lastDispatchAt = Date.now();
         lastDispatchGeneration = registry.get(sessionGenerationAtom);
         void runAtomCommand(
@@ -174,10 +170,8 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
         // the shell arrives, so it still counts toward search ranking.
         if (openPending) {
           openPending = false;
-          if (retryPending || lastDispatchedUpdatedAt !== visitedAt) {
-            dispatch(shell, visitedAt, true);
-            return;
-          }
+          dispatch(shell, visitedAt, true);
+          return;
         }
         const lastVisitedAtMs = shell.lastVisitedAt ? Date.parse(shell.lastVisitedAt) : NaN;
         if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= updatedAtMs) {

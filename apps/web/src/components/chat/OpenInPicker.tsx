@@ -1,6 +1,4 @@
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { useLayoutPane } from "../../layout/layoutPaneContext";
 import {
   AuthOrchestrationOperateScope,
   buildRemoteOpenUrl,
@@ -9,7 +7,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { T, useGT, useMessages, Var } from "gt-react";
-import { memo, use } from "react";
+import { memo, use, useRef } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { shortcutLabelForCommand } from "../../keybindings";
 import type { FileManagerAction } from "./OpenInPicker.logic";
@@ -24,14 +22,11 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import { AppWindowIcon, CheckIcon, ChevronDownIcon, SquareArrowOutUpRightIcon } from "lucide-react";
+import { ChevronDownIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
-import { Kbd } from "../ui/kbd";
 import {
   Menu,
-  MenuGroup,
-  MenuGroupLabel,
   MenuItem,
   MenuItemLabel,
   MenuPopup,
@@ -41,11 +36,19 @@ import {
   MenuSubPopup,
   MenuTrigger,
 } from "../ui/menu";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { type EditorIconOption, editorIconOptions } from "../editorIcons";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
+import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
+} from "./threadDetailsPanelStyles";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useComposerMenuState } from "./useComposerMenuState";
 
@@ -95,9 +98,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   const gt = useGT();
   const messages = useMessages();
   const isPanel = displayMode === "panel";
-  // Compact sits in a pane's top bar beside its ghost icons: two ghost icons, no border.
-  const ghost = compact && !isPanel;
-  const ActionGroup = ghost ? "div" : Group;
+  const ActionGroup = isPanel ? "div" : Group;
+  const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
@@ -153,7 +155,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   const backgroundThread = use(BackgroundThreadContext);
-  const { focused, related } = useLayoutPane();
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors, messages);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
   const primaryLabel = isPanel
@@ -161,13 +162,6 @@ export const OpenInPicker = memo(function OpenInPicker({
       ? gt("Open in {editor}", { editor: primaryOption.label })
       : gt("Open in editor")
     : gt("Open", { $context: "verb, opens the project in the preferred editor" });
-  const handleOpenPreferredEditor = () => {
-    if (!preferredEditor) return;
-    const label = editorLabelForPlatform(preferredEditor, navigator.platform);
-    void openInEditor(preferredEditor).then((opened) => {
-      if (opened) announce(gt("Opened in {editor}", { editor: label }));
-    });
-  };
 
   const unavailableReason =
     remote.mode === "remote-unavailable"
@@ -212,25 +206,8 @@ export const OpenInPicker = memo(function OpenInPicker({
             >
               <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
               <MenuItemLabel>{label}</MenuItemLabel>
-              {value !== preferredEditor ? null : presentation === "menu" ? (
-                openFavoriteEditorShortcutLabel && (
-                  <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-                )
-              ) : (
-                // The popup marks the preferred editor with a check and its shortcut key cap.
-                <span className="ms-auto flex items-center gap-2 ps-4">
-                  <CheckIcon
-                    aria-label={gt("Preferred editor")}
-                    className="size-3.5 text-foreground"
-                  />
-                  {openFavoriteEditorShortcutLabel ? (
-                    isPanel ? (
-                      <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-                    ) : (
-                      <Kbd>{openFavoriteEditorShortcutLabel}</Kbd>
-                    )
-                  ) : null}
-                </span>
+              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
+                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
               )}
             </MenuItem>
           ))}
@@ -280,146 +257,100 @@ export const OpenInPicker = memo(function OpenInPicker({
     );
   }
 
-  if (isPanel) {
-    return (
-      <div
-        className="flex shrink-0 items-center pe-1"
-        role="group"
-        aria-label={gt("Open in editor")}
-      >
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <ThreadDetailsControl
-                part="icon"
-                aria-label={primaryLabel}
-                disabled={
-                  !preferredEditor ||
-                  !openInCwd ||
-                  !canOpenEditor ||
-                  isEditorUnavailable(preferredEditor)
-                }
-                {...(enableShortcut && (focused || related) && !backgroundThread
-                  ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" }
-                  : {})}
-                onClick={handleOpenPreferredEditor}
-              />
-            }
-          >
-            {primaryOption ? (
-              <primaryOption.Icon className={getOpenInIconClass(primaryOption.kind)} />
-            ) : (
-              <AppWindowIcon />
-            )}
-          </TooltipTrigger>
-          <TooltipPopup>{primaryLabel}</TooltipPopup>
-        </Tooltip>
-        <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <MenuTrigger
-                  disabled={isHostEditorDenied}
-                  render={<ThreadDetailsControl part="icon" aria-label={gt("Choose editor")} />}
-                />
-              }
-            >
-              <ChevronDownIcon />
-            </TooltipTrigger>
-            <TooltipPopup>
-              <T>Choose editor</T>
-            </TooltipPopup>
-          </Tooltip>
-          <MenuPopup side="bottom" align="end">
-            {editorItems}
-          </MenuPopup>
-        </Menu>
-      </div>
-    );
-  }
-
   const primaryControlLabel = compact ? gt("Open file in preferred editor") : primaryLabel;
+  const primaryControl = (
+    <ThreadDetailsControl
+      aria-label={primaryControlLabel}
+      // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
+      data-toolbar-control=""
+      size={isPanel ? "sm" : "xs"}
+      variant={isPanel ? "ghost" : "outline"}
+      part="primary"
+      panel={isPanel}
+      disabled={
+        !preferredEditor || !openInCwd || !canOpenEditor || isEditorUnavailable(preferredEditor)
+      }
+      {...(enableShortcut && !backgroundThread ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" } : {})}
+      onClick={() => {
+        if (!preferredEditor) return;
+        const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+        void openInEditor(preferredEditor).then((opened) => {
+          if (opened) announce(gt("Opened in {editor}", { editor: label }));
+        });
+      }}
+    >
+      {primaryOption?.Icon ? (
+        <primaryOption.Icon
+          aria-hidden="true"
+          className={cn(
+            isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
+            getOpenInIconClass(primaryOption.kind),
+          )}
+        />
+      ) : isPanel ? (
+        <SquareArrowOutUpRightIcon aria-hidden="true" className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+      ) : null}
+      <span
+        className={cn(
+          compact
+            ? "sr-only"
+            : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
+          isPanel && cn("not-sr-only ml-0 min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+        )}
+      >
+        {primaryLabel}
+      </span>
+    </ThreadDetailsControl>
+  );
+
   return (
     <ActionGroup
       aria-label={gt("Open in editor")}
       role="group"
-      {...(ghost ? { className: "flex shrink-0 items-center gap-0.5" } : {})}
+      {...(isPanel
+        ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
+        : {})}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ThreadDetailsControl
-              aria-label={primaryControlLabel}
-              // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
-              data-toolbar-control=""
-              size={ghost ? "icon-sm" : "xs"}
-              variant={ghost ? "ghost" : "secondary"}
-              panel={false}
-              disabled={
-                !preferredEditor ||
-                !openInCwd ||
-                !canOpenEditor ||
-                isEditorUnavailable(preferredEditor)
-              }
-              {...(enableShortcut && (focused || related) && !backgroundThread
-                ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" }
-                : {})}
-              onClick={handleOpenPreferredEditor}
-            />
-          }
-        >
-          {primaryOption?.Icon ? (
-            <primaryOption.Icon
-              aria-hidden="true"
-              className={cn("size-3.5", getOpenInIconClass(primaryOption.kind))}
-            />
-          ) : null}
-          <span
-            className={
-              compact
-                ? "sr-only"
-                : "sr-only @4xl/header-actions:not-sr-only @4xl/header-actions:ml-0.5"
-            }
-          >
-            {primaryLabel}
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup side="top">{primaryControlLabel}</TooltipPopup>
-      </Tooltip>
-      {ghost ? null : (
-        <GroupSeparator {...(!compact ? { className: "hidden @4xl/header-actions:block" } : {})} />
+      <SharedTooltipTrigger render={primaryControl} label={primaryControlLabel} />
+      {isPanel ? (
+        <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+      ) : (
+        <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       )}
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <MenuTrigger
-                disabled={isHostEditorDenied}
-                render={
-                  <ThreadDetailsControl
-                    aria-label={gt("Choose editor")}
-                    data-toolbar-control=""
-                    size={ghost ? "icon-sm" : "icon-xs"}
-                    variant={ghost ? "ghost" : "secondary"}
-                    panel={false}
-                  />
-                }
-              />
-            }
-          >
-            <ChevronDownIcon aria-hidden="true" className={ghost ? "size-3.5" : "size-4"} />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            <T>Choose editor</T>
-          </TooltipPopup>
-        </Tooltip>
-        <MenuPopup align="end" className="min-w-60">
-          <MenuGroup>
-            <MenuGroupLabel>
-              <T>Open in…</T>
-            </MenuGroupLabel>
-            {editorItems}
-          </MenuGroup>
+        <SharedTooltipTrigger
+          render={
+            <MenuTrigger
+              disabled={isHostEditorDenied}
+              render={
+                <ThreadDetailsControl
+                  aria-label={gt("Choose editor")}
+                  data-toolbar-control=""
+                  size={isPanel ? "sm" : "icon-xs"}
+                  variant={isPanel ? "ghost" : "outline"}
+                  part="secondary"
+                  panel={isPanel}
+                />
+              }
+            />
+          }
+          label={
+            <>
+              <T>Choose editor</T>
+            </>
+          }
+        >
+          <ChevronDownIcon
+            aria-hidden="true"
+            className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+          />
+        </SharedTooltipTrigger>
+        <MenuPopup
+          align="end"
+          {...(isPanel ? { anchor: panelAnchorRef } : {})}
+          className={isPanel ? "w-(--anchor-width)" : undefined}
+        >
+          {editorItems}
         </MenuPopup>
       </Menu>
     </ActionGroup>

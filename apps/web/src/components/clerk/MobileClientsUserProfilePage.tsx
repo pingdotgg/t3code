@@ -1,4 +1,3 @@
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
 import { T, useGT, useMessages } from "gt-react";
 import { SmartphoneIcon } from "lucide-react";
@@ -45,21 +44,14 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
     <ClerkUserProfileRow icon={<SmartphoneIcon className="size-4" />}>
       <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <div className="min-w-0">
-          <h3 className="truncate text-label text-strong-foreground">{device.label}</h3>
-          <p className="text-meta text-muted-foreground">
-            <Tooltip>
-              <TooltipTrigger render={<span tabIndex={0} />}>
-                {mobileClientPlatformLabel(device)}
-              </TooltipTrigger>
-              <TooltipPopup>
-                {device.appVersion
-                  ? gt("T3 Code {version}", { version: device.appVersion })
-                  : gt("App version unavailable")}
-              </TooltipPopup>
-            </Tooltip>
+          <h3 className="truncate text-sm leading-4.5 font-medium text-foreground">
+            {device.label}
+          </h3>
+          <p className="text-xs leading-4.5 text-muted-foreground">
+            {mobileClientPlatformLabel(device)}
           </p>
         </div>
-        <p className="shrink-0 text-caption text-dim-foreground">
+        <p className="shrink-0 text-2xs leading-4 text-muted-foreground/75">
           {mobileClientUpdatedAtLabel(device.updatedAt, m)}
         </p>
       </div>
@@ -73,7 +65,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
           label={gt("Live Activities")}
         />
       </div>
-      <p className="mt-1.5 text-meta text-dim-foreground">
+      <p className="mt-1.5 text-xs leading-4.5 text-muted-foreground/80">
         {mobileClientNotificationDetail(device, m)}
       </p>
     </ClerkUserProfileRow>
@@ -146,16 +138,16 @@ export function MobileClientsUserProfilePage() {
       <div>
         {devicesState.error ? (
           <div
-            className="mb-4 flex flex-col gap-3 border-t border-destructive/35 py-3 sm:flex-row sm:items-center sm:justify-between"
+            className="mb-4 flex flex-col gap-3 border-t border-destructive/35 py-3 text-xs sm:flex-row sm:items-center sm:justify-between"
             role="alert"
           >
             <div>
-              <p className="text-label text-destructive-foreground">
+              <p className="font-medium text-destructive-foreground">
                 <T>Could not load mobile clients</T>
               </p>
-              <p className="mt-0.5 text-meta text-muted-foreground">{devicesState.error}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
             </div>
-            <Button size="xs" variant="secondary" onClick={devicesState.refresh}>
+            <Button size="xs" variant="outline" onClick={devicesState.refresh}>
               <T>Try again</T>
             </Button>
           </div>

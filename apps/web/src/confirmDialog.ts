@@ -1,43 +1,26 @@
 import type { ConfirmDialogOptions, ConfirmDialogVariant } from "@t3tools/contracts";
 
-/** What the host shows: the message, plus the caller's explicit title and action label. */
-type ConfirmDialogRequest = {
-  readonly message: string;
-  readonly variant: ConfirmDialogVariant;
-  readonly title?: string | undefined;
-  readonly confirmLabel?: string | undefined;
-  readonly initialFocus: ConfirmDialogOptions["initialFocus"];
-  readonly deleteIcon?: true | undefined;
-};
-
 export type ConfirmDialogState =
   | { readonly status: "idle" }
-  | ({ readonly status: "confirming" } & ConfirmDialogRequest)
-  | ({ readonly status: "closing" } & ConfirmDialogRequest);
+  | {
+      readonly status: "confirming";
+      readonly message: string;
+      readonly variant: ConfirmDialogVariant;
+      readonly initialFocus: ConfirmDialogOptions["initialFocus"];
+    }
+  | {
+      readonly status: "closing";
+      readonly message: string;
+      readonly variant: ConfirmDialogVariant;
+      readonly initialFocus: ConfirmDialogOptions["initialFocus"];
+    };
 
-type PendingConfirmation = ConfirmDialogRequest & {
+type PendingConfirmation = {
+  readonly message: string;
+  readonly variant: ConfirmDialogVariant;
+  readonly initialFocus: ConfirmDialogOptions["initialFocus"];
   readonly resolve: (confirmed: boolean) => void;
 };
-
-function requestOf(confirmation: ConfirmDialogRequest): ConfirmDialogRequest {
-  return {
-    message: confirmation.message,
-    variant: confirmation.variant,
-    title: confirmation.title,
-    confirmLabel: confirmation.confirmLabel,
-    initialFocus: confirmation.initialFocus,
-    deleteIcon: confirmation.deleteIcon,
-  };
-}
-
-// The options type is shared with desktop IPC, so a delete confirm is marked here instead.
-const deleteConfirmOptions = new WeakSet<ConfirmDialogOptions>();
-
-/** Marks a destructive confirm as a delete, so its button carries the trash icon. */
-export function deleteConfirm(options: ConfirmDialogOptions): ConfirmDialogOptions {
-  deleteConfirmOptions.add(options);
-  return options;
-}
 
 const idleState: ConfirmDialogState = { status: "idle" };
 let state: ConfirmDialogState = idleState;
@@ -90,9 +73,6 @@ export function requestConfirmDialog(
       message,
       variant: options?.variant ?? "default",
       initialFocus: options?.initialFocus,
-      title: options?.title,
-      confirmLabel: options?.confirmLabel,
-      deleteIcon: options && deleteConfirmOptions.has(options) ? true : undefined,
       resolve,
     } satisfies PendingConfirmation;
     if (activeConfirmation || state.status === "closing") {
@@ -101,7 +81,12 @@ export function requestConfirmDialog(
     }
 
     activeConfirmation = pending;
-    publish({ status: "confirming", ...requestOf(pending) });
+    publish({
+      status: "confirming",
+      message,
+      variant: pending.variant,
+      initialFocus: pending.initialFocus,
+    });
   });
 
   return confirmation;
@@ -117,7 +102,12 @@ export function respondToConfirmDialog(confirmed: boolean): void {
   const confirmation = activeConfirmation;
   activeConfirmation = null;
   confirmation.resolve(confirmed);
-  publish({ status: "closing", ...requestOf(state) });
+  publish({
+    status: "closing",
+    message: state.message,
+    variant: state.variant,
+    initialFocus: state.initialFocus,
+  });
 }
 
 export function completeConfirmDialogClose(): void {
@@ -130,7 +120,12 @@ export function completeConfirmDialogClose(): void {
   }
 
   activeConfirmation = next;
-  publish({ status: "confirming", ...requestOf(next) });
+  publish({
+    status: "confirming",
+    message: next.message,
+    variant: next.variant,
+    initialFocus: next.initialFocus,
+  });
 }
 
 export function resetConfirmDialogForTests(): void {

@@ -3,13 +3,9 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { Input, type InputProps } from "~/components/ui/input";
-import { createPartPresence } from "~/components/ui/part-presence";
-
-type InputGroupPart = "control" | "inline-start" | "inline-end" | "block-start" | "block-end";
-const { PartPresenceContext, useParts, usePart } = createPartPresence<InputGroupPart>();
 
 const inputGroupVariants = cva(
-  "kbd-in-control relative inline-flex w-full min-w-0 items-center rounded-[var(--control-radius)] border text-prompt text-foreground has-[textarea]:h-auto data-[parts~=block-end]:h-auto data-[parts~=block-start]:h-auto data-[parts~=block-end]:flex-col data-[parts~=block-start]:flex-col has-[input:disabled,textarea:disabled]:opacity-64 data-[parts~=inline-start]:**:[[data-size=sm]_input]:ps-1.5 data-[parts~=inline-end]:**:[[data-size=sm]_input]:pe-1.5 *:[[data-slot=input-control],[data-slot=textarea-control]]:contents *:[[data-slot=input-control],[data-slot=textarea-control]]:before:hidden data-[parts~=block-start]:**:[input]:h-auto data-[parts~=block-end]:**:[input]:h-auto data-[parts~=inline-start]:**:[input]:ps-2 data-[parts~=inline-end]:**:[input]:pe-2 data-[parts~=block-end]:**:[input]:pt-1.5 data-[parts~=block-start]:**:[input]:pb-1.5 **:[textarea]:min-h-20.5 **:[textarea]:resize-none **:[textarea]:py-[calc(--spacing(3)-1px)] **:[textarea]:max-sm:min-h-23.5 **:[textarea_button]:rounded-[calc(var(--control-radius)-1px)]",
+  "relative inline-flex w-full min-w-0 items-center rounded-[var(--control-radius)] border text-base text-foreground ring-ring/24 transition-shadow has-[input:focus-visible,textarea:focus-visible]:has-[input[aria-invalid],textarea[aria-invalid]]:border-destructive/64 has-[input:focus-visible,textarea:focus-visible]:has-[input[aria-invalid],textarea[aria-invalid]]:ring-destructive/16 has-[textarea]:h-auto has-data-[align=block-end]:h-auto has-data-[align=block-start]:h-auto has-data-[align=block-end]:flex-col has-data-[align=block-start]:flex-col has-[input:focus-visible,textarea:focus-visible]:border-ring has-[input[aria-invalid],textarea[aria-invalid]]:border-destructive/36 has-autofill:bg-foreground/4 has-[input:disabled,textarea:disabled]:opacity-64 has-[input:disabled,textarea:disabled,input:focus-visible,textarea:focus-visible,input[aria-invalid],textarea[aria-invalid]]:shadow-none has-[input:focus-visible,textarea:focus-visible]:ring-[3px] has-[input:focus-visible,textarea:focus-visible]:ring-inset sm:text-sm dark:has-autofill:bg-foreground/8 dark:has-[input[aria-invalid],textarea[aria-invalid]]:ring-destructive/24 has-data-[align=inline-start]:**:[[data-size=sm]_input]:ps-1.5 has-data-[align=inline-end]:**:[[data-size=sm]_input]:pe-1.5 *:[[data-slot=input-control],[data-slot=textarea-control]]:contents *:[[data-slot=input-control],[data-slot=textarea-control]]:before:hidden has-[[data-align=block-start],[data-align=block-end]]:**:[input]:h-auto has-data-[align=inline-start]:**:[input]:ps-2 has-data-[align=inline-end]:**:[input]:pe-2 has-data-[align=block-end]:**:[input]:pt-1.5 has-data-[align=block-start]:**:[input]:pb-1.5 **:[textarea]:min-h-20.5 **:[textarea]:resize-none **:[textarea]:py-[calc(--spacing(3)-1px)] **:[textarea]:max-sm:min-h-23.5 **:[textarea_button]:rounded-[calc(var(--control-radius)-1px)]",
   {
     defaultVariants: {
       variant: "default",
@@ -19,19 +15,14 @@ const inputGroupVariants = cva(
       size: {
         default: null,
         lg: "h-9",
-        sidebar:
-          "h-7 text-control font-normal [&_[data-slot=input]]:h-6.5 [&_[data-slot=input]]:leading-6.5 [&_[data-slot=input]]:px-1.5 [&_[data-slot=input-group-addon]]:ps-2",
       },
       variant: {
         default:
-          "surface-well has-[input:focus-visible,textarea:focus-visible]:surface-focus has-[input[aria-invalid=true],textarea[aria-invalid=true]]:surface-invalid has-[input:focus-visible,textarea:focus-visible]:has-[input[aria-invalid=true],textarea[aria-invalid=true]]:surface-invalid-focus",
-        // A field floating over content (thread find): the popover surface.
+          "border-input bg-background not-dark:bg-clip-padding shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] not-has-[input:disabled,textarea:disabled]:not-has-[input:focus-visible,textarea:focus-visible]:not-has-[input[aria-invalid],textarea[aria-invalid]]:before:shadow-[0_1px_--theme(--color-black/4%)] dark:bg-input/32 dark:not-has-[input:disabled,textarea:disabled]:not-has-[input:focus-visible,textarea:focus-visible]:not-has-[input[aria-invalid],textarea[aria-invalid]]:before:shadow-[0_-1px_--theme(--color-white/6%)]",
         popover:
-          "surface-popover rounded-card has-[input:focus-visible,textarea:focus-visible]:outline-2 has-[input:focus-visible,textarea:focus-visible]:outline-ring",
-        // A search field on chrome among ghost icon buttons: chrome-less at rest,
-        // the ghost button's hover fill, and the field focus stroke.
+          "dropdown-glass rounded-2xl has-[input:focus-visible,textarea:focus-visible]:ring-0 has-[input:focus-visible,textarea:focus-visible]:border-[color-mix(in_srgb,var(--contrast-foreground)_18%,transparent)]",
         ghost:
-          "surface-ghost-field hover:surface-ghost-hover has-[input:focus-visible,input[data-focus-preview]]:surface-ghost-field-focus",
+          "border-transparent bg-transparent shadow-none hover:bg-muted/40 has-[input:focus-visible,textarea:focus-visible]:bg-background",
       },
     },
   },
@@ -43,23 +34,18 @@ function InputGroup({
   size,
   ...props
 }: React.ComponentProps<"div"> & VariantProps<typeof inputGroupVariants>) {
-  // The addons and the control inside, for the styles that depend on them.
-  const [parts, registerPart] = useParts();
   return (
-    <PartPresenceContext value={registerPart}>
-      <div
-        className={cn(inputGroupVariants({ variant, size }), className)}
-        data-parts={parts.length > 0 ? parts.join(" ") : undefined}
-        data-slot="input-group"
-        role="group"
-        {...props}
-      />
-    </PartPresenceContext>
+    <div
+      className={cn(inputGroupVariants({ variant, size }), className)}
+      data-slot="input-group"
+      role="group"
+      {...props}
+    />
   );
 }
 
 const inputGroupAddonVariants = cva(
-  "[&_svg]:-mx-0.5 flex h-auto cursor-text select-none items-center justify-center gap-2 leading-none in-[[data-slot=input-group][data-parts~=control]]:[&_svg:not([class*='size-'])]:size-4.5 sm:in-[[data-slot=input-group][data-parts~=control]]:[&_svg:not([class*='size-'])]:size-4 **:[svg:not([class*='text-']):not(button_*)]:text-muted-foreground",
+  "[&_svg]:-mx-0.5 flex h-auto cursor-text select-none items-center justify-center gap-2 leading-none [&>kbd]:rounded-[calc(var(--radius)-5px)] in-[[data-slot=input-group]:has([data-slot=input-control],[data-slot=textarea-control])]:[&_svg:not([class*='size-'])]:size-4.5 sm:in-[[data-slot=input-group]:has([data-slot=input-control],[data-slot=textarea-control])]:[&_svg:not([class*='size-'])]:size-4 not-has-[button]:**:[svg:not([class*='opacity-'])]:opacity-80",
   {
     defaultVariants: {
       align: "inline-start",
@@ -101,7 +87,6 @@ function InputGroupAddon({
   inset,
   ...props
 }: React.ComponentProps<"div"> & VariantProps<typeof inputGroupAddonVariants>) {
-  usePart(align);
   return (
     <div
       className={cn(inputGroupAddonVariants({ align, inset }), className)}
@@ -129,17 +114,7 @@ function InputGroupAddon({
 }
 
 function InputGroupInput({ className, ...props }: InputProps) {
-  usePart("control");
   return <Input className={className} unstyled {...props} />;
 }
 
-/** A dim unit after the value, such as "days". Clicking it focuses the input. */
-function InputGroupUnit({ children }: { children: React.ReactNode }) {
-  return (
-    <InputGroupAddon align="inline-end">
-      <span className="text-meta text-dim-foreground">{children}</span>
-    </InputGroupAddon>
-  );
-}
-
-export { InputGroup, InputGroupAddon, InputGroupInput, InputGroupUnit };
+export { InputGroup, InputGroupAddon, InputGroupInput };

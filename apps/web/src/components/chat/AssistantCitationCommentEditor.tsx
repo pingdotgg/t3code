@@ -1,6 +1,14 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
-import { use, useEffect, useRef, useState, type RefObject } from "react";
+import {
+  use,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+  type RefObject,
+} from "react";
 
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { textDirection } from "~/textDirection";
@@ -8,24 +16,30 @@ import { textDirection } from "~/textDirection";
 import { ComposerContextActionsContext } from "../composerContextActions";
 import { Button } from "../ui/button";
 
+/** Lets the popover finish a running dictation, instead of discarding it, when it is dismissed. */
+export type AssistantCitationCommentDictation = {
+  /** False when nothing is being dictated; otherwise `settle` gets the comment once it is transcribed. */
+  finish: (settle: (comment: string) => void) => boolean;
+};
+
 export function AssistantCitationCommentEditor({
   citation,
   inputRef,
   onSubmit,
   onSubmitAndSend,
   onCancel,
-  onViewSource,
   onDraftChange,
   onVoiceSetupOpenChange,
+  dictationRef,
 }: {
   citation: AssistantCitation;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
-  onViewSource?: () => void;
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
+  dictationRef?: Ref<AssistantCitationCommentDictation>;
 }) {
   const gt = useGT();
   const [comment, setComment] = useState(citation.comment ?? "");
@@ -57,6 +71,13 @@ export function AssistantCitationCommentEditor({
     onVoiceSetupOpenChange?.(setupOpen);
     return () => onVoiceSetupOpenChange?.(false);
   }, [onVoiceSetupOpenChange, setupOpen]);
+  useImperativeHandle(dictationRef, () => ({
+    finish: (settle) => {
+      if (!speech.blocksSubmission || speech.preparing) return false;
+      speech.submitAfterDictation(settle);
+      return true;
+    },
+  }));
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
   const submit = () => {
     speech.submitAfterDictation((text) => {
@@ -93,8 +114,8 @@ export function AssistantCitationCommentEditor({
         placeholder={gt("Add an optional comment...")}
         rows={2}
         dir={textDirection(comment)}
-        className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-body outline-none text-foreground placeholder:text-muted-foreground max-sm:text-base"
-        value={speech.displayText}
+        className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
+        value={comment}
         onChange={(event) => updateComment(event.currentTarget.value)}
         onKeyDown={(event) => {
           if (
@@ -113,7 +134,7 @@ export function AssistantCitationCommentEditor({
         }}
       />
       {commentTooLong ? (
-        <p role="status" className="pt-1 text-meta text-error-foreground">
+        <p role="status" className="pt-1 text-xs text-destructive">
           <T>
             Comments can contain up to{" "}
             <Var>{ASSISTANT_CITATION_MAX_COMMENT_LENGTH.toLocaleString()}</Var> characters.
@@ -122,22 +143,10 @@ export function AssistantCitationCommentEditor({
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
         <TextFieldSpeechControls speech={speech} />
-        {onViewSource ? (
-          <Button
-            variant="secondary"
-            size="xs"
-            // Escape cancels; keep Tab from the comment on Save so Enter cannot leave a new citation.
-            tabIndex={-1}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onViewSource}
-          >
-            <T>View source</T>
-          </Button>
-        ) : null}
         {/* Wrap as a pair so the recording pill never pushes Save alone onto a new row under Cancel. */}
         <div className="flex gap-2">
           <Button
-            variant="secondary"
+            variant="outline"
             size="xs"
             // Escape cancels; keep Tab from the comment on Save so Enter cannot discard a new citation.
             tabIndex={-1}
@@ -149,7 +158,6 @@ export function AssistantCitationCommentEditor({
           <Button
             size="xs"
             disabled={speech.preparing || (commentTooLong && !speech.blocksSubmission)}
-            aria-keyshortcuts="Enter"
             onPointerDown={(event) => event.preventDefault()}
             onClick={submit}
           >

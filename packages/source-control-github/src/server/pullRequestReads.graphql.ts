@@ -302,20 +302,20 @@ export const RemovedFromMergeQueueEvent = Schema.Struct({
 export interface RemovedFromMergeQueueEvent extends Schema.Struct.Type<typeof RemovedFromMergeQueueEvent.fields> {}
 
 /** An item in a pull request timeline */
-export const MergeQueueRemovalsNodesPullRequestTimelineItemsOther = Schema.Struct({
+export const PullRequestTimelineItemsOther = Schema.Struct({
   __typename: GraphQL.otherTypename<Shared.Typename.PullRequestTimelineItems>()(["RemovedFromMergeQueueEvent"])
 })
-export interface MergeQueueRemovalsNodesPullRequestTimelineItemsOther extends Schema.Struct.Type<typeof MergeQueueRemovalsNodesPullRequestTimelineItemsOther.fields> {}
+export interface PullRequestTimelineItemsOther extends Schema.Struct.Type<typeof PullRequestTimelineItemsOther.fields> {}
 
 /** The connection type for PullRequestTimelineItems. */
-export const MergeQueueRemovalsPullRequestTimelineItemsConnection = Schema.Struct({
+export const PullRequestTimelineItemsConnection = Schema.Struct({
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
     RemovedFromMergeQueueEvent,
-    MergeQueueRemovalsNodesPullRequestTimelineItemsOther
+    PullRequestTimelineItemsOther
   ]))))
 })
-export interface MergeQueueRemovalsPullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof MergeQueueRemovalsPullRequestTimelineItemsConnection.fields> {}
+export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
 
 /** Represents a comparison between two commit revisions. */
 export const Comparison = Schema.Struct({
@@ -332,14 +332,14 @@ export const BaseRefRef = Schema.Struct({
 export interface BaseRefRef extends Schema.Struct.Type<typeof BaseRefRef.fields> {}
 
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
-export const ReviewRequestsNodesRequestedReviewerUser = Schema.Struct({
+export const RequestedReviewerUser = Schema.Struct({
   __typename: Schema.Literal("User"),
   /** The username used to login. */
   login: Schema.String,
   /** The user's public profile name. */
   name: Schema.NullOr(Schema.String)
 })
-export interface ReviewRequestsNodesRequestedReviewerUser extends Schema.Struct.Type<typeof ReviewRequestsNodesRequestedReviewerUser.fields> {}
+export interface RequestedReviewerUser extends Schema.Struct.Type<typeof RequestedReviewerUser.fields> {}
 
 /** A special type of user which takes actions on behalf of GitHub Apps. */
 export const RequestedReviewerBot = Schema.Struct({
@@ -350,7 +350,7 @@ export const RequestedReviewerBot = Schema.Struct({
 export interface RequestedReviewerBot extends Schema.Struct.Type<typeof RequestedReviewerBot.fields> {}
 
 /** A team of users in an organization. */
-export const ReviewRequestsNodesRequestedReviewerTeam = Schema.Struct({
+export const Team = Schema.Struct({
   __typename: Schema.Literal("Team"),
   /** The slug corresponding to the team. */
   slug: Schema.String,
@@ -361,7 +361,7 @@ export const ReviewRequestsNodesRequestedReviewerTeam = Schema.Struct({
   /** A URL pointing to the team's avatar. */
   teamAvatarUrl: Schema.NullOr(Shared.URI)
 })
-export interface ReviewRequestsNodesRequestedReviewerTeam extends Schema.Struct.Type<typeof ReviewRequestsNodesRequestedReviewerTeam.fields> {}
+export interface Team extends Schema.Struct.Type<typeof Team.fields> {}
 
 /** Types that can be requested reviewers. */
 export const RequestedReviewerOther = Schema.Struct({
@@ -373,9 +373,9 @@ export interface RequestedReviewerOther extends Schema.Struct.Type<typeof Reques
 export const PullRequestCoreRepositoryPullRequestReviewRequestsNodesReviewRequest = Schema.Struct({
   /** The reviewer that is requested. */
   requestedReviewer: Schema.NullOr(Schema.Union([
-    ReviewRequestsNodesRequestedReviewerUser,
+    RequestedReviewerUser,
     RequestedReviewerBot,
-    ReviewRequestsNodesRequestedReviewerTeam,
+    Team,
     RequestedReviewerOther
   ]))
 })
@@ -517,7 +517,7 @@ export const PullRequestCoreRepositoryPullRequestPullRequest = Schema.Struct({
   /** Returns the auto-merge request object if one exists for this pull request. */
   autoMergeRequest: Schema.NullOr(AutoMergeRequest),
   /** A list of events, comments, commits, etc. associated with the pull request. */
-  mergeQueueRemovals: Schema.optionalKey(MergeQueueRemovalsPullRequestTimelineItemsConnection),
+  mergeQueueRemovals: Schema.optionalKey(PullRequestTimelineItemsConnection),
   /** Check if the current viewer can update this object. */
   viewerCanUpdate: Schema.Boolean,
   /** Did the viewer author this comment. */
@@ -1230,7 +1230,7 @@ export const ReviewerCandidatesRepositoryPullRequestReviewRequestsNodesReviewReq
   /** The reviewer that is requested. */
   requestedReviewer: Schema.NullOr(Schema.Union([
     MergedByUser,
-    ReviewRequestsNodesRequestedReviewerTeam,
+    Team,
     NodesBot,
     RequestedReviewerOther
   ]))
@@ -1244,74 +1244,12 @@ export const ReviewerCandidatesRepositoryPullRequestReviewRequestsReviewRequestC
 })
 export interface ReviewerCandidatesRepositoryPullRequestReviewRequestsReviewRequestConnection extends Schema.Struct.Type<typeof ReviewerCandidatesRepositoryPullRequestReviewRequestsReviewRequestConnection.fields> {}
 
-/** A suggestion to review a pull request based on a user's commit history and review comments. */
-export const SuggestedReviewer = Schema.Struct({
-  /** Is this suggestion based on past commits? */
-  isAuthor: Schema.Boolean,
-  /** Is this suggestion based on past review comments? */
-  isCommenter: Schema.Boolean,
-  /** Identifies the user suggested to review the pull request. */
-  reviewer: AssignableUsersNodesUser
-})
-export interface SuggestedReviewer extends Schema.Struct.Type<typeof SuggestedReviewer.fields> {}
-
-/** A user is an individual's account on GitHub that owns repositories and can make new content. */
-export const RequestEventsNodesRequestedReviewerUser = Schema.Struct({
-  __typename: Schema.Literal("User"),
-  /** The username used to login. */
-  login: Schema.String
-})
-export interface RequestEventsNodesRequestedReviewerUser extends Schema.Struct.Type<typeof RequestEventsNodesRequestedReviewerUser.fields> {}
-
-/** A team of users in an organization. */
-export const RequestEventsNodesRequestedReviewerTeam = Schema.Struct({
-  __typename: Schema.Literal("Team"),
-  /** The slug corresponding to the team. */
-  slug: Schema.String
-})
-export interface RequestEventsNodesRequestedReviewerTeam extends Schema.Struct.Type<typeof RequestEventsNodesRequestedReviewerTeam.fields> {}
-
-/** Represents an 'review_requested' event on a given pull request. */
-export const ReviewRequestedEvent = Schema.Struct({
-  __typename: Schema.Literal("ReviewRequestedEvent"),
-  /** Identifies the date and time when the object was created. */
-  createdAt: Shared.DateTime,
-  /** Identifies the reviewer whose review was requested. */
-  requestedReviewer: Schema.NullOr(Schema.Union([
-    RequestEventsNodesRequestedReviewerUser,
-    RequestEventsNodesRequestedReviewerTeam,
-    RequestedReviewerBot,
-    RequestedReviewerOther
-  ]))
-})
-export interface ReviewRequestedEvent extends Schema.Struct.Type<typeof ReviewRequestedEvent.fields> {}
-
-/** An item in a pull request timeline */
-export const RequestEventsNodesPullRequestTimelineItemsOther = Schema.Struct({
-  __typename: GraphQL.otherTypename<Shared.Typename.PullRequestTimelineItems>()(["ReviewRequestedEvent"])
-})
-export interface RequestEventsNodesPullRequestTimelineItemsOther extends Schema.Struct.Type<typeof RequestEventsNodesPullRequestTimelineItemsOther.fields> {}
-
-/** The connection type for PullRequestTimelineItems. */
-export const RequestEventsPullRequestTimelineItemsConnection = Schema.Struct({
-  /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
-    ReviewRequestedEvent,
-    RequestEventsNodesPullRequestTimelineItemsOther
-  ]))))
-})
-export interface RequestEventsPullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof RequestEventsPullRequestTimelineItemsConnection.fields> {}
-
 /** A repository pull request. */
 export const ReviewerCandidatesRepositoryPullRequestPullRequest = Schema.Struct({
   /** The actor who authored the comment. */
   author: Schema.NullOr(Actor),
   /** A list of review requests associated with the pull request. */
-  reviewRequests: Schema.NullOr(ReviewerCandidatesRepositoryPullRequestReviewRequestsReviewRequestConnection),
-  /** A list of reviewer suggestions based on commit history and past review comments. */
-  suggestedReviewers: Schema.Array(Schema.NullOr(SuggestedReviewer)),
-  /** A list of events, comments, commits, etc. associated with the pull request. */
-  requestEvents: RequestEventsPullRequestTimelineItemsConnection
+  reviewRequests: Schema.NullOr(ReviewerCandidatesRepositoryPullRequestReviewRequestsReviewRequestConnection)
 })
 export interface ReviewerCandidatesRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof ReviewerCandidatesRepositoryPullRequestPullRequest.fields> {}
 
@@ -1334,7 +1272,7 @@ export const ReviewerCandidates = GraphQL.query("ReviewerCandidates", {
       { name: "query", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){assignableUsers(first:100 query:$", "query", "){pageInfo{hasNextPage}nodes{login name avatarUrl}}pullRequest(number:$", "number", "){author{__typename login}reviewRequests(first:100){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}...on Bot{login avatarUrl}}}}suggestedReviewers{isAuthor isCommenter reviewer{login name avatarUrl}}requestEvents:timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT]last:100){nodes{__typename...on ReviewRequestedEvent{createdAt requestedReviewer{__typename...on User{login}...on Team{slug}...on Bot{login}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){assignableUsers(first:100 query:$", "query", "){pageInfo{hasNextPage}nodes{login name avatarUrl}}pullRequest(number:$", "number", "){author{__typename login}reviewRequests(first:100){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}...on Bot{login avatarUrl}}}}}}"] }
     ],
     fragments: []
   },

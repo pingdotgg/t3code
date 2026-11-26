@@ -34,10 +34,9 @@ const row = {
 };
 
 function Rows() {
-  const { prefetch, reads } = usePullRequestIntentPrefetch(() => true);
+  const prefetch = usePullRequestIntentPrefetch(() => true);
   return (
     <>
-      {reads}
       <button type="button" onClick={() => prefetch(row)}>
         rest
       </button>

@@ -4,6 +4,7 @@ import { msg } from "gt-react";
 import {
   pickSnoozePreset as pickSharedSnoozePreset,
   resolveSnoozePresets as resolveSharedSnoozePresets,
+  snoozeWakeLabel,
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 
@@ -14,7 +15,7 @@ import { serverEnvironment } from "../state/server";
 import { formatShortTimestamp } from "../timestampFormat";
 import { toastManager } from "./ui/toast";
 
-export type { SnoozePreset };
+export { snoozeWakeLabel, type SnoozePreset };
 
 /** The snooze menu for a thread, from its environment's presets, read when the menu opens. */
 export function resolveSnoozePresets(

@@ -1,5 +1,3 @@
-import type { ScheduledTask } from "@t3tools/contracts";
-import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -103,74 +101,4 @@ export function formatNextScheduledTaskRun(
     ...(next.getFullYear() !== current.getFullYear() ? { year: "numeric" as const } : {}),
   });
   return resolve(msg("Next run {date} at {time}", { date, time }));
-}
-
-export const SCHEDULE_DAYS = [1, 2, 3, 4, 5, 6, 0].map((index) => ({ index }));
-
-// 2024-01-07 was a Sunday, so day index 0 to 6 maps onto Sunday to Saturday.
-export function weekdayLabel(index: number, locale?: string): string {
-  return new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(
-    Date.UTC(2024, 0, 7 + index),
-  );
-}
-
-export function describeSchedule(
-  task: ScheduledTask,
-  timeZone?: string,
-  resolve: MessageResolver = m,
-  locale?: string,
-): string {
-  if (task.schedule.type === "webhook") return resolve(msg("On webhook"));
-  if (task.schedule.type === "once") {
-    const runAt = new Date(task.schedule.runAt);
-    return resolve(
-      msg("Once, {date} at {time}", { date: formatRunAtDate(runAt), time: formatRunAtTime(runAt) }),
-    );
-  }
-  if (task.schedule.type === "interval")
-    return formatScheduledTaskInterval(task.schedule.everyMs, resolve);
-  const days = task.schedule.weekdays?.length
-    ? repeatLabel(task.schedule.weekdays, resolve, locale)
-    : resolve(msg("Every day"));
-  const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
-  const time = formatScheduleTime(task.schedule.timeOfDay);
-  return zone === undefined
-    ? resolve(msg("{days} at {time}", { days, time }))
-    : resolve(msg("{days} at {time} {zone}", { days, time, zone }));
-}
-
-export function formatScheduleTime(value: string): string {
-  const [hours, minutes] = value.split(":").map(Number);
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return value;
-  const time = new Date();
-  time.setHours(hours ?? 9, minutes ?? 0, 0, 0);
-  return time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-export function formatRunAtDate(value: Date): string {
-  return value.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
-}
-
-export function formatRunAtTime(value: Date): string {
-  return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-export function isWeekdays(weekdays: ReadonlyArray<number>): boolean {
-  const days = new Set(weekdays);
-  return days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day));
-}
-
-export function repeatLabel(
-  weekdays: ReadonlyArray<number>,
-  resolve: MessageResolver = m,
-  locale?: string,
-): string {
-  const days = new Set(weekdays);
-  if (days.size === 7) return resolve(msg("Every day"));
-  if (isWeekdays(weekdays)) return resolve(msg("Weekdays"));
-  return (
-    SCHEDULE_DAYS.filter((day) => days.has(day.index))
-      .map((day) => weekdayLabel(day.index, locale))
-      .join(", ") || resolve(msg("Choose days"))
-  );
 }

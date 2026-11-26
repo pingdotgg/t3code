@@ -56,7 +56,7 @@ import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { CommandBlock } from "../CommandBlock";
 import { AccessOption, accessConfig } from "../auth/ConnectAgentSurface";
 import { useAccessEnvironment } from "../settings/useAccessEnvironment";
-import { Button, ContentButton, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
@@ -86,7 +86,7 @@ export function UseInAnotherAppDialogHost() {
 function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentId | null }) {
   const { environment, label } = useAccessEnvironment(requested);
   const gt = useGT();
-  const title = `${gt("Use T3 Code in another app (MCP)")} (${label ?? "T3 Code"})`;
+  const title = `${gt("Use T3 Code in another app (MCP)")} · ${label ?? "T3 Code"}`;
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : close())}>
       <WizardPopup>
@@ -165,7 +165,7 @@ function Wizard({
           <AppStep choice={choice} onChoose={setChoice} />
         ) : step === 1 ? (
           <section className="space-y-3">
-            <h3 className="text-label">{levelsHeading}</h3>
+            <h3 className="text-sm font-medium">{levelsHeading}</h3>
             <RadioGroup
               aria-label={levelsHeading}
               value={access}
@@ -175,6 +175,7 @@ function Wizard({
                 <AccessOption
                   key={level}
                   access={level}
+                  selected={level === access}
                   disabledReason={levels.get(level)}
                   description={
                     level === "full-access"
@@ -199,7 +200,7 @@ function Wizard({
           leading={step === 2 ? <ManageAccessButton environment={environment} /> : undefined}
         >
           {step === 1 ? (
-            <Button variant="secondary" onClick={() => setStep(0)}>
+            <Button variant="outline" onClick={() => setStep(0)}>
               <T>Back</T>
             </Button>
           ) : null}
@@ -396,7 +397,7 @@ function GateScreen({
   const turnOnHere = useT3ConnectTurnOn(environment.environmentId);
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const retry = (onClick: () => void) => (
-    <Button variant="secondary" onClick={onClick}>
+    <Button variant="outline" onClick={onClick}>
       <T>Check again</T>
     </Button>
   );
@@ -406,7 +407,7 @@ function GateScreen({
   switch (gate.kind) {
     case "checking":
       return (
-        <p role="status" className="flex items-center gap-2 text-body text-muted-foreground">
+        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           <Spinner size="sm" tone="muted" />
           <T>Checking T3 Connect…</T>
         </p>
@@ -494,11 +495,11 @@ function GateScreen({
                 {connecting ? gt("Connecting…") : gt("Turn on")}
               </Button>
               {operationError ? (
-                <p className="text-meta text-destructive-foreground">{operationError}</p>
+                <p className="text-xs text-destructive-foreground">{operationError}</p>
               ) : null}
               {tunnelLimit !== null ? (
                 <>
-                  <p className="text-body text-destructive-foreground">
+                  <p className="text-sm text-destructive-foreground">
                     <T>Your T3 Connect account is out of tunnels.</T>
                   </p>
                   <ManageAccessButton environment={environment} label={gt("Manage tunnels")} />
@@ -506,9 +507,9 @@ function GateScreen({
               ) : null}
             </div>
           ) : turnOnHere.kind === "policy" ? (
-            <p className="text-body text-muted-foreground">{turnOnHere.reason}</p>
+            <p className="text-sm text-muted-foreground">{turnOnHere.reason}</p>
           ) : (
-            <div className="space-y-2 text-body">
+            <div className="space-y-2 text-sm">
               <CommandBlock command="t3 connect link" />
               <p>
                 <T>
@@ -537,9 +538,9 @@ function GateMessage({
 }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-title [--type-title:1rem]">{title}</h3>
+      <h3 className="text-base font-medium">{title}</h3>
       {lines.length > 0 ? (
-        <div className="space-y-1 text-body text-muted-foreground">
+        <div className="space-y-1 text-sm text-muted-foreground">
           {lines.map((line) => (
             <p key={line}>{line}</p>
           ))}
@@ -559,41 +560,37 @@ function AppStep({
 }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-label">
+      <h3 className="text-sm font-medium">
         <T>Which app?</T>
       </h3>
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
         {MCP_APPS.filter((app) => !app.hidden).map((app) => (
-          <ContentButton
-            variant="selection-card"
+          <button
             key={app.id}
             type="button"
             aria-pressed={choice === app}
             onClick={() => onChoose(app)}
-            className="min-w-0"
+            className="flex min-w-0 flex-col items-center gap-2 rounded-lg border border-transparent px-1 py-3 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/8"
           >
-            <span className="flex flex-col items-center gap-2 px-1 py-3">
-              <img
-                src={app.logo}
-                alt=""
-                className="size-10 rounded-lg ring-1 ring-black/10 dark:ring-white/12"
-              />
-              <span className="max-w-full truncate whitespace-nowrap text-meta">{app.name}</span>
+            <img
+              src={app.logo}
+              alt=""
+              className="size-10 rounded-lg ring-1 ring-black/10 dark:ring-white/12"
+            />
+            <span className="max-w-full truncate whitespace-nowrap text-xs font-medium">
+              {app.name}
             </span>
-          </ContentButton>
+          </button>
         ))}
       </div>
-      <ContentButton
-        variant="selection-card"
+      <button
         type="button"
         aria-pressed={choice === "other"}
         onClick={() => onChoose("other")}
-        className="w-full"
+        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/8"
       >
-        <span className="block px-3 py-2.5 text-label">
-          <T>Something else…</T>
-        </span>
-      </ContentButton>
+        <T>Something else…</T>
+      </button>
     </section>
   );
 }
@@ -616,7 +613,7 @@ function ConnectStep({
   const app = choice === "other" ? null : choice;
   const code =
     access === null ? (
-      <p className="text-body text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         {app === null
           ? gt(
               "When the app opens the sign-in page, choose what it may do and approve with your T3 Connect account.",
@@ -642,13 +639,13 @@ function ConnectStep({
         {message ? (
           <CopyRow label={gt("Message", { $context: "message to send" })} value={message} />
         ) : null}
-        <ol className="list-decimal space-y-1 ps-5 text-body">
+        <ol className="list-decimal space-y-1 ps-5 text-sm">
           {(app?.steps ?? OTHER_MCP_APP_STEPS).map((step) => (
             <li key={step}>{m(step)}</li>
           ))}
         </ol>
         {app === null ? (
-          <p className="text-meta text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             <T>Apps that require their own client ID cannot connect.</T>
           </p>
         ) : app.docs ? (
@@ -686,7 +683,15 @@ function TextButton({
   readonly onClick: () => void;
   readonly children: ReactNode;
 }) {
-  return <InlineButton onClick={onClick}>{children}</InlineButton>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="block text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:underline"
+    >
+      {children}
+    </button>
+  );
 }
 
 function openLink(url: string) {
@@ -705,7 +710,7 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
   const gt = useGT();
   const m = useMessages();
   const action = mcpHandoffAction(app, mcpUrl, m);
-  const note = app.note ? <p className="text-meta text-muted-foreground">{m(app.note)}</p> : null;
+  const note = app.note ? <p className="text-xs text-muted-foreground">{m(app.note)}</p> : null;
   if (action === null) {
     return (
       <div className="space-y-2">
@@ -714,7 +719,7 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
               .commands(mcpUrl)
               .map((command) => <CommandBlock key={command} command={command} />)
           : null}
-        <p className="text-meta text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {gt("Run these where {app} runs.", { app: app.name })}
         </p>
         {note}
@@ -813,16 +818,16 @@ function ApprovalCode({
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-body">
+        <span className="text-sm">
           <T>
             Code to approve{" "}
-            <span className="text-label">
+            <span className="font-medium">
               <Var>{m(accessConfig[access].label)}</Var>
             </span>
           </T>
         </span>
         {live ? null : (
-          <Button size="sm" variant="secondary" disabled={pending} onClick={() => void mint()}>
+          <Button size="sm" variant="outline" disabled={pending} onClick={() => void mint()}>
             {pending ? gt("Getting code…") : code === null ? gt("Get code") : gt("New code")}
           </Button>
         )}
@@ -831,22 +836,19 @@ function ApprovalCode({
         live ? (
           <>
             <CopyRow label={gt("Code", { $context: "approval code" })} value={code.credential} />
-            <p className="text-meta text-muted-foreground">
-              {gt("Expires {time}", {
+            <p className="text-xs text-muted-foreground">
+              {gt("Expires {time} · one use", {
                 time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`,
               })}
-              <span className="ms-2">
-                <T>one use</T>
-              </span>
             </p>
           </>
         ) : (
-          <p className="text-meta text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             <T>The code expired.</T>
           </p>
         )
       ) : null}
-      {error ? <p className="text-meta text-destructive-foreground">{error}</p> : null}
+      {error ? <p className="text-xs text-destructive-foreground">{error}</p> : null}
     </div>
   );
 }
@@ -859,8 +861,8 @@ function CopyRow({ label, value }: { readonly label: string; readonly value: str
   const gt = useGT();
   return (
     <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
-      <span className="shrink-0 text-meta text-muted-foreground">{label}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-body">{value}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-sm">{value}</span>
       <Button
         size="icon-xs"
         variant="ghost"
@@ -901,10 +903,10 @@ function LinkedLine({
     // A forwarded call keeps the lower of the app's level and the link's own.
     const level =
       access === null || levelRank(link.access) < levelRank(access) ? link.access : access;
-    return `${name} (${link.status === "expired" ? gt("Expired") : m(accessConfig[level].label)})`;
+    return `${name} · ${link.status === "expired" ? gt("Expired") : m(accessConfig[level].label)}`;
   });
   return (
-    <p className="text-meta text-muted-foreground">
+    <p className="text-xs text-muted-foreground">
       {gt("Linked: {environments}", { environments: named.join(", ") })}
     </p>
   );

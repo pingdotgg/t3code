@@ -1,12 +1,5 @@
 import { useGT } from "gt-react";
-import {
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type Ref,
-} from "react";
+import { useImperativeHandle, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import { flushSync } from "react-dom";
 
 import {
@@ -17,9 +10,6 @@ import {
 import { AttachmentImage } from "../media/AttachmentImage";
 
 const MAX_ZOOM = 8;
-const ZOOM_STEP = 1.5;
-/** Room the expanded-media dialog keeps for its header bar and thumbnail strip. */
-const EXPANDED_MEDIA_RESERVED_HEIGHT = 200;
 
 // Subtract the caption strip, matching dialog CSS's --native-titlebar-height.
 function readViewerSize() {
@@ -47,16 +37,6 @@ function subscribeViewerSize(onChange: () => void) {
 
 export interface ZoomableImageHandle {
   pan: (key: string) => boolean;
-  zoomIn: () => void;
-  zoomOut: () => void;
-  resetZoom: () => void;
-}
-
-export interface ZoomableImageView {
-  /** Rendered pixels per source pixel, so 1 is the image's natural size. */
-  readonly scale: number;
-  readonly canZoomIn: boolean;
-  readonly canZoomOut: boolean;
 }
 
 export function ZoomableImage({
@@ -64,16 +44,12 @@ export function ZoomableImage({
   name,
   mimeType,
   onError,
-  onNaturalSize,
-  onViewChange,
   ref,
 }: {
   src: string;
   name: string;
   mimeType?: string | undefined;
   onError: () => void;
-  onNaturalSize?: (size: { width: number; height: number }) => void;
-  onViewChange?: (view: ZoomableImageView) => void;
   ref?: Ref<ZoomableImageHandle>;
 }) {
   const gt = useGT();
@@ -96,10 +72,7 @@ export function ZoomableImage({
   } | null>(null);
   const suppressClickRef = useRef(false);
   const [dragging, setDragging] = useState(false);
-  const maxHeight = Math.max(
-    1,
-    Math.min(viewerSize.height * 0.86, viewerSize.height - EXPANDED_MEDIA_RESERVED_HEIGHT),
-  );
+  const maxHeight = Math.max(1, Math.min(viewerSize.height * 0.86, viewerSize.height - 160));
   // A vector scales without loss, and an SVG without width and height reports a tiny default size.
   const fit = Math.min(
     mimeType === "image/svg+xml" ? Infinity : 1,
@@ -108,24 +81,6 @@ export function ZoomableImage({
   );
   const width = naturalSize.width * fit * zoom;
   const height = naturalSize.height * fit * zoom;
-
-  const changeZoom = (next: number, point?: { x: number; y: number }) => {
-    const viewport = viewportRef.current;
-    const clamped = Math.min(MAX_ZOOM, Math.max(1, next));
-    if (!viewport || zoom === clamped) return;
-    const bounds = viewport.getBoundingClientRect();
-    const x = point ? point.x - bounds.left : viewport.clientWidth / 2;
-    const y = point ? point.y - bounds.top : viewport.clientHeight / 2;
-    const anchorX = (viewport.scrollLeft + x) / zoom;
-    const anchorY = (viewport.scrollTop + y) / zoom;
-    const clientX = bounds.left + x;
-    const clientY = bounds.top + y;
-    // The new size must be laid out before the scroll position can keep the anchor in place.
-    flushSync(() => setZoom(clamped));
-    const resized = viewport.getBoundingClientRect();
-    viewport.scrollLeft = anchorX * clamped - (clientX - resized.left);
-    viewport.scrollTop = anchorY * clamped - (clientY - resized.top);
-  };
 
   useImperativeHandle(
     ref,
@@ -157,19 +112,27 @@ export function ZoomableImage({
         }
         return true;
       },
-      zoomIn: () => changeZoom(zoom * ZOOM_STEP),
-      zoomOut: () => changeZoom(zoom / ZOOM_STEP),
-      resetZoom: () => changeZoom(1),
     }),
-    [changeZoom, zoom],
+    [zoom],
   );
 
-  const scale = fit * zoom;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the expanded-media toolbar in step with committed image scale after image load, viewport resize and zoom
-  useEffect(() => {
-    if (!naturalSize.width) return;
-    onViewChange?.({ scale, canZoomIn: zoom < MAX_ZOOM, canZoomOut: zoom > 1 });
-  }, [naturalSize.width, onViewChange, scale, zoom]);
+  const changeZoom = (next: number, point?: { x: number; y: number }) => {
+    const viewport = viewportRef.current;
+    const clamped = Math.min(MAX_ZOOM, Math.max(1, next));
+    if (!viewport || zoom === clamped) return;
+    const bounds = viewport.getBoundingClientRect();
+    const x = point ? point.x - bounds.left : viewport.clientWidth / 2;
+    const y = point ? point.y - bounds.top : viewport.clientHeight / 2;
+    const anchorX = (viewport.scrollLeft + x) / zoom;
+    const anchorY = (viewport.scrollTop + y) / zoom;
+    const clientX = bounds.left + x;
+    const clientY = bounds.top + y;
+    // The new size must be laid out before the scroll position can keep the anchor in place.
+    flushSync(() => setZoom(clamped));
+    const resized = viewport.getBoundingClientRect();
+    viewport.scrollLeft = anchorX * clamped - (clientX - resized.left);
+    viewport.scrollTop = anchorY * clamped - (clientY - resized.top);
+  };
 
   const attachViewport = (viewport: HTMLDivElement) => {
     viewportRef.current = viewport;
@@ -203,7 +166,7 @@ export function ZoomableImage({
           "Click to zoom in or return to fit. Pinch or Ctrl+scroll to zoom, scroll or drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit.",
         )}
         tabIndex={0}
-        className="max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-card bg-background shadow-dialog ring-1 ring-border outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
         style={{
           width: width || undefined,
           height: height || undefined,
@@ -222,10 +185,10 @@ export function ZoomableImage({
             if (!event.repeat) changeZoom(zoom > 1 ? 1 : 2);
           } else if (event.key === "+" || event.key === "=") {
             event.preventDefault();
-            changeZoom(zoom * ZOOM_STEP);
+            changeZoom(zoom * 1.5);
           } else if (event.key === "-") {
             event.preventDefault();
-            changeZoom(zoom / ZOOM_STEP);
+            changeZoom(zoom / 1.5);
           } else if (event.key === "0") {
             event.preventDefault();
             changeZoom(1);
@@ -286,12 +249,10 @@ export function ZoomableImage({
             naturalSize.width ? { width, height } : { maxWidth: "var(--media-width)", maxHeight }
           }
           onLoad={(event) => {
-            const size = {
+            setNaturalSize({
               width: event.currentTarget.naturalWidth,
               height: event.currentTarget.naturalHeight,
-            };
-            setNaturalSize(size);
-            onNaturalSize?.(size);
+            });
           }}
           onError={onError}
         />

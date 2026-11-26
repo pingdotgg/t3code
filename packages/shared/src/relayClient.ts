@@ -162,14 +162,6 @@ const CloudflaredConfig = Config.all({
   executableOverride: trimmedString(CLOUDFLARED_PATH_ENV_NAME),
 });
 
-type InstallStageReporter = (
-  stage: RelayClientInstallProgressStage,
-  facts?: {
-    readonly downloadedBytes?: number;
-    readonly checksumVerified?: boolean;
-  },
-) => Effect.Effect<void>;
-
 export interface CloudflaredRelayClientOptions {
   readonly baseDir: string;
   readonly releaseAsset?: CloudflaredReleaseAsset;
@@ -450,8 +442,11 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }
   }).pipe(Effect.withSpan("cloudflared.pruneManagedVersions"));
 
+  // Node can finish an in-flight rename after interruption. Wait for each attempt before
+  // releasing the install scope, while keeping Windows retry delays interruptible.
   const renameWhenUnlocked = (from: string, to: string) =>
     fileSystem.rename(from, to).pipe(
+      Effect.uninterruptible,
       Effect.retry({
         times: ACTIVATE_RETRY_COUNT,
         schedule: Schedule.spaced(ACTIVATE_RETRY_DELAY),
@@ -478,7 +473,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
   const downloadAsset = Effect.fn("cloudflared.downloadAsset")(function* (
     asset: CloudflaredReleaseAsset,
-    report: InstallStageReporter,
+    report: (stage: RelayClientInstallProgressStage) => Effect.Effect<void>,
   ) {
     yield* report("downloading");
     const response = yield* httpClient.execute(HttpClientRequest.get(asset.url)).pipe(
@@ -506,7 +501,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         ),
       ),
     );
-    yield* report("verifying", { downloadedBytes: bytes.byteLength });
+    yield* report("verifying");
     const checksum = yield* digest.digest(Digest.sha256, bytes).pipe(
       Effect.mapError(
         (cause) =>
@@ -598,7 +593,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const installUnlocked = Effect.fn("cloudflared.installUnlocked")(function* (
-    report: InstallStageReporter,
+    report: (stage: RelayClientInstallProgressStage) => Effect.Effect<void>,
   ) {
     yield* report("checking");
     const config = yield* loadCloudflaredConfig;
@@ -652,7 +647,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         releaseAsset.archive === "tgz" ? "cloudflared.tgz" : executableFileName(platform),
       );
       const download = yield* downloadAsset(releaseAsset, report);
-      yield* report("installing", { checksumVerified: true });
+      yield* report("installing");
       yield* fileSystem
         .writeFile(archivePath, download)
         .pipe(wrapInstallFailure("write_failed", "Could not write the relay client download."));
@@ -683,12 +678,14 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
       const stagedPath = `${managedPath}.${yield* random.uuidV4()}.tmp`;
       yield* report("activating");
+      yield* Effect.addFinalizer(() =>
+        fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore),
+      );
       yield* renameWhenUnlocked(executablePath, stagedPath).pipe(
         wrapInstallFailure("write_failed", "Could not stage the relay client."),
       );
       yield* renameWhenUnlocked(stagedPath, managedPath).pipe(
         wrapInstallFailure("write_failed", "Could not activate the relay client."),
-        Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
       );
       return {
         status: "available",
@@ -713,11 +710,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
   const installWithProgress: RelayClientShape["installWithProgress"] = (report) =>
     installSemaphore.withPermit(
-      installUnlocked((stage, facts) =>
+      installUnlocked((stage) =>
         report({
           type: "progress",
           stage,
-          ...facts,
         }),
       ).pipe(Effect.scoped),
     );

@@ -1,7 +1,6 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import { useEffect, useEffectEvent, useRef, type RefObject } from "react";
 import type { ThreadFindMatch } from "./threadFind";
-import { readTimelineTopInset } from "./timelineScrollAnchoring";
 import { useThreadFindHighlights } from "./threadFindHighlights";
 
 const FIND_MATCH_VIEW_MARGIN = 96;
@@ -112,7 +111,7 @@ function revealThreadFindMatch(
       .scrollToIndex({
         index: rowIndex,
         animated: false,
-        viewOffset: FIND_MATCH_VIEW_MARGIN + readTimelineTopInset(container),
+        viewOffset: FIND_MATCH_VIEW_MARGIN,
       })
       .then(() => {
         if (state.positioning !== request || !stillCurrent()) return;
@@ -145,12 +144,11 @@ function revealThreadFindMatch(
   const rect = range.getBoundingClientRect();
   const viewport = container?.getBoundingClientRect();
   if (!viewport || rect.height === 0) return;
-  const topInset = readTimelineTopInset(container);
   const margin = Math.min(
     FIND_MATCH_VIEW_MARGIN,
-    Math.max(0, (viewport.height - topInset - contentInsetEndAdjustment - rect.height) / 2),
+    Math.max(0, (viewport.height - contentInsetEndAdjustment - rect.height) / 2),
   );
-  const top = viewport.top + topInset + margin;
+  const top = viewport.top + margin;
   const bottom = viewport.bottom - margin - contentInsetEndAdjustment;
   const delta = rect.top < top ? rect.top - top : rect.bottom > bottom ? rect.bottom - bottom : 0;
   // DOM text can precede settled row sizes; wait before measuring offscreen matches.

@@ -100,7 +100,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
       ? firstNumber !== null
         ? gt("Line {line}", { line: firstNumber })
         : gt("File comment")
-      : firstNumber !== null && lastNumber !== null
+      : firstNumber !== null && lastNumber !== null && firstNumber < lastNumber
         ? gt("Lines {first}-{last}", { first: firstNumber, last: lastNumber })
         : gt("{count, plural, one {{count} lines selected} other {{count} lines selected}}", {
             count: selectedLines.length,
@@ -192,7 +192,9 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
         ) : (
           <View className="min-h-0 flex-1 gap-4">
             <View className="gap-1 px-1">
-              <Text className="text-2xs font-t3-bold text-foreground-muted">{selectionLabel}</Text>
+              <Text className="text-2xs font-t3-bold uppercase text-foreground-muted">
+                {selectionLabel}
+              </Text>
               <Text
                 className="font-mono text-xs leading-snug text-foreground-muted"
                 ellipsizeMode="middle"

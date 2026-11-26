@@ -26,7 +26,6 @@ import {
   useId,
   useRef,
   useState,
-  type ComponentProps,
   type ReactNode,
 } from "react";
 import { T, useGT, useMessages } from "gt-react";
@@ -42,27 +41,22 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { waitForQuerySettled } from "../../state/waitForQuerySettled";
-import { Button, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
 import { ChatGptAccountPicker } from "./ChatGptAccountPicker";
 import { Input } from "../ui/input";
+import { OpenAI } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow } from "./settingsLayout";
 import { AddCodexAccountDialog } from "./AddCodexAccountDialog";
+import { getOnboardingProviderState } from "../../onboarding/providerReadiness.logic";
+import { getProviderSummary } from "./providerStatus";
 import {
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
 } from "./CodexSetupSection.logic";
-
-import { OpenAI } from "../Icons";
-import { getOnboardingProviderState } from "../../onboarding/providerReadiness.logic";
-import { getProviderSummary } from "./providerStatus";
-
-function renderSettingsRow(props: ComponentProps<typeof SettingsRow>) {
-  return <SettingsRow {...props} />;
-}
 
 const noop = () => undefined;
 
@@ -104,18 +98,16 @@ interface CodexSetupSectionProps {
   readonly mode: "managed" | "existing";
   readonly enabled: boolean;
   readonly readOnly?: boolean;
-  readonly renderRow?: (props: ComponentProps<typeof SettingsRow>) => ReactNode;
   // Onboarding's "Use existing CLI" opens a terminal, which this session may not be allowed.
   readonly existingCliDisabled?: boolean;
   readonly presentation?: "settings" | "onboarding";
+  readonly onModeChange: (mode: "managed" | "existing") => void;
   readonly autoStart?: boolean;
   readonly displayName?: string | undefined;
   readonly onAutoStartConsumed?: () => void;
-  readonly onModeChange: (mode: "managed" | "existing") => void;
   readonly onSignInCancelled?: (() => void) | undefined;
 }
 
-/** Provider settings run the environment-owned Codex setup flow. */
 export function CodexSetupSection(props: CodexSetupSectionProps) {
   const gt = useGT();
   const m = useMessages();
@@ -165,16 +157,16 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
         }
         control={
           existingReady ? (
-            <span className="inline-flex items-center gap-1.5 text-label text-success-foreground">
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
               <CheckIcon className="size-3.5" />
               <T>Ready</T>
             </span>
           ) : existingChecking ? (
-            <span className="text-meta text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               <T>Checking...</T>
             </span>
           ) : existingAuthenticated ? (
-            <span className="text-meta text-muted-foreground">{existingSummary.headline}</span>
+            <span className="text-xs text-muted-foreground">{existingSummary.headline}</span>
           ) : (
             <ManagedControl reason={chatGptDenial}>
               <ChatGptConnectionButton
@@ -209,7 +201,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           title={props.displayName || props.provider?.displayName || "Codex"}
           description={<CodexSignInDescription />}
           control={
-            <Button size="sm" variant="secondary" className="min-w-44" disabled>
+            <Button size="sm" variant="outline" className="min-w-44" disabled>
               <T>Open sign-in page</T>
             </Button>
           }
@@ -287,7 +279,6 @@ function ManagedCodexSetup({
   presentation,
   displayName,
   onSignInCancelled,
-  renderRow = renderSettingsRow,
 }: CodexSetupSectionProps & {
   readonly autoStart: boolean;
   readonly onAutoStartConsumed: () => void;
@@ -638,33 +629,30 @@ function ManagedCodexSetup({
   }, [clientCallback, url]);
 
   const runtimeDescription =
-    installation?.phase === "downloading" ? (
-      installation.totalBytes === null ? (
-        gt("Downloading {downloaded} MB.", {
-          downloaded: (installation.downloadedBytes / 1_000_000).toFixed(1),
-        })
-      ) : (
-        gt("Downloading {downloaded} of {total} MB.", {
-          downloaded: (installation.downloadedBytes / 1_000_000).toFixed(1),
-          total: (installation.totalBytes / 1_000_000).toFixed(1),
-        })
-      )
-    ) : installation?.phase === "extracting" ? (
-      gt("Installing Codex.")
-    ) : installation?.phase === "verifying" ? (
-      gt("Checking Codex.")
-    ) : installed ? (
-      <span className="flex flex-col gap-0.5">
-        <span>
-          {installation?.source === "local"
-            ? gt("Using your installed Codex.")
-            : gt("Managed by T3 Code.")}
-        </span>
-        {installation?.installedVersion ? <span>v{installation.installedVersion}</span> : null}
-      </span>
-    ) : (
-      (installation?.message ?? gt("T3 Code downloads and manages Codex for you."))
-    );
+    installation?.phase === "downloading"
+      ? installation.totalBytes === null
+        ? gt("Downloading {downloaded} MB.", {
+            downloaded: (installation.downloadedBytes / 1_000_000).toFixed(1),
+          })
+        : gt("Downloading {downloaded} of {total} MB.", {
+            downloaded: (installation.downloadedBytes / 1_000_000).toFixed(1),
+            total: (installation.totalBytes / 1_000_000).toFixed(1),
+          })
+      : installation?.phase === "extracting"
+        ? gt("Installing Codex.")
+        : installation?.phase === "verifying"
+          ? gt("Checking Codex.")
+          : installed
+            ? installation?.installedVersion
+              ? installation?.source === "local"
+                ? gt("Using your installed Codex · v{version}.", {
+                    version: installation.installedVersion,
+                  })
+                : gt("Managed by T3 Code · v{version}.", { version: installation.installedVersion })
+              : installation?.source === "local"
+                ? gt("Using your installed Codex.")
+                : gt("Managed by T3 Code.")
+            : (installation?.message ?? gt("T3 Code downloads and manages Codex for you."));
   const accountDescription = finishingSignIn ? (
     gt("Finishing sign-in...")
   ) : installActive ? (
@@ -712,7 +700,7 @@ function ManagedCodexSetup({
   const waitingControl = (
     <Button
       size="sm"
-      variant={remoteWeb ? "default" : "secondary"}
+      variant={remoteWeb ? "default" : "outline"}
       className={presentation === "onboarding" ? "min-w-44" : undefined}
       disabled={
         handoffQuery.data?.phase === "finished"
@@ -742,7 +730,7 @@ function ManagedCodexSetup({
   );
   const callbackCompletion =
     !handoff && auth?.phase === "waiting" && url ? (
-      <div className="flex w-full flex-col gap-3 text-meta leading-relaxed text-muted-foreground">
+      <div className="flex w-full flex-col gap-3 text-xs leading-relaxed text-muted-foreground">
         <p>
           <T>If sign-in doesn't return to T3 Code, paste the URL from the final localhost page.</T>
         </p>
@@ -778,7 +766,7 @@ function ManagedCodexSetup({
             />
           </div>
           <Button
-            variant="secondary"
+            variant="outline"
             type="submit"
             disabled={pending || readOnly || !callbackUrl.trim()}
           >
@@ -802,7 +790,7 @@ function ManagedCodexSetup({
             <summary className="cursor-pointer">
               <T>Other ways to connect</T>
             </summary>
-            <Button className="mt-2" size="sm" variant="secondary" render={<a href={handoffUrl} />}>
+            <Button className="mt-2" size="sm" variant="outline" render={<a href={handoffUrl} />}>
               <T>Use T3 desktop for automatic return</T>
             </Button>
           </details>
@@ -818,7 +806,7 @@ function ManagedCodexSetup({
   const callbackFallback = needsManualCallback ? (
     callbackCompletion
   ) : callbackCompletion ? (
-    <div className="space-y-3 text-meta leading-relaxed text-muted-foreground">
+    <div className="space-y-3 text-xs leading-relaxed text-muted-foreground">
       <CodexSignInDescription
         label={gt("Having trouble signing in?")}
         expanded={callbackHelpOpen}
@@ -909,7 +897,7 @@ function ManagedCodexSetup({
           }
           control={
             authenticated && !busy ? (
-              <span className="inline-flex items-center gap-1.5 text-label text-success-foreground">
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
                 <CheckIcon className="size-3.5" />
                 <T>Ready</T>
               </span>
@@ -979,7 +967,7 @@ function ManagedCodexSetup({
         >
           {needsManualCallback ? callbackFallback : callbackHelpContent}
           {setupError ? (
-            <p role="alert" className="text-meta text-destructive">
+            <p role="alert" className="text-xs text-destructive">
               {setupError}
             </p>
           ) : null}
@@ -991,10 +979,10 @@ function ManagedCodexSetup({
   return (
     <section aria-label={gt("Codex setup")} className="divide-y divide-border/50">
       {accountPicker}
-      {renderRow({
-        title: gt("ChatGPT account"),
-        description: accountDescription,
-        control: (
+      <SettingsRow
+        title={gt("ChatGPT account")}
+        description={accountDescription}
+        control={
           <div className="flex max-w-88 flex-wrap items-center justify-end gap-2">
             {authActive ? (
               <>
@@ -1038,7 +1026,7 @@ function ManagedCodexSetup({
                 {updateAvailable ? (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     disabled={unavailable || busy}
                     onClick={() =>
                       void run(() => startInstall({ environmentId, input: { instanceId } }))
@@ -1049,7 +1037,7 @@ function ManagedCodexSetup({
                 ) : null}
                 <Button
                   size="sm"
-                  variant="secondary"
+                  variant="outline"
                   disabled={unavailable || busy}
                   onClick={() => setAccountPickerOpen(true)}
                 >
@@ -1107,21 +1095,21 @@ function ManagedCodexSetup({
               </>
             )}
           </div>
-        ),
-      })}
+        }
+      />
       {authenticated ? (
         <div className="flex justify-end px-3 py-1 sm:px-4">
           <ChatGptUsageButton />
         </div>
       ) : null}
       {logoutWarning ? (
-        <p role="alert" className="px-3 py-2 text-meta text-muted-foreground sm:px-4">
+        <p role="alert" className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
           {logoutWarning}
         </p>
       ) : null}
       {callbackFallback ? <div className="px-3 py-3 sm:px-4">{callbackFallback}</div> : null}
       {error || authQuery.error || installQuery.error || installation?.phase === "failed" ? (
-        <p role="alert" className="px-3 py-2 text-meta text-destructive sm:px-4">
+        <p role="alert" className="px-3 py-2 text-xs text-destructive sm:px-4">
           {error ??
             (installation?.phase === "failed"
               ? installation.message
@@ -1158,7 +1146,6 @@ export function CodexManagedRuntimeFields({
         control={
           <div className="w-full sm:w-80">
             <Input
-              size="settings"
               aria-label={gt("Codex binary path")}
               value={executablePath}
               title={executablePath}
@@ -1176,7 +1163,6 @@ export function CodexManagedRuntimeFields({
         control={
           <div className="w-full sm:w-80">
             <Input
-              size="settings"
               aria-label={gt("Codex home path")}
               value={provider?.runtimePaths?.homePath ?? ""}
               title={provider?.runtimePaths?.homePath}
@@ -1196,7 +1182,6 @@ export function CodexManagedRuntimeFields({
         control={
           <div className="w-full sm:w-80">
             <Input
-              size="settings"
               aria-label={gt("Codex shadow home path")}
               value={provider?.runtimePaths?.shadowHomePath ?? ""}
               title={provider?.runtimePaths?.shadowHomePath ?? undefined}
@@ -1229,8 +1214,9 @@ function CodexSignInDescription({
   const label = labelOverride ?? gt("Complete sign-in in your browser.");
   if (!onToggle) return <div className="leading-relaxed">{label}</div>;
   return (
-    <InlineButton
+    <button
       type="button"
+      className="inline-flex items-center gap-1.5 rounded-sm text-left leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       aria-label={gt("Having trouble signing in?")}
       aria-expanded={expanded}
       aria-controls={controls}
@@ -1238,7 +1224,7 @@ function CodexSignInDescription({
     >
       {label}
       <ChevronRightIcon aria-hidden className={`size-3 shrink-0 ${expanded ? "rotate-90" : ""}`} />
-    </InlineButton>
+    </button>
   );
 }
 
@@ -1257,14 +1243,12 @@ function CodexWelcomeCard({
 }) {
   const footer = Children.toArray(children);
   return (
-    <div className="rounded-card surface-card px-4 py-4">
+    <div className="rounded-lg border border-border bg-background px-4 py-4">
       <div className="flex flex-wrap items-center gap-3">
         <OpenAI className="size-5 shrink-0 fill-foreground" />
         <div className="min-w-0 flex-1">
-          <h3 className="text-label">{title}</h3>
-          <div className="mt-0.5 text-meta leading-relaxed text-muted-foreground">
-            {description}
-          </div>
+          <h3 className="text-sm font-medium">{title}</h3>
+          <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</div>
         </div>
         {control || secondaryControl ? (
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 has-[button]:w-full has-[button]:flex-col-reverse has-[button]:items-end sm:has-[button]:w-auto sm:has-[button]:flex-row sm:has-[button]:items-center">

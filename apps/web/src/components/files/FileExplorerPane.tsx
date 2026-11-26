@@ -16,9 +16,7 @@ const FILE_CONTENT_MIN_WIDTH = 256;
  */
 export function FileExplorerPane({
   resizable,
-  visible = true,
   children,
-  className,
   storageKey = "t3code.fileExplorerWidth",
   defaultWidth = 256,
   defaultWidthFraction,
@@ -26,9 +24,7 @@ export function FileExplorerPane({
   resizeLabel,
 }: {
   resizable: boolean;
-  visible?: boolean;
   children: ReactNode;
-  className?: string;
   storageKey?: string;
   defaultWidth?: number;
   defaultWidthFraction?: number;
@@ -69,10 +65,8 @@ export function FileExplorerPane({
       }}
       aria-label={gt("File explorer")}
       className={cn(
-        "relative min-h-0 min-w-0 shrink-0 bg-background",
-        visible ? "flex" : "hidden",
-        resizable ? "border-l border-border" : "flex-1",
-        className,
+        "relative flex min-h-0 min-w-0 shrink-0 bg-background",
+        resizable ? "border-l border-border/60" : "flex-1",
       )}
       style={
         resizable

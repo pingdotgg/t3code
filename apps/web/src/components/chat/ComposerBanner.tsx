@@ -9,21 +9,37 @@ import { ScrollArea } from "../ui/scroll-area";
 
 export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "warning";
 
+const surfaceColors = cn(
+  "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
+  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))]",
+  "[html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)]",
+);
+
+const neutralOutline = cn(
+  "[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--contrast-foreground)_8%,transparent))]",
+  "dark:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--color-white)_5%,transparent))]",
+  "[html[data-theme-id]_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,var(--app-theme-toolbar-border))]",
+  "dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--app-theme-input)_30%,var(--background)))]",
+  "dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28]",
+);
+
+const errorColors =
+  "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]";
+
 const variantColors: Record<ComposerBannerVariant, string> = {
-  default: "[--surface-tint:var(--muted-foreground)]",
-  error: "[--surface-tint:var(--error-foreground)]",
-  info: "[--surface-tint:var(--update-foreground)]",
-  success: "[--surface-tint:var(--success-foreground)]",
-  warning: "[--surface-tint:var(--warning-foreground)]",
+  default: neutralOutline,
+  error: errorColors,
+  info: neutralOutline,
+  success: neutralOutline,
+  warning:
+    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--warning)_28%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--warning)_8%,transparent)]",
 };
 
 /**
- * A status line section inside the composer tray. Lines paint nothing of their
- * own: the tray is their surface. Floating layers (the command and stash menus)
- * pick an opaque surface instead.
+ * An attached surface tucks its bottom under the card below it. A detached one is a whole card
+ * of its own, for a notice that sits apart from the composer.
  */
 function Surface({
-  surface = "tint",
   variant = "default",
   detached = false,
   className,
@@ -31,25 +47,25 @@ function Surface({
 }: ComponentProps<"div"> & {
   variant?: ComposerBannerVariant;
   detached?: boolean;
-  surface?: "tint" | "popover" | "panel" | "card";
 }) {
-  const resolvedSurface = detached && surface === "tint" ? "card" : surface;
   return (
     <div
       data-composer-banner-surface={detached ? "detached" : "attached"}
       data-variant={variant}
       className={cn(
-        "relative isolate border-0 shadow-none",
+        surfaceColors,
+        "relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent]",
         variantColors[variant],
-        resolvedSurface !== "tint" &&
-          "rounded-card before:pointer-events-none before:absolute! before:inset-0 before:-z-1 before:rounded-card",
-        resolvedSurface === "popover"
-          ? "bg-transparent before:surface-popover"
-          : resolvedSurface === "panel"
-            ? "before:surface-panel"
-            : resolvedSurface === "card"
-              ? "before:surface-card"
-              : null,
+        detached
+          ? "[--chat-composer-attachment-overlap:0px] before:rounded-2xl"
+          : // Bleed the mask 1px past the seam to cover Chromium's fractional-pixel backdrop loss.
+            "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4",
+        "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
+        "before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
+        "before:shadow-composer dark:before:shadow-composer-dark",
+        !detached &&
+          "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above",
+        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
         className,
       )}
       {...props}
@@ -57,24 +73,27 @@ function Surface({
   );
 }
 
-/** One section of the tray's status region. */
 function Attachment({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-banner-attachment"
-      className={cn("w-full min-w-0", className)}
+      className={cn(
+        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
+        // Only the banner touching the composer gets the dark seam shade; stacked ones would band.
+        "[&:has(+[data-slot=composer-banner-attachment])]:[--chat-composer-attached-seam:transparent]",
+        "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0 [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:[--composer-banner-corner-top:var(--control-radius)]",
+        className,
+      )}
       {...props}
     />
   );
 }
 
-/** The status region above the composer. Empty regions take no space. */
 function Dock({ className, ...props }: ComponentProps<"div">) {
   return (
-    <div
-      data-slot="composer-status-region"
+    <Attachment
       className={cn(
-        "surface-composer-banner flex w-full min-w-0 flex-col not-has-data-[composer-banner-surface=attached]:hidden",
+        "flex items-end gap-1 not-has-data-[composer-banner-surface=attached]:hidden",
         className,
       )}
       {...props}
@@ -83,36 +102,48 @@ function Dock({ className, ...props }: ComponentProps<"div">) {
 }
 
 function Column({ className, ...props }: ComponentProps<"div">) {
-  return <div className={cn("flex min-w-0 flex-1 flex-col empty:hidden", className)} {...props} />;
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-1 flex-col empty:hidden",
+        "[&>[data-slot=composer-banner-attachment]]:w-full [&>[data-slot=composer-banner-attachment]:last-child]:mb-0",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 function Root({
   className,
   density = "default",
-  textSize = "compact",
   variant = "default",
   width = "fill",
-  surface = "tint",
   ...props
 }: ComponentProps<typeof Surface> & {
   density?: "default" | "comfortable" | "spacious";
-  textSize?: "compact" | "body";
   width?: "fill" | "content";
-  surface?: "tint" | "popover" | "panel" | "card";
 }) {
-  // The icon starts on the composer's text line and actions end where the tray row's text does.
   return (
     <Surface
       className={cn(
-        "min-w-0 ps-3.5 pe-4.25 py-(--composer-banner-padding-block) [--composer-banner-icon-column:--spacing(3)] [--composer-banner-padding-block:--spacing(2.5)]",
-        textSize === "body" ? "text-body font-medium" : "text-xs/4 font-medium",
-        density === "comfortable" && "[--composer-banner-padding-block:--spacing(2.5)]",
-        density === "spacious" && "[--composer-banner-padding-block:--spacing(3)]",
+        "min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-corner-top:var(--radius-xl)] [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
+        density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
+        density === "spacious" && "px-3 [--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
+        // A corner button nests inside the banner's radius only when the padding
+        // is tight; spacious padding already leaves the default radius concentric.
+        // Joined cards have a square top, and only detached cards round the bottom.
+        density !== "spacious" && [
+          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-(--composer-banner-corner-top)",
+          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-(--composer-banner-corner-top)",
+          "[&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-(--composer-banner-corner-top)",
+          "data-[composer-banner-surface=detached]:[&>[data-composer-banner-row]:only-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-ee-xl",
+          "data-[composer-banner-surface=detached]:[&>[data-composer-banner-row]:only-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-ee-xl",
+        ],
         className,
       )}
       data-slot="composer-banner"
-      surface={surface}
       data-composer-banner-width={width}
       variant={variant}
       {...props}
@@ -130,7 +161,7 @@ function Row({
 }) {
   const rowProps = {
     className: cn(
-      "group/banner-row grid min-h-4 w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-2 text-start",
+      "group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start",
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
       "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-xl [&:is(button)]:hover:bg-foreground/5 [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
       layout === "wrap-actions" &&
@@ -154,8 +185,8 @@ function Icon({ className, ...props }: ComponentProps<"span">) {
       aria-hidden
       data-slot="composer-banner-icon"
       className={cn(
-        "col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-(--surface-tint) [&>svg]:size-3",
-        "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning-foreground group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-[13px]",
+        "col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3",
+        "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4",
         className,
       )}
       {...props}
@@ -168,10 +199,10 @@ function Content({ className, ...props }: ComponentProps<"span">) {
     <span
       data-slot="composer-banner-content"
       className={cn(
-        "col-start-2 row-start-1 flex min-w-0 items-center gap-2 *:data-[slot=composer-banner-separator]:mx-0",
+        "col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0",
         "@max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4",
-        // Without an icon before it, the content takes the icon's column too.
-        "[&:not([data-slot=composer-banner-icon]~*)]:col-[1/3]",
+        "group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5",
+        "group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5",
         className,
       )}
       {...props}
@@ -180,7 +211,15 @@ function Content({ className, ...props }: ComponentProps<"span">) {
 }
 
 function Separator() {
-  return null;
+  return (
+    <span
+      aria-hidden
+      data-slot="composer-banner-separator"
+      className="mx-1 inline-block flex-none text-muted-foreground/40"
+    >
+      ·
+    </span>
+  );
 }
 
 function Actions({ className, ...props }: ComponentProps<"span">) {
@@ -188,8 +227,8 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
     <span
       data-slot="composer-banner-actions"
       className={cn(
-        "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1.5",
-        "group-data-[composer-banner-layout=approval]/banner-row:self-center @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2",
+        "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1",
+        "group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2",
         "group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto",
         className,
       )}
@@ -203,7 +242,7 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
     defaultTagName: "div",
     render,
     props: mergeProps<"div">(
-      { className: cn("grid gap-px pt-1.5 [&_[data-composer-banner-row]]:min-h-5.5", className) },
+      { className: cn("grid gap-px [&_[data-composer-banner-row]]:min-h-5", className) },
       props,
     ),
   });
@@ -227,7 +266,7 @@ function Count({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
       className={cn(
-        "inline-flex flex-none justify-center text-meta text-muted-foreground tabular-nums",
+        "inline-flex min-w-(--composer-banner-icon-column,1em) flex-none justify-center font-medium text-muted-foreground tabular-nums",
         className,
       )}
       {...props}
@@ -236,7 +275,7 @@ function Count({ className, ...props }: ComponentProps<"span">) {
 }
 
 function Body({ className, ...props }: ComponentProps<"div">) {
-  return <div className={cn("min-w-0 ps-5", className)} {...props} />;
+  return <div className={cn("min-w-0 ps-8 sm:ps-7", className)} {...props} />;
 }
 
 function Dot({ className, ...props }: ComponentProps<"span">) {
@@ -245,28 +284,23 @@ function Dot({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-// Decorative: the row itself is the control. Chevron up opens the line upward.
 function ToggleIcon({ expanded }: { expanded: boolean }) {
   return (
-    <ChevronDownIcon
-      aria-hidden
-      className={cn(
-        "size-3 shrink-0 text-muted-foreground last:-me-[2.5px]",
-        !expanded && "rotate-180",
-      )}
-    />
+    <Button
+      render={<span aria-hidden />}
+      size="icon-xs"
+      variant="ghost"
+      tabIndex={-1}
+      className="pointer-events-none"
+    >
+      <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
+    </Button>
   );
 }
 
 function Dismiss({ className, children, ...props }: ComponentProps<typeof Button>) {
   return (
-    // Always last in its row: the negative margin puts the x's ink, not its padding, on the row's edge.
-    <Button
-      size="icon-xs"
-      variant="ghost-muted"
-      className={cn("-me-2.5 sm:-me-2", className)}
-      {...props}
-    >
+    <Button size="icon-xs" variant="ghost" className={className} {...props}>
       {children ?? <XIcon className="size-3.5" />}
     </Button>
   );

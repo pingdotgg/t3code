@@ -712,8 +712,7 @@ describe("V2 session presentation", () => {
         {
           kind: "work",
           entry: {
-            label: stepStatus === "completed" ? "Tasks 1/1" : "Tasks 0/1",
-            ...(stepStatus === "completed" ? {} : { detail: "Verify the change" }),
+            label: stepStatus === "completed" ? "Tasks 1/1" : "Tasks 0/1 · Verify the change",
           },
         },
       ]);
@@ -1297,23 +1296,20 @@ describe("native provider presentation in the v2 timeline", () => {
       optimisticMessages: [],
     });
     expect(entries.map((entry) => entry.kind)).toEqual(["message"]);
-    const rows = (turnWorkFold: boolean) =>
-      deriveMessagesTimelineRows({
-        timelineEntries: entries,
-        latestRun: {
-          runId: base.runId,
-          status: "completed",
-          startedAt: DateTime.formatIso(timestamp),
-          completedAt: DateTime.formatIso(timestamp),
-        },
-        isWorking: false,
-        activeTurnStartedAt: null,
-        turnDiffSummaries: [],
-        supportsConversationRollback: false,
-        turnWorkFold,
-      }).map((row) => row.kind);
-    expect(rows(true)).toEqual(["turn-fold", "message"]);
-    expect(rows(false)).toEqual(["message"]);
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      latestRun: {
+        runId: base.runId,
+        status: "completed",
+        startedAt: DateTime.formatIso(timestamp),
+        completedAt: DateTime.formatIso(timestamp),
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.map((row) => row.kind)).toEqual(["message"]);
   });
 
   it.each([

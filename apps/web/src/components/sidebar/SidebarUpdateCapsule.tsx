@@ -8,7 +8,6 @@ import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
 import { useServerUpdate } from "../ServerUpdateAction";
 import { Button } from "../ui/button";
-import { SidebarMenuButton } from "../ui/sidebar";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   describeUpdateCapsule,
@@ -137,18 +136,18 @@ export function SidebarUpdateCapsule({
       >
         <PopoverTrigger
           render={
-            <SidebarMenuButton
+            <button
               type="button"
               aria-label={
                 view.slow ? `${view.label} ${view.slow.status} ${view.slow.elapsed}` : view.label
               }
-              className="absolute inset-0 h-full"
+              className="absolute inset-0 cursor-pointer rounded-full outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset"
             />
           }
         />
         <span
           className={cn(
-            "pointer-events-none relative hidden min-w-0 flex-1 truncate pl-3 text-caption transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
+            "pointer-events-none relative hidden min-w-0 flex-1 truncate pl-3 text-xs transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
             expandedControlClassName,
           )}
         >
@@ -158,16 +157,16 @@ export function SidebarUpdateCapsule({
           ) : null}
         </span>
         {view.action !== null ? (
-          <span
+          <button
+            type="button"
             className={cn(
-              "relative hidden shrink-0 transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
+              "relative hidden shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
               expandedControlClassName,
             )}
+            onClick={runAction}
           >
-            <Button size="xs" variant="link" onClick={runAction}>
-              {actionLabel}
-            </Button>
-          </span>
+            {actionLabel}
+          </button>
         ) : null}
         <span
           className={cn(
@@ -177,14 +176,14 @@ export function SidebarUpdateCapsule({
                 ? "@min-[5rem]/sidebar-update:hidden"
                 : "@min-[12rem]/sidebar-update:hidden"),
             restartSeconds !== null &&
-              "rounded-full text-caption tabular-nums ring-1 ring-current/22 ring-inset",
+              "rounded-full text-xs font-medium tabular-nums ring-1 ring-current/22 ring-inset",
           )}
         >
           {restartSeconds !== null ? m(msg("{seconds}s", { seconds: restartSeconds })) : icon}
         </span>
       </div>
       <PopoverPopup side="top" align="end" padding="compact" width="sm">
-        <div className="flex flex-col gap-1 text-caption">
+        <div className="flex flex-col gap-1 text-xs">
           {run.localVersion !== null ? (
             <div className="flex items-center justify-between gap-3">
               <span>
@@ -199,7 +198,7 @@ export function SidebarUpdateCapsule({
               <span>
                 <T>This app</T>
               </span>
-              <Button size="xs" variant="secondary" onClick={() => void onRestart()}>
+              <Button size="xs" variant="outline" onClick={() => void onRestart()}>
                 <T>Restart to update</T>
               </Button>
             </div>
@@ -227,7 +226,7 @@ export function SidebarUpdateCapsule({
           ))}
           {view.action !== null ? (
             <div className="mt-1 flex justify-end gap-1">
-              <Button size="xs" variant="secondary" onClick={runAction}>
+              <Button size="xs" variant="outline" onClick={runAction}>
                 {actionLabel}
               </Button>
               {settled && failed && view.action !== "dismiss" ? (

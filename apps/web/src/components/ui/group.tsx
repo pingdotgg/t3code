@@ -9,7 +9,6 @@ const groupVariants = cva(
   {
     defaultVariants: {
       orientation: "horizontal",
-      split: false,
     },
     variants: {
       orientation: {
@@ -18,11 +17,6 @@ const groupVariants = cva(
         vertical:
           "*:[[data-slot]~[data-slot]:not([data-slot=separator])]:before:-top-[0.5px] *:data-slot:not-data-[slot=separator]:has-[~[data-slot]]:before:-bottom-[0.5px] flex-col *:pointer-coarse:after:min-h-auto *:data-slot:has-[~[data-slot]]:rounded-b-none *:data-slot:has-[~[data-slot]]:border-b-0 *:data-slot:not-data-[slot=separator]:has-[~[data-slot]]:before:hidden *:data-slot:has-[~[data-slot]]:before:rounded-b-none dark:*:last:before:hidden dark:*:first:before:block *:[[data-slot]~[data-slot]]:rounded-t-none *:[[data-slot]~[data-slot]]:border-t-0 *:[[data-slot]~[data-slot]]:before:rounded-t-none",
       },
-      // Two controls side by side, a gap apart, with a small radius where they face.
-      split: {
-        true: "gap-1 *:data-slot:has-[~[data-slot]]:rounded-e-[2px] *:data-slot:has-[~[data-slot]]:border-e *:data-slot:has-[~[data-slot]]:before:rounded-e-[2px] *:[[data-slot]~[data-slot]]:rounded-s-[2px] *:[[data-slot]~[data-slot]]:border-s *:[[data-slot]~[data-slot]]:before:rounded-s-[2px]",
-        false: "",
-      },
     },
   },
 );
@@ -30,18 +24,16 @@ const groupVariants = cva(
 function Group({
   className,
   orientation,
-  split,
   children,
   ...props
 }: {
   className?: string;
   orientation?: VariantProps<typeof groupVariants>["orientation"];
-  split?: boolean;
   children: React.ReactNode;
 } & React.ComponentProps<"div">) {
   return (
     <div
-      className={cn(groupVariants({ orientation, split }), className)}
+      className={cn(groupVariants({ orientation }), className)}
       data-orientation={orientation}
       data-slot="group"
       role="group"

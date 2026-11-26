@@ -36,7 +36,6 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   DEFAULT_KEYBINDINGS,
-  RETIRED_DEFAULT_KEYBINDINGS,
   mergeWithDefaultKeybindings,
   compileResolvedKeybindingRule,
   compileResolvedKeybindingsConfig,
@@ -501,18 +500,7 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const persistedConfig = runtimeConfig.keybindings;
-      // A retired default left in the file would shadow its replacement.
-      const customConfig = persistedConfig.filter(
-        (entry) =>
-          !RETIRED_DEFAULT_KEYBINDINGS.some(
-            (retired) =>
-              entry.command === retired.command &&
-              entry.key === retired.key &&
-              entry.when === retired.when,
-          ),
-      );
-      const retiredRemoved = customConfig.length !== persistedConfig.length;
+      const customConfig = runtimeConfig.keybindings;
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
@@ -586,8 +574,7 @@ const make = Effect.gen(function* () {
           commands: skippedDefaults.map((rule) => rule.command),
         });
       }
-      // Dropping a retired default rewrites the file even with nothing to append.
-      if (defaultsToAppend.length > 0 || retiredRemoved) {
+      if (defaultsToAppend.length > 0) {
         yield* writeConfigAtomically([...defaultsToAppend, ...customConfig]);
       }
       const settledLateDefaults = pendingLateDefaults.filter(

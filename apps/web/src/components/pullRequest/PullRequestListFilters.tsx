@@ -6,30 +6,23 @@ import type {
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
-  ScopedProjectRef,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
-  CircleDotIcon,
-  FolderIcon,
-  ServerIcon,
   CircleSlashIcon,
   CircleXIcon,
   EyeOffIcon,
   FolderGit2Icon,
   LayersIcon,
-  ChevronDownIcon,
   ListFilterIcon,
   SearchIcon,
-  XIcon,
   TagIcon,
   UserRoundIcon,
-  UsersRoundIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { type ElementType, useRef, useState } from "react";
+import { type ElementType, useState } from "react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { useDebouncedValue } from "~/state/queries";
@@ -54,19 +47,19 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
+  selectedPullRequestLabels,
   pullRequestLabelChoices,
   pullRequestLabelColor,
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
 } from "./pullRequestList.logic";
-import { m, type MessageResolver } from "~/i18n/messages";
 import { resolveFilterOptions } from "./pullRequestListOptions";
 import { PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface PullRequestFilterOption<Value extends string> {
   readonly value: Value;
@@ -118,17 +111,14 @@ export function PullRequestSearchInput({
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
 }) {
-  const gt = useGT();
   const [draft, setDraft] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   return (
-    <InputGroup className="min-w-0 flex-1">
+    <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
       <InputGroupAddon>
         {busy ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
       </InputGroupAddon>
       {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
-        ref={inputRef}
         type="text"
         role="searchbox"
         value={draft ?? value}
@@ -156,28 +146,12 @@ export function PullRequestSearchInput({
         placeholder={placeholder}
         aria-label={label}
       />
-      {(draft ?? value).length > 0 ? (
-        <InputGroupAddon align="inline-end">
-          <Button
-            size="icon-micro"
-            variant="ghost"
-            aria-label={gt("Clear pull request search")}
-            onClick={() => {
-              inputRef.current?.focus();
-              setDraft("");
-              onChange("");
-              onSubmit("");
-            }}
-          >
-            <XIcon aria-hidden />
-          </Button>
-        </InputGroupAddon>
-      ) : null}
     </InputGroup>
   );
 }
 
 const ALL_PROJECTS_VALUE = "all";
+const ALL_HOSTS_VALUE = "";
 const ALL_SERVERS_VALUE = "";
 const UNFILTERED_VALUE = "all";
 /** Project ids are unique only within an environment. */
@@ -254,19 +228,16 @@ function PullRequestFilterRadioGroup<Value extends string>({
               <PullRequestFilterOptionIcon option={option} />
               <span className="min-w-0 flex-1 truncate">{option.label}</span>
               {option.unavailable ? (
-                <span className="shrink-0">{gt("Unavailable", { $context: "filter option" })}</span>
+                <span className="shrink-0">
+                  · {gt("Unavailable", { $context: "filter option" })}
+                </span>
               ) : null}
               <MenuRadioItemIndicator />
             </span>
           </MenuRadioItem>
         );
         if (!option.unavailable) return item;
-        return (
-          <Tooltip key={option.value}>
-            <TooltipTrigger render={item} />
-            <TooltipPopup side="top">{option.unavailable}</TooltipPopup>
-          </Tooltip>
-        );
+        return <SharedTooltipTrigger key={option.value} render={item} label={option.unavailable} />;
       })}
     </MenuRadioGroup>
   );
@@ -274,14 +245,11 @@ function PullRequestFilterRadioGroup<Value extends string>({
 
 export function PullRequestFilterRadioSubmenu<Value extends string>({
   label,
-  icon: Icon,
   value,
   options,
   onChange,
 }: {
   label: string;
-  /** The category's own glyph, so the menu reads the same whatever each filter is set to. */
-  icon: ElementType<{ className?: string }>;
   value: Value;
   options: ReadonlyArray<PullRequestFilterOption<Value>>;
   onChange: (value: Value) => void;
@@ -291,9 +259,9 @@ export function PullRequestFilterRadioSubmenu<Value extends string>({
   return (
     <MenuSub>
       <MenuSubTrigger>
-        <Icon aria-hidden className="size-3.5" />
+        <PullRequestFilterOptionIcon option={current} />
         <span className="flex-1">{label}</span>
-        <span className="min-w-0 max-w-32 truncate text-xs font-normal text-muted-foreground">
+        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
           {current.label}
         </span>
       </MenuSubTrigger>
@@ -369,7 +337,7 @@ function PullRequestAuthorChoices({
       <MenuRadioGroup value={selected?.actor.login ?? value ?? ""} onValueChange={select}>
         <MenuRadioItem value="">
           <span className="flex min-w-0 items-center gap-2">
-            <UsersRoundIcon aria-hidden className="size-3.5" />
+            <LayersIcon aria-hidden className="size-3.5" />
             <T>Anyone</T>
           </span>
         </MenuRadioItem>
@@ -379,8 +347,10 @@ function PullRequestAuthorChoices({
               <PullRequestActorAvatar actor={option.actor} />
               <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
               {option.mergedCount > 0 ? (
-                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
-                  {option.mergedCount} {option.mergedCount === 1 ? "merge" : "merges"} loaded
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {gt("{count, plural, one {{count} merge loaded} other {{count} merges loaded}}", {
+                    count: option.mergedCount,
+                  })}
                 </span>
               ) : null}
             </span>
@@ -417,11 +387,11 @@ function PullRequestAuthorFilter({
         <span className="flex-1">
           <T>Author</T>
         </span>
-        <span className="min-w-0 max-w-32 truncate text-xs font-normal text-muted-foreground">
+        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
           {value ?? gt("Anyone")}
         </span>
       </MenuSubTrigger>
-      <MenuSubPopup className="w-65">
+      <MenuSubPopup>
         <PullRequestAuthorChoices
           value={value}
           options={options}
@@ -450,9 +420,9 @@ function PullRequestLabelChoices({
   const selected = new Set(value.map((name) => name.toLowerCase()));
   const choices = pullRequestLabelChoices(options, hosted.labels, query);
   const visible = [
-    ...value
-      .filter((name) => !choices.some((option) => option.name.toLowerCase() === name.toLowerCase()))
-      .map((name) => ({ name, color: null, count: 0 })),
+    ...selectedPullRequestLabels(options, hosted.labels, value).filter(
+      (label) => !choices.some((option) => option.name.toLowerCase() === label.name.toLowerCase()),
+    ),
     ...choices,
   ];
   return (
@@ -493,7 +463,7 @@ function PullRequestLabelChoices({
               />
               <span className="min-w-0 flex-1 truncate">{option.name}</span>
               {option.count > 0 ? (
-                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                   {option.count}
                 </span>
               ) : null}
@@ -524,7 +494,7 @@ function PullRequestLabelFilter({
         <span className="flex-1">
           <T>Labels</T>
         </span>
-        <span className="text-xs font-normal text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {value.length === 0
             ? gt("Any", { $context: "no label filter" })
             : gt("{count, plural, one {{count} selected} other {{count} selected}}", {
@@ -545,10 +515,10 @@ function PullRequestLabelFilter({
 }
 
 export function PullRequestFiltersMenu({
+  onOpenChange,
   state,
   stateOptions,
   onState,
-  onOpenChange,
   involvement,
   involvementOptions,
   onInvolvement,
@@ -557,6 +527,9 @@ export function PullRequestFiltersMenu({
   authorOptions = [],
   labelOptions = [],
   optionScope,
+  host,
+  hostOptions,
+  onHost,
   server,
   serverOptions,
   onServer,
@@ -566,10 +539,10 @@ export function PullRequestFiltersMenu({
   unavailable,
   onProject,
 }: {
+  onOpenChange?: (open: boolean) => void;
   state: PullRequestListState;
   stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
   onState: (state: PullRequestListState) => void;
-  onOpenChange?: (open: boolean) => void;
   involvement: PullRequestInvolvement;
   involvementOptions: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
   onInvolvement: (involvement: PullRequestInvolvement) => void;
@@ -578,15 +551,13 @@ export function PullRequestFiltersMenu({
   authorOptions?: ReadonlyArray<PullRequestAuthorFacet>;
   labelOptions?: ReadonlyArray<PullRequestLabelFacet>;
   optionScope: ReadonlyArray<PullRequestFilterOptionScope>;
+  host: string | undefined;
+  hostOptions: ReadonlyArray<PullRequestFilterOption<string>>;
+  onHost: (host: string | undefined) => void;
   server: EnvironmentId | undefined;
   serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onServer: (server: EnvironmentId | undefined) => void;
-  projects: ReadonlyArray<
-    ProjectFaviconProject & {
-      readonly id: ProjectId;
-      readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
-    }
-  >;
+  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
   projectId: ProjectId | undefined;
   projectEnvironmentId: EnvironmentId | undefined;
   unavailable: ReadonlyMap<string, string>;
@@ -598,6 +569,7 @@ export function PullRequestFiltersMenu({
   const filterCount = [
     state !== "open",
     involvement !== "all",
+    host,
     server,
     projectId,
     filters.draft,
@@ -620,64 +592,46 @@ export function PullRequestFiltersMenu({
     projectId === undefined || projectEnvironmentId === undefined
       ? ALL_PROJECTS_VALUE
       : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId });
-  const unavailableReason = (project: (typeof projects)[number]) =>
-    project.memberProjectRefs.every((ref) =>
-      unavailable.has(
-        pullRequestProjectKey({ id: ref.projectId, environmentId: ref.environmentId }),
-      ),
-    )
-      ? unavailable.get(pullRequestProjectKey(project))
-      : undefined;
   const projectOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
     { value: ALL_PROJECTS_VALUE, label: gt("All projects"), Icon: LayersIcon },
     ...projects
       .toSorted(
         (left, right) =>
-          Number(unavailableReason(left) !== undefined) -
-          Number(unavailableReason(right) !== undefined),
+          Number(unavailable.has(pullRequestProjectKey(left))) -
+          Number(unavailable.has(pullRequestProjectKey(right))),
       )
       .map((project) => ({
         value: pullRequestProjectKey(project),
         label: project.title,
         Icon: FolderGit2Icon,
         project,
-        ...(unavailableReason(project) !== undefined
-          ? { unavailable: unavailableReason(project) }
+        ...(unavailable.has(pullRequestProjectKey(project))
+          ? { unavailable: unavailable.get(pullRequestProjectKey(project)) }
           : {}),
       })),
   ];
   return (
     <Menu onOpenChange={onOpenChange}>
-      <MenuTrigger
-        aria-label={
-          filterCount > 0
-            ? gt("{count, plural, one {Filters, {count} active} other {Filters, {count} active}}", {
-                count: filterCount,
-              })
-            : gt("Filters")
-        }
-        render={<Button variant="secondary" />}
-      >
-        <ListFilterIcon aria-hidden className="size-4" />
-        <T>Filters</T>
+      <MenuTrigger render={<Button variant="outline" />}>
+        <ListFilterIcon className="size-4" />
+        <span>
+          <T>Filters</T>
+        </span>
         {filterCount > 0 ? (
-          <span className="rounded-full surface-selected-soft px-1.5 text-xs text-muted-foreground tabular-nums">
+          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}
-        <ChevronDownIcon aria-hidden className="size-3 text-dim-foreground" />
       </MenuTrigger>
-      <MenuPopup align="end" side="bottom" className="w-62">
+      <MenuPopup align="end" side="bottom">
         <PullRequestFilterRadioSubmenu
           label={gt("State", { $context: "pull request filter" })}
-          icon={PullRequestGlyph.pullRequest}
           value={state}
           options={stateOptions}
           onChange={onState}
         />
         <PullRequestFilterRadioSubmenu
           label={gt("Involvement")}
-          icon={UsersRoundIcon}
           value={involvement}
           options={involvementOptions}
           onChange={onInvolvement}
@@ -701,31 +655,38 @@ export function PullRequestFiltersMenu({
         />
         <PullRequestFilterRadioSubmenu
           label={gt("Draft", { $context: "pull request filter" })}
-          icon={PullRequestGlyph.draft}
           value={filters.draft ?? UNFILTERED_VALUE}
           options={resolveFilterOptions(DRAFT_OPTIONS, resolve)}
           onChange={(draft) => updateFilter("draft", draft)}
         />
         <PullRequestFilterRadioSubmenu
           label={gt("Review", { $context: "pull request filter" })}
-          icon={CircleCheckIcon}
           value={filters.review ?? UNFILTERED_VALUE}
           options={resolveFilterOptions(REVIEW_OPTIONS, resolve)}
           onChange={(review) => updateFilter("review", review)}
         />
         <PullRequestFilterRadioSubmenu
           label={gt("Checks", { $context: "pull request filter" })}
-          icon={CircleDotIcon}
           value={filters.checks ?? UNFILTERED_VALUE}
           options={resolveFilterOptions(CHECKS_OPTIONS, resolve)}
           onChange={(checks) => updateFilter("checks", checks)}
         />
+        {hostOptions.length > 2 ? (
+          <>
+            <MenuSeparator />
+            <PullRequestFilterRadioSubmenu
+              label={gt("Host", { $context: "pull request filter" })}
+              value={host ?? ALL_HOSTS_VALUE}
+              options={hostOptions}
+              onChange={(next) => onHost(next === ALL_HOSTS_VALUE ? undefined : next)}
+            />
+          </>
+        ) : null}
         {serverOptions.length > 2 ? (
           <>
             <MenuSeparator />
             <PullRequestFilterRadioSubmenu
               label={gt("Server", { $context: "pull request filter" })}
-              icon={ServerIcon}
               value={server ?? ALL_SERVERS_VALUE}
               options={serverOptions}
               onChange={(next) =>
@@ -737,7 +698,6 @@ export function PullRequestFiltersMenu({
         <MenuSeparator />
         <PullRequestFilterRadioSubmenu
           label={gt("Project", { $context: "pull request filter" })}
-          icon={FolderIcon}
           value={projectValue}
           options={projectOptions}
           onChange={(next) => {
@@ -749,78 +709,4 @@ export function PullRequestFiltersMenu({
       </MenuPopup>
     </Menu>
   );
-}
-
-const REVIEW_CLAUSES = {
-  approved: msg("Review is approved."),
-  "changes-requested": msg("Changes are requested."),
-  "review-required": msg("Review is required."),
-  none: msg("There are no reviews."),
-} as const satisfies Record<NonNullable<PullRequestListFilters["review"]>, string>;
-
-/**
- * The active narrowings, one sentence each, for the empty list: "Author is theo. Checks are
- * failing." Null when nothing narrows the list.
- */
-export function describePullRequestListFilters(
-  {
-    state,
-    involvement,
-    filters,
-    hostLabel,
-    serverLabel,
-    projectLabel,
-  }: {
-    state: PullRequestListState;
-    involvement: PullRequestInvolvement;
-    filters: PullRequestListFilters;
-    hostLabel?: string | undefined;
-    serverLabel?: string | undefined;
-    projectLabel?: string | undefined;
-  },
-  resolve: MessageResolver = m,
-): string | null {
-  const labels = (filters.labels ?? []).flat();
-  const clauses = [
-    state === "open"
-      ? null
-      : state === "all"
-        ? resolve(msg("Any state is shown."))
-        : resolve(
-            msg("{state, select, closed {State is closed.} other {State is merged.}}", {
-              state,
-            }),
-          ),
-    involvement === "authored"
-      ? resolve(msg("Only yours are shown."))
-      : involvement === "reviewing"
-        ? resolve(msg("Review is requested from you."))
-        : null,
-    filters.author ? resolve(msg("Author is {author}.", { author: filters.author })) : null,
-    labels.length === 0
-      ? null
-      : resolve(
-          msg("{count, plural, one {Label is {labels}.} other {Labels are {labels}.}}", {
-            count: labels.length,
-            labels: labels.join(", "),
-          }),
-        ),
-    filters.draft === "only"
-      ? resolve(msg("Only drafts are shown."))
-      : filters.draft === "hide"
-        ? resolve(msg("Drafts are hidden."))
-        : null,
-    filters.review ? resolve(REVIEW_CLAUSES[filters.review]) : null,
-    filters.checks
-      ? resolve(
-          msg("{checks, select, passing {Checks are passing.} other {Checks are failing.}}", {
-            checks: filters.checks,
-          }),
-        )
-      : null,
-    hostLabel ? resolve(msg("Host is {host}.", { host: hostLabel })) : null,
-    serverLabel ? resolve(msg("Server is {server}.", { server: serverLabel })) : null,
-    projectLabel ? resolve(msg("Project is {project}.", { project: projectLabel })) : null,
-  ].filter((clause) => clause !== null);
-  return clauses.length === 0 ? null : clauses.join(" ");
 }

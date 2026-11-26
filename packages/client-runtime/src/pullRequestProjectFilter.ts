@@ -1,79 +1,52 @@
-import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
-
-export interface PullRequestProjectFilterGroup {
-  readonly label: string;
-  readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
-}
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 interface FilterProject {
   readonly id: ProjectId;
   readonly environmentId: EnvironmentId;
+  readonly repositoryIdentity?: { readonly canonicalKey?: string | undefined } | null | undefined;
   readonly title: string;
+  readonly workspaceRoot: string;
+}
+
+function distinguishTitles<Project extends FilterProject>(
+  projects: ReadonlyArray<Project>,
+  suffix: (project: Project) => string,
+) {
+  const counts = new Map<string, number>();
+  for (const project of projects) {
+    counts.set(project.title, (counts.get(project.title) ?? 0) + 1);
+  }
+  return projects.map((project) =>
+    (counts.get(project.title) ?? 0) > 1
+      ? { ...project, title: `${project.title} · ${suffix(project)}` }
+      : project,
+  );
 }
 
 export function pullRequestFilterProjects<Project extends FilterProject>(
   projects: ReadonlyArray<Project>,
-  groups: ReadonlyArray<PullRequestProjectFilterGroup>,
+  environmentLabels: ReadonlyMap<EnvironmentId, string>,
   selectedProject?: Pick<FilterProject, "id" | "environmentId">,
 ) {
-  const keyOf = (environmentId: EnvironmentId, projectId: ProjectId) =>
-    JSON.stringify([environmentId, projectId]);
-  const byRef = new Map(
-    projects.map((project) => [keyOf(project.environmentId, project.id), project]),
-  );
-  return groups.flatMap((group) => {
-    const members = group.memberProjectRefs.flatMap((ref) => {
-      const project = byRef.get(keyOf(ref.environmentId, ref.projectId));
-      return project ? [project] : [];
-    });
-    const representative =
-      members.find(
-        (project) =>
-          project.id === selectedProject?.id &&
-          project.environmentId === selectedProject.environmentId,
-      ) ?? members[0];
-    return representative
-      ? [
-          {
-            ...representative,
-            title: group.label,
-            memberProjectRefs: members.map((project) => ({
-              environmentId: project.environmentId,
-              projectId: project.id,
-            })),
-          },
-        ]
-      : [];
-  });
-}
+  const byRepository = new Map<string, Project>();
+  for (const project of projects) {
+    const repository = project.repositoryIdentity?.canonicalKey?.toLowerCase();
+    const key = JSON.stringify([
+      project.environmentId,
+      repository ? ["repository", repository] : ["project", project.id],
+    ]);
+    const selected =
+      project.id === selectedProject?.id && project.environmentId === selectedProject.environmentId;
+    if (!byRepository.has(key) || selected) byRepository.set(key, project);
+  }
 
-export function pullRequestProjectFilterQueries(
-  projects: ReadonlyArray<
-    Pick<FilterProject, "id" | "environmentId"> & {
-      readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
-    }
-  >,
-  environmentIds: ReadonlyArray<EnvironmentId>,
-  selectedProject?: { readonly id: string; readonly environmentId?: string | undefined },
-): ReadonlyArray<{
-  readonly environmentId: EnvironmentId;
-  readonly projectIds?: ReadonlyArray<ProjectId>;
-}> {
-  if (selectedProject === undefined)
-    return environmentIds.map((environmentId) => ({ environmentId }));
-  const selected = projects.find((project) =>
-    project.memberProjectRefs.some(
-      (ref) =>
-        ref.projectId === selectedProject.id &&
-        (selectedProject.environmentId === undefined ||
-          ref.environmentId === selectedProject.environmentId),
-    ),
+  const byServer = distinguishTitles(
+    [...byRepository.values()],
+    (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
   );
-  return environmentIds.flatMap((environmentId) => {
-    const projectIds =
-      selected?.memberProjectRefs
-        .filter((ref) => ref.environmentId === environmentId)
-        .map((ref) => ref.projectId) ?? [];
-    return projectIds.length > 0 ? [{ environmentId, projectIds }] : [];
-  });
+  const byPath = distinguishTitles(byServer, (project) => project.workspaceRoot);
+  const byEnvironment = distinguishTitles(byPath, (project) => project.environmentId);
+  return distinguishTitles(byEnvironment, (project) => project.id).sort((left, right) =>
+    left.title.localeCompare(right.title),
+  );
 }

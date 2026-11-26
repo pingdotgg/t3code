@@ -2,7 +2,6 @@ import { pipe } from "effect/Function";
 import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
-import { msg } from "gt-react";
 import { useSyncExternalStore } from "react";
 import {
   applyThemePalette,
@@ -13,17 +12,14 @@ import {
   getThemePreferenceMode,
   getThemePreviewAppearance,
   parseThemeHalves,
-  readStoredBlackChrome,
   resolveDesktopTheme,
   resolveThemeAppearance,
   resolveThemeHalf,
   subscribeToThemePreview,
   THEME_PREVIEW_ID,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
-  THEME_BLACK_CHROME_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
   THEME_HALVES_STORAGE_KEY,
-  themeVariantHalves,
   ThemePreference,
   type ThemeAppearance,
   type ThemeHalves,
@@ -38,24 +34,9 @@ type ThemeSnapshot = {
   followSystem: boolean;
   appearanceMode: ThemePreferenceMode;
   themeHalves: ThemeHalves | null;
-  /** The stored preference; it only shows while the light appearance is. */
-  blackChrome: boolean;
 };
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
-
-/**
- * What the appearance pickers offer: the stored mode, plus "black-chrome",
- * which is the light mode with a black window and sidebar.
- */
-export type AppearanceChoice = ThemePreferenceMode | "black-chrome";
-
-export const APPEARANCE_CHOICES: ReadonlyArray<{ choice: AppearanceChoice; label: string }> = [
-  { choice: "system", label: msg("System") },
-  { choice: "light", label: msg("Light") },
-  { choice: "black-chrome", label: msg("Black chrome") },
-  { choice: "dark", label: msg("Dark") },
-];
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
@@ -66,7 +47,6 @@ const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   followSystem: true,
   appearanceMode: "system",
   themeHalves: null,
-  blackChrome: false,
 };
 
 export function readThemeHalves(): ThemeHalves | null {
@@ -147,7 +127,6 @@ let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let snapshotStale = true;
 let lastDesktopTheme: "light" | "dark" | "system" | null = null;
-let lastDesktopBlackChrome: boolean | null = null;
 let lastAppliedTheme: Omit<ThemeSnapshot, "resolvedTheme"> | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
 
@@ -289,18 +268,12 @@ function normalizeThemeColor(value: string | null | undefined): string | null {
   return value?.trim() ?? null;
 }
 
-// The color at the top edge of the page: the full-bleed content pane on narrow
-// layouts, otherwise the window chrome the inset pane sits on.
-function resolveBrowserChromeSurfaceColor(rootStyles: CSSStyleDeclaration): string {
-  const pane = document.querySelector<HTMLElement>("main[data-slot='sidebar-inset']");
-  if (pane) {
-    const paneStyles = getComputedStyle(pane);
-    return paneStyles.marginTop === "0px"
-      ? paneStyles.backgroundColor
-      : rootStyles.getPropertyValue("--app-chrome-background");
-  }
-  const sidebar = document.querySelector<HTMLElement>("[data-slot='sidebar-inner']");
-  return getComputedStyle(sidebar ?? document.body).backgroundColor;
+function resolveBrowserChromeSurface(): HTMLElement {
+  return (
+    document.querySelector<HTMLElement>("main[data-slot='sidebar-inset']") ??
+    document.querySelector<HTMLElement>("[data-slot='sidebar-inner']") ??
+    document.body
+  );
 }
 
 export function syncBrowserChromeTheme() {
@@ -309,7 +282,9 @@ export function syncBrowserChromeTheme() {
   const themeChromeColor = document.documentElement.dataset.themeId
     ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
     : null;
-  const surfaceColor = normalizeThemeColor(resolveBrowserChromeSurfaceColor(rootStyles));
+  const surfaceColor = normalizeThemeColor(
+    getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
+  );
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
   const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
@@ -337,13 +312,11 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
-  const blackChrome = readStoredBlackChrome();
   if (
     lastAppliedTheme?.theme === theme &&
     lastAppliedTheme.systemDark === systemDark &&
     lastAppliedTheme.followSystem === followSystem &&
     lastAppliedTheme.appearanceMode === appearanceMode &&
-    lastAppliedTheme.blackChrome === blackChrome &&
     themeHalvesSignature(lastAppliedTheme.themeHalves) === themeHalvesSignature(themeHalves)
   ) {
     syncDesktopTheme(theme, followSystem, appearanceMode);
@@ -362,14 +335,9 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   );
   applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
   document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
-  // Black chrome is a light-only shell treatment: index.css scopes the dark
-  // tokens to [data-chrome-scope] surfaces under this class.
-  const blackChromeActive = blackChrome && resolvedAppearance === "light";
-  document.documentElement.classList.toggle("black-chrome", blackChromeActive);
-  lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves, blackChrome };
+  lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
-  syncDesktopBlackChrome(blackChromeActive);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     void document.documentElement.offsetHeight;
@@ -423,19 +391,6 @@ function syncDesktopTheme(
   );
 }
 
-function syncDesktopBlackChrome(active: boolean) {
-  if (typeof window === "undefined") return;
-  const bridge = window.desktopBridge;
-  if (typeof bridge?.setBlackChrome !== "function" || lastDesktopBlackChrome === active) return;
-  lastDesktopBlackChrome = active;
-  void bridge.setBlackChrome(active).catch((cause: unknown) => {
-    console.error("Failed to sync the black chrome to the desktop shell.", {
-      ...safeErrorLogAttributes(cause),
-    });
-    if (lastDesktopBlackChrome === active) lastDesktopBlackChrome = null;
-  });
-}
-
 if (typeof document !== "undefined" && typeof window !== "undefined") {
   applyTheme(getStored());
 }
@@ -450,7 +405,6 @@ function getSnapshot(): ThemeSnapshot {
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
-  const blackChrome = readStoredBlackChrome();
 
   const resolvedTheme = resolveThemeAppearance(
     theme,
@@ -466,21 +420,12 @@ function getSnapshot(): ThemeSnapshot {
     lastSnapshot.systemDark === systemDark &&
     lastSnapshot.followSystem === followSystem &&
     lastSnapshot.appearanceMode === appearanceMode &&
-    lastSnapshot.blackChrome === blackChrome &&
     themeHalvesSignature(lastSnapshot.themeHalves) === themeHalvesSignature(themeHalves)
   ) {
     return lastSnapshot;
   }
 
-  lastSnapshot = {
-    theme,
-    resolvedTheme,
-    systemDark,
-    followSystem,
-    appearanceMode,
-    themeHalves,
-    blackChrome,
-  };
+  lastSnapshot = { theme, resolvedTheme, systemDark, followSystem, appearanceMode, themeHalves };
   return lastSnapshot;
 }
 
@@ -504,11 +449,7 @@ function handleStorageChange(e: StorageEvent) {
   } else if (e.key === THEME_FOLLOW_SYSTEM_STORAGE_KEY) {
     applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
-  } else if (
-    e.key === THEME_APPEARANCE_MODE_STORAGE_KEY ||
-    e.key === THEME_HALVES_STORAGE_KEY ||
-    e.key === THEME_BLACK_CHROME_STORAGE_KEY
-  ) {
+  } else if (e.key === THEME_APPEARANCE_MODE_STORAGE_KEY || e.key === THEME_HALVES_STORAGE_KEY) {
     applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
   } else if (e.key === CUSTOM_THEMES_STORAGE_KEY || e.key === null) {
@@ -575,31 +516,19 @@ export function useRenderedAppearance() {
 }
 
 export function setTheme(next: Theme): boolean {
-  return setThemeSelection(next);
-}
-
-function setThemeSelection(next: Theme, halves?: ThemeHalves): boolean {
   if (typeof window === "undefined") return false;
   try {
     // Save the current mode first; inferring it from the new theme can switch dark to light.
     pipe(getStored(), readAppearanceModePreference, writeAppearanceModePreference);
-    // Retain the mix to restore it on a failed preference write.
+    // A whole theme replaces the mix; retain it to restore on a failed preference write.
     const previousHalvesRaw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
-    if (halves && (halves.light !== undefined || halves.dark !== undefined)) {
-      window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, JSON.stringify(halves));
-    } else {
-      window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
-    }
+    window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
     try {
       writeThemePreference(next);
     } catch (cause) {
       if (previousHalvesRaw !== null) {
         try {
           window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, previousHalvesRaw);
-        } catch {}
-      } else {
-        try {
-          window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
         } catch {}
       }
       throw cause;
@@ -624,16 +553,6 @@ function setThemeSelection(next: Theme, halves?: ThemeHalves): boolean {
   applyTheme(next, { suppressTransitions: true });
   emitChange();
   return true;
-}
-
-export function setThemeVariant(
-  variantIds: ReadonlyArray<string | null>,
-  nextVariantId: string | null,
-): boolean {
-  if (typeof window === "undefined") return false;
-  const theme = getStored();
-  const halves = themeVariantHalves(theme, readStoredThemeHalvesRaw(), variantIds, nextVariantId);
-  return halves === null || setThemeSelection(readAppearanceModePreference(theme), halves);
 }
 
 export function setAppearanceMode(nextAppearanceMode: ThemePreferenceMode): boolean {
@@ -720,39 +639,6 @@ export function refreshTheme({ preservePreview = false } = {}): void {
   emitChange();
 }
 
-function setBlackChrome(enabled: boolean): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    if (enabled) window.localStorage.setItem(THEME_BLACK_CHROME_STORAGE_KEY, "true");
-    else window.localStorage.removeItem(THEME_BLACK_CHROME_STORAGE_KEY);
-  } catch (cause) {
-    const error = new ThemeStorageError({
-      operation: "write",
-      storageKey: THEME_BLACK_CHROME_STORAGE_KEY,
-      cause,
-    });
-    console.error(error.message, {
-      operation: error.operation,
-      storageKey: error.storageKey,
-      ...safeErrorLogAttributes(error),
-    });
-    return false;
-  }
-  applyTheme(getStored(), { suppressTransitions: true });
-  emitChange();
-  return true;
-}
-
-// Picking any choice writes both keys, so black chrome never lingers behind
-// a System or Dark selection.
-export function setAppearanceChoice(choice: AppearanceChoice): boolean {
-  const nextBlackChrome = choice === "black-chrome";
-  if (readStoredBlackChrome() !== nextBlackChrome && !setBlackChrome(nextBlackChrome)) {
-    return false;
-  }
-  return setAppearanceMode(choice === "black-chrome" ? "light" : choice);
-}
-
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const { theme, resolvedTheme } = snapshot;
@@ -767,11 +653,6 @@ export function useTheme() {
     return setAppearanceMode(nextMode);
   };
 
-  const appearanceChoice: AppearanceChoice =
-    snapshot.appearanceMode === "light" && snapshot.blackChrome
-      ? "black-chrome"
-      : snapshot.appearanceMode;
-
   return {
     theme,
     setTheme,
@@ -779,12 +660,8 @@ export function useTheme() {
     setFollowSystem,
     setThemeHalf,
     clearThemeHalves,
-    setBlackChrome,
-    setAppearanceChoice,
     refreshTheme,
     followSystem: snapshot.followSystem,
-    blackChrome: snapshot.blackChrome,
-    appearanceChoice,
     appearanceMode: snapshot.appearanceMode,
     resolvedTheme,
     themeHalves: snapshot.themeHalves,

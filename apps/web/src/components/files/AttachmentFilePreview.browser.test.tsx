@@ -289,6 +289,33 @@ describe("bounded binary previews", () => {
     }
   });
 
+  it("shows 0 bytes for empty archive entries and folders", async () => {
+    const zip = new JSZip();
+    zip.file("empty.txt", "");
+    zip.folder("empty-dir");
+    zip.file("pkg/__init__.py", "");
+    zip.file("readme.txt", "hello");
+    const bytes = await zip.generateAsync({ type: "arraybuffer" });
+    const src = URL.createObjectURL(new Blob([bytes]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="sizes.zip" kind="archive" />);
+      const rows = () =>
+        [...screen.container.querySelectorAll("tbody tr")].map((row) =>
+          [...row.querySelectorAll("td")].slice(0, 2).map((cell) => cell.textContent?.trim()),
+        );
+      await vi.waitFor(() => {
+        expect(rows()).toEqual([
+          ["empty-dir", "0 bytes"],
+          ["pkg", "0 bytes"],
+          ["empty.txt", "0 bytes"],
+          ["readme.txt", "1 KB"],
+        ]);
+      }, 10_000);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
   it("uses a PAX size override for the following TAR payload and bounds it", async () => {
     const archive = (size: string) => {
       const header = (name: string, size: number, type: string) => {
@@ -656,7 +683,7 @@ describe("large text preview recovery", () => {
       // A cold worker can take longer than waitFor allows to load and index on CI.
       await indexed[0];
       await vi.waitFor(() => expect(screen.container.textContent).toContain("1,000 lines"));
-      const viewport = screen.container.querySelector<HTMLElement>('div[tabindex="0"]')!;
+      const viewport = screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
       await act(() =>
         viewport.dispatchEvent(
           new WheelEvent("wheel", { deltaY: 250, bubbles: true, cancelable: true }),
@@ -666,7 +693,7 @@ describe("large text preview recovery", () => {
       const scrollTop = viewport.scrollTop;
       state(`${original}#renewed`, "one");
       await screen.rerender(preview("unrelated-command"));
-      expect(screen.container.querySelector('div[tabindex="0"]')).toBe(viewport);
+      expect(screen.container.querySelector('[tabindex="0"]')).toBe(viewport);
       expect(viewport.scrollTop).toBe(scrollTop);
       expect(workers).toHaveLength(1);
       state(`${changed}#updated`, "two");
@@ -1122,6 +1149,25 @@ describe("large text preview recovery", () => {
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it.each([
+    [1024, false],
+    [1025, true],
+  ] as const)(
+    "shows the column truncation banner only when a CSV exceeds 1,024 columns (%i columns)",
+    async (columnCount, truncated) => {
+      const row = Array.from({ length: columnCount }, (_, i) => i).join(",");
+      await using screen = await render(
+        <LargeTextViewer name="wide.csv" text={`${row}\n${row}\n`} delimiter="," />,
+      );
+      const hasBanner = () =>
+        screen.container.textContent?.includes("Showing the first 1,024 columns") ?? false;
+      expect(hasBanner()).toBe(truncated);
+      const status = () => screen.container.querySelector('[role="status"]')?.textContent ?? "";
+      await vi.waitFor(() => expect(status()).toContain("1 row · 1,024 columns"), 10_000);
+      expect(hasBanner()).toBe(truncated);
+    },
+  );
+
   it("reloads a partial page when the indexed row count grows", async () => {
     const load = vi.fn();
     const rows = [["first"]];
@@ -1547,38 +1593,21 @@ it("copies every indexed line rather than the mounted preview rows", async () =>
 });
 
 it.each([
-  ["one.csv", "text/csv", "name\nAda\n", "1 row", "1 column"],
-  ["two.csv", "text/csv", "name,count\nAda,1\nGrace,2\n", "2 rows", "2 columns"],
-  ["one.tsv", "text/tab-separated-values", "name\nAda\n", "1 row", "1 column"],
-  ["one.txt", "text/plain", "a".repeat(1024 * 1024) + "\n", "1 line", ""],
-  ["two.txt", "text/plain", ("a".repeat(512 * 1024) + "\n").repeat(2), "2 lines", ""],
-] as const)(
-  "labels the counts of %s in the status line",
-  async (name, mimeType, text, label, columns) => {
-    const file = new Blob([text], { type: mimeType });
-    await using screen = await render(
-      <AttachmentFilePreview name={name} mimeType={mimeType} sizeBytes={file.size} file={file} />,
-    );
-    // The redesigned status line shows the row or line count; columns and size sit in its tooltip.
-    const tooltip = () => document.querySelector('[data-slot="tooltip-popup"]')?.textContent ?? "";
-    const trigger = () =>
-      screen.container.querySelector<HTMLElement>('[role="status"] [tabindex="0"]');
-    // Keyboard focus opens the tooltip; the trigger can remount while indexing finishes.
-    await userEvent.keyboard("{Shift}");
-    // A cold large-text worker can take longer than waitFor's default to boot on CI.
-    await vi.waitFor(
-      () => {
-        const current = trigger();
-        if (current && document.activeElement !== current) current.focus();
-        expect(tooltip()).toMatch(/ [KM]?B$/);
-      },
-      { timeout: 10_000 },
-    );
-    expect(trigger()?.textContent).toBe(label);
-    expect(tooltip()).toContain(columns);
-    expect(tooltip()).not.toMatch(/\b1 columns\b/);
-  },
-);
+  ["one.csv", "text/csv", "name\nAda\n", "1 row · 1 column ·"],
+  ["two.csv", "text/csv", "name,count\nAda,1\nGrace,2\n", "2 rows · 2 columns ·"],
+  ["one.tsv", "text/tab-separated-values", "name\nAda\n", "1 row · 1 column ·"],
+  ["one.txt", "text/plain", "a".repeat(1024 * 1024) + "\n", "1 line ·"],
+  ["two.txt", "text/plain", ("a".repeat(512 * 1024) + "\n").repeat(2), "2 lines ·"],
+] as const)("labels the counts of %s in the status line", async (name, mimeType, text, label) => {
+  const file = new Blob([text], { type: mimeType });
+  await using screen = await render(
+    <AttachmentFilePreview name={name} mimeType={mimeType} sizeBytes={file.size} file={file} />,
+  );
+  const status = () => screen.container.querySelector('[role="status"]')?.textContent ?? "";
+  // A cold large-text worker can take longer than waitFor's default to boot on CI.
+  await vi.waitFor(() => expect(status()).toMatch(/ [KM]?B$/), { timeout: 10_000 });
+  expect(status()).toContain(label);
+});
 
 it.each(["archive", "sqlite"] as const)(
   "reauthorizes and retries a failed %s attachment",
@@ -2190,8 +2219,7 @@ it.each(["rtf", "epub", "ods"] as const)(
           expect(screen.container.textContent).toContain("North");
           expect(screen.container.textContent).toContain("150");
           expect(screen.container.textContent).not.toContain("private note");
-          expect(screen.container.textContent).toContain("1 row");
-          expect(screen.container.textContent).not.toContain("1 rows");
+          expect(screen.container.textContent).toContain("1 row · 2 columns");
           expect(screen.container.textContent).not.toContain("Limited to 500");
         } else {
           const frame = screen.container.querySelector("iframe");
@@ -2331,3 +2359,22 @@ it.each([
     `Unsupported PDF ${directory} asset.`,
   );
 });
+
+it.each([
+  ["firmware", "Save it to open in an app that supports this format."],
+  [".cache", "Save it to open in an app that supports this format."],
+  ["a.dir/firmware", "Save it to open in an app that supports this format."],
+  ["blob.foo", "Save it to open in an app that supports foo files."],
+] as const)(
+  "describes unsupported binary attachment %s without misreading its name as an extension",
+  async (name, expected) => {
+    const file = new Blob([new Uint8Array([0, 1, 2, 3])], { type: "application/octet-stream" });
+    await using screen = await render(
+      <AttachmentFilePreview name={name} mimeType={file.type} sizeBytes={file.size} file={file} />,
+    );
+    await expect
+      .element(screen.getByText("No preview for this file", { exact: true }))
+      .toBeVisible();
+    await expect.element(screen.getByText(expected, { exact: true })).toBeVisible();
+  },
+);

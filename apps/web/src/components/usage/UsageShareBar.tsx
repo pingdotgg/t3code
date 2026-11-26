@@ -1,8 +1,7 @@
 import { formatPercent } from "@t3tools/shared/usageFormat";
 import { useMessages } from "gt-react";
 import type { ReactNode } from "react";
-
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface ShareSegment {
   readonly label: string;
@@ -29,32 +28,30 @@ export function UsageShareBar({
   return (
     <div className="flex min-w-0 flex-col gap-2.5">
       <div className="flex items-baseline justify-between gap-3">
-        <h3 className="text-meta text-foreground">{label}</h3>
+        <h3 className="text-sm font-medium text-foreground">{label}</h3>
         {aside}
       </div>
       {/* The legend below carries every figure; the bar's tooltips are pointer-only. */}
       <div aria-hidden className="flex h-2 gap-0.5">
         {visible.map((segment) => (
-          <Tooltip key={segment.label}>
-            <TooltipTrigger
-              render={
-                <div
-                  className="h-full min-w-1 rounded-xs first:rounded-l-full last:rounded-r-full"
-                  style={{ flex: `${segment.value} 1 0`, backgroundColor: segment.color }}
-                />
-              }
-            />
-            <TooltipPopup>
-              <div className="flex flex-col gap-0.5">
-                <span>{m(segment.label)}</span>
-                <span>{format(segment.value)}</span>
-                <span>{formatPercent(segment.value / total)}</span>
-              </div>
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            key={segment.label}
+            render={
+              <div
+                className="h-full min-w-1 rounded-xs first:rounded-l-full last:rounded-r-full"
+                style={{ flex: `${segment.value} 1 0`, backgroundColor: segment.color }}
+              />
+            }
+            label={
+              <>
+                {m(segment.label)} · {format(segment.value)} ·{" "}
+                {formatPercent(segment.value / total)}
+              </>
+            }
+          />
         ))}
       </div>
-      <ul aria-label={label} className="flex flex-wrap gap-x-4 gap-y-1 text-caption">
+      <ul aria-label={label} className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
         {visible.map((segment) => (
           <li key={segment.label} className="flex items-center gap-1.5">
             <span

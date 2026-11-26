@@ -10,12 +10,11 @@ export type DiffPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
   const shouldUseDragRegion = isElectron && mode !== "sheet" && mode !== "embedded";
   return cn(
-    // diff-toolbar: DiffPanel folds its actions into a menu in narrow panes.
-    "@container/diff-toolbar flex items-center justify-between gap-2",
+    "@container/diff-header flex items-center justify-between gap-2",
     mode === "embedded" ? "px-2" : "px-4",
     shouldUseDragRegion
       ? "drag-region h-[var(--workspace-topbar-height)] border-b border-border wco:pr-(--workspace-native-controls-inset)"
-      : "flex h-10 min-h-10 shrink-0 items-center border-b border-border bg-background in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
+      : "flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
   );
 }
 
@@ -93,16 +92,16 @@ function DiffCodeLineSkeleton({ width }: { width: "short" | "medium" | "long" })
 export function DiffPanelLoadingState(props: { label: string }) {
   return (
     <div
-      className="min-h-0 flex-1 overflow-hidden bg-background pt-under-header"
+      className="min-h-0 flex-1 overflow-hidden bg-background"
       role="status"
       aria-live="polite"
       aria-label={props.label}
     >
       <DiffFileHeaderSkeleton titleWidth="medium" />
       <div className="flex h-6 items-center gap-2 px-2 pr-3">
-        <div className="h-px flex-1 bg-border" />
+        <div className="h-px flex-1 bg-border/40" />
         <Skeleton shape="pill" className="h-2.5 w-24" />
-        <div className="h-px flex-1 bg-border" />
+        <div className="h-px flex-1 bg-border/40" />
       </div>
       <div className="space-y-2 px-3 py-2">
         <DiffCodeLineSkeleton width="medium" />

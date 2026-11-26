@@ -1,41 +1,28 @@
-import { msg, useGT, useMessages } from "gt-react";
-import { ArrowUpRight } from "lucide-react";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg, useMessages } from "gt-react";
 
 import type { MessageResolver } from "../../i18n/messages";
-import { Button } from "~/components/ui/button";
+import { DiscoveryListRow } from "../ui/discovery-list";
 
+import { PreviewFaviconIcon } from "./PreviewFaviconIcon";
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
 interface Props {
+  threadRef: ScopedThreadRef;
   server: PreviewableServer;
   onOpen: () => void;
 }
 
-/** One live local server: a live dot, its address, the owning process, and Open. */
-export function PreviewLocalServerCard({ server, onOpen }: Props) {
-  const gt = useGT();
+export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
   const m = useMessages();
-  const address = `${server.host}:${server.port}`;
+  const subtitle = describeServer(server, m);
   return (
-    <div className="flex items-center gap-2.5 rounded-card surface-card-settings px-3 py-2.5">
-      <span aria-hidden className="size-[7px] shrink-0 rounded-full bg-success" />
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate font-mono text-body text-foreground">{address}</span>
-        <span className="truncate text-caption text-dim-foreground">
-          {describeServer(server, m)}
-        </span>
-      </div>
-      <Button
-        type="button"
-        variant="secondary"
-        size="xs"
-        aria-label={gt("Open {address}", { address })}
-        onClick={onOpen}
-      >
-        <ArrowUpRight />
-        {gt("Open", { $context: "verb, opens a local server in the browser" })}
-      </Button>
-    </div>
+    <DiscoveryListRow
+      onClick={onOpen}
+      icon={<PreviewFaviconIcon threadRef={threadRef} url={server.requestedUrl} />}
+      title={subtitle}
+      description={`${server.host}:${server.port}`}
+    />
   );
 }
 

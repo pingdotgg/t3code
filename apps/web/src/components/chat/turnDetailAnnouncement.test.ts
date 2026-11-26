@@ -69,7 +69,6 @@ const inAttempt = (
     attemptOrdinal: 1,
     rootNodeId: `${id}-root` as TimelineAttempt["rootNodeId"],
     status,
-    startedAt: null,
     completedAt: completed === undefined ? null : time(completed),
   },
 });

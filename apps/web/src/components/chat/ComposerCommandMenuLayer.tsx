@@ -18,10 +18,6 @@ function composerCommandMenuPositionsEqual(
   );
 }
 
-// The gap between the tray and a menu floating above it, and the pen's widest menu.
-const COMPOSER_MENU_GAP_PX = 8;
-export const COMPOSER_MENU_MAX_WIDTH_PX = 520;
-
 /** Mounts the layer one deferred render after `open` turns true, so the keystroke that opened it paints first. */
 export function DeferredComposerCommandMenuLayer({
   open,
@@ -31,15 +27,13 @@ export function DeferredComposerCommandMenuLayer({
   return open && mounted ? <ComposerCommandMenuLayer {...props} /> : null;
 }
 
-/** Floats a menu above the composer tray, aligned with its left edge. */
 export function ComposerCommandMenuLayer(props: {
   anchor: HTMLElement | null;
-  maxWidth?: number;
   children: ReactNode;
   /** Keeps the 96px floor past the window top: the stash then loses its header, not its entries. */
   canOverflowTop?: boolean;
 }) {
-  const { anchor, canOverflowTop = false, maxWidth } = props;
+  const { anchor, canOverflowTop = false } = props;
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the menu from the composer's DOM rect, tracking window resize, scroll and ancestor resizes
@@ -47,24 +41,31 @@ export function ComposerCommandMenuLayer(props: {
     if (!anchor) return;
 
     const updatePosition = () => {
-      const tray =
-        anchor.closest<HTMLElement>('[data-slot="composer-host"]') ??
-        anchor.closest<HTMLElement>('[data-chat-composer-form="true"]') ??
-        anchor;
-      const rect = tray.getBoundingClientRect();
-      const width = maxWidth === undefined ? rect.width : Math.min(rect.width, maxWidth);
+      const form = anchor.closest<HTMLElement>('[data-chat-composer-form="true"]');
+      const mainSurface = form?.querySelector<HTMLElement>(
+        '[data-chat-composer-main-surface="true"]',
+      );
+      const rect = (mainSurface ?? form ?? anchor).getBoundingClientRect();
+      const rootFontSizePx =
+        Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+      const drawerInsetRem = Number.parseFloat(
+        window.getComputedStyle(form ?? anchor).getPropertyValue("--chat-composer-drawer-inset"),
+      );
+      const drawerInset = drawerInsetRem * rootFontSizePx;
+      const width = rect.width - drawerInset * 2;
       if (width <= 0) {
         setPosition(null);
         return;
       }
-      const spaceAbove = rect.top - COMPOSER_MENU_GAP_PX;
+      const composerOverlap = rootFontSizePx + 1;
+      const spaceAbove = rect.top + composerOverlap;
       const bottom = window.innerHeight - spaceAbove;
       const floorHeight = Math.max(96, spaceAbove - 24);
       const maxHeight = canOverflowTop ? floorHeight : Math.min(floorHeight, window.innerHeight);
       const next = {
         // With too little room above, the menu slides down over the composer instead of past the window top.
         bottom: canOverflowTop ? bottom : Math.min(bottom, window.innerHeight - maxHeight),
-        left: rect.left,
+        left: rect.left + drawerInset,
         maxHeight,
         width,
       };
@@ -88,7 +89,7 @@ export function ComposerCommandMenuLayer(props: {
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [anchor, canOverflowTop, maxWidth]);
+  }, [anchor, canOverflowTop]);
 
   if (!anchor || !position) return null;
 

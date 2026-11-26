@@ -1,4 +1,3 @@
-import { useId, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   canEditPullRequestMaintainerEdits,
@@ -17,22 +16,18 @@ import type {
 } from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
-  ArrowDownUpIcon,
   BookOpenIcon,
   CopyIcon,
   HammerIcon,
   LinkIcon,
-  LayoutPanelTopIcon,
   MessageCircleQuestionIcon,
   MoreHorizontalIcon,
   RotateCcwIcon,
   ScrollTextIcon,
   Trash2Icon,
-  FolderGit2Icon,
-  PencilIcon,
-  SquareTerminalIcon,
 } from "lucide-react";
-import { Branch, msg, T, useGT, useMessages, Var } from "gt-react";
+import { Branch, msg, T, useGT, useMessages } from "gt-react";
+import { useId, useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { m } from "~/i18n/messages";
@@ -52,12 +47,9 @@ import {
   MenuSeparator,
   MenuShortcut,
   MenuTrigger,
-  MenuGroup,
-  MenuGroupLabel,
 } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ActOnEnvironmentPicker, type PerformPullRequestAction } from "./PullRequestDetailActions";
 import {
   PULL_REQUEST_MERGE_METHOD_LABELS,
@@ -65,12 +57,12 @@ import {
   readableFailure,
 } from "./pullRequestDetail.logic";
 import { PullRequestGlyph } from "./pullRequestIcons";
-import { type PickableEnvironment } from "./pullRequestProjectAssignment.logic";
+import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
-import { canEditPullRequestChangeRequest } from "@t3tools/client-runtime/pull-request-editing";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /** Everything else the reader can do with the pull request, behind the header's overflow button. */
 export function PullRequestActionsMenu({
@@ -78,15 +70,13 @@ export function PullRequestActionsMenu({
   reference,
   pullRequestKey,
   detail,
+  observedAt,
   terminology,
   threadRef,
   linkThreadRef,
-  onOpenAsWorkspace,
   onThreadPickerOpenChange,
   refreshing,
   refreshFromHost,
-  timelineOrder,
-  onToggleTimelineOrder,
   handoff,
   attachesToComposer,
   askAboutPullRequest,
@@ -119,26 +109,28 @@ export function PullRequestActionsMenu({
   perform,
   openOnHostText,
   copyReference,
-  inlineConfirm,
-  showCheckout,
-  checkoutMenuItems,
-  onEditTitle,
-  repositoryUrl,
-  checkoutCommand,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   pullRequestKey: string;
-  detail: PullRequestDetail;
+  detail: Pick<
+    PullRequestDetail,
+    | "url"
+    | "state"
+    | "isDraft"
+    | "headBranch"
+    | "capabilities"
+    | "viewerPermissions"
+    | "maintainerCanModify"
+  >;
+  /** When the detail was last read; the detail itself keeps its older stamp across refreshes. */
+  observedAt: number | undefined;
   terminology: ChangeRequestTerminology;
   threadRef: ScopedThreadRef | null;
   linkThreadRef: ScopedThreadRef | null;
-  onOpenAsWorkspace?: (() => void) | undefined;
   onThreadPickerOpenChange: (open: boolean) => void;
   refreshing: boolean;
   refreshFromHost: () => Promise<void>;
-  timelineOrder: "newest" | "oldest" | null;
-  onToggleTimelineOrder: () => void;
   handoff: string | null;
   attachesToComposer: boolean;
   askAboutPullRequest: () => void;
@@ -171,17 +163,12 @@ export function PullRequestActionsMenu({
   perform: PerformPullRequestAction;
   openOnHostText: string;
   copyReference: (value: string, failureTitle: string) => void;
-  inlineConfirm: ReturnType<typeof useInlineActionConfirm>;
-  showCheckout: boolean;
-  checkoutMenuItems: ReactNode;
-  onEditTitle: () => void;
-  repositoryUrl: string | null;
-  checkoutCommand: string | null;
 }) {
   const gt = useGT();
   const openLink = useOpenLink(threadRef);
   const resolve = useMessages();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
   const maintainerEditsHintId = useId();
   const updatePullRequest = useAtomCommand(pullRequestEnvironment.update, {
@@ -194,7 +181,7 @@ export function PullRequestActionsMenu({
   const maintainerEditsChoiceKept = maintainerEditsChoiceInForce(
     maintainerEditsChoice,
     pullRequestKey,
-    detail.observedAt,
+    observedAt,
     maintainerEditsSaving,
   );
   if (maintainerEditsChoiceKept !== maintainerEditsChoice) {
@@ -206,7 +193,7 @@ export function PullRequestActionsMenu({
   const saveMaintainerEdits = async (value: boolean) => {
     if (!canSaveMaintainerEdits) return;
     const previousChoice = maintainerEditsChoice;
-    setMaintainerEditsChoice({ key: pullRequestKey, observedAt: detail.observedAt, value });
+    setMaintainerEditsChoice({ key: pullRequestKey, observedAt, value });
     setMaintainerEditsSaving(true);
     const result = await updatePullRequest({
       environmentId,
@@ -226,38 +213,36 @@ export function PullRequestActionsMenu({
   };
   return (
     <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <Button
-                  aria-label={
-                    refreshing
-                      ? gt(
-                          "Refreshing {term, select, mr {merge request} cr {change request} other {pull request}}",
-                          { term: changeRequestTermKind(terminology) },
-                        )
-                      : gt(
-                          "More {term, select, mr {merge request} cr {change request} other {pull request}} actions",
-                          { term: changeRequestTermKind(terminology) },
-                        )
-                  }
-                  size="icon-xs"
-                  variant="ghost-muted"
-                />
-              }
-            >
-              {refreshing ? (
-                <RefreshIcon refreshing size="md" />
-              ) : (
-                <MoreHorizontalIcon className="size-4" />
-              )}
-            </MenuTrigger>
-          }
-        />
-        <TooltipPopup>
-          {refreshing
+      <SharedTooltipTrigger
+        render={
+          <MenuTrigger
+            render={
+              <Button
+                aria-label={
+                  refreshing
+                    ? gt(
+                        "Refreshing {term, select, mr {merge request} cr {change request} other {pull request}}",
+                        { term: changeRequestTermKind(terminology) },
+                      )
+                    : gt(
+                        "More {term, select, mr {merge request} cr {change request} other {pull request}} actions",
+                        { term: changeRequestTermKind(terminology) },
+                      )
+                }
+                size="icon-xs"
+                variant="ghost-muted"
+              />
+            }
+          >
+            {refreshing ? (
+              <RefreshIcon refreshing size="md" />
+            ) : (
+              <MoreHorizontalIcon className="size-4" />
+            )}
+          </MenuTrigger>
+        }
+        label={
+          refreshing
             ? gt(
                 "Refreshing {term, select, mr {merge request} cr {change request} other {pull request}}",
                 { term: changeRequestTermKind(terminology) },
@@ -265,9 +250,9 @@ export function PullRequestActionsMenu({
             : gt(
                 "More {term, select, mr {merge request} cr {change request} other {pull request}} actions",
                 { term: changeRequestTermKind(terminology) },
-              )}
-        </TooltipPopup>
-      </Tooltip>
+              )
+        }
+      />
       <MenuPopup align="end" side="bottom">
         <PullRequestThreadLinks
           display="menu-item"
@@ -281,19 +266,11 @@ export function PullRequestActionsMenu({
           <RefreshIcon size="sm" refreshing={refreshing} />
           <T context="verb, menu item">Refresh</T>
         </MenuItem>
-        {timelineOrder !== null ? (
-          <MenuItem onClick={onToggleTimelineOrder}>
-            <ArrowDownUpIcon className="size-3.5" />
-            {timelineOrder === "newest"
-              ? gt("Show oldest activity first")
-              : gt("Show newest activity first")}
-          </MenuItem>
-        ) : null}
         <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
-          <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
+          <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start" />
           <span className="flex min-w-0 flex-col">
             <span>{handoff === "ask" ? gt("Opening...") : gt("Ask a question")}</span>
-            <span className="text-meta text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {attachesToComposer
                 ? gt(
                     "Adds the {term, select, mr {merge request} cr {change request} other {pull request}} to this thread's composer.",
@@ -309,7 +286,7 @@ export function PullRequestActionsMenu({
           </span>
         </MenuItem>
         <MenuItem disabled={handoff !== null} onClick={explainPullRequest}>
-          <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
+          <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start" />
           <span className="flex min-w-0 flex-col">
             <span>
               {handoff === "explain"
@@ -318,7 +295,7 @@ export function PullRequestActionsMenu({
                     term: changeRequestTermKind(terminology),
                   })}
             </span>
-            <span className="text-meta text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               <T>A walk through the diff and what to read closely.</T>
             </span>
           </span>
@@ -337,24 +314,11 @@ export function PullRequestActionsMenu({
                 : gt("Rewrite guide")}
           </MenuItem>
         ) : null}
-        {onOpenAsWorkspace ? (
-          // Its own workspace: the chat with its terminal, and this panel beside it.
-          <MenuItem onClick={onOpenAsWorkspace}>
-            <LayoutPanelTopIcon className="size-3.5" />
-            <T>Open as workspace</T>
-          </MenuItem>
-        ) : null}
-        {showCheckout ? (
-          <>
-            <MenuSeparator />
-            {checkoutMenuItems}
-          </>
-        ) : null}
         {pickableEnvironments.length > 0 ? (
           <ActOnEnvironmentPicker
             environments={pickableEnvironments}
             value={actingEnvironmentId}
-            onChange={(next) => onActingEnvironmentChange(next)}
+            onChange={onActingEnvironmentChange}
             disabled={handoff !== null}
           />
         ) : null}
@@ -374,14 +338,14 @@ export function PullRequestActionsMenu({
                 <span>
                   <T>Allow edits from maintainers</T>
                 </span>
-                <span id={maintainerEditsHintId} className="text-meta text-muted-foreground">
+                <span id={maintainerEditsHintId} className="text-xs text-muted-foreground">
                   <T>
                     Maintainers can push to this branch. If your fork has workflows, this can also
                     give access to its secrets.
                   </T>
                 </span>
                 {maintainerEditsSaving ? (
-                  <span role="status" className="text-meta text-muted-foreground">
+                  <span role="status" className="text-xs text-muted-foreground">
                     <T>Saving…</T>
                   </span>
                 ) : null}
@@ -444,32 +408,24 @@ export function PullRequestActionsMenu({
             {showsMergeMethods ? (
               <>
                 {showsDraftToggle || showsMergeNow || showsAutoMerge ? <MenuSeparator /> : null}
-                <MenuGroup>
-                  <MenuGroupLabel>
-                    <T>Merge method</T>
-                  </MenuGroupLabel>
-                  <MenuRadioGroup
-                    value={selectedMergeMethod}
-                    onValueChange={(method) => {
-                      const selectedMethod = method as PullRequestMergeMethod;
-                      onSelectMergeMethod(selectedMethod);
-                    }}
-                  >
-                    {allowedMergeMethods.map((method) => (
-                      <MenuRadioItem
-                        key={method}
-                        value={method}
-                        disabled={actionPending}
-                        closeOnClick
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          <PullRequestGlyph.merged className="size-3.5" />
-                          <span>{resolve(PULL_REQUEST_MERGE_METHOD_LABELS[method])}</span>
-                        </span>
-                      </MenuRadioItem>
-                    ))}
-                  </MenuRadioGroup>
-                </MenuGroup>
+                <MenuRadioGroup
+                  value={selectedMergeMethod}
+                  onValueChange={(method) => onSelectMergeMethod(method as PullRequestMergeMethod)}
+                >
+                  {allowedMergeMethods.map((method) => (
+                    <MenuRadioItem
+                      key={method}
+                      value={method}
+                      disabled={actionPending}
+                      closeOnClick
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <PullRequestGlyph.merged className="size-3.5" />
+                        <span>{resolve(PULL_REQUEST_MERGE_METHOD_LABELS[method])}</span>
+                      </span>
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
               </>
             ) : null}
             {pullRequestActionMenuHasGroup(
@@ -481,26 +437,10 @@ export function PullRequestActionsMenu({
             ) : null}
           </>
         ) : null}
-        {canEditPullRequestChangeRequest(detail) ? (
-          <MenuItem onClick={() => onEditTitle()}>
-            <PencilIcon className="size-3.5" />
-            <T>Edit title</T>
-          </MenuItem>
-        ) : null}
         <MenuItem onClick={(event) => void openLink(detail.url, { event }).catch(console.error)}>
           <ArrowUpRightIcon className="size-3.5" />
           {openOnHostText}
         </MenuItem>
-        {repositoryUrl ? (
-          <MenuItem
-            onClick={(event) => void openLink(repositoryUrl, { event }).catch(console.error)}
-          >
-            <FolderGit2Icon className="size-3.5" />
-            <T>
-              Open <Var>{detail.repository}</Var>
-            </T>
-          </MenuItem>
-        ) : null}
         <MenuItem
           onClick={() =>
             copyReference(
@@ -544,16 +484,6 @@ export function PullRequestActionsMenu({
             {shortcutLabelForCommand(keybindings, "pullRequest.copyNumber")}
           </MenuShortcut>
         </MenuItem>
-        {checkoutCommand ? (
-          <MenuItem
-            onClick={() =>
-              copyReference(checkoutCommand, resolve(msg("Failed to copy checkout command")))
-            }
-          >
-            <SquareTerminalIcon className="size-3.5" />
-            <T>Copy checkout command</T>
-          </MenuItem>
-        ) : null}
         {detail.state === "open" && can("close") ? (
           <>
             <MenuSeparator />
@@ -629,7 +559,7 @@ export function PullRequestActionsMenu({
                     ? gt("Deleting branch...")
                     : gt("Delete branch")}
                 </span>
-                <span className="truncate text-meta text-muted-foreground">
+                <span className="truncate text-xs text-muted-foreground">
                   {environmentConnected ? detail.headBranch : gt("Reconnect to delete this branch")}
                 </span>
               </span>

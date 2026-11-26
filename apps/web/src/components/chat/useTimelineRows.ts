@@ -8,12 +8,8 @@ import {
   deriveMessagesTimelineRowsWithState,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
-  applyWorkingWindow,
-  applyBackgroundActivityGroups,
 } from "./MessagesTimeline.logic";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
-import { type SlashCommandCatalog } from "./timelineSlashCommands";
-import { shallow } from "zustand/vanilla/shallow";
 
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 
@@ -73,88 +69,17 @@ export function useIncrementalTimelineRows(
 export function useStableRows(
   rows: MessagesTimelineRow[],
   identity: string,
-  input: StableTimelineRowsInput,
 ): MessagesTimelineRow[] {
   const [state, setState] = useState<{
     readonly identity: string;
     readonly source: MessagesTimelineRow[] | null;
-    readonly input: StableTimelineRowsInput | null;
     readonly stable: StableMessagesTimelineRowsState;
-  }>({ identity, source: null, input: null, stable: { byId: new Map(), result: [] } });
-  if (state.identity === identity && state.source === rows && state.input !== null) {
-    const {
-      expandedWorkGroupIds: previousGroups,
-      pendingApprovalRequestIds: previousApprovals,
-      childApprovalThreadIds: previousChildApprovals,
-      ...previousInput
-    } = state.input;
-    const {
-      expandedWorkGroupIds: nextGroups,
-      pendingApprovalRequestIds: nextApprovals,
-      childApprovalThreadIds: nextChildApprovals,
-      ...nextInput
-    } = input;
-    if (
-      shallow(previousGroups, nextGroups) &&
-      shallow(previousApprovals, nextApprovals) &&
-      shallow(previousChildApprovals, nextChildApprovals) &&
-      shallow(previousInput, nextInput)
-    ) {
-      return state.stable.result;
-    }
-  }
-  const previous = state.identity === identity ? state.stable : { byId: new Map(), result: [] };
-  // Labs fold off: the running turn streams in place and wake-ups keep their rows, like main.
-  if (!input.turnWorkFold) {
-    const stable = computeStableMessagesTimelineRows(rows, previous);
-    setState({ identity, source: rows, input, stable });
-    return stable.result;
-  }
-  const windowed = input.windowlessCitation
-    ? rows
-    : applyWorkingWindow(rows, input, input.workingHistoryKey);
-  const visibleRows =
-    input.activeFindEntryId !== null &&
-    windowed.some(
-      (row) =>
-        row.kind === "working" &&
-        row.window?.items.some((item) => item.id === input.activeFindEntryId),
-    )
-      ? rows
-      : windowed;
-  const groupedRows = applyBackgroundActivityGroups(visibleRows, input, previous.result);
-  const stable = computeStableMessagesTimelineRows(groupedRows, previous);
-  setState({ identity, source: rows, input, stable });
+  }>({ identity, source: null, stable: { byId: new Map(), result: [] } });
+  if (state.identity === identity && state.source === rows) return state.stable.result;
+  const stable = computeStableMessagesTimelineRows(
+    rows,
+    state.identity === identity ? state.stable : { byId: new Map(), result: [] },
+  );
+  setState({ identity, source: rows, stable });
   return stable.result;
-}
-
-type StableTimelineRowsInput = Parameters<typeof applyBackgroundActivityGroups>[1] & {
-  readonly pendingApprovalRequestIds: NonNullable<
-    MessagesTimelineRowsInput["pendingApprovalRequestIds"]
-  >;
-  readonly childApprovalThreadIds: NonNullable<MessagesTimelineRowsInput["childApprovalThreadIds"]>;
-  readonly isWorking: boolean;
-  readonly runlessWorkActive: boolean;
-  readonly toolCallVisibility: Exclude<MessagesTimelineRowsInput["toolCallVisibility"], undefined>;
-  readonly revealedMessageId: Exclude<MessagesTimelineRowsInput["revealedMessageId"], undefined>;
-  readonly workingHistoryKey: string | null;
-  readonly windowlessCitation: boolean;
-  readonly activeFindEntryId: string | null;
-  readonly turnWorkFold: boolean;
-};
-
-export function useTimelineSlashCommandCatalog(
-  commands: SlashCommandCatalog["commands"],
-  skills: SlashCommandCatalog["skills"],
-): SlashCommandCatalog {
-  // Projection only reads names; provider pushes must not invalidate streaming rows.
-  const key = JSON.stringify([
-    commands.map((command) => command.name),
-    skills.map((skill) => skill.name),
-  ]);
-  const [state, setState] = useState({ key, catalog: { commands, skills } });
-  if (state.key === key) return state.catalog;
-  const catalog = { commands, skills };
-  setState({ key, catalog });
-  return catalog;
 }

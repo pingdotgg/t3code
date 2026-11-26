@@ -34,7 +34,6 @@ import {
 import {
   Dialog,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogPanel,
   DialogPopup,
@@ -42,7 +41,6 @@ import {
   DialogTrigger,
 } from "../ui/dialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { AnimatedHeight } from "../AnimatedHeight";
@@ -69,6 +67,7 @@ import {
   parseRemotePairingFields,
   formatDesktopSshConnectionError,
 } from "./ConnectionsSettings.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const SSH_PROTOCOL_NAME = "SSH";
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
@@ -391,7 +390,7 @@ export function AddEnvironmentDialog({
         aria-pressed={selected}
         className={cn(
           "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-left",
-          selected ? "border-ring surface-selected" : "border-border hover:surface-ghost-hover",
+          selected ? "border-primary/50 bg-primary/5" : "border-border/60 hover:bg-muted/40",
         )}
         disabled={isAddingSavedBackend}
         onClick={() => {
@@ -404,16 +403,16 @@ export function AddEnvironmentDialog({
             className={cn(
               "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border",
               selected
-                ? "border-ring surface-selected text-strong-foreground"
-                : "border-transparent surface-well text-muted-foreground group-hover:text-strong-foreground",
+                ? "border-primary/30 bg-primary/10 text-primary"
+                : "border-border/70 bg-background text-muted-foreground group-hover:text-foreground",
             )}
           >
             {input.icon}
           </span>
         ) : null}
         <span className="min-w-0">
-          <span className="block text-label text-strong-foreground">{input.title}</span>
-          <span className="mt-1 block text-meta leading-relaxed text-muted-foreground">
+          <span className="block text-sm font-medium text-foreground">{input.title}</span>
+          <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
             {input.description}
           </span>
         </span>
@@ -425,7 +424,7 @@ export function AddEnvironmentDialog({
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
         <label className="block">
-          <span className="mb-1.5 block text-meta text-strong-foreground">
+          <span className="mb-1.5 block text-xs font-medium text-foreground">
             <T>Host</T>
           </span>
           <Input
@@ -437,7 +436,7 @@ export function AddEnvironmentDialog({
           />
         </label>
         <label className="block">
-          <span className="mb-1.5 block text-meta text-strong-foreground">
+          <span className="mb-1.5 block text-xs font-medium text-foreground">
             <T>Pairing code</T>
           </span>
           <Input
@@ -450,7 +449,7 @@ export function AddEnvironmentDialog({
         </label>
       </div>
       <div>
-        <span className="mt-1 block text-caption text-muted-foreground">
+        <span className="mt-1 block text-2xs text-muted-foreground">
           <T>Paste a full pairing URL here to fill both fields automatically.</T>
         </span>
       </div>
@@ -499,12 +498,12 @@ export function AddEnvironmentDialog({
     <div className="space-y-4">
       {relayRouteOffer !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
-          <p className="text-meta text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             <T>This machine is on your T3 Connect account. Use it as a fallback route.</T>
           </p>
           <Button
             size="xs"
-            variant="secondary"
+            variant="outline"
             disabled={isAddingSavedBackend}
             onClick={() => void addRelayRoute()}
           >
@@ -513,7 +512,20 @@ export function AddEnvironmentDialog({
         </div>
       ) : null}
       {renderRemoteFields()}
-      {error ? <p className="text-meta text-destructive">{error}</p> : null}
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      <Button
+        variant="outline"
+        className="w-full"
+        disabled={isAddingSavedBackend}
+        onClick={() => void handleAddSavedBackend()}
+      >
+        <PlusIcon className="size-3.5" />
+        {isAddingSavedBackend
+          ? gt("Adding…")
+          : routeTarget
+            ? gt("Add route")
+            : gt("Add environment")}
+      </Button>
     </div>
   );
   const renderSshFields = () => (
@@ -522,7 +534,7 @@ export function AddEnvironmentDialog({
         <div className="block">
           <label
             htmlFor="saved-backend-ssh-host"
-            className="mb-1.5 block text-meta text-strong-foreground"
+            className="mb-1.5 block text-xs font-medium text-foreground"
           >
             <T>SSH host or alias</T>
           </label>
@@ -557,11 +569,11 @@ export function AddEnvironmentDialog({
             {hasSshHostSuggestionContent ? (
               <AutocompletePopup>
                 {isLoadingDiscoveredSshHosts ? (
-                  <div className="px-3 py-2 text-meta text-muted-foreground">
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
                     <T>Loading hosts…</T>
                   </div>
                 ) : filteredDiscoveredSshHosts.length > 0 ? (
-                  <AutocompleteList className="max-h-72">
+                  <AutocompleteList scrollAreaClassName="max-h-72">
                     {filteredDiscoveredSshHosts.map((target, index) => {
                       const address = formatDesktopSshTarget(target);
                       const shortcutCommand = index < 9 ? threadJumpCommandForIndex(index) : null;
@@ -574,9 +586,11 @@ export function AddEnvironmentDialog({
                           value={target}
                           className="h-8 min-h-8 whitespace-nowrap"
                         >
-                          <span className="min-w-0 truncate text-label">{target.alias}</span>
+                          <span className="min-w-0 truncate text-sm font-medium">
+                            {target.alias}
+                          </span>
                           {address !== target.alias ? (
-                            <span className="min-w-0 flex-1 truncate text-meta text-muted-foreground">
+                            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                               {address}
                             </span>
                           ) : (
@@ -602,7 +616,7 @@ export function AddEnvironmentDialog({
         </div>
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
           <label className="block">
-            <span className="mb-1.5 block text-meta text-strong-foreground">
+            <span className="mb-1.5 block text-xs font-medium text-foreground">
               <T>Username</T>
             </span>
             <Input
@@ -615,7 +629,7 @@ export function AddEnvironmentDialog({
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-meta text-strong-foreground">
+            <span className="mb-1.5 block text-xs font-medium text-foreground">
               <T>Port</T>
             </span>
             <Input
@@ -634,31 +648,44 @@ export function AddEnvironmentDialog({
             <AlertDescription>{error ?? discoveredSshHostsError}</AlertDescription>
           </Alert>
         ) : null}
+        <Button
+          variant="outline"
+          className="w-full"
+          disabled={isAddingSavedBackend}
+          onClick={() => void handleAddSavedBackend()}
+        >
+          <PlusIcon className="size-3.5" />
+          {isAddingSavedBackend
+            ? gt("Adding…")
+            : routeTarget
+              ? gt("Add route")
+              : gt("Add environment")}
+        </Button>
       </div>
     </div>
   );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <DialogTrigger
-              render={
-                <Button size="standard" variant="secondary" aria-label={gt("Add environment")}>
-                  <PlusIcon className="size-3" />
-                  <span>
-                    <T>Add environment</T>
-                  </span>
-                </Button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          <T>Add environment</T>
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <DialogTrigger
+            render={
+              <Button size="xs" variant="ghost-muted" aria-label={gt("Add environment")}>
+                <PlusIcon className="size-3" />
+                <span>
+                  <T>Add environment</T>
+                </span>
+              </Button>
+            }
+          />
+        }
+        label={
+          <>
+            <T>Add environment</T>
+          </>
+        }
+      />
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
@@ -666,7 +693,7 @@ export function AddEnvironmentDialog({
               ? gt("Add a route to {environment}", { environment: routeTarget.label })
               : prefill
                 ? gt("Connect to {environment}", { environment: prefill.label })
-                : gt("Add environment")}
+                : gt("Add Environment")}
           </DialogTitle>
           <DialogDescription>
             {routeTarget
@@ -683,7 +710,7 @@ export function AddEnvironmentDialog({
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
-            <div className={cn("grid gap-3", desktopBridge && "sm:grid-cols-2")}>
+            <div className="grid gap-3 sm:grid-cols-2">
               {renderConnectionModeCard({
                 mode: "remote",
                 title: gt("Remote link"),
@@ -703,28 +730,6 @@ export function AddEnvironmentDialog({
               {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
             </AnimatedHeight>
           </div>
-          <DialogFooter variant="bare" className="-mx-5 -mb-4">
-            <Button
-              size="standard"
-              variant="secondary"
-              disabled={isAddingSavedBackend}
-              onClick={() => handleOpenChange(false)}
-            >
-              <T>Cancel</T>
-            </Button>
-            <Button
-              size="standard"
-              disabled={isAddingSavedBackend}
-              onClick={() => void handleAddSavedBackend()}
-            >
-              <PlusIcon className="size-3.5" />
-              {isAddingSavedBackend
-                ? gt("Adding…")
-                : routeTarget
-                  ? gt("Add route")
-                  : gt("Add environment")}
-            </Button>
-          </DialogFooter>
         </DialogPanel>
       </DialogPopup>
     </Dialog>

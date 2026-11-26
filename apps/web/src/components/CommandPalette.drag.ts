@@ -1,7 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { flushSync } from "react-dom";
 import { dispatchCommandPalette } from "../commandPaletteStore";
-import { cancelLayoutDrag, dropLayoutDrag, moveLayoutDrag } from "../layout/layoutDrag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import {
   dropThreadContext,
@@ -22,19 +21,13 @@ export function startPaletteThreadDrag(
     options: {
       distance: 6,
       onAttach: () => {},
-      onFinish: () => {
-        endThreadContextDrag();
-        cancelLayoutDrag();
-      },
-      onDrop: (point) => dropThreadContext(point, [{ ...thread, title }]) || dropLayoutDrag(),
+      onFinish: endThreadContextDrag,
+      onDrop: (point) => dropThreadContext(point, [{ ...thread, title }]),
     },
     onStart: () => {
       flushSync(() => dispatchCommandPalette({ _tag: "SetOpen", open: false }));
     },
-    onMove: (point) =>
-      moveLayoutDrag({ kind: "thread", threadRef: thread }, point, {
-        composer: moveThreadContextDrag(point, { title, count: 1 }),
-      }),
+    onMove: (point) => moveThreadContextDrag(point, { title, count: 1 }),
     onPending: () => {},
     onAbort: () => {},
     onCancel: () => {},

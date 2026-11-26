@@ -41,6 +41,7 @@ import {
 } from "./methods/updates.ts";
 import {
   getAppBranding,
+  getDatabaseMigrationProgress,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
   installRelayTelemetryEnabled,
@@ -60,10 +61,8 @@ import {
   toLocalBackendPath,
   pickProjectFavicon,
   pickThemeFiles,
-  setBlackChrome,
   setTheme,
   syncHtmlFullscreen,
-  setWindowButtonsVisible,
   showContextMenu,
 } from "./methods/window.ts";
 import {
@@ -107,6 +106,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(takeLegacyLocalStorage);
   yield* ipc.handle(completeLegacyLocalStorage);
   yield* ipc.handleSync(getAppBranding);
+  yield* ipc.handle(getDatabaseMigrationProgress);
   yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
@@ -161,7 +161,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
-  yield* ipc.handle(setBlackChrome);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(readMedia);
@@ -175,7 +174,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(syncHtmlFullscreen);
-  yield* ipc.handle(setWindowButtonsVisible);
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

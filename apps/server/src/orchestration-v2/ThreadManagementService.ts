@@ -70,13 +70,14 @@ import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
-import { projectTurnItemForDetail } from "@t3tools/shared/wireProjection";
+import { projectTurnItemForDetail } from "./WireProjection.ts";
 import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import { contextBoundaryOrdinal } from "./contextBoundary.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import { checkOutput, outputRequestProblem } from "./runOutput.ts";
+import { routineSpan } from "@t3tools/shared/observability";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -393,7 +394,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
       case "failed":
         return "Failed to update the awaited background work.";
       case "unmatched":
-        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here.";
+        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and Workflow runs already keep the thread working until they finish, and delegate_task IDs don't go here either.";
     }
   }
 }
@@ -471,7 +472,6 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: Orchestrator.OrchestratorV2["Service"]["listActiveSubagentThreadIds"];
   readonly countThreads: Orchestrator.OrchestratorV2["Service"]["countThreads"];
-  readonly countArchivedThreadMessages: Orchestrator.OrchestratorV2["Service"]["countArchivedThreadMessages"];
   readonly listActiveShellIndex: Orchestrator.OrchestratorV2["Service"]["listActiveShellIndex"];
   readonly listOlderSettledThreads: Orchestrator.OrchestratorV2["Service"]["listOlderSettledThreads"];
   readonly readShellSnapshot: (
@@ -690,6 +690,7 @@ const make = Effect.gen(function* () {
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
+    { attributes: routineSpan },
   )(function* (threadId: ThreadId) {
     yield* legacyImporter.ensureTranscript(threadId).pipe(
       Effect.tapError((cause) =>
@@ -985,6 +986,7 @@ const make = Effect.gen(function* () {
       ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
       dispatchMode,
       ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
+      ...(mode === "queue" ? { explicitQueue: true as const } : {}),
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });
@@ -1986,7 +1988,6 @@ const make = Effect.gen(function* () {
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
     countThreads: orchestrator.countThreads,
-    countArchivedThreadMessages: orchestrator.countArchivedThreadMessages,
     listActiveShellIndex: orchestrator.listActiveShellIndex,
     listOlderSettledThreads: orchestrator.listOlderSettledThreads,
     readShellSnapshot: orchestrator.readShellSnapshot,

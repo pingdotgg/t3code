@@ -108,7 +108,6 @@ vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
 import DiffPanel from "./DiffPanel";
-import { PanelTabSlotsContext } from "./PanelTabBreadcrumb";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
@@ -234,25 +233,16 @@ it.each([
     using context = setup(failedBaseRef);
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
-        <PanelTabSlotsContext
-          value={{ breadcrumb: null, actions: null, registerActions: () => () => {} }}
-        >
-          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
-        </PanelTabSlotsContext>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
       </RegistryContext.Provider>,
     );
     await expect.element(screen.getByText(errorMessage, { exact: true })).toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: "Diff scope: Branch changes" }))
-      .toBeVisible();
     const selector = screen.getByRole("combobox", { name: /Change comparison target/ });
     await vi.waitFor(() => expect(selector.query()).not.toBeNull());
     await userEvent.click(selector);
     await expect.element(page.getByRole("option", { name: "main", exact: true })).toBeVisible();
     await userEvent.click(page.getByRole("option", { name: recovery, exact: true }));
-    await expect
-      .element(screen.getByText("This branch has no changes against its base."))
-      .toBeVisible();
+    await expect.element(screen.getByText("No net changes in this selection.")).toBeVisible();
     await expect.element(screen.getByText(errorMessage, { exact: true })).not.toBeInTheDocument();
     const key = scopedThreadKey(context.threadRef);
     await vi.waitFor(() => {
@@ -286,11 +276,40 @@ it("opens a repository-relative file from a nested project without a remote", as
       <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
     </RegistryContext.Provider>,
   );
-  // A narrow header shows the redesign's basename, which carries the full path.
-  await userEvent.click(screen.getByText("back\\slash.txt", { exact: true }));
+  await userEvent.click(screen.getByText(path, { exact: true }));
   expect(
     selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
   ).toMatchObject({ activeSurfaceId: "file:back\\slash.txt" });
+});
+
+it("explains a branch diff whose only changes are hidden test files", async () => {
+  using context = setup("origin/orphan");
+  using _hideTestFiles = {
+    [Symbol.dispose]() {
+      window.localStorage.removeItem("t3code.diffHideTestFiles");
+    },
+  };
+  const path = "math.test.ts";
+  const metadata = preview();
+  const source = {
+    ...metadata.sources[0]!,
+    files: [{ path, previousPath: null, additions: 1, deletions: 0 }],
+  };
+  state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByText(path, { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Hide test files", exact: true }));
+  await expect.element(screen.getByText(path, { exact: true })).not.toBeInTheDocument();
+  await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Show test files", exact: true }));
+  await expect.element(screen.getByText(path, { exact: true })).toBeVisible();
 });
 
 it.each([false, true])(
@@ -501,8 +520,7 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
       </div>
     </RegistryContext.Provider>,
   );
-  // A narrow header shows the redesign's basename, which carries the full path.
-  await userEvent.click(screen.getByText("a.ts", { exact: true }));
+  await userEvent.click(screen.getByText("src/a.ts", { exact: true }));
   await vi.waitFor(() =>
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),

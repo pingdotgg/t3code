@@ -3,8 +3,6 @@ import {
   composerImageDedupKey,
   rememberComposerImageBytes,
 } from "./components/chat/composerAttachmentFiles";
-import { layoutDraftIds } from "./layout/layoutModel";
-import { useLayoutStore } from "./layout/layoutStore";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
   ResponseContextRecord,
@@ -125,12 +123,6 @@ export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
 export const DraftId = Schema.String.pipe(Schema.brand("DraftId"));
 export type DraftId = typeof DraftId.Type;
-
-/**
- * The composer on the no-projects home. It has no draft session; the first
- * new thread opened once a project exists takes its prompt (useHandleNewThread).
- */
-export const NO_PROJECTS_DRAFT_ID = DraftId.make("no-projects");
 
 const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
 
@@ -425,6 +417,7 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  workspaceExplicit: Schema.optionalKey(Schema.Boolean),
   checkoutPullRequest: Schema.optionalKey(
     Schema.Struct({ url: Schema.String, branch: Schema.String }),
   ),
@@ -525,6 +518,8 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  /** The user chose the workspace; without it a draft moving machine takes the new project's default. */
+  workspaceExplicit?: true;
   /** Linked to the thread when the draft is sent on this branch. */
   checkoutPullRequest?: DraftCheckoutPullRequest;
   /**
@@ -600,6 +595,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      workspaceExplicit?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -617,6 +613,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      workspaceExplicit?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -633,6 +630,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      workspaceExplicit?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1737,6 +1735,7 @@ function createDraftThreadState(
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
+    workspaceExplicit?: boolean;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1795,6 +1794,9 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    ...((options?.workspaceExplicit ?? existingThread?.workspaceExplicit)
+      ? { workspaceExplicit: true as const }
+      : {}),
     ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
     ...(!projectChanged && existingThread?.worktreeRepositories !== undefined
       ? { worktreeRepositories: existingThread.worktreeRepositories }
@@ -1859,6 +1861,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    left.workspaceExplicit === right.workspaceExplicit &&
     checkoutPullRequestsEqual(left.checkoutPullRequest, right.checkoutPullRequest) &&
     worktreeRepositoriesEqual(left.worktreeRepositories, right.worktreeRepositories) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
@@ -2023,6 +2026,7 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        ...(candidateDraftThread.workspaceExplicit === true ? { workspaceExplicit: true } : {}),
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -2401,17 +2405,14 @@ function migratePersistedComposerDraftStoreState(
 export function partializeComposerDraftStoreState(
   state: ComposerDraftStoreState,
 ): PersistedComposerDraftStoreState {
-  // Open layout tabs keep their drafts alongside promoting or content-bearing sessions.
   const mappedDraftKeys = new Set(
     Object.values(state.logicalProjectDraftThreadKeyByLogicalProjectKey),
   );
-  const tabDraftKeys = layoutDraftIds(useLayoutStore.getState().layout);
   const keptSessionKeys = new Set(
     Object.entries(state.draftThreadsByThreadKey)
       .filter(
         ([threadKey, draftThread]) =>
           mappedDraftKeys.has(threadKey) ||
-          tabDraftKeys.has(threadKey) ||
           isDraftThreadPromoting(draftThread) ||
           composerDraftHasUserContent(state.draftsByThreadKey[threadKey]) ||
           draftThreadHasOpenPreview(draftThread),
@@ -2815,6 +2816,7 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    ...(persistedDraftThread.workspaceExplicit ? { workspaceExplicit: true } : {}),
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
       : {}),
@@ -3009,7 +3011,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               previousThreadKeyForLogicalProject === undefined
                 ? undefined
                 : nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
-            // Open tabs keep empty drafts alive; populated drafts remain available in the sidebar.
+            // Keep populated drafts unmapped: sidebar rows still expose them when a new draft is opened.
             if (
               previousThreadKeyForLogicalProject &&
               previousThreadKeyForLogicalProject !== draftId &&
@@ -3018,9 +3020,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 previousThreadKeyForLogicalProject,
               ) &&
               !isDraftThreadPromoting(previousDraftThread) &&
-              !layoutDraftIds(useLayoutStore.getState().layout).has(
-                previousThreadKeyForLogicalProject,
-              ) &&
               !composerDraftHasUserContent(
                 state.draftsByThreadKey[previousThreadKeyForLogicalProject],
               ) &&
@@ -3126,6 +3125,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              ...((options.workspaceExplicit ?? existing.workspaceExplicit)
+                ? { workspaceExplicit: true as const }
+                : {}),
               ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
               ...(worktreeRepositories ? { worktreeRepositories } : {}),
               promotedTo: existing.promotedTo ?? null,
@@ -3143,6 +3145,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              nextDraftThread.workspaceExplicit === existing.workspaceExplicit &&
               checkoutPullRequestsEqual(
                 nextDraftThread.checkoutPullRequest,
                 existing.checkoutPullRequest,
@@ -3265,14 +3268,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return removeDraftThreadReferences(state, threadKey);
           });
-          useLayoutStore
-            .getState()
-            .closeTabsWhere(
-              (tab) =>
-                tab.content.kind === "chat" &&
-                tab.content.target.kind === "draft" &&
-                tab.content.target.draftId === threadKey,
-            );
         },
         setStickyModelSelection: (modelSelection) => {
           const normalized = normalizeModelSelection(modelSelection);
@@ -4941,24 +4936,6 @@ export function subscribeDraftThreadPromotion(input: {
           if (disposed) return;
           const current = composerDraftStore.getState().draftThreadsByThreadKey[draftId];
           if (!current || !scopedThreadRefsEqual(current.promotedTo, ref)) return;
-          for (const workspace of useLayoutStore.getState().layout.workspaces) {
-            for (const column of workspace.columns) {
-              for (const pane of column.panes) {
-                for (const tab of pane.tabs) {
-                  if (
-                    tab.content.kind === "chat" &&
-                    tab.content.target.kind === "draft" &&
-                    tab.content.target.draftId === draftId
-                  ) {
-                    useLayoutStore.getState().replaceTabContent(tab.id, {
-                      kind: "chat",
-                      target: { kind: "server", threadRef: ref },
-                    });
-                  }
-                }
-              }
-            }
-          }
           finalizePromotedDraftThreadByRef(ref);
         });
       }

@@ -9,7 +9,7 @@ import {
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { T, useGT } from "gt-react";
-import { MessageSquarePlusIcon, Trash2Icon, XIcon } from "lucide-react";
+import { Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -35,12 +35,11 @@ import {
 import { useOpenThreadFamily } from "../ThreadRouteView";
 import { useAtomCommand } from "../../state/use-atom-command";
 import ChatView from "../ChatView";
-import { PanelTabActions, useInPanelTabBar } from "../PanelTabBreadcrumb";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { closeThreadFindIn } from "./threadFindStore";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /**
  * A side chat or a subagent as a tab: the thread's own chat, which decides its bottom, the
@@ -57,7 +56,6 @@ export default function SideThreadPane(props: {
   const { parentRef, surface } = props;
   const { threadId } = surface;
   const gt = useGT();
-  const inPanelTabBar = useInPanelTabBar();
   const threadRef = scopeThreadRef(parentRef.environmentId, threadId);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the parent panel as host in the panel store, and closes this side chat's find with its pane
   useEffect(() => {
@@ -153,85 +151,54 @@ export default function SideThreadPane(props: {
         ? thread.title
         : formatSubagentDisplayTitle(thread.title);
 
-  const actions = isSideChat ? (
-    <div className="flex shrink-0 items-center gap-1.5">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={gt("Add to chat")}
-              aria-disabled={!canAddToChat || undefined}
-              onClick={addToChat}
-            >
-              <MessageSquarePlusIcon className="size-3.5" />
-            </Button>
-          }
-        />
-        <TooltipPopup side="bottom">
-          <T>Add to chat</T>
-          <span className="block">
-            {canAddToChat
-              ? gt("Adds this side chat to the main thread's next message.")
-              : gt("Available after the first message.")}
-          </span>
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger render={<span className="flex shrink-0" />}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={gt("Delete side chat")}
-            disabled={!canOperate || shell === null || deleting}
-            onClick={() => void deleteSideChat()}
-          >
-            <Trash2Icon className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">
-          <T>Delete side chat</T>
-        </TooltipPopup>
-      </Tooltip>
-      {inPanelTabBar ? null : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={gt("Close side chat")}
-                onClick={props.onClose}
-              />
-            }
-          >
-            <XIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            <T>Close side chat</T>
-          </TooltipPopup>
-        </Tooltip>
-      )}
-    </div>
-  ) : null;
-
   return (
     <div
       data-side-chat-pane={threadId}
       data-testid="side-thread-pane"
       className="flex h-full min-h-0 flex-col"
     >
-      {actions === null ? null : inPanelTabBar ? (
-        <PanelTabActions>{actions}</PanelTabActions>
-      ) : (
-        <div className="flex h-9 shrink-0 items-center gap-1 pr-1 pl-3">
-          <h2 className="min-w-0 flex-1 truncate text-meta">{title}</h2>
-          {actions}
+      {isSideChat ? (
+        <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
+          <h2 className="min-w-0 flex-1 truncate text-xs font-medium">{title}</h2>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="xs"
+                aria-disabled={!canAddToChat || undefined}
+                onClick={addToChat}
+              >
+                <T>Add to chat</T>
+              </Button>
+            }
+            label={
+              canAddToChat
+                ? gt("Adds this side chat to the main thread's next message.")
+                : gt("Available after the first message.")
+            }
+            side="bottom"
+          />
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={gt("Delete side chat")}
+            disabled={!canOperate || shell === null || deleting}
+            onClick={() => void deleteSideChat()}
+          >
+            <Trash2Icon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={gt("Close side chat")}
+            onClick={props.onClose}
+          >
+            <XIcon />
+          </Button>
         </div>
-      )}
+      ) : null}
       {renderState === "missing" ? (
-        <p className="p-3 text-meta text-muted-foreground">
+        <p className="p-3 text-xs text-muted-foreground">
           {isSideChat ? (
             <T>This side chat was deleted.</T>
           ) : (

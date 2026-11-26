@@ -4,9 +4,7 @@ import * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
-import { MENU_ROW_TEXT_CLASS } from "./menu-row-text";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { RELAXED_PICKER_CLASS } from "./picker-styles";
 
 const ComboboxContext = React.createContext<{
   chipsRef: React.RefObject<Element | null> | null;
@@ -61,11 +59,9 @@ function ComboboxInput({
         className={cn(
           startAddon &&
             "data-[size=sm]:*:data-[slot=combobox-input]:ps-[calc(--spacing(7.5)-1px)] *:data-[slot=combobox-input]:ps-[calc(--spacing(8.5)-1px)] sm:data-[size=sm]:*:data-[slot=combobox-input]:ps-[calc(--spacing(7)-1px)] sm:*:data-[slot=combobox-input]:ps-[calc(--spacing(8)-1px)]",
-          // Room for the trigger or clear button that follows the input.
-          (showTrigger || showClear) &&
-            (sizeValue === "sm"
-              ? "*:data-[slot=combobox-input]:pe-6.5"
-              : "*:data-[slot=combobox-input]:pe-7"),
+          sizeValue === "sm"
+            ? "has-[+[data-slot=combobox-trigger],+[data-slot=combobox-clear]]:*:data-[slot=combobox-input]:pe-6.5"
+            : "has-[+[data-slot=combobox-trigger],+[data-slot=combobox-clear]]:*:data-[slot=combobox-input]:pe-7",
           className,
         )}
         data-slot="combobox-input"
@@ -73,7 +69,7 @@ function ComboboxInput({
           <Input
             className={cn(
               "has-disabled:opacity-100",
-              unstyled && "rounded-none bg-transparent text-label",
+              unstyled && "rounded-none bg-transparent text-sm",
             )}
             nativeInput
             size={sizeValue}
@@ -108,45 +104,13 @@ function ComboboxInput({
   );
 }
 
-/**
- * The search row at the top of a combobox popup. `inset` draws a sunken field inside the
- * popover padding, like the sidebar search; the default is an underlined row.
- */
-function ComboboxSearchInput({
-  separator = true,
-  variant = "underline",
-  ...props
-}: React.ComponentProps<typeof ComboboxInput> & {
-  separator?: boolean;
-  variant?: "underline" | "inset";
-}) {
-  if (variant === "inset") {
-    return (
-      <label className="block min-w-0 shrink-0 cursor-text px-2 pt-1.5">
-        <div className="relative isolate flex h-7 items-center gap-2 rounded-control px-2.5 before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:surface-well">
-          <SearchIcon aria-hidden="true" className="size-[13px] shrink-0 text-dim-foreground" />
-          <ComboboxInput
-            {...props}
-            className="min-w-0 flex-1 [&_input]:h-6.5 [&_input]:px-0 [&_input]:font-sans [&_input]:leading-6.5"
-            showTrigger={false}
-            size="sm"
-            unstyled
-          />
-        </div>
-      </label>
-    );
-  }
+function ComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) {
   return (
     <label className="block min-w-0 shrink-0 cursor-text px-3 pt-2.5">
-      <div
-        className={cn(
-          "relative -translate-y-px border-b pb-1.5 transition-colors",
-          separator ? "surface-search-separator focus-within:border-ring" : "border-transparent",
-        )}
-      >
+      <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
         <SearchIcon
           aria-hidden="true"
-          className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground opacity-70"
+          className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
         />
         <ComboboxInput
           {...props}
@@ -177,10 +141,8 @@ function ComboboxPopup({
   align = "start",
   collisionAvoidance,
   anchor: anchorProp,
-  spacing = "default",
   ...props
 }: ComboboxPrimitive.Popup.Props & {
-  spacing?: "default" | "relaxed";
   align?: ComboboxPrimitive.Positioner.Props["align"];
   sideOffset?: ComboboxPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: ComboboxPrimitive.Positioner.Props["alignOffset"];
@@ -205,8 +167,7 @@ function ComboboxPopup({
       >
         <span
           className={cn(
-            "surface-popover kbd-in-popover relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-card transition-[scale,opacity]",
-            spacing === "relaxed" && RELAXED_PICKER_CLASS,
+            "dropdown-glass relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] transition-[scale,opacity] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
             className,
           )}
         >
@@ -228,23 +189,20 @@ function ComboboxItem({
   className,
   children,
   hideIndicator: _hideIndicator = false,
-  radius = "item",
   selectedFill = true,
   ...props
 }: ComboboxPrimitive.Item.Props & {
   hideIndicator?: boolean;
-  radius?: "item" | "row";
   /** Off for rows that mark selection themselves, so a fill only means hover or highlight. */
   selectedFill?: boolean;
 }) {
   return (
     <ComboboxPrimitive.Item
       className={cn(
-        `flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-[8px] data-[radius=row]:rounded-row px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none not-data-disabled:hover:surface-selected-soft data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-selected:text-strong-foreground data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground [&[data-highlighted][data-selected]]:surface-selected-soft [&[data-highlighted][data-selected]]:text-strong-foreground data-disabled:opacity-45 sm:min-h-7 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0`,
-        selectedFill && "data-selected:surface-selected-soft",
+        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-sm px-2 py-1 text-base outline-none not-data-disabled:hover:bg-foreground/[0.09] data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-selected:text-foreground data-highlighted:bg-foreground/[0.09] data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-foreground/[0.09] [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        selectedFill && "data-selected:bg-foreground/[0.06]",
         className,
       )}
-      data-radius={radius}
       data-slot="combobox-item"
       {...props}
     >
@@ -261,16 +219,26 @@ function ComboboxItem({
 function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   return (
     <ComboboxPrimitive.Empty
-      className={cn("not-empty:p-2 text-center text-body text-muted-foreground", className)}
+      className={cn(
+        "not-empty:p-2 text-center text-base text-muted-foreground sm:text-sm",
+        className,
+      )}
       data-slot="combobox-empty"
       {...props}
     />
   );
 }
 
-function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
+function ComboboxList({
+  className,
+  scrollAreaClassName,
+  ...props
+}: ComboboxPrimitive.List.Props & {
+  /** Put height caps here, not on `className`: a capped list never resizes, so the scrollbar goes stale. */
+  scrollAreaClassName?: string;
+}) {
   return (
-    <ScrollArea scrollbarGutter scrollFade>
+    <ScrollArea className={scrollAreaClassName} observeContent scrollbarGutter scrollFade>
       <ComboboxPrimitive.List
         className={cn("not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1", className)}
         data-slot="combobox-list"
@@ -298,7 +266,10 @@ function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
 function ComboboxStatus({ className, ...props }: ComboboxPrimitive.Status.Props) {
   return (
     <ComboboxPrimitive.Status
-      className={cn("px-3 py-2 text-meta text-muted-foreground empty:m-0 empty:p-0", className)}
+      className={cn(
+        "px-3 py-2 font-medium text-muted-foreground text-xs empty:m-0 empty:p-0",
+        className,
+      )}
       data-slot="combobox-status"
       {...props}
     />

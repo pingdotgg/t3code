@@ -45,8 +45,7 @@ export function DeviceControlsRail(props: {
   onScreenshot: () => void;
   toolsOpen: boolean;
   onTools: () => void;
-  /** Absent where there is no chat to float over (a threadless surface). */
-  onFloat?: (() => void) | undefined;
+  onFloat: () => void;
   onClose: () => void;
   onPowerOff: () => void;
 }) {
@@ -64,7 +63,7 @@ export function DeviceControlsRail(props: {
       data-layout="rail"
       className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pr-2 [scrollbar-width:none]"
     >
-      <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full surface-panel p-2 [scrollbar-width:none]">
+      <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
         <RailButton
           tooltipSide={popupSide}
           label={gt("Home", { $context: "device home button" })}
@@ -226,12 +225,10 @@ export function DeviceControlsRail(props: {
             <MoreHorizontal />
           </MenuTrigger>
           <MenuPopup side={popupSide} align="end">
-            {props.onFloat ? (
-              <MenuItem onClick={props.onFloat}>
-                <PictureInPicture2 />
-                <T>Float device over chat</T>
-              </MenuItem>
-            ) : null}
+            <MenuItem onClick={props.onFloat}>
+              <PictureInPicture2 />
+              <T>Float device over chat</T>
+            </MenuItem>
             <MenuItem onClick={props.onClose}>
               <X />
               <T>Close device panel</T>
@@ -293,7 +290,7 @@ export function DeviceControlsRail(props: {
 }
 
 function RailDivider() {
-  return <div aria-hidden className="my-1 h-px w-5 shrink-0 bg-border" />;
+  return <div aria-hidden className="my-1 h-px w-5 shrink-0 bg-border/70" />;
 }
 
 function RailButton(props: {

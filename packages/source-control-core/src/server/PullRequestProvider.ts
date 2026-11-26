@@ -26,7 +26,6 @@ import type {
   PullRequestMergeability,
   PullRequestOmittedFileStat,
   PullRequestReaction,
-  PullRequestReviewRequestEvent,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
   PullRequestReviewDecision,
@@ -293,8 +292,6 @@ export interface ProviderChangeRequestActivity {
   readonly overviewThreads?: ReadonlyArray<PullRequestOverviewThread>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
   readonly reactions?: ReadonlyArray<PullRequestReaction>;
-  /** Review requests from the host's timeline, where it keeps them. */
-  readonly reviewRequests?: ReadonlyArray<PullRequestReviewRequestEvent>;
 }
 
 export interface ProviderDiffSlice {
@@ -441,7 +438,7 @@ export interface PullRequestProviderApi {
 
   readonly getChangeRequestChecks?: (
     input: ProviderRepositoryRef & { readonly number: number },
-  ) => Effect.Effect<Pick<PullRequestChecks, "state" | "checks">, PullRequestProviderError>;
+  ) => Effect.Effect<Omit<PullRequestChecks, "observedAt">, PullRequestProviderError>;
 
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },

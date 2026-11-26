@@ -20,7 +20,7 @@ export function LinkAccessPicker({
   const selected = accessConfig[value];
   return (
     <div className="space-y-1.5">
-      <span id={labelId} className="block text-caption">
+      <span id={labelId} className="block text-xs font-medium">
         <T>What agents here may do there</T>
       </span>
       <Select
@@ -42,22 +42,20 @@ export function LinkAccessPicker({
           {AuthMcpClientAccess.literals.map((option) => {
             const { label, description, icon: Icon } = accessConfig[option];
             return (
-              <SelectItem key={option} value={option}>
+              <SelectItem key={option} value={option} hideIndicator>
                 <span className="grid min-w-0 gap-0.5 py-0.5">
-                  <span className="inline-flex items-center gap-1.5 text-label text-foreground">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                     <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
                     {m(label)}
                   </span>
-                  <span className="text-meta leading-4 text-muted-foreground">
-                    {m(description)}
-                  </span>
+                  <span className="text-xs leading-4 text-muted-foreground">{m(description)}</span>
                 </span>
               </SelectItem>
             );
           })}
         </SelectPopup>
       </Select>
-      <p className="text-meta text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {m(selected.description)}{" "}
         <T>
           An agent never gets more access there than its own mode here. Below full access, it can

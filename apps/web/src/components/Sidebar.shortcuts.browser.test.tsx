@@ -19,7 +19,7 @@ import {
 } from "../../test/fakeEnvironment";
 import { act, render } from "../../test/render";
 
-// The socket is the only fake layer; see test/appScenarios.renders.tsx.
+// The socket is the only fake layer.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
   const [actual, { fakeDriver }, Layer] = await Promise.all([
     importOriginal<{ readonly ConnectionDriver: Context.Key<unknown, FakeDriver> }>(),
@@ -66,7 +66,6 @@ it("leaves thread shortcuts and their hints to the preview when their rules excl
 
   const previewChrome = document.createElement("div");
   previewChrome.dataset.previewPanelMode = "browser";
-  previewChrome.style.cssText = "position: fixed; top: 0; left: 0; z-index: 10000";
   previewChrome.innerHTML = '<button type="button">Reload</button>';
   document.body.append(previewChrome);
   using _chrome = { [Symbol.dispose]: () => previewChrome.remove() };

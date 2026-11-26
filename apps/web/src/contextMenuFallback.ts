@@ -3,9 +3,6 @@ import { msg } from "gt-react";
 
 import { m } from "./i18n/messages";
 
-import { MENU_ITEM_ROW_CLASS, MENU_SUB_TRIGGER_ROW_CLASS } from "./components/ui/menu";
-import { prepareFocusReturn } from "./components/ui/focus-return";
-
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<string, string> }>> = {
@@ -28,15 +25,6 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
   clock: [
     { tag: "path", attrs: { d: "M12 6v6l4 2" } },
     { tag: "circle", attrs: { cx: "12", cy: "12", r: "10" } },
-  ],
-  "square-pen": [
-    { tag: "path", attrs: { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" } },
-    {
-      tag: "path",
-      attrs: {
-        d: "M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z",
-      },
-    },
   ],
   pencil: [
     {
@@ -85,20 +73,6 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
       tag: "path",
       attrs: {
         d: "M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z",
-      },
-    },
-  ],
-  "messages-square": [
-    {
-      tag: "path",
-      attrs: {
-        d: "M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
-      },
-    },
-    {
-      tag: "path",
-      attrs: {
-        d: "M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1",
       },
     },
   ],
@@ -163,35 +137,6 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
       },
     },
   ],
-  terminal: [
-    { tag: "polyline", attrs: { points: "4 17 10 11 4 5" } },
-    { tag: "line", attrs: { x1: "12", x2: "20", y1: "19", y2: "19" } },
-  ],
-  globe: [
-    { tag: "circle", attrs: { cx: "12", cy: "12", r: "10" } },
-    { tag: "path", attrs: { d: "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" } },
-    { tag: "path", attrs: { d: "M2 12h20" } },
-  ],
-  "file-diff": [
-    { tag: "path", attrs: { d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" } },
-    { tag: "path", attrs: { d: "M9 10h6" } },
-    { tag: "path", attrs: { d: "M12 13V7" } },
-    { tag: "path", attrs: { d: "M9 17h6" } },
-  ],
-  "layers-2": [
-    {
-      tag: "path",
-      attrs: {
-        d: "M13 13.74a2 2 0 0 1-2 0L2.5 8.87a1 1 0 0 1 0-1.74L11 2.26a2 2 0 0 1 2 0l8.5 4.87a1 1 0 0 1 0 1.74z",
-      },
-    },
-    {
-      tag: "path",
-      attrs: {
-        d: "m20 14.285 1.5.845a1 1 0 0 1 0 1.74L13 21.74a2 2 0 0 1-2 0l-8.5-4.87a1 1 0 0 1 0-1.74l1.5-.845",
-      },
-    },
-  ],
   "folder-tree": [
     {
       tag: "path",
@@ -214,38 +159,6 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M10 19H3" } },
     { tag: "circle", attrs: { cx: "17", cy: "15", r: "3" } },
     { tag: "path", attrs: { d: "m21 19-1.9-1.9" } },
-  ],
-  "panel-right": [
-    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
-    { tag: "path", attrs: { d: "M15 3v18" } },
-  ],
-  "panel-bottom": [
-    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
-    { tag: "path", attrs: { d: "M3 15h18" } },
-  ],
-  "columns-2": [
-    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
-    { tag: "path", attrs: { d: "M12 3v18" } },
-  ],
-  maximize: [
-    { tag: "path", attrs: { d: "M8 3H5a2 2 0 0 0-2 2v3" } },
-    { tag: "path", attrs: { d: "M21 8V5a2 2 0 0 0-2-2h-3" } },
-    { tag: "path", attrs: { d: "M3 16v3a2 2 0 0 0 2 2h3" } },
-    { tag: "path", attrs: { d: "M16 21h3a2 2 0 0 0 2-2v-3" } },
-  ],
-  link: [
-    { tag: "path", attrs: { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" } },
-    { tag: "path", attrs: { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" } },
-  ],
-  x: [
-    { tag: "path", attrs: { d: "M18 6 6 18" } },
-    { tag: "path", attrs: { d: "m6 6 12 12" } },
-  ],
-  "copy-x": [
-    { tag: "line", attrs: { x1: "12", x2: "18", y1: "12", y2: "18" } },
-    { tag: "line", attrs: { x1: "12", x2: "18", y1: "18", y2: "12" } },
-    { tag: "rect", attrs: { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" } },
-    { tag: "path", attrs: { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" } },
   ],
   trash: [
     { tag: "path", attrs: { d: "M3 6h18" } },
@@ -272,7 +185,9 @@ function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSV
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute(
     "class",
-    tone === "destructive" ? "size-[15px] shrink-0 text-current" : "size-[15px] shrink-0",
+    tone === "destructive"
+      ? "size-4.5 shrink-0 sm:size-4"
+      : "size-4.5 shrink-0 text-muted-foreground sm:size-4",
   );
   for (const node of paths) {
     const child = document.createElementNS(SVG_NS, node.tag);
@@ -342,7 +257,6 @@ export function showContextMenuFallback<T extends string>(
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
     let isDisposed = false;
-    let keyboardInteraction = !position;
     let canDismissFromPointer = false;
 
     const dismiss = (restoreFocus = true) => cleanup(null, restoreFocus);
@@ -366,9 +280,7 @@ export function showContextMenuFallback<T extends string>(
         menu.remove();
       }
       if (shouldRestoreFocus && previouslyFocusedElement?.isConnected) {
-        prepareFocusReturn(document);
-        const focusOptions = { preventScroll: true, focusVisible: keyboardInteraction };
-        previouslyFocusedElement.focus(focusOptions);
+        previouslyFocusedElement.focus({ preventScroll: true });
       }
       resolve(result);
     };
@@ -386,7 +298,6 @@ export function showContextMenuFallback<T extends string>(
         isNodeWithinMenuStack(document.activeElement, [menu]),
       );
       if (level < 0) return;
-      keyboardInteraction = true;
       const menu = menuStack[level]!;
       const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button")].filter(
         (button) => !button.disabled,
@@ -448,7 +359,6 @@ export function showContextMenuFallback<T extends string>(
     const onWindowBlur = () => cleanup(null, false);
 
     const onPointerDown = (event: PointerEvent) => {
-      keyboardInteraction = false;
       if (!canDismissFromPointer || isNodeWithinMenuStack(event.target, menuStack)) {
         return;
       }
@@ -481,45 +391,29 @@ export function showContextMenuFallback<T extends string>(
 
       const menu = document.createElement("div");
       menu.className =
-        "surface-popover fixed z-[10000] min-w-40 max-w-sm overflow-hidden rounded-card text-popover-foreground outline-none";
+        "dropdown-glass fixed z-[10000] min-w-32 max-w-sm overflow-hidden rounded-lg bg-clip-padding text-popover-foreground outline-none";
       menu.style.cssText =
-        "position:fixed;z-index:10000;min-width:10rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-card);color:var(--contrast-popover-foreground);outline:none;pointer-events:auto;";
-      // Web context menus keep their design widths even when labels are short.
-      // Use action ids so native menu contracts and localized labels stay unchanged.
-      const ids = new Set<string>(entries.map((item) => item.id));
-      const minWidth =
-        ids.has("rename") && ids.has("mark-unread")
-          ? 256
-          : ids.has("snooze:custom")
-            ? 220
-            : ids.has("open-in-preview")
-              ? 232
-              : 180;
-      menu.style.minWidth = `${Math.min(minWidth, Math.max(1, window.innerWidth - 8))}px`;
+        "position:fixed;z-index:10000;min-width:8rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-lg);background-clip:padding-box;color:var(--contrast-popover-foreground);outline:none;pointer-events:auto;";
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
       menu.dataset.contextMenu = "true";
-      // Theme CSS styles menus through this documented hook, like the component menus.
-      menu.dataset.slot = "menu-popup";
       menu.setAttribute("role", "menu");
       menu.setAttribute("aria-label", parentTrigger?.textContent ?? m(msg("Context menu")));
       menu.tabIndex = -1;
 
-      // Size to the content and scroll only past the viewport; clampMenuPosition
-      // keeps the same viewport clearance on each edge.
       const inner = document.createElement("div");
       inner.className =
         "max-h-[calc(100vh-0.5rem)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1";
       inner.style.cssText =
-        "max-height:calc(100vh - 0.5rem);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;--popup-item-radius:calc(var(--radius-card) - 5px);display:flex;flex-direction:column;";
+        "max-height:calc(100vh - 0.5rem);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;";
 
       for (const item of entries) {
         if (item.separatorBefore === true && inner.children.length > 0) {
           const separator = document.createElement("div");
-          separator.className = "mx-2 my-1 h-px shrink-0 bg-hairline";
+          separator.className = "mx-2 my-1 h-px bg-border";
           separator.style.cssText =
-            "height:1px;flex-shrink:0;margin:0.25rem 0.5rem;background:var(--hairline);";
+            "height:1px;margin:0.25rem 0.5rem;background:var(--contrast-border);";
           separator.dataset.contextMenuSeparator = "true";
           separator.setAttribute("role", "separator");
           inner.appendChild(separator);
@@ -527,7 +421,7 @@ export function showContextMenuFallback<T extends string>(
 
         if (item.header === true) {
           const header = document.createElement("div");
-          header.className = "px-2 py-1.5 text-meta text-dim-foreground";
+          header.className = "px-2 py-1.5 font-medium text-muted-foreground text-xs";
           header.textContent = item.label;
           inner.appendChild(header);
           continue;
@@ -544,35 +438,34 @@ export function showContextMenuFallback<T extends string>(
         button.tabIndex = -1;
         button.setAttribute("role", "menuitem");
         button.setAttribute("aria-disabled", String(isDisabled));
-        const rowBase = `${hasChildren ? MENU_SUB_TRIGGER_ROW_CLASS : MENU_ITEM_ROW_CLASS} [&>svg:not(:last-child)]:-mx-0.5 w-full text-left`;
-        button.dataset.variant = isLeafDestructive ? "destructive" : "default";
-        button.className = rowBase;
-        if (isDisabled) button.dataset.disabled = "";
+        const rowBase =
+          "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
+        button.className = isDisabled
+          ? `${rowBase} pointer-events-none cursor-not-allowed text-muted-foreground opacity-64`
+          : isLeafDestructive
+            ? `${rowBase} text-destructive-foreground hover:bg-destructive/10 hover:text-destructive-foreground`
+            : `${rowBase} text-foreground hover:bg-accent hover:text-accent-foreground`;
         button.style.cssText =
-          "display:flex;width:100%;min-height:1.75rem;align-items:center;gap:0.5rem;border:0;border-radius:var(--popup-item-radius,8px);background:transparent;padding:0.25rem 0.5rem;color:var(--contrast-foreground);font-family:var(--font-sans,system-ui,sans-serif);font-weight:500;line-height:1.25rem;text-align:left;cursor:default;";
+          "display:flex;width:100%;min-height:1.75rem;align-items:center;gap:0.5rem;border:0;border-radius:var(--radius-sm);background:transparent;padding:0.25rem 0.5rem;color:var(--contrast-foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:0.875rem;line-height:1.25rem;text-align:left;cursor:default;";
         if (isLeafDestructive) {
           button.style.color = "var(--destructive-foreground)";
         }
         if (isDisabled) {
           button.style.color = "var(--contrast-muted-foreground)";
-          button.style.opacity = "0.45";
+          button.style.opacity = "0.64";
           button.style.pointerEvents = "none";
         }
 
         if (typeof item.checked === "boolean") {
           button.setAttribute("role", "menuitemradio");
           button.setAttribute("aria-checked", item.checked ? "true" : "false");
-          if (item.checked) {
-            button.dataset.selected = "";
-            button.style.background = "var(--selected-soft-fill)";
-          }
           const check = item.checked ? createIconElement("check", "neutral") : null;
           if (check) {
             button.appendChild(check);
           } else {
             const spacer = document.createElement("span");
-            spacer.className = "size-[15px] shrink-0";
-            spacer.style.cssText = "display:inline-block;width:15px;height:15px;flex-shrink:0;";
+            spacer.className = "size-4.5 shrink-0 sm:size-4";
+            spacer.style.cssText = "display:inline-block;width:1rem;height:1rem;flex-shrink:0;";
             spacer.setAttribute("aria-hidden", "true");
             button.appendChild(spacer);
           }
@@ -604,19 +497,16 @@ export function showContextMenuFallback<T extends string>(
           detail.textContent = item.detail;
           button.appendChild(detail);
         }
-        if (item.shortcut && !hasChildren) {
-          const shortcut = document.createElement("span");
-          shortcut.className = "ms-auto shrink-0 font-sans text-meta text-dim-foreground";
-          shortcut.textContent = item.shortcut;
-          button.appendChild(shortcut);
-        }
 
         if (hasChildren) {
           button.setAttribute("aria-haspopup", "menu");
           button.setAttribute("aria-expanded", "false");
           const chevron = createIconElement("chevron-right", "neutral");
           if (chevron) {
-            chevron.setAttribute("class", "ms-auto size-3.5 shrink-0 text-muted-foreground");
+            chevron.setAttribute(
+              "class",
+              "-me-0.5 ms-auto size-4.5 shrink-0 text-muted-foreground opacity-80 sm:size-4",
+            );
             chevron.setAttribute("aria-hidden", "true");
             chevron.dataset.contextMenuChevron = "true";
             button.appendChild(chevron);
@@ -628,10 +518,11 @@ export function showContextMenuFallback<T extends string>(
           let isFocused = false;
           const updateHighlight = () => {
             const isHighlighted = isHovered || isFocused;
-            if (isHighlighted) button.dataset.highlighted = "";
-            else delete button.dataset.highlighted;
-            button.style.background =
-              isHighlighted || item.checked ? "var(--selected-soft-fill)" : "transparent";
+            button.style.background = isHighlighted
+              ? isLeafDestructive
+                ? "color-mix(in srgb, var(--destructive) 10%, transparent)"
+                : "var(--accent)"
+              : "transparent";
             button.style.color = isHighlighted
               ? isLeafDestructive
                 ? "var(--destructive-foreground)"
@@ -641,7 +532,6 @@ export function showContextMenuFallback<T extends string>(
                 : "var(--contrast-foreground)";
           };
           button.addEventListener("mouseenter", () => {
-            keyboardInteraction = false;
             button.focus({ preventScroll: true });
             isHovered = true;
             updateHighlight();

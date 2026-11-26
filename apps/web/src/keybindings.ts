@@ -47,8 +47,6 @@ export interface ShortcutMatchContext {
   previewOpen: boolean;
   isWeb: boolean;
   isDesktop: boolean;
-  /** macOS, where mod is Cmd. Optional: derived from the platform unless given. */
-  isMac?: boolean;
   editableFocus?: boolean;
   [key: string]: boolean;
 }
@@ -80,8 +78,8 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     previewOpen: false,
     isWeb: !isElectron,
     isDesktop: isElectron,
-    isMac: isMacPlatform(resolvePlatform(options)),
     editableFocus: false,
+    isMac: isMacPlatform(resolvePlatform(options)),
     ...options?.context,
   };
 }
@@ -91,7 +89,7 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
     case "identifier":
       if (node.name === "true") return true;
       if (node.name === "false") return false;
-      return Boolean(context[node.name]);
+      return Object.hasOwn(context, node.name) && Boolean(context[node.name]);
     case "not":
       return !evaluateWhenNode(node.node, context);
     case "and":
@@ -147,34 +145,16 @@ export function shortcutForContext(
   return shortcut;
 }
 
-type EffectiveShortcutsByCommand = ReadonlyMap<KeybindingCommand, readonly KeybindingShortcut[]>;
-
-// Label lookups run on every render of many components; one walk per keybindings array and context.
-const effectiveShortcutsCache = new WeakMap<
-  ResolvedKeybindingsConfig,
-  Map<string, EffectiveShortcutsByCommand>
->();
-
-function effectiveShortcutsByCommand(
+export function effectiveShortcutsForCommand(
   keybindings: ResolvedKeybindingsConfig,
-  options: ShortcutMatchOptions | undefined,
-): EffectiveShortcutsByCommand {
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): KeybindingShortcut[] {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
-  const cacheKey = `${platform}|${Object.keys(context)
-    .toSorted()
-    .map((name) => `${name}:${context[name] ? 1 : 0}`)
-    .join(",")}`;
-  let byContext = effectiveShortcutsCache.get(keybindings);
-  if (!byContext) {
-    byContext = new Map();
-    effectiveShortcutsCache.set(keybindings, byContext);
-  }
-  const cached = byContext.get(cacheKey);
-  if (cached) return cached;
-
   const claimedShortcuts = new Set<string>();
-  const effective = new Map<KeybindingCommand, KeybindingShortcut[]>();
+  const effective: KeybindingShortcut[] = [];
+
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
@@ -187,20 +167,12 @@ function effectiveShortcutsByCommand(
     }
 
     claimedShortcuts.add(conflictKey);
-    const shortcuts = effective.get(binding.command);
-    if (shortcuts) shortcuts.push(shortcut);
-    else effective.set(binding.command, [shortcut]);
+    if (binding.command === command) {
+      effective.push(shortcut);
+    }
   }
-  byContext.set(cacheKey, effective);
-  return effective;
-}
 
-export function effectiveShortcutsForCommand(
-  keybindings: ResolvedKeybindingsConfig,
-  command: KeybindingCommand,
-  options?: ShortcutMatchOptions,
-): KeybindingShortcut[] {
-  return [...(effectiveShortcutsByCommand(keybindings, options).get(command) ?? [])];
+  return effective;
 }
 
 function findEffectiveShortcutForCommand(
@@ -208,7 +180,7 @@ function findEffectiveShortcutForCommand(
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,
 ): KeybindingShortcut | null {
-  return effectiveShortcutsByCommand(keybindings, options).get(command)?.[0] ?? null;
+  return effectiveShortcutsForCommand(keybindings, command, options)[0] ?? null;
 }
 
 function matchesCommandShortcut(
@@ -231,20 +203,16 @@ export function resolveShortcutCommand(
     context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
   }
 
-  // Every scope resolves every keydown, so rule out other keys before the full match.
-  const keyboardLayoutMap = options?.keyboardLayoutMap ?? getKeyboardLayoutMap();
-  const eventKeys = resolveEventKeys(event, keyboardLayoutMap);
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
-    if (!eventKeys.has(binding.shortcut.key)) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (
       !matchesKeybindingShortcut(
         event,
         shortcutForContext(binding, context),
         platform,
-        keyboardLayoutMap,
+        options?.keyboardLayoutMap ?? getKeyboardLayoutMap(),
       )
     )
       continue;
@@ -283,28 +251,30 @@ export function formatShortcutKeyLabel(key: string): string {
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
+export function formatShortcutKeyParts(
+  shortcut: KeybindingShortcut,
+  platform = navigator.platform,
+): readonly string[] {
+  const useMetaForMod = isMacPlatform(platform);
+  const showCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
+  const showAlt = shortcut.altKey;
+  const showShift = shortcut.shiftKey;
+  const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
+  const parts: string[] = [];
+  if (showCtrl) parts.push(useMetaForMod ? "\u2303" : "Ctrl");
+  if (showAlt) parts.push(useMetaForMod ? "\u2325" : "Alt");
+  if (showShift) parts.push(useMetaForMod ? "\u21e7" : "Shift");
+  if (showMeta) parts.push(useMetaForMod ? "\u2318" : "Meta");
+  parts.push(formatShortcutKeyLabel(shortcut.key));
+  return parts;
+}
+
 export function formatShortcutLabel(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): string {
-  const keyLabel = formatShortcutKeyLabel(shortcut.key);
-  const useMetaForMod = isMacPlatform(platform);
-  const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
-  const showCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
-  const showAlt = shortcut.altKey;
-  const showShift = shortcut.shiftKey;
-
-  if (useMetaForMod) {
-    return `${showCtrl ? "\u2303" : ""}${showAlt ? "\u2325" : ""}${showShift ? "\u21e7" : ""}${showMeta ? "\u2318" : ""}${keyLabel}`;
-  }
-
-  const parts: string[] = [];
-  if (showCtrl) parts.push("Ctrl");
-  if (showAlt) parts.push("Alt");
-  if (showShift) parts.push("Shift");
-  if (showMeta) parts.push("Meta");
-  parts.push(keyLabel);
-  return parts.join("+");
+  const parts = formatShortcutKeyParts(shortcut, platform);
+  return isMacPlatform(platform) ? parts.join("") : parts.join("+");
 }
 
 export function shortcutLabelForCommand(
@@ -417,6 +387,15 @@ export function isTerminalNewShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "terminal.new", options);
+}
+
+export function isTerminalCycleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const command = resolveShortcutCommand(event, keybindings, options);
+  return command === "terminal.previous" || command === "terminal.next";
 }
 
 export function isTerminalCloseShortcut(
@@ -565,38 +544,4 @@ export function terminalNavigationShortcutData(
   }
 
   return null;
-}
-
-const ELECTRON_KEY_NAMES: Record<string, string> = {
-  arrowleft: "Left",
-  arrowright: "Right",
-  arrowup: "Up",
-  arrowdown: "Down",
-  escape: "Escape",
-  enter: "Enter",
-  " ": "Space",
-  home: "Home",
-  end: "End",
-  tab: "Tab",
-};
-
-/**
- * A command's key for a context menu row: the label the web menu shows and
- * the accelerator the desktop menu shows beside the item. Empty when the
- * command has no key.
- */
-export function contextMenuShortcutFields(
-  keybindings: ResolvedKeybindingsConfig,
-  command: KeybindingCommand,
-): { shortcut?: string; accelerator?: string } {
-  const shortcut = findEffectiveShortcutForCommand(keybindings, command);
-  if (!shortcut) return {};
-  const parts: string[] = [];
-  if (shortcut.modKey) parts.push("CmdOrCtrl");
-  if (shortcut.metaKey) parts.push("Super");
-  if (shortcut.ctrlKey) parts.push("Ctrl");
-  if (shortcut.altKey) parts.push("Alt");
-  if (shortcut.shiftKey) parts.push("Shift");
-  parts.push(ELECTRON_KEY_NAMES[shortcut.key] ?? shortcut.key.toUpperCase());
-  return { shortcut: formatShortcutLabel(shortcut), accelerator: parts.join("+") };
 }

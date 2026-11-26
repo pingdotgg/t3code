@@ -6,8 +6,5 @@ import { createContext } from "react";
  */
 export const BackgroundThreadContext = createContext(false);
 
-/**
- * True for a thread kept mounted out of sight: under Settings or Usage, or as a pane tab
- * that is off screen or scrolled out of the window.
- */
+/** True only for a thread kept mounted out of sight under Settings or Usage. */
 export const HiddenThreadContext = createContext(false);

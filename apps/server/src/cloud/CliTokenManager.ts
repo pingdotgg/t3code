@@ -1,7 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - The CLI loopback OAuth callback is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
@@ -28,10 +26,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-import {
-  buildConnectAuthorizeRequestUrl,
-  connectAuthorizeRequestCode,
-} from "@t3tools/shared/connectAuth";
+import { buildConnectAuthorizeRequestUrl } from "@t3tools/shared/connectAuth";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
@@ -54,22 +49,14 @@ const DEVICE_AUTHORIZATION_SLOW_DOWN_INCREMENT = Duration.seconds(5);
 const OAUTH_REQUEST_TIMEOUT = Duration.seconds(10);
 const boldTerminalText = (value: string): string => `\u001b[1m${value}\u001b[22m`;
 
-function formatLoopbackAuthorizationPrompt(authorizationUrl: string, code: string): string {
+function formatLoopbackAuthorizationPrompt(authorizationUrl: string): string {
   return [
     "Open this URL to authorize T3 Connect:",
     `  ${authorizationUrl}`,
     "",
-    `The browser shows this code: ${boldTerminalText(code)}`,
-    "",
     `Press ${boldTerminalText("Enter")} to open it in your browser.`,
     `No browser on this device? Press ${boldTerminalText("H")} to switch to headless mode.`,
   ].join("\n");
-}
-
-/** "host · shell" label the hosted /connect page shows for this terminal. */
-function describeCliDevice(): string {
-  const shell = process.env.SHELL ? NodePath.basename(process.env.SHELL) : "";
-  return [NodeOS.hostname(), shell].filter((part) => part.length > 0).join(" · ");
 }
 
 export type LoopbackAuthorizationResult =
@@ -526,23 +513,13 @@ export const make = Effect.gen(function* () {
     const metadata = yield* cloudCliOAuthConfig;
     const hostedAppUrl = yield* hostedAppUrlConfig;
     const { verifier, challenge, state } = yield* makePkceRequest;
-    const callback = yield* Deferred.make<string, CloudCliAuthorizationDeniedError>();
+    const callback = yield* Deferred.make<string>();
     const layerCallbackRoute = HttpRouter.add(
       "GET",
       "/callback",
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const url = new URL(request.originalUrl, metadata.redirectUri);
-        // Cancel on the hosted /connect page returns here with access_denied.
-        if (
-          url.searchParams.get("state") === state &&
-          url.searchParams.get("error") === "access_denied"
-        ) {
-          yield* Deferred.fail(callback, new CloudCliAuthorizationDeniedError());
-          return HttpServerResponse.text(
-            "T3 Connect authorization was cancelled. You can close this tab.",
-          );
-        }
         const code = url.searchParams.get("code");
         if (url.searchParams.get("state") !== state || !code) {
           return HttpServerResponse.text("Invalid T3 Connect authorization callback.", {
@@ -572,11 +549,8 @@ export const make = Effect.gen(function* () {
       state,
       challenge,
       loopbackPort: metadata.loopbackPort,
-      device: describeCliDevice(),
     });
-    yield* Console.log(
-      formatLoopbackAuthorizationPrompt(authorizationUrl, connectAuthorizeRequestCode(state)),
-    );
+    yield* Console.log(formatLoopbackAuthorizationPrompt(authorizationUrl));
     const authorization = yield* waitForLoopbackAuthorization({
       authorizationUrl,
       callback: Deferred.await(callback).pipe(

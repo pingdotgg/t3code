@@ -18,6 +18,7 @@ import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
+  ExternalLinkIcon,
   ChevronRightIcon,
   BotIcon,
   CheckIcon,
@@ -40,23 +41,24 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { useQuietThreadShell } from "../../state/entities";
-import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
+import { useEnvironmentProviders } from "../../state/environments";
 import { type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentSessionId } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import ChatMarkdown from "../ChatMarkdown";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { Button, ContentButton, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { StatusDot } from "../ui/status-dot";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   buildWorkflowFeed,
   buildWorkflowTimeline,
   readWorkflowQuestion,
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
   workflowChip,
   workflowFlowFocus,
@@ -64,18 +66,21 @@ import {
   workflowResultLines,
   workflowRunNow,
   workflowRunState,
+  workflowWithdrawal,
   workflowSaidStart,
   workflowStepReferences,
   workflowStepTime,
   workflowOneLine,
   type WorkflowBeat,
   type WorkflowFeedRow,
+  type WorkflowQuestionChoice,
   type WorkflowQuickSteps,
   type WorkflowRunNode,
   type WorkflowRunTone,
 } from "@t3tools/client-runtime/workflows";
 import type { WorkflowPaneTab } from "./workflowPane.logic";
 import { WorkflowReferenceChip } from "./WorkflowReferences";
+import { useWorkflowThreadOpen } from "./useWorkflowThreadOpen";
 
 /** An agent's thread, as a step names it: the linked environment it is in, or null for this one. */
 export interface WorkflowThreadTarget {
@@ -145,7 +150,7 @@ export function WorkflowChip({ name }: { readonly name: string }) {
     <span
       aria-hidden
       className={cn(
-        "grid size-4 shrink-0 place-items-center rounded-badge text-micro leading-none",
+        "grid size-4 shrink-0 place-items-center rounded-sm text-4xs leading-none font-bold",
         CHIP_TONES[chip.tone],
       )}
     >
@@ -169,12 +174,12 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
   return (
     <span
       className={cn(
-        "flex shrink-0 items-center gap-1 text-meta whitespace-nowrap",
+        "flex shrink-0 items-center gap-1 text-xs font-medium whitespace-nowrap",
         WORKFLOW_TONE_CLASS[state.tone],
       )}
     >
       {state.tone === "working" ? (
-        <StatusDot tone="info" />
+        <span aria-hidden className="size-1.5 rounded-full bg-info" />
       ) : state.tone === "done" ? (
         <CheckIcon aria-hidden className="size-3" />
       ) : null}
@@ -185,10 +190,20 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
 
 const nthTry = (count: number, resolve: MessageResolver) =>
   resolve(
-    msg("{count, plural, =1 {1st try} =2 {2nd try} =3 {3rd try} other {{count}th try}}", {
-      count,
-    }),
+    msg(
+      "{count, selectordinal, one {{count}st try} two {{count}nd try} few {{count}rd try} other {{count}th try}}",
+      { count },
+    ),
   );
+
+const queuedText = (beat: WorkflowBeat, resolve: MessageResolver) =>
+  beat.ahead === undefined || beat.ahead === 0
+    ? resolve(msg("queued, next in line", { $context: "a workflow step waits for a free place" }))
+    : resolve(
+        msg("{count, plural, one {queued, {count} ahead} other {queued, {count} ahead}}", {
+          count: beat.ahead,
+        }),
+      );
 
 // The loading view and the timeline each draw a question's card, so a reason typed while the
 // steps load is kept here rather than in the card that is about to be replaced.
@@ -426,7 +441,8 @@ export function WorkflowRunFeed({
           beat.status !== "running" &&
           beat.kind !== "ask" &&
           beat.kind !== "sleep" &&
-          beat.kind !== "wait",
+          beat.kind !== "wait" &&
+          beat.kind !== "queue",
       ) ??
       null)
     : null;
@@ -446,7 +462,7 @@ export function WorkflowRunFeed({
           <Button
             size="sm"
             variant="ghost"
-            className={cn("-ms-2.5", shownTab !== null ? "@4xl/runs:hidden" : "@2xl/runs:hidden")}
+            className="-ms-2.5 md:hidden"
             onClick={() => onSelect(null)}
             aria-label={gt("Back to the list of runs")}
           >
@@ -454,16 +470,18 @@ export function WorkflowRunFeed({
             <T context="noun, the list of workflow runs">Runs</T>
           </Button>
           {parent === null ? null : (
-            <div className="text-meta">
-              <InlineButton tone="muted" onClick={() => onSelect(parent.runId)}>
-                <T>
-                  Part of <Var>{parent.title}</Var>
-                </T>
-              </InlineButton>
-            </div>
+            <button
+              type="button"
+              className="block cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => onSelect(parent.runId)}
+            >
+              <T>
+                Part of <Var>{parent.title}</Var>
+              </T>
+            </button>
           )}
           <div className="flex items-center gap-2">
-            <h2 className="min-w-0 flex-1 text-title break-words">{run.title}</h2>
+            <h2 className="min-w-0 flex-1 text-base font-semibold break-words">{run.title}</h2>
             <WorkflowStateWord node={node} />
             {ended ? null : (
               <Button
@@ -478,11 +496,10 @@ export function WorkflowRunFeed({
               </Button>
             )}
           </div>
-          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <WorkflowChip name={run.workflow} />
-              <span>{run.workflow}</span>
-            </span>
+          <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+            <WorkflowChip name={run.workflow} />
+            <span>{run.workflow}</span>
+            <span aria-hidden>·</span>
             <span>
               <T>
                 started{" "}
@@ -492,16 +509,22 @@ export function WorkflowRunFeed({
               </T>
             </span>
             {run.status === "paused" ? null : (
-              <span>
-                {ended
-                  ? gt("took {duration}", { duration: formatDuration(ranMs) })
-                  : gt("{duration} so far", { duration: formatDuration(ranMs) })}
-              </span>
+              <>
+                <span aria-hidden>·</span>
+                <span>
+                  {ended
+                    ? gt("took {duration}", { duration: formatDuration(ranMs) })
+                    : gt("{duration} so far", { duration: formatDuration(ranMs) })}
+                </span>
+              </>
             )}
             {run.retired ? (
-              <span>
-                <T>its version is no longer registered</T>
-              </span>
+              <>
+                <span aria-hidden>·</span>
+                <span>
+                  <T>its version is no longer registered</T>
+                </span>
+              </>
             ) : null}
           </p>
           {references.length === 0 ? null : (
@@ -520,15 +543,15 @@ export function WorkflowRunFeed({
         (feed.length === 0 && run.status === "paused" && loose.length === 0) ? (
           <>
             {detail.error ? (
-              <p className="mt-4 text-meta text-destructive">{detail.error}</p>
+              <p className="mt-4 text-xs text-destructive">{detail.error}</p>
             ) : feed === null ? (
-              <p className="mt-4 text-meta text-muted-foreground" role="status">
+              <p className="mt-4 text-xs text-muted-foreground" role="status">
                 <T>Loading steps…</T>
               </p>
             ) : null}
             {/* A question the run already asks is answerable without its step history. */}
             {run.status === "paused" ? (
-              <div className="mt-4 border-t border-divider pt-4">
+              <div className="mt-4 border-t border-border pt-4">
                 <div className="max-w-2xl">{pause(null, run.pauses, run.detail)}</div>
               </div>
             ) : null}
@@ -563,7 +586,7 @@ export function WorkflowRunFeed({
             <section
               ref={panel}
               aria-label={gt("What happened")}
-              className="min-w-0 flex-1 border-t border-divider pt-4 @2xl/feed:sticky @2xl/feed:top-4 @2xl/feed:self-stretch @2xl/feed:border-t-0 @2xl/feed:border-s @2xl/feed:border-divider @2xl/feed:ps-6 @2xl/feed:pt-1"
+              className="min-w-0 flex-1 border-t border-border pt-4 @2xl/feed:sticky @2xl/feed:top-4 @2xl/feed:self-stretch @2xl/feed:border-t-0 @2xl/feed:border-s @2xl/feed:ps-6 @2xl/feed:pt-1"
             >
               {shownBeat !== undefined ? (
                 // Keyed by the step: a reason typed for one question must not follow to the next.
@@ -598,12 +621,12 @@ export function WorkflowRunFeed({
                     sub={<RelativeLabel value={run.endedAt ?? run.updatedAt} />}
                   />
                   {run.status !== "completed" && run.detail ? (
-                    <p className="mt-3 text-body break-words whitespace-pre-wrap">{run.detail}</p>
+                    <p className="mt-3 text-sm break-words whitespace-pre-wrap">{run.detail}</p>
                   ) : null}
                   <ResultLines lines={resultLines} />
                 </FeedCard>
               ) : (
-                <p className="text-meta text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   <T>Nothing yet.</T>
                 </p>
               )}
@@ -759,101 +782,86 @@ function TimelineRow({
 }) {
   const live = tone === "working" || tone === "input";
   return (
-    <ContentButton
+    <button
+      type="button"
       aria-current={selected}
-      className="group/row relative block w-full min-w-0 cursor-pointer text-left"
+      className={cn(
+        "group/row relative flex w-full min-w-0 cursor-pointer items-center gap-2.5 pe-2 text-left",
+        sub ? "py-1 ps-1" : "py-1.5",
+        enters ? "motion-safe:animate-step-in" : null,
+      )}
       onClick={onPick}
     >
+      {/* The highlight starts past the mark, so the rail and the branch stay whole. */}
       <span
+        aria-hidden
         className={cn(
-          "relative flex w-full min-w-0 items-center gap-2.5 pe-2 group-focus-visible/row:ring-2 group-focus-visible/row:ring-ring/70 group-focus-visible/row:ring-inset",
-          sub ? "py-1 ps-1" : "py-1.5",
-          enters ? "motion-safe:animate-step-in" : null,
+          "pointer-events-none absolute inset-y-0 end-0 rounded-lg",
+          "start-6",
+          selected ? "bg-accent" : "group-hover/row:bg-accent/60",
         )}
-      >
-        {/* The highlight starts past the mark, so the rail and the branch stay whole. */}
-        <span
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute inset-y-0 end-0 rounded-row",
-            "start-6",
-            selected ? "surface-selected" : "group-hover/row:surface-ghost-hover",
-          )}
-        />
-        {sub ? (
-          <span aria-hidden className="relative z-10 grid size-5 shrink-0 place-items-center">
-            <svg viewBox="0 0 12 12" className="size-2.5 overflow-visible">
-              <circle
-                cx="6"
-                cy="6"
-                r="4.5"
-                strokeWidth="2"
-                className={cn(
-                  tone === "done"
-                    ? "stroke-transparent fill-muted-foreground/45"
-                    : tone === "failed"
-                      ? "stroke-destructive fill-destructive"
-                      : tone === "input"
-                        ? "stroke-warning fill-warning"
-                        : tone === "working"
-                          ? "stroke-info fill-info"
-                          : "stroke-muted-foreground/50 fill-background",
-                )}
-              />
-            </svg>
-          </span>
-        ) : (
-          <StepMark tone={tone} pulse={enters} draw={draw} />
-        )}
-        {/* Read left to right: the step, then what came of it. The name keeps its room. */}
-        <span className="relative flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="flex max-w-[60%] min-w-0 shrink-0 items-baseline gap-1.5">
-            {lead === undefined ? null : <span className="self-center">{lead}</span>}
-            <span
-              className={cn(
-                "min-w-0 truncate",
-                live || selected || current
-                  ? "text-label text-foreground"
-                  : "text-body text-foreground/75",
-              )}
-            >
-              {name}
-            </span>
-          </span>
-          {note || aside ? (
-            <span
-              className={cn(
-                "min-w-0 truncate text-meta",
-                asideTone === "failed" ? "text-destructive" : "text-muted-foreground",
-              )}
-            >
-              {aside ?? note}
-            </span>
-          ) : null}
-        </span>
-        {verb ? (
+      />
+      {sub ? (
+        <span aria-hidden className="relative z-10 grid size-5 shrink-0 place-items-center">
           <span
-            className={cn("relative max-w-[40%] shrink-0 truncate text-meta", VERB_TONE[verbTone])}
+            className={cn(
+              "size-2.5 rounded-full border-2",
+              tone === "done"
+                ? "border-transparent bg-muted-foreground/45"
+                : tone === "failed"
+                  ? "border-destructive bg-destructive"
+                  : tone === "input"
+                    ? "border-warning bg-warning"
+                    : tone === "working"
+                      ? "border-info bg-info"
+                      : "border-muted-foreground/50 bg-background",
+            )}
+          />
+        </span>
+      ) : (
+        <StepMark tone={tone} pulse={enters} draw={draw} />
+      )}
+      {/* Read left to right: the step, then what came of it. The name keeps its room. */}
+      <span className="relative flex min-w-0 flex-1 items-baseline gap-2">
+        <span className="flex max-w-[60%] min-w-0 shrink-0 items-baseline gap-1.5">
+          {lead === undefined ? null : <span className="self-center">{lead}</span>}
+          <span
+            className={cn(
+              "min-w-0 truncate text-sm",
+              live || selected || current ? "font-medium text-foreground" : "text-foreground/75",
+            )}
           >
-            {verb}
+            {name}
+          </span>
+        </span>
+        {note || aside ? (
+          <span
+            className={cn(
+              "min-w-0 truncate text-xs",
+              asideTone === "failed" ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {aside ?? note}
           </span>
         ) : null}
-        <span className="relative min-w-12 shrink-0 text-right text-meta text-muted-foreground tabular-nums">
-          {duration ?? ""}
-        </span>
-        {/* Points at the pane beside the timeline; no background moves on its own. */}
-        <span
-          aria-hidden
-          className="relative hidden w-3 shrink-0 place-items-center @2xl/feed:grid"
-        >
-          {selected || current ? (
-            <ChevronRightIcon
-              className={cn("size-3", selected ? "text-foreground" : "text-muted-foreground")}
-            />
-          ) : null}
-        </span>
       </span>
-    </ContentButton>
+      {verb ? (
+        <span className={cn("relative max-w-[40%] shrink-0 truncate text-xs", VERB_TONE[verbTone])}>
+          {verb}
+        </span>
+      ) : null}
+      <span className="relative min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+        {duration ?? ""}
+      </span>
+      {/* Points at the pane beside the timeline; no background moves on its own. */}
+      <span aria-hidden className="relative hidden w-3 shrink-0 place-items-center @2xl/feed:grid">
+        {selected || current ? (
+          <ChevronRightIcon
+            className={cn("size-3", selected ? "text-foreground" : "text-muted-foreground")}
+          />
+        ) : null}
+      </span>
+    </button>
   );
 }
 
@@ -1003,9 +1011,9 @@ function WorkflowTimeline({
             draw={row.endMs > openedAtMs}
             name={
               names.length <= 2
-                ? names.join(", ")
+                ? names.join(" · ")
                 : gt("{names} and {count} more", {
-                    names: names.slice(0, 2).join(", "),
+                    names: names.slice(0, 2).join(" · "),
                     count: names.length - 2,
                   })
             }
@@ -1022,7 +1030,11 @@ function WorkflowTimeline({
       const running = row.beats.filter((beat) => beat.status === "running").length;
       // Steps that only sleep or wait are under way without working.
       const working = row.beats.some(
-        (beat) => beat.status === "running" && beat.kind !== "sleep" && beat.kind !== "wait",
+        (beat) =>
+          beat.status === "running" &&
+          beat.kind !== "sleep" &&
+          beat.kind !== "wait" &&
+          beat.kind !== "queue",
       );
       const failed = row.beats.some((beat) => beat.status === "failed");
       const asks = row.beats.some(
@@ -1054,18 +1066,18 @@ function WorkflowTimeline({
               />
               <span
                 className={cn(
-                  "min-w-0 flex-1 truncate",
-                  running > 0 ? "text-label" : "text-body text-muted-foreground",
+                  "min-w-0 flex-1 truncate text-sm",
+                  running > 0 ? "font-medium" : "text-muted-foreground",
                 )}
               >
                 {gt("{count} in parallel", { count: row.beats.length })}
               </span>
               {working ? (
-                <span className="text-meta text-info-foreground">
+                <span className="text-xs text-info-foreground">
                   {gt("{count} running", { count: running })}
                 </span>
               ) : null}
-              <span className="min-w-12 shrink-0 text-right text-meta text-muted-foreground tabular-nums">
+              <span className="min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
                 {workflowStepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs)}
               </span>
               <span aria-hidden className="hidden w-3 shrink-0 @2xl/feed:block" />
@@ -1170,7 +1182,7 @@ function WorkflowTimeline({
   }
   const live = end === null;
   return (
-    <nav aria-label={gt("Steps so far")} className="w-full shrink-0 @2xl/feed:w-80 @4xl/feed:w-96">
+    <nav aria-label={gt("Steps so far")} className="w-full shrink-0 @2xl/feed:w-96">
       <ol>
         {items.map((item, index) => (
           <li key={item.key} className="relative">
@@ -1186,7 +1198,7 @@ function WorkflowTimeline({
         <div className="flex items-start gap-2.5">
           <span
             aria-hidden
-            className="ms-[9px] block h-5 w-0 border-s-2 border-dashed border-muted-foreground/30"
+            className="ms-[9px] block h-5 w-0 border-s-2 border-dashed border-border"
           />
         </div>
       ) : null}
@@ -1236,6 +1248,7 @@ function WorkflowBeatRow({
   const failed = beat.status === "failed";
   const said = workflowAgentSummary(beat).said;
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
+  const sessionId = useEnvironmentSessionId(environmentId);
   const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
   // An agent's own approval or question needs a person as much as the workflow's does.
   const agentAsks =
@@ -1269,6 +1282,8 @@ function WorkflowBeatRow({
           : gt("about to wake");
       case "wait":
         return gt("waiting");
+      case "queue":
+        return queuedText(beat, m);
       case "run":
         return child === null ? gt("running") : workflowRunNow(child, m);
       case "step":
@@ -1282,11 +1297,17 @@ function WorkflowBeatRow({
       case "agent":
         return said === null ? null : workflowOneLine(said);
       case "ask":
-        return answer === null
+        if (answer !== null)
+          return answer.answeredBy === null || isOwnWorkflowAnswer(answer, sessionId)
+            ? gt("You said {choice}", { choice: answer.choice })
+            : gt("{who} said {choice}", { who: answer.answeredBy, choice: answer.choice });
+        const withdrawal = workflowWithdrawal(beat.result);
+        return withdrawal === null
           ? gt("nobody answered")
-          : gt("You said {choice}", { choice: answer.choice });
+          : gt("withdrawn by {by}", { by: withdrawal.by });
       case "sleep":
       case "wait":
+      case "queue":
         return null;
       case "run":
         return child === null ? null : workflowRunNow(child, m);
@@ -1309,7 +1330,7 @@ function WorkflowBeatRow({
           : needsYou
             ? "input"
             : under
-              ? beat.kind === "sleep" || beat.kind === "wait"
+              ? beat.kind === "sleep" || beat.kind === "wait" || beat.kind === "queue"
                 ? "quiet"
                 : "working"
               : "done"
@@ -1332,7 +1353,11 @@ function WorkflowBeatRow({
       note={beat.kind === "agent" && (under || said === null) ? model : null}
       verb={verb}
       verbTone={
-        needsYou ? "input" : beat.kind === "sleep" || beat.kind === "wait" ? "quiet" : "working"
+        needsYou
+          ? "input"
+          : beat.kind === "sleep" || beat.kind === "wait" || beat.kind === "queue"
+            ? "quiet"
+            : "working"
       }
       aside={aside}
       {...(failed ? { asideTone: "failed" as const } : {})}
@@ -1345,14 +1370,13 @@ function WorkflowBeatRow({
   );
 }
 
-// What happened reads as part of the page. Questions and pauses are the framed alert cards,
-// using the redesign's warning and error tint tokens so they adapt across flat and Aqua styles.
+// What happened reads as part of the page. A question, answered in the timeline, is the one box;
+// a pause says so in its heading and its button.
 const CARD_TONE = {
   plain: "",
   quiet: "",
-  ask: "surface-tint [--surface-tint:var(--warning)] [--surface-tint-fill:var(--warning-alert-fill)] [--surface-tint-rim:var(--warning-alert-rim)] rounded-card px-3.5 py-3",
-  failed:
-    "surface-tint [--surface-tint:var(--error)] [--surface-tint-fill:var(--error-alert-fill)] [--surface-tint-rim:var(--error-alert-rim)] rounded-card px-3.5 py-3",
+  ask: "rounded-xl border border-warning/30 bg-warning-surface px-3 py-2.5",
+  failed: "",
   done: "",
 } as const;
 
@@ -1392,17 +1416,15 @@ function CardHead({
 }) {
   return (
     <div className="min-w-0">
-      <div className="flex min-w-0 items-start gap-2">
+      <div className="flex min-w-0 items-center gap-2">
         {mark === null || mark === undefined ? null : (
           <span className="grid h-6 shrink-0 place-items-center">{mark}</span>
         )}
-        <div className="min-w-0 flex-1 text-title leading-6 break-words">{name}</div>
+        <div className="min-w-0 flex-1 truncate text-base leading-6 font-semibold">{name}</div>
         {action === undefined || action === null ? null : <div className="shrink-0">{action}</div>}
       </div>
       {sub === undefined || sub === null || sub === "" ? null : (
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta break-words text-muted-foreground">
-          {sub}
-        </div>
+        <div className="mt-0.5 text-xs break-words text-muted-foreground">{sub}</div>
       )}
     </div>
   );
@@ -1416,7 +1438,7 @@ function ResultLines({
   if (lines.length === 0) return null;
   if (lines.every((line) => line.label === null)) {
     return (
-      <div className="mt-3 space-y-1 text-body">
+      <div className="mt-3 space-y-1 text-sm">
         {lines.map((line) => (
           <p key={line.value} className="break-words whitespace-pre-wrap">
             {line.value}
@@ -1435,7 +1457,7 @@ function Facts({
   readonly facts: ReadonlyArray<{ readonly label: string; readonly value: string }>;
 }) {
   return (
-    <dl className="mt-3 grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-body">
+    <dl className="mt-3 grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
       {facts.map((fact) => (
         <div key={fact.label} className="contents">
           <dt className="truncate text-muted-foreground">{fact.label}</dt>
@@ -1468,10 +1490,10 @@ function WorkflowQuickStepsCard({ row }: { readonly row: WorkflowQuickSteps }) {
   const gt = useGT();
   return (
     <FeedCard label={gt("Quick steps")}>
-      <ul className="space-y-1.5 text-body">
+      <ul className="space-y-1.5 text-sm">
         {row.steps.map((step) => (
           <li key={step.name} className="break-words">
-            <span className="text-label">{step.name}</span>
+            <span className="font-semibold">{step.name}</span>
             <ResultLines lines={workflowResultLines(step.result)} />
           </li>
         ))}
@@ -1499,9 +1521,10 @@ function WorkflowBeatCard({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const sessionId = useEnvironmentSessionId(environmentId);
   const under = beat.status === "running";
   const length = formatDuration(elapsedOf(beat));
-  const tries = beat.attempts > 1 ? <span>{nthTry(beat.attempts, m)}</span> : null;
+  const tries = beat.attempts > 1 ? ` · ${nthTry(beat.attempts, m)}` : "";
   switch (beat.kind) {
     case "agent":
       return (
@@ -1514,21 +1537,51 @@ function WorkflowBeatCard({
       );
     case "ask": {
       const answer = workflowAnswer(beat.result);
-      if (answer === null)
+      const withdrawal = answer === null ? workflowWithdrawal(beat.result) : null;
+      if (withdrawal !== null)
         return (
-          <Note label={beat.name}>
-            <span>{gt("nobody answered")}</span>
-            <span>{length}</span>
-          </Note>
+          <Note
+            label={beat.name}
+            detail={
+              <p className="mt-3 text-sm">
+                {withdrawal.reason === null
+                  ? gt("Withdrawn by {by}.", { by: withdrawal.by })
+                  : gt("Withdrawn by {by}: {reason}", {
+                      by: withdrawal.by,
+                      reason: withdrawal.reason,
+                    })}
+              </p>
+            }
+          >{`${gt("withdrawn")} · ${length}`}</Note>
         );
+      if (answer === null)
+        return <Note label={beat.name}>{`${gt("nobody answered")} · ${length}`}</Note>;
+      // This client's own answer reads "You"; anyone else's, another device of yours too, its name.
+      const who = isOwnWorkflowAnswer(answer, sessionId) ? null : answer.answeredBy;
       return (
         <FeedCard label={beat.name}>
           <CardHead mark={null} name={beat.name} sub={length} />
-          <p className="mt-3 text-body">
-            {answer.reason === null ? (
+          <p className="mt-3 text-sm">
+            {who !== null && answer.reason === null ? (
+              <T>
+                <Var>{who}</Var> said{" "}
+                <span className="font-semibold">
+                  <Var>{answer.choice}</Var>
+                </span>
+                .
+              </T>
+            ) : who !== null ? (
+              <T>
+                <Var>{who}</Var> said{" "}
+                <span className="font-semibold">
+                  <Var>{answer.choice}</Var>
+                </span>
+                : <Var>{answer.reason}</Var>
+              </T>
+            ) : answer.reason === null ? (
               <T>
                 You said{" "}
-                <span className="text-label">
+                <span className="font-semibold">
                   <Var>{answer.choice}</Var>
                 </span>
                 .
@@ -1536,24 +1589,28 @@ function WorkflowBeatCard({
             ) : (
               <T>
                 You said{" "}
-                <span className="text-label">
+                <span className="font-semibold">
                   <Var>{answer.choice}</Var>
                 </span>
                 : <Var>{answer.reason}</Var>
               </T>
             )}
           </p>
+          {answer.answeredAt === null ? null : (
+            <p className="mt-1 text-xs text-muted-foreground">
+              <T>
+                answered{" "}
+                <Var>
+                  <RelativeLabel value={answer.answeredAt} />
+                </Var>
+              </T>
+            </p>
+          )}
         </FeedCard>
       );
     }
     case "sleep": {
-      if (!under)
-        return (
-          <Note label={beat.name}>
-            <span>{gt("slept")}</span>
-            <span>{length}</span>
-          </Note>
-        );
+      if (!under) return <Note label={beat.name}>{`${gt("slept")} · ${length}`}</Note>;
       const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
       return (
         <FeedCard tone="quiet" label={beat.name}>
@@ -1572,19 +1629,24 @@ function WorkflowBeatCard({
       );
     }
     case "wait":
-      if (!under)
-        return (
-          <Note label={beat.name}>
-            <span>{gt("waited")}</span>
-            <span>{length}</span>
-          </Note>
-        );
+      if (!under) return <Note label={beat.name}>{`${gt("waited")} · ${length}`}</Note>;
       return (
         <FeedCard tone="quiet" label={beat.name}>
           <CardHead
             mark={<HourglassIcon className="size-3.5 text-muted-foreground" />}
             name={beat.name}
             sub={gt("{duration} so far", { duration: length })}
+          />
+        </FeedCard>
+      );
+    case "queue":
+      if (!under) return <Note label={beat.name}>{`${gt("queued")} · ${length}`}</Note>;
+      return (
+        <FeedCard tone="quiet" label={beat.name}>
+          <CardHead
+            mark={<HourglassIcon className="size-3.5 text-muted-foreground" />}
+            name={beat.name}
+            sub={`${queuedText(beat, m)} · ${length}`}
           />
         </FeedCard>
       );
@@ -1596,24 +1658,16 @@ function WorkflowBeatCard({
             mark={<WorkflowChip name={beat.childRun?.workflow ?? beat.name} />}
             name={title}
             sub={
-              child === null ? (
-                <>
-                  {beat.childRun?.workflow ? <span>{beat.childRun.workflow}</span> : null}
-                  <span>{length}</span>
-                </>
-              ) : (
-                <>
-                  <span>{child.run.workflow}</span>
-                  <span>{workflowRunNow(child, m)}</span>
-                </>
-              )
+              child === null
+                ? `${beat.childRun?.workflow ?? ""} · ${length}`
+                : `${child.run.workflow} · ${workflowRunNow(child, m)}`
             }
             action={
               <>
                 {child === null ? null : <WorkflowStateWord node={child} />}
                 <Button
                   size="compact"
-                  variant="secondary"
+                  variant="outline"
                   onClick={() => onSelect(beat.childRun?.runId ?? null)}
                 >
                   <T>Open run</T>
@@ -1629,14 +1683,9 @@ function WorkflowBeatCard({
         return (
           <FeedCard tone="quiet" label={beat.name}>
             <CardHead
-              mark={<StatusDot tone="info" />}
+              mark={<span aria-hidden className="size-1.5 rounded-full bg-info" />}
               name={beat.name}
-              sub={
-                <>
-                  <span>{gt("running for {duration}", { duration: length })}</span>
-                  {tries}
-                </>
-              }
+              sub={`${gt("running for {duration}", { duration: length })}${tries}`}
             />
           </FeedCard>
         );
@@ -1644,8 +1693,7 @@ function WorkflowBeatCard({
       const lines = workflowResultLines(beat.result);
       return (
         <Note label={beat.name} detail={<ResultLines lines={lines} />}>
-          {beat.status === "failed" ? <span>{gt("failed")}</span> : null}
-          <span>{length}</span>
+          {beat.status === "failed" ? `${gt("failed")} · ${length}` : length}
           {tries}
         </Note>
       );
@@ -1672,8 +1720,7 @@ function WorkflowAgentCard({
     beat.thread?.environmentId == null
       ? environmentId
       : EnvironmentId.make(beat.thread.environmentId);
-  // This client can only show a thread on an environment it is itself connected to.
-  const threadEnvironment = useEnvironment(threadEnvironmentId);
+  const threadOpen = useWorkflowThreadOpen(environmentId, threadEnvironmentId);
   const shell = useQuietThreadShell(
     beat.thread === null
       ? null
@@ -1695,15 +1742,17 @@ function WorkflowAgentCard({
         : shell?.runtime?.status === "preparing" || shell?.runtime?.status === "starting"
           ? gt("starting")
           : gt("working");
-  const subParts = [
+  const sub = [
     shell === null ? null : formatModelSlugName(shell.modelSelection.model),
     liveWord,
     length,
     beat.attempts > 1 ? nthTry(beat.attempts, m) : null,
     elsewhere
-      ? gt("on {environment}", { environment: threadEnvironment?.label ?? threadEnvironmentId })
+      ? gt("on {environment}", { environment: threadOpen.label ?? threadEnvironmentId })
       : null,
-  ].filter((part): part is string => part !== null);
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
   return (
     <FeedCard label={beat.name}>
       <CardHead
@@ -1723,12 +1772,10 @@ function WorkflowAgentCard({
           )
         }
         name={beat.name}
-        sub={subParts.map((part) => (
-          <span key={part}>{part}</span>
-        ))}
+        sub={sub}
         action={
-          beat.thread === null ? null : threadEnvironment === null ? (
-            <span className="text-meta text-muted-foreground">
+          beat.thread === null ? null : threadOpen.open === "unavailable" ? (
+            <span className="text-xs text-muted-foreground">
               <T>
                 Thread on <Var>{threadEnvironmentId}</Var>
               </T>
@@ -1749,25 +1796,28 @@ function WorkflowAgentCard({
         }
       />
       {beat.status === "failed" && beat.detail ? (
-        <p className="mt-3 flex gap-1.5 text-body text-destructive">
+        <p className="mt-3 flex gap-1.5 text-sm text-destructive">
           <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
           <span className="break-words whitespace-pre-wrap">{beat.detail}</span>
         </p>
       ) : null}
       {summary.said === null ? null : (
         // Set off from the head, so headings in the reply read as the agent's, not the page's.
-        <div className="mt-3 border-t border-divider pt-3">
+        <div className="mt-3 border-t border-border/60 pt-3">
           <ChatMarkdown
             text={start !== null && !all ? start : summary.said}
             cwd={undefined}
-            className="text-body"
+            className="text-sm"
           />
           {start !== null ? (
-            <div className="mt-1 text-meta">
-              <InlineButton tone="muted" aria-expanded={all} onClick={() => setAll(!all)}>
-                {all ? gt("Show less") : gt("Show more")}
-              </InlineButton>
-            </div>
+            <button
+              type="button"
+              aria-expanded={all}
+              className="mt-1 cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => setAll(!all)}
+            >
+              {all ? gt("Show less") : gt("Show more")}
+            </button>
           ) : null}
         </div>
       )}
@@ -1818,11 +1868,8 @@ function WorkflowPauseCard({
         }
         sub={
           <>
-            {attempts > 0 ? <span>{nthTry(attempts, m)}</span> : null}
-            <span>
-              <RelativeLabel value={run.updatedAt} />
-            </span>
-            <span>{next}</span>
+            {attempts > 0 ? `${nthTry(attempts, m)} · ` : null}
+            <RelativeLabel value={run.updatedAt} /> · {next}
           </>
         }
         action={
@@ -1831,9 +1878,9 @@ function WorkflowPauseCard({
           </Button>
         }
       />
-      {reason ? <p className="mt-3 text-body break-words whitespace-pre-wrap">{reason}</p> : null}
+      {reason ? <p className="mt-3 text-sm break-words whitespace-pre-wrap">{reason}</p> : null}
       {kept ? (
-        <p className="mt-2 text-meta text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           <T>Only the failed step runs again; what finished before it is kept.</T>
         </p>
       ) : null}
@@ -1872,17 +1919,25 @@ function WorkflowQuestionCard({
     question.thread?.environmentId == null
       ? environmentId
       : EnvironmentId.make(question.thread.environmentId);
-  const reachable = useEnvironment(threadEnvironmentId) !== null;
-  const choose = async (choice: string) => {
+  const reachable =
+    useWorkflowThreadOpen(environmentId, threadEnvironmentId).open !== "unavailable";
+  const [reasonFor, setReasonFor] = useState<string | null>(null);
+  const choose = async (choice: WorkflowQuestionChoice) => {
     if (busy) return;
-    setBusy(true);
     const given = reason?.trim() ?? "";
+    // The server refuses it without a reason, so the field opens and says so instead.
+    if (choice.requireReason && given === "") {
+      setReasonFor(choice.value);
+      if (reason === null) setReason("");
+      return;
+    }
+    setBusy(true);
     const result = await answer({
       environmentId,
       input: {
         runId: question.runId,
         name: question.name,
-        choice,
+        choice: choice.value,
         ...(given === "" ? {} : { reason: given }),
       },
     });
@@ -1892,8 +1947,8 @@ function WorkflowQuestionCard({
   return (
     <FeedCard tone="ask" label={view.title} reveal>
       {inline ? null : (
-        <p className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-          <span className={cn("text-label", WORKFLOW_TONE_CLASS.input)}>
+        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className={cn("font-medium", WORKFLOW_TONE_CLASS.input)}>
             <T context="the workflow run waits on a person">Needs you</T>
           </span>
           <span>
@@ -1901,45 +1956,70 @@ function WorkflowQuestionCard({
               asked{" "}
               <Var>
                 <RelativeLabel value={question.askedAt} />
-              </Var>
+              </Var>{" "}
+              · the run waits for you
             </T>
-          </span>
-          <span>
-            <T>the run waits for you</T>
           </span>
         </p>
       )}
-      <h3 className={cn("text-label break-words", inline ? null : "mt-1")}>{view.title}</h3>
+      <h3 className={cn("text-sm font-semibold break-words", inline ? null : "mt-1")}>
+        {view.title}
+      </h3>
       {view.body ? (
-        <ChatMarkdown text={view.body} cwd={undefined} className="mt-1 text-body" />
+        <ChatMarkdown text={view.body} cwd={undefined} className="mt-1 text-sm" />
       ) : null}
-      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+      {view.links.length === 0 ? null : (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {view.links.map((link) => (
+            <Button
+              key={`${link.label}:${link.url}`}
+              size="sm"
+              variant="outline"
+              render={<a href={link.url} target="_blank" rel="noreferrer" />}
+            >
+              {link.label}
+              <ExternalLinkIcon aria-hidden />
+            </Button>
+          ))}
+        </div>
+      )}
+      <div className="mt-2.5 flex flex-wrap items-start gap-2">
         {view.choices.map((choice, index) => (
-          <Button
-            key={choice}
-            size="sm"
-            variant={index === 0 ? "default" : "secondary"}
-            disabled={busy || !canAnswer}
-            onClick={() => void choose(choice)}
-          >
-            {choice}
-          </Button>
+          <div key={choice.value} className="flex flex-col items-start gap-1">
+            <Button
+              size="sm"
+              variant={index === 0 ? "default" : "outline"}
+              disabled={busy || !canAnswer}
+              onClick={() => void choose(choice)}
+            >
+              {choice.value}
+            </Button>
+            {choice.description === null ? null : (
+              <span className="max-w-60 text-xs text-muted-foreground">{choice.description}</span>
+            )}
+          </div>
         ))}
       </div>
       {reason === null || (question.thread !== null && reachable) ? (
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-meta text-muted-foreground">
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
           {reason === null ? (
-            <InlineButton tone="muted" disabled={busy} onClick={() => setReason("")}>
+            <button
+              type="button"
+              disabled={busy}
+              className="cursor-pointer hover:text-foreground disabled:cursor-default"
+              onClick={() => setReason("")}
+            >
               <T>Add a reason</T>
-            </InlineButton>
+            </button>
           ) : null}
           {question.thread === null || !reachable ? null : (
-            <InlineButton
-              tone="muted"
+            <button
+              type="button"
+              className="cursor-pointer hover:text-foreground"
               onClick={() => question.thread !== null && onOpenThread(question.thread)}
             >
               <T>Ask the agent first</T>
-            </InlineButton>
+            </button>
           )}
         </div>
       ) : null}
@@ -1954,6 +2034,13 @@ function WorkflowQuestionCard({
             placeholder={gt("Why, in a sentence. It goes with whichever answer you pick.")}
             onChange={(event) => setReason(event.currentTarget.value)}
           />
+          {reasonFor === null || (reason?.trim() ?? "") !== "" ? null : (
+            <p className="mt-1 text-xs text-muted-foreground">
+              <T>
+                <Var>{reasonFor}</Var> needs a reason.
+              </T>
+            </p>
+          )}
         </div>
       )}
     </FeedCard>

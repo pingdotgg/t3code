@@ -3,11 +3,9 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUsageLimits,
-  type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  antigravityWindowLimitsModel,
   collectLimitAccounts,
   collectLimitPools,
   collectProviderUsageLimits,
@@ -15,7 +13,6 @@ import {
   hubRoutes,
   instanceHubs,
   type LimitPoolWindow,
-  remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 
@@ -48,6 +45,26 @@ export function resolveThreadDetailsLimits(
   return hubPool(provider.driver, model, providers, hubs, now) ?? { kind: "instance", limits: own };
 }
 
+export function resolveThreadHttpQuotas(
+  providerInstanceId: ProviderInstanceId | null,
+  sources: UsageLimitSourceSnapshots,
+) {
+  if (providerInstanceId === null) return [];
+  return sources.flatMap((source) =>
+    source.kind === "http"
+      ? (source.quotaAccounts ?? []).flatMap((account) =>
+          account.providerInstanceId === providerInstanceId
+            ? account.windows.map((window) => ({
+                key: JSON.stringify([source.id, account.id, window.id]),
+                accountLabel: account.label,
+                window,
+              }))
+            : [],
+        )
+      : [],
+  );
+}
+
 export function nextPoolReset(window: LimitPoolWindow, now: number) {
   const pooled = window.members.length > 1;
   return (
@@ -65,19 +82,7 @@ function hubPool(
   const routes = hubRoutes(sources, driver, model);
   const routed = sources.map((source) => ({
     ...source,
-    accounts: source.accounts.filter(routes).map((account) =>
-      account.driver === "antigravity"
-        ? {
-            ...account,
-            usageLimits: {
-              ...account.usageLimits,
-              windows: account.usageLimits.windows.filter((window) =>
-                antigravityWindowLimitsModel(window, model),
-              ),
-            },
-          }
-        : account,
-    ),
+    accounts: source.accounts.filter(routes),
   }));
   const readable = routed
     .flatMap((source) => source.accounts)
@@ -112,62 +117,4 @@ export function poolSources(window: LimitPoolWindow) {
   );
   const signedIn = window.members.some(({ account }) => account.environments.length > 0);
   return { hubs: [...new Set(hubs)], signedIn };
-}
-
-export function limitTone(left: number): "error" | "warning" | null {
-  if (left <= 10) return "error";
-  if (left <= 20) return "warning";
-  return null;
-}
-
-type FoldedWindow = Pick<ServerProviderUsageWindow, "id" | "kind" | "label" | "usedPercent">;
-
-/** Whether a window meters the model, or null when its data cannot say. */
-function windowMetersModel(
-  driver: ServerProvider["driver"] | undefined,
-  window: FoldedWindow,
-  model: string | null,
-): boolean | null {
-  if (model === null) return null;
-  if (driver === "antigravity") {
-    const base = model.slice(model.lastIndexOf("/") + 1);
-    return /^(gemini|claude|gpt)/.test(base) ? antigravityWindowLimitsModel(window, model) : null;
-  }
-  if (driver === "claudeAgent" && window.id.startsWith("seven_day_")) {
-    const scope = window.id.slice("seven_day_".length);
-    return `_${model.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_`.includes(`_${scope}_`);
-  }
-  return true;
-}
-
-/**
- * The limit rows shown before "Show N more": those metering the thread's model when the windows
- * say, else the two nearest their limit, one per period. A row near its limit always shows.
- */
-export function foldLimitRows<
-  Row extends {
-    readonly driver: ServerProvider["driver"] | undefined;
-    readonly window: FoldedWindow;
-  },
->(rows: readonly Row[], model: string | null) {
-  const meters = rows.map((row) => windowMetersModel(row.driver, row.window, model));
-  const known = !meters.includes(null) && meters.includes(true);
-  const nearest = rows.toSorted(
-    (left, right) => remainingPercent(left.window) - remainingPercent(right.window),
-  );
-  const perPeriod = nearest.filter(
-    (row, index) => nearest.findIndex((other) => other.window.kind === row.window.kind) === index,
-  );
-  const kept = new Set(
-    known
-      ? rows.filter((_, index) => meters[index])
-      : [...perPeriod, ...nearest.filter((row) => !perPeriod.includes(row))].slice(0, 2),
-  );
-  for (const row of rows) {
-    if (limitTone(remainingPercent(row.window)) !== null) kept.add(row);
-  }
-  return {
-    shown: rows.filter((row) => kept.has(row)),
-    hidden: rows.filter((row) => !kept.has(row)),
-  };
 }

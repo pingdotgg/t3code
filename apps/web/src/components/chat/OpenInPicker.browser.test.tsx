@@ -86,9 +86,6 @@ async function setup() {
   state.markHintSeen.mockReset();
   state.listeners.clear();
   window.localStorage.clear();
-  for (const region of document.querySelectorAll('body > [aria-live="polite"]')) {
-    region.textContent = "";
-  }
 
   await using stack = new AsyncDisposableStack();
   const _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
@@ -172,23 +169,22 @@ async function setup() {
 }
 
 describe("host editor access", () => {
-  it.each([false, true])("uses the selected grant (panel: %s)", async (panel) => {
+  it("uses the selected grant for both the button and a retained shortcut", async () => {
     await using fixture = await setup();
     const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;
     state.allowed.add(selected);
-    await renderPicker(editors, panel);
-    const openButton = () => (panel ? byLabel("Open in VS Code") : primaryButton());
+    await renderPicker();
     // Revoke without rerendering to exercise execution-time grant checks.
     state.allowed.delete(selected);
     state.allowed.add(primary);
-    await click(openButton());
+    await click(primaryButton());
     // The shortcut is consumed and opens nothing once the grant is gone.
     expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
     expect(state.run).not.toHaveBeenCalled();
     expect(state.setPreferred).not.toHaveBeenCalled();
 
-    await renderPicker(editors, panel);
-    expect(openButton().disabled).toBe(true);
+    await renderPicker();
+    expect(primaryButton().disabled).toBe(true);
     expect(byLabel("Choose editor").disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
   });
@@ -257,11 +253,11 @@ describe("remote editor links", () => {
 });
 
 describe("open in editor announcement", () => {
-  it.each([false, true])("announces successful opens (panel: %s)", async (panel) => {
+  it("speaks only after the shortcut opened the editor, from the picker or the fallback", async () => {
     await using fixture = await setup();
     const { screen, renderPicker, pressOpenFavorite, FavoriteEditorFallback } = fixture;
     state.allowed.add(selected);
-    await renderPicker(editors, panel);
+    await renderPicker();
     using _timers = fakeTimers();
     const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
     const spoken = async () => {

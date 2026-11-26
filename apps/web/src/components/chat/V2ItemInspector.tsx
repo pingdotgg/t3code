@@ -1,10 +1,13 @@
 import { T, Var, useGT } from "gt-react";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   isJsonToolText,
   toolCallLines,
-  turnItemHasDetail,
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
   turnItemOutputImages,
@@ -15,6 +18,9 @@ import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon } from "lucide-react";
 import { memo, type ReactNode, Suspense, use } from "react";
 
+import { canOpenLinksInApp, resolveLinkTarget } from "../../browser/browserLinkTarget";
+import { useOpenLink } from "../../browser/useOpenLink";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
@@ -25,6 +31,7 @@ import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
+import { FileSearchResults } from "./FileSearchResults";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -93,11 +100,6 @@ function StructuredValue({
       )}
     </pre>
   );
-}
-
-/** Whether the inspector can show the item, including output fetched on demand. */
-export function v2ItemInspectorHasContent(item: OrchestrationV2ProjectedTurnItem["item"]): boolean {
-  return turnItemHasDetail(item);
 }
 
 function useFetchedTurnItem(
@@ -172,7 +174,7 @@ function ToolOutput(props: ToolOutputState) {
       <T>Loading output…</T>
     </div>
   ) : props.error ? (
-    <div className="text-error-foreground">
+    <div className="text-destructive">
       <T>
         Couldn&apos;t load output: <Var>{props.error}</Var>
       </T>
@@ -190,17 +192,49 @@ export function FetchedToolOutput(props: {
   readonly environmentId: EnvironmentId;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   readonly source?: TurnItemSource | undefined;
-  readonly showImages?: boolean;
 }) {
   const { output } = useFetchedTurnItem(props.projectedItem, props.environmentId, props.source);
   useInitialOutputReady(output.pending, props.onInitialOutputReady);
   return (
     <div className={cn("mt-1.5 space-y-1.5", monoClassName)}>
-      {props.showImages !== false ? (
-        <ToolOutputImages {...output} onImageExpand={props.onImageExpand} />
-      ) : null}
+      <ToolOutputImages {...output} onImageExpand={props.onImageExpand} />
       <ToolOutput {...output} onImageExpand={props.onImageExpand} />
     </div>
+  );
+}
+
+function WebSearchResultLink(props: {
+  readonly href: string;
+  readonly threadRef: ScopedThreadRef;
+  readonly children: ReactNode;
+}) {
+  const openLink = useOpenLink(props.threadRef);
+  // Subscribe so the synchronous _blank decision sees hydrated settings, as ChatMarkdown does.
+  const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
+  return (
+    <a
+      href={props.href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+      onClick={(event) => {
+        if (
+          resolveLinkTarget({
+            url: props.href,
+            event,
+            preference: linkTargetPreference,
+            canOpenInApp: canOpenLinksInApp(props.threadRef),
+          }) !== "app"
+        ) {
+          return;
+        }
+        event.preventDefault();
+        void openLink(props.href, { event }).catch(console.error);
+      }}
+    >
+      {props.children}
+      <ExternalLinkIcon className="size-3" />
+    </a>
   );
 }
 
@@ -271,7 +305,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   return (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
-        <div className="rounded-control border border-transparent surface-timeline-inspector p-2 italic text-muted-foreground">
+        <div className="rounded-md border border-border/45 bg-muted/15 p-2 italic text-muted-foreground">
           <ChatMarkdown
             text={item.text}
             cwd={props.cwd}
@@ -307,20 +341,19 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "file_change" ? (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-muted-foreground">
+              {formatWorkspaceRelativePath(item.fileName, props.workspaceRoot)}
+            </span>
             {item.additions !== undefined || item.deletions !== undefined ? (
               <span>
-                <span className="text-diff-addition-foreground">
-                  +{formatDiffCount(item.additions ?? 0)}
-                </span>{" "}
-                <span className="text-diff-deletion-foreground">
-                  -{formatDiffCount(item.deletions ?? 0)}
-                </span>
+                <span className="text-diff-addition">+{formatDiffCount(item.additions ?? 0)}</span>{" "}
+                <span className="text-diff-deletion">-{formatDiffCount(item.deletions ?? 0)}</span>
               </span>
             ) : null}
             {props.onOpenToolDiff ? (
               <Button
                 size="xs"
-                variant="secondary"
+                variant="outline"
                 onClick={() =>
                   props.onOpenToolDiff?.({
                     threadId: props.projectedItem.sourceThreadId,
@@ -337,7 +370,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             <StructuredValue value={item.diffStr} />
           ) : null}
           {item.changes !== undefined && item.changes.length > 0 ? (
-            <ul className="space-y-1 font-mono text-dim-foreground">
+            <ul className="space-y-1 font-mono text-muted-foreground">
               {item.changes.map((change) => (
                 <li key={JSON.stringify([change.operation, change.oldPath, change.path])}>
                   {change.operation} {change.oldPath ? `${change.oldPath} → ` : ""}
@@ -352,7 +385,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </div>
       ) : null}
 
-      {item.type === "file_search" && item.pattern?.trim() ? (
+      {/* The row label already shows the pattern unless the provider titled the search itself. */}
+      {item.type === "file_search" &&
+      item.pattern?.trim() &&
+      item.title &&
+      !item.title.includes(item.pattern.trim()) ? (
         <div className={cn("text-foreground/85", monoClassName)}>{item.pattern}</div>
       ) : null}
 
@@ -361,20 +398,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "file_search" && item.results?.length ? (
-        <ul className="space-y-1">
-          {item.results.map((result) => (
-            <li key={JSON.stringify(result)}>
-              <span className="font-mono text-dim-foreground">
-                {formatWorkspaceRelativePath(result.fileName, props.workspaceRoot)}
-                {result.line === undefined ? "" : `:${result.line}`}
-                {result.column === undefined ? "" : `:${result.column}`}
-              </span>
-              {result.preview ? (
-                <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{result.preview}</p>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+        <FileSearchResults
+          pattern={item.pattern}
+          results={item.results}
+          workspaceRoot={props.workspaceRoot}
+        />
       ) : null}
 
       {item.type === "web_search" && item.results?.length ? (
@@ -384,17 +412,17 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             return (
               <li key={JSON.stringify(result)}>
                 {safeHref ? (
-                  <a
+                  <WebSearchResultLink
                     href={safeHref}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+                    threadRef={{
+                      environmentId: props.environmentId,
+                      threadId: props.projectedItem.sourceThreadId,
+                    }}
                   >
                     {result.title ?? result.url}
-                    <ExternalLinkIcon className="size-3" />
-                  </a>
+                  </WebSearchResultLink>
                 ) : (
-                  <p className="text-label text-foreground">
+                  <p className="font-medium text-foreground">
                     {result.title ?? result.url ?? gt("Search result")}
                   </p>
                 )}

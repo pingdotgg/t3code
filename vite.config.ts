@@ -1,7 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - Config load checks the debt-ceiling files exist before any Effect runtime exists.
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
-import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 import { remoteCacheUrl } from "./infra/task-cache/src/remoteCache.ts";
 import { cachedTestTasks } from "./scripts/lib/cached-tests.ts";
@@ -29,25 +27,6 @@ const TEST_CONFIG_PACKAGES = [
 // config. Packages that borrow this config (`--config ../../vite.config.ts`) run
 // from their own directory, as CI does, so they keep one plain project.
 const isRepoRootTestRun = process.cwd() === import.meta.dirname;
-
-/** Debt ceilings for files that still exist, so a branch deleting a file can't break the config. */
-const existingCeilings = <Entry>(ceilings: Record<string, Entry>) =>
-  Object.entries(ceilings).filter(([file]) =>
-    NodeFS.existsSync(NodeURL.fileURLToPath(new URL(file, import.meta.url))),
-  );
-
-/** Per-file debt ceilings for the design-system rules, generated into lint-ceilings.json. */
-const lintCeilings: Record<string, Record<string, number | Array<string>>> = JSON.parse(
-  NodeFS.readFileSync(new URL("./lint-ceilings.json", import.meta.url), "utf8"),
-);
-const generatedCeilings = (rule: string) =>
-  existingCeilings(lintCeilings[rule] ?? {}).map(([file, entry]) => {
-    const options: ["error", { maxOccurrences: number } | { allowed: Array<string> }] = [
-      "error",
-      typeof entry === "number" ? { maxOccurrences: entry } : { allowed: entry },
-    ];
-    return { files: [file], rules: { [rule]: options } };
-  });
 
 const RESTRICTED_IMPORT_PATHS = [
   {
@@ -331,6 +310,7 @@ export default defineConfig({
       "t3code/no-native-title-tooltip": "error",
       // Test files only (the rule checks the filename).
       "t3code/no-polling-loop-in-tests": "error",
+      "t3code/no-layout-command-approval-writes": "error",
       "t3code/no-raw-mcp-registration": "error",
       "t3code/no-real-time-wait-in-tests": "error",
       "t3code/no-test-in-loop": "error",
@@ -370,47 +350,6 @@ export default defineConfig({
       {
         files: ["apps/**/src/**", "packages/**/src/**"],
         rules: { "t3code/no-dom-test-environment": "error" },
-      },
-      {
-        files: ["apps/web/src/**", "apps/mobile/src/**"],
-        rules: { "t3code/no-spaced-caps": "error" },
-      },
-      {
-        files: ["apps/web/src/**"],
-        rules: { "t3code/no-dot-separated-text": "error" },
-      },
-      {
-        // A <button>, <a> or <input> with appearance classes is a hand-built control that
-        // skips the components/ui variants; shadcn/no-restyle cannot see it because it only
-        // checks ui components. components/ui builds the primitives from raw elements.
-        files: ["apps/web/src/**"],
-        excludeFiles: ["apps/web/src/components/ui/**"],
-        rules: { "t3code/no-styled-raw-controls": "error" },
-      },
-      {
-        // Type comes from the seven roles (text-title … text-micro, or <Text>), not
-        // Tailwind's size and weight scale. components/ui defines the roles' users,
-        // tests assert on markup, and the catalog demos raw classes on purpose.
-        files: ["apps/web/src/**"],
-        excludeFiles: [
-          "apps/web/src/components/ui/**",
-          "apps/web/src/components/design-system/**",
-          "apps/web/src/**/*.test.{ts,tsx}",
-        ],
-        rules: { "t3code/no-raw-type-classes": "error" },
-      },
-      {
-        // Surfaces come from the surface-* utilities and radius tokens, not hand-built
-        // bg, border, rounded and shadow classes that the surface styles cannot repaint.
-        // components/ui is included, so a feature look moved into a variant still counts.
-        files: ["apps/web/src/**"],
-        excludeFiles: ["apps/web/src/**/*.test.{ts,tsx}"],
-        rules: { "t3code/no-raw-surface": "error" },
-      },
-      {
-        files: ["apps/web/src/components/ui/**"],
-        excludeFiles: ["apps/web/src/**/*.test.{ts,tsx}"],
-        rules: { "t3code/no-new-ui-variants": "error" },
       },
       {
         files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
@@ -463,6 +402,16 @@ export default defineConfig({
       {
         files: ["apps/server/src/mcp/McpHttpServer.ts"],
         rules: { "t3code/no-raw-mcp-registration": "off" },
+      },
+      {
+        // The client RPC, the layer that builds it, and the tests that stand in for a person.
+        files: [
+          "apps/server/src/ws.ts",
+          "apps/server/src/server.ts",
+          "apps/server/src/ws.test.ts",
+          "apps/server/src/workspace/TaskFolders.testkit.ts",
+        ],
+        rules: { "t3code/no-layout-command-approval-writes": "off" },
       },
       {
         files: ["apps/web/src/**"],
@@ -740,12 +689,6 @@ export default defineConfig({
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
         },
       },
-      // Design-system debt: each file's count must equal its ceiling. `vp run lint:ceilings`
-      // lowers them after a fix; never raise one or add a file to pass lint.
-      ...generatedCeilings("t3code/no-styled-raw-controls"),
-      ...generatedCeilings("t3code/no-raw-type-classes"),
-      ...generatedCeilings("t3code/no-raw-surface"),
-      ...generatedCeilings("t3code/no-new-ui-variants"),
     ],
     options: {
       reportUnusedDisableDirectives: "error",

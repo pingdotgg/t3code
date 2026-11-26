@@ -14,16 +14,18 @@ import {
 import {
   ChevronRightIcon,
   DownloadIcon,
-  FileQuestion,
   Trash2Icon,
   WrapTextIcon,
   XIcon,
   CheckIcon,
+  Code2Icon,
   CopyIcon,
+  EyeIcon,
+  Table2Icon,
 } from "lucide-react";
-import { msg, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { m } from "~/i18n/messages";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -41,12 +43,10 @@ import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
-  FileRenderedViewToggle,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
   FileSurfaceNotice,
-  FileSurfaceState,
 } from "./fileSurfaceChrome";
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
@@ -82,6 +82,19 @@ export function ReadOnlySourcePreview(props: { name: string; text: string; wordW
       <SourcePreview {...props} />
     </Suspense>
   );
+}
+
+function renderedToggleLabel(
+  mode: "markdown" | "mermaid" | "html" | "table",
+  rendered: boolean,
+  resolve: MessageResolver,
+): string {
+  if (mode === "mermaid")
+    return rendered ? resolve(msg("Show Mermaid source")) : resolve(msg("Show rendered diagram"));
+  if (mode === "markdown")
+    return rendered ? resolve(msg("Show markdown source")) : resolve(msg("Show rendered markdown"));
+  if (mode === "table") return rendered ? resolve(msg("Show source")) : resolve(msg("Show table"));
+  return rendered ? resolve(msg("Show HTML source")) : resolve(msg("Show rendered page"));
 }
 
 export function AttachmentFilePreview(props: {
@@ -271,6 +284,11 @@ export function AttachmentFilePreview(props: {
     });
   };
 
+  const basename = props.name.split(/[\\/]/).at(-1) ?? "";
+  const dotIndex = basename.lastIndexOf(".");
+  const extension =
+    dotIndex > 0 && dotIndex < basename.length - 1 ? basename.slice(dotIndex + 1) : null;
+
   const body = failure ? (
     <FileSurfaceFailure
       message={failure}
@@ -378,17 +396,20 @@ export function AttachmentFilePreview(props: {
       onError={() => setError(gt("Unable to load image."))}
     />
   ) : (
-    <FileSurfaceState
-      icon={<FileQuestion />}
-      title={gt("No preview for this file")}
-      description={
-        props.name.split(".").at(-1)
-          ? gt("Save it to open in an app that supports {extension} files.", {
-              extension: props.name.split(".").at(-1),
-            })
-          : gt("Save it to open in an app that supports this format files.")
-      }
-    />
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
+      <p className="text-sm font-medium">
+        <T>No preview for this file</T>
+      </p>
+      <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+        {extension ? (
+          <T>
+            Save it to open in an app that supports <Var>{extension}</Var> files.
+          </T>
+        ) : (
+          <T>Save it to open in an app that supports this format.</T>
+        )}
+      </p>
+    </div>
   );
 
   return (
@@ -398,11 +419,8 @@ export function AttachmentFilePreview(props: {
           <span className="shrink-0 px-0.5 text-muted-foreground">
             {props.origin ?? gt("Attachment")}
           </span>
-          <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-dim-foreground" />
-          <span
-            aria-current="page"
-            className="min-w-0 truncate px-0.5 font-medium text-strong-foreground"
-          >
+          <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
+          <span aria-current="page" className="min-w-0 truncate px-0.5 font-medium text-foreground">
             {props.name}
           </span>
           {props.sizeBytes > 0 ? (
@@ -412,11 +430,19 @@ export function AttachmentFilePreview(props: {
           ) : null}
         </div>
         {renderedMode ? (
-          <FileRenderedViewToggle
-            mode={renderedMode}
-            rendered={rendered}
-            onRenderedChange={setRendered}
-          />
+          <FileSurfaceAction
+            label={renderedToggleLabel(renderedMode, rendered, messages)}
+            pressed={rendered}
+            onPress={() => setRendered((value) => !value)}
+          >
+            {rendered ? (
+              <Code2Icon className="size-3.5" />
+            ) : renderedMode === "table" ? (
+              <Table2Icon className="size-3.5" />
+            ) : (
+              <EyeIcon className="size-3.5" />
+            )}
+          </FileSurfaceAction>
         ) : null}
         {showsRawText ? (
           <FileSurfaceAction

@@ -62,6 +62,7 @@ import {
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
 import * as ConnectionStorage from "./storage";
+import { browserThreadTriageOutboxStore } from "./threadTriageOutboxStore";
 import { clientPresentationMetadata } from "./clientMetadata";
 import { m } from "../i18n/messages";
 
@@ -841,7 +842,11 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
     clear: Effect.fn("Persistence.EnvironmentOwnedDataCleanup.clear")(function (environmentId) {
       return Effect.sync(() => {
         clearComposerDraftsEnvironment(environmentId);
-      });
+      }).pipe(
+        Effect.andThen(
+          Effect.ignore(browserThreadTriageOutboxStore.clearEnvironment(environmentId)),
+        ),
+      );
     }),
   }),
 );
@@ -850,11 +855,11 @@ const layerRpcRequestObserver = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
     // Every RPC passes through this observer; the request owns its span.
-    observe: Effect.fnUntraced(function* ({ environmentId, method }) {
+    observe: Effect.fnUntraced(function* ({ environmentId, environmentLabel, method }) {
       return yield* Effect.sync(() => {
         nextObservedRpcRequestId += 1;
         const requestId = `${environmentId}:${nextObservedRpcRequestId}`;
-        trackRpcRequestSent(requestId, method, method, environmentId);
+        trackRpcRequestSent(requestId, method, `${method} · ${environmentLabel}`);
         return Effect.sync(() => {
           acknowledgeRpcRequest(requestId);
         });

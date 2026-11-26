@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { Button } from "~/components/ui/button";
 import { observeResize } from "~/lib/observeResize";
 import { msg, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
@@ -151,18 +150,17 @@ export default function Spreadsheet(props: {
         }}
       >
         {opened.tabs.map((tab) => (
-          <Button
+          <button
             key={tab.index}
             type="button"
             role="tab"
             aria-selected={tab.index === opened.layout.info.activeSheet}
             tabIndex={tab.index === opened.layout.info.activeSheet ? 0 : -1}
             onClick={() => show(tab.index)}
-            variant={tab.index === opened.layout.info.activeSheet ? "secondary" : "ghost-muted"}
-            size="xs"
+            className="h-7 shrink-0 rounded-md px-2.5 text-xs text-muted-foreground hover:bg-accent aria-selected:bg-accent aria-selected:text-foreground"
           >
             {tab.name}
-          </Button>
+          </button>
         ))}
       </div>
     </div>
@@ -771,7 +769,7 @@ function SpreadsheetGrid(props: {
       {notice ? (
         <div
           role="status"
-          className="absolute inset-x-3 bottom-3 rounded-md bg-background p-2 text-meta text-foreground shadow-md"
+          className="absolute inset-x-3 bottom-3 rounded-md bg-background p-2 text-xs text-foreground shadow-md"
         >
           {notice}
         </div>

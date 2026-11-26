@@ -9,7 +9,6 @@ import "culori/css";
 import { converter, parse } from "culori/fn";
 import {
   BUILT_IN_THEMES,
-  T3_CODE_CLASSIC_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -37,15 +36,7 @@ import { applyThemeBackground } from "./themeBackground";
 import { applyThemeCss } from "./themeCss";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 
-export {
-  EMBER_THEME,
-  GROVE_THEME,
-  IRIS_THEME,
-  OCEAN_THEME,
-  T3_CHAT_THEME,
-  T3_CODE_CLASSIC_THEME,
-  THEME_COLOR_ROLES,
-};
+export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
 const T3_CHAT_THEME_ID = "t3-chat" as const;
@@ -59,17 +50,6 @@ export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
 export const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
-/** "true" when the light appearance keeps a black window and sidebar. */
-export const THEME_BLACK_CHROME_STORAGE_KEY = "t3code:theme-black-chrome";
-
-export function readStoredBlackChrome(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(THEME_BLACK_CHROME_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -462,30 +442,15 @@ export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
 }
 
-// The stock look's shell comes from index.css, not the standard palette: the thread pane on
-// `--background` and the window chrome around it. index.css mirrors these; change both.
-const STOCK_SHELL_COLORS = {
-  light: { canvas: "#f5f5f5", chrome: "#e4e4e4", toolbar: "#e4e4e4", sidebar: "#e4e4e4" },
-  dark: { canvas: "#151515", chrome: "#000000", toolbar: "#000000", sidebar: "#000000" },
-} as const;
-const stockThemeColors: Partial<Record<ThemeAppearance, ThemeColors>> = {};
+// index.css paints the light bubble a step darker than the shared palette mobile uses.
+const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
+  light: { messageSurface: "#ebebed" },
+  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
+};
 
-/** The stock "T3 Code" look as a palette: what HTML renders paint and its theme file carries. */
-export function getStockThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return (stockThemeColors[appearance] ??= {
-    ...getStandardThemeColors(appearance),
-    ...STOCK_SHELL_COLORS[appearance],
-  });
-}
-
-/** The stock theme colors as painted by index.css, including its message bubble. */
+/** The standard theme as index.css paints it, for solves that measure the page. */
 export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return {
-    ...getStockThemeColors(appearance),
-    ...(appearance === "light"
-      ? { surface: "#f9f9f9", surfaceRaised: "#f6f6f6", messageSurface: "#fdfdfd" }
-      : { surface: "#1a1a1a", surfaceRaised: "#161616", messageSurface: "#252525" }),
-  };
+  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
 }
 
 type ThemeRgbColor = {
@@ -1767,9 +1732,6 @@ export function applyThemeColorPreview(
 
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
-  // Black chrome is light-only, as when the stored theme is applied, so a light draft's
-  // sidebar and chrome colors show on the black shell they will wear.
-  root.classList.toggle("black-chrome", appearance === "light" && readStoredBlackChrome());
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
@@ -1866,27 +1828,6 @@ export function isKnownThemePreference(theme: string): boolean {
 }
 
 export type ThemeHalves = Readonly<{ light?: string; dark?: string }>;
-
-export function themeVariantHalves(
-  theme: ThemePreference,
-  halves: ThemeHalves | null,
-  variantIds: ReadonlyArray<string | null>,
-  nextVariantId: string | null,
-): ThemeHalves | null {
-  const baseId = getThemeDefinition(theme)?.id ?? null;
-  const next: { light?: string; dark?: string } = {};
-  let ownsHalf = false;
-  // Switch both owned halves, or just one when another theme owns the other.
-  // With neither owned, only the card preview changes; applying it is a separate action.
-  for (const appearance of ["light", "dark"] as const) {
-    const owner = halves?.[appearance] ?? baseId;
-    const owned = variantIds.includes(owner);
-    ownsHalf ||= owned;
-    const nextOwner = owned ? nextVariantId : owner;
-    if (nextOwner !== null) next[appearance] = nextOwner;
-  }
-  return ownsHalf ? next : null;
-}
 
 export function parseThemeHalves(raw: string | null): ThemeHalves | null {
   if (!raw) return null;

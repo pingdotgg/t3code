@@ -13,10 +13,9 @@ import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
-import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   applyPendingPullRequestReactions,
   type PendingPullRequestReaction,
@@ -26,6 +25,9 @@ import {
   pullRequestReactionTooltip,
   pullRequestReactionsSignature,
 } from "@t3tools/client-runtime/pull-request-reactions";
+
+const PILL_CLASS =
+  "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction> =
   new Map();
@@ -73,36 +75,48 @@ export function ReactionBar({
   return (
     <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
       {shown.map((reaction) => (
-        <Tooltip key={reaction.content}>
-          <TooltipTrigger
-            render={
-              <Button
-                size="xs-pill"
-                variant={reaction.viewerHasReacted ? "secondary" : "pill"}
-                aria-pressed={reaction.viewerHasReacted}
-                aria-label={gt("{reaction}, {count}", {
-                  reaction: pullRequestReactionName(reaction.content, messages),
-                  count: reaction.count,
-                  $context: "reaction button: reaction name and how many people used it",
-                })}
-                disabled={!canReact}
-                onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
-              />
-            }
-          >
-            <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
-            <span className="tabular-nums">{reaction.count}</span>
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {pullRequestReactionTooltip(reaction, messages, locale)}
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          key={reaction.content}
+          render={
+            <button
+              type="button"
+              aria-pressed={reaction.viewerHasReacted}
+              aria-label={gt("{reaction}, {count}", {
+                reaction: pullRequestReactionName(reaction.content, messages),
+                count: reaction.count,
+                $context: "reaction button: reaction name and how many people used it",
+              })}
+              disabled={!canReact}
+              className={cn(
+                PILL_CLASS,
+                reaction.viewerHasReacted
+                  ? "border-primary/60 bg-primary/10 text-foreground"
+                  : "border-border/70 bg-muted/40 text-muted-foreground",
+                canReact ? "hover:border-primary/60" : "cursor-default",
+              )}
+              onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
+            />
+          }
+          label={pullRequestReactionTooltip(reaction, messages, locale)}
+        >
+          <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
+          <span className="tabular-nums">{reaction.count}</span>
+        </SharedTooltipTrigger>
       ))}
 
       {canReact ? (
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger
-            render={<Button size="icon-xs-pill" variant="pill" aria-label={gt("Add a reaction")} />}
+            render={
+              <button
+                type="button"
+                aria-label={gt("Add a reaction")}
+                className={cn(
+                  PILL_CLASS,
+                  "border-border/70 px-1.5 text-muted-foreground hover:border-primary/60 hover:text-foreground",
+                )}
+              />
+            }
           >
             <SmilePlusIcon aria-hidden className="size-3.5" />
           </PopoverTrigger>
@@ -112,19 +126,22 @@ export function ReactionBar({
                 const reacted =
                   shown.find((reaction) => reaction.content === content)?.viewerHasReacted ?? false;
                 return (
-                  <Button
+                  <button
                     key={content}
-                    size="icon-sm"
-                    variant={reacted ? "secondary" : "ghost"}
+                    type="button"
                     aria-pressed={reacted}
                     aria-label={pullRequestReactionName(content, messages)}
+                    className={cn(
+                      "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      reacted && "bg-primary/10",
+                    )}
                     onClick={() => {
                       setPickerOpen(false);
                       void toggle(content, !reacted);
                     }}
                   >
                     <span aria-hidden>{pullRequestReactionEmoji(content)}</span>
-                  </Button>
+                  </button>
                 );
               })}
             </div>

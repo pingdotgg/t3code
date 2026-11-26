@@ -253,11 +253,10 @@ describe("EnvironmentProviderSettings routing", () => {
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
     await setProviders([provider()]);
-    await using screen = await render(panel({ targetInstanceId: customId }));
-    await expect.element(page.getByRole("heading", { name: "Provider unavailable" })).toBeVisible();
-    expect(screen.container.textContent).toContain(
-      "This provider instance is no longer available on this device.",
-    );
+    await using _screen = await render(panel({ targetInstanceId: customId }));
+    await expect
+      .element(page.getByText("This provider instance is no longer available on this device."))
+      .toBeVisible();
     expect(state.updateSettings).not.toHaveBeenCalled();
   });
 
@@ -273,7 +272,7 @@ describe("EnvironmentProviderSettings routing", () => {
         },
       },
     };
-    await using _screen = await render(panel({ targetInstanceId: customId }));
+    await using _screen = await render(panel());
     await userEvent.click(page.getByRole("switch", { name: "Enable Work" }).first());
 
     expect(state.mutateProviderInstance).toHaveBeenCalledWith(
@@ -474,47 +473,13 @@ describe("EnvironmentProviderSettings provider list", () => {
     await setup();
     await setProviders([provider()]);
     await using _screen = await render(panel());
-    const select = page.getByRole("button", { name: "Configure Claude" });
-    await expect.element(select).not.toHaveAttribute("aria-current");
-    const row = page.elementLocator(select.element().closest('[data-slot="provider-card"]')!);
+    const select = page.getByRole("button", { name: "Select Claude" });
+    await expect.element(select).toHaveAttribute("aria-pressed", "false");
+    const row = page.elementLocator(select.element().closest('[data-slot="settings-row"]')!);
 
     await userEvent.click(row, { position: { x: 3, y: 3 } });
 
-    await expect.element(select).toHaveAttribute("aria-current", "true");
-  });
-
-  it("selects from status text while keeping the enable switch independent", async () => {
-    await setup();
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [ProviderInstanceId.make("claudeAgent")]: {
-          driver: ProviderDriverKind.make("claudeAgent"),
-          enabled: true,
-        },
-      },
-    };
-    await setProviders([
-      {
-        ...provider(),
-        instanceId: ProviderInstanceId.make("claudeAgent"),
-        driver: ProviderDriverKind.make("claudeAgent"),
-        auth: { status: "authenticated", label: "Claude account" },
-      },
-    ]);
-    await using _screen = await render(panel());
-    const select = page.getByRole("button", { name: "Configure Claude" });
-    const row = page.elementLocator(select.element().closest('[data-slot="provider-card"]')!);
-    await expect.element(select).not.toHaveAttribute("aria-current");
-
-    await userEvent.click(row.getByText("Authenticated", { exact: true }));
-    await expect.element(select).toHaveAttribute("aria-current", "true");
-    expect(state.mutateProviderInstance).not.toHaveBeenCalled();
-
-    await userEvent.click(page.getByRole("button", { name: "Configure Codex" }));
-    await userEvent.click(row.getByRole("switch", { name: "Enable Claude" }));
-    await expect.element(select).not.toHaveAttribute("aria-current");
-    expect(state.mutateProviderInstance).toHaveBeenCalledTimes(1);
+    await expect.element(select).toHaveAttribute("aria-pressed", "true");
   });
 });
 
@@ -524,7 +489,7 @@ describe("EnvironmentProviderSettings account email", () => {
     const email = "developer@example.com";
     await setProviders([{ ...provider(), auth: { status: "authenticated", email } }]);
     await using _screen = await render(panel({ targetInstanceId: codexId }));
-    const toggle = page.getByRole("button", { name: "Toggle account email visibility" }).first();
+    const toggle = page.getByRole("button", { name: "Toggle account email visibility" });
     const button = toggle.element() as HTMLButtonElement;
 
     await act(() => button.click());
@@ -631,7 +596,7 @@ describe("EnvironmentProviderSettings instance removal", () => {
 });
 
 describe("EnvironmentProviderSettings health check interval", () => {
-  it("commits interval drafts and allows retrying rejected edits", async () => {
+  it("commits interval drafts on blur and Enter and allows retrying rejected edits", async () => {
     await setup();
     await using _screen = await render(panel());
     const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
@@ -659,7 +624,25 @@ describe("EnvironmentProviderSettings health check interval", () => {
     await act(() => state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed?.());
     await expect.element(input).toHaveValue("300");
     await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
-    await userEvent.tab();
+    // An Enter that confirms an IME candidate must not commit.
+    for (const composition of [
+      { isComposing: true, keyCode: 13 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      await act(() =>
+        input.element().dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            ...composition,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      );
+    }
+    expect(state.updateSettings).toHaveBeenCalledTimes(1);
+    await userEvent.keyboard("{Enter}");
+    await expect.element(input).toHaveFocus();
     expect(
       state.updateSettings.mock.calls.map(([patch]) =>
         Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),

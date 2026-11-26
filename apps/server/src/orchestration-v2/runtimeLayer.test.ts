@@ -12895,7 +12895,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "user"] as const)(
+  it.effect.each(["notification", "scheduled-task", "user"] as const)(
     "a %s message on a snoozed thread keeps the snooze only when automatic",
     (kind) =>
       Effect.gen(function* () {
@@ -12931,8 +12931,8 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" ? "user" : "agent",
-          creationSource: kind === "user" ? "web" : "provider",
+          createdBy: kind === "notification" ? "agent" : "user",
+          creationSource: kind === "notification" ? "provider" : "web",
           ...(kind === "notification"
             ? {
                 notification: {
@@ -12942,11 +12942,15 @@ it.layer(layerTest)("snooze queued runs", (it) => {
                 },
               }
             : {}),
+          ...(kind === "scheduled-task"
+            ? { scheduledTaskId: ScheduledTaskId.make(`scheduled-task:${threadId}`) }
+            : {}),
         });
         const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
         if (kind === "user") {
           assert.isNull(thread.snoozedUntil);
         } else {
+          assert.isNotNull(thread.snoozedUntil);
           assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
         }
       }),
@@ -13449,50 +13453,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
         })
         .pipe(Effect.flip);
       assert.instanceOf(invalidVisit, Orchestrator.OrchestratorDispatchError);
-    }),
-  );
-
-  it.effect("keeps a retry's failed-run marker on its message and turn item", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-layer-retry-marker");
-      const retryOfRunId = RunId.make(`${threadId}:failed-run`);
-      const messageId = MessageId.make(`${threadId}:retry`);
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make(`${threadId}:create`),
-        threadId,
-        projectId: ProjectId.make(`${threadId}:project`),
-        title: "Retried thread",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: `/tmp/t3-${threadId}`,
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make(`${threadId}:message`),
-        threadId,
-        messageId,
-        text: "Build it",
-        attachments: [],
-        retryOfRunId,
-        dispatchMode: { type: "start_immediately" },
-      });
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(
-        projection.messages.find((message) => message.id === messageId)?.retryOfRunId,
-        retryOfRunId,
-      );
-      const item = projection.turnItems.find(
-        (candidate) => candidate.type === "user_message" && candidate.messageId === messageId,
-      );
-      assert.equal(item?.type === "user_message" ? item.retryOfRunId : undefined, retryOfRunId);
     }),
   );
 

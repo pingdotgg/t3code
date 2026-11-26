@@ -1,16 +1,9 @@
 /* oxlint-disable react/no-array-index-key -- Positions identify source rows and columns. */
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
-import type { DelimitedColumnKind } from "@t3tools/shared/delimitedPreview";
 import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
-import { cn } from "~/lib/utils";
-import { PanelFrame } from "~/components/ui/panel-frame";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
-
-function columnClass(kind: DelimitedColumnKind | undefined) {
-  return kind === "number" ? "text-right font-mono" : kind === "date" ? "font-mono" : "text-left";
-}
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 export default function VirtualTablePreview(props: {
   readonly name: string;
@@ -19,7 +12,6 @@ export default function VirtualTablePreview(props: {
   readonly getRows: (page: number) => readonly (readonly string[])[] | undefined;
   readonly loadPage?: (page: number) => void;
   readonly header?: readonly string[] | undefined;
-  readonly columnKinds?: readonly DelimitedColumnKind[] | undefined;
   readonly source?: boolean;
   readonly wrap?: boolean;
   readonly revealLine?: number | null;
@@ -32,8 +24,6 @@ export default function VirtualTablePreview(props: {
   const widthRef = useRef(0);
   const measureRef = useRef<HTMLTableElement>(null);
   const [measured, setMeasured] = useState<number[] | null>(null);
-  const sampleRows = props.getRows(0)?.slice(0, 20);
-  const measuredRows = useRef(sampleRows);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the viewport before paint and observe container resizes to invalidate column measurements.
   useLayoutEffect(() => {
     const node = ref.current;
@@ -52,29 +42,16 @@ export default function VirtualTablePreview(props: {
   }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read the browser's laid-out table column widths before displaying the virtual table.
   useLayoutEffect(() => {
-    const previous = measuredRows.current;
-    if (
-      previous?.length !== sampleRows?.length ||
-      sampleRows?.some(
-        (row, index) =>
-          row.length !== previous?.[index]?.length ||
-          row.some((cell, column) => cell !== previous?.[index]?.[column]),
-      )
-    ) {
-      measuredRows.current = sampleRows;
-      setMeasured(null);
-      return;
-    }
     if (!width || !props.header || !measureRef.current || measured) return;
     const widths = [...measureRef.current.querySelectorAll("thead th")].map(
       (cell) => cell.getBoundingClientRect().width,
     );
     if (widths.length) setMeasured(widths);
-  }, [measured, width, props.header, sampleRows]);
-  const rowHeader = props.source ? 56 : 28;
+  }, [measured, width, props.header]);
   const columnWidth = props.source
     ? 0
-    : Math.max(128, Math.min(320, (width - rowHeader) / Math.min(props.columns, 6)));
+    : Math.max(128, Math.min(320, (width - 56) / Math.min(props.columns, 6)));
+  const rowHeader = 56;
   const sizes = Array.from(
     { length: props.columns },
     (_, column) => measured?.[column] ?? columnWidth,
@@ -100,10 +77,7 @@ export default function VirtualTablePreview(props: {
   return (
     <div
       ref={ref}
-      className={cn(
-        "relative min-h-0 flex-1 overflow-x-auto contain-strict",
-        !props.source && "mx-4 mt-2",
-      )}
+      className="relative min-h-0 flex-1 overflow-x-auto contain-strict"
       onScroll={(event) => {
         event.currentTarget.style.setProperty(
           "--preview-scroll-left",
@@ -116,17 +90,15 @@ export default function VirtualTablePreview(props: {
         <table
           ref={measureRef}
           aria-hidden="true"
-          className="invisible absolute top-0 w-max border-separate border-spacing-0 text-meta/4"
+          className="invisible absolute top-0 border-separate border-spacing-0 text-xs"
+          style={{ width: Math.max(width - rowHeader, props.columns * 128) }}
         >
           <thead>
             <tr>
               {props.header.map((cell, i) => (
                 <th
                   key={i}
-                  className={cn(
-                    "min-w-14 max-w-80 border-b px-2 py-1.5 text-meta/4 whitespace-nowrap",
-                    columnClass(props.columnKinds?.[i]),
-                  )}
+                  className="min-w-32 max-w-80 border-b px-3 py-1.5 text-left font-medium whitespace-nowrap"
                 >
                   {cell}
                 </th>
@@ -134,21 +106,21 @@ export default function VirtualTablePreview(props: {
             </tr>
           </thead>
           <tbody>
-            {sampleRows?.slice(1, 20).map((row, i) => (
-              <tr key={i}>
-                {row.map((cell, j) => (
-                  <td
-                    key={j}
-                    className={cn(
-                      "max-w-80 border-b px-2 py-1.5 whitespace-pre tabular-nums",
-                      columnClass(props.columnKinds?.[j]),
-                    )}
-                  >
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {props
+              .getRows(0)
+              ?.slice(1, 20)
+              .map((row, i) => (
+                <tr key={i}>
+                  {row.map((cell, j) => (
+                    <td
+                      key={j}
+                      className="max-w-80 border-b px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums"
+                    >
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
           </tbody>
         </table>
       ) : null}
@@ -158,42 +130,33 @@ export default function VirtualTablePreview(props: {
           aria-label={props.name}
           aria-rowcount={props.count}
           aria-colcount={props.source ? undefined : props.columns}
-          className="flex h-full min-h-0 flex-col text-meta/4"
+          className="flex h-full min-h-0 flex-col text-xs"
           style={{ width: tableWidth }}
         >
           {!props.source ? (
-            <PanelFrame.Toolbar
+            <div
               role="row"
-              flush
-              rounded="top"
-              className="relative z-10 min-h-[29px]"
+              className="relative z-10 flex min-h-[29px] shrink-0 border-b border-border bg-muted/60 font-medium backdrop-blur"
             >
-              <div
-                className="sticky left-0 z-10 shrink-0 rounded-tl-row surface-card-fill"
-                style={{ width: rowHeader }}
-              />
+              <div className="sticky left-0 z-10 w-14 shrink-0 border-r border-border bg-background" />
               <div style={{ width: offset(firstColumn), flexShrink: 0 }} />
               {columns.map((column) => (
-                <Tooltip key={column}>
-                  <TooltipTrigger
-                    render={
-                      <div
-                        role="columnheader"
-                        aria-colindex={column + 1}
-                        className={cn(
-                          "shrink-0 overflow-hidden px-2 py-1.5 text-ellipsis whitespace-pre last:rounded-tr-row",
-                          columnClass(props.columnKinds?.[column]),
-                        )}
-                        style={{ width: sizes[column] }}
-                      >
-                        {props.header?.[column] ?? columnLabel(column)}
-                      </div>
-                    }
-                  />
-                  <TooltipPopup>{props.header?.[column] ?? columnLabel(column)}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  key={column}
+                  render={
+                    <div
+                      role="columnheader"
+                      aria-colindex={column + 1}
+                      className="shrink-0 overflow-hidden border-r border-border/40 px-3 py-1.5 text-ellipsis whitespace-pre"
+                      style={{ width: sizes[column] }}
+                    >
+                      {props.header?.[column] ?? columnLabel(column)}
+                    </div>
+                  }
+                  label={props.header?.[column] ?? columnLabel(column)}
+                />
               ))}
-            </PanelFrame.Toolbar>
+            </div>
           ) : null}
           <ScaledRows
             {...props}
@@ -247,7 +210,7 @@ function RowPage(
             className={
               props.source
                 ? `flex min-h-[29px] font-mono ${props.revealLine != null && Math.min(props.count, Math.max(1, props.revealLine)) === index + 1 ? "bg-primary/10" : ""}`
-                : "flex min-h-[29px] border-b border-divider"
+                : `flex min-h-[29px] border-b border-border/60 ${(index - (props.header ? 1 : 0)) % 2 ? "bg-muted/30" : ""}`
             }
             style={rowMinHeight ? { minHeight: rowMinHeight } : undefined}
             data-preview-reveal={
@@ -259,12 +222,7 @@ function RowPage(
           >
             <div
               role={props.source ? undefined : "rowheader"}
-              className={cn(
-                "z-1 shrink-0 bg-background py-1.5 text-right font-mono tabular-nums select-none",
-                props.source
-                  ? "sticky left-0 border-r border-border px-2 text-meta/4 text-muted-foreground"
-                  : "relative pe-1 text-micro text-dim-foreground",
-              )}
+              className={`${props.source ? "sticky left-0" : "relative"} z-1 shrink-0 border-r border-border bg-background px-2 py-1.5 text-right font-normal text-muted-foreground tabular-nums select-none`}
               style={{
                 width: props.rowHeader,
                 transform: props.source ? undefined : "translateX(var(--preview-scroll-left, 0px))",
@@ -288,10 +246,7 @@ function RowPage(
                 className={
                   props.source
                     ? `min-w-0 flex-1 px-3 py-1 ${props.wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`
-                    : cn(
-                        "shrink-0 truncate px-2 py-1.5 text-foreground tabular-nums",
-                        columnClass(props.columnKinds?.[column]),
-                      )
+                    : "shrink-0 border-r border-border/40 px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums"
                 }
                 style={props.source ? undefined : { width: props.sizes[column] }}
               >
@@ -326,15 +281,7 @@ function ScaledRows(
     (settings) => `${settings.fontFamilySans}:${settings.fontSizeInterface}`,
   );
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
-  const [{ top, remainder }, setPosition] = useState({ top: 0, remainder: 0 });
-  const setTop = (value: number) =>
-    setPosition((old) => {
-      const nextTop = value === 0 ? 0 : value + old.remainder;
-      const nextRemainder = value === 0 ? 0 : old.remainder;
-      return old.top === nextTop && old.remainder === nextRemainder
-        ? old
-        : { top: nextTop, remainder: nextRemainder };
-    });
+  const [top, setTop] = useState(0);
   const handledReveal = useRef<string | null>(null);
   const pendingReveal = useRef<{ row: number; attempts: number } | null>(null);
   const pendingEnd = useRef(false);
@@ -361,11 +308,8 @@ function ScaledRows(
     const node = ref.current;
     if (!node || (previous.scale === scale && previous.maxFirst === maxFirst)) return;
     const previousEnd = previous.maxFirst * 29 * previous.scale;
-    let logicalTop = Math.min(
-      previous.maxFirst * 29,
-      (node.scrollTop + remainder) / previous.scale,
-    );
-    let remaining = Math.max(0, node.scrollTop + remainder - previousEnd);
+    let logicalTop = Math.min(previous.maxFirst * 29, node.scrollTop / previous.scale);
+    let remaining = Math.max(0, node.scrollTop - previousEnd);
     // Native-tail pixels cross rows of different heights before returning to the scaled track.
     for (const height of previous.heights) {
       logicalTop += Math.min(1, remaining / height) * 29;
@@ -379,10 +323,8 @@ function ScaledRows(
       remaining = Math.max(0, remaining - 1);
       if (!remaining) break;
     }
-    const nextTop = Math.min(maxFirst * 29, logicalTop) * scale + nativeOffset;
-    node.scrollTop = nextTop;
-    // Keep the subpixel anchor that the browser rounds out of scrollTop.
-    setPosition({ top: nextTop, remainder: nextTop - node.scrollTop });
+    node.scrollTop = Math.min(maxFirst * 29, logicalTop) * scale + nativeOffset;
+    setTop(node.scrollTop);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll the DOM viewport to a requested line after its virtual track has committed.
   useLayoutEffect(() => {
@@ -396,7 +338,7 @@ function ScaledRows(
     if (!node || !props.count || handledReveal.current === key) return;
     const row = Math.min(props.count, Math.max(1, props.revealLine)) - 1;
     node.scrollTop = Math.max(0, (row - headerRows) * 29) * scale;
-    setPosition({ top: node.scrollTop, remainder: 0 });
+    setTop(node.scrollTop);
     pendingEnd.current = false;
     pendingReveal.current = { row, attempts: 0 };
     handledReveal.current = key;
@@ -617,7 +559,7 @@ function ScaledRows(
           pendingEnd.current = event.key === "End";
           pendingReveal.current = null;
           node.scrollTop = event.key === "Home" ? 0 : node.scrollHeight;
-          setPosition({ top: node.scrollTop, remainder: 0 });
+          setTop(node.scrollTop);
         }
       }}
       onScroll={(event) => setTop(event.currentTarget.scrollTop)}
@@ -635,15 +577,14 @@ function ScaledRows(
           className="absolute inset-x-0"
           style={{
             top:
-              (maxFirst === 0
+              maxFirst === 0
                 ? 0
                 : nativeTail
                   ? maxFirst * scale * 29 - layout.offset
                   : position.top +
                     (atStart
                       ? 0
-                      : -layout.offset - ((position.top / scale / 29) % 1) * layout.rowHeight)) -
-              remainder,
+                      : -layout.offset - ((position.top / scale / 29) % 1) * layout.rowHeight),
           }}
         >
           {Array.from({ length: pageCount }, (_, offset) => (

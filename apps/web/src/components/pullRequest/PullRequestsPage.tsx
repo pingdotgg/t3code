@@ -1,15 +1,17 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { cn } from "~/lib/utils";
-import { m } from "~/i18n/messages";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
-import { pullRequestCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import {
+  applyPullRequestFilterChange,
+  pullRequestMenuFilters,
+} from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
 import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
+import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
   EnvironmentId,
@@ -19,31 +21,31 @@ import type {
   PullRequestListCursors,
   PullRequestListInput,
   PullRequestListResult,
+  PullRequestListState,
   PullRequestSummary,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigate } from "@tanstack/react-router";
-import { ArrowDownUpIcon, CircleAlertIcon, LayersIcon, Plug2Icon } from "lucide-react";
-import { T, useGT, useLocale, useMessages } from "gt-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { ArrowDownUpIcon, LayersIcon, Plug2Icon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
+
+import { m } from "~/i18n/messages";
+import { useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
 
 import {
   collectPullRequestListFacets,
   narrowPullRequestsToFilters,
   mergePullRequestDiffStats,
-  settlePullRequestSortStats,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
   pullRequestListAnsweredEmpty,
   rankPullRequestMatches,
-  pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
   retainVisiblePullRequestStatsBatches,
   type EnvironmentPullRequestEntry,
   type MergedPullRequestList,
   type PullRequestDiffStats,
-  type PullRequestSortStats,
   type PullRequestStatsBatch,
   type PullRequestStatsPolicy,
   type PullRequestStatsScope,
@@ -66,7 +68,6 @@ import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
   PullRequestFiltersMenu,
-  describePullRequestListFilters,
   PullRequestSearchInput,
   pullRequestHostLabel,
   pullRequestProjectKey,
@@ -79,7 +80,7 @@ import {
   SORT_OPTIONS,
   STATE_TABS,
 } from "./pullRequestListOptions";
-import { WorkItemListColumn } from "../workItem/WorkItemListColumn";
+import { PullRequestsColumn } from "./PullRequestsColumn";
 import { PullRequestListGroups } from "./PullRequestListGroups";
 import { pullRequestPanelReference } from "./usePullRequestDetail";
 import { usePullRequestIntentPrefetch } from "./usePullRequestIntentPrefetch";
@@ -87,33 +88,27 @@ import {
   usePullRequestDisplayGroups,
   usePullRequestQueryFilters,
   usePullRequestScope,
-  validatePullRequestsSearch,
   type PullRequestsSearch,
 } from "./usePullRequestListView";
 import { pullRequestGroups, pullRequestListEntryId } from "./pullRequestListGroups.logic";
-import { PullRequestListEmptyState, PullRequestListNotice } from "./PullRequestListEmptyState";
-import { PullRequestGlyph } from "./pullRequestIcons";
+import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { type PullRequestRowTarget } from "./PullRequestRow";
+import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { RightPanelTabs } from "../RightPanelTabs";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
-import { isModalDialogOpen } from "~/lib/modalDialog";
 import { isElectron } from "~/env";
-import { resolveShortcutCommand } from "~/keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
-import { RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
+import { PanelLayoutControls, RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
 import { Button } from "../ui/button";
-import { RefreshIcon } from "../ui/refresh-icon";
 import { SidebarInset, useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
-import { PREVIEW_PANEL_SPLIT_MIN_ROW_WIDTH } from "~/hooks/usePreviewPanelInlineSize";
-import { observeResize } from "~/lib/observeResize";
-import { copyThreadReference } from "~/lib/copyThreadReference";
-import { useLayoutPageLocation } from "~/layout/pageNavigation";
-import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { toastManager } from "../ui/toast";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
 import {
   PULL_REQUESTS_PANEL_REF,
@@ -123,6 +118,7 @@ import {
   useRightPanelStore,
   type PullRequestSurface,
 } from "~/rightPanelStore";
+import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
 import {
   pullRequestEnvironment,
   usePullRequestHostList,
@@ -133,6 +129,7 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import {
@@ -141,12 +138,7 @@ import {
   type PullRequestHostRead,
 } from "./pullRequestProjectAssignment.logic";
 
-/** The windowed list reuses row slots, so document order is not the order on screen. */
-function rowsInScreenOrder(viewport: HTMLElement | null): HTMLElement[] {
-  const rows = [...(viewport?.querySelectorAll<HTMLElement>("[data-pull-request-key]") ?? [])];
-  const tops = new Map(rows.map((row) => [row, row.getBoundingClientRect().top]));
-  return rows.sort((a, b) => (tops.get(a) ?? 0) - (tops.get(b) ?? 0));
-}
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 function getShortcutContext() {
   return {
@@ -179,32 +171,14 @@ const heldRowReaders = new WeakMap<
   Map<string, ReturnType<typeof heldPullRequestListEntriesAtom<EnvironmentPullRequestEntry>>>
 >();
 
-type PendingListEntriesAtom = Atom.Atom<ReadonlyArray<EnvironmentPullRequestEntry>>;
-const NO_PENDING_LIST_ENTRIES: PendingListEntriesAtom = Atom.make(
-  (): ReadonlyArray<EnvironmentPullRequestEntry> => [],
-);
-// One atom per list and query. An atom made during render was a new registry node every
-// render, whose value read again on subscribe was a new array, so the page rendered again.
-const pendingListAtoms = new WeakMap<
-  ReadonlyArray<EnvironmentPullRequestEntry>,
-  Map<string, PendingListEntriesAtom>
->();
-
-function pendingListEntriesAtom(
+function usePendingListEntries(
   input: PullRequestListInput,
   entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
-): PendingListEntriesAtom {
-  if (entries === undefined || entries.length === 0) return NO_PENDING_LIST_ENTRIES;
+) {
   const key = JSON.stringify(input);
-  let byInput = pendingListAtoms.get(entries);
-  if (byInput === undefined) {
-    byInput = new Map();
-    pendingListAtoms.set(entries, byInput);
-  }
-  let atom = byInput.get(key);
-  if (atom === undefined) {
-    atom = Atom.make((get) =>
-      entries.flatMap((entry) => {
+  return useAtomValue(
+    Atom.make((get) =>
+      (entries ?? []).flatMap((entry) => {
         let readers = heldRowReaders.get(entry);
         if (readers === undefined) {
           readers = new Map();
@@ -217,27 +191,14 @@ function pendingListEntriesAtom(
         }
         return AsyncResult.getOrElse(get(reader), () => []);
       }),
-    );
-    byInput.set(key, atom);
-  }
-  return atom;
-}
-
-function usePendingListEntries(
-  input: PullRequestListInput,
-  entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
-) {
-  return useAtomValue(pendingListEntriesAtom(input, entries));
+    ),
+  );
 }
 
 export function PullRequestsPage() {
   const gt = useGT();
   const resolve = useMessages();
-  const locale = useLocale();
-  const { visible } = useLayoutPane();
-  const location = useLayoutPageLocation();
-  const search = validatePullRequestsSearch(location.search);
-  const focusedRef = useLayoutPaneFocusedRef();
+  const search = useSearch({ from: "/_chat/pull-requests" });
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
     sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
@@ -310,9 +271,7 @@ export function PullRequestsPage() {
     [Key in keyof PullRequestsSearch]?: PullRequestsSearch[Key] | undefined;
   }) =>
     void navigate({
-      to: "/pull-requests",
-      search: (): PullRequestsSearch => {
-        const previous = search;
+      search: (previous: PullRequestsSearch): PullRequestsSearch => {
         const next = { ...previous, ...patch };
         return {
           involvement: next.involvement ?? previous.involvement,
@@ -321,7 +280,6 @@ export function PullRequestsPage() {
           ...(next.repository ? { repository: next.repository } : {}),
           ...(next.number ? { number: next.number } : {}),
           ...(next.projectId ? { projectId: next.projectId } : {}),
-          ...(next.projectEnvironmentId ? { projectEnvironmentId: next.projectEnvironmentId } : {}),
           ...(next.environmentId ? { environmentId: next.environmentId } : {}),
           ...(next.host ? { host: next.host } : {}),
           ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
@@ -422,6 +380,7 @@ export function PullRequestsPage() {
             state: search.state,
             involvement: search.involvement,
             limit: pageSize,
+            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
             ...(projectIds ? { projectIds } : {}),
             ...(search.host ? { host: search.host } : {}),
             ...(hasFilters ? { filters } : {}),
@@ -446,6 +405,7 @@ export function PullRequestsPage() {
         state: search.state,
         involvement: search.involvement,
         limit: PAGE_SIZE,
+        ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
         ...(projectIds ? { projectIds } : {}),
         ...(search.host ? { host: search.host } : {}),
         ...(menuFiltered ? { filters: menuFilters } : {}),
@@ -467,6 +427,7 @@ export function PullRequestsPage() {
         state: "all",
         involvement: search.involvement,
         limit: PAGE_SIZE,
+        ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
         ...(projectIds ? { projectIds } : {}),
         ...(search.host ? { host: search.host } : {}),
       } satisfies PullRequestListInput,
@@ -476,6 +437,7 @@ export function PullRequestsPage() {
   const filterOptionScope = environmentQueries.map(({ environmentId, projectIds }) => ({
     environmentId,
     input: {
+      ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
       ...(projectIds ? { projectIds } : {}),
       ...(search.host ? { host: search.host } : {}),
     },
@@ -499,6 +461,7 @@ export function PullRequestsPage() {
           state: search.state,
           involvement,
           limit: PAGE_SIZE,
+          ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
           ...(projectIds ? { projectIds } : {}),
           ...(search.host ? { host: search.host } : {}),
           ...(menuFiltered ? { filters: menuFilters } : {}),
@@ -636,20 +599,10 @@ export function PullRequestsPage() {
     }
     const entries = narrowPullRequestsToFilters(loaded.data.entries, {
       state: search.state,
-      projectId: undefined,
+      projectId: scopedProjectId,
       host: search.host,
     });
-    const scoped =
-      scopedProjectId === undefined
-        ? entries
-        : entries.filter((entry) =>
-            environmentQueries.some(
-              (query) =>
-                query.environmentId === entry.environmentId &&
-                query.projectIds?.includes(entry.projectId),
-            ),
-          );
-    return scoped.length === 0 ? null : { ...loaded.data, entries: scoped };
+    return entries.length === 0 ? null : { ...loaded.data, entries };
   })();
   // A grown page is read by the list and nothing else: the baseline always asks for one page, so
   // a host with no cursor to continue from — where "more" means asking for a longer page — would
@@ -814,12 +767,6 @@ export function PullRequestsPage() {
   const shownHeldAuthored = usePendingListEntries(overlayInput, heldPartitions?.authored);
   const shownHeldReviewing = usePendingListEntries(overlayInput, heldPartitions?.reviewing);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // State as well as a ref: the windowed rows follow the scroller once it mounts.
-  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
-  const attachScroller = (element: HTMLDivElement | null) => {
-    scrollRef.current = element;
-    setScrollElement(element);
-  };
   const {
     entries,
     listedPullRequestTabStatuses,
@@ -854,16 +801,6 @@ export function PullRequestsPage() {
   });
 
   const visibleStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
-  const sortStatsKey = JSON.stringify([
-    filterKey,
-    typedQuery,
-    sort,
-    pageSize,
-    sentCursors,
-    ...[listQuery, baselineQuery, authoredQuery, reviewingQuery].map((query) =>
-      query.observations.map(([environmentId, , timestamp]) => [environmentId, timestamp]),
-    ),
-  ]);
   const [statsByRow, setStatsByRow] = useState<PullRequestDiffStats>(() => new Map());
   if (
     panelEnvironmentId !== null &&
@@ -1012,28 +949,6 @@ export function PullRequestsPage() {
     setMergedStats(stats);
     setStatsByRow((previous) => mergePullRequestDiffStats(previous, stats));
   }
-  const [sortStats, setSortStats] = useState<PullRequestSortStats | null>(null);
-  const nextSortStats = settlePullRequestSortStats(
-    sortStats,
-    sortStatsKey,
-    statsByRow,
-    statsPolicy === "eager" ? statsQuery.stats : null,
-    statsPolicy !== "eager" ||
-      // Read here rather than marked by the effect, so a keystroke that needs no new counts
-      // settles in its own render instead of committing again.
-      (statsTargetState.key === filterKey &&
-        pullRequestStatsKeysToRequest(
-          entriesByStatsKey,
-          new Set(entriesByStatsKey.keys()),
-          statsTargetState.batches,
-          statsByRow,
-        ).size === 0 &&
-        !statsQuery.isPending &&
-        !listQuery.isPending &&
-        !baselineQuery.isPending &&
-        (!partitionsWanted || (!authoredQuery.isPending && !reviewingQuery.isPending))),
-  );
-  if (nextSortStats !== sortStats) setSortStats(nextSortStats);
   // Stable so a refresh that resumes after awaiting the host compares against the scope on screen
   // by then, not the one it started from.
   const refreshListAndStats = useStableCallback(
@@ -1090,7 +1005,6 @@ export function PullRequestsPage() {
     host: search.host,
     groups,
     statsByRow,
-    sortStatsByRow: nextSortStats.stats,
     overrides,
     state: search.state,
     localFilters,
@@ -1125,10 +1039,8 @@ export function PullRequestsPage() {
         candidate.entries.some((row) => pullRequestEntryKey(row) === originKey),
       );
       if (!group || readCloseSweep().closingKeys.has(originKey)) return;
-      // The rows on screen, in screen order: stacks reorder their layers and a folded stack
-      // renders none, so the data order would sweep rows the reader never passed over.
-      const orderedKeys = rowsInScreenOrder(scrollRef.current).map(
-        (row) => row.dataset.pullRequestKey ?? "",
+      const orderedKeys = readCloseSweep().displayGroups.flatMap((candidate) =>
+        candidate.entries.map(pullRequestEntryKey),
       );
       const canClose = (key: string) => {
         const row = readCloseSweep().closeSweepRows.get(key);
@@ -1182,7 +1094,7 @@ export function PullRequestsPage() {
           const bounds = viewport.getBoundingClientRect();
           const visibleY = Math.min(Math.max(y, bounds.top), bounds.bottom - 1);
           let key: string | null = null;
-          for (const row of rowsInScreenOrder(viewport)) {
+          for (const row of viewport.querySelectorAll<HTMLElement>("[data-pull-request-key]")) {
             if (key !== null && row.getBoundingClientRect().top > visibleY) break;
             key = row.dataset.pullRequestKey ?? null;
           }
@@ -1204,32 +1116,20 @@ export function PullRequestsPage() {
   const rightPanelAvailable = selectedPullRequestSurface !== null;
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const [maximized, setMaximized] = useState(false);
-  // A pane too narrow for the list and the review at their minimums shows the review alone.
-  const [tooNarrowToSplit, setTooNarrowToSplit] = useState(false);
-  const observeSplitRow = useStableCallback((row: HTMLDivElement) =>
-    observeResize(row, () =>
-      setTooNarrowToSplit(row.clientWidth < PREVIEW_PANEL_SPLIT_MIN_ROW_WIDTH),
-    ),
-  );
-  const rightPanelMaximized = rightPanelState.isOpen && (maximized || tooNarrowToSplit);
+  const rightPanelMaximized = rightPanelState.isOpen && maximized;
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
   const toggleRightPanelMaximized = () => {
     if (rightPanelState.isOpen) setMaximized((value) => !value);
   };
   const onGuideShown = () => setMaximized(true);
-  const linkedSelectionKey = linkedSelection === null ? null : JSON.stringify(linkedSelection);
-  const openLinkedPullRequest = useEffectEvent(() => {
-    if (rightPanelRef === null || linkedSelection === null) return;
-    useRightPanelStore.getState().openPullRequest(rightPanelRef, linkedSelection);
-    // updateSearch leaves selectedUrl out, so a reload does not reveal the link again.
-    if (linkedSelection.revealUrl !== undefined) updateSearch({});
-  });
+  // updateSearch leaves selectedUrl out, so a reload does not reveal the link again.
+  const consumeLinkedUrl = useEffectEvent(() => updateSearch({}));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the URL-linked pull request in the right panel store
   useEffect(() => {
-    if (!visible || !pullRequestsSupported || rightPanelRef === null || linkedSelectionKey === null)
-      return;
-    openLinkedPullRequest();
-  }, [linkedSelectionKey, pullRequestsSupported, rightPanelRef, visible]);
+    if (!pullRequestsSupported || rightPanelRef === null || linkedSelection === null) return;
+    useRightPanelStore.getState().openPullRequest(rightPanelRef, linkedSelection);
+    if (linkedSelection.revealUrl !== undefined) consumeLinkedUrl();
+  }, [linkedSelection, pullRequestsSupported, rightPanelRef]);
 
   const selected =
     rightPanelState.isOpen && activePullRequestSurface !== null
@@ -1286,11 +1186,10 @@ export function PullRequestsPage() {
     ),
   );
 
-  const { prefetch: prefetchEntry, reads: intentReads } = usePullRequestIntentPrefetch((entry) =>
+  const prefetchEntry = usePullRequestIntentPrefetch((entry) =>
     listedPullRequestsBySurface.has(pullRequestListEntryId(entry)),
   );
-  // Stable, so the memoized rows skip the page's re-renders.
-  const selectEntry = useStableCallback((entry: PullRequestRowTarget) => {
+  const selectEntry = (entry: PullRequestRowTarget) => {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openPullRequest(rightPanelRef, entry);
     updateSearch({
@@ -1300,7 +1199,7 @@ export function PullRequestsPage() {
       selectedEnvironmentId: entry.environmentId,
       selectedHost: entry.host,
     });
-  });
+  };
 
   const searchInput = (
     <PullRequestSearchInput
@@ -1312,105 +1211,45 @@ export function PullRequestsPage() {
       onSubmit={submitQuery}
     />
   );
-  const openPanelControls =
-    rightPanelState.isOpen && !tooNarrowToSplit ? (
-      <div
-        className={cn(
-          "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
-          mobileSidebarSheetMounted && "hidden",
-        )}
-        data-workspace-titlebar-controls
-      >
+  const panelToggleControls = (
+    <PanelLayoutControls
+      showTerminalControl={false}
+      showThreadPanelControl={false}
+      terminalAvailable={false}
+      terminalOpen={false}
+      terminalShortcutLabel={null}
+      threadPanelOpen={false}
+      threadPanelPresentation="inline"
+      threadPanelShortcutLabel={null}
+      onToggleThreadPanel={() => undefined}
+      rightPanelAvailable={rightPanelAvailable}
+      rightPanelOpen={rightPanelState.isOpen}
+      rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+      rightPanelUnavailableLabel={gt("Select a pull request first")}
+      onToggleTerminal={() => undefined}
+      onToggleRightPanel={toggleRightPanel}
+    />
+  );
+  const openPanelControls = (
+    <div
+      className={cn(
+        "absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        mobileSidebarSheetMounted && "hidden",
+      )}
+      data-workspace-titlebar-controls
+    >
+      {rightPanelState.isOpen ? (
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
           onToggle={toggleRightPanelMaximized}
         />
-      </div>
-    ) : null;
+      ) : null}
+      {panelToggleControls}
+    </div>
+  );
   const listError = listQuery.error
     ? `${environmentLabels.get(listQuery.error.environmentId) || gt("Environment")}: ${listQuery.error.message}`
     : null;
-  // Said in the empty list, so a list narrowed to nothing names what narrowed it.
-  const hostFilterEntries = hosts.length > 0 ? hosts : expectedHosts;
-  const hostFilterEntry = hostFilterEntries.find((entry) => entry.host === search.host);
-  const filterSummary = describePullRequestListFilters(
-    {
-      state: search.state,
-      involvement: search.involvement,
-      filters: menuFilters,
-      hostLabel:
-        search.host === undefined
-          ? undefined
-          : hostFilterEntry
-            ? pullRequestHostLabel(hostFilterEntries, hostFilterEntry)
-            : search.host,
-      serverLabel:
-        capableEnvironments.length > 1 && scopedEnvironmentId !== null
-          ? environmentLabels.get(scopedEnvironmentId)
-          : undefined,
-      projectLabel: scopedProject?.title,
-    },
-    resolve,
-  );
-  const clearListFilters = () =>
-    updateListScope({
-      state: "open",
-      involvement: "all",
-      draft: undefined,
-      review: undefined,
-      checks: undefined,
-      author: undefined,
-      labels: undefined,
-      host: undefined,
-      projectId: undefined,
-      projectEnvironmentId: undefined,
-      environmentId: undefined,
-    });
-  const listFiltered =
-    menuFiltered ||
-    search.state !== "open" ||
-    search.involvement !== "all" ||
-    scopedProjectId !== undefined ||
-    (capableEnvironments.length > 1 && scopedEnvironmentId !== null) ||
-    search.host !== undefined;
-  // Every host signed out (or missing its CLI) leaves an empty list that is no answer at all,
-  // so it says which host to sign in to rather than "no pull requests".
-  const signedOutHosts = hosts.filter((host) => !host.configured);
-  const listFormat = new Intl.ListFormat(locale, { type: "conjunction" });
-  const firstSignedOut = signedOutHosts[0];
-  const signIn =
-    firstSignedOut !== undefined && signedOutHosts.length === hosts.length
-      ? {
-          hostLabel: listFormat.format(
-            signedOutHosts.map((host) => pullRequestHostLabel(hosts, host)),
-          ),
-          changeRequestPlural: listFormat.format([
-            ...new Set(
-              signedOutHosts.map(
-                (host) => sourceControlClients.get(host.kind).changeRequest.plural,
-              ),
-            ),
-          ]),
-          detail: signedOutHosts.length === 1 ? firstSignedOut.detail : null,
-          Icon: getSourceControlPresentationForKind(firstSignedOut.kind).Icon,
-        }
-      : null;
-  // Repositories that failed while the rest answered with nothing: the empty list is partly
-  // unread, so it says so rather than claiming there is nothing open.
-  const firstListError = listErrors[0];
-  const readErrorMessage =
-    firstListError === undefined
-      ? null
-      : listErrors.length === 1
-        ? `${firstListError.projectTitle}: ${firstListError.message}`
-        : gt(
-            "{count, plural, one {{count} repository could not be read.} other {{count} repositories could not be read.}} {project}: {message}",
-            {
-              count: listErrors.length,
-              project: firstListError.projectTitle,
-              message: firstListError.message,
-            },
-          );
   const carriedToNothing =
     shownCount === 0 &&
     typedQuery.length === 0 &&
@@ -1420,62 +1259,33 @@ export function PullRequestsPage() {
       {!capabilityKnown ? (
         <PullRequestListGhost rows={7} caption={gt("Loading pull requests…")} />
       ) : !pullRequestsSupported ? (
-        <PullRequestListNotice
-          icon={PullRequestGlyph.pullRequest}
+        <PullRequestsUnavailableState
           title={gt("Pull requests unavailable")}
-          description={gt("Update your T3 Code servers to browse pull requests.")}
+          error={gt("Update your T3 Code servers to browse pull requests.")}
         />
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} caption={gt("Loading pull requests…")} />
       ) : listError && shownCount === 0 ? (
-        <PullRequestListNotice
-          icon={CircleAlertIcon}
-          title={gt("Could not load pull requests")}
-          description={listError}
-        >
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={listQuery.isPending}
-            onClick={listQuery.retry}
-          >
-            <RefreshIcon size="sm" refreshing={listQuery.isPending} />
-            <T>Retry</T>
-          </Button>
-        </PullRequestListNotice>
+        <PullRequestsUnavailableState
+          error={listError}
+          refreshing={listQuery.isPending}
+          onRetry={listQuery.retry}
+        />
       ) : carriedToNothing ? (
         <PullRequestListGhost rows={7} />
-      ) : shownCount === 0 &&
-        signIn === null &&
-        readErrorMessage !== null &&
-        typedQuery.length === 0 &&
-        !listFiltered ? (
-        <PullRequestListNotice
-          icon={CircleAlertIcon}
-          title={gt("Could not load pull requests")}
-          description={readErrorMessage}
-        >
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={refreshing}
-            onClick={() => void refreshFromHost()}
-          >
-            <RefreshIcon size="sm" refreshing={refreshing} />
-            <T>Retry</T>
-          </Button>
-        </PullRequestListNotice>
       ) : shownCount === 0 ? (
         <PullRequestListEmptyState
           hasProjects={!projectsKnown || projects.length > 0}
-          signIn={signIn}
           refreshing={refreshing}
           onRefresh={() => void refreshFromHost()}
           query={typedQuery}
-          filtered={listFiltered}
-          filterSummary={filterSummary}
-          onClearFilters={clearListFilters}
-          onShowAll={() => updateListScope({ state: "all" })}
+          filtered={
+            menuFiltered ||
+            search.state !== "open" ||
+            search.involvement !== "all" ||
+            scopedProjectId !== undefined ||
+            search.host !== undefined
+          }
           searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
           canLoadMore={listData?.truncated === true && (canContinue || pageSize < MAX_PAGE_SIZE)}
           loadingMore={loadingMore}
@@ -1497,15 +1307,13 @@ export function PullRequestsPage() {
           closingKeys={closingKeys}
           sweepingKeys={closeSweepKeys}
           onCloseSweepStart={startCloseSweep}
-          scrollElement={scrollElement}
         />
       )}
-      {intentReads}
 
       {listError && shownCount > 0 ? (
-        <div className="flex items-center justify-between gap-3 rounded-control border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
           <span>{gt("{error} Showing the last pull requests loaded.", { error: listError })}</span>
-          <Button size="xs" variant="secondary" onClick={listQuery.retry}>
+          <Button size="xs" variant="outline" onClick={listQuery.retry}>
             <T>Retry</T>
           </Button>
         </div>
@@ -1520,7 +1328,7 @@ export function PullRequestsPage() {
           ) : canContinue || pageSize < MAX_PAGE_SIZE ? (
             <Button
               size="sm"
-              variant="secondary"
+              variant="outline"
               onClick={loadMore}
               disabled={listQuery.isPending || showingCarried}
             >
@@ -1537,7 +1345,7 @@ export function PullRequestsPage() {
   );
   const hostEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: gt("All forges"), Icon: Plug2Icon },
+    { value: "", label: gt("All", { $context: "all hosts" }), Icon: Plug2Icon },
     ...hostEntries.map((entry) => {
       const summary = hosts.find((host) => host.host === entry.host);
       return {
@@ -1563,27 +1371,24 @@ export function PullRequestsPage() {
       label={gt("Sort pull requests")}
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
       triggerLabel={gt("Sort", { $context: "verb, sort a list" })}
+      outlined
       value={sort}
       options={resolveFilterOptions(SORT_OPTIONS, resolve)}
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
   const filtersMenu = (
-    <PullRequestFiltersMenu
+    <PullRequestFiltersMenuInSidebarOrder
+      onOpenChange={setFiltersOpen}
       state={search.state}
       stateOptions={resolveFilterOptions(STATE_TABS, resolve)}
       onState={(state) => updateListScope({ state })}
-      onOpenChange={setFiltersOpen}
       involvement={search.involvement}
       involvementOptions={resolveFilterOptions(INVOLVEMENT_TABS, resolve)}
       onInvolvement={(involvement) => updateListScope({ involvement })}
-      filters={
-        typedParsed.filters.draft
-          ? { ...menuFilters, draft: typedParsed.filters.draft }
-          : menuFilters
-      }
+      filters={pullRequestMenuFilters(typedParsed.filters, menuFilters)}
       onFilters={(value) => {
-        const { query, filters: next } = applyPullRequestDraftFilterChange(
+        const { query, filters: next } = applyPullRequestFilterChange(
           typedQuery,
           menuFilters,
           value,
@@ -1600,44 +1405,32 @@ export function PullRequestsPage() {
       authorOptions={facets.authors}
       labelOptions={facets.labels}
       optionScope={filterOptionScope}
+      host={search.host}
+      hostOptions={hostMenuOptions}
+      onHost={(host) => updateListScope({ host })}
       server={scopedEnvironmentId ?? undefined}
       serverOptions={serverMenuOptions}
-      onServer={(server) =>
-        updateListScope({
-          environmentId: server,
-          projectId: undefined,
-          projectEnvironmentId: undefined,
-        })
-      }
+      onServer={(server) => updateListScope({ environmentId: server, projectId: undefined })}
       projects={scopedProjects}
       projectId={scopedProjectId}
       projectEnvironmentId={scopedProject?.environmentId}
       unavailable={unavailableProjects}
       onProject={(projectId, environmentId) =>
-        updateListScope({ projectId, projectEnvironmentId: environmentId })
+        updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId })
       }
     />
   );
   const columnProps = {
-    area: "pull-requests",
-    title: gt("Pull requests"),
-    icon: (
-      <PullRequestGlyph.pullRequest aria-hidden className="size-3.5 shrink-0 text-foreground" />
-    ),
-    refreshLabel: gt("Refresh pull requests"),
     refreshing,
     onRefresh: () => void refreshFromHost(),
-    providerMenu: (
-      <PullRequestCompactFilterMenu
-        label={gt("Filter by provider")}
-        iconOnly={search.host !== undefined}
-        triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
-        triggerLabel={gt("All", { $context: "all providers" })}
-        value={search.host ?? ""}
-        options={hostMenuOptions}
-        onChange={(next) => updateListScope({ host: next === "" ? undefined : next })}
-      />
-    ),
+    searchValue: search.q ?? "",
+    involvement: search.involvement,
+    state: search.state,
+    host: search.host,
+    hostMenuOptions,
+    onInvolvement: (involvement: PullRequestInvolvement) => updateListScope({ involvement }),
+    onState: (state: PullRequestListState) => updateListScope({ state }),
+    onHost: (host: string | undefined) => updateListScope({ host }),
     searchInput,
     sortMenu,
     filtersMenu,
@@ -1648,10 +1441,39 @@ export function PullRequestsPage() {
         onApply={(preferences) => updateListScope(pullRequestSavedViewPatch(preferences))}
       />
     ),
+    rightPanelControl: !pullRequestsSupported ? null : (
+      <span
+        aria-hidden
+        className={cn(
+          "shrink-0",
+          rightPanelState.isOpen ? "-ml-3 w-0" : "w-7 sm:w-5",
+          panelAnimationsActive && "transition-[width,margin] ease-out",
+        )}
+        style={
+          panelAnimationsActive
+            ? { transitionDuration: `${panelAnimationDurationMs}ms` }
+            : undefined
+        }
+      />
+    ),
+    titlebarControls:
+      // While the panel is closed the strip lives inside the header: a no-drag
+      // descendant beats the header's desktop drag-region, where a floating
+      // sibling loses (app-region hit-testing ignores z-index).
+      pullRequestsSupported ? (
+        rightPanelPresent ? (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 left-full w-7 [-webkit-app-region:no-drag]"
+          />
+        ) : (
+          openPanelControls
+        )
+      ) : null,
     rightPanelOpen: rightPanelState.isOpen,
     maximizedAway: rightPanelMaximized,
     listBody,
-    scrollRef: attachScroller,
+    scrollRef,
   };
 
   const activateSurface = (surface: PullRequestSurface) => {
@@ -1694,10 +1516,30 @@ export function PullRequestsPage() {
     event.stopPropagation();
     if (event.repeat) return;
     const url = openPanelPullRequestUrl;
-    const { shortLabel } = (
+    const terminology = (
       sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
     ).changeRequest;
-    void copyThreadReference(pullRequestCopyTarget(url, shortLabel, m));
+    void writeTextToClipboard(url, {
+      target: `${terminology.singular} link`,
+      unavailableMessage: msg(
+        "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} link.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+      failureMessage: msg(
+        "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} link to the clipboard.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+    }).then(undefined, (error) => {
+      toastManager.add({
+        type: "error",
+        title: m(
+          msg("Failed to copy {term, select, mr {MR} cr {change request} other {PR}} link", {
+            term: changeRequestTermKind(terminology),
+          }),
+        ),
+        description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
+      });
+    });
   });
   const closeActiveSurfaceFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (activePullRequestSurface === null) return;
@@ -1720,54 +1562,34 @@ export function PullRequestsPage() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document keydown listener for the right panel and copy-reference shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        !focusedRef.current ||
-        event.defaultPrevented ||
-        isCommandPaletteOpen() ||
-        isModalDialogOpen()
-      )
-        return;
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: getShortcutContext(),
       });
-      if (command === "rightPanel.close" || command === "tab.close")
-        closeActiveSurfaceFromShortcut(event);
+      if (command === "rightPanel.close") closeActiveSurfaceFromShortcut(event);
       if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
       if (command === "rightPanel.toggleMaximized") toggleRightPanelMaximizedFromShortcut(event);
       if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [focusedRef, keybindings]);
+  }, [keybindings]);
 
-  const splitPanes =
-    rightPanelPresent && renderedPullRequestSurface !== null && panelEnvironmentId !== null;
   return (
-    // An open review is its own pane beside the list's (pen bETcv), so the inset steps back to
-    // the chrome and each pane paints itself.
-    <SidebarInset
-      variant={splitPanes ? "split" : "pane"}
-      className="h-full min-h-0 overflow-hidden overscroll-y-none"
-    >
-      <div ref={observeSplitRow} className="relative flex min-h-0 flex-1">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
+      <div className="relative flex min-h-0 flex-1">
         {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
-        <WorkItemListColumn {...columnProps} split={splitPanes} />
+        <PullRequestsColumn {...columnProps} />
 
-        {splitPanes ? (
+        {rightPanelPresent && renderedPullRequestSurface && panelEnvironmentId !== null ? (
           <RightPanelTabs
             mode="inline"
-            pane
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
-            holdsPaneTabs={rightPanelMaximized}
             keybindings={keybindings}
+            getShortcutContext={getShortcutContext}
             widthStorageKey="t3code:pull-request-panel-width"
-            // The pen's split (bETcv) gives the review 549 of 1280px, which
-            // leaves the list room for its whole "Pull requests › All
-            // repositories" tab. SSR has no window, so fall back to that.
-            defaultWidth={
-              typeof window === "undefined" ? 550 : Math.floor(window.innerWidth * 0.43)
-            }
+            defaultWidth={typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2)}
             surfaces={renderedRightPanelSurfaces}
             environmentId={panelEnvironmentId}
             activeSurfaceId={renderedPullRequestSurface.id}
@@ -1822,7 +1644,6 @@ export function PullRequestsPage() {
                   .settlePullRequestReveal(rightPanelRef, renderedPullRequestSurface.id, revealUrl);
               }}
               environmentId={panelEnvironmentId}
-              onBack={tooNarrowToSplit ? toggleRightPanel : undefined}
               onGuideShown={onGuideShown}
               onSelectPullRequest={(reference) => {
                 if (rightPanelRef === null) return;
@@ -1892,4 +1713,12 @@ export function PullRequestsPage() {
       </div>
     </SidebarInset>
   );
+}
+
+function PullRequestFiltersMenuInSidebarOrder(
+  props: ComponentProps<typeof PullRequestFiltersMenu>,
+) {
+  const sidebarProjectGroups = useSidebarProjectGroups();
+  const projects = sortProjectsByGroupOrder(props.projects, sidebarProjectGroups);
+  return <PullRequestFiltersMenu {...props} projects={projects} />;
 }

@@ -1,9 +1,5 @@
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-references";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import {
-  chatMarkdownImageSource,
-  type ChatMarkdownImageProperties,
-} from "@t3tools/shared/markdownHast";
 import type { Nodes } from "hast";
 
 import {
@@ -103,58 +99,4 @@ function commentPreviewText(node: Nodes): string {
 export function pullRequestCommentPreview(body: string, provider: string): string {
   const options = provider === "github" ? GITHUB_PREVIEW_MARKDOWN : PREVIEW_MARKDOWN;
   return commentPreviewText(wordsHast(body, options)).replace(/\s+/gu, " ").trim();
-}
-
-/** Every image source in the markdown, with each theme variant. */
-function markdownImageSources(markdown: string): Array<string> {
-  const sources: Array<string> = [];
-  const visit = (node: Nodes) => {
-    if (node.type === "element" && node.tagName === "img") {
-      const properties = node.properties as ChatMarkdownImageProperties;
-      const fallback = chatMarkdownImageSource(properties);
-      if (fallback) sources.push(fallback.classifiedSrc);
-      for (const [theme, variant] of [
-        ["dark", properties.dataDarkSrc],
-        ["light", properties.dataLightSrc],
-      ] as const) {
-        if (typeof variant !== "string") continue;
-        const source = chatMarkdownImageSource(properties, theme);
-        if (source) sources.push(source.classifiedSrc);
-      }
-    }
-    if ("children" in node) node.children.forEach(visit);
-  };
-  visit(wordsHast(markdown, PREVIEW_MARKDOWN));
-  return sources;
-}
-
-// Markdown shows an image only from `![` or a raw `<img>` (or `<image>`, which HTML reads as one),
-// so text without either skips the parse, which costs a whole chat markdown pass.
-const MAY_HOLD_IMAGE = /!\[|<im/iu;
-
-export function pullRequestAttachments(body: string) {
-  const attachments: Array<{ url: string; media: "image" | "video"; caption: string }> = [];
-  const seen = new Set<string>();
-  const add = (url: string, media: "image" | "video", caption: string) => {
-    if (seen.has(url) || !/^https?:\/\//iu.test(url)) return;
-    seen.add(url);
-    attachments.push({
-      url,
-      media,
-      caption: caption || `${media === "image" ? "Image" : "Video"} ${attachments.length + 1}`,
-    });
-  };
-  const collect = (segments: ReturnType<typeof splitPullRequestBody>) => {
-    for (const segment of segments) {
-      if (segment.kind === "attachment") {
-        if (segment.media !== "unknown") add(segment.url, segment.media, "");
-      } else if (segment.kind === "table") {
-        for (const cell of segment.rows.flat()) collect(cell.segments);
-      } else if (MAY_HOLD_IMAGE.test(segment.text)) {
-        for (const url of markdownImageSources(segment.text)) add(url, "image", "");
-      }
-    }
-  };
-  collect(splitPullRequestBody(body));
-  return attachments;
 }

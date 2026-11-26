@@ -1,4 +1,3 @@
-import type { RelayClientInstallProgressEvent } from "@t3tools/contracts";
 import { sha256 } from "@noble/hashes/sha2";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -413,6 +412,67 @@ describe("RelayClient", () => {
   );
 
   it.effect.skipIf(windowsHost)(
+    "removes a staged client whose rename lands after cancellation",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const scope = yield* Effect.scope;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-cloudflared-test-",
+        });
+        const directory = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64`;
+        const renamePending = yield* Deferred.make<void>();
+        const allowRename = yield* Deferred.make<void>();
+        const renameFinished = yield* Deferred.make<void, PlatformError.PlatformError>();
+        const manager = yield* RelayClient.makeCloudflaredRelayClient({
+          baseDir,
+          releaseAsset: testReleaseAsset,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            // Like Node's rename, the staging rename completes even if its caller is interrupted.
+            rename: (from, to) =>
+              to.endsWith(".tmp")
+                ? Effect.forkIn(
+                    Deferred.complete(
+                      renameFinished,
+                      Deferred.await(allowRename).pipe(Effect.andThen(fileSystem.rename(from, to))),
+                    ),
+                    scope,
+                  ).pipe(
+                    Effect.andThen(Deferred.succeed(renamePending, undefined)),
+                    Effect.andThen(Deferred.await(renameFinished)),
+                  )
+                : fileSystem.rename(from, to),
+            // Land the rename before the install temp directory is removed.
+            remove: (path, options) =>
+              path.endsWith(".tmp")
+                ? fileSystem
+                    .remove(path, options)
+                    .pipe(
+                      Effect.andThen(Deferred.succeed(allowRename, undefined)),
+                      Effect.andThen(Deferred.await(renameFinished)),
+                    )
+                : fileSystem.remove(path, options),
+          }),
+        );
+
+        const installing = yield* manager.install.pipe(Effect.forkChild);
+        yield* Deferred.await(renamePending);
+        yield* Effect.yieldNow;
+        const cancelling = yield* Fiber.interrupt(installing).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(allowRename, undefined);
+        yield* Fiber.join(cancelling);
+        yield* Deferred.await(renameFinished);
+
+        expect(yield* fileSystem.readDirectory(directory)).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "downloads, verifies, validates, and atomically installs the managed executable",
     () =>
       Effect.gen(function* () {
@@ -430,11 +490,11 @@ describe("RelayClient", () => {
           },
         });
 
-        const progress: Array<RelayClientInstallProgressEvent> = [];
+        const progress: Array<string> = [];
         const installed = yield* manager.installWithProgress((event) =>
           Effect.sync(() => {
             if (event.type === "progress") {
-              progress.push(event);
+              progress.push(event.stage);
             }
           }),
         );
@@ -449,13 +509,13 @@ describe("RelayClient", () => {
           "test-cloudflared-binary",
         );
         expect(progress).toEqual([
-          { type: "progress", stage: "checking" },
-          { type: "progress", stage: "waiting_for_lock" },
-          { type: "progress", stage: "downloading" },
-          { type: "progress", stage: "verifying", downloadedBytes: bytes.byteLength },
-          { type: "progress", stage: "installing", checksumVerified: true },
-          { type: "progress", stage: "validating" },
-          { type: "progress", stage: "activating" },
+          "checking",
+          "waiting_for_lock",
+          "downloading",
+          "verifying",
+          "installing",
+          "validating",
+          "activating",
         ]);
         expect(yield* manager.resolve).toEqual(installed);
       }).pipe(
@@ -528,24 +588,9 @@ describe("RelayClient", () => {
         },
       });
 
-      const progress: Array<RelayClientInstallProgressEvent> = [];
-      const error = yield* manager
-        .installWithProgress((event) =>
-          Effect.sync(() => {
-            progress.push(event);
-          }),
-        )
-        .pipe(Effect.flip);
+      const error = yield* manager.install.pipe(Effect.flip);
       expect(error).toBeInstanceOf(RelayClient.RelayClientInstallError);
       expect(error.reason).toBe("invalid_checksum");
-      expect(progress).toContainEqual({
-        type: "progress",
-        stage: "verifying",
-        downloadedBytes: new TextEncoder().encode("tampered").byteLength,
-      });
-      expect(
-        progress.some((event) => event.type === "progress" && event.checksumVerified === true),
-      ).toBe(false);
       expect(
         yield* fileSystem.exists(
           `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64/cloudflared.lock`,

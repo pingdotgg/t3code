@@ -1,33 +1,35 @@
-import {
-  type EnvironmentId,
-  type PullRequestAction,
-  type PullRequestMergeMethod,
-  type PullRequestUpdateMethod,
+import type {
+  EnvironmentId,
+  PullRequestAction,
+  PullRequestMergeMethod,
+  PullRequestUpdateMethod,
 } from "@t3tools/contracts";
-import { CheckIcon, FolderGit2Icon, GitBranchIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
-import { T, useGT, useMessages } from "gt-react";
+import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
+import { Branch, T, useGT } from "gt-react";
 import type { ReactNode } from "react";
+
+import { AnimatedWidth } from "~/components/AnimatedWidth";
 import { cn } from "~/lib/utils";
-import {
-  PULL_REQUEST_MERGE_METHOD_LABELS,
-  resolvePullRequestPrimaryControl,
-} from "./pullRequestDetail.logic";
-import { useInlineActionConfirm } from "./useInlineActionConfirm";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { RefreshIcon } from "../ui/refresh-icon";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
-  MenuGroup,
-  MenuGroupLabel,
+  Menu,
   MenuItem,
+  MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator,
+  MenuTrigger,
 } from "../ui/menu";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import type { resolvePullRequestPrimaryControl } from "./pullRequestDetail.logic";
 import { PullRequestGlyph } from "./pullRequestIcons";
-import { changeRequestTermKind } from "./changeRequestTerm";
-import { type PickableEnvironment } from "./pullRequestProjectAssignment.logic";
+import type { resolvePullRequestState } from "./pullRequestPresentation";
+import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
+import { useInlineActionConfirm } from "./useInlineActionConfirm";
+
+import type { ChangeRequestTermKind } from "./changeRequestTerm";
 
 export type PerformPullRequestAction = (
   action: PullRequestAction,
@@ -73,6 +75,98 @@ export function ActOnEnvironmentPicker({
   );
 }
 
+export function PullRequestCheckoutMenu({
+  handoff,
+  checkoutRoot,
+  canPrepareWorktree,
+  canCheckoutHere,
+  onCheckout,
+  pickableEnvironments,
+  actingEnvironmentId,
+  onActingEnvironmentChange,
+  term,
+}: {
+  handoff: string | null;
+  checkoutRoot: string | null;
+  canPrepareWorktree: boolean;
+  canCheckoutHere: boolean;
+  onCheckout: (mode: "worktree" | "local") => void;
+  pickableEnvironments: ReadonlyArray<PickableEnvironment>;
+  actingEnvironmentId: EnvironmentId;
+  onActingEnvironmentChange: (environmentId: EnvironmentId) => void;
+  term: ChangeRequestTermKind;
+}) {
+  const gt = useGT();
+  return (
+    <Menu>
+      <SharedTooltipTrigger
+        render={
+          <MenuTrigger
+            disabled={handoff !== null || checkoutRoot === null}
+            render={
+              <Button
+                size="xs"
+                variant="outline"
+                aria-label={
+                  handoff?.startsWith("checkout") ? gt("Checking out...") : gt("Check out")
+                }
+              >
+                <GitBranchIcon aria-hidden className="size-3.5" />
+                <span className="@max-[35rem]/pr-header:hidden">
+                  {handoff?.startsWith("checkout") ? gt("Checking out...") : gt("Check out")}
+                </span>
+                <ChevronDownIcon aria-hidden className="size-3.5 text-muted-foreground" />
+              </Button>
+            }
+          />
+        }
+        label={
+          <>
+            <T>
+              Check out this{" "}
+              <Branch branch={term} mr="merge request" cr="change request">
+                pull request
+              </Branch>
+            </T>
+          </>
+        }
+      />
+      <MenuPopup align="end" side="bottom">
+        <MenuItem disabled={!canPrepareWorktree} onClick={() => onCheckout("worktree")}>
+          <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
+          <span className="flex min-w-0 flex-col">
+            <span>
+              <T>In a separate worktree</T>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              <T>Its own folder and thread. Nothing you have open moves.</T>
+            </span>
+          </span>
+        </MenuItem>
+        <MenuItem disabled={!canCheckoutHere} onClick={() => onCheckout("local")}>
+          <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
+          <span className="flex min-w-0 flex-col">
+            <span>
+              <T>In this repository</T>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              <T>Switches the branch you are working in.</T>
+            </span>
+          </span>
+        </MenuItem>
+        {pickableEnvironments.length > 0 ? (
+          <ActOnEnvironmentPicker
+            environments={pickableEnvironments}
+            value={actingEnvironmentId}
+            onChange={onActingEnvironmentChange}
+            disabled={handoff !== null}
+          />
+        ) : null}
+      </MenuPopup>
+    </Menu>
+  );
+}
+
 export function PullRequestResolveConflictsButton({
   handoff,
   unavailable,
@@ -84,419 +178,287 @@ export function PullRequestResolveConflictsButton({
 }) {
   const gt = useGT();
   return (
-    <Button
-      size="xs"
-      variant="destructive-outline"
-      disabled={handoff !== null || unavailable}
-      onClick={onResolve}
-    >
-      <PullRequestGlyph.conflicting aria-hidden className="size-3.5" />
-      {handoff === "conflicts" ? gt("Preparing...") : gt("Resolve conflicts")}
-    </Button>
+    <SharedTooltipTrigger
+      render={
+        <span className="inline-flex shrink-0">
+          <Button
+            size="xs"
+            variant="destructive-outline"
+            disabled={handoff !== null || unavailable}
+            onClick={onResolve}
+            aria-label={handoff === "conflicts" ? gt("Preparing...") : gt("Resolve conflicts")}
+          >
+            <PullRequestGlyph.conflicting aria-hidden className="size-3.5" />
+            <span className="@max-[30rem]/pr-header:hidden">
+              {handoff === "conflicts" ? gt("Preparing...") : gt("Resolve conflicts")}
+            </span>
+          </Button>
+        </span>
+      }
+      label={handoff === "conflicts" ? gt("Preparing...") : gt("Resolve conflicts")}
+    />
   );
 }
 
-export function PullRequestCheckoutMenuItems({
-  handoff,
-  checkoutRoot,
-  canPrepareWorktree,
-  canCheckoutHere,
-  onCheckout,
-}: {
-  handoff: string | null;
-  checkoutRoot: string | null;
-  canPrepareWorktree: boolean;
-  canCheckoutHere: boolean;
-  onCheckout: (mode: "worktree" | "local") => void;
-}) {
-  const gt = useGT();
-  return (
-    <>
-      <MenuItem
-        disabled={handoff !== null || checkoutRoot === null || !canPrepareWorktree}
-        onClick={() => onCheckout("worktree")}
-      >
-        <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
-        <span className="flex min-w-0 flex-col">
-          <span>
-            {handoff === "checkout:worktree"
-              ? gt("Checking out...")
-              : gt("Check out in a worktree")}
-          </span>
-          <span className="text-meta text-muted-foreground">
-            <T>Its own folder and thread. Nothing you have open moves.</T>
-          </span>
-        </span>
-      </MenuItem>
-      <MenuItem
-        disabled={handoff !== null || checkoutRoot === null || !canCheckoutHere}
-        onClick={() => onCheckout("local")}
-      >
-        <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
-        <span className="flex min-w-0 flex-col">
-          <span>
-            {handoff === "checkout:local"
-              ? gt("Checking out...")
-              : gt("Check out in this repository")}
-          </span>
-          <span className="text-meta text-muted-foreground">
-            <T>Switches the branch you are working in.</T>
-          </span>
-        </span>
-      </MenuItem>
-    </>
-  );
-}
-
-/** The readiness card's primary control and armed auto-merge status. */
+/** The header's one prominent control, which depends on where the pull request stands. */
 export function PullRequestPrimaryAction({
+  pullRequestKey,
   primaryAction,
   mergeBlockedReason,
-  handoff,
-  unavailable,
-  onResolve,
-  pendingAction,
-  perform,
-  inlineConfirm,
+  autoMergeArmed,
+  armedAutoMergeLabel,
+  pendingAutoMergeLabel,
   selectedMergeMethod,
   selectedMergeMethodLabel,
-  pendingAutoMergeLabel,
-  armedAutoMergeLabel,
+  statePresentation,
+  pendingAction,
+  perform,
+  resolveConflicts,
 }: {
+  pullRequestKey: string;
   primaryAction: ReturnType<typeof resolvePullRequestPrimaryControl> | null;
   mergeBlockedReason: string | null;
-  handoff: string | null;
-  unavailable: boolean;
-  onResolve: () => void;
-  pendingAction: PullRequestAction | null;
-  perform: PerformPullRequestAction;
-  inlineConfirm: ReturnType<typeof useInlineActionConfirm>;
+  autoMergeArmed: boolean;
+  armedAutoMergeLabel: string;
+  pendingAutoMergeLabel: string;
   selectedMergeMethod: PullRequestMergeMethod;
   selectedMergeMethodLabel: string;
-  pendingAutoMergeLabel: string;
-  armedAutoMergeLabel: string;
-}) {
-  const gt = useGT();
-  const actionPending = pendingAction !== null;
-  // The merge, full width at the foot of the readiness card. One stable slot from waiting through
-  // completion: conflicts take it while they need a person, and a finished pull request shows its
-  // state there instead of a button.
-  const primaryButton =
-    primaryAction === "resolve" ? (
-      <Button
-        size="sm"
-        variant="destructive-tint"
-        className="flex-1"
-        disabled={handoff !== null || unavailable}
-        onClick={onResolve}
-      >
-        <PullRequestGlyph.conflicting aria-hidden className="size-3.5" />
-        {handoff === "conflicts" ? gt("Preparing...") : gt("Resolve conflicts")}
-      </Button>
-    ) : primaryAction === "ready" ? (
-      <Button
-        size="sm"
-        className="flex-1"
-        disabled={actionPending}
-        onClick={() => void perform("ready")}
-      >
-        <PullRequestGlyph.pullRequest aria-hidden className="size-3.5" />
-        <T>Ready for review</T>
-      </Button>
-    ) : primaryAction === "enable-auto-merge" ? (
-      <Button
-        size="sm"
-        className="flex-1"
-        disabled={actionPending}
-        aria-disabled={mergeBlockedReason !== null || undefined}
-        aria-description={mergeBlockedReason ?? undefined}
-        {...(mergeBlockedReason === null
-          ? inlineConfirm.props(
-              "enable-auto-merge",
-              () => void perform("enable-auto-merge", selectedMergeMethod),
-            )
-          : {})}
-      >
-        {inlineConfirm.isArmed("enable-auto-merge") ? (
-          <CheckIcon aria-hidden className="size-3.5" />
-        ) : (
-          <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-        )}
-        {pendingAction === "enable-auto-merge"
-          ? gt("Enabling...")
-          : inlineConfirm.isArmed("enable-auto-merge")
-            ? gt("Confirm auto-merge?")
-            : pendingAutoMergeLabel}
-      </Button>
-    ) : primaryAction === "merge" ? (
-      <Button
-        size="sm"
-        className="flex-1"
-        disabled={actionPending}
-        aria-disabled={mergeBlockedReason !== null || undefined}
-        aria-description={mergeBlockedReason ?? undefined}
-        {...(mergeBlockedReason === null
-          ? inlineConfirm.props("merge", () => void perform("merge", selectedMergeMethod))
-          : {})}
-      >
-        {inlineConfirm.isArmed("merge") ? (
-          <CheckIcon aria-hidden className="size-3.5" />
-        ) : (
-          <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-        )}
-        {pendingAction === "merge"
-          ? gt("Merging...")
-          : inlineConfirm.isArmed("merge")
-            ? gt("Confirm merge?")
-            : selectedMergeMethodLabel}
-      </Button>
-    ) : null;
-  const primaryStatus =
-    primaryButton !== null ? null : primaryAction === "auto-merge-armed" ? (
-      <PullRequestStateBadge
-        tone="info"
-        icon={<PullRequestGlyph.merged aria-hidden className="size-3.5" />}
-        label={armedAutoMergeLabel}
-      />
-    ) : null; // Merged and closed show their own badge in the same slot.
-  return primaryButton ?? primaryStatus;
-}
-
-const STATE_BADGE_TONES = {
-  info: "[--surface-tint:var(--info-foreground)] text-info-foreground",
-  merged: "[--surface-tint:var(--merged-foreground)] text-merged-foreground",
-  destructive: "[--surface-tint:var(--destructive-foreground)] text-destructive-foreground",
-} as const;
-
-/** What happened to the pull request, in the readiness card's action slot and its tint. */
-export function PullRequestStateBadge({
-  tone,
-  icon,
-  label,
-}: {
-  tone: keyof typeof STATE_BADGE_TONES;
-  icon: ReactNode;
-  label: string;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <div
-            data-slot="state-badge"
-            className={cn(
-              "surface-tint flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control px-3 text-label sm:h-7 [&>svg]:shrink-0",
-              STATE_BADGE_TONES[tone],
-            )}
-          />
-        }
-      >
-        {icon}
-        <span className="min-w-0 truncate">{label}</span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-/** The chevron's options once a pull request is merged or closed. */
-export function PullRequestFinishedMenuItems({
-  state,
-  singular,
-  headBranch,
-  canReopen,
-  canRevert,
-  showsDeleteBranch,
-  environmentConnected,
-  pendingAction,
-  perform,
-  inlineConfirm,
-  confirmDeleteBranch,
-}: {
-  state: "merged" | "closed";
-  singular: string;
-  headBranch: string;
-  canReopen: boolean;
-  canRevert: boolean;
-  showsDeleteBranch: boolean;
-  environmentConnected: boolean;
+  statePresentation: ReturnType<typeof resolvePullRequestState> | null;
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
-  inlineConfirm: ReturnType<typeof useInlineActionConfirm>;
-  confirmDeleteBranch: () => Promise<void>;
+  resolveConflicts: ReactNode;
 }) {
   const gt = useGT();
+  const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
   return (
     <>
-      {state === "closed" && canReopen ? (
-        <MenuItem disabled={actionPending} onClick={() => void perform("reopen")}>
-          <PullRequestGlyph.reopen className="size-3.5" />
-          {gt(
-            "Reopen {term, select, mr {merge request} cr {change request} other {pull request}}",
-            { term: changeRequestTermKind({ singular }) },
-          )}
-        </MenuItem>
-      ) : null}
-      {state === "merged" && canRevert ? (
-        <MenuItem
-          closeOnClick={inlineConfirm.isArmed("revert")}
-          aria-label={
-            inlineConfirm.isArmed("revert") ? gt("Confirm revert?") : gt("Revert changes")
+      {autoMergeArmed && primaryAction !== "auto-merge-armed" ? (
+        <SharedTooltipTrigger
+          render={
+            <Badge size="control" variant="info" role="img" aria-label={armedAutoMergeLabel}>
+              <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+              <span className="@max-[30rem]/pr-header:hidden">{armedAutoMergeLabel}</span>
+            </Badge>
           }
-          variant={inlineConfirm.isArmed("revert") ? "destructive" : "default"}
-          disabled={actionPending}
-          {...inlineConfirm.props("revert", () => void perform("revert"))}
-        >
-          <RotateCcwIcon className="size-3.5" />
-          {inlineConfirm.isArmed("revert") ? gt("Confirm revert?") : gt("Revert changes")}
-        </MenuItem>
+          label={gt("{label}: the host will merge this on its own once its requirements are met", {
+            label: armedAutoMergeLabel,
+          })}
+        />
       ) : null}
-      {showsDeleteBranch ? (
-        <MenuItem
-          variant="destructive"
-          disabled={actionPending || !environmentConnected}
-          onClick={() => void confirmDeleteBranch()}
-        >
-          <Trash2Icon className="mt-1 size-3.5 shrink-0 self-start" />
-          <span className="flex min-w-0 flex-col">
-            <span>
-              {pendingAction === "delete-branch" ? gt("Deleting branch...") : gt("Delete branch")}
+      {primaryAction === "resolve" ? (
+        resolveConflicts
+      ) : primaryAction === "ready" ? (
+        <SharedTooltipTrigger
+          render={
+            <span className="inline-flex shrink-0">
+              <Button
+                size="xs"
+                variant="default"
+                disabled={actionPending}
+                onClick={() => void perform("ready")}
+                aria-label={gt("Ready for review")}
+              >
+                <PullRequestGlyph.pullRequest aria-hidden className="size-3.5" />
+                <span className="@max-[30rem]/pr-header:hidden">
+                  <T>Ready for review</T>
+                </span>
+              </Button>
             </span>
-            <span className="truncate text-caption text-muted-foreground">
-              {environmentConnected ? headBranch : gt("Reconnect to delete this branch")}
+          }
+          label={
+            <>
+              <T>Ready for review</T>
+            </>
+          }
+        />
+      ) : primaryAction === "enable-auto-merge" ? (
+        <SharedTooltipTrigger
+          render={
+            <span className="inline-flex shrink-0">
+              <Button
+                size="xs"
+                variant="default"
+                disabled={actionPending}
+                aria-disabled={mergeBlockedReason !== null || undefined}
+                aria-description={mergeBlockedReason ?? undefined}
+                {...(mergeBlockedReason === null
+                  ? inlineConfirm.props(
+                      "enable-auto-merge",
+                      () => void perform("enable-auto-merge", selectedMergeMethod),
+                    )
+                  : {})}
+                aria-label={
+                  pendingAction === "enable-auto-merge"
+                    ? gt("Enabling...")
+                    : inlineConfirm.isArmed("enable-auto-merge")
+                      ? gt("Confirm auto-merge?")
+                      : pendingAutoMergeLabel
+                }
+              >
+                {inlineConfirm.isArmed("enable-auto-merge") ? (
+                  <CheckIcon aria-hidden className="size-3.5" />
+                ) : (
+                  <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+                )}
+                <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
+                  <span className="grid">
+                    <span aria-hidden className="invisible col-start-1 row-start-1">
+                      {pendingAutoMergeLabel}
+                    </span>
+                    <span className="col-start-1 row-start-1">
+                      {pendingAction === "enable-auto-merge"
+                        ? gt("Enabling...")
+                        : inlineConfirm.isArmed("enable-auto-merge")
+                          ? gt("Confirm auto-merge?")
+                          : pendingAutoMergeLabel}
+                    </span>
+                  </span>
+                </AnimatedWidth>
+              </Button>
             </span>
+          }
+          label={
+            mergeBlockedReason ??
+            (pendingAction === "enable-auto-merge"
+              ? gt("Enabling...")
+              : inlineConfirm.isArmed("enable-auto-merge")
+                ? gt("Confirm auto-merge?")
+                : pendingAutoMergeLabel)
+          }
+        />
+      ) : primaryAction === "auto-merge-armed" ? (
+        <SharedTooltipTrigger
+          render={
+            <Badge size="control" variant="info" role="img" aria-label={armedAutoMergeLabel}>
+              <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+              <span className="@max-[30rem]/pr-header:hidden">{armedAutoMergeLabel}</span>
+            </Badge>
+          }
+          label={gt("{label}: the host will merge this on its own once its requirements are met", {
+            label: armedAutoMergeLabel,
+          })}
+        />
+      ) : primaryAction === "merge" ? (
+        <SharedTooltipTrigger
+          render={
+            <span className="inline-flex shrink-0">
+              <Button
+                size="xs"
+                variant="default"
+                disabled={actionPending}
+                aria-disabled={mergeBlockedReason !== null || undefined}
+                aria-description={mergeBlockedReason ?? undefined}
+                {...(mergeBlockedReason === null
+                  ? inlineConfirm.props("merge", () => void perform("merge", selectedMergeMethod))
+                  : {})}
+                aria-label={
+                  pendingAction === "merge"
+                    ? gt("Merging...")
+                    : inlineConfirm.isArmed("merge")
+                      ? gt("Confirm merge?")
+                      : selectedMergeMethodLabel
+                }
+              >
+                {inlineConfirm.isArmed("merge") ? (
+                  <CheckIcon aria-hidden className="size-3.5" />
+                ) : (
+                  <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+                )}
+                <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
+                  <span className="grid">
+                    <span aria-hidden className="invisible col-start-1 row-start-1">
+                      {selectedMergeMethodLabel}
+                    </span>
+                    <span className="col-start-1 row-start-1">
+                      {pendingAction === "merge"
+                        ? gt("Merging...")
+                        : inlineConfirm.isArmed("merge")
+                          ? gt("Confirm merge?")
+                          : selectedMergeMethodLabel}
+                    </span>
+                  </span>
+                </AnimatedWidth>
+              </Button>
+            </span>
+          }
+          label={
+            mergeBlockedReason ??
+            (pendingAction === "merge"
+              ? gt("Merging...")
+              : inlineConfirm.isArmed("merge")
+                ? gt("Confirm merge?")
+                : selectedMergeMethodLabel)
+          }
+        />
+      ) : (primaryAction === "merged" || primaryAction === "closed") &&
+        statePresentation !== null ? (
+        <Badge size="control" variant="outline">
+          <span className={cn("flex items-center gap-1", statePresentation.toneClassName)}>
+            <statePresentation.Icon className="size-3.5" />
+            {statePresentation.label}
           </span>
-        </MenuItem>
+        </Badge>
       ) : null}
     </>
   );
 }
 
-/** Merge methods, host updates and page checkout behind the readiness action. */
-export function PullRequestPrimaryActionMenu({
-  showsMergeMethods,
-  showsMergeNow,
-  showsAutoMerge,
-  autoMergeArmed,
-  allowedMergeMethods,
-  selectedMergeMethod,
-  onSelectMergeMethod,
+export function PullRequestApproveWorkflowsButton({
+  pullRequestKey,
   pendingAction,
   perform,
-  inlineConfirm,
-  can,
-  updateMethods,
-  showCheckout,
-  checkoutMenuItems,
 }: {
-  showsMergeMethods: boolean;
-  showsMergeNow: boolean;
-  showsAutoMerge: boolean;
-  autoMergeArmed: boolean;
-  allowedMergeMethods: ReadonlyArray<PullRequestMergeMethod>;
-  selectedMergeMethod: PullRequestMergeMethod;
-  onSelectMergeMethod: (method: PullRequestMergeMethod) => void;
+  pullRequestKey: string;
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
-  inlineConfirm: ReturnType<typeof useInlineActionConfirm>;
-  can: (action: PullRequestAction) => boolean;
-  updateMethods: ReadonlyArray<PullRequestUpdateMethod>;
-  showCheckout: boolean;
-  checkoutMenuItems: ReactNode;
 }) {
   const gt = useGT();
-  const resolve = useMessages();
+  const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
   return (
-    <>
-      {showsMergeMethods ? (
-        <MenuGroup>
-          <MenuGroupLabel>
-            <T>Merge method</T>
-          </MenuGroupLabel>
-          <MenuRadioGroup
-            value={selectedMergeMethod}
-            onValueChange={(method) => {
-              const selectedMethod = method as PullRequestMergeMethod;
-              onSelectMergeMethod(selectedMethod);
-            }}
+    <SharedTooltipTrigger
+      render={
+        <span className="ml-auto inline-flex shrink-0">
+          <Button
+            size="xs"
+            variant="warning-outline"
+            disabled={actionPending}
+            {...inlineConfirm.props("approve-workflows", () => void perform("approve-workflows"))}
+            aria-label={
+              pendingAction === "approve-workflows"
+                ? gt("Approving...")
+                : inlineConfirm.isArmed("approve-workflows")
+                  ? gt("Confirm approve?")
+                  : gt("Approve workflows to run")
+            }
           >
-            {allowedMergeMethods.map((method) => (
-              <MenuRadioItem key={method} value={method} disabled={actionPending} closeOnClick>
-                <span className="flex min-w-0 items-center gap-2">
-                  <PullRequestGlyph.merged className="size-3.5" />
-                  <span>{resolve(PULL_REQUEST_MERGE_METHOD_LABELS[method])}</span>
-                </span>
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-      ) : null}
-      {showsMergeNow || showsAutoMerge ? (
-        <>
-          {showsMergeMethods ? <MenuSeparator /> : null}
-          {showsMergeNow ? (
-            <MenuItem
-              closeOnClick={inlineConfirm.isArmed("merge")}
-              aria-label={inlineConfirm.isArmed("merge") ? gt("Confirm merge?") : gt("Merge now")}
-              disabled={actionPending}
-              {...inlineConfirm.props("merge", () => void perform("merge", selectedMergeMethod))}
-            >
-              <PullRequestGlyph.merged className="size-3.5" />
-              {inlineConfirm.isArmed("merge") ? gt("Confirm merge?") : gt("Merge now")}
-            </MenuItem>
-          ) : null}
-          {autoMergeArmed && can("disable-auto-merge") ? (
-            <MenuItem disabled={actionPending} onClick={() => void perform("disable-auto-merge")}>
-              <PullRequestGlyph.merged className="size-3.5" />
-              <T>Disable auto-merge</T>
-            </MenuItem>
-          ) : showsAutoMerge ? (
-            <MenuItem
-              closeOnClick={inlineConfirm.isArmed("enable-auto-merge")}
-              aria-label={
-                inlineConfirm.isArmed("enable-auto-merge")
-                  ? gt("Confirm auto-merge?")
-                  : gt("Enable auto-merge")
-              }
-              disabled={actionPending}
-              {...inlineConfirm.props(
-                "enable-auto-merge",
-                () => void perform("enable-auto-merge", selectedMergeMethod),
-              )}
-            >
-              <PullRequestGlyph.merged className="size-3.5" />
-              {inlineConfirm.isArmed("enable-auto-merge")
-                ? gt("Confirm auto-merge?")
-                : gt("Enable auto-merge")}
-            </MenuItem>
-          ) : null}
-        </>
-      ) : null}
-      {updateMethods.length > 0 ? (
-        <>
-          {showsMergeMethods || showsMergeNow || showsAutoMerge ? <MenuSeparator /> : null}
-          {updateMethods.map((method) => (
-            <MenuItem
-              key={method}
-              disabled={actionPending}
-              onClick={() => void perform("update-branch", undefined, method)}
-            >
-              <RefreshIcon size="sm" />
-              {method === "rebase" ? gt("Update with rebase") : gt("Update branch")}
-            </MenuItem>
-          ))}
-        </>
-      ) : null}
-      {showCheckout ? (
-        <>
-          {showsMergeMethods || showsMergeNow || showsAutoMerge || updateMethods.length > 0 ? (
-            <MenuSeparator />
-          ) : null}
-          {checkoutMenuItems}
-        </>
-      ) : null}
-    </>
+            <PlayIcon aria-hidden className="size-3.5" />
+            <span className="inline-grid">
+              <span aria-hidden className="invisible col-start-1 row-start-1">
+                <T>Approve workflows to run</T>
+              </span>
+              <span aria-hidden className="invisible col-start-1 row-start-1">
+                <T>Confirm approve?</T>
+              </span>
+              <span className="col-start-1 row-start-1">
+                {pendingAction === "approve-workflows"
+                  ? gt("Approving...")
+                  : inlineConfirm.isArmed("approve-workflows")
+                    ? gt("Confirm approve?")
+                    : gt("Approve workflows to run")}
+              </span>
+            </span>
+          </Button>
+        </span>
+      }
+      label={
+        pendingAction === "approve-workflows"
+          ? gt("Approving...")
+          : inlineConfirm.isArmed("approve-workflows")
+            ? gt("Confirm approve?")
+            : gt("Approve workflows to run")
+      }
+    />
   );
 }

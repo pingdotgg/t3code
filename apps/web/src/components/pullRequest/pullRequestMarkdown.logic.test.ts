@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { wordsHast } from "~/markdown/wordsHast";
 import {
-  pullRequestAttachments,
   pullRequestCommentPreview,
   pullRequestMarkdownExtensions,
 } from "./pullRequestMarkdown.logic";
@@ -97,40 +96,5 @@ describe("pullRequestCommentPreview", () => {
     ["Approved :thumbsup:", "Approved :thumbsup:", "gitlab"],
   ])("extracts readable text from %s", (body, expected, provider = "github") => {
     expect(pullRequestCommentPreview(body, provider)).toBe(expected);
-  });
-});
-
-describe("pullRequestAttachments", () => {
-  it("collects body media and image references once while leaving code alone", () => {
-    expect(
-      pullRequestAttachments(
-        [
-          "![Before](https://example.com/before.png)",
-          "![Again](https://example.com/before.png)",
-          "![After][result]",
-          "",
-          "[result]: https://example.com/after.png",
-          "",
-          "https://example.com/demo.mp4",
-          "",
-          "```md",
-          "![Code](https://example.com/code.png)",
-          "```",
-          "    ![Indented](https://example.com/indented.png)",
-          "![Unsafe](javascript:alert)",
-          '<img src="https://example.com/screenshot.png" alt="Screenshot" />',
-        ].join("\n"),
-      ),
-    ).toEqual([
-      { url: "https://example.com/before.png", media: "image", caption: "Image 1" },
-      { url: "https://example.com/after.png", media: "image", caption: "Image 2" },
-      { url: "https://example.com/demo.mp4", media: "video", caption: "Video 3" },
-      { url: "https://example.com/screenshot.png", media: "image", caption: "Image 4" },
-    ]);
-    expect(
-      pullRequestAttachments(
-        'Fixes the sync! See [the log](https://example.com/log.png).\n\n<IMG SRC="https://example.com/raw.png">',
-      ),
-    ).toEqual([{ url: "https://example.com/raw.png", media: "image", caption: "Image 1" }]);
   });
 });

@@ -2,7 +2,6 @@ import { msg, T, Var } from "gt-react";
 
 import { m } from "../i18n/messages";
 import { type SlowRpcAckRequest, subscribeSlowRpcAckRequests } from "../rpc/requestLatencyState";
-import { useEnvironments } from "../state/environments";
 import { toastManager } from "./ui/toast";
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
@@ -20,34 +19,21 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
 }
 
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
-  const { environments } = useEnvironments();
-  const environmentLabels = new Map<string, string>(
-    environments.map((environment) => [environment.environmentId, environment.label]),
-  );
-
   return (
-    <ul className="space-y-2.5 text-meta text-muted-foreground">
-      {requests.map((request) => {
-        // Name the environment by its label rather than its id.
-        const environmentLabel = request.environmentId
-          ? environmentLabels.get(request.environmentId)
-          : undefined;
-        const label = environmentLabel ? request.method : request.tag;
-        return (
-          <li
-            className="min-w-0 border-border border-b pb-2 last:border-b-0 last:pb-0"
-            key={request.requestId}
-          >
-            <div className="wrap-break-word text-foreground">{label}</div>
-            {environmentLabel ? <div className="mt-0.5">{environmentLabel}</div> : null}
-            <div className="mt-0.5 text-caption text-dim-foreground">
-              <T>
-                Started <Var>{new Date(request.startedAt).toLocaleTimeString()}</Var>
-              </T>
-            </div>
-          </li>
-        );
-      })}
+    <ul className="space-y-2.5 text-xs text-muted-foreground">
+      {requests.map((request) => (
+        <li
+          className="min-w-0 border-border/50 border-b pb-2 last:border-b-0 last:pb-0"
+          key={request.requestId}
+        >
+          <div className="wrap-break-word font-medium text-foreground">{request.tag}</div>
+          <div className="mt-0.5 text-3xs opacity-75">
+            <T>
+              Started <Var>{new Date(request.startedAt).toLocaleTimeString()}</Var>
+            </T>
+          </div>
+        </li>
+      ))}
     </ul>
   );
 }

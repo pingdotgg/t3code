@@ -130,7 +130,7 @@ function ModelPicker({
           <ComboboxEmpty>
             <T>No transcription model matches.</T>
           </ComboboxEmpty>
-          <ComboboxList className="max-h-64">
+          <ComboboxList scrollAreaClassName="max-h-64">
             {(model: CloudSpeechModel) => (
               <ComboboxItem key={model.id} value={model}>
                 <span className="flex min-w-0 flex-col">
@@ -367,7 +367,7 @@ export function CloudVoiceConfiguration({
                 </T>
               </p>
             ) : AsyncResult.isFailure(presence) && saved === undefined ? (
-              <Button size="sm" variant="secondary" onClick={refresh}>
+              <Button size="sm" variant="outline" onClick={refresh}>
                 <T>Retry loading API key</T>
               </Button>
             ) : routed &&
@@ -405,7 +405,7 @@ export function CloudVoiceConfiguration({
                       current={currentModel}
                     />
                   ) : AsyncResult.isFailure(models) ? (
-                    <Button size="sm" variant="secondary" type="button" onClick={refreshModels}>
+                    <Button size="sm" variant="outline" type="button" onClick={refreshModels}>
                       <T>Retry loading models</T>
                     </Button>
                   ) : (
@@ -474,7 +474,7 @@ export function CloudVoiceConfiguration({
               </Button>
             </div>
           )}
-          <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={close}>
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={close}>
             <T>Cancel</T>
           </Button>
           {connected &&

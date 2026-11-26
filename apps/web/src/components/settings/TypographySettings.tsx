@@ -486,7 +486,7 @@ function FontFamilySettingsRow({
       />
     ) : (
       <Input
-        size="settings"
+        size="sm"
         aria-label={gt("{title} family", { title })}
         aria-invalid={draftPending || undefined}
         autoCapitalize="off"
@@ -519,7 +519,7 @@ function FontFamilySettingsRow({
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === "Enter") flushDraft();
-          if (event.key === "Escape") {
+          if (event.key === "Escape" && draft !== value) {
             // Discard uncommitted typing without closing the settings page,
             // which is what an unhandled Escape does.
             event.preventDefault();
@@ -547,18 +547,13 @@ function FontFamilySettingsRow({
           }
         }}
       >
-        <SelectTrigger
-          variant="well"
-          size="compact"
-          className="w-22 shrink-0"
-          aria-label={size.label}
-        >
+        <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
           <SelectValue>{size.value} px</SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
           {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
             (px) => (
-              <SelectItem key={px} value={String(px)}>
+              <SelectItem hideIndicator key={px} value={String(px)}>
                 {px} px
               </SelectItem>
             ),

@@ -105,18 +105,17 @@ import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ACPRegistryIcon } from "../Icons";
-import { Button, InlineButton } from "../ui/button";
-import { OnboardingAgentRow } from "./OnboardingAgentRow";
+import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { QRCodeSvg } from "../ui/qr-code";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
 import { toastManager } from "../ui/toast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const SCAN_LIMIT_MESSAGE = msg(
@@ -275,15 +274,15 @@ export function WelcomePage({
       role="main"
       className="h-dvh min-h-0 overflow-hidden overscroll-y-none"
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background surface-grain">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         {/* The desktop window only moves where CSS opts in, so keep a titlebar strip. */}
         {isElectron ? <WorkspacePageHeader electron /> : null}
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-gutter-both">
           <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pt-12 pb-8 sm:pt-20">
-            <h1 className="text-title [--type-title:1.5rem] text-foreground">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               <T>Welcome to T3 Code</T>
             </h1>
-            <p className="mt-1.5 text-body text-muted-foreground">
+            <p className="mt-1.5 text-sm text-muted-foreground">
               <T>
                 Setting up{" "}
                 <span className="text-foreground">
@@ -292,7 +291,7 @@ export function WelcomePage({
                 .
               </T>
             </p>
-            <div className="mt-8 space-y-4">
+            <div className="mt-10 border-t border-border/60">
               <AgentsSection
                 environmentId={environmentId}
                 label={label}
@@ -316,7 +315,7 @@ export function WelcomePage({
               )}
               <div className="flex items-center gap-3">
                 {agentReady ? null : (
-                  <span className="text-meta text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     <T>Set up one agent to start.</T>
                   </span>
                 )}
@@ -348,16 +347,18 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
   const messages = useMessages();
   const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId), messages);
   return (
-    <p className="mt-auto pt-12 text-caption leading-relaxed text-muted-foreground">
+    <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
       {telemetryOff === undefined ? (
         <T>
           T3 Code collects anonymous usage data to improve the app. To opt out, see the{" "}
-          <InlineButton
-            tone="muted"
-            render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
+          <a
+            className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
+            href={PRIVACY_POLICY_URL}
+            target="_blank"
+            rel="noreferrer noopener"
           >
             privacy policy
-          </InlineButton>
+          </a>
           .
         </T>
       ) : (
@@ -365,12 +366,14 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
           {telemetryOff}{" "}
           <T>
             See the{" "}
-            <InlineButton
-              tone="muted"
-              render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
+            <a
+              className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
+              href={PRIVACY_POLICY_URL}
+              target="_blank"
+              rel="noreferrer noopener"
             >
               privacy policy
-            </InlineButton>
+            </a>
             .
           </T>
         </>
@@ -388,8 +391,8 @@ function WelcomeSection({
   readonly children: ReactNode;
 }) {
   return (
-    <section className="grid gap-x-6 gap-y-2 rounded-card surface-card p-4 sm:grid-cols-[6rem_minmax(0,1fr)]">
-      <h2 className="text-body leading-10 text-muted-foreground">{title}</h2>
+    <section className="grid gap-x-10 border-b border-border/60 py-4 sm:grid-cols-[6rem_minmax(0,1fr)]">
+      <h2 className="text-sm leading-10 text-muted-foreground">{title}</h2>
       <div className="min-w-0">{children}</div>
     </section>
   );
@@ -572,7 +575,7 @@ function AgentsSection({
     const settingsAction = (actionLabel: string) => (
       <Button
         size="xs"
-        variant="secondary"
+        variant="outline"
         aria-label={gt("{action}: {agent}", { action: actionLabel, agent: name })}
         render={
           <Link
@@ -588,7 +591,7 @@ function AgentsSection({
       return (
         <Button
           size="xs"
-          variant="secondary"
+          variant="outline"
           aria-label={gt("Turn on: {agent}", { agent: name })}
           disabled={!canManageProviders || serverConfig === null}
           onClick={() => void turnOn(provider)}
@@ -605,7 +608,7 @@ function AgentsSection({
       return (
         <Button
           size="xs"
-          variant="secondary"
+          variant="outline"
           aria-label={gt("Set up: {agent}", { agent: name })}
           aria-expanded={open}
           onClick={() => setCodexSetupId(open ? null : provider.instanceId)}
@@ -662,14 +665,14 @@ function AgentsSection({
         />
       ))}
       {checking && found.length === 0 ? (
-        <p className="text-body leading-10 text-muted-foreground">
+        <p className="text-sm leading-10 text-muted-foreground">
           <T>
             Checking <Var>{label}</Var>…
           </T>
         </p>
       ) : null}
       {notes.map((note) => (
-        <p key={note} className="pl-8 text-meta text-muted-foreground">
+        <p key={note} className="pl-8 text-xs text-muted-foreground">
           {note}
         </p>
       ))}
@@ -680,7 +683,7 @@ function AgentsSection({
           </RowIcon>
           <span
             className={cn(
-              "text-body group-hover:text-foreground",
+              "text-sm group-hover:text-foreground",
               found.length > 0 ? "text-muted-foreground" : "text-foreground",
             )}
           >
@@ -690,7 +693,7 @@ function AgentsSection({
           <ChevronDownIcon className="ml-auto size-4 text-muted-foreground group-data-panel-open:rotate-180" />
         </CollapsibleTrigger>
         <CollapsiblePanel>
-          <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
             {available.map((provider) => (
               <AgentRow
                 key={provider.instanceId}
@@ -706,12 +709,12 @@ function AgentsSection({
               <RowIcon>
                 <ACPRegistryIcon className="size-4" />
               </RowIcon>
-              <span className="min-w-0 flex-1 text-body text-muted-foreground">
+              <span className="min-w-0 flex-1 text-sm text-muted-foreground">
                 <T>More agents in the ACP Registry</T>
               </span>
               <Button
                 size="xs"
-                variant="secondary"
+                variant="outline"
                 disabled={!canManageProviders}
                 onClick={() => setAddingProvider(true)}
               >
@@ -819,7 +822,7 @@ function ProjectsSection({
   if (scan.isPending && candidates.length === 0) {
     return (
       <WelcomeSection title={gt("Projects")}>
-        <p className="text-body leading-10 text-muted-foreground">
+        <p className="text-sm leading-10 text-muted-foreground">
           <T>
             Looking for projects in your <Var>{importSourcesLabel}</Var> history…
           </T>
@@ -837,7 +840,7 @@ function ProjectsSection({
       <WelcomeSection title={gt("Projects")}>
         <div
           role="alert"
-          className="flex min-h-10 items-center justify-between gap-3 text-body text-muted-foreground"
+          className="flex min-h-10 items-center justify-between gap-3 text-sm text-muted-foreground"
         >
           <span>{gt("Could not check projects. {error}", { error: scan.error })}</span>
           {retry}
@@ -848,7 +851,7 @@ function ProjectsSection({
   if (candidates.length === 0) {
     return scan.data?.truncated ? (
       <WelcomeSection title={gt("Projects")}>
-        <p className="text-meta leading-10 text-muted-foreground" role="status">
+        <p className="text-xs leading-10 text-muted-foreground" role="status">
           {m(SCAN_LIMIT_MESSAGE)}
         </p>
       </WelcomeSection>
@@ -880,7 +883,7 @@ function ProjectsSection({
             />
           </RowIcon>
           <span className="min-w-0 flex-1">
-            <span className="block text-label text-foreground">
+            <span className="block text-sm font-medium text-foreground">
               {canWrite && selected.length > 0
                 ? gt(
                     "{count, plural, one {Import {count} project and their threads} other {Import {count} projects and their threads}}",
@@ -888,7 +891,7 @@ function ProjectsSection({
                   )
                 : gt("Import projects and their threads")}
             </span>
-            <span className="block text-meta text-muted-foreground">
+            <span className="block text-xs text-muted-foreground">
               <T>
                 From your <Var>{importSourcesLabel}</Var> history
               </T>
@@ -914,7 +917,7 @@ function ProjectsSection({
       {reviewing && canWrite ? (
         // The negative margin lines the list's checkboxes up with the one above it.
         <fieldset className="-mx-1.5 mt-1 min-w-0" disabled={isImporting}>
-          <div className="flex items-center justify-between gap-3 px-2 text-meta text-muted-foreground">
+          <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
             <span role="status">
               {gt(
                 "{selected, plural, one {{selected} of {total} selected} other {{selected} of {total} selected}}",
@@ -955,21 +958,21 @@ function ProjectsSection({
         </fieldset>
       ) : null}
       {scan.data?.truncated ? (
-        <p className="pl-8 text-meta text-muted-foreground" role="status">
+        <p className="pl-8 text-xs text-muted-foreground" role="status">
           {m(SCAN_LIMIT_MESSAGE)}
         </p>
       ) : null}
       {scan.error !== null ? (
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 pl-8 text-body text-muted-foreground"
+          className="flex items-center justify-between gap-3 pl-8 text-sm text-muted-foreground"
         >
           <span>{gt("Could not check projects again. {error}", { error: scan.error })}</span>
           {retry}
         </div>
       ) : null}
       {visibleImportError ? (
-        <p className="pt-1 pl-8 text-body text-destructive">{m(visibleImportError)}</p>
+        <p className="pt-1 pl-8 text-sm text-destructive">{m(visibleImportError)}</p>
       ) : null}
     </WelcomeSection>
   );
@@ -985,7 +988,7 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
           <RowIcon>
             <SmartphoneIcon className="size-4" />
           </RowIcon>
-          <span className="min-w-0 flex-1 text-label text-foreground">
+          <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
             <T>Use T3 Code on your phone</T>
           </span>
           <CollapsibleTrigger render={<Button variant="ghost-muted" size="xs" />}>
@@ -997,7 +1000,7 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
           <div className="flex items-center gap-8 pt-2 pb-3 pl-8">
             <ol className="min-w-0 flex-1 space-y-5">
               <PhoneStep step={1}>
-                <p className="text-body text-foreground">
+                <p className="text-sm text-foreground">
                   <T>Scan with your phone to get the app.</T>
                 </p>
               </PhoneStep>
@@ -1025,7 +1028,7 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
 function PhoneStep({ step, children }: { readonly step: number; readonly children: ReactNode }) {
   return (
     <li className="flex gap-3">
-      <span className="w-3 shrink-0 text-body text-muted-foreground tabular-nums">{step}</span>
+      <span className="w-3 shrink-0 text-sm text-muted-foreground tabular-nums">{step}</span>
       <div className="flex min-w-0 flex-col items-start gap-2">{children}</div>
     </li>
   );
@@ -1055,13 +1058,13 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   // The server checks the tunnel on its own; until it has, the result is unknown.
   const reachability = shared ? link.reachability?.status : undefined;
   const settingsLink = (label: string) => (
-    <Button variant="secondary" size="xs" render={<Link to="/settings/access" />}>
+    <Button variant="outline" size="xs" render={<Link to="/settings/access" />}>
       {label}
     </Button>
   );
   if (isSignedIn && link === null && linkState.isPending) {
     return (
-      <p className="text-body text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         <T>Checking T3 Connect…</T>
       </p>
     );
@@ -1069,7 +1072,7 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   if (isSignedIn && linkState.error !== null) {
     return (
       <>
-        <p className="text-body text-foreground">
+        <p className="text-sm text-foreground">
           <T>Could not check T3 Connect.</T>
         </p>
         {settingsLink(gt("Check T3 Connect"))}
@@ -1078,7 +1081,7 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   }
   if (isSignedIn && reachability === "reachable") {
     return (
-      <p className="flex gap-1.5 text-body text-foreground">
+      <p className="flex gap-1.5 text-sm text-foreground">
         <CheckIcon className="mt-0.5 size-4 shrink-0 text-success-foreground" />
         <T>Your phone can reach this computer. Sign in to the app with the same account.</T>
       </p>
@@ -1086,7 +1089,7 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   }
   if (isSignedIn && shared && reachability === undefined) {
     return (
-      <p className="text-body text-foreground">
+      <p className="text-sm text-foreground">
         <T>T3 Connect is on for this computer. Sign in to the app with the same account.</T>
       </p>
     );
@@ -1095,7 +1098,7 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
     // Signing in alone does not share this computer, for example after "Not now".
     return (
       <>
-        <p className="text-body text-foreground">
+        <p className="text-sm text-foreground">
           {shared
             ? gt("T3 Connect is on, but the app cannot reach this computer.")
             : gt("Signed in. Share this computer so the app can reach it.")}
@@ -1106,15 +1109,15 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   }
   return (
     <>
-      <p className="text-body text-foreground">
+      <p className="text-sm text-foreground">
         <T>Sign in to T3 Connect here, then in the app with the same account.</T>
       </p>
       {loadFailed ? (
-        <Button variant="secondary" size="xs" onClick={retryClerkLoad}>
+        <Button variant="outline" size="xs" onClick={retryClerkLoad}>
           <T>Retry sign-in</T>
         </Button>
       ) : (
-        <Button variant="secondary" size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
+        <Button variant="outline" size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
           <T>Sign in to T3 Connect</T>
         </Button>
       )}
@@ -1203,7 +1206,7 @@ function TerminalAction({
   return (
     <Button
       size="xs"
-      variant="secondary"
+      variant="outline"
       aria-label={gt("{action}: {agent}", { action: label, agent: name })}
       disabled={disabled}
       onClick={onClick}
@@ -1246,28 +1249,6 @@ function AgentRow({
             provider.message ??
             getProviderSummary(provider, messages).headline)
           : (brokenMessage ?? getProviderSummary(provider, messages).headline);
-  if (!compact)
-    return (
-      <OnboardingAgentRow
-        driver={provider.driver}
-        title={name}
-        description={detail}
-        control={
-          state === "ready" ? (
-            <span className="inline-flex items-center gap-1.5 text-meta text-success-foreground">
-              <CheckIcon className="size-3.5" />
-              <T context="agent status">Ready</T>
-            </span>
-          ) : state === "checking" ? (
-            <span className="text-meta text-muted-foreground">
-              <T>Checking…</T>
-            </span>
-          ) : (
-            action
-          )
-        }
-      />
-    );
   return (
     <div className={cn("flex items-center gap-3", compact ? "min-h-9" : "min-h-10 py-1")}>
       <RowIcon>
@@ -1278,23 +1259,23 @@ function AgentRow({
         />
       </RowIcon>
       <div className="min-w-0 flex-1">
-        <span className={cn("block truncate text-body text-foreground", !compact && "text-label")}>
+        <span className={cn("block truncate text-sm text-foreground", !compact && "font-medium")}>
           {name}
         </span>
         {detail ? (
-          <p className="line-clamp-2 text-meta leading-relaxed break-words text-muted-foreground">
+          <p className="line-clamp-2 text-xs leading-relaxed break-words text-muted-foreground">
             {detail}
           </p>
         ) : null}
       </div>
       <div className="shrink-0">
         {state === "ready" ? (
-          <span className="inline-flex items-center gap-1.5 text-meta text-success-foreground">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
             <CheckIcon className="size-3.5" />
             <T context="agent status">Ready</T>
           </span>
         ) : state === "checking" ? (
-          <span className="text-meta text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             <T>Checking…</T>
           </span>
         ) : (
@@ -1425,10 +1406,10 @@ function AgentInstallTerminal({
   return (
     <div
       data-thread-terminal-drawer
-      className="mt-4 overflow-hidden rounded-card surface-panel text-foreground"
+      className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
     >
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
-        <span className="text-caption text-muted-foreground">
+        <span className="text-2xs font-medium text-muted-foreground">
           {!canOperateTerminal ? (
             gt("This connection cannot control terminals.")
           ) : setupState === "writeFailed" ? (
@@ -1816,10 +1797,10 @@ function ImportCandidateList({
             />
             <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
               <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
-              <span className="truncate text-body text-muted-foreground">
+              <span className="truncate text-sm text-muted-foreground">
                 <T>Other folders</T>
               </span>
-              <span className="ml-auto shrink-0 text-meta text-muted-foreground tabular-nums">
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
                 {gt("{count, plural, one {{count} folder} other {{count} folders}}", {
                   count: other.length,
                 })}
@@ -1878,7 +1859,7 @@ function ImportRepositoryGroup({
         />
         <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
-          <span className="truncate text-label">{group.label}</span>
+          <span className="truncate text-sm font-medium">{group.label}</span>
           <ImportRowMeta
             sources={[...new Set(group.candidates.flatMap((c) => c.sources))]}
             threadCount={group.threadCount}
@@ -1936,20 +1917,24 @@ function ImportCandidateRow({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-center gap-3 rounded-control border border-border surface-card px-3 py-2.5 has-disabled:cursor-default",
+        "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40 has-disabled:cursor-default",
         nested && "pl-8",
       )}
     >
       <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
-      <Tooltip>
-        <TooltipTrigger render={<span className="flex min-w-0 flex-1 flex-col gap-0.5" />}>
-          {label !== undefined ? <span className="truncate text-label">{label}</span> : null}
-          {path !== undefined ? (
-            <ProjectPathText path={path} className="w-full text-meta text-muted-foreground" />
-          ) : null}
-        </TooltipTrigger>
-        <TooltipPopup variant="code">{candidate.path}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
+        label={candidate.path}
+        variant="code"
+      >
+        {label !== undefined ? <span className="truncate text-sm font-medium">{label}</span> : null}
+        {path !== undefined ? (
+          <ProjectPathText
+            path={path}
+            className={label === undefined ? "text-xs" : "text-2xs text-muted-foreground"}
+          />
+        ) : null}
+      </SharedTooltipTrigger>
       <ImportRowMeta
         sources={nested ? null : candidate.sources}
         threadCount={candidate.threadCount}
@@ -1990,22 +1975,22 @@ function ImportRowMeta({
         ? gt("now", { $context: "relative time" })
         : relative.value;
   return (
-    <span className="ml-auto flex shrink-0 flex-col items-end gap-0.5 text-meta text-muted-foreground tabular-nums">
-      <span className="flex items-center gap-1">
-        {sources?.map((source) => (
-          <span key={source} role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
-            <ProviderInstanceIcon
-              driverKind={ProviderDriverKind.make(source)}
-              displayName={IMPORT_SOURCE_NAMES[source]}
-              iconClassName="size-3"
-            />
-          </span>
-        ))}
-        <span>
-          {threadCount} {threadCount === 1 ? "conversation" : "conversations"}
+    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
+      {AgentSessionSource.literals.map((source) => (
+        <span key={source} className="flex size-4 items-center justify-center">
+          {sources?.includes(source) ? (
+            <span role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
+              <ProviderInstanceIcon
+                driverKind={ProviderDriverKind.make(source)}
+                displayName={IMPORT_SOURCE_NAMES[source]}
+                iconClassName="size-3"
+              />
+            </span>
+          ) : null}
         </span>
-      </span>
-      <span className="text-meta text-muted-foreground">{age}</span>
+      ))}
+      <span className="text-right">{threadCount}</span>
+      <span className="text-right whitespace-nowrap">{age}</span>
     </span>
   );
 }
@@ -2020,7 +2005,7 @@ function CliPathSetup() {
       <RowIcon>
         <TerminalIcon className="size-4" />
       </RowIcon>
-      <p className="min-w-0 flex-1 text-body text-muted-foreground">
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
         {setup.added ? (
           <T>
             Added to <Var>{setup.file}</Var>. Open a new terminal to use{" "}
@@ -2034,7 +2019,7 @@ function CliPathSetup() {
         )}
       </p>
       {setup.added ? null : (
-        <Button size="xs" variant="secondary" disabled={busy} onClick={() => run("addToPath")}>
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
           <T>Add to PATH</T>
         </Button>
       )}

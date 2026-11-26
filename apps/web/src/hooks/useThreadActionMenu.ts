@@ -11,7 +11,6 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
-  type ContextMenuItem,
   type ScopedThreadRef,
   type ThreadId,
   type ContextMenuSource,
@@ -22,6 +21,7 @@ import { msg } from "gt-react";
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  isThreadTriageAction,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
@@ -31,7 +31,7 @@ import { copyThreadReference } from "../lib/copyThreadReference";
 import { m } from "../i18n/messages";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { threadEnvironment } from "../state/threads";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { threadTriagePermitted, useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentServerConfigLoaded,
@@ -53,7 +53,6 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
-import { deleteConfirm } from "../confirmDialog";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -65,29 +64,15 @@ function failureToast(title: string, error: unknown) {
   );
 }
 
-const NEW_SIDE_CHAT_MENU_ID = "thread:new-side-chat";
-
 export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
-  readonly onStartRename: () => void;
+  /** Omitted where no inline title editor is rendered; the rename item is then disabled. */
+  readonly onStartRename?: (() => void) | undefined;
   readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
-  /** Tab actions prepended to the thread menu, read when it opens. */
-  readonly leadingItems?: () => readonly ContextMenuItem<string>[];
-  readonly onLeadingAction?: (id: string) => void;
-  readonly onNewSideChat?: (() => void) | undefined;
 }) {
-  const {
-    threadRef,
-    projectCwd,
-    onStartRename,
-    onFind,
-    canShareWithGuest,
-    leadingItems,
-    onLeadingAction,
-    onNewSideChat,
-  } = input;
+  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -132,78 +117,50 @@ export function useThreadActionMenu(input: {
     onError: (error) => failureToast(m(msg("Failed to copy thread ID")), error),
   });
 
-  const openMenu = (position: { x: number; y: number }, source?: ContextMenuSource) => {
-    if (threadRef === null) return;
-    void (async () => {
+  /** The thread's menu as of now, and a runner for its actions. Null until the thread loads. */
+  const readMenu = () => {
+    if (threadRef === null) return null;
+    const thread = readThreadShell(threadRef);
+    if (!thread) return null;
+    const now = new Date();
+    const configLoaded = readEnvironmentServerConfigLoaded(threadRef.environmentId);
+    const supports = {
+      settlement: configLoaded,
+      autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
+      snooze: configLoaded,
+      pinning: configLoaded,
+      titleRegeneration: configLoaded,
+    };
+    const isRegeneratingTitle = thread.titleRegeneration != null;
+    const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
+    const items = buildThreadActionMenuItems({
+      canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+      canTriage: threadTriagePermitted(threadRef.environmentId),
+      canFind: onFind !== undefined,
+      canRename: onStartRename !== undefined,
+      branch: thread.branch ?? null,
+      projectFilter: null,
+      isPinned: thread.pinnedAt != null,
+      isSettled: supports.settlement && thread.settledOverride === "settled",
+      autoSettleEnabled: thread.autoSettleDisabledAt == null,
+      isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
+      canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
+      isRegeneratingTitle,
+      isRunning: !threadRuntimeCanArchive(thread.runtime),
+      hasCompletedRun: thread.latestRun?.completedAt != null,
+      supports,
+      snoozePresets,
+      canShareWithGuest,
+      canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+    });
+    const run = async (action: ThreadActionMenuId) => {
       const api = readLocalApi();
       if (!api) return;
-      const thread = readThreadShell(threadRef);
-      if (!thread) {
-        failureToast(
-          m(msg("Thread actions unavailable")),
-          new Error(m(msg("This thread has not loaded yet."))),
-        );
-        return;
-      }
-      const now = new Date();
-      const configLoaded = readEnvironmentServerConfigLoaded(threadRef.environmentId);
-      const supports = {
-        settlement: configLoaded,
-        autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
-        snooze: configLoaded,
-        pinning: configLoaded,
-        titleRegeneration: configLoaded,
-      };
-      const isRegeneratingTitle = thread.titleRegeneration != null;
-      const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
-      const items = buildThreadActionMenuItems({
-        canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
-        canFind: onFind !== undefined,
-        branch: thread.branch ?? null,
-        projectFilter: null,
-        isPinned: thread.pinnedAt != null,
-        isSettled: supports.settlement && thread.settledOverride === "settled",
-        autoSettleEnabled: thread.autoSettleDisabledAt == null,
-        isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
-        canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
-        isRegeneratingTitle,
-        isRunning: !threadRuntimeCanArchive(thread.runtime),
-        hasCompletedRun: thread.latestRun?.completedAt != null,
-        supports,
-        snoozePresets,
-        canShareWithGuest,
-        canTurnIntoProject: canTurnThreadIntoProject(threadRef),
-      });
-      const leading = leadingItems?.() ?? [];
-      const leadingIds = new Set(leading.map((item) => item.id));
-      const sideChatItems: ContextMenuItem<string>[] = onNewSideChat
-        ? [{ id: NEW_SIDE_CHAT_MENU_ID, label: m(msg("New side chat")), icon: "messages-square" }]
-        : [];
-      const menuItems: ContextMenuItem<string>[] = [
-        ...sideChatItems,
-        ...leading.map((item, index) =>
-          index === 0 && sideChatItems.length > 0 ? { ...item, separatorBefore: true } : item,
-        ),
-        ...items.map((item, index) =>
-          index === 0 && (leading.length > 0 || sideChatItems.length > 0)
-            ? { ...item, separatorBefore: true }
-            : item,
-        ),
-      ];
-      const clicked = await settlePromise(() => api.contextMenu.show(menuItems, position, source));
-      if (clicked._tag === "Failure" || clicked.value === null) return;
-      if (clicked.value === NEW_SIDE_CHAT_MENU_ID) {
-        onNewSideChat?.();
-        return;
-      }
-      if (leadingIds.has(clicked.value)) {
-        onLeadingAction?.(clicked.value);
-        return;
-      }
-      const action = clicked.value as ThreadActionMenuId;
       if (
         threadActionRequiresOperate(action) &&
-        !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
+        !(isThreadTriageAction(action)
+          ? threadTriagePermitted(threadRef.environmentId)
+          : readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope))
       ) {
         failureToast(
           m(msg("Thread action unavailable")),
@@ -297,7 +254,7 @@ export function useThreadActionMenu(input: {
           );
           return;
         case "rename":
-          onStartRename();
+          onStartRename?.();
           return;
         case "regenerate-title": {
           if (isRegeneratingTitle) return;
@@ -387,16 +344,11 @@ export function useThreadActionMenu(input: {
           if (confirmThreadDelete) {
             const confirmed = await settlePromise(() =>
               api.dialogs.confirm(
-                m(
-                  msg('This deletes "{title}" and its chat history. You can\'t undo this.', {
-                    title: thread.title,
-                  }),
-                ),
-                deleteConfirm({
-                  variant: "destructive",
-                  title: m(msg("Delete thread?")),
-                  confirmLabel: m(msg("Delete thread")),
-                }),
+                [
+                  m(msg('Delete thread "{title}"?', { title: thread.title })),
+                  m(msg("This permanently clears conversation history for this thread.")),
+                ].join("\n"),
+                { variant: "destructive" },
               ),
             );
             if (confirmed._tag === "Failure" || !confirmed.value) return;
@@ -415,6 +367,25 @@ export function useThreadActionMenu(input: {
         default:
           return;
       }
+    };
+    return { items, run };
+  };
+
+  const openMenu = (position: { x: number; y: number }, source?: ContextMenuSource) => {
+    void (async () => {
+      const api = readLocalApi();
+      if (!api || threadRef === null) return;
+      const menu = readMenu();
+      if (!menu) {
+        failureToast(
+          m(msg("Thread actions unavailable")),
+          new Error(m(msg("This thread has not loaded yet."))),
+        );
+        return;
+      }
+      const clicked = await settlePromise(() => api.contextMenu.show(menu.items, position, source));
+      if (clicked._tag === "Failure" || clicked.value === null) return;
+      await menu.run(clicked.value);
     })();
   };
 
@@ -422,5 +393,5 @@ export function useThreadActionMenu(input: {
     void readLocalApi()?.contextMenu.close();
   };
 
-  return { openMenu, closeMenu };
+  return { openMenu, closeMenu, readMenu };
 }

@@ -37,7 +37,7 @@ import type { EnvironmentPresentation } from "~/state/environments";
 import { usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function EnvironmentRoutesList({
   environment,
@@ -179,67 +179,60 @@ function SortableRouteRow({
       )}
     >
       <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-1.5 text-meta text-foreground">
+        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
           {label}
           {inUse ? (
-            <span className="rounded-sm bg-success/12 px-1 text-caption text-success-foreground">
+            <span className="rounded-sm bg-success/12 px-1 text-2xs font-normal text-success-foreground">
               <T>In use</T>
             </span>
           ) : null}
           {refused ? (
-            <span className="rounded-sm bg-destructive/8 px-1 text-caption text-destructive-foreground">
+            <span className="rounded-sm bg-destructive/8 px-1 text-2xs font-normal text-destructive-foreground">
               <T>Sign-in refused</T>
             </span>
           ) : null}
         </p>
         {address !== null ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={<p tabIndex={0} className="truncate text-meta text-muted-foreground" />}
-            >
-              {address}
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {isLearned(route) ? gt("Found automatically") : address}
-            </TooltipPopup>
-          </Tooltip>
+          <p className="truncate text-2xs text-muted-foreground">
+            {address}
+            {isLearned(route) ? ` · ${gt("found automatically")}` : ""}
+          </p>
         ) : null}
         {refused && address !== null ? (
-          <p className="text-meta text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             <T>The host refused this device's sign-in. Pair this address again with Add route.</T>
           </p>
         ) : null}
       </div>
-      <Button
-        size="icon-xs"
-        variant="ghost-muted"
+      <button
+        type="button"
         ref={setActivatorNodeRef}
         {...attributes}
         {...listeners}
         aria-label={gt("Reorder {route}, position {position}", { route: label, position })}
-        className="cursor-grab touch-none active:cursor-grabbing"
+        className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
       >
         <GripVerticalIcon className="size-3.5" />
-      </Button>
+      </button>
       {removable ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost-muted"
-                size="icon-xs"
-                aria-label={gt("Remove {route} route", { route: label })}
-                onClick={onRemove}
-              />
-            }
-          >
-            <XIcon className="size-3" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            <T>Remove route</T>
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label={gt("Remove {route} route", { route: label })}
+              onClick={onRemove}
+            />
+          }
+          label={
+            <>
+              <T>Remove route</T>
+            </>
+          }
+        >
+          <XIcon className="size-3" />
+        </SharedTooltipTrigger>
       ) : null}
     </li>
   );

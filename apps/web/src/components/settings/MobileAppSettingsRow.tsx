@@ -34,14 +34,14 @@ export function MobileAppSettingsRow() {
         <div className="flex items-center gap-2">
           {stores.map(({ label, store, url, Icon }) => (
             <Popover key={store}>
-              <PopoverTrigger render={<Button size="sm" variant="secondary" />}>
+              <PopoverTrigger render={<Button size="sm" variant="outline" />}>
                 <Icon />
                 {m(label)}
               </PopoverTrigger>
               <PopoverPopup align="end">
                 <div className="flex flex-col items-center gap-3">
                   <PopoverTitle>{store}</PopoverTitle>
-                  <p className="text-caption text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     <T>Scan with your phone camera.</T>
                   </p>
                   <div className="rounded-lg bg-white p-1.5">
@@ -55,7 +55,7 @@ export function MobileAppSettingsRow() {
                   </div>
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     render={<a href={url} target="_blank" rel="noreferrer noopener" />}
                   >
                     <T>

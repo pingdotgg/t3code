@@ -16,7 +16,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { toastManager } from "../ui/toast";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
-import { SettingsNote } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 
 const options: ReadonlyArray<{ value: PullRequestRoutingPermission; label: string }> = [
@@ -36,7 +35,7 @@ function summarizePullRequestRouting(
     readonly permission: PullRequestRoutingPermission;
   }>,
   resolve: MessageResolver,
-) {
+): string | null {
   const groups = (["read-write", "read"] as const).flatMap((permission) => {
     const labels = entries.filter((entry) => entry.permission === permission);
     return labels.length === 0
@@ -47,13 +46,7 @@ function summarizePullRequestRouting(
           }),
         ];
   });
-  return groups.length === 0 ? null : (
-    <span className="grid gap-1">
-      {groups.map((group) => (
-        <span key={group}>{group}</span>
-      ))}
-    </span>
-  );
+  return groups.length === 0 ? null : groups.join(" · ");
 }
 
 export function PullRequestRoutingSettings({
@@ -87,13 +80,13 @@ export function PullRequestRoutingSettings({
         ) ?? gt("Off", { $context: "pull request routing permission" })
       }
     >
-      <SettingsNote>
+      <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
         <T>
           Machines you trust here can read PR data through each other's source control access.
           Enable both machines. Read and act may use broader permissions than the machine that owns
           them. This applies only to this device.
         </T>
-      </SettingsNote>
+      </p>
       {environments.map((environment) => (
         <EnvironmentRow
           key={environment.environmentId}
@@ -125,8 +118,7 @@ export function PullRequestRoutingSettings({
             }}
           >
             <SelectTrigger
-              variant="well"
-              size="compact"
+              size="xs"
               className="w-32"
               aria-label={gt("{environment} pull request routing", {
                 environment: environment.label,

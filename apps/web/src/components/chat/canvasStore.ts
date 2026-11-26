@@ -27,8 +27,17 @@ export interface ChatCanvasMeasurements {
 
 interface ChatCanvasStoreState {
   readonly measurements: ChatCanvasMeasurements;
+  /**
+   * The last measurement taken with the right panel open and with it closed. A thread switch can
+   * open or close the panel, and laying out with the other state's width costs a second layout
+   * pass before the first paint.
+   */
+  readonly measurementsByRightPanel: {
+    readonly open?: ChatCanvasMeasurements;
+    readonly closed?: ChatCanvasMeasurements;
+  };
   readonly detailsCardMeasurement: DetailsCardMeasurement | null;
-  readonly setMeasurements: (next: ChatCanvasMeasurements) => void;
+  readonly setMeasurements: (next: ChatCanvasMeasurements, rightPanelOpen: boolean) => void;
   readonly measureDetailsCard: (next: DetailsCardMeasurement) => void;
 }
 
@@ -67,9 +76,19 @@ const sameMeasurements = (a: ChatCanvasMeasurements, b: ChatCanvasMeasurements) 
 export const createChatCanvasStore = () =>
   createStore<ChatCanvasStoreState>()((set) => ({
     measurements: INITIAL_MEASUREMENTS,
+    measurementsByRightPanel: {},
     detailsCardMeasurement: null,
-    setMeasurements: (next) =>
-      set((state) => (sameMeasurements(state.measurements, next) ? state : { measurements: next })),
+    setMeasurements: (next, rightPanelOpen) =>
+      set((state) => {
+        const key = rightPanelOpen ? "open" : "closed";
+        const known = state.measurementsByRightPanel[key];
+        const measurements = known && sameMeasurements(known, next) ? known : next;
+        if (measurements === known && measurements === state.measurements) return state;
+        return {
+          measurements,
+          measurementsByRightPanel: { ...state.measurementsByRightPanel, [key]: measurements },
+        };
+      }),
     measureDetailsCard: (next) =>
       set((state) => {
         const current = state.detailsCardMeasurement;
@@ -83,6 +102,9 @@ export const createChatCanvasStore = () =>
   }));
 
 export type ChatCanvasStore = ReturnType<typeof createChatCanvasStore>;
+
+export const selectCanvasMeasurements = (state: ChatCanvasStoreState, rightPanelOpen: boolean) =>
+  state.measurementsByRightPanel[rightPanelOpen ? "open" : "closed"] ?? state.measurements;
 
 export function resolveChatCanvasModel({
   measurements,
@@ -154,7 +176,6 @@ export function resolveChatCanvasModel({
   });
   const detailsCardMode: ThreadPanelPresentation = detailsCardPlacement ? "inline" : "popover";
   return {
-    measurements,
     container,
     lane,
     layout,
@@ -163,42 +184,4 @@ export function resolveChatCanvasModel({
     detailsCardPlacement,
     detailsCardMode,
   };
-}
-
-type ChatCanvasModel = ReturnType<typeof resolveChatCanvasModel>;
-type DetailsCardBox = ChatCanvasModel["detailsCardPlacement"];
-
-const cardKey = (card: DetailsCardBox) =>
-  card ? `${card.right},${card.y},${card.width},${card.height}` : "-";
-
-/**
- * Everything the canvas and its consumers draw from a model. The card is placed from the
- * right and the player only reads the width with it, so most resizes change none of it.
- */
-export function chatCanvasDrawnKey({
-  measurements,
-  container,
-  lane,
-  layout,
-  detailsCardTopInset,
-  preferredDetailsCard,
-  detailsCardPlacement,
-}: ChatCanvasModel): string {
-  const { frame, chat, htmlPreview } = layout;
-  return [
-    measurements.timelineGutter,
-    chat.insetStart,
-    chat.insetEnd,
-    // ChatCanvas widens the HTML preview lane past the chat from these.
-    htmlPreview.width > chat.width ? `${htmlPreview.left - chat.left},${htmlPreview.width}` : "-",
-    layout.overlapsChat,
-    layout.overlapsDetailsCard,
-    frame ? `${frame.x},${frame.y},${frame.width},${frame.height},${container.width}` : "-",
-    container.height,
-    lane.padding,
-    lane.minChatWidth,
-    detailsCardTopInset,
-    cardKey(preferredDetailsCard),
-    cardKey(detailsCardPlacement),
-  ].join("|");
 }

@@ -1,7 +1,5 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  ForwardCompatibleOptional,
-  LayoutSettings,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -69,7 +67,7 @@ import {
   mapSettingsSecrets,
   mapSettingsSecretValues,
   withoutRemovedSecretProviderReferences,
-  withoutRedirectedSimlockTokens,
+  withoutRedirectedSecrets,
   SECRET_REDACTED,
   type SettingsSecret,
 } from "./settingsSecrets.ts";
@@ -80,11 +78,7 @@ export {
 } from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
-const encodeServerSettingsJson = Schema.encodeUnknownEffect(
-  fromJsonStringPretty(
-    Schema.Struct({ ...ServerSettings.fields, layout: ForwardCompatibleOptional(LayoutSettings) }),
-  ),
-);
+const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
@@ -147,9 +141,14 @@ const normalizeServerSettings = (
     ),
   );
 
+export interface SettingsClient {
+  readonly secretReferences: boolean;
+  readonly httpUsageLimitSources?: boolean;
+}
+
 export function redactServerSettingsForClient(
   settings: ServerSettings,
-  client: { readonly secretReferences: boolean },
+  client: SettingsClient,
 ): ServerSettings {
   const redacted = mapSettingsSecrets(settings, (secret) =>
     secret.sensitive
@@ -162,7 +161,18 @@ export function redactServerSettingsForClient(
     : mapSettingsSecretValues(redacted, (value) =>
         isSecretReference(value) ? SECRET_REDACTED : value,
       );
-  return { ...shaped, secretProviders: withoutUnknownSecretProviderConfigs(shaped) };
+  return {
+    ...shaped,
+    secretProviders: withoutUnknownSecretProviderConfigs(shaped),
+    // Older clients decode only "cliproxy" sources and reject the whole settings payload otherwise.
+    usageLimitSources: client.httpUsageLimitSources
+      ? shaped.usageLimitSources
+      : Object.fromEntries(
+          Object.entries(shaped.usageLimitSources).filter(
+            ([, source]) => source.kind === "cliproxy",
+          ),
+        ),
+  };
 }
 
 /** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */
@@ -268,7 +278,6 @@ export class ServerSettingsService extends Context.Service<
     /** The administrator's policy as clients see it; absent when unmanaged. */
     readonly managedPolicy?: ManagedPolicySummary | undefined;
 
-    /** Read current server settings. */
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateSettings: (
@@ -389,6 +398,7 @@ const PersistedServerSettings = Schema.Struct({
 // Parse first and decode second, so a managed policy can fill its defaults in between.
 const decodeSettingsFileJsonExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
 const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(PersistedServerSettings);
+
 /**
  * The settings on disk with the managed policy laid over them, read without the service: no
  * database, no write, no legacy migration. A missing or unreadable file reads as the defaults.
@@ -402,11 +412,8 @@ export const readServerSettingsFromDisk = Effect.gen(function* () {
     Option.isNone(raw) ? managed.defaults : decodeSettingsFile(raw.value, managed).settings,
   );
 }).pipe(Effect.withSpan("ServerSettings.readServerSettingsFromDisk"));
-
-/** Retired keys feed source-control migration and the read-only client layout migration. */
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
-    layout: ForwardCompatibleOptional(LayoutSettings),
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     bitbucket: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
@@ -554,15 +561,6 @@ function migrateLegacyProviderSettings(
   };
 }
 
-const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
-
-function selectionSupportsTextGeneration(
-  settings: ServerSettings,
-  selection: ModelSelection,
-): boolean {
-  return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
-}
-
 type DriverAllowed = (driver: ProviderDriverKind) => boolean;
 const anyDriver: DriverAllowed = () => true;
 
@@ -572,7 +570,6 @@ function resolveTextGenerationProvider(
 ): ServerSettings {
   const selection = settings.textGenerationModelSelection;
   return isModelSelectionProviderEnabled(settings, selection) &&
-    selectionSupportsTextGeneration(settings, selection) &&
     isDriverAllowed(
       settings.providerInstances[selection.instanceId]?.driver ??
         ProviderDriverKind.make(selection.instanceId),
@@ -745,7 +742,6 @@ const make = Effect.gen(function* () {
     );
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
-  const legacyLayoutRef = yield* Ref.make<LayoutSettings | undefined>(undefined);
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
@@ -786,19 +782,14 @@ const make = Effect.gen(function* () {
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
-      // Preserve the read-only layout on disk so each client can migrate independently.
-      const legacyLayout = yield* Ref.get(legacyLayoutRef);
       const stripped = stripDefaultServerSettings(settings, managed.defaults) ?? {};
-      const sparseSettings =
+      const sparseSettingsJson = yield* encodeServerSettingsJson(
         managed.keepStored === undefined
           ? stripped
           : managed.keepStored(stripped, settings, yield* readStoredSettings, (key) =>
               ATOMIC_SETTINGS_KEYS.has(key),
-            );
-      const sparseSettingsJson = yield* encodeServerSettingsJson({
-        ...(typeof sparseSettings === "object" && sparseSettings !== null ? sparseSettings : {}),
-        ...(legacyLayout === undefined ? {} : { layout: legacyLayout }),
-      });
+            ),
+      );
 
       return yield* writeFileStringAtomically({
         filePath: settingsPath,
@@ -850,7 +841,6 @@ const make = Effect.gen(function* () {
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = managed.defaults;
-    yield* Ref.set(legacyLayoutRef, undefined);
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     let legacySourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {};
     let parseFailure = Option.none<unknown>();
@@ -858,7 +848,6 @@ const make = Effect.gen(function* () {
     if (yield* readConfigExists) {
       const file = decodeSettingsFile(yield* readRawConfig, managed);
       if (file.legacy !== undefined) {
-        yield* Ref.set(legacyLayoutRef, file.legacy.layout);
         legacyProviders = file.legacy.providers;
         legacySourceControl = { bitbucket: file.legacy.bitbucket, github: file.legacy.github };
       }
@@ -1252,7 +1241,7 @@ const make = Effect.gen(function* () {
         }
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withoutRedirectedSimlockTokens(
+        const updated = withoutRedirectedSecrets(
           current,
           withEchoedSecretReferences(current, yield* update(current)),
         );
@@ -1460,15 +1449,7 @@ const make = Effect.gen(function* () {
     managedPolicy,
     start,
     ready: Deferred.await(startedDeferred),
-    getSettings: getMaterializedSettings.pipe(
-      Effect.flatMap((settings) =>
-        Ref.get(legacyLayoutRef).pipe(
-          Effect.map((legacyLayout) =>
-            legacyLayout === undefined ? settings : { ...settings, layout: legacyLayout },
-          ),
-        ),
-      ),
-    ),
+    getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(

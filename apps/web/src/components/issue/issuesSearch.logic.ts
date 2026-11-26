@@ -1,3 +1,4 @@
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import {
   ISSUE_LIST_MAX_EXCLUDED_PROJECTS,
@@ -54,78 +55,18 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   key: bounded(raw.key),
 });
 
-const SEGMENT_LIMIT = 14;
-
-const groupBy = <Item, Key>(items: ReadonlyArray<Item>, key: (item: Item) => Key) => {
-  const groups = new Map<Key, Item[]>();
-  for (const item of items) groups.set(key(item), [...(groups.get(key(item)) ?? []), item]);
-  return groups;
-};
-
-const pathSegments = (path: string) => path.split(/[\\/]+/).filter(Boolean);
-const shortSegment = (segment: string) =>
-  segment.length > SEGMENT_LIMIT ? `${segment.slice(0, SEGMENT_LIMIT - 1)}…` : segment;
-
-/** The fewest trailing folders of each path that tell them all apart, shortened. */
-const pathSuffixes = (paths: ReadonlyArray<string>): ReadonlyArray<string> | null => {
-  const segments = paths.map(pathSegments);
-  const longest = Math.max(0, ...segments.map((parts) => parts.length));
-  for (let count = 1; count <= longest; count++) {
-    const suffixes = segments.map((parts) => {
-      const shown = parts.slice(-count).map(shortSegment).join("/");
-      return parts.length > count ? `…/${shown}` : shown;
-    });
-    if (new Set(suffixes).size === suffixes.length) return suffixes;
-  }
-  return null;
-};
-
 /**
- * One choice per project: projects on one repository can read different Linear teams. Projects
- * that share a name say the least that tells them apart: the machine where that differs, then
- * the fewest trailing folders of their paths. The scratch project leads, beside All projects;
- * scratch projects stay, since Settings can bind one to a Linear team.
+ * One choice per project: projects on one repository can read different Linear teams. Scratch
+ * projects stay, since Settings can bind one to a Linear team.
  */
 export const issueFilterProjects = (
   projects: ReadonlyArray<EnvironmentProject>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
-) => {
-  const named = projects;
-  const byTitle = groupBy(named, (project) => project.title);
-  const details = new Map<EnvironmentProject, string>();
-  for (const same of byTitle.values()) {
-    if (same.length < 2) continue;
-    const machines = same.map(
-      (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
-    );
-    const machinesDiffer = new Set(machines).size > 1;
-    // Within one machine, the path tells the projects apart.
-    const byMachine = groupBy(same, (project) => project.environmentId);
-    for (const group of byMachine.values()) {
-      const suffixes = group.length > 1 ? pathSuffixes(group.map((p) => p.workspaceRoot)) : null;
-      group.forEach((project, index) => {
-        const parts = [
-          ...(machinesDiffer
-            ? [environmentLabels.get(project.environmentId) ?? project.environmentId]
-            : []),
-          ...(group.length > 1 ? [suffixes?.[index] ?? project.id] : []),
-        ];
-        if (parts.length > 0) details.set(project, parts.join(", "));
-      });
-    }
-  }
-  const scratchFirst = (project: EnvironmentProject) =>
-    project.repositoryIdentity == null && project.title === "No project" ? 0 : 1;
-  return named
-    .map((project) => {
-      const detail = details.get(project);
-      return { ...project, title: detail ? `${project.title} (${detail})` : project.title };
-    })
-    .toSorted(
-      (left, right) =>
-        scratchFirst(left) - scratchFirst(right) || left.title.localeCompare(right.title),
-    );
-};
+) =>
+  pullRequestFilterProjects(
+    projects.map((project) => ({ ...project, repositoryIdentity: null })),
+    environmentLabels,
+  );
 
 /** The same key as `pullRequestProjectKey`. */
 const projectKey = (project: { readonly id: ProjectId; readonly environmentId: EnvironmentId }) =>

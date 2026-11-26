@@ -97,7 +97,6 @@ export function DevReplayHost() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- exposes the console API on window and listens for the hidden window hotkey
   useEffect(() => {
     window.t3dev = {
-      ...window.t3dev,
       replayScenarios: () => listScenarios(),
       replay: (scenario) => replayFromConsole(scenario),
     };
@@ -110,10 +109,7 @@ export function DevReplayHost() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
-      if (window.t3dev) {
-        delete window.t3dev.replay;
-        delete window.t3dev.replayScenarios;
-      }
+      delete window.t3dev;
       window.removeEventListener("keydown", onKeyDown);
     };
   }, []);
@@ -145,7 +141,7 @@ export function DevReplayHost() {
         </DialogHeader>
         <DialogPanel>
           {scenarios.length === 0 || project === undefined ? (
-            <p className="text-body text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               <T>Needs a project and the Replay (dev) provider, which dev servers start.</T>
             </p>
           ) : (

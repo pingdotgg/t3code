@@ -7,8 +7,7 @@ import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
-import { beginLayoutContentDrag } from "~/layout/layoutDrag";
-import { fileSurface, useRightPanelStore } from "~/rightPanelStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { COMPOSER_CONTEXT_KINDS } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { use, type ReactNode } from "react";
@@ -35,7 +34,6 @@ import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/con
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ContextChipPopover as UserMessageContextPopover,
   FileChip,
@@ -70,6 +68,7 @@ import {
 } from "../../reviewCommentContext";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 function UserMessageMentionChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "mention" }>;
@@ -81,46 +80,39 @@ function UserMessageMentionChip(props: {
     resolvePathLinkTarget(props.record.path, ctx.workspaceRoot ?? ""),
   );
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <ContextChip
-            {...nativeDrag}
-            kind={documentChipKindForFileName(props.record.path) ?? "mention"}
-            render={<button type="button" />}
-            aria-label={gt("Preview {name}", { name: props.record.path })}
-            data-markdown-copy={props.copyMarkdown}
-            onClick={() => {
-              if (ctx.threadRef)
-                useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
-            }}
-            onPointerDown={(event) => {
-              if (!ctx.threadRef || nativeDrag.draggable) return;
-              beginLayoutContentDrag(event, {
-                kind: "surface",
-                threadRef: ctx.threadRef,
-                surface: fileSurface(props.record.path, null, 0),
-              });
-            }}
-          >
-            <WorkspaceEntryIcon
-              path={props.record.path}
-              environmentId={ctx.activeThreadEnvironmentId}
-              cwd={ctx.workspaceRoot}
-              theme={ctx.resolvedTheme}
-            />
-            <ContextChipLabel>{props.record.label}</ContextChipLabel>
-          </ContextChip>
-        }
-      />
-      <TooltipPopup className="pointer-events-auto">
-        <WorkspaceEntryTooltip
-          path={props.record.path}
-          environmentId={ctx.activeThreadEnvironmentId}
-          cwd={ctx.workspaceRoot}
-        />
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <ContextChip
+          {...nativeDrag}
+          kind={documentChipKindForFileName(props.record.path) ?? "mention"}
+          render={<button type="button" />}
+          aria-label={gt("Preview {name}", { name: props.record.path })}
+          data-markdown-copy={props.copyMarkdown}
+          onClick={() => {
+            if (ctx.threadRef)
+              useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+          }}
+        >
+          <WorkspaceEntryIcon
+            path={props.record.path}
+            environmentId={ctx.activeThreadEnvironmentId}
+            cwd={ctx.workspaceRoot}
+            theme={ctx.resolvedTheme}
+          />
+          <ContextChipLabel>{props.record.label}</ContextChipLabel>
+        </ContextChip>
+      }
+      label={
+        <>
+          <WorkspaceEntryTooltip
+            path={props.record.path}
+            environmentId={ctx.activeThreadEnvironmentId}
+            cwd={ctx.workspaceRoot}
+          />
+        </>
+      }
+      className="pointer-events-auto"
+    />
   );
 }
 
@@ -172,11 +164,11 @@ function UserMessagePreviewAnnotationDetails(props: {
   const visibleElements = props.record.elements ?? [];
   const targetText = previewAnnotationTargetText(props.record, messages);
   return (
-    <div className="max-w-full overflow-hidden rounded-card border border-transparent surface-card">
+    <div className="max-w-full overflow-hidden rounded-lg border border-border/70 bg-background/70">
       {props.image?.previewUrl ? (
         <button
           type="button"
-          className="block max-h-64 w-full cursor-zoom-in overflow-hidden border-b border-border bg-muted"
+          className="block max-h-64 w-full cursor-zoom-in overflow-hidden border-b border-border/70 bg-muted"
           aria-label={gt("Preview {name}", { name: props.image.name })}
           onClick={() => {
             if (!props.image) return;
@@ -191,7 +183,7 @@ function UserMessagePreviewAnnotationDetails(props: {
           />
         </button>
       ) : (
-        <div className="border-b border-border bg-muted/40 px-3 py-2 text-muted-foreground text-xs">
+        <div className="border-b border-border/70 bg-muted/40 px-3 py-2 text-secondary-label text-xs">
           <T>Screenshot unavailable</T>
         </div>
       )}
@@ -204,7 +196,7 @@ function UserMessagePreviewAnnotationDetails(props: {
             {props.record.comment}
           </div>
         ) : null}
-        <div className="mt-1 flex items-center gap-2 text-muted-foreground text-3xs">
+        <div className="mt-1 flex items-center gap-2 text-secondary-label text-3xs">
           {targetText ? <span className="truncate">{targetText}</span> : null}
           {(props.record.styleChanges?.length ?? 0) > 0 ? (
             <span className="inline-flex shrink-0 items-center gap-1">
@@ -214,7 +206,7 @@ function UserMessagePreviewAnnotationDetails(props: {
           ) : null}
         </div>
         {visibleElements.length > 0 ? (
-          <div className="mt-2 space-y-2 border-t border-border pt-2">
+          <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
             {visibleElements.map((element) => {
               const source = element.source;
               const sourceLabel = source?.fileName
@@ -230,11 +222,11 @@ function UserMessagePreviewAnnotationDetails(props: {
                       {element.selector || `<${element.tagName}>`}
                     </code>
                     {sourceLabel ? (
-                      <span className="ml-auto shrink-0 text-muted-foreground">{sourceLabel}</span>
+                      <span className="ml-auto shrink-0 text-secondary-label">{sourceLabel}</span>
                     ) : null}
                   </div>
                   {element.htmlPreview?.trim() ? (
-                    <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded-row surface-card px-2 py-1.5 text-3xs leading-relaxed">
+                    <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-muted/60 px-2 py-1.5 text-3xs leading-relaxed">
                       {element.htmlPreview.trim()}
                     </pre>
                   ) : null}
@@ -257,12 +249,12 @@ function UserMessageElementDetails({
     ? `${record.source.fileName}${record.source.lineNumber === null ? "" : `:${record.source.lineNumber}`}`
     : null;
   return (
-    <div className="max-w-full overflow-hidden rounded-card border border-transparent surface-card">
-      <div className="border-b border-border px-3 py-2.5">
+    <div className="max-w-full overflow-hidden rounded-lg border border-border/70 bg-background/70">
+      <div className="border-b border-border/70 px-3 py-2.5">
         <div className="truncate text-message-foreground text-xs font-medium">
           {record.pageTitle?.trim() || record.pageUrl}
         </div>
-        <div className="mt-0.5 truncate text-muted-foreground text-3xs">{record.pageUrl}</div>
+        <div className="mt-0.5 truncate text-secondary-label text-3xs">{record.pageUrl}</div>
       </div>
       <div className="space-y-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2 text-xs">
@@ -270,7 +262,7 @@ function UserMessageElementDetails({
             {record.selector || `<${record.tagName}>`}
           </code>
           {sourceLabel ? (
-            <span className="ml-auto shrink-0 text-muted-foreground">{sourceLabel}</span>
+            <span className="ml-auto shrink-0 text-secondary-label">{sourceLabel}</span>
           ) : null}
         </div>
         {record.htmlPreview?.trim() ? (
@@ -453,7 +445,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         record.kind === "terminal" ? (
           <span data-markdown-copy={context.copyMarkdown}>
             <TerminalContextInlineChip
-              label={record.label}
               terminalLabel={record.terminalLabel}
               lineStart={record.lineStart}
               lineEnd={record.lineEnd}
@@ -609,14 +600,14 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
   );
 
   return (
-    <div className="space-y-2 rounded-card border border-transparent surface-card p-3">
+    <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
       <div className="space-y-1">
         <div className="text-xs font-medium text-foreground">
           {formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
         <div className="text-2xs text-muted-foreground">
-          <span className="block">{reviewCommentRangeText(comment.rangeLabel, m)}</span>
-          <span className="block">{reviewCommentSectionText(comment.sectionTitle, m)}</span>
+          {reviewCommentSectionText(comment.sectionTitle, m)} ·{" "}
+          {reviewCommentRangeText(comment.rangeLabel, m)}
         </div>
       </div>
       {comment.text.length > 0 && (
@@ -657,7 +648,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         </DiffWorkerPoolProvider>
       )}
       {renderablePatch?.kind === "raw" && (
-        <pre className="overflow-x-auto rounded-row surface-card p-2 text-xs">
+        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
           {renderablePatch.text}
         </pre>
       )}

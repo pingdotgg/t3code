@@ -19,34 +19,29 @@ export class RelayClientInstallConfirmationConflictError extends Schema.TaggedEr
   }
 }
 
-export interface RelayClientInstallingState {
-  readonly status: "installing";
-  readonly version: string;
-  readonly stage: RelayClientInstallProgressStage;
-  /** Size of the finished download, once the server reports it. */
-  readonly downloadedBytes?: number;
-  /** True once the download matched the pinned sha256. */
-  readonly checksumVerified?: boolean;
-  /** Cancel was pressed; the install stream is being interrupted. */
-  readonly cancelling?: boolean;
-}
-
 export type RelayClientInstallDialogState =
   | { readonly status: "idle" }
   | { readonly status: "confirming"; readonly version: string }
-  | RelayClientInstallingState
+  | {
+      readonly status: "installing";
+      readonly version: string;
+      readonly stage: RelayClientInstallProgressStage;
+    }
   | {
       readonly status: "closing";
       readonly view:
         | { readonly status: "confirming"; readonly version: string }
-        | RelayClientInstallingState;
+        | {
+            readonly status: "installing";
+            readonly version: string;
+            readonly stage: RelayClientInstallProgressStage;
+          };
     };
 
 const idleState: RelayClientInstallDialogState = { status: "idle" };
 let state: RelayClientInstallDialogState = idleState;
 let resolveConfirmation: ((confirmed: boolean) => void) | null = null;
 const listeners = new Set<() => void>();
-const cancelListeners = new Set<() => void>();
 
 function publish(next: RelayClientInstallDialogState) {
   state = next;
@@ -103,34 +98,10 @@ export function respondToRelayClientInstallConfirmation(confirmed: boolean): voi
 }
 
 export function reportRelayClientInstallProgress(event: RelayClientInstallProgressEvent): void {
-  if (state.status !== "installing" || event.type !== "progress" || state.cancelling) {
+  if (state.status !== "installing" || event.type !== "progress") {
     return;
   }
-  publish({
-    ...state,
-    stage: event.stage,
-    ...(event.downloadedBytes !== undefined ? { downloadedBytes: event.downloadedBytes } : {}),
-    ...(event.checksumVerified ? { checksumVerified: true } : {}),
-  });
-}
-
-// Interrupt the install stream to release server temp state and locks; activation cannot be cancelled.
-export function cancelRelayClientInstall(): void {
-  if (state.status !== "installing" || state.cancelling) {
-    return;
-  }
-  publish({ ...state, cancelling: true });
-  for (const listener of cancelListeners) {
-    listener();
-  }
-}
-
-export function onRelayClientInstallCancel(listener: () => void): () => void {
-  cancelListeners.add(listener);
-  if (state.status === "installing" && state.cancelling) listener();
-  return () => {
-    cancelListeners.delete(listener);
-  };
+  publish({ ...state, stage: event.stage });
 }
 
 export function finishRelayClientInstall(): void {
@@ -152,5 +123,4 @@ export function resetRelayClientInstallDialogForTests(): void {
   resolveConfirmation = null;
   publish(idleState);
   listeners.clear();
-  cancelListeners.clear();
 }

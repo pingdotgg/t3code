@@ -9,11 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import {
-  changedFileTotals,
-  deriveTurnRepositoryChanges,
-  type TurnRepositoryChanges,
-} from "./threadRepositories.ts";
+import { deriveTurnRepositoryChanges, type TurnRepositoryChanges } from "./threadRepositories.ts";
 
 export interface ThreadCheckpointSummary {
   readonly checkpointId?: CheckpointId;
@@ -96,11 +92,4 @@ export function deriveThreadCheckpointSummaries(
       },
     ];
   });
-}
-
-/** The thread folder's own totals; `turnChanges` adds the repositories. */
-export function checkpointFileTotals(
-  checkpoint: Pick<ThreadCheckpointSummary, "files" | "filesTotal">,
-): OrchestrationV2CheckpointFileTotals {
-  return changedFileTotals(checkpoint);
 }

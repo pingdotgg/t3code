@@ -11,6 +11,7 @@ import {
   type PreviewStreamInput,
   type PreviewStreamMouseButton,
   type PreviewStreamPointer,
+  type PreviewStreamSelectMenu,
   type PreviewStreamViewport,
   previewStreamHostSetupMessage,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
@@ -29,7 +30,6 @@ import {
   useEffect,
   useEffectEvent,
   useImperativeHandle,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -39,11 +39,11 @@ import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
-import { setWheelScroller } from "~/motion/gesture";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
 
@@ -56,33 +56,7 @@ export interface ServerBrowserHandle {
   readonly canvas: () => HTMLCanvasElement | null;
 }
 
-let handoffFrame: { key: string; canvas: HTMLCanvasElement } | null = null;
-
-/** Carry the displayed frame across a panel/mini-player handoff until its new stream paints. */
-export function handoffServerBrowserFrame(
-  environmentId: EnvironmentId,
-  threadId: string,
-  tabId: string,
-  source: HTMLCanvasElement | null,
-): void {
-  handoffFrame = null;
-  if (!source || source.width < 1 || source.height < 1) return;
-  const canvas = document.createElement("canvas");
-  canvas.width = source.width;
-  canvas.height = source.height;
-  const context = canvas.getContext("2d");
-  if (!context) return;
-  context.drawImage(source, 0, 0);
-  const frame = { key: JSON.stringify([environmentId, threadId, tabId]), canvas };
-  handoffFrame = frame;
-  window.setTimeout(() => {
-    if (handoffFrame === frame) handoffFrame = null;
-  }, 1000);
-}
-
 const RESIZE_THROTTLE_MS = 150;
-// How long a page this viewer resized may take to send a frame at its new size.
-const RESIZE_HOLD_MS = 1_000;
 // Reuse nearby probes when a slow link would return the tap's answer after it ends.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
@@ -213,7 +187,6 @@ export function ServerBrowserSurface(props: {
   const clientRef = useRef<PreviewStreamClient | null>(null);
   const viewportRef = useRef<PreviewStreamViewport | null>(null);
   const sizeRef = useRef<{ width: number; height: number } | null>(null);
-  const placementRef = useRef<FramePlacement | null>(null);
   const hasFrameRef = useRef(false);
   const controlRef = useRef<PreviewStreamControl | null>(null);
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
@@ -221,6 +194,7 @@ export function ServerBrowserSurface(props: {
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const [agentCursor, setAgentCursor] = useState<AgentCursorPlacement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectMenu, setSelectMenu] = useState<PreviewStreamSelectMenu | null>(null);
   const answerFileChooser = (files: ReadonlyArray<File>) => {
     const chooser = fileChooser;
     if (!chooser) return;
@@ -253,28 +227,6 @@ export function ServerBrowserSurface(props: {
   const probeRef = useRef<TouchProbe | null>(null);
   const lastProbeRef = useRef<{ x: number; y: number; editable: boolean; at: number } | null>(null);
   const firstFrame = useEffectEvent(() => onFirstFrame?.());
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Paint the handoff frame before the destination becomes visible while its stream reconnects.
-  useLayoutEffect(() => {
-    const canvas = canvasRef.current;
-    if (
-      !visible ||
-      pdfUrl ||
-      !canvas ||
-      handoffFrame?.key !== JSON.stringify([environmentId, threadId, tabId])
-    )
-      return;
-    const seed = handoffFrame.canvas;
-    handoffFrame = null;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    canvas.width = seed.width;
-    canvas.height = seed.height;
-    context.drawImage(seed, 0, 0);
-    if (!hasFrameRef.current) {
-      hasFrameRef.current = true;
-      firstFrame();
-    }
-  }, [environmentId, threadId, tabId, visible, pdfUrl]);
   const noFrames = useEffectEvent(() => onNoFrames?.());
   const [framesStalled, setFramesStalled] = useState(false);
   const viewportChanged = useEffectEvent((viewport: PreviewStreamViewport) =>
@@ -416,17 +368,7 @@ export function ServerBrowserSurface(props: {
       if (capTimer !== null) clearTimeout(capTimer);
       capTimer = setTimeout(growCap, previous === null ? 0 : RESIZE_THROTTLE_MS * 2);
     };
-    const stopObserving = observeResize(element, (entries) => {
-      const entry = entries.at(-1);
-      // A page that follows this viewer's size is about to be resized.
-      const resizing = followSize && controlRef.current?.controller === "you";
-      if (entry) {
-        placementRef.current?.resized(
-          entry.contentRect.width,
-          entry.contentRect.height,
-          resizing ? RESIZE_THROTTLE_MS + RESIZE_HOLD_MS : 0,
-        );
-      }
+    const stopObserving = observeResize(element, () => {
       if (timer !== null) return;
       timer = setTimeout(measure, sizeRef.current === null ? 0 : RESIZE_THROTTLE_MS);
     });
@@ -442,15 +384,12 @@ export function ServerBrowserSurface(props: {
     const canvas = canvasRef.current;
     if (!visible || accessDenied || hostSetup || !access || !cap || !canvas) return;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const placement = createFramePlacement(canvas);
-    placementRef.current = placement;
     let noFrameTimer: ReturnType<typeof setTimeout> | null = null;
     const clearNoFrameTimer = () => {
       if (noFrameTimer !== null) clearTimeout(noFrameTimer);
       noFrameTimer = null;
     };
     const painter = createPreviewFramePainter(canvas, () => {
-      placement.painted(sizeRef.current);
       if (hasFrameRef.current) return;
       hasFrameRef.current = true;
       clearNoFrameTimer();
@@ -484,6 +423,7 @@ export function ServerBrowserSurface(props: {
         onDownload: offerDownload,
         onPopup: popupOpened,
         onFileChooser: setFileChooser,
+        onSelectMenu: setSelectMenu,
         onViewport: (viewport) => {
           viewportRef.current = viewport;
           viewportChanged(viewport);
@@ -499,6 +439,7 @@ export function ServerBrowserSurface(props: {
           )
             setPromptText(next.dialog?.defaultValue ?? "");
           if (next.controller !== "you") {
+            setSelectMenu(null);
             clearInput();
           } else if (previous?.controller !== "you") {
             const size = sizeRef.current;
@@ -539,8 +480,6 @@ export function ServerBrowserSurface(props: {
     clientRef.current = client;
     return () => {
       painter.stop();
-      placement.stop();
-      if (placementRef.current === placement) placementRef.current = null;
       clearNoFrameTimer();
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       client.stop();
@@ -581,13 +520,7 @@ export function ServerBrowserSurface(props: {
       queueWheel(point, event.deltaX * unit, event.deltaY * unit, previewStreamModifiers(event));
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
-    // The page takes the wheel while you control it, so a swipe over it
-    // scrolls the page instead of switching workspaces.
-    setWheelScroller(canvas, () => controlRef.current?.controller === "you");
-    return () => {
-      canvas.removeEventListener("wheel", onWheel);
-      setWheelScroller(canvas, null);
-    };
+    return () => canvas.removeEventListener("wheel", onWheel);
   }, [pagePoint, queueWheel]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending input animation frame when the component unmounts
@@ -849,17 +782,16 @@ export function ServerBrowserSurface(props: {
     >
       <div
         className={cn(
-          "relative z-20 flex shrink-0 items-center justify-between gap-2 border-border bg-background px-2 py-1",
-          visible ? "visible" : "invisible",
+          "visible relative z-20 flex shrink-0 items-center justify-between gap-2 border-border bg-background px-2 py-1",
           controlPosition === "bottom" ? "order-last border-t" : "border-b",
         )}
       >
-        <span role="status" className="text-meta text-muted-foreground">
+        <span role="status" className="text-xs text-muted-foreground">
           {previewStreamControlLabel(control, resolve)}
         </span>
         {control?.canOperate ? (
           <Button
-            variant="secondary"
+            variant="outline"
             size="xs"
             disabled={control.controller === "another-viewer"}
             onClick={() =>
@@ -907,7 +839,6 @@ export function ServerBrowserSurface(props: {
           disabled={pdfUrl !== null || control?.controller !== "you"}
           defaultValue={INPUT_SENTINEL}
           onFocus={(event) => resetInput(event.currentTarget)}
-          // oxlint-disable-next-line t3code/no-styled-raw-controls, t3code/no-raw-type-classes -- A hidden input; 16px keeps iOS from zooming on focus.
           className="sr-only top-0 left-0 text-base"
           onKeyDown={(event) => handleKey("down", event)}
           onKeyUp={(event) => handleKey("up", event)}
@@ -925,9 +856,41 @@ export function ServerBrowserSurface(props: {
             if (text) send({ type: "text", text });
           }}
         />
+        {selectMenu && control?.controller === "you" ? (
+          <Menu open modal={false} onOpenChange={(open) => !open && setSelectMenu(null)}>
+            <MenuPopup
+              anchor={() => selectMenuAnchor(selectMenu, canvasRef.current, viewportRef.current)}
+              align="start"
+              sideOffset={0}
+              finalFocus={inputRef}
+              aria-label={gt("Page select options")}
+            >
+              <MenuRadioGroup
+                value={selectMenu.selectedIndex}
+                onValueChange={(index: number) => {
+                  setSelectMenu(null);
+                  send({ type: "selectMenu", id: selectMenu.id, index });
+                }}
+              >
+                {selectMenu.options
+                  .map((option, index) => ({ ...option, index }))
+                  .map((option) => (
+                    <MenuRadioItem
+                      key={option.index}
+                      value={option.index}
+                      disabled={option.disabled}
+                      closeOnClick
+                    >
+                      {option.label}
+                    </MenuRadioItem>
+                  ))}
+              </MenuRadioGroup>
+            </MenuPopup>
+          </Menu>
+        ) : null}
         {visible && framesStalled && !pdfUrl ? (
           <div className="absolute inset-0 flex items-center justify-center bg-background p-4 text-center">
-            <p role="alert" className="max-w-sm text-body text-muted-foreground">
+            <p role="alert" className="max-w-sm text-sm text-muted-foreground">
               <T>
                 The server's browser loaded this page but is not drawing it. Try reloading, or open
                 the page in a browser on this computer.
@@ -941,7 +904,7 @@ export function ServerBrowserSurface(props: {
             role="dialog"
             aria-label={gt("Choose files for the page")}
           >
-            <p className="text-body">
+            <p className="text-sm">
               {fileChooser.multiple ? (
                 <T>The page asks for files.</T>
               ) : (
@@ -961,7 +924,7 @@ export function ServerBrowserSurface(props: {
               }}
             />
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" size="sm" onClick={() => answerFileChooser([])}>
+              <Button variant="outline" size="sm" onClick={() => answerFileChooser([])}>
                 <T>Cancel</T>
               </Button>
               <Button size="sm" onClick={() => fileInputRef.current?.click()}>
@@ -976,7 +939,7 @@ export function ServerBrowserSurface(props: {
             role="dialog"
             aria-label={gt("Browser dialog")}
           >
-            <p className="break-words text-body">{control.dialog.message}</p>
+            <p className="break-words text-sm">{control.dialog.message}</p>
             {control.controller === "you" ? (
               <>
                 {control.dialog.type === "prompt" ? (
@@ -988,7 +951,7 @@ export function ServerBrowserSurface(props: {
                 ) : null}
                 <div className="flex justify-end gap-2">
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     size="sm"
                     onClick={() => send({ type: "dialog", accept: false })}
                   >
@@ -1009,7 +972,7 @@ export function ServerBrowserSurface(props: {
                 </div>
               </>
             ) : (
-              <p className="text-meta text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 <T>Take control to respond.</T>
               </p>
             )}
@@ -1018,11 +981,11 @@ export function ServerBrowserSurface(props: {
       </div>
       {visible && hostSetup ? (
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-4 text-center">
-          <p role="alert" className="max-w-sm text-body text-muted-foreground">
+          <p role="alert" className="max-w-sm text-sm text-muted-foreground">
             {previewStreamHostSetupMessage(hostSetup, resolve)}
           </p>
           <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
-          <Button variant="secondary" size="sm" onClick={() => setHostSetup(null)}>
+          <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
             <T>Try again</T>
           </Button>
         </div>
@@ -1030,11 +993,11 @@ export function ServerBrowserSurface(props: {
       {visible && accessDenied ? (
         // The page can be invisible beneath an empty or unreachable state; reconnect must remain reachable.
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-3 text-center">
-          <p role="alert" className="text-meta text-muted-foreground">
+          <p role="alert" className="text-xs text-muted-foreground">
             <T>Browser connection was refused.</T>
           </p>
           <Button
-            variant="secondary"
+            variant="outline"
             size="sm"
             onClick={() => {
               unauthorizedRef.current = 0;
@@ -1048,6 +1011,28 @@ export function ServerBrowserSurface(props: {
       ) : null}
     </div>
   );
+}
+
+function selectMenuAnchor(
+  menu: PreviewStreamSelectMenu,
+  canvas: HTMLCanvasElement | null,
+  viewport: PreviewStreamViewport | null,
+) {
+  if (!canvas || !viewport || canvas.width < 1 || canvas.height < 1) return null;
+  return {
+    getBoundingClientRect: () => {
+      const rect = canvas.getBoundingClientRect();
+      const fit = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+      const scaleX = (canvas.width * fit) / viewport.width;
+      const scaleY = (canvas.height * fit) / viewport.height;
+      return DOMRect.fromRect({
+        x: rect.left + (rect.width - canvas.width * fit) / 2 + menu.x * scaleX,
+        y: rect.top + (rect.height - canvas.height * fit) / 2 + menu.y * scaleY,
+        width: menu.width * scaleX,
+        height: menu.height * scaleY,
+      });
+    },
+  };
 }
 
 interface AgentCursorPlacement {
@@ -1073,93 +1058,4 @@ function placeAgentCursor(
     left: (box.width - width) / 2 + (pointer.x * width) / viewport.width,
     top: (box.height - height) / 2 + (pointer.y * height) / viewport.height,
   };
-}
-
-type Size = { width: number; height: number };
-
-/** Hold a matching frame at native size during viewport resizing to avoid rescaling into bars; fit
- * other sizes once the bounded hold expires. */
-interface FramePlacement {
-  /** A frame was painted; `size` is the surface size last sent to the page. */
-  readonly painted: (size: Size | null) => void;
-  /** The surface resized; `holdMs` is how long a resize of the page may take. */
-  readonly resized: (width: number, height: number, holdMs: number) => void;
-  readonly stop: () => void;
-}
-
-function createFramePlacement(canvas: HTMLCanvasElement): FramePlacement {
-  let drawn: Size | null = null;
-  // The surface's size as last seen; the frame shown may predate this placement.
-  let box: Size | null = canvas.parentElement
-    ? { width: canvas.parentElement.clientWidth, height: canvas.parentElement.clientHeight }
-    : null;
-  let holdUntil = 0;
-  let fallback: ReturnType<typeof setTimeout> | null = null;
-  // The painted frame's corner color, read at most once per frame.
-  let corner: string | null = null;
-  const setRoom = (color: string) => {
-    if (canvas.parentElement) canvas.parentElement.style.backgroundColor = color;
-  };
-  const place = (next: Size | null) => {
-    if (next?.width !== drawn?.width || next?.height !== drawn?.height) {
-      canvas.style.width = next ? `${next.width}px` : "";
-      canvas.style.height = next ? `${next.height}px` : "";
-    }
-    drawn = next;
-    // Room the frame leaves uncovered takes its far corner's color.
-    const uncovered =
-      next !== null &&
-      box !== null &&
-      (box.width > next.width + 0.5 || box.height > next.height + 0.5);
-    setRoom(uncovered ? (corner ??= frameCornerColor(canvas)) : "");
-  };
-  const fits = (size: Size | null) =>
-    size !== null &&
-    canvas.width > 1 &&
-    Math.abs(canvas.width / canvas.height - size.width / size.height) < 0.01;
-  const settle = () => {
-    holdUntil = 0;
-    if (fallback !== null) clearTimeout(fallback);
-    fallback = null;
-  };
-  return {
-    painted: (size) => {
-      corner = null;
-      if (fits(size)) {
-        settle();
-        place(size);
-      } else if (!drawn || performance.now() >= holdUntil) {
-        place(null);
-      }
-    },
-    resized: (width, height, holdMs) => {
-      // A frame drawn before this placement was made, at the old size.
-      if (!drawn && fits(box)) place(box);
-      box = { width, height };
-      if (!drawn) return;
-      if (holdMs <= 0) {
-        // Nothing will redraw the page at this size: fit the frame shown.
-        settle();
-        place(null);
-        return;
-      }
-      holdUntil = performance.now() + holdMs;
-      if (fallback !== null) clearTimeout(fallback);
-      // The page never came back at the new size: fit what it last sent.
-      fallback = setTimeout(() => {
-        fallback = null;
-        if (drawn && !fits(box)) place(null);
-      }, holdMs);
-      place(drawn);
-    },
-    stop: settle,
-  };
-}
-
-/** The color at the frame's bottom-right corner, where a page's own background usually shows. */
-function frameCornerColor(canvas: HTMLCanvasElement): string {
-  const pixel = canvas
-    .getContext("2d")
-    ?.getImageData(canvas.width - 1, canvas.height - 1, 1, 1).data;
-  return pixel ? `rgb(${pixel[0]} ${pixel[1]} ${pixel[2]})` : "";
 }

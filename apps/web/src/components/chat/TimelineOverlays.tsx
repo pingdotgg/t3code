@@ -1,73 +1,56 @@
-import { T, useGT } from "gt-react";
-import { ChevronDownIcon, ShieldIcon } from "lucide-react";
+import { T } from "gt-react";
+import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+export function WorkspaceFileDropOverlay() {
+  return (
+    <div
+      className="pointer-events-none absolute inset-2 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.035]"
+      data-chat-workspace-drop-overlay="true"
+    >
+      <div
+        role="status"
+        className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2.5 text-sm font-medium text-foreground shadow-lg"
+      >
+        <PaperclipIcon className="size-4 text-primary" aria-hidden="true" />
+        <T>Drop files to attach</T>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Sits `bottom` pixels up, clear of the composer and its attached banners. The summary names
  * what waits at the end of the timeline, which is out of view while it shows.
  */
 export function ScrollToEndButton(props: {
-  readonly visible: boolean;
   readonly bottom: number;
-  readonly summary: ReadonlyArray<string>;
-  readonly pendingApprovalCount?: number | undefined;
-  readonly pendingSubagentApprovalCount?: number | undefined;
+  readonly summary: string | null;
   readonly onScrollToEnd: () => void;
 }) {
-  const gt = useGT();
-  const ownApprovals = props.pendingApprovalCount ?? 0;
-  const subagentApprovals = props.pendingSubagentApprovalCount ?? 0;
-  const totalApprovals = ownApprovals + subagentApprovals;
-  const hasApprovalWaiting = totalApprovals > 0;
-  const approvalLabel =
-    ownApprovals > 0
-      ? totalApprovals === 1
-        ? gt("Approval waiting")
-        : gt("{count} approvals waiting", { count: totalApprovals })
-      : subagentApprovals === 1
-        ? gt("Subagent approval waiting")
-        : gt("{count} subagent approvals waiting", { count: subagentApprovals });
-
-  const button = (
-    <Button
-      data-scroll-to-end="true"
-      data-approval-waiting={hasApprovalWaiting ? "true" : undefined}
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={props.onScrollToEnd}
-      className="pointer-events-auto"
-      size="xs"
-      variant="floating"
-    >
-      {hasApprovalWaiting ? (
-        <ShieldIcon aria-hidden className="size-3.5 text-warning-foreground" />
-      ) : null}
-      {hasApprovalWaiting ? approvalLabel : <T>Scroll to end</T>}
-      <ChevronDownIcon aria-hidden className="size-3.5" />
-    </Button>
-  );
   return (
     <div
       className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
-      data-visible={props.visible}
-      inert={!props.visible}
       style={{ bottom: props.bottom }}
     >
-      {props.summary.length > 0 ? (
-        <Tooltip>
-          <TooltipTrigger render={button} />
-          <TooltipPopup>
-            {props.summary.map((part) => (
-              <span className="block" key={part}>
-                {part}
-              </span>
-            ))}
-          </TooltipPopup>
-        </Tooltip>
-      ) : (
-        button
-      )}
+      <Button
+        data-scroll-to-end="true"
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={props.onScrollToEnd}
+        className="pointer-events-auto"
+        size="xs"
+        variant="glass"
+      >
+        <ChevronDownIcon className="size-3.5" />
+        <T>Scroll to end</T>
+        {props.summary === null ? null : (
+          <span className="text-muted-foreground">
+            <span aria-hidden>· </span>
+            {props.summary}
+          </span>
+        )}
+      </Button>
     </div>
   );
 }

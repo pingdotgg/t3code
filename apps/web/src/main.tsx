@@ -11,16 +11,11 @@ import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
 import { whenLocaleReady } from "./i18n/runtime";
 import { chunkLoadState } from "./lib/chunkReloadGuard";
-import { timelineGapRecorderEnabled } from "./components/chat/timelineGapRecorderEnabled";
-import { startSurfaceGrainTiles } from "./surfaceGrainTile";
-
-if (timelineGapRecorderEnabled) void import("./components/chat/timelineGapConsole");
 
 const stopTrackingKeyboardLayout = trackKeyboardLayout();
 import.meta.hot?.dispose(stopTrackingKeyboardLayout);
 
 const router = startAppServices();
-startSurfaceGrainTiles();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 

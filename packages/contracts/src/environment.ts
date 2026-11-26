@@ -19,6 +19,8 @@ export const ORCHESTRATION_PROTOCOL_HEADER = "x-t3-orchestration-protocol";
 export const CLIENT_CAPABILITIES_QUERY_PARAM = "clientCapabilities";
 /** Secret fields may hold a secret provider reference instead of a string. */
 export const SETTINGS_SECRET_REFERENCES_CAPABILITY = "settingsSecretReferences";
+/** Usage limit sources may be of kind "http", not only "cliproxy". */
+export const HTTP_USAGE_LIMIT_SOURCES_CAPABILITY = "httpUsageLimitSources";
 
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",
@@ -174,10 +176,6 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   desktopAppChannelSwitch: Schema.optionalKey(Schema.Boolean),
   /** Subscribe to command output only when advertised; older servers never send it. */
   commandOutputStreaming: Schema.optionalKey(Schema.Boolean),
-  /** Server streams conversation counts while importing agent history
-      (`agentSessions.importWithProgress`). Absent on older servers, where
-      clients must use the unary `agentSessions.import`. */
-  agentSessionImportProgress: Schema.optionalKey(Schema.Boolean),
   /** Hosts headless Chromium tabs streamed over /api/preview-stream for clients without a local runtime. */
   serverBrowser: Schema.optionalKey(Schema.Boolean),
   /** Server links to other environments (`PeerLink`) and its agents can work

@@ -31,8 +31,7 @@ export const en = {
     downloadForAndroid: "Download for Android",
     sourceLink: "Steal our code (legally)",
     alsoOnPhone: "Also on your phone:",
-    screenshotAlt:
-      "T3 Code with the thread list beside an open Claude thread, whose docked details card shows its branch, changes, linked pull request with passing checks, usage limits, context, an automation and a fork",
+    screenshotAlt: "T3 Code running Claude, Codex, Muse, and Gemini subagents in one thread",
     endorsementsTitle: "Tolerated by over {users} devs",
     endorsementsSub: "Some of them even tweeted about it.",
     endorsementsLabel: "Developer endorsements",
@@ -85,7 +84,6 @@ export const en = {
     channelLabel: "Release channel",
     stable: "Stable",
     nightly: "Nightly",
-    nightlyTagline: "New changes as they land, before they reach Stable. Expect rough edges.",
     intelNote: "On an Intel Mac? {link}.",
     intelLink: "Download the x64 build",
     armNote: "On ARM? Download the arm64 {deb} or {appimage}.",

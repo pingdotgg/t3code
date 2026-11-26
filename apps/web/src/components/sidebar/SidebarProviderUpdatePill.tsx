@@ -11,20 +11,24 @@ import {
   getProviderUpdateSidebarPillView,
   type ProviderUpdateSidebarPillView,
 } from "../ProviderUpdateLaunchNotification.logic";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 // Matches the pill's `duration-180` class.
 const PROVIDER_UPDATE_PILL_EXIT_MS = 180;
 
 const PROVIDER_UPDATE_PILL_STYLES = {
-  loading: "bg-update/12 text-update-foreground",
-  success: "bg-update/12 text-update-foreground",
-  warning: "bg-warning/12 text-warning-foreground",
-  error: "bg-destructive/12 text-error-foreground",
+  loading:
+    "bg-sidebar-control-surface text-sidebar-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-sidebar-row-hover",
+  success:
+    "bg-sidebar-control-surface text-sidebar-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-sidebar-row-hover",
+  warning:
+    "bg-warning/12 text-warning group-has-[button[data-provider-update-main]:hover]/provider-update:bg-warning/18",
+  error:
+    "bg-destructive/12 text-destructive group-has-[button[data-provider-update-main]:hover]/provider-update:bg-destructive/18",
 } as const;
 
 const PROVIDER_UPDATE_PILL_PROGRESS_STYLES = {
-  success: "bg-update/14",
+  success: "bg-foreground/8",
   warning: "bg-warning/14",
   error: "bg-destructive/14",
 } as const;
@@ -145,7 +149,7 @@ export function SidebarProviderUpdatePill() {
 
   return (
     <div
-      className={`relative flex min-h-7 w-full shrink-0 items-center overflow-hidden rounded-control text-2xs leading-4 font-medium transform-gpu transition-all duration-180 ease-drawer will-change-transform ${
+      className={`group/provider-update relative flex min-h-7 w-full shrink-0 items-center overflow-hidden rounded-lg text-2xs leading-4 font-medium transform-gpu transition-all duration-180 ease-drawer will-change-transform ${
         PROVIDER_UPDATE_PILL_STYLES[displayedView.tone]
       } ${
         exitingKey === displayedView.key
@@ -157,7 +161,7 @@ export function SidebarProviderUpdatePill() {
         <div
           key={displayedView.key}
           aria-hidden="true"
-          className={`pointer-events-none absolute inset-y-0 left-0 w-full origin-left scale-x-0 transition-transform duration-(--provider-update-pill-dismiss-ms) ease-linear starting:scale-x-100 border-r border-current/15 inset-shadow-2xs inset-shadow-update/8 ${
+          className={`pointer-events-none absolute inset-y-0 left-0 w-full origin-left scale-x-0 transition-transform duration-(--provider-update-pill-dismiss-ms) ease-linear starting:scale-x-100 border-r border-current/15 inset-shadow-2xs inset-shadow-white/8 ${
             PROVIDER_UPDATE_PILL_PROGRESS_STYLES[displayedView.tone]
           }`}
           style={
@@ -167,49 +171,48 @@ export function SidebarProviderUpdatePill() {
           }
         />
       ) : null}
-      <div className="pointer-events-none absolute inset-0 rounded-control transition-colors" />
-      <Tooltip>
-        <TooltipTrigger
+      <div className="pointer-events-none absolute inset-0 rounded-lg transition-colors" />
+      <SharedTooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={displayedView.description}
+            data-provider-update-main
+            className="relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+            onClick={openProviderSettings}
+          >
+            {displayedView.tone === "loading" ? (
+              <Spinner size="sm" className="shrink-0" />
+            ) : displayedView.tone === "success" ? (
+              <CircleCheckIcon className="size-3.5 shrink-0" />
+            ) : displayedView.tone === "error" ? (
+              <TriangleAlertIcon className="size-3.5 shrink-0" />
+            ) : (
+              <DownloadIcon className="size-3.5 shrink-0" />
+            )}
+            <span className="min-w-0 wrap-break-word">{displayedView.title}</span>
+          </button>
+        }
+        label={displayedView.description}
+      />
+      {displayedView.dismissible && (
+        <SharedTooltipTrigger
           render={
             <button
               type="button"
-              aria-label={displayedView.description}
-              className="relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
-              onClick={openProviderSettings}
+              aria-label={gt("Dismiss provider update notice")}
+              className="relative z-[1] mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              onClick={() => startExit(displayedView.key, null, displayedView.dismissKeys)}
             >
-              {displayedView.tone === "loading" ? (
-                <Spinner size="sm" className="shrink-0" />
-              ) : displayedView.tone === "success" ? (
-                <CircleCheckIcon className="size-3.5 shrink-0" />
-              ) : displayedView.tone === "error" ? (
-                <TriangleAlertIcon className="size-3.5 shrink-0" />
-              ) : (
-                <DownloadIcon className="size-3.5 shrink-0" />
-              )}
-              <span className="min-w-0 wrap-break-word">{displayedView.title}</span>
+              <XIcon className="size-3.5 shrink-0" />
             </button>
           }
+          label={
+            <>
+              <T>Dismiss until provider status changes</T>
+            </>
+          }
         />
-        <TooltipPopup side="top">{displayedView.description}</TooltipPopup>
-      </Tooltip>
-      {displayedView.dismissible && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={gt("Dismiss provider update notice")}
-                className="relative z-[1] mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                onClick={() => startExit(displayedView.key, null, displayedView.dismissKeys)}
-              >
-                <XIcon className="size-3.5 shrink-0" />
-              </button>
-            }
-          />
-          <TooltipPopup side="top">
-            <T>Dismiss until provider status changes</T>
-          </TooltipPopup>
-        </Tooltip>
       )}
     </div>
   );

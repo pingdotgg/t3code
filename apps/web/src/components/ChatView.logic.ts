@@ -1,4 +1,6 @@
 import { toServerClock } from "@t3tools/client-runtime/clock";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
@@ -37,6 +39,7 @@ import {
   type ProviderInstanceId,
   type ProviderThreadId,
   type ServerProvider,
+  type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadContextRecord,
   type EnvironmentContextRecord,
@@ -80,10 +83,11 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 import {
   filterTerminalContextsWithText,
-  formatTerminalContextLabel,
+  terminalContextDisplayLabels,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import {
+  formatInlineContextReference,
   removeInlineContextReference,
   stripInlineContextReferences,
 } from "~/lib/composerContextReferences";
@@ -110,6 +114,7 @@ type ThreadProjection = EnvironmentThread["projection"];
 type ThreadStructureRow = ThreadStructure["visibleTurnItems"][number];
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
@@ -230,15 +235,6 @@ export function shouldOpenProactiveTurnDiff(input: {
     (input.previousRunningTurnId === undefined ||
       input.settledTurnId === input.previousRunningTurnId)
   );
-}
-
-export function shouldShowComposerTasks(input: {
-  steps: ReadonlyArray<{ status: string }>;
-  planRunSettled: boolean;
-  isSendBusy: boolean;
-}): boolean {
-  if (!input.planRunSettled) return true;
-  return !input.isSendBusy && input.steps.some((step) => step.status !== "completed");
 }
 
 export function resolveProactiveTurnDiffAction(input: {
@@ -422,6 +418,16 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
   return input.nextEntries;
 }
 
+export function startNewThreadForProject(
+  projectRef: ScopedProjectRef | null,
+  handleNewThread: (projectRef: ScopedProjectRef) => Promise<unknown>,
+): boolean {
+  if (projectRef === null) return false;
+  void handleNewThread(projectRef);
+
+  return true;
+}
+
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;
@@ -574,6 +580,37 @@ export function getAntigravitySendBlockReason(
     return resolve(msg("That Antigravity model is no longer available. Choose another model."));
   }
   return null;
+}
+
+export function reconcileMountedTerminalThreadIds(input: {
+  currentThreadIds: ReadonlyArray<string>;
+  openThreadIds: ReadonlyArray<string>;
+  activeThreadId: string | null;
+  activeThreadTerminalOpen: boolean;
+  maxHiddenThreadCount?: number;
+}): string[] {
+  const openThreadIdSet = new Set(input.openThreadIds);
+  const hiddenThreadIds = input.currentThreadIds.filter(
+    (threadId) => threadId !== input.activeThreadId && openThreadIdSet.has(threadId),
+  );
+  const maxHiddenThreadCount = Math.max(
+    0,
+    input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  );
+  const nextThreadIds =
+    hiddenThreadIds.length > maxHiddenThreadCount
+      ? hiddenThreadIds.slice(-maxHiddenThreadCount)
+      : hiddenThreadIds;
+
+  if (
+    input.activeThreadId &&
+    input.activeThreadTerminalOpen &&
+    !nextThreadIds.includes(input.activeThreadId)
+  ) {
+    nextThreadIds.push(input.activeThreadId);
+  }
+
+  return nextThreadIds;
 }
 
 // Null identifies the project checkout when a launch or session is known.
@@ -1110,10 +1147,6 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   );
 }
 
-export function isCoveredByModal(element: Pick<Element, "closest"> | null): boolean {
-  return element?.closest('[aria-hidden="true"]') != null;
-}
-
 // Window return puts the caret in the composer unless focus or a selection is deliberate: another
 // text field, a terminal, an open dialog, menu, or popup, a region, timeline, or sidebar row reached
 // from the keyboard, a region with its own keys (aria-keyshortcuts), or selected text the composer
@@ -1521,16 +1554,21 @@ export function optimisticMessageAttachments(
   );
 }
 
-/** Fallback title sources for a message with no text of its own. */
-export function sendTitleFallbackLabels(
+export function deriveComposerSendTitle(
   snapshot: ComposerSendSnapshot,
   resolve: MessageResolver = m,
 ) {
-  const terminalContext = snapshot.terminalContexts[0];
+  const terminalLabels = terminalContextDisplayLabels(snapshot.terminalContexts, resolve);
+  const text = replaceComposerContextReferences(snapshot.messageText, (reference) => {
+    const label = terminalLabels.get(reference.contextId);
+    return reference.kind === "terminal" && label !== undefined
+      ? formatInlineContextReference({ ...reference, label })
+      : reference.source;
+  });
   const reviewComment = snapshot.reviewComments[0];
   const previewAnnotation = snapshot.previewAnnotations[0];
-  return [
-    terminalContext ? formatTerminalContextLabel(terminalContext) : undefined,
+  const fallbackLabels = [
+    terminalLabels.values().next().value,
     reviewComment
       ? resolve(
           msg("Review: {label}", {
@@ -1541,6 +1579,10 @@ export function sendTitleFallbackLabels(
       : undefined,
     previewAnnotation ? previewAnnotationContextLabel(previewAnnotation, resolve) : undefined,
   ];
+  return deriveThreadTitleSeed(
+    { text, attachments: snapshot.attachments, fallbackLabels },
+    resolve,
+  );
 }
 
 /**

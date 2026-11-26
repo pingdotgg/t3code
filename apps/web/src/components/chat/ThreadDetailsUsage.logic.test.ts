@@ -8,7 +8,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { foldLimitRows, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import {
+  poolSources,
+  resolveThreadDetailsLimits,
+  resolveThreadHttpQuotas,
+} from "./ThreadDetailsUsage.logic";
 
 const now = Date.parse("2026-10-30T12:00:00.000Z");
 const checkedAt = "2026-10-30T11:59:00.000Z";
@@ -146,47 +150,29 @@ describe("resolveThreadDetailsLimits", () => {
   });
 });
 
-describe("foldLimitRows", () => {
-  const antigravity = ProviderDriverKind.make("antigravity");
-  const row = (
-    id: string,
-    kind: "session" | "weekly",
-    usedPercent: number,
-    driver: ProviderDriverKind = antigravity,
-  ) => ({ driver, window: { id, kind, label: id, usedPercent } });
-  const ids = (rows: ReadonlyArray<{ readonly window: { readonly id: string } }>) =>
-    rows.map((entry) => entry.window.id);
-
-  it("shows the rows of the thread's model, else the nearest per period, and never hides a low one", () => {
-    const rows = [
-      row("3p-5h", "session", 0),
-      row("gemini-5h", "session", 17),
-      row("3p-weekly", "weekly", 0),
-      row("gemini-weekly", "weekly", 6),
-    ];
-    expect(ids(foldLimitRows(rows, "gemini-4-neon").shown)).toEqual(["gemini-5h", "gemini-weekly"]);
-    expect(ids(foldLimitRows(rows, "claude-opus-5-5").hidden)).toEqual([
-      "gemini-5h",
-      "gemini-weekly",
-    ]);
-    expect(ids(foldLimitRows(rows, null).shown)).toEqual(["gemini-5h", "gemini-weekly"]);
-    const spent = [...rows.slice(0, 3), row("gemini-weekly", "weekly", 100)];
-    expect(ids(foldLimitRows(spent, "claude-opus-5-5").shown)).toEqual([
-      "3p-5h",
-      "3p-weekly",
-      "gemini-weekly",
-    ]);
-  });
-
-  it("folds a Claude weekly limit scoped to another model", () => {
-    const rows = [
-      row("five_hour", "session", 40, claude),
-      row("seven_day", "weekly", 30, claude),
-      row("seven_day_opus", "weekly", 50, claude),
-      row("seven_day_sonnet", "weekly", 10, claude),
-    ];
-    expect(ids(foldLimitRows(rows, "claude-opus-5-5").hidden)).toEqual(["seven_day_sonnet"]);
-    expect(foldLimitRows(rows.slice(0, 2), "claude-opus-5-5").hidden).toEqual([]);
-    expect(foldLimitRows(rows.slice(0, 3), "claude-opus-5-5").hidden).toEqual([]);
+describe("resolveThreadHttpQuotas", () => {
+  it("shows only the quota accounts bound to the thread's provider instance", () => {
+    const window = { id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 35 } as const;
+    const source: UsageLimitSourceSnapshot = {
+      id: UsageLimitSourceId.make("quota"),
+      kind: "http",
+      label: "Quota server",
+      checkedAt,
+      accounts: [],
+      quotaAccounts: [
+        { id: "bound", label: "Work plan", providerInstanceId: instanceId, windows: [window] },
+        { id: "unbound", label: "Unbound", windows: [window] },
+        {
+          id: "other",
+          label: "Other plan",
+          providerInstanceId: ProviderInstanceId.make("other"),
+          windows: [window],
+        },
+      ],
+    };
+    expect(
+      resolveThreadHttpQuotas(instanceId, [source]).map((quota) => quota.accountLabel),
+    ).toEqual(["Work plan"]);
+    expect(resolveThreadHttpQuotas(null, [source])).toEqual([]);
   });
 });

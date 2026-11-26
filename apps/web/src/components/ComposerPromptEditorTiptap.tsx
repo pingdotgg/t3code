@@ -20,7 +20,7 @@ import { useGT } from "gt-react";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
-  type EditorState,
+  EditorState,
   NodeSelection,
   Plugin,
   PluginKey,
@@ -139,7 +139,6 @@ import {
   ComposerContextRecordsContext,
 } from "./composerContextPresentation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
@@ -154,6 +153,7 @@ import {
   type ComposerAttachmentInsertion,
 } from "./composerAttachmentInsertion";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export interface ComposerPromptEditorHandle {
   focus: () => void;
@@ -187,7 +187,6 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
-  narrowPlaceholder?: string | undefined;
   /** Rendered after the placeholder text, such as a key hint. */
   placeholderSuffix?: ReactNode;
   ariaLabel?: string | undefined;
@@ -268,9 +267,6 @@ function resolvedThemeFromDocument(): "light" | "dark" {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
-// The editor and its placeholder share one text box, so accepted text lands on the placeholder's pixels.
-const COMPOSER_TEXT_CLASS_NAME = "composer-text -m-1 p-1";
-
 const CHIP_NODE_SELECTION_CLASS_NAME =
   "relative inline-flex min-w-0 max-w-full select-none items-baseline data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
@@ -327,16 +323,19 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
   );
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
-      <Tooltip>
-        <TooltipTrigger render={chip} />
-        <TooltipPopup side="top" className="pointer-events-auto">
-          <WorkspaceEntryTooltip
-            path={path}
-            environmentId={actions.environmentId}
-            cwd={actions.cwd}
-          />
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={chip}
+        label={
+          <>
+            <WorkspaceEntryTooltip
+              path={path}
+              environmentId={actions.environmentId}
+              cwd={actions.cwd}
+            />
+          </>
+        }
+        className="pointer-events-auto"
+      />
     </NodeViewWrapper>
   );
 }
@@ -467,6 +466,21 @@ const ComposerCitationExtension = Node.create({
   addNodeView() {
     return ReactNodeViewRenderer(ComposerCitationNodeView);
   },
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          handleDOMEvents: {
+            // Tiptap hands a mousedown on the source link to ProseMirror, which would select the
+            // chip, so the next keystroke would replace the citation.
+            mousedown: (_view, event) =>
+              event.target instanceof Element &&
+              event.target.closest("[data-composer-citation-chip] a[href]") !== null,
+          },
+        },
+      }),
+    ];
+  },
 });
 
 function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
@@ -525,12 +539,15 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       if (sent) editor.view.focus();
       return;
     }
+    // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
+    // Mid-text, skipping the space would glue them to the next word instead.
+    const end = pos + current.nodeSize;
+    const { doc } = editor.state;
+    const trailingSpace =
+      doc.textBetween(end, end + 1) === " " && doc.resolve(end).end() === end + 1;
+    const caret = trailingSpace ? end + 1 : end;
     // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
-    editor
-      .chain()
-      .setMeta(SILENT_SELECTION_META, sent)
-      .focus(pos + current.nodeSize)
-      .run();
+    editor.chain().setMeta(SILENT_SELECTION_META, sent).focus(caret).run();
   };
 
   return (
@@ -830,11 +847,12 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
     setSelection({ value, cursor, expandedCursor });
     onPromptChange(value, cursor, expandedCursor, ...rest);
   };
-  // Changing text mode remounts the editor. Its collapsed cursor cannot represent
-  // a caret inside unknown `$name` text, so retain the exact Markdown offset here.
+  // Changing text mode remounts the editor; switching drafts reuses it (see the controlled-value
+  // effect). Its collapsed cursor cannot represent a caret inside unknown `$name` text, so retain
+  // the exact Markdown offset here.
   return (
     <ComposerPromptEditorTiptapInner
-      key={`${props.draftKey ?? ""}:${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}`}
+      key={props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}
       {...props}
       restoreFocusRef={restoreFocusRef}
       initialExpandedCursor={
@@ -992,7 +1010,6 @@ function ComposerPromptEditorTiptapInner(
     skills,
     disabled,
     placeholder,
-    narrowPlaceholder,
     ariaLabel,
     suggestionListId,
     activeSuggestionId,
@@ -1057,6 +1074,14 @@ function ComposerPromptEditorTiptapInner(
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
+  const draftKey = props.draftKey ?? "";
+  const [renderedDraftKey, setRenderedDraftKey] = useState(draftKey);
+  if (renderedDraftKey !== draftKey) {
+    setRenderedDraftKey(draftKey);
+    setOpenCitation(null);
+    setIsEmpty(value.length === 0);
+  }
+  const appliedDraftKeyRef = useRef(draftKey);
 
   const citationCommentActions = {
     openComment: openCitation,
@@ -1141,8 +1166,7 @@ function ComposerPromptEditorTiptapInner(
 
   const editorAttributes = {
     class: cn(
-      "composer-tiptap block max-h-42 min-h-5 overflow-y-auto bg-transparent text-foreground focus:outline-none",
-      COMPOSER_TEXT_CLASS_NAME,
+      "composer-tiptap -m-1 block max-h-52 min-h-[calc(2lh+--spacing(2))] overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
       className,
     ),
     "data-testid": "composer-editor",
@@ -1550,10 +1574,12 @@ function ComposerPromptEditorTiptapInner(
             return true;
           });
           if (touchesSpecial) return false;
-          const map = serializeEditorDoc(view.state.doc);
-          const startMd = flatToMarkdown(map, pmToFlat(map, from));
-          const endMd = flatToMarkdown(map, pmToFlat(map, to));
-          if (selectionTouchesMentionBoundary(map.value, startMd, endMd)) return false;
+          if (!selectionInOneCodeBlock(view.state)) {
+            const map = serializeEditorDoc(view.state.doc);
+            const startMd = flatToMarkdown(map, pmToFlat(map, from));
+            const endMd = flatToMarkdown(map, pmToFlat(map, to));
+            if (selectionTouchesMentionBoundary(map.value, startMd, endMd)) return false;
+          }
           const markTr = surroundSelectionWithMark(view.state, from, to, text);
           if (markTr) {
             view.dispatch(markTr);
@@ -1660,7 +1686,7 @@ function ComposerPromptEditorTiptapInner(
   // Push attributes before layout measurements; Tiptap updates them later in a passive effect.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes DOM attributes into the ProseMirror view before layout measurements read them
   useLayoutEffect(() => {
-    if (!editor?.isInitialized || editor.isDestroyed) return;
+    if (!editor?.isInitialized) return;
     editor.view.setProps({ attributes: editorAttributes });
   }, [editor, editorAttributes]);
 
@@ -1719,97 +1745,104 @@ function ComposerPromptEditorTiptapInner(
 
   // The one place the controlled value reaches the editor. Imperative handlers compare against
   // the committed value, so it is recorded here even before the editor exists.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the controlled Tiptap document before paint, outside React's commit
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the controlled value and cursor into the Tiptap document before paint
   useLayoutEffect(() => {
     latestValueRef.current = value;
-    if (!editor || editor.isDestroyed) return;
-    // Tiptap mounts React node views with flushSync; leave React's commit before updating them.
-    let active = true;
-    const applyControlledUpdate = () => {
-      if (!active || editor.isDestroyed) return;
-      const initialSelection = !hasAppliedControlledSelectionRef.current;
-      hasAppliedControlledSelectionRef.current = true;
-      const normalizedCursor = clampEditorCursor(value, cursor);
-      const previousSnapshot = snapshotRef.current;
-      if (
-        !initialSelection &&
-        previousSnapshot.value === value &&
-        previousSnapshot.cursor === normalizedCursor
-      ) {
-        return;
-      }
-      const normalizedExpandedCursor = initialSelection
-        ? initialExpandedCursor
-        : expandEditorCursor(value, normalizedCursor);
-      snapshotRef.current = {
-        value,
-        cursor: normalizedCursor,
-        expandedCursor: normalizedExpandedCursor,
-        contextIds: collectInlineContextIds(value),
-      };
-      selectionRangeRef.current = {
-        start: normalizedExpandedCursor,
-        end: normalizedExpandedCursor,
-      };
-      setIsEmpty(value.length === 0);
-      const rootElement = editor.view.dom;
-      const isFocused = Boolean(rootElement && document.activeElement === rootElement);
-      if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
+    if (!editor) return;
+    // Switching threads swaps the draft in this same editor, which is far cheaper than rebuilding
+    // it. A fresh state keeps undo from reaching back into the previous thread's draft.
+    const draftChanged = appliedDraftKeyRef.current !== draftKey;
+    appliedDraftKeyRef.current = draftKey;
+    const initialSelection = !hasAppliedControlledSelectionRef.current || draftChanged;
+    hasAppliedControlledSelectionRef.current = true;
+    const normalizedCursor = clampEditorCursor(value, cursor);
+    const previousSnapshot = snapshotRef.current;
+    if (
+      !initialSelection &&
+      previousSnapshot.value === value &&
+      previousSnapshot.cursor === normalizedCursor
+    ) {
+      return;
+    }
+    const normalizedExpandedCursor = initialSelection
+      ? initialExpandedCursor
+      : expandEditorCursor(value, normalizedCursor);
+    snapshotRef.current = {
+      value,
+      cursor: normalizedCursor,
+      expandedCursor: normalizedExpandedCursor,
+      contextIds: collectInlineContextIds(value),
+    };
+    selectionRangeRef.current = {
+      start: normalizedExpandedCursor,
+      end: normalizedExpandedCursor,
+    };
+    setIsEmpty(value.length === 0);
+    const rootElement = editor.view.dom;
+    const isFocused = Boolean(rootElement && document.activeElement === rootElement);
+    if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
 
-      isApplyingControlledUpdateRef.current = true;
-      const pendingCitation =
-        citationRequestRef.current?.value === value ? citationRequestRef.current : null;
-      if (previousSnapshot.value !== value) {
-        saveCitationDraft(editor, previousSnapshot.value);
-        editor.commands.setContent(
-          buildDocJson(value, skillLabelFor, { styling: richText, literalText, isKnownModel }),
-          {
-            emitUpdate: false,
-          },
-        );
-      }
-      selectMarkdownOffset(editor, value, normalizedExpandedCursor);
-      const map = serializeEditorDoc(editor.state.doc);
-      if (isFocused) scrollTiptapCaretIntoView(editor);
-      // A redraw later in this commit drops the editor's scroll offset, so reveal on the next frame.
-      else if (initialSelection) {
-        window.requestAnimationFrame(() => {
-          if (!editor.isDestroyed) revealCaretInEditor(editor);
-        });
-      }
-      if (pendingCitation) {
-        citationRequestRef.current = null;
-        const target = map.runs.find(
-          (run) =>
-            run.kind === "token" &&
-            run.nodeName === "composer-citation" &&
-            run.mdStart === pendingCitation.citationStart,
-        );
-        if (target) {
-          const node = editor.state.doc.nodeAt(target.pmPos);
-          const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
-          if (citeKey) {
-            setOpenCitation({
-              key: citeKey,
-              sourceAnchor: pendingCitation.sourceAnchor,
-              removeOnCancel: pendingCitation.insertedSpaces,
-            });
-          }
+    isApplyingControlledUpdateRef.current = true;
+    const pendingCitation =
+      !draftChanged && citationRequestRef.current?.value === value
+        ? citationRequestRef.current
+        : null;
+    if (draftChanged) {
+      citationRequestRef.current = null;
+      citationDraftRef.current = null;
+      editor.view.updateState(
+        EditorState.create({
+          doc: editor.schema.nodeFromJSON(
+            buildDocJson(value, skillLabelFor, { styling: richText, literalText, isKnownModel }),
+          ),
+          plugins: editor.state.plugins,
+        }),
+      );
+    } else if (previousSnapshot.value !== value) {
+      saveCitationDraft(editor, previousSnapshot.value);
+      editor.commands.setContent(
+        buildDocJson(value, skillLabelFor, { styling: richText, literalText, isKnownModel }),
+        {
+          emitUpdate: false,
+        },
+      );
+    }
+    selectMarkdownOffset(editor, value, normalizedExpandedCursor);
+    const map = serializeEditorDoc(editor.state.doc);
+    if (isFocused) scrollTiptapCaretIntoView(editor);
+    // A redraw later in this commit drops the editor's scroll offset, so reveal on the next frame.
+    else if (initialSelection) {
+      window.requestAnimationFrame(() => {
+        if (!editor.isDestroyed) revealCaretInEditor(editor);
+      });
+    }
+    if (pendingCitation) {
+      citationRequestRef.current = null;
+      const target = map.runs.find(
+        (run) =>
+          run.kind === "token" &&
+          run.nodeName === "composer-citation" &&
+          run.mdStart === pendingCitation.citationStart,
+      );
+      if (target) {
+        const node = editor.state.doc.nodeAt(target.pmPos);
+        const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
+        if (citeKey) {
+          setOpenCitation({
+            key: citeKey,
+            sourceAnchor: pendingCitation.sourceAnchor,
+            removeOnCancel: pendingCitation.insertedSpaces,
+          });
         }
       }
-      queueMicrotask(() => {
-        isApplyingControlledUpdateRef.current = false;
-      });
-    };
-    // Cursor-only updates must precede focus restoration on a rich/plain remount.
-    if (snapshotRef.current.value === value) applyControlledUpdate();
-    else queueMicrotask(applyControlledUpdate);
-    return () => {
-      active = false;
-    };
+    }
+    queueMicrotask(() => {
+      isApplyingControlledUpdateRef.current = false;
+    });
   }, [
     clampEditorCursor,
     cursor,
+    draftKey,
     editor,
     expandEditorCursor,
     initialExpandedCursor,
@@ -1834,46 +1867,20 @@ function ComposerPromptEditorTiptapInner(
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the mounted editor's visible text anchored while its DOM width changes
   useLayoutEffect(() => {
-    if (!editor || editor.isDestroyed) return;
-    let stop: (() => void) | undefined;
-    const detach = () => {
-      stop?.();
-      stop = undefined;
-    };
-    const attach = () => {
-      detach();
-      if (editor.isDestroyed) return;
-      // An <Activity> reappear can fire layout effects before EditorContent mounts the ProseMirror view.
-      let dom: HTMLElement;
-      try {
-        dom = editor.view.dom;
-      } catch {
-        return;
-      }
-      stop = preserveReadingPosition(dom);
-    };
-    attach();
-    editor.on("mount", attach);
-    editor.on("unmount", detach);
-    return () => {
-      editor.off("mount", attach);
-      editor.off("unmount", detach);
-      detach();
-    };
+    if (editor) return preserveReadingPosition(editor.view.dom);
   }, [editor]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores ProseMirror focus and caret scroll when the keyed editor remounts, capturing focus on teardown
   useLayoutEffect(() => {
     if (!editor) return;
-    if (restoreFocusRef.current && !editor.isDestroyed) {
+    if (restoreFocusRef.current) {
       restoreFocusRef.current = false;
       editor.view.focus();
       scrollTiptapCaretIntoView(editor);
     }
     return () => {
-      // Capture focus before the keyed editor's DOM is removed. A pane move can unmount
-      // the view first; reading it then throws.
-      restoreFocusRef.current = !editor.isDestroyed && editor.view.hasFocus();
+      // Capture focus before the keyed editor's DOM is removed.
+      restoreFocusRef.current = editor.view.hasFocus();
     };
   }, [editor, restoreFocusRef]);
 
@@ -2024,15 +2031,14 @@ function ComposerPromptEditorTiptapInner(
       <ComposerContextRecordsContext value={contextRecords}>
         <ComposerCitationCommentContext value={citationCommentActions}>
           <div
-            data-composer-empty={value.length === 0}
             className={cn(
-              "relative grid grid-cols-1 font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
+              "relative grid grid-cols-[minmax(0,1fr)] font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
               containerClassName,
             )}
           >
             <EditorContent
               editor={editor}
-              className="[grid-area:1/1]"
+              className="col-start-1 row-start-1"
               onKeyDown={(event) => {
                 if (
                   event.key === "Control" ||
@@ -2076,34 +2082,13 @@ function ComposerPromptEditorTiptapInner(
             />
             {isEmpty && contextRecords.size === 0 && placeholder ? (
               <div
-                data-composer-placeholder=""
                 className={cn(
-                  "pointer-events-none relative text-placeholder [grid-area:1/1]",
-                  COMPOSER_TEXT_CLASS_NAME,
+                  "pointer-events-none relative col-start-1 row-start-1 leading-relaxed text-placeholder",
+                  placeholderClassName,
                 )}
               >
-                <div className={placeholderClassName}>
-                  {narrowPlaceholder ? (
-                    <>
-                      <span className="@max-[440px]/composer-surface:hidden">{placeholder}</span>
-                      <span className="hidden @max-[440px]/composer-surface:inline">
-                        {narrowPlaceholder}
-                      </span>
-                    </>
-                  ) : (
-                    placeholder
-                  )}
-                  {placeholderSuffix ? (
-                    // No width and one top-aligned line tall: a suffix can neither wrap onto a line of
-                    // its own nor push the baseline, so accepted text keeps the placeholder's layout.
-                    <span
-                      data-composer-placeholder-suffix=""
-                      className="inline-flex h-lh w-0 items-center align-top whitespace-nowrap"
-                    >
-                      {placeholderSuffix}
-                    </span>
-                  ) : null}
-                </div>
+                {placeholder}
+                {placeholderSuffix}
               </div>
             ) : null}
           </div>

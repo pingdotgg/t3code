@@ -1,13 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
-import {
-  ChevronDownIcon,
-  PlusIcon,
-  RotateCcwIcon,
-  ServerIcon,
-  Undo2Icon,
-  XIcon,
-} from "lucide-react";
+import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useRef, useState } from "react";
@@ -328,20 +321,14 @@ export function UsagePriceOverrides({
               </Label>
               <Menu>
                 <MenuTrigger
-                  render={
-                    <Button variant="secondary" size="sm" className="w-50 max-w-full min-w-0" />
-                  }
+                  render={<Button variant="outline" size="sm" className="min-w-0" />}
                   aria-labelledby="usage-prices-apply-label usage-prices-selection"
                   disabled={pending || hasChanges}
                 >
-                  <ServerIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                  <span id="usage-prices-selection" className="min-w-0 flex-1 truncate text-start">
+                  <span id="usage-prices-selection" className="truncate">
                     {selectionLabel}
                   </span>
-                  <ChevronDownIcon
-                    className="size-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
+                  <ChevronDownIcon className="size-3.5 shrink-0" aria-hidden />
                 </MenuTrigger>
                 <MenuPopup align="start">
                   <MenuCheckboxItem
@@ -470,8 +457,8 @@ export function UsagePriceOverrides({
                               ) : (
                                 <span
                                   className={cn(
-                                    "block font-mono break-all",
-                                    row.removed && "text-dim-foreground",
+                                    "block break-all",
+                                    row.removed && "text-muted-foreground line-through",
                                   )}
                                 >
                                   {row.model}
@@ -579,8 +566,6 @@ export function UsagePriceOverrides({
                                 >
                                   {row.isNew ? (
                                     <XIcon aria-hidden />
-                                  ) : row.removed ? (
-                                    <Undo2Icon aria-hidden />
                                   ) : (
                                     <RotateCcwIcon aria-hidden />
                                   )}
@@ -643,16 +628,11 @@ export function UsagePriceOverrides({
                           : "text-muted-foreground"
                       }
                     >
-                      {result?.status === "failed" ? (
-                        <>
-                          <span className="block">{gt("Not saved")}</span>
-                          <span className="block">{result.error}</span>
-                        </>
-                      ) : result?.status === "saved" ? (
-                        gt("Saved")
-                      ) : (
-                        gt("Saving…")
-                      )}
+                      {result?.status === "failed"
+                        ? gt("Not saved · {error}", { error: result.error })
+                        : result?.status === "saved"
+                          ? gt("Saved")
+                          : gt("Saving…")}
                     </span>
                   </div>
                 );
@@ -668,7 +648,7 @@ export function UsagePriceOverrides({
           </span>
           <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto">
             {hasChanges ? (
-              <Button variant="secondary" disabled={pending} onClick={discard}>
+              <Button variant="ghost" disabled={pending} onClick={discard}>
                 {failedDestinations.length > 0
                   ? gt("Discard pending changes")
                   : gt("Discard changes")}

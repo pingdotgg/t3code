@@ -2,7 +2,7 @@ import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../../test/render";
-import { WorktreeSetupRows } from "./WorktreeSetupCard";
+import { WorktreeSetupCard } from "./WorktreeSetupCard";
 
 const NOW = new Date("2026-10-26T12:00:10.000Z");
 
@@ -42,47 +42,37 @@ function snapshot(overrides: Partial<WorktreeSetupSnapshot>): WorktreeSetupSnaps
   };
 }
 
-const rows = (value: WorktreeSetupSnapshot) => (
-  <WorktreeSetupRows snapshot={value} onOpenTerminal={null} />
+const card = (value: WorktreeSetupSnapshot) => (
+  <WorktreeSetupCard snapshot={value} onCancel={null} onWorkLocally={null} onOpenTerminal={null} />
 );
 
-it("ticks the running stage duration", async () => {
+it("ticks the running stage while finished stages keep their duration", async () => {
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
-  await using screen = await render(rows(snapshot({})));
+  await using screen = await render(card(snapshot({})));
   // Assert synchronously: expect.element polls on timers these tests fake.
-  const checkout = screen
-    .getByRole("region", { name: "Worktree setup" })
-    .element()
-    .querySelector('[data-worktree-setup-stage="checkout"]');
-
-  expect(checkout?.textContent).toContain("Checking out t3/feature");
-  expect(checkout?.textContent).toContain("7s");
-
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
-  });
-  expect(checkout?.textContent).toContain("12s");
-});
-
-it("keeps the finished setup duration at its end", async () => {
-  using _timers = fakeTimers();
-  vi.setSystemTime(NOW);
-  const done = snapshot({
-    phase: "done",
-    endedAt: "2026-10-26T12:00:05.000Z",
-    stages: snapshot({}).stages.map((stage) => ({
-      ...stage,
-      status: "done",
-      endedAt: stage.endedAt ?? "2026-10-26T12:00:05.000Z",
-    })),
-  });
-  await using screen = await render(rows(done));
   const section = screen.getByRole("region", { name: "Worktree setup" });
 
-  expect(section.element().textContent).toContain("Set up worktree t3/feature5s");
+  expect(section.element().textContent).toContain("Fetch base branch3s");
+  expect(section.element().textContent).toContain("Check out files7s");
+
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5_000);
   });
-  expect(section.element().textContent).toContain("Set up worktree t3/feature5s");
+  expect(section.element().textContent).toContain("Fetch base branch3s");
+  expect(section.element().textContent).toContain("Check out files12s");
+});
+
+it("stops a stage interrupted by the setup ending at the setup's end", async () => {
+  using _timers = fakeTimers();
+  vi.setSystemTime(NOW);
+  const failed = snapshot({ phase: "failed", endedAt: "2026-10-26T12:00:05.000Z" });
+  await using screen = await render(card(failed));
+  const section = screen.getByRole("region", { name: "Worktree setup" });
+
+  expect(section.element().textContent).toContain("Check out files2s");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+  expect(section.element().textContent).toContain("Check out files2s");
 });

@@ -64,13 +64,12 @@ import {
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
-import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
-import { RELAXED_PICKER_CLASS } from "../ui/picker-styles";
 import { Badge } from "../ui/badge";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
@@ -175,8 +174,7 @@ function adjacentModelPickerProvider(input: {
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 const MODEL_LIST_ESTIMATED_ITEM_SIZE = 32;
 // Rendered heights in `--spacing` units. Chrome is the search box and list padding, plus a 1px border.
-const ONE_LINE_ROW_UNITS = 8;
-const TWO_LINE_ROW_UNITS = 11.25;
+const ROW_UNITS = 8;
 const ROW_SEPARATOR_UNITS = 0.5;
 const LIST_CHROME_UNITS = 15.5;
 
@@ -227,7 +225,7 @@ function ModelPickerProviderNotices({
   return (
     <>
       {setupEntries.length > 0 ? (
-        <div className="max-h-44 shrink-0 overflow-y-auto border-t border-border p-2">
+        <div className="max-h-44 shrink-0 overflow-y-auto border-t border-border/70 p-2">
           {setupEntries.map((entry) => (
             <div key={entry.instanceId} className="px-1 py-1.5 text-xs leading-snug">
               <p className="line-clamp-3 text-muted-foreground">
@@ -253,7 +251,7 @@ function ModelPickerProviderNotices({
       {updateRequiredNotices.map(({ instanceId, notice, canUpdateInSettings }) => (
         <p
           key={instanceId}
-          className="shrink-0 border-t border-border/70 px-3 py-2 text-caption text-muted-foreground"
+          className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
         >
           {notice}
           {canUpdateInSettings ? (
@@ -642,33 +640,30 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
   const isLocked = lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
-  // Inside one provider's tab the provider line repeats the selected rail icon on every row.
-  const rowsMixProviders = isSearching || selectedInstanceId === "favorites";
   // Fit the tallest tab so switching tabs never resizes the popup and moves the rail under the cursor.
   const tallestTabUnits = (() => {
     const unitsByTab = new Map<ProviderInstanceId | "favorites", number>();
-    const addRow = (tab: ProviderInstanceId | "favorites", twoLine: boolean) => {
-      const rowUnits = twoLine ? TWO_LINE_ROW_UNITS : ONE_LINE_ROW_UNITS;
+    const addRow = (tab: ProviderInstanceId | "favorites") => {
       const previous = unitsByTab.get(tab);
       unitsByTab.set(
         tab,
-        previous === undefined ? rowUnits : previous + ROW_SEPARATOR_UNITS + rowUnits,
+        previous === undefined ? ROW_UNITS : previous + ROW_SEPARATOR_UNITS + ROW_UNITS,
       );
     };
     const tabsWithLegacyRow = new Set<ProviderInstanceId>();
     for (const model of flatModels) {
       if (!matchesLockedProvider(model)) continue;
       const isFavorite = favoritesSet.has(providerModelKey(model.instanceId, model.slug));
-      if (isFavorite) addRow("favorites", true);
+      if (isFavorite) addRow("favorites");
       if (model.isLegacy && !isFavorite) {
         tabsWithLegacyRow.add(model.instanceId);
       } else {
-        addRow(model.instanceId, Boolean(model.subProvider));
+        addRow(model.instanceId);
       }
     }
-    for (const instanceId of tabsWithLegacyRow) addRow(instanceId, true);
+    for (const instanceId of tabsWithLegacyRow) addRow(instanceId);
     for (const [instanceId, subProviders] of subProvidersByInstance) {
-      for (const _subProvider of subProviders) addRow(instanceId, true);
+      for (const _subProvider of subProviders) addRow(instanceId);
     }
     return Math.max(0, ...unitsByTab.values());
   })();
@@ -890,7 +885,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     keybindings,
     props.terminalOpen,
   );
+  const badgedInstanceIds = new Set(
+    instanceEntries
+      .filter((entry) => shouldShowInstanceBadge(entry, instanceEntries))
+      .map((entry) => entry.instanceId),
+  );
   const modelListExtraData = {
+    badgedInstanceIds,
     favoritesSet,
     modelJumpLabelByKey,
     activeModelKey,
@@ -954,13 +955,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   };
 
   return (
-    <TooltipProvider delay={0}>
+    <>
       <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
       <div
         ref={pickerContentRef}
         className={cn(
           "relative flex w-screen max-w-90 flex-row overflow-hidden",
-          RELAXED_PICKER_CLASS,
           props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
         )}
         // Docked, the popup sets the height; a minimum here would overflow short windows.
@@ -1044,13 +1044,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         >
           <div
             className={cn(
-              "flex min-h-0 flex-1 flex-col overflow-hidden",
-              showSidebar && "border-l border-transparent",
+              "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
+              showSidebar && "border-l border-border/70",
             )}
           >
             <ComboboxSearchInput
-              variant="inset"
-              separator={false}
               ref={searchInputRef}
               placeholder={gt("Search models...")}
               value={searchQuery}
@@ -1156,7 +1154,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       aria-expanded={legacySection.isExpanded}
                       className="group w-full cursor-pointer"
                     >
-                      <span className="text-label leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
+                      <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
                         {legacySection.isExpanded
                           ? gt("Show less", { $context: "collapses the list of older models" })
                           : gt("Show more", { $context: "expands the list of older models" })}
@@ -1178,7 +1176,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     >
                       <div className="min-w-0 flex-1 text-left">
                         <div className="flex min-w-0 items-center gap-2">
-                          <div className="min-w-0 truncate text-label text-foreground">
+                          <div className="min-w-0 truncate text-sm font-normal leading-snug">
                             {subProviderSection.name}
                           </div>
                           {unavailable ? (
@@ -1187,7 +1185,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                             </Badge>
                           ) : null}
                         </div>
-                        <div className="mt-1 text-meta text-muted-foreground">
+                        <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground">
                           {subProviderSection.unavailableReason ??
                             gt("{count, plural, one {{count} model} other {{count} models}}", {
                               count: subProviderSection.models.length,
@@ -1230,7 +1228,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         ? selectedModelKeySet.has(modelKey)
                         : modelKey === activeModelKey
                     }
-                    showProvider={rowsMixProviders || Boolean(model.subProvider)}
+                    favoriteStarOnHover={selectedInstanceId === "favorites" && !isSearching}
+                    showInstanceBadge={badgedInstanceIds.has(model.instanceId)}
                     showNewBadge={model.badge === "new"}
                     unavailable={model.isUnavailable === true}
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
@@ -1257,6 +1256,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           </div>
         </Combobox>
       </div>
-    </TooltipProvider>
+    </>
   );
 });

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 
 const COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS = 50;
 const COMPOSER_RESTING_TRANSITION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
+const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
 
 export function useComposerRestingTransition(
   isCollapsed: boolean,
@@ -54,10 +55,17 @@ export function useComposerRestingTransition(
 
   const clearTransitionStyles = () => {
     const element = elementRef.current;
+    const footer = element?.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
     element?.style.removeProperty("overflow");
     element
       ?.querySelector<HTMLElement>('[data-chat-composer-surface="true"]')
       ?.style.removeProperty("height");
+    footer?.style.removeProperty("position");
+    footer?.style.removeProperty("top");
+    footer?.style.removeProperty("bottom");
+    footer?.style.removeProperty("left");
+    footer?.style.removeProperty("right");
+    footer?.style.removeProperty("height");
     clearOverlayPin();
   };
 
@@ -81,7 +89,11 @@ export function useComposerRestingTransition(
       '[data-composer-prompt-surface="true"], [data-chat-composer-transition-prompt="true"]',
     );
     const action = visibleTransitionElement('[data-chat-composer-transition-actions="true"]');
-    const controls = nextIsCollapsed ? restingControlsRef.current : null;
+    const footer = element.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
+    const continuousControls = element.dataset.inlineRestingControls === "true";
+    const controls = nextIsCollapsed
+      ? restingControlsRef.current
+      : element.querySelector<HTMLElement>('[data-chat-composer-controls="footer"]');
 
     const interruptedAnimation = animationRef.current;
     const interruptedPromptTop = interruptedAnimation
@@ -134,6 +146,7 @@ export function useComposerRestingTransition(
     const nextActionTop = action?.getBoundingClientRect().top ?? null;
     const nextControlsRect = controls?.getBoundingClientRect() ?? null;
     const nextControlsTop = nextControlsRect?.top ?? null;
+    const footerBottom = footer ? nextRect.bottom - footer.getBoundingClientRect().bottom : 1;
     const previousHeight = interruptedHeight ?? previousHeightRef.current;
     const targetChanged =
       interruptedTargetHeight === null || Math.abs(interruptedTargetHeight - nextHeight) >= 0.5;
@@ -164,6 +177,20 @@ export function useComposerRestingTransition(
         overlay.style.flexDirection = "column";
         overlay.style.justifyContent = "flex-end";
         pinnedOverlayRef.current = overlay;
+      }
+
+      if (footer) {
+        footer.style.position = "absolute";
+        footer.style.top = "auto";
+        footer.style.bottom = `${String(footerBottom)}px`;
+        footer.style.height = "3rem";
+        if (nextIsCollapsed) {
+          footer.style.left = "auto";
+          footer.style.right = "1px";
+        } else {
+          footer.style.left = "1px";
+          footer.style.right = "1px";
+        }
       }
 
       const animation = element.animate(
@@ -216,17 +243,19 @@ export function useComposerRestingTransition(
       };
       animateContentPosition(prompt, previousPromptTop);
       animateContentPosition(action, previousActionTop);
-      const previousControlsTop =
-        interruptedControlsTop ??
-        (previousContentOffsetsRef.current.controlsFromBottom === null
-          ? null
-          : previousBottom - previousContentOffsetsRef.current.controlsFromBottom);
-      const previousControlsLeft =
-        interruptedControlsLeft ??
-        (previousContentOffsetsRef.current.controlsFromLeft === null
-          ? null
-          : animatedRect.left + previousContentOffsetsRef.current.controlsFromLeft);
-      animateContentPosition(controls, previousControlsTop, previousControlsLeft);
+      if (continuousControls) {
+        const previousControlsTop =
+          interruptedControlsTop ??
+          (previousContentOffsetsRef.current.controlsFromBottom === null
+            ? null
+            : previousBottom - previousContentOffsetsRef.current.controlsFromBottom);
+        const previousControlsLeft =
+          interruptedControlsLeft ??
+          (previousContentOffsetsRef.current.controlsFromLeft === null
+            ? null
+            : animatedRect.left + previousContentOffsetsRef.current.controlsFromLeft);
+        animateContentPosition(controls, previousControlsTop, previousControlsLeft);
+      }
       contentAnimationsRef.current = contentAnimations;
 
       if (stateChanged) {
@@ -249,6 +278,29 @@ export function useComposerRestingTransition(
               ],
               {
                 duration,
+                easing: COMPOSER_RESTING_TRANSITION_EASING,
+              },
+            ),
+          );
+        }
+
+        const arrivingControls = nextIsCollapsed
+          ? restingControlsRef.current
+          : element.querySelector<HTMLElement>('[data-chat-composer-controls="footer"]');
+        if (arrivingControls && !continuousControls) {
+          const drift = nextIsCollapsed
+            ? -COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX
+            : COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX;
+          stateChangeAnimations.push(
+            arrivingControls.animate(
+              [
+                { opacity: 0, transform: `translateY(${String(drift)}px)` },
+                { opacity: 1, transform: "none" },
+              ],
+              {
+                duration: nextIsCollapsed ? duration : duration / 2,
+                delay: nextIsCollapsed ? 0 : duration / 2,
+                fill: "backwards",
                 easing: COMPOSER_RESTING_TRANSITION_EASING,
               },
             ),
@@ -365,7 +417,9 @@ export function useComposerRestingTransition(
         '[data-chat-composer-transition-actions="true"]',
       )?.getBoundingClientRect().top;
       const controlsRect = (
-        isCollapsedRef.current ? restingControlsRef.current : null
+        isCollapsedRef.current
+          ? restingControlsRef.current
+          : visibleTransitionElement('[data-chat-composer-controls="footer"]')
       )?.getBoundingClientRect();
       previousHeightRef.current = elementRect.height;
       previousContentOffsetsRef.current = {

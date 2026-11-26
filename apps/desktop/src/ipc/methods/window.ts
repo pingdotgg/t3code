@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   ContextMenuSource,
   DesktopAppBrandingSchema,
+  DatabaseMigrationProgress,
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
   DesktopThemeSchema,
@@ -24,6 +25,8 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Ref from "effect/Ref";
+import * as DesktopState from "../../app/DesktopState.ts";
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
@@ -72,6 +75,16 @@ function toWebSocketBaseUrl(httpBaseUrl: URL): string {
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.href;
 }
+
+export const getDatabaseMigrationProgress = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.GET_DATABASE_MIGRATION_PROGRESS_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(DatabaseMigrationProgress),
+  handler: Effect.fn("desktop.ipc.window.getDatabaseMigrationProgress")(function* () {
+    const state = yield* DesktopState.DesktopState;
+    return yield* Ref.get(state.databaseMigrationProgress);
+  }),
+});
 
 export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_APP_BRANDING_CHANNEL,
@@ -145,22 +158,6 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
     return Option.isSome(window) && window.value.isFullScreen();
-  }),
-});
-
-// macOS traffic lights. The renderer hides them while the sidebar is collapsed
-// when the user opts in; other platforms keep their caption buttons.
-export const setWindowButtonsVisible = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.SET_WINDOW_BUTTONS_VISIBLE_CHANNEL,
-  payload: Schema.Boolean,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.setWindowButtonsVisible")(function* (visible, event) {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    if (environment.platform !== "darwin" || event === undefined) return;
-    const contents = Electron.webContents.fromId(event.sender.id);
-    const window = contents ? Electron.BrowserWindow.fromWebContents(contents) : null;
-    if (!window || window.isDestroyed()) return;
-    window.setWindowButtonVisibility(visible);
   }),
 });
 
@@ -352,16 +349,6 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
-  }),
-});
-
-export const setBlackChrome = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.SET_BLACK_CHROME_CHANNEL,
-  payload: Schema.Boolean,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.setBlackChrome")(function* (enabled) {
-    const electronTheme = yield* ElectronTheme.ElectronTheme;
-    yield* electronTheme.setBlackChrome(enabled);
   }),
 });
 

@@ -9,7 +9,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { StatusDot } from "../ui/status-dot";
+import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettings } from "./useScopedSettings";
 import { SettingsSection } from "./settingsLayout";
@@ -70,30 +70,30 @@ function endpointStatus(
   if (url === "") {
     return {
       label: resolve(msg("Off", { $context: "export disabled" })),
-      tone: "neutral",
-    } as const;
+      dot: "bg-muted-foreground/40",
+    };
   }
-  if (check?.url !== url) return { label: resolve(msg("Not checked")), tone: "neutral" } as const;
+  if (check?.url !== url) {
+    return { label: resolve(msg("Not checked")), dot: "bg-muted-foreground/40" };
+  }
   const { result } = check;
-  if (result === null) return { label: resolve(msg("Checking…")), tone: "warning" } as const;
+  if (result === null) return { label: resolve(msg("Checking…")), dot: "bg-warning" };
   switch (result._tag) {
     case "Accepted":
       return {
-        label: resolve(msg("Connected")),
-        detail: resolve(msg("{ms} ms", { ms: Math.round(result.latencyMs) })),
-        tone: "success",
-      } as const;
+        label: resolve(msg("Connected · {ms} ms", { ms: Math.round(result.latencyMs) })),
+        dot: "bg-success",
+      };
     case "Rejected":
       return {
-        label: resolve(msg("Rejected")),
-        detail: resolve(msg("HTTP {status}", { status: result.status })),
-        tone: "danger",
-      } as const;
+        label: resolve(msg("Rejected · HTTP {status}", { status: result.status })),
+        dot: "bg-destructive",
+      };
     case "Unreachable":
       return {
         label: result.timedOut ? resolve(msg("Timed out")) : resolve(msg("Unreachable")),
-        tone: "danger",
-      } as const;
+        dot: "bg-destructive",
+      };
   }
 }
 
@@ -199,14 +199,14 @@ function TelemetryExportForm() {
           }
         }}
       >
-        <p className="text-meta text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           <T>
             Send traces, metrics, and logs to an OTLP HTTP receiver. Restart the server to apply.
             Environment variables override these settings.
           </T>
         </p>
         {!canEdit && (
-          <p className="text-meta text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {environment
               ? gt("This connection lacks permission to change settings on {environment}.", {
                   environment: environment.label,
@@ -223,27 +223,23 @@ function TelemetryExportForm() {
           const check = canCheck ? endpointStatus(url, checks[key], messages) : null;
           const status = override
             ? {
-                label: check?.label ?? override.label,
-                tone: check?.tone ?? ("neutral" as const),
+                label: check ? `${override.label} · ${check.label}` : override.label,
+                dot: check?.dot ?? "bg-muted-foreground/40",
               }
             : check;
           return (
             <div key={key} className="grid gap-1.5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-1.5">
-                  {status && <StatusDot tone={status.tone} />}
+                  {status && <ConnectionStatusDot dotClassName={status.dot} />}
                   <Label htmlFor={key}>{messages(label)}</Label>
                 </div>
-                <span className="grid justify-items-end gap-1 text-meta text-muted-foreground">
-                  {override && check ? <span>{override.label}</span> : null}
-                  {status ? <span>{status.label}</span> : null}
-                  {check && "detail" in check ? <span>{check.detail}</span> : null}
-                </span>
+                {status && <span className="text-xs text-muted-foreground">{status.label}</span>}
               </div>
               <div className="flex gap-2">
                 <Input
                   id={key}
-                  size="settings"
+                  size="sm"
                   type="url"
                   pattern="[Hh][Tt][Tt][Pp][Ss]?://.*"
                   title={gt("Enter an HTTP or HTTPS endpoint, or leave empty to disable export.")}
@@ -265,7 +261,7 @@ function TelemetryExportForm() {
                   <Button
                     type="button"
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     disabled={
                       !isHttpUrl(url) || (checks[key]?.url === url && checks[key].result === null)
                     }
@@ -276,7 +272,7 @@ function TelemetryExportForm() {
                 )}
               </div>
               {(saved[key] !== (running?.[key] ?? "") || override?.variable) && (
-                <p className="break-all text-meta text-muted-foreground">
+                <p className="break-all text-xs text-muted-foreground">
                   {override?.variable ? (
                     running?.[key] ? (
                       <T>
@@ -304,14 +300,14 @@ function TelemetryExportForm() {
           );
         })}
         <div className="flex items-center justify-between gap-3">
-          <p role="status" className="text-meta text-muted-foreground">
+          <p role="status" className="text-xs text-muted-foreground">
             {message}
           </p>
           <div className="flex shrink-0 gap-2">
             <Button
               type="button"
               size="xs"
-              variant="secondary"
+              variant="outline"
               disabled={!changed || saving || !canEdit}
               onClick={() => {
                 setDraft({});

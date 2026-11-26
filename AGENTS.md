@@ -149,7 +149,6 @@ Read the matching doc before changing code in that area; code review enforces th
 - Client mutations use `createEnvironmentRpcCommand`, declare protected methods in `CLIENT_GUARDED_RPC_SCOPES`, and gate UI with `permissionAtom` (server stays authoritative). Keep raw RPC clients inside `rpc/`.
 - Server features are Effect services using `Effect.fn("Service.operation")` with thin transport handlers; see [02_effect-services.md](docs/internals/02_effect-services.md).
 - `apps/web/src/components/ui` exports own their look (`shadcn/no-restyle` enforces this); see [10_web-ui.md](docs/internals/10_web-ui.md).
-- Before building or porting UI, read [Building or porting UI](docs/internals/10_web-ui.md#building-or-porting-ui) and open `/design-system` in a dev build. `t3code/no-raw-type-classes`, `t3code/no-styled-raw-controls`, `t3code/no-raw-surface` and `t3code/no-new-ui-variants` fail lint. Their ceilings in `lint-ceilings.json` must equal each file's count: after a fix, merge or cherry-pick, run `vp run lint:ceilings`, which only lowers them. Never raise one or edit the table by hand.
 - Inferred types over annotations. `any` is the enemy.
 - Default to no comment. Write one only for a constraint, external quirk, or invariant the code can't show (1–4 lines max; `t3code/no-low-value-comments` enforces this).
 - React effects are only for synchronizing with external systems. Derive in render and act in handlers; any remaining effect states its reason via `// oxlint-disable-next-line t3code/no-unreasoned-state-sync -- <why>`.

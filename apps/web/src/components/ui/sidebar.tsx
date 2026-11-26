@@ -6,6 +6,7 @@ import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { Input, type InputProps } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
   Sheet,
@@ -14,12 +15,8 @@ import {
   SheetPopup,
   SheetTitle,
 } from "~/components/ui/sheet";
-import {
-  Tooltip,
-  TooltipPopup,
-  TooltipTrigger,
-  TooltipScrollDismissArea,
-} from "~/components/ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -36,6 +33,7 @@ const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing) * 3)";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+const SIDEBAR_COLLAPSE_DRAG_RATIO = 0.75;
 const SIDEBAR_TITLEBAR_CONTROL_SIZE = "max-sm:[--workspace-titlebar-control-size:--spacing(8)]";
 
 type SidebarContextProps = {
@@ -53,6 +51,7 @@ type SidebarContextProps = {
 };
 
 type SidebarResizableOptions = {
+  collapseOnResize?: boolean;
   maxWidth?: number;
   minWidth?: number;
   onResize?: (width: number) => void;
@@ -68,6 +67,7 @@ type SidebarResizableOptions = {
 };
 
 type SidebarResolvedResizableOptions = {
+  collapseOnResize: boolean;
   maxWidth: number;
   minWidth: number;
   onResize?: (width: number) => void;
@@ -194,7 +194,6 @@ function createSidebarOpenStore(defaultOpen: boolean, storageKey: string | undef
 function SidebarProvider({
   defaultOpen = true,
   storageKey,
-  store: providedStore,
   className,
   style,
   children,
@@ -202,12 +201,9 @@ function SidebarProvider({
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean;
   storageKey?: string;
-  store?: ReturnType<typeof createSidebarOpenStore>;
 }) {
   const isMobile = useMediaQuery(SIDEBAR_MOBILE_QUERY);
-  const [store] = React.useState(
-    () => providedStore ?? createSidebarOpenStore(defaultOpen, storageKey),
-  );
+  const [store] = React.useState(() => createSidebarOpenStore(defaultOpen, storageKey));
   const { open, openMobile } = React.useSyncExternalStore(
     store.subscribe,
     store.getSnapshot,
@@ -279,6 +275,7 @@ function resolveSidebarResizable({
 
   const options = typeof resizable === "boolean" ? {} : resizable;
   return {
+    collapseOnResize: options.collapseOnResize ?? false,
     maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
     minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
     storageKey: options.storageKey ?? null,
@@ -346,7 +343,7 @@ function Sidebar({
             keepMounted
             {...(panelAnimationsActive ? {} : { transitionDurationMs: 0 })}
             className={cn(
-              "w-(--sidebar-width) max-w-none bg-(--app-chrome-background) bg-(image:--surface-grain) p-0 surface-grain text-sidebar-foreground [.black-chrome_&]:[--kbd-background:initial]",
+              "w-(--sidebar-width) max-w-none bg-sidebar surface-grain p-0 text-sidebar-foreground",
               className,
             )}
             data-mobile="true"
@@ -400,7 +397,7 @@ function Sidebar({
             "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
             "group-data-[collapsible=offcanvas]:w-0",
             "group-data-[side=right]:rotate-180",
-            variant === "floating"
+            variant === "floating" || variant === "inset"
               ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
           )}
@@ -413,20 +410,16 @@ function Sidebar({
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
-            // Floating pads its card; inset sits flush on the window chrome
-            // beside the inset content pane, so it has no edge border.
-            variant === "floating"
+            variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-              : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
-            variant === "sidebar" &&
-              "group-data-[side=left]:border-r group-data-[side=right]:border-l",
+              : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className,
           )}
           data-slot="sidebar-container"
           {...props}
         >
           <div
-            className="flex h-full w-full flex-col bg-sidebar surface-grain group-data-[variant=inset]:ps-(--workspace-sidebar-edge-inset) group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm/5"
+            className="flex h-full w-full flex-col bg-sidebar surface-grain group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm/5"
             data-sidebar="sidebar"
             data-slot="sidebar-inner"
           >
@@ -434,6 +427,9 @@ function Sidebar({
           </div>
         </div>
       </div>
+      {offcanvasCollapsed && side === "left" && resolvedResizable?.collapseOnResize && (
+        <SidebarRestoreHandle options={resolvedResizable} />
+      )}
     </SidebarInstanceContext>
   );
 }
@@ -459,29 +455,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {isOpen ? (
-        <PanelLeftCloseIcon
-          className={cn(
-            "size-4",
-            props.variant === "media-navigation"
-              ? "text-current light:text-sidebar-toggle"
-              : "text-sidebar-toggle",
-          )}
-
-          strokeWidth={2.25}
-        />
-      ) : (
-        <PanelLeftIcon
-          className={cn(
-            "size-4",
-            props.variant === "media-navigation"
-              ? "text-current light:text-sidebar-toggle"
-              : "text-sidebar-toggle",
-          )}
-
-          strokeWidth={2.25}
-        />
-      )}
+      {isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />}
       <span className="sr-only">
         <T>Toggle Sidebar</T>
       </span>
@@ -491,6 +465,110 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
 
 function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptions): number {
   return Math.max(options.minWidth, Math.min(width, options.maxWidth));
+}
+
+function commitSidebarWidth(
+  wrapper: HTMLElement,
+  options: SidebarResolvedResizableOptions,
+  width: number,
+) {
+  wrapper.style.setProperty("--sidebar-width", `${width}px`);
+  if (options.storageKey) {
+    try {
+      setLocalStorageItem(options.storageKey, width, Schema.Finite);
+    } catch (error) {
+      console.error("Could not persist sidebar width.", error);
+    }
+  }
+  options.onResize?.(width);
+}
+
+function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOptions }) {
+  const { setOpen } = useSidebar();
+  const gt = useGT();
+  const [near, setNear] = React.useState(false);
+  const suppressClick = React.useRef(false);
+  const resize = useResizeDrag<HTMLButtonElement>((event) => {
+    if (event.pointerType !== "mouse") return null;
+    const wrapper = event.currentTarget.closest<HTMLElement>('[data-slot="sidebar-wrapper"]');
+    const sidebar = wrapper?.querySelector<HTMLElement>('[data-slot="sidebar"][data-side="left"]');
+    const container = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
+    const gap = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-gap"]');
+    if (!wrapper || !container || !gap) return null;
+    let restorePending = false;
+    wrapper.dataset.sidebarDragState = "collapsed";
+    return {
+      width: 0,
+      edge: "right",
+      bounds: { min: 0, max: options.maxWidth },
+      cancelOnInterrupt: true,
+      resize(nextWidth) {
+        const shouldRestore = nextWidth >= 48;
+        if (shouldRestore !== restorePending) {
+          restorePending = shouldRestore;
+          wrapper.dataset.sidebarDragState = restorePending ? "expanded" : "collapsed";
+        }
+        const width = clampSidebarWidth(nextWidth, options);
+        container.style.left = restorePending ? "0px" : `${-width}px`;
+        for (const element of [container, gap]) {
+          element.style.width = `${restorePending || element === container ? width : 0}px`;
+          element.style.transitionDuration = "0ms";
+        }
+        return width;
+      },
+      finish(width, moved) {
+        suppressClick.current = moved;
+        if (moved && restorePending) {
+          commitSidebarWidth(wrapper, options, width);
+          setOpen(true);
+        }
+      },
+      cleanup() {
+        delete wrapper.dataset.sidebarDragState;
+        container.style.removeProperty("left");
+        for (const element of [container, gap]) {
+          element.style.removeProperty("width");
+          element.style.removeProperty("transition-duration");
+        }
+      },
+    };
+  });
+  const { ref: handleRef, ...drag } = resize;
+  return (
+    <div
+      className="fixed top-1/2 left-[8px] z-41 h-16 w-[16px] -translate-y-1/2 [-webkit-app-region:no-drag]"
+      data-slot="sidebar-restore-edge"
+      onPointerEnter={(event) => {
+        if (event.pointerType === "mouse") setNear(true);
+      }}
+      onPointerLeave={() => setNear(false)}
+    >
+      <button
+        aria-label={gt("Show sidebar")}
+        className={cn(
+          "absolute inset-0 cursor-e-resize before:absolute before:inset-y-0 before:left-0 before:w-1/2 before:rounded-md before:bg-sidebar-border",
+          !near && "opacity-0",
+        )}
+        data-slot="sidebar-restore-handle"
+        tabIndex={-1}
+        type="button"
+        ref={handleRef}
+        onPointerDown={drag.onPointerDown}
+        onPointerMove={drag.onPointerMove}
+        onPointerUp={drag.onPointerUp}
+        onPointerCancel={drag.onPointerCancel}
+        onLostPointerCapture={drag.onLostPointerCapture}
+        onClick={(event) => {
+          if (suppressClick.current) {
+            suppressClick.current = false;
+            return;
+          }
+          if (event.detail !== 0 && !near) return;
+          setOpen(true);
+        }}
+      />
+    </div>
+  );
 }
 
 function SidebarRail({
@@ -503,7 +581,7 @@ function SidebarRail({
   onPointerUp,
   ...props
 }: React.ComponentProps<"button">) {
-  const { open, toggleSidebar, onCollapse } = useSidebar();
+  const { open, setOpen, toggleSidebar, onCollapse } = useSidebar();
   const gt = useGT();
   const sidebarInstance = React.use(SidebarInstanceContext);
   const suppressClickRef = React.useRef(false);
@@ -523,6 +601,9 @@ function SidebarRail({
     if (!wrapper || !sidebarRoot || !sidebarContainer) return null;
 
     const side = sidebarInstance?.side ?? "left";
+    const canCollapse = open && side === "left" && options.collapseOnResize;
+    let collapsePending = false;
+    if (canCollapse) wrapper.dataset.sidebarDragState = "expanded";
     let width = clampSidebarWidth(sidebarContainer.getBoundingClientRect().width, options);
     // Write width only to gap/container during drag; inherited --sidebar-width restyles the whole app, so
     // update it at commit.
@@ -532,8 +613,13 @@ function SidebarRail({
     ].filter((element): element is HTMLElement => element !== null);
     const setTargetWidth = (value: number) => {
       widthTargets.forEach((element) => {
-        element.style.setProperty("width", `${value}px`);
+        element.style.setProperty(
+          "width",
+          `${collapsePending && element !== sidebarContainer ? 0 : value}px`,
+        );
       });
+      // Match the offcanvas left offset so releasing a drag cannot restart the slide.
+      if (canCollapse) sidebarContainer.style.left = collapsePending ? `${-value}px` : "0px";
     };
     widthTargets.forEach((element) => {
       element.style.setProperty("transition-duration", "0ms");
@@ -544,7 +630,14 @@ function SidebarRail({
       width,
       edge: side === "left" ? "right" : "left",
       bounds: { min: options.minWidth, max: options.maxWidth },
-      resize(nextWidth) {
+      cancelOnInterrupt: canCollapse,
+      resize(nextWidth, rawWidth) {
+        const shouldCollapse =
+          canCollapse && rawWidth < options.minWidth * (1 - SIDEBAR_COLLAPSE_DRAG_RATIO);
+        if (shouldCollapse !== collapsePending) {
+          collapsePending = shouldCollapse;
+          wrapper.dataset.sidebarDragState = collapsePending ? "collapsed" : "expanded";
+        }
         const accepted =
           options.shouldAcceptWidth?.({
             currentWidth: width,
@@ -555,24 +648,21 @@ function SidebarRail({
             wrapper,
           }) ?? true;
         if (accepted) {
-          setTargetWidth(nextWidth);
           width = nextWidth;
         }
+        setTargetWidth(width);
         return width;
       },
       finish(finalWidth, moved) {
-        wrapper.style.setProperty("--sidebar-width", `${finalWidth}px`);
         suppressClickRef.current = moved;
-        if (options.storageKey) {
-          try {
-            setLocalStorageItem(options.storageKey, finalWidth, Schema.Finite);
-          } catch (error) {
-            console.error("Could not persist sidebar width.", error);
-          }
-        }
-        options.onResize?.(finalWidth);
+        commitSidebarWidth(wrapper, options, finalWidth);
+        if (moved && collapsePending) setOpen(false);
       },
       cleanup() {
+        if (canCollapse) {
+          delete wrapper.dataset.sidebarDragState;
+          sidebarContainer.style.removeProperty("left");
+        }
         widthTargets.forEach((element) => {
           element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");
@@ -610,82 +700,75 @@ function SidebarRail({
     toggleSidebar();
   };
 
-  // The rail spans the sidebar's full height, so the tip follows the pointer
-  // instead of floating at the rail's vertical middle.
+  const rail = (
+    <button
+      aria-label={railLabel}
+      className={cn(
+        /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
+        "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+        "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+        "touch-none",
+        canResize
+          ? "cursor-col-resize"
+          : "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize [[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
+        "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
+        "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
+        "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
+        className,
+      )}
+      data-sidebar="rail"
+      data-slot="sidebar-rail"
+      onClick={handleClick}
+      onLostPointerCapture={(event) => {
+        onLostPointerCapture?.(event);
+        if (!event.defaultPrevented) resize.onLostPointerCapture(event);
+      }}
+      onPointerCancel={(event) => {
+        onPointerCancel?.(event);
+        if (!event.defaultPrevented) resize.onPointerCancel(event);
+      }}
+      onPointerDown={(event) => {
+        onPointerDown?.(event);
+        if (!event.defaultPrevented) resize.onPointerDown(event);
+      }}
+      onPointerMove={(event) => {
+        onPointerMove?.(event);
+        if (!event.defaultPrevented) resize.onPointerMove(event);
+      }}
+      onPointerUp={(event) => {
+        onPointerUp?.(event);
+        if (!event.defaultPrevented) resize.onPointerUp(event);
+      }}
+      ref={railRef}
+      tabIndex={-1}
+      type="button"
+      {...props}
+    />
+  );
+  if (canResize && resolvedResizable.collapseOnResize) return rail;
+
+  return <SharedTooltipTrigger render={rail} label={railTitle} side="right" />;
+}
+
+function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
   return (
-    <Tooltip trackCursorAxis="y">
-      <TooltipTrigger
-        render={
-          <button
-            aria-label={railLabel}
-            className={cn(
-              /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
-              "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
-              "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
-              "touch-none",
-              canResize
-                ? "cursor-col-resize"
-                : "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize [[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
-              "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
-              "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
-              "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
-              className,
-            )}
-            data-sidebar="rail"
-            data-slot="sidebar-rail"
-            onClick={handleClick}
-            onLostPointerCapture={(event) => {
-              onLostPointerCapture?.(event);
-              if (!event.defaultPrevented) resize.onLostPointerCapture(event);
-            }}
-            onPointerCancel={(event) => {
-              onPointerCancel?.(event);
-              if (!event.defaultPrevented) resize.onPointerCancel(event);
-            }}
-            onPointerDown={(event) => {
-              onPointerDown?.(event);
-              if (!event.defaultPrevented) resize.onPointerDown(event);
-            }}
-            onPointerMove={(event) => {
-              onPointerMove?.(event);
-              if (!event.defaultPrevented) resize.onPointerMove(event);
-            }}
-            onPointerUp={(event) => {
-              onPointerUp?.(event);
-              if (!event.defaultPrevented) resize.onPointerUp(event);
-            }}
-            ref={railRef}
-            tabIndex={-1}
-            type="button"
-            {...props}
-          />
-        }
-      />
-      <TooltipPopup side="right">{railTitle}</TooltipPopup>
-    </Tooltip>
+    <Input
+      className={cn(
+        "[&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground",
+        className,
+      )}
+      unstyled
+      {...props}
+    />
   );
 }
 
-/**
- * `pane` draws the single inset pane. `split` keeps the same insets but draws
- * nothing, for a layout whose panes each draw their own pane with gaps.
- */
-function SidebarInset({
-  className,
-  variant = "pane",
-  ...props
-}: React.ComponentProps<"main"> & { variant?: "pane" | "split" }) {
+function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
       className={cn(
-        "relative flex min-w-0 w-full flex-1 flex-col",
-        variant === "pane" && "bg-background surface-grain",
-        // The inset pane (pen mSaSF) on the window chrome: 12px from the window
-        // and from the sidebar's content, centered on the chrome row at the top.
-        // It stretches in the flex wrapper, so the route's own height yields.
-        "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
-        "[[data-panel-animations=true]_&]:transition-[margin-inline-start,border-end-start-radius] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
-        variant === "pane" && "md:peer-data-[variant=inset]:rounded-pane",
+        "relative flex min-w-0 w-full flex-1 flex-col bg-background surface-grain",
+        "md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-2 md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ms-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm/5",
         className,
       )}
       data-slot="sidebar-inset"
@@ -705,16 +788,11 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-/**
- * Mirrors the window chrome row: the footer's controls end on the inset pane's
- * bottom edge, and the shelf docked above centers as far from the bottom as
- * the sidebar's first row does from the top.
- */
 function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "flex flex-col gap-2 px-[var(--sidebar-content-inset)] pt-2 pb-(--workspace-pane-inset)",
+        "flex flex-col gap-2 px-[var(--sidebar-content-inset)] pt-1 pb-[var(--sidebar-content-inset)]",
         className,
       )}
       data-sidebar="footer"
@@ -735,7 +813,6 @@ function SidebarContent({
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
       <ScrollArea
-        render={<TooltipScrollDismissArea suppressHoverWhileScrolling />}
         hideScrollbars
         scrollFade
         scrollFadePadding={false}
@@ -773,18 +850,10 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function SidebarMenu({
-  className,
-  size = "default",
-  ...props
-}: React.ComponentProps<"ul"> & { size?: "default" | "compact" }) {
+function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
-      className={cn(
-        "flex w-full min-w-0 flex-col",
-        size === "compact" ? "gap-0.5" : "gap-1",
-        className,
-      )}
+      className={cn("flex w-full min-w-0 flex-col gap-1", className)}
       data-sidebar="menu"
       data-slot="sidebar-menu"
       {...props}
@@ -804,7 +873,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full cursor-pointer items-center gap-[var(--sidebar-control-gap)] overflow-hidden text-left outline-hidden ring-ring transition-[width,height,padding] hover:surface-sidebar-row-hover hover:text-sidebar-foreground focus-visible:[box-shadow:inset_0_0_0_1.5px_var(--ring)]! active:surface-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-64 aria-disabled:pointer-events-none aria-disabled:opacity-64 data-[active=true]:surface-sidebar-row-selected data-[active=true]:font-medium data-[active=true]:text-(--sidebar-active-label) data-[state=open]:hover:surface-sidebar-row-hover data-[state=open]:hover:text-sidebar-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-[var(--sidebar-content-inset)]! [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-3.5 [&>svg]:shrink-0 [&>svg]:text-[var(--sidebar-icon-color)] hover:[&>svg]:text-sidebar-foreground active:[&>svg]:text-sidebar-foreground data-[active=true]:[&>svg]:text-(--sidebar-active-icon)",
+  "peer/menu-button flex w-full cursor-pointer items-center gap-[var(--sidebar-control-gap)] overflow-hidden text-left outline-hidden ring-ring transition-[width,height,padding] hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset active:bg-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-64 aria-disabled:pointer-events-none aria-disabled:opacity-64 data-[active=true]:bg-sidebar-row-selected data-[active=true]:font-medium data-[active=true]:text-sidebar-foreground data-[state=open]:hover:bg-sidebar-row-hover data-[state=open]:hover:text-sidebar-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-[var(--sidebar-content-inset)]! [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-[var(--sidebar-icon-color)] hover:[&>svg]:text-sidebar-foreground active:[&>svg]:text-sidebar-foreground data-[active=true]:[&>svg]:text-sidebar-foreground",
   {
     defaultVariants: {
       size: "default",
@@ -812,22 +881,15 @@ const sidebarMenuButtonVariants = cva(
     },
     variants: {
       size: {
-        // A leading 14px glyph centers on the sidebar's icon column (a 16px slot on
-        // the text line) and its label still starts after a 16px slot and 6px.
         default:
-          "h-8 rounded-[var(--control-radius)] px-[var(--sidebar-row-content-inset)] py-1.5 text-label has-[>svg:first-child]:ps-[calc(var(--sidebar-row-content-inset)+1px)] has-[>svg:first-child]:gap-[calc(var(--sidebar-control-gap)-1px)]",
-        // The default row on the 28px control pitch, for a row that stands in for
-        // the footer's icon controls: its glyph stays on their center line.
-        control:
-          "h-(--workspace-titlebar-control-size) rounded-[var(--control-radius)] px-[var(--sidebar-row-content-inset)] text-label has-[>svg:first-child]:ps-[calc(var(--sidebar-row-content-inset)+1px)] has-[>svg:first-child]:gap-[calc(var(--sidebar-control-gap)-1px)]",
-        project:
-          "h-8 gap-2.5 rounded-[var(--control-radius)] px-(--sidebar-row-content-inset) text-label",
-        compact: "h-7.5 gap-2 rounded-lg px-2 text-label",
+          "h-8 rounded-[var(--control-radius)] px-[var(--sidebar-row-content-inset)] py-1.5 text-sm",
         icon: "size-8 justify-center rounded-[var(--control-radius)] p-0",
-        sm: "h-7 rounded-control p-2 text-meta",
+        lg: "h-12 rounded-[var(--control-radius)] px-[var(--sidebar-row-content-inset)] py-2 text-sm group-data-[collapsible=icon]:p-0!",
+        sm: "h-7 rounded-[var(--control-radius)] px-[var(--sidebar-row-content-inset)] py-2 text-xs",
       },
       variant: {
-        default: "text-sidebar-muted-foreground",
+        default: "font-medium text-sidebar-muted-foreground/80",
+        outline: "bg-sidebar-control-surface ring-1 ring-sidebar-border",
       },
     },
   },
@@ -924,10 +986,10 @@ function SidebarMenuSubButton({
 }) {
   const defaultProps = {
     className: cn(
-      "-translate-x-px flex h-7 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground outline-hidden ring-ring hover:surface-sidebar-row-hover hover:text-sidebar-foreground focus-visible:[box-shadow:inset_0_0_0_1.5px_var(--ring)]! active:surface-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-64 aria-disabled:pointer-events-none aria-disabled:opacity-64 [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-3.5 [&>svg]:shrink-0 [&>svg]:text-sidebar-muted-foreground",
-      "data-[active=true]:surface-sidebar-row-selected data-[active=true]:text-strong-foreground",
-      size === "sm" && "text-meta",
-      size === "md" && "text-label",
+      "-translate-x-px flex h-7 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset active:bg-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-64 aria-disabled:pointer-events-none aria-disabled:opacity-64 [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-muted-foreground",
+      "data-[active=true]:bg-sidebar-row-selected data-[active=true]:text-sidebar-foreground",
+      size === "sm" && "text-xs",
+      size === "md" && "text-sm",
       "group-data-[collapsible=icon]:hidden",
       className,
     ),
@@ -945,7 +1007,7 @@ function SidebarMenuSubButton({
 }
 
 export {
-  createSidebarOpenStore,
+  SidebarInput,
   Sidebar,
   SidebarContent,
   SidebarFooter,

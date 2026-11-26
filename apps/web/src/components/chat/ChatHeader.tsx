@@ -11,11 +11,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { T, useGT, useMessages, Var } from "gt-react";
-import { GitForkIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
+import { ChevronDownIcon } from "lucide-react";
 import {
-  Fragment,
   memo,
+  useEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -23,53 +23,28 @@ import {
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
-import { Separator } from "../ui/separator";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
-import { useAtomValue } from "@effect/atom-react";
-import { primaryServerKeybindingsAtom } from "../../state/server";
-import { beginLayoutContentDrag, beginLayoutTabDrag } from "../../layout/layoutDrag";
-import { THREAD_TERMINAL_SURFACE_ID } from "../../layout/layoutModel";
 import { threadEnvironment } from "../../state/threads";
 import { canShareWithGuestAtom } from "./guestShareAvailability";
+import { useAtomValue } from "@effect/atom-react";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
-  PANE_GHOST_TAB_TITLE_CLASS,
-  PANE_TAB_CLASS,
-  PANE_TAB_TITLE_CLASS,
-  PaneNotch,
-  PaneTabButton,
-} from "../PaneNotch";
-import { ContentButton } from "../ui/button";
+  WorkspaceBreadcrumb,
+  WorkspaceBreadcrumbItem,
+  WorkspaceBreadcrumbSeparator,
+  WorkspaceBreadcrumbText,
+} from "../WorkspaceBreadcrumb";
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
+import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
-import { useLayoutPane } from "../../layout/layoutPaneContext";
-import {
-  LAYOUT_TAB_ICON_CLASS,
-  LAYOUT_TAB_SLOT_CLASS,
-  LayoutPaneTab,
-  LayoutNewTabButton,
-  LayoutPaneTabStrip,
-  LayoutTabCloseButton,
-  ParentThreadLinkLabel,
-  buildLayoutTabMenuItems,
-  closeLayoutTabOnMiddleClick,
-  ghostTabTooltip,
-  finishLayoutTabRename,
-  isLayoutTabMenuId,
-  runLayoutTabMenuAction,
-  useLayoutPaneSiblingTabs,
-  useLayoutTabGhostOf,
-  useLayoutTabGhostShown,
-  useLayoutTabRenameRequested,
-} from "../../layout/PaneTabs";
-import { useQuietThreadShell } from "../../state/entities";
-import { useLayoutStore } from "../../layout/layoutStore";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -81,22 +56,9 @@ interface ChatHeaderProps {
   parentThreadLink: { threadId: ThreadId; title: string } | null;
   onOpenThread: (threadId: ThreadId) => void;
   rightPanelOpen: boolean;
-  /**
-   * Room the header's floating controls take at its end, in px, so the notch's
-   * tabs truncate before they run under them. Unset keeps the default room.
-   */
-  trailingInset?: number | null | undefined;
+  onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
-  /** The chat's terminal pane while hidden (cmd+J): its notch offers it back. */
-  hiddenTerminal?: HiddenTerminalChip | null | undefined;
-  onNewSideChat?: (() => void) | undefined;
-}
-
-export interface HiddenTerminalChip {
-  readonly shortcutLabel: string | null;
-  readonly running: boolean;
-  readonly onShow: () => void;
 }
 
 function resolveRenameCommit(input: {
@@ -119,33 +81,16 @@ export const ChatHeader = memo(function ChatHeader({
   parentThreadLink,
   onOpenThread,
   rightPanelOpen,
-  trailingInset,
+  onNewThreadInProject,
   onOpenProjectSettings,
   onFindInThread,
-  hiddenTerminal,
-  onNewSideChat,
 }: ChatHeaderProps) {
   const gt = useGT();
-  const messages = useMessages();
-  const { tabId: layoutTabId } = useLayoutPane();
-  // Drag the tab out of its notch to split (pen T5Hy0Q).
-  const handleTabPointerDown = (event: React.PointerEvent) => {
-    if (layoutTabId !== null) beginLayoutTabDrag(event, layoutTabId);
-  };
-  const siblingTabs = useLayoutPaneSiblingTabs();
-  const ghostShown = useLayoutTabGhostShown(layoutTabId);
-  const ghostOf = useLayoutTabGhostOf(ghostShown ? layoutTabId : null);
-  const ghostParent = useQuietThreadShell(ghostOf);
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const layoutMenuItems = () =>
-    layoutTabId === null
-      ? []
-      : buildLayoutTabMenuItems(useLayoutStore.getState().layout, layoutTabId, keybindings);
-  const runLayoutMenuAction = (id: string) => {
-    if (layoutTabId !== null && isLayoutTabMenuId(id)) runLayoutTabMenuAction(id, layoutTabId);
-  };
   const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
+  const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
+  const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
+  const [collapseParentTitle, setCollapseParentTitle] = useState(false);
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
@@ -168,24 +113,53 @@ export const ChatHeader = memo(function ChatHeader({
   ) {
     setRenaming(null);
   }
-  const renameRequested = useLayoutTabRenameRequested(layoutTabId);
-  if (renaming === null && renameRequested && canOperateThread && isServerThread) {
-    setRenaming({
-      environmentId: activeThreadEnvironmentId,
-      threadId: activeThreadId,
-      title: activeThreadTitle,
-    });
-  }
   const renamingTitle =
     canOperateThread &&
     renaming?.threadId === activeThreadId &&
     renaming.environmentId === activeThreadEnvironmentId
       ? renaming.title
       : null;
-  const stopRenaming = () => {
-    setRenaming(null);
-    finishLayoutTabRename(layoutTabId);
-  };
+  const isRenamingTitle = renamingTitle !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the breadcrumb list DOM via ResizeObserver, a frame and font loads to collapse the parent title
+  useEffect(() => {
+    const list = breadcrumbContainerRef.current?.querySelector("ol");
+    if (!list || !parentThreadLink) return;
+    const measure = () => {
+      const gap = Number.parseFloat(getComputedStyle(list).columnGap) || 0;
+      const width = Array.from(list.children).reduce(
+        (total, item) => {
+          const label = item.querySelector('[data-slot="workspace-breadcrumb-text"]');
+          const ellipsis = item.querySelector("[data-parent-breadcrumb-ellipsis]");
+          return (
+            total +
+            (item.firstElementChild?.getBoundingClientRect().width ?? 0) +
+            (label && getComputedStyle(label).maxWidth === "none"
+              ? label.scrollWidth - label.clientWidth
+              : 0) -
+            (ellipsis?.getBoundingClientRect().width ?? 0)
+          );
+        },
+        gap * (list.children.length - 1),
+      );
+      setCollapseParentTitle(width > list.clientWidth);
+    };
+    measure();
+    const frame = requestAnimationFrame(measure);
+    document.fonts.addEventListener("loadingdone", measure);
+    const stopObserving = observeResize(list, measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.fonts.removeEventListener("loadingdone", measure);
+      stopObserving();
+    };
+  }, [
+    // Title, font and rename changes resize the breadcrumb text without resizing the list, so it re-measures.
+    activeProjectName,
+    activeThreadTitle,
+    parentThreadLink,
+    interfaceFont,
+    isRenamingTitle,
+  ]);
   const renameCommittedRef = useRef(false);
   const startRename = () => {
     if (
@@ -201,7 +175,7 @@ export const ChatHeader = memo(function ChatHeader({
     });
   };
   const commitRename = (title: string) => {
-    stopRenaming();
+    setRenaming(null);
     if (!readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)) return;
     const resolution = resolveRenameCommit({
       title,
@@ -232,9 +206,6 @@ export const ChatHeader = memo(function ChatHeader({
     onStartRename: startRename,
     onFind: onFindInThread,
     canShareWithGuest,
-    leadingItems: layoutMenuItems,
-    onLeadingAction: runLayoutMenuAction,
-    onNewSideChat,
   });
   const openMenuFromTitle = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (isTrailingDoubleClick(event.detail)) return;
@@ -246,51 +217,27 @@ export const ChatHeader = memo(function ChatHeader({
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if ((event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null) return;
     closeMenu();
-    // A ghost tab is kept first; the next double-click renames.
-    if (ghostShown && layoutTabId !== null) {
-      useLayoutStore.getState().keepTab(layoutTabId);
-      return;
-    }
     startRename();
   };
   const handleHeaderContextMenu = (event: ReactMouseEvent) => {
     if (renamingTitle !== null) return;
+    if (!isServerThread && onOpenProjectSettings === undefined) return;
+    event.preventDefault();
     if (!isServerThread) {
-      const layoutItems = layoutMenuItems();
-      if (onOpenProjectSettings === undefined && layoutItems.length === 0) return;
-      event.preventDefault();
       const api = readLocalApi();
       if (!api) return;
       void api.contextMenu
-        .show<string>(
-          [
-            ...layoutItems,
-            ...(onOpenProjectSettings
-              ? [
-                  {
-                    id: "project-settings",
-                    label: gt("Project settings"),
-                    icon: "settings",
-                    separatorBefore: layoutItems.length > 0,
-                  },
-                ]
-              : []),
-          ],
+        .show(
+          [{ id: "project-settings", label: gt("Project settings"), icon: "settings" }],
           { x: event.clientX, y: event.clientY },
           contextMenuSourceOf(event),
         )
         .then((action) => {
           if (action === "project-settings") onOpenProjectSettings?.();
-          else if (action !== null) runLayoutMenuAction(action);
         });
       return;
     }
-    event.preventDefault();
     openMenu({ x: event.clientX, y: event.clientY }, contextMenuSourceOf(event));
-  };
-  const handleTabAuxClick = (event: ReactMouseEvent) => {
-    if (layoutTabId === null) return;
-    closeLayoutTabOnMiddleClick(event, layoutTabId);
   };
   const handleRenameKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -300,264 +247,169 @@ export const ChatHeader = memo(function ChatHeader({
     } else if (event.key === "Escape") {
       event.preventDefault();
       renameCommittedRef.current = true;
-      stopRenaming();
+      setRenaming(null);
     }
   };
-  // `parentThreadLink` is set only for a subagent, however its tab was opened.
-  const tabIcon =
-    ghostOf || parentThreadLink ? (
-      <GitForkIcon aria-hidden className="size-3.5 shrink-0" />
-    ) : isServerThread ? (
-      activeProject ? (
-        <ProjectFavicon project={activeProject} className="size-3.5" />
-      ) : null
-    ) : (
-      <SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-foreground" />
-    );
-  // The project name left the header with the breadcrumb; the tab's tooltip
-  // keeps it, in the breadcrumb's old order.
-  const plainTooltip = activeProjectName
-    ? `${activeProjectName} / ${activeThreadTitle}`
-    : activeThreadTitle;
-  const tabTooltip = ghostShown
-    ? ghostTabTooltip(ghostOf ? activeThreadTitle : plainTooltip, ghostParent?.title, messages)
-    : plainTooltip;
-  // The parent's own tab, when it leads this one in the strip, becomes the back link.
-  const parentTabId =
-    parentThreadLink === null
-      ? null
-      : (siblingTabs.before.find(
-          (tab) =>
-            tab.content.kind === "chat" &&
-            tab.content.target.kind === "server" &&
-            tab.content.target.threadRef.threadId === parentThreadLink.threadId,
-        )?.id ?? null);
   return (
     <div
+      ref={breadcrumbContainerRef}
       className={cn(
-        "flex min-w-0 flex-1 items-center self-stretch",
-        trailingInset == null && (rightPanelOpen ? "pr-10" : "pr-24"),
+        "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
+        rightPanelOpen ? "pr-10" : "pr-24",
       )}
-      style={trailingInset == null ? undefined : { paddingInlineEnd: trailingInset }}
       onContextMenu={handleHeaderContextMenu}
     >
-      <PaneNotch>
-        <LayoutPaneTabStrip>
-          {siblingTabs.before.map((tab) =>
-            tab.id === parentTabId ? (
-              <Fragment key={tab.id}>
-                <LayoutPaneTab tab={tab} parentLink />
-                <ParentThreadLinkSeparator />
-              </Fragment>
-            ) : (
-              <LayoutPaneTab key={tab.id} tab={tab} />
-            ),
-          )}
-          {parentThreadLink && parentTabId === null ? (
-            <>
-              <ParentThreadLink
-                environmentId={activeThreadEnvironmentId}
-                link={parentThreadLink}
-                onOpenThread={onOpenThread}
-              />
-              <ParentThreadLinkSeparator />
-            </>
-          ) : null}
-          {renamingTitle !== null ? (
-            <div
-              className={cn(
-                PANE_TAB_CLASS,
-                "max-w-full shrink-0 inset-ring inset-ring-ring/50 focus-within:inset-ring-ring",
-              )}
-            >
-              {tabIcon}
-              <input
-                autoFocus
-                dir="auto"
-                aria-label={gt("Thread title")}
-                className="min-w-24 max-w-full bg-transparent outline-none [field-sizing:content]"
-                defaultValue={renamingTitle}
-                onBlur={(event) => {
-                  if (renameCommittedRef.current) return;
-                  if (
-                    event.relatedTarget instanceof HTMLElement &&
-                    event.relatedTarget.closest("button")
-                  ) {
-                    stopRenaming();
-                    return;
-                  }
-                  commitRename(event.currentTarget.value);
-                }}
-                onFocus={(event) => {
-                  renameCommittedRef.current = false;
-                  event.currentTarget.select();
-                }}
-                onKeyDown={handleRenameKeyDown}
-              />
-            </div>
-          ) : (
-            <span className={LAYOUT_TAB_SLOT_CLASS}>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    isServerThread ? (
-                      <PaneTabButton
-                        data-layout-pane-tab={layoutTabId ?? undefined}
-                        type="button"
-                        aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
-                        aria-haspopup="menu"
-                        onClick={openMenuFromTitle}
-                        onAuxClick={handleTabAuxClick}
-                        onPointerDown={handleTabPointerDown}
-                        onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
-                      />
-                    ) : (
-                      <div
-                        className={cn(PANE_TAB_CLASS, "cursor-pointer select-none")}
-                        data-layout-pane-tab={layoutTabId ?? undefined}
-                        onAuxClick={handleTabAuxClick}
-                        onPointerDown={handleTabPointerDown}
-                      />
-                    )
-                  }
-                >
-                  <span className={LAYOUT_TAB_ICON_CLASS}>{tabIcon}</span>
-                  <h2
-                    className={cn(
-                      "min-w-0",
-                      PANE_TAB_TITLE_CLASS,
-                      ghostShown && PANE_GHOST_TAB_TITLE_CLASS,
-                    )}
-                    dir={textDirection(activeThreadTitle)}
-                  >
-                    {activeThreadTitle}
-                  </h2>
-                </TooltipTrigger>
-                <TooltipPopup side="bottom" className="whitespace-pre-line">
-                  {tabTooltip}
-                </TooltipPopup>
-              </Tooltip>
-              {layoutTabId !== null ? (
-                <LayoutTabCloseButton tabId={layoutTabId} title={activeThreadTitle} />
-              ) : null}
-            </span>
-          )}
-          {siblingTabs.after.map((tab) => (
-            <LayoutPaneTab key={tab.id} tab={tab} />
-          ))}
-          {hiddenTerminal ? (
-            // The hidden terminal keeps a tab like any other pane tab.
-            <span className={LAYOUT_TAB_SLOT_CLASS}>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      data-hidden-terminal-chip=""
-                      className={cn(
-                        PANE_TAB_CLASS,
-                        "cursor-pointer text-left text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
-                      )}
-                      onClick={hiddenTerminal.onShow}
-                      onPointerDown={(event) =>
-                        beginLayoutContentDrag(event, {
-                          kind: "surface",
-                          threadRef: scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
-                          surface: { id: THREAD_TERMINAL_SURFACE_ID, kind: "thread-terminal" },
-                        })
-                      }
-                    />
-                  }
-                >
-                  <SquareTerminal
-                    aria-hidden
-                    className={cn(
-                      "size-3.5 shrink-0",
-                      hiddenTerminal.running && "text-success-foreground",
-                    )}
+      <WorkspaceBreadcrumb
+        ariaLabel={gt("Thread breadcrumb")}
+        className="flex-1 overflow-clip [overflow-clip-margin:2px]"
+      >
+        {activeProject ? (
+          <>
+            <WorkspaceBreadcrumbItem className="shrink">
+              <SharedTooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={gt("New thread in {project}", { project: activeProjectName })}
+                    onClick={onNewThreadInProject}
+                    className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   />
-                  <span className="min-w-0 truncate">
-                    <T>Terminal</T>
+                }
+                label={
+                  <>
+                    <T>
+                      New thread in <Var>{activeProjectName}</Var>
+                    </T>
+                  </>
+                }
+              >
+                <ProjectFavicon project={activeProject} className="size-3.5" />
+                <MiddleTruncate
+                  data-slot="workspace-breadcrumb-text"
+                  value={activeProjectName ?? ""}
+                  showTitle={false}
+                  variant="cap-aligned"
+                />
+              </SharedTooltipTrigger>
+            </WorkspaceBreadcrumbItem>
+            <WorkspaceBreadcrumbSeparator>
+              <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
+            </WorkspaceBreadcrumbSeparator>
+          </>
+        ) : null}
+        {parentThreadLink ? (
+          <>
+            <WorkspaceBreadcrumbItem>
+              <SharedTooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={gt("Open parent thread: {title}", {
+                      title: parentThreadLink.title,
+                    })}
+                    onClick={() => onOpenThread(parentThreadLink.threadId)}
+                    className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  />
+                }
+                label={parentThreadLink.title}
+              >
+                <WorkspaceBreadcrumbText
+                  aria-hidden
+                  className={collapseParentTitle ? "w-0" : undefined}
+                >
+                  {parentThreadLink.title}
+                </WorkspaceBreadcrumbText>
+                {collapseParentTitle ? (
+                  <span aria-hidden data-parent-breadcrumb-ellipsis>
+                    ...
                   </span>
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">
-                  {hiddenTerminal.shortcutLabel
-                    ? gt("Show the terminal ({shortcut})", {
-                        shortcut: hiddenTerminal.shortcutLabel,
-                      })
-                    : gt("Show the terminal")}
-                  <br />
-                  {activeThreadTitle}
-                  <br />
-                  {hiddenTerminal.running ? gt("Process running") : gt("Idle")}
-                </TooltipPopup>
-              </Tooltip>
-            </span>
-          ) : null}
-        </LayoutPaneTabStrip>
-        {layoutTabId !== null ? <LayoutNewTabButton tabId={layoutTabId} /> : null}
-        {renamingTitle === null && activeThreadLinkOrigin ? (
-          <Tooltip>
-            <TooltipTrigger render={<Badge variant="info" size="sm" />}>
+                ) : null}
+              </SharedTooltipTrigger>
+            </WorkspaceBreadcrumbItem>
+            <WorkspaceBreadcrumbSeparator>
+              <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
+            </WorkspaceBreadcrumbSeparator>
+          </>
+        ) : null}
+        <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
+          {renamingTitle !== null ? (
+            <input
+              autoFocus
+              dir="auto"
+              aria-label={gt("Thread title")}
+              className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-medium text-foreground outline-none ring-1 ring-inset ring-ring/50 focus:ring-ring"
+              defaultValue={renamingTitle}
+              onBlur={(event) => {
+                if (renameCommittedRef.current) return;
+                if (
+                  event.relatedTarget instanceof HTMLElement &&
+                  event.relatedTarget.closest("button")
+                ) {
+                  setRenaming(null);
+                  return;
+                }
+                commitRename(event.currentTarget.value);
+              }}
+              onFocus={(event) => event.currentTarget.select()}
+              onKeyDown={handleRenameKeyDown}
+            />
+          ) : isServerThread ? (
+            <SharedTooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
+                  aria-haspopup="menu"
+                  onClick={openMenuFromTitle}
+                  onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
+                  className="group/thread-title inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                />
+              }
+              label={activeThreadTitle}
+            >
+              <h2 className="min-w-0" dir={textDirection(activeThreadTitle)}>
+                <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+              </h2>
+              <ChevronDownIcon
+                aria-hidden
+                data-thread-title-chevron
+                className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
+              />
+            </SharedTooltipTrigger>
+          ) : (
+            <SharedTooltipTrigger
+              render={
+                <h2
+                  aria-label={activeThreadTitle}
+                  className="min-w-0 flex-1"
+                  dir={textDirection(activeThreadTitle)}
+                />
+              }
+              label={activeThreadTitle}
+            >
+              <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+            </SharedTooltipTrigger>
+          )}
+          {renamingTitle === null && activeThreadLinkOrigin ? (
+            <SharedTooltipTrigger
+              render={<Badge variant="info" size="sm" />}
+              label={
+                <>
+                  <T>
+                    Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
+                    environment.
+                  </T>
+                </>
+              }
+            >
               <T>
                 From <Var>{activeThreadLinkOrigin}</Var>
               </T>
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              <T>
-                Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
-                environment.
-              </T>
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
-      </PaneNotch>
+            </SharedTooltipTrigger>
+          ) : null}
+        </WorkspaceBreadcrumbItem>
+      </WorkspaceBreadcrumb>
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );
 });
-
-/** Sets the parent's back link apart from the child tabs after it. */
-function ParentThreadLinkSeparator() {
-  return <Separator orientation="vertical" className="mx-0.5 h-4" />;
-}
-
-/** A subagent thread's way back to its parent when it has no tab in this pane. */
-function ParentThreadLink({
-  environmentId,
-  link,
-  onOpenThread,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly link: { threadId: ThreadId; title: string };
-  readonly onOpenThread: (threadId: ThreadId) => void;
-}) {
-  const gt = useGT();
-  return (
-    <span className={LAYOUT_TAB_SLOT_CLASS}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ContentButton
-              variant="tab"
-              type="button"
-              aria-label={gt("Open parent thread: {title}", { title: link.title })}
-              onClick={() => onOpenThread(link.threadId)}
-              onPointerDown={(event) =>
-                beginLayoutContentDrag(event, {
-                  kind: "thread",
-                  threadRef: scopeThreadRef(environmentId, link.threadId),
-                })
-              }
-            />
-          }
-        >
-          <ParentThreadLinkLabel title={link.title} />
-        </TooltipTrigger>
-        <TooltipPopup side="bottom" className="whitespace-pre-line">
-          {`${link.title}\n${gt("Parent thread")}`}
-        </TooltipPopup>
-      </Tooltip>
-    </span>
-  );
-}

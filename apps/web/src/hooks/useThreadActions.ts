@@ -60,16 +60,10 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
-import { forgetThreadSettledByUser, markThreadSettledByUser } from "../layout/settledByUser";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
-import { discardThreadSurfaces } from "../components/ThreadSurfaceTab";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { threadTriagePermitted, useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { closeLayoutThread } from "../layout/layoutActions";
-import { findLayoutChatForThread } from "../layout/layoutModel";
-import { useLayoutStore } from "../layout/layoutStore";
-import { deleteConfirm } from "../confirmDialog";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -316,12 +310,16 @@ export function useThreadActions() {
   const deleteThreadMutation = useOrchestrationCommand(threadEnvironment.delete, {
     reportFailure: false,
   });
-  const settleThreadMutation = useOrchestrationCommand(threadEnvironment.settle, {
-    reportFailure: false,
-  });
-  const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
-    reportFailure: false,
-  });
+  const settleThreadMutation = useOrchestrationCommand(
+    threadEnvironment.settle,
+    { reportFailure: false },
+    threadTriagePermitted,
+  );
+  const unsettleThreadMutation = useOrchestrationCommand(
+    threadEnvironment.unsettle,
+    { reportFailure: false },
+    threadTriagePermitted,
+  );
   const pinThreadMutation = useOrchestrationCommand(threadEnvironment.pin, {
     reportFailure: false,
   });
@@ -337,12 +335,16 @@ export function useThreadActions() {
   const reorderActiveThreadMutation = useOrchestrationCommand(threadEnvironment.reorderActive, {
     reportFailure: false,
   });
-  const snoozeThreadMutation = useOrchestrationCommand(threadEnvironment.snooze, {
-    reportFailure: false,
-  });
-  const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
-    reportFailure: false,
-  });
+  const snoozeThreadMutation = useOrchestrationCommand(
+    threadEnvironment.snooze,
+    { reportFailure: false },
+    threadTriagePermitted,
+  );
+  const unsnoozeThreadMutation = useOrchestrationCommand(
+    threadEnvironment.unsnooze,
+    { reportFailure: false },
+    threadTriagePermitted,
+  );
   const markThreadUnread = useMarkThreadUnread();
   const createProjectFromThread = useAtomCommand(projectEnvironment.createFromThread, {
     reportFailure: false,
@@ -429,8 +431,6 @@ export function useThreadActions() {
     }
 
     const requestingRouteHref = router.state.location.href;
-    const hadLayoutChat =
-      findLayoutChatForThread(useLayoutStore.getState().layout, threadRef) !== null;
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToDraft =
       currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -445,7 +445,6 @@ export function useThreadActions() {
       return archiveResult;
     }
     expireThreadUndos(threadRef, LIST_PLACEMENT_UNDO_KINDS);
-    closeLayoutThread(threadRef);
     const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
     if (wokeAt !== null) {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
@@ -459,11 +458,7 @@ export function useThreadActions() {
       failureTitle: m(msg("Failed to undo archive")),
     });
 
-    if (
-      !hadLayoutChat &&
-      shouldNavigateToDraft &&
-      router.state.location.href === requestingRouteHref
-    ) {
+    if (shouldNavigateToDraft && router.state.location.href === requestingRouteHref) {
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -503,7 +498,6 @@ export function useThreadActions() {
         input: { threadId: target.threadId },
       });
       if (result._tag === "Success") {
-        closeLayoutThread(target);
         for (const ref of [
           target,
           ...threads
@@ -606,7 +600,7 @@ export function useThreadActions() {
             "",
             m(msg("Delete the worktree too?")),
           ].join("\n"),
-          deleteConfirm({ variant: "destructive", confirmLabel: m(msg("Delete worktree")) }),
+          { variant: "destructive" },
         ),
       );
       if (confirmationResult._tag === "Failure") {
@@ -623,8 +617,6 @@ export function useThreadActions() {
     }
 
     const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
-    const hadLayoutChat =
-      findLayoutChatForThread(useLayoutStore.getState().layout, threadRef) !== null;
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToFallback =
       currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -650,7 +642,6 @@ export function useThreadActions() {
     if (deleteResult._tag === "Failure") {
       return deleteResult;
     }
-    closeLayoutThread(threadRef);
     expireThreadUndos(threadRef, [...LIST_PLACEMENT_UNDO_KINDS, "archive"]);
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
     releaseComposerDraftUploads(threadRef);
@@ -668,12 +659,10 @@ export function useThreadActions() {
       scopeProjectRef(threadRef.environmentId, thread.projectId),
       threadRef,
     );
-    // Its surface tabs go with it: browsers and terminals end, the tabs close.
-    discardThreadSurfaces(threadRef);
     clearTerminalUiState(threadRef);
     clearDeletedThreadPanelState(threadRef);
 
-    if (!hadLayoutChat && shouldNavigateToFallback && !navigatedDuringDelete) {
+    if (shouldNavigateToFallback && !navigatedDuringDelete) {
       const fallbackThread = fallbackThreadId
         ? readThreadShell(scopeThreadRef(threadRef.environmentId, fallbackThreadId))
         : null;
@@ -767,7 +756,6 @@ export function useThreadActions() {
       );
     }
     ThreadUndo.invalidate("settle", scopedThreadKey(target));
-    forgetThreadSettledByUser(scopedThreadKey(target));
     // reason "user" pins active until real activity, suppressing auto-settle.
     return unsettleThreadMutation({
       environmentId: target.environmentId,
@@ -870,7 +858,6 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     const nowIso = new Date().toISOString();
     const wokeAt = resolved ? threadWokeAt(resolved.thread, { now: nowIso }) : null;
     const undoPlan = ThreadUndo.planThreadUndo("settle", resolved?.thread);
@@ -887,8 +874,6 @@ export function useThreadActions() {
       action.finish();
       return result;
     }
-    markThreadSettledByUser(scopedThreadKey(target));
-    closeLayoutThread(target);
     if (wokeAt !== null) {
       markThreadVisited(scopedThreadKey(target), wokeAt);
     }
@@ -985,7 +970,6 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     if (resolved && !canSnooze(resolved.thread, { now: new Date().toISOString() })) {
       return AsyncResult.failure(
         Cause.fail(
@@ -1005,7 +989,6 @@ export function useThreadActions() {
       action.finish();
       return result;
     }
-    closeLayoutThread(target);
     showThreadUndoNotice({
       action: "Snoozed",
       claim: action,
@@ -1015,13 +998,19 @@ export function useThreadActions() {
     return result;
   };
 
-  const runUndoPlan = (target: ScopedThreadRef, plan: ThreadUndo.ThreadUndoPlan) =>
-    ThreadUndo.executeThreadUndo(
+  const runUndoPlan = (target: ScopedThreadRef, plan: ThreadUndo.ThreadUndoPlan) => {
+    let cancelledOnDevice = false;
+    return ThreadUndo.executeThreadUndo(
       plan,
       async (step) => {
+        if (cancelledOnDevice) return AsyncResult.success(undefined);
         switch (step.action) {
-          case "unsettle":
-            return unsettleThread(target, step.restoreUnsettledAt);
+          case "unsettle": {
+            const result = await unsettleThread(target, step.restoreUnsettledAt);
+            cancelledOnDevice =
+              result._tag === "Success" && ThreadUndo.cancelledOnDevice(result.value);
+            return result;
+          }
           case "unsnooze":
             return unsnoozeThread(target);
           case "pin":
@@ -1037,6 +1026,7 @@ export function useThreadActions() {
       },
       (result) => result._tag === "Success",
     );
+  };
 
   const confirmAndDeleteThread = async (target: ScopedThreadRef, knownTitle?: string) => {
     const permissionFailure = threadOperationFailure(target);
@@ -1045,17 +1035,16 @@ export function useThreadActions() {
     const resolved = resolveThreadTarget(target);
 
     if (confirmThreadDelete && localApi) {
-      const knownName = resolved?.thread.title ?? knownTitle;
+      const title = resolved?.thread.title ?? knownTitle ?? null;
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
-          knownName
-            ? m(msg('This deletes "{title}" and its chat history.', { title: knownName }))
-            : m(msg("This deletes this thread and its chat history.")),
-          deleteConfirm({
-            variant: "destructive",
-            title: m(msg("Delete thread?")),
-            confirmLabel: m(msg("Delete thread")),
-          }),
+          [
+            title === null
+              ? m(msg('Delete thread "this thread"?'))
+              : m(msg('Delete thread "{title}"?', { title })),
+            m(msg("This permanently clears conversation history for this thread.")),
+          ].join("\n"),
+          { variant: "destructive" },
         ),
       );
       if (confirmationResult._tag === "Failure") {

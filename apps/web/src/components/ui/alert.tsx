@@ -4,48 +4,26 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-// Status alerts are the tint recipe: the tone's hue as a faint gradient fill
-// and rim, with the icon in the tone and the text in the normal tiers.
-const alertVariants = cva("relative text-foreground", {
-  compoundVariants: [
-    {
-      className: "surface-tint",
-      density: "default",
-      variant: ["default", "error", "info", "warning"],
-    },
-    {
-      className: "surface-tint-fill",
-      density: "strip",
-      variant: ["default", "error", "info", "warning"],
-    },
-  ],
+const alertVariants = cva("relative rounded-xl border px-3.5 py-3 text-card-foreground text-sm", {
   defaultVariants: {
-    density: "default",
-    edge: "none",
+    surface: "default",
     variant: "default",
   },
   variants: {
-    density: {
-      default: "rounded-lg px-3.5 py-3 text-body",
-      strip: "rounded-none px-3 py-2 text-meta",
-    },
-    edge: {
-      none: "",
-      top: "border-t border-divider",
-      bottom: "border-b border-divider",
+    surface: {
+      default: "",
+      glass: "alert-glass",
     },
     variant: {
-      default: "[--surface-tint:var(--muted-foreground)] [&_svg]:text-muted-foreground",
+      default: "bg-transparent dark:bg-input/32 [&_svg]:text-muted-foreground",
       sidebar:
-        "rounded-lg border border-sidebar-border bg-sidebar-control-surface px-2 py-1.5 text-[11px] leading-4 [&_[data-slot=alert-description]]:block [&_[data-slot=alert-description]]:text-sidebar-muted-foreground",
-      // Bare sidebar text, for transient confirmations that should not read as a card.
-      "sidebar-plain":
-        "px-(--sidebar-row-content-inset) py-1.5 text-[11px] leading-4 [&_[data-slot=alert-description]]:block [&_[data-slot=alert-description]]:text-sidebar-muted-foreground",
+        "rounded-lg border-sidebar-border bg-sidebar-control-surface px-2 py-1.5 text-[11px] leading-4 [&_[data-slot=alert-description]]:block [&_[data-slot=alert-description]]:text-sidebar-muted-foreground",
       error:
-        "[--surface-tint:var(--error)] [--surface-tint-fill:var(--error-alert-fill)] [--surface-tint-rim:var(--error-alert-rim)] [&_svg]:text-error-foreground",
-      info: "[--surface-tint:var(--info)] [--surface-tint-fill:var(--info-alert-fill)] [--surface-tint-rim:var(--info-alert-rim)] [&_svg]:text-info-foreground",
+        "border-error/32 bg-error-surface text-error-foreground [&_[data-slot=alert-description]]:text-error-foreground/80 [&_svg]:text-error",
+      info: "border-info/32 bg-info/4 [&_svg]:text-info",
+      success: "border-success/32 bg-success/4 [&_svg]:text-success",
       warning:
-        "[--surface-tint:var(--warning)] [--surface-tint-fill:var(--warning-alert-fill)] [--surface-tint-rim:var(--warning-alert-rim)] [&_svg]:text-warning-foreground",
+        "border-warning/32 bg-warning-surface text-warning-foreground [&_[data-slot=alert-description]]:text-warning-foreground/80 [&_svg]:text-warning",
     },
   },
 });
@@ -72,8 +50,7 @@ function alertChildSlot(child: React.ReactElement): string | undefined {
 function Alert({
   className,
   variant,
-  density,
-  edge,
+  surface,
   controlAlignment = "center",
   children,
   ...props
@@ -102,8 +79,7 @@ function Alert({
 
   return (
     <div
-      className={cn(alertVariants({ variant, density, edge }), className)}
-      data-density={density ?? "default"}
+      className={cn(alertVariants({ surface, variant }), className)}
       data-slot="alert"
       data-variant={variant ?? "default"}
       role="alert"
@@ -120,12 +96,11 @@ function Alert({
       >
         {icon.length > 0 && (
           <div
-            data-slot="alert-icon"
             className={cn(
               "flex shrink-0 items-center justify-center",
               controlAlignment === "first-line"
-                ? "h-lh w-4 [&>svg]:size-3.5"
-                : "h-lh w-4 self-start [&>svg]:size-3.5",
+                ? "h-lh w-4 [&>svg]:size-4"
+                : "size-4 [&>svg]:size-full",
             )}
           >
             {icon}
@@ -150,13 +125,7 @@ function Alert({
 }
 
 function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      className={cn("text-label text-foreground", className)}
-      data-slot="alert-title"
-      {...props}
-    />
-  );
+  return <div className={cn("font-medium", className)} data-slot="alert-title" {...props} />;
 }
 
 function AlertDescription({ className, ...props }: React.ComponentProps<"div">) {

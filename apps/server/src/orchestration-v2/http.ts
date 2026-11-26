@@ -40,7 +40,7 @@ import {
 } from "./ShellStream.ts";
 import { encodeThreadSnapshotBody } from "./threadSnapshotBody.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
-import { projectThreadProjectionForWire } from "@t3tools/shared/wireProjection";
+import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 const isInvalidThreadHistoryCursorError = Schema.is(InvalidThreadHistoryCursorError);
 

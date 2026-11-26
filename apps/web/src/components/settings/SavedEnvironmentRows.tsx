@@ -43,6 +43,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/men
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { Button, InlineButton } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import {
@@ -55,7 +56,7 @@ import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
-import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
+import { TunnelLimitAlert, TunnelUsageMeter, TunnelUsageMeterSkeleton } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
 import { readEnvironmentScope } from "~/state/session";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
@@ -232,11 +233,14 @@ export function SavedBackendListRow({
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
   const routeCount = connectionRoutes(environment.entry).length;
-  const subtitleText = diagnosis
-    ? environmentTransportLabel(environment, connectedTarget, messages)
-    : resumingServerUpdate
-      ? gt("Restarting")
-      : status.text;
+  const subtitleText = [
+    environmentTransportLabel(environment, connectedTarget, messages),
+    // The headline below names the failure in full.
+    diagnosis ? null : resumingServerUpdate ? gt("Restarting") : status.text,
+    enabled && versionMismatch ? serverVersion : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(" · ");
 
   const showUpdateAction =
     enabled &&
@@ -244,8 +248,7 @@ export function SavedBackendListRow({
     versionMismatch !== null &&
     (serverUpdateState.status === "idle" || serverUpdateState.status === "failed");
 
-  const statusTooltip = `${environmentTransportLabel(environment, connectedTarget, messages)}
-${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : ""}${
+  const statusTooltip = `${
     unsupported
       ? (connectionErrorText(environment.connection, messages) ??
         connectionStatusText(environment.connection, messages))
@@ -267,7 +270,7 @@ ${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : "
       label={environment.label}
       dimmed={!enabled}
       subtitle={
-        <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="flex min-w-0 items-center gap-1">
           <Tooltip>
             {/* The status can change while the tooltip is open, and base-ui only
                 re-measures the popup when the trigger's payload changes. */}
@@ -292,12 +295,20 @@ ${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : "
               {statusTooltip}
             </TooltipPopup>
           </Tooltip>
-          <InlineButton
-            tone="muted"
+          <span aria-hidden className="shrink-0">
+            ·
+          </span>
+          <button
+            type="button"
             aria-expanded={routesOpen}
             onClick={() => setRoutesOpen((open) => !open)}
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           >
-            {routeCount === 1 ? gt("Routes") : `${routeCount} routes`}
+            {routeCount === 1
+              ? gt("Routes")
+              : gt("{count, plural, one {{count} route} other {{count} routes}}", {
+                  count: routeCount,
+                })}
             <ChevronRightIcon
               aria-hidden
               className={cn(
@@ -305,12 +316,16 @@ ${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : "
                 routesOpen && "rotate-90",
               )}
             />
-          </InlineButton>
-          <InlineButton
-            tone="muted"
+          </button>
+          <span aria-hidden className="shrink-0">
+            ·
+          </span>
+          <button
+            type="button"
             aria-expanded={permissionsOpen}
             aria-controls={`remote-permissions-${environmentId}`}
             onClick={() => setPermissionsOpen((open) => !open)}
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <T>Permissions</T>
             <ChevronRightIcon
@@ -320,7 +335,7 @@ ${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : "
                 permissionsOpen && "rotate-90",
               )}
             />
-          </InlineButton>
+          </button>
         </span>
       }
       below={
@@ -401,26 +416,22 @@ ${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : "
           appearance="icon"
         />
       ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Switch
-              size="sm"
-              checked={enabled}
-              disabled={isRemoving || blocked}
-              aria-label={
-                enabled
-                  ? gt("Switch off {label}", { label: environment.label })
-                  : gt("Switch on {label}", { label: environment.label })
-              }
-              onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          {blocked ? gt("Client not supported") : enabled ? gt("Switch off") : gt("Switch on")}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <Switch
+            size="sm"
+            checked={enabled}
+            disabled={isRemoving || blocked}
+            aria-label={
+              enabled
+                ? gt("Switch off {label}", { label: environment.label })
+                : gt("Switch on {label}", { label: environment.label })
+            }
+            onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
+          />
+        }
+        label={blocked ? gt("Client not supported") : enabled ? gt("Switch off") : gt("Switch on")}
+      />
       <Menu>
         <MenuTrigger
           render={
@@ -487,10 +498,10 @@ function CloudLinkSwitch({
     />
   );
   return disabledReason ? (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex">{control}</span>} />
-      <TooltipPopup side="top">{disabledReason}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<span className="inline-flex">{control}</span>}
+      label={disabledReason}
+    />
   ) : (
     control
   );
@@ -531,6 +542,8 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
           ) : null
         }
       />
+    ) : usage.loading ? (
+      <TunnelUsageMeterSkeleton />
     ) : null;
   return (
     <>
@@ -617,7 +630,7 @@ function ConfiguredCloudLinkRow({
   // a fresh sign-in offers both linking and publishing.
   const signedOut = isSignedIn === false;
   const signInButton = (
-    <Button size="sm" variant="secondary" onClick={openAuthPrompt}>
+    <Button size="sm" variant="outline" onClick={openAuthPrompt}>
       <T>Sign in</T>
     </Button>
   );
@@ -634,22 +647,18 @@ function ConfiguredCloudLinkRow({
     reachability?.status === "reachable" ? (
       formatConnectReachable(reachability)
     ) : reachability?.status === "unreachable" ? (
-      <span className="block text-destructive-foreground">
+      <span className="block text-destructive">
         {[reachability.reason, reachability.hint, gt("Fix: {fix}", { fix: reachability.fix })]
           .filter(Boolean)
           .join(" ")}{" "}
-        <InlineButton
-          tone="destructive"
-          render={
-            <a
-              href={connectReachabilityHelpUrl(reachability.cause)}
-              target="_blank"
-              rel="noreferrer"
-            />
-          }
+        <a
+          href={connectReachabilityHelpUrl(reachability.cause)}
+          target="_blank"
+          rel="noreferrer"
+          className="underline underline-offset-2"
         >
           <T>More info</T>
-        </InlineButton>
+        </a>
       </span>
     ) : null;
 
@@ -887,7 +896,7 @@ export function CloudLinkRow({
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
   const gt = useGT();
   return (
-    <Empty size="compact">
+    <Empty className="min-h-52">
       <EmptyMedia variant="icon">
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>

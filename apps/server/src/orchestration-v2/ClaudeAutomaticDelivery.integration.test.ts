@@ -182,12 +182,6 @@ it.effect.each(deliveries)(
               mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
               reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
-              getContextUsage: Effect.fail(
-                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                  method: "getContextUsage",
-                  cause: new Error("Unsupported control request subtype"),
-                }),
-              ),
               stopTask: () => Effect.void,
               interrupt: Effect.die("automatic delivery must never interrupt"),
               close: Effect.void,
@@ -537,12 +531,6 @@ it.effect("applies an effort change to the running Claude query without waiting 
             mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
             reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
-            getContextUsage: Effect.fail(
-              new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                method: "getContextUsage",
-                cause: new Error("Unsupported control request subtype"),
-              }),
-            ),
             stopTask: () => Effect.void,
             interrupt: Effect.die("an effort change must not interrupt the turn"),
             close: Effect.void,
@@ -662,12 +650,6 @@ const renamedClaudeSessionTitles = (options: { readonly renameDuringStartup: boo
             mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
             reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
-            getContextUsage: Effect.fail(
-              new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                method: "getContextUsage",
-                cause: new Error("Unsupported control request subtype"),
-              }),
-            ),
             stopTask: () => Effect.void,
             interrupt: Effect.die("a rename must not interrupt the turn"),
             close: Effect.void,
@@ -897,12 +879,6 @@ it.effect("offers a continuation for a later wake after a queued continuation is
                 mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                 reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
-                getContextUsage: Effect.fail(
-                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                    method: "getContextUsage",
-                    cause: new Error("Unsupported control request subtype"),
-                  }),
-                ),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
@@ -1110,12 +1086,6 @@ it.effect.each([
             mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
             reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
-            getContextUsage: Effect.fail(
-              new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                method: "getContextUsage",
-                cause: new Error("Unsupported control request subtype"),
-              }),
-            ),
             stopTask: () => Effect.void,
             interrupt: Queue.shutdown(sdkMessages),
             close: Effect.void,
@@ -1448,12 +1418,6 @@ const exitWhileIdle = (options: {
                     mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                     reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                     listPermissionRules: Effect.die("unexpected permission rules read"),
-                    getContextUsage: Effect.fail(
-                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                        method: "getContextUsage",
-                        cause: new Error("Unsupported control request subtype"),
-                      }),
-                    ),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),

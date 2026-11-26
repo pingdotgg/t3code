@@ -28,8 +28,6 @@ export interface EnvironmentConnectionPresentation {
    * says where to approve it and shows the code, and is not a failure.
    */
   readonly awaitingApproval?: true;
-  /** Epoch ms of the next automatic attempt while backing off. */
-  readonly retryAt?: number | null;
 }
 
 /**
@@ -86,7 +84,6 @@ export function presentConnectionState(
       return {
         phase: "reconnecting",
         ...failureError(state.lastFailure),
-        retryAt: state.retryAt,
       };
     case "blocked":
       return {

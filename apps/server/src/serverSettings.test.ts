@@ -5,7 +5,6 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   type ManagedPolicyDocument,
-  DEFAULT_LAYOUT_SETTINGS,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -14,10 +13,11 @@ import {
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   SecretProviderId,
-  ServerConfig as ServerConfigContract,
   ServerSettings,
   ServerSettingsPatch,
+  UsageLimitSourceConfig,
   UsageLimitSourceId,
+  type SettingsSecretValue,
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -45,12 +45,18 @@ import { SECRET_REDACTED } from "./settingsSecrets.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
+// Clients from before HTTP sources decode only "cliproxy" and reject the whole settings payload.
+const decodePreHttpUsageLimitSources = Schema.decodeUnknownSync(
+  Schema.Record(
+    UsageLimitSourceId,
+    Schema.Struct({ ...UsageLimitSourceConfig.fields, kind: Schema.Literal("cliproxy") }),
+  ),
+);
+
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
-const decodeClientConfigSettings = Schema.decodeEffect(
-  Schema.toType(ServerConfigContract.fields.settings),
-);
-const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
+const decodeServerSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 
 const layerServerSettings = (policy?: ManagedPolicyDocument) =>
   ServerSettingsModule.layer.pipe(
@@ -226,86 +232,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }),
     ).pipe(Effect.provide(layerServerSettings())),
   );
-  it.effect("retains layout only for client migration across unrelated saves and restarts", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const service = yield* ServerSettingsModule.ServerSettingsService;
-      const legacyLayout = { ...DEFAULT_LAYOUT_SETTINGS, terminalPlacement: "new-column" as const };
-      yield* fs.writeFileString(
-        config.settingsPath,
-        JSON.stringify({
-          layout: legacyLayout,
-          responseStreamingMode: "turn",
-          projectSettingsOverrides: {
-            legacy: { layout: { template: "retired-shape" }, defaultAutoPull: true },
-          },
-        }),
-      );
-
-      const settings = yield* service.getSettings;
-      const clientSettings = yield* decodeClientConfigSettings(
-        ServerSettingsModule.redactServerSettingsForClient(settings, { secretReferences: true }),
-      );
-      assert.deepEqual(clientSettings.layout, legacyLayout);
-      const projectSettingsOverrides: unknown = settings.projectSettingsOverrides;
-      assert.deepEqual(projectSettingsOverrides, {
-        [ProjectId.make("legacy")]: {
-          layout: { template: "retired-shape" },
-          defaultAutoPull: true,
-        },
-      });
-      yield* service.updateSettings(
-        yield* decodeSettingsPatch({
-          responseStreamingMode: "paragraph",
-          layout: { ...legacyLayout, newTabPosition: "end" },
-        }),
-      );
-      const persisted = JSON.parse(yield* fs.readFileString(config.settingsPath));
-      assert.deepEqual(persisted.layout, legacyLayout);
-      assert.notProperty(persisted, "legacyLayout");
-      assert.deepEqual(persisted.projectSettingsOverrides, {
-        legacy: { layout: { template: "retired-shape" }, defaultAutoPull: true },
-      });
-
-      const restarted = yield* Effect.gen(function* () {
-        const service = yield* ServerSettingsModule.ServerSettingsService;
-        return yield* service.getSettings;
-      }).pipe(
-        Effect.provide(
-          Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ManagedPolicy.layerTest())),
-        ),
-      );
-      assert.deepEqual(
-        (yield* decodeClientConfigSettings(
-          ServerSettingsModule.redactServerSettingsForClient(restarted, { secretReferences: true }),
-        )).layout,
-        legacyLayout,
-      );
-      assert.equal(restarted.responseStreamingMode, "paragraph");
-    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
-  );
-
-  it.effect("ignores malformed retired layout without resetting other server settings", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const service = yield* ServerSettingsModule.ServerSettingsService;
-      yield* fs.writeFileString(
-        config.settingsPath,
-        JSON.stringify({
-          layout: { template: "retired-shape" },
-          responseStreamingMode: "turn",
-          enableAgentBrowserAccess: false,
-        }),
-      );
-      const settings = yield* service.getSettings;
-      assert.notProperty(settings, "layout");
-      assert.equal(settings.responseStreamingMode, "turn");
-      assert.isFalse(settings.enableAgentBrowserAccess);
-    }).pipe(Effect.provide(layerServerSettings())),
-  );
-
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -413,7 +339,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
       const write = (entry: unknown) =>
-        decodeSettingsPatch({ secretProviders: { personal: entry } }).pipe(
+        decodeServerSettingsPatch({ secretProviders: { personal: entry } }).pipe(
           Effect.flatMap(service.updateSettings),
           Effect.flip,
         );
@@ -1737,11 +1663,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         instanceId: opencode,
         instance: {
           ...client.providerInstances[opencode]!,
-          config: { ...clientConfig, serverUrl: "http://127.0.0.1:4097" },
+          config: { ...clientConfig, binaryPath: "/opt/opencode" },
         },
       });
       assert.deepInclude(edited.providerInstances[opencode]?.config, {
-        serverUrl: "http://127.0.0.1:4097",
+        binaryPath: "/opt/opencode",
         serverPassword: "legacy-password",
       });
     }).pipe(Effect.provide(layerServerSettings())),
@@ -1866,6 +1792,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const antigravity = ProviderInstanceId.make("antigravity");
         const openCode = ProviderInstanceId.make("opencode");
         const hub = UsageLimitSourceId.make("hub");
+        const quota = UsageLimitSourceId.make("quota");
         const router = ProviderInstanceId.make("openrouter");
         const withUsage = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
@@ -1882,6 +1809,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               kind: "cliproxy",
               url: "https://hub.test",
               managementKey: usageReference,
+              enabled: true,
+            },
+            [quota]: {
+              kind: "http",
+              url: "https://quota.test/v1",
+              managementKey: "",
               enabled: true,
             },
           },
@@ -1929,6 +1862,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
+        assert.deepEqual(
+          Object.keys(
+            decodePreHttpUsageLimitSources(encodeServerSettings(legacy).usageLimitSources),
+          ),
+          [hub],
+        );
+        assert.equal(
+          ServerSettingsModule.redactServerSettingsForClient(withUsage, {
+            secretReferences: false,
+            httpUsageLimitSources: true,
+          }).usageLimitSources[quota]?.kind,
+          "http",
+        );
         assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
@@ -1951,6 +1897,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "ghe.acme.test": "ghp_ghe",
         });
         assert.deepEqual(echoed.usageLimitSources[hub]?.managementKey, usageReference);
+        assert.equal(echoed.usageLimitSources[quota]?.kind, "http");
         assert.deepEqual(echoed.textGenerators[router]?.apiKey, usageReference);
         assert.deepEqual(echoed.cloudSpeechCredentials, {
           openai: usageReference,
@@ -1983,6 +1930,138 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("a kept secret is dropped when the address it is sent to changes", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const openCode = ProviderInstanceId.make("opencode");
+      const hub = UsageLimitSourceId.make("hub");
+      const router = ProviderInstanceId.make("openrouter");
+      const reference = {
+        provider: SecretProviderId.make("personal"),
+        reference: "op://Private/Hub/key",
+      };
+      const patch = (input: {
+        readonly serverUrl: string;
+        readonly hubUrl: string;
+        readonly baseUrl: string;
+        readonly secret: SettingsSecretValue;
+      }) => ({
+        providerInstances: {
+          [openCode]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverUrl: input.serverUrl, serverPassword: input.secret },
+          },
+        },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy" as const,
+            url: input.hubUrl,
+            managementKey: input.secret,
+            enabled: true,
+          },
+        },
+        textGenerators: {
+          [router]: {
+            kind: "openaiCompatible" as const,
+            baseUrl: input.baseUrl,
+            apiKey: input.secret,
+            enabled: true,
+          },
+        },
+      });
+      const saved = {
+        serverUrl: "http://127.0.0.1:4096",
+        hubUrl: "https://hub.test",
+        baseUrl: "https://router.test/v1",
+      };
+      const elsewhere = {
+        serverUrl: "http://elsewhere.test:4096",
+        hubUrl: "https://elsewhere.test",
+        baseUrl: "https://elsewhere.test/v1",
+      };
+      const secrets = (settings: ServerSettings) => [
+        (settings.providerInstances[openCode]?.config as { serverPassword?: unknown } | undefined)
+          ?.serverPassword,
+        settings.usageLimitSources[hub]?.managementKey,
+        settings.textGenerators[router]?.apiKey,
+      ];
+      const kept = (secret: SettingsSecretValue) => [secret, secret, secret];
+      yield* decodeServerSettingsPatch({
+        secretProviders: {
+          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+        },
+      }).pipe(Effect.flatMap(service.updateSettings));
+
+      yield* service.updateSettings(patch({ ...saved, secret: "saved-fixture" }));
+      assert.deepEqual(
+        secrets(yield* service.updateSettings(patch({ ...saved, secret: SECRET_REDACTED }))),
+        kept("saved-fixture"),
+      );
+      assert.deepEqual(
+        secrets(yield* service.updateSettings(patch({ ...elsewhere, secret: SECRET_REDACTED }))),
+        kept(""),
+      );
+      assert.deepEqual(
+        secrets(yield* service.updateSettings(patch({ ...saved, secret: "typed-fixture" }))),
+        kept("typed-fixture"),
+      );
+
+      yield* service.updateSettings(patch({ ...saved, secret: reference }));
+      assert.deepEqual(
+        secrets(yield* service.updateSettings(patch({ ...elsewhere, secret: reference }))),
+        kept(""),
+      );
+
+      const sameAddress = [
+        {
+          serverUrl: "http://127.0.0.1:4096/",
+          hubUrl: "https://hub.test//",
+          baseUrl: "https://router.test/v1/",
+        },
+        {
+          serverUrl: "HTTP://127.0.0.1:4096",
+          hubUrl: "https://HUB.test:443",
+          baseUrl: "https://Router.test/v1//",
+        },
+      ];
+      const otherAddress = [
+        {
+          serverUrl: "http://127.0.0.1:4097",
+          hubUrl: "https://hub.test:8443",
+          baseUrl: "https://router.test:8443/v1",
+        },
+        {
+          serverUrl: "https://127.0.0.1:4096",
+          hubUrl: "http://hub.test",
+          baseUrl: "http://router.test/v1",
+        },
+        {
+          serverUrl: "http://127.0.0.1:4096/api",
+          hubUrl: "https://hub.test/api/",
+          baseUrl: "https://router.test/V1",
+        },
+        {
+          serverUrl: "http://127.0.0.1:4096/?team=a",
+          hubUrl: "https://hub.test?team=a",
+          baseUrl: "https://router.test/v1/v1/",
+        },
+      ];
+      for (const [addresses, expected] of [
+        [sameAddress, kept("saved-fixture")],
+        [otherAddress, kept("")],
+      ] as const) {
+        for (const address of addresses) {
+          yield* service.updateSettings(patch({ ...saved, secret: "saved-fixture" }));
+          assert.deepEqual(
+            secrets(yield* service.updateSettings(patch({ ...address, secret: SECRET_REDACTED }))),
+            expected,
+            JSON.stringify(address),
+          );
+        }
+      }
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("removing a secret provider unsets every field that read from it", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -1993,7 +2072,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const work = { provider: SecretProviderId.make("work"), reference: "op://Work/token" };
       const instanceId = ProviderInstanceId.make("antigravity_refs");
       const hub = UsageLimitSourceId.make("hub");
-      yield* decodeSettingsPatch({
+      yield* decodeServerSettingsPatch({
         secretProviders: {
           personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
           work: { kind: "one_password", label: "Work", config: { account: "work" } },
@@ -3099,7 +3178,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           reference: "op://Private/Anthropic/key",
         };
         yield* withPolicy(undefined, (service) =>
-          decodeSettingsPatch({
+          decodeServerSettingsPatch({
             secretProviders: {
               personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
             },

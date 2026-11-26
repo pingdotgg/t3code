@@ -80,9 +80,9 @@ describe("issueFilterProjects", () => {
       new Map([[environmentId, "laptop"]]),
     );
     expect(choices.map((choice) => [choice.id, choice.title])).toEqual([
-      ["main", "t3code (…/main)"],
-      ["scratch", "t3code (…/scratch)"],
-      ["worktree", "t3code (…/worktree)"],
+      ["main", "t3code · laptop · /work/main"],
+      ["scratch", "t3code · laptop · /work/scratch"],
+      ["worktree", "t3code · laptop · /work/worktree"],
     ]);
   });
 });

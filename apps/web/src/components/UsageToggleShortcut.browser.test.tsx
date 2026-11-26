@@ -1,10 +1,8 @@
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
-import "../index.css";
+import { userEvent } from "vite-plus/test/browser";
 
-import { act, render } from "../../test/render";
-import { trackNavigationHistory } from "../navigationHistory";
+import { render } from "../../test/render";
 
 const state = vi.hoisted(() => ({ navigate: vi.fn() }));
 
@@ -29,8 +27,6 @@ vi.mock(import("../state/server"), async (original) => {
   ]);
   return { ...actual, primaryServerKeybindingsAtom: Atom.make(compiled) };
 });
-// Like main's AppRouteModal test: the dictation indicator reads environments not set up here.
-vi.mock("./chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
 vi.mock(import("@tanstack/react-router"), async (original) => ({
   ...(await original()),
   useNavigate: (() => state.navigate) as never,
@@ -39,7 +35,6 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 import { useCommandPaletteMount } from "../commandPaletteStore";
 import { installCommandPaletteCommands } from "../shortcuts/commandPaletteCommands";
 import { registerNavigationHistoryCommands } from "./AppSidebarLayout";
-import { AppRouteModal } from "./AppRouteModal";
 
 function MountedPalette() {
   useCommandPaletteMount();
@@ -51,12 +46,8 @@ describe("usage toggle shortcut on Usage", () => {
   it("goes back", async () => {
     vi.clearAllMocks();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    await using screen = await render(null);
-    const router = screen.router;
-    if (!router) throw new Error("This test requires a router");
-    using _history = { [Symbol.dispose]: trackNavigationHistory(router.history) };
-    using _commands = { [Symbol.dispose]: registerNavigationHistoryCommands(router) };
-    await router.navigate({ to: "/usage" });
+    await using screen = await render(null, { router: "/usage" });
+    using _commands = { [Symbol.dispose]: registerNavigationHistoryCommands(screen.router!) };
 
     using back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
     await userEvent.keyboard("{Control>}u{/Control}");
@@ -78,27 +69,5 @@ describe("usage toggle shortcut on Usage", () => {
     await userEvent.keyboard("{Control>}u{/Control}");
 
     expect(navigate).not.toHaveBeenCalled();
-  });
-});
-
-describe("usage route modal", () => {
-  it.each(["escape", "backdrop"])("returns to the opener with %s", async (action) => {
-    state.navigate.mockClear();
-    await using _screen = await render(<AppRouteModal label="Usage">Usage</AppRouteModal>);
-    const dialog = page.getByRole("dialog", { name: "Usage" });
-    await expect.element(dialog).toBeVisible();
-
-    if (action === "escape") await userEvent.keyboard("{Escape}");
-    else {
-      const viewport = document.querySelector('[data-slot="dialog-viewport"]');
-      if (!viewport) throw new Error("Missing modal backdrop");
-      await act(() => {
-        viewport.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-        viewport.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-    }
-
-    await expect.poll(() => state.navigate.mock.calls).toEqual([[{ href: "/", replace: true }]]);
-    await expect.element(dialog).not.toBeInTheDocument();
   });
 });

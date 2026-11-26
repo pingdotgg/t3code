@@ -1,7 +1,6 @@
-import { openLayerMatches } from "./lib/openLayers";
 import type { EnvironmentId, PullRequestLinkedThreadsResult } from "@t3tools/contracts";
-import type { Project } from "./types";
 
+import type { DraftId } from "./composerDraftStore";
 import { dispatchCommandPalette, isCommandPaletteMounted } from "./commandPaletteStore";
 
 export interface CommandPaletteLinkedThreads {
@@ -11,9 +10,10 @@ export interface CommandPaletteLinkedThreads {
 
 export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
+  /** With add-project: the draft the new project is picked for. */
+  readonly draftId?: DraftId | null;
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
-  readonly onSelectProject?: (project: Project) => void;
 }
 
 export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void {
@@ -21,12 +21,12 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
   // store, it would pop a stale palette once the app shell mounts.
   if (!isCommandPaletteMounted()) return;
   if (detail.open === "new-thread-in") {
-    dispatchCommandPalette({
-      _tag: "OpenNewThreadIn",
-      ...(detail.onSelectProject ? { onSelectProject: detail.onSelectProject } : {}),
-    });
+    dispatchCommandPalette({ _tag: "OpenNewThreadIn" });
   } else if (detail.open === "add-project") {
-    dispatchCommandPalette({ _tag: "OpenAddProject" });
+    dispatchCommandPalette({
+      _tag: "OpenAddProject",
+      ...(detail.draftId ? { draftId: detail.draftId } : {}),
+    });
   } else if (detail.query !== undefined) {
     dispatchCommandPalette({
       _tag: "OpenSearch",
@@ -38,8 +38,9 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
   }
 }
 
-/** True while the palette popup is open. */
+/** True while the palette popup is on screen, including its closing animation. */
 export function isCommandPaletteOpen(): boolean {
-  // A palette playing its close animation is closed: shortcuts work again.
-  return openLayerMatches("[data-command-palette]:not([data-closed])");
+  return (
+    typeof document !== "undefined" && document.querySelector("[data-command-palette]") !== null
+  );
 }

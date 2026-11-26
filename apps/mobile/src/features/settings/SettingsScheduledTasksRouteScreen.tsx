@@ -41,6 +41,7 @@ import {
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import type { MessageResolver } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -96,15 +97,8 @@ import {
   markScheduledTaskEditorSaved,
 } from "./scheduled-task-editor-state";
 import {
-  SCHEDULE_DAYS as DAYS,
-  describeSchedule,
   formatNextScheduledTaskRun,
-  formatRunAtDate,
-  formatRunAtTime,
-  formatScheduleTime as formatTime,
-  isWeekdays,
-  repeatLabel,
-  weekdayLabel,
+  formatScheduledTaskInterval,
 } from "./scheduledTaskPresentation";
 
 type ScheduledTaskRoutes = {
@@ -115,15 +109,69 @@ type ScheduledTaskRoutes = {
   SettingsScheduledTaskThread: undefined;
 };
 
+const DAYS = [1, 2, 3, 4, 5, 6, 0].map((index) => ({ index }));
+
+// 2024-01-07 was a Sunday, so day index 0 to 6 maps onto Sunday to Saturday.
+function weekdayLabel(index: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(
+    Date.UTC(2024, 0, 7 + index),
+  );
+}
+
 const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
   new_thread: msg("New thread each run"),
   continue: msg("One thread, same conversation"),
   fresh_session: msg("One thread, fresh session"),
 };
 
+function describeSchedule(
+  task: ScheduledTask,
+  timeZone: string | undefined,
+  resolve: MessageResolver,
+  locale: string,
+): string {
+  if (task.schedule.type === "webhook") return resolve(msg("On webhook"));
+  if (task.schedule.type === "once") {
+    const runAt = new Date(task.schedule.runAt);
+    return resolve(
+      msg("Once, {date} at {time}", { date: formatRunAtDate(runAt), time: formatRunAtTime(runAt) }),
+    );
+  }
+  if (task.schedule.type === "interval")
+    return formatScheduledTaskInterval(task.schedule.everyMs, resolve);
+  const days = task.schedule.weekdays?.length
+    ? repeatLabel(task.schedule.weekdays, resolve, locale)
+    : resolve(msg("Every day"));
+  const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
+  const time = formatTime(task.schedule.timeOfDay);
+  return zone === undefined
+    ? resolve(msg("{days} at {time}", { days, time }))
+    : resolve(msg("{days} at {time} {zone}", { days, time, zone }));
+}
+
+// A stored wall time names no date or zone, so format it in UTC where nothing can shift it.
+function formatTime(value: string): string {
+  const [hours, minutes] = value.split(":").map(Number);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return value;
+  return new Date(Date.UTC(2000, 0, 1, hours ?? 9, minutes ?? 0)).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
+}
+
+function formatRunAtDate(value: Date): string {
+  return value.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatRunAtTime(value: Date): string {
+  return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 function timePickerValue(value: string): Date {
   const [hours, minutes] = value.split(":").map(Number);
-  const time = new Date();
+  // Native pickers read local hours, and 2000-01-01 has no DST change in any zone, unlike today.
+  const time = new Date(2000, 0, 1);
   time.setHours(
     Number.isInteger(hours) ? (hours ?? 9) : 9,
     Number.isInteger(minutes) ? (minutes ?? 0) : 0,
@@ -131,6 +179,26 @@ function timePickerValue(value: string): Date {
     0,
   );
   return time;
+}
+
+function isWeekdays(weekdays: ReadonlyArray<number>): boolean {
+  const days = new Set(weekdays);
+  return days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day));
+}
+
+function repeatLabel(
+  weekdays: ReadonlyArray<number>,
+  resolve: MessageResolver,
+  locale: string,
+): string {
+  const days = new Set(weekdays);
+  if (days.size === 7) return resolve(msg("Every day"));
+  if (isWeekdays(weekdays)) return resolve(msg("Weekdays"));
+  return (
+    DAYS.filter((day) => days.has(day.index))
+      .map((day) => weekdayLabel(day.index, locale))
+      .join(", ") || resolve(msg("Choose days"))
+  );
 }
 
 function FormField(props: {

@@ -1,6 +1,4 @@
 import { msg } from "gt-react";
-import { HistoryIcon } from "lucide-react";
-import { createElement } from "react";
 
 import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -23,7 +21,7 @@ export function startLegacyThreadMigrationToast(): () => void {
           title: m(msg("Restoring your threads…")),
           description: m(
             msg(
-              "{count, plural, one {Moving {total} thread from the old store. You can keep working.} other {Moving {total} threads from the old store. You can keep working.}}",
+              "{count, plural, one {Migrating {total} thread from the previous version. You can keep working while this finishes.} other {Migrating {total} threads from the previous version. You can keep working while this finishes.}}",
               {
                 count: migration.totalThreadCount,
                 total: migration.totalThreadCount.toLocaleString(),
@@ -31,12 +29,6 @@ export function startLegacyThreadMigrationToast(): () => void {
             ),
           ),
           timeout: 0,
-          data: {
-            leadingIcon: createElement(HistoryIcon, {
-              "aria-hidden": true,
-              className: "size-[15px] text-info-foreground",
-            }),
-          },
         });
         return;
       }

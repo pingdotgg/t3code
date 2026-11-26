@@ -8,6 +8,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 import { cn } from "../../lib/utils";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
+import { Skeleton } from "../ui/skeleton";
 
 // Above this, one slot per tunnel is too thin to read, so the bar fills instead.
 const MAX_SEGMENTS = 10;
@@ -40,6 +41,18 @@ export function tunnelUpgradeCopy(
   }
 }
 
+/** Holds the meter's height while usage loads, so the rows below it stay put. */
+export function TunnelUsageMeterSkeleton() {
+  return (
+    <div aria-hidden className="flex max-w-sm flex-col gap-1.5">
+      <div className="flex h-4 items-center">
+        <Skeleton shape="pill" className="h-3 w-32" />
+      </div>
+      <Skeleton shape="pill" className="h-1.5 w-full" />
+    </div>
+  );
+}
+
 /** "2 of 3 tunnels in use" with one bar slot per tunnel. */
 export function TunnelUsageMeter({
   used,
@@ -57,7 +70,7 @@ export function TunnelUsageMeter({
   const fill = full ? "bg-warning" : "bg-foreground/72";
   return (
     <div className={cn("flex max-w-sm flex-col gap-1.5", className)}>
-      <div className="flex items-baseline justify-between gap-3 text-meta">
+      <div className="flex items-baseline justify-between gap-3 text-xs">
         <span className={cn("tabular-nums", full ? "text-warning-foreground" : "text-foreground")}>
           {gt("{used} of {limit} tunnels in use", { used, limit })}
         </span>
@@ -115,7 +128,7 @@ export function TunnelLimitAlert({
         <T>Upgrade on T3 Chat</T>
       </Button>
     ) : onManageTunnels ? (
-      <Button size="sm" variant="secondary" onClick={onManageTunnels}>
+      <Button size="sm" variant="outline" onClick={onManageTunnels}>
         <T>Manage tunnels</T>
       </Button>
     ) : null;

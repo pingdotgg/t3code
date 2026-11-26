@@ -6,20 +6,10 @@ function Collapsible({ ...props }: CollapsiblePrimitive.Root.Props) {
   return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />;
 }
 
-function CollapsibleTrigger({
-  className,
-  variant = "default",
-  ...props
-}: CollapsiblePrimitive.Trigger.Props & { variant?: "default" | "muted" | "ghost" }) {
+function CollapsibleTrigger({ className, ...props }: CollapsiblePrimitive.Trigger.Props) {
   return (
     <CollapsiblePrimitive.Trigger
-      className={cn(
-        "cursor-pointer",
-        variant === "ghost" && "hover:surface-ghost-hover",
-        variant === "muted" &&
-          "flex shrink-0 items-center gap-1.5 rounded-row px-2 py-1 text-meta text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
-        className,
-      )}
+      className={cn("cursor-pointer", className)}
       data-slot="collapsible-trigger"
       {...props}
     />

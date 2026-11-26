@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
@@ -162,8 +162,10 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
     ),
   ],
   [
-    "Google accounts use your subscription; API keys and Agent Platform bill usage.",
-    msg("Google accounts use your subscription; API keys and Agent Platform bill usage."),
+    "Google account and Gemini Enterprise use your existing plan. Gemini API key and Agent Platform charge per use to your key or Google Cloud project.",
+    msg(
+      "Google account and Gemini Enterprise use your existing plan. Gemini API key and Agent Platform charge per use to your key or Google Cloud project.",
+    ),
   ],
   [
     "Gemini or Vertex AI express key. Stored separately on the host.",
@@ -259,6 +261,25 @@ function packageFieldText(text: string, resolve: MessageResolver): string {
   return entry === undefined ? text : resolve(entry);
 }
 
+/** An unset select shows, and acts as, its first option. */
+function readSelectValue(
+  config: unknown,
+  key: string,
+  options: ReadonlyArray<ProviderSettingsFormOption> | undefined,
+): string {
+  return readProviderConfigString(config, key) || (options?.[0]?.value ?? "");
+}
+
+function hasConfiguredValue(config: unknown, key: string): boolean {
+  if (config === null || typeof config !== "object") return false;
+  const value = (config as Record<string, unknown>)[key];
+  return value !== undefined && value !== "";
+}
+
+/**
+ * Without a `value`, lists every field. With one, a `visibleWhen` field is hidden only while empty:
+ * a leftover value still reaches the server, so it stays visible and clearable.
+ */
 export function deriveProviderSettingsFields(
   definition: SettingsFormDefinition,
   value?: unknown,
@@ -285,6 +306,23 @@ export function deriveProviderSettingsFields(
       const fieldSchema = definition.settingsSchema.fields[key]!;
       const formAnnotation = readProviderSettingsFormAnnotation(fieldSchema);
       if (formAnnotation.hidden) return [];
+      const visibleWhen = formAnnotation.visibleWhen;
+      const controller =
+        visibleWhen === undefined ? undefined : definition.settingsSchema.fields[visibleWhen.field];
+      if (
+        visibleWhen !== undefined &&
+        value !== undefined &&
+        !hasConfiguredValue(value, key) &&
+        !visibleWhen.values.includes(
+          readSelectValue(
+            value,
+            visibleWhen.field,
+            controller && readProviderSettingsFormAnnotation(controller).options,
+          ),
+        )
+      ) {
+        return [];
+      }
       if (isLocalAcp && key !== "source" && key !== "commandPath") return [];
 
       const annotatedTitle = readFieldAnnotationString(fieldSchema, "title");
@@ -413,7 +451,7 @@ function ProviderCommandArguments({
         <Button
           type="button"
           size="sm"
-          variant="secondary"
+          variant="outline"
           onClick={() => updateArguments([...rows, makeCommandArgumentDraftRow("")])}
         >
           <PlusIcon />
@@ -425,7 +463,7 @@ function ProviderCommandArguments({
         <div className="mt-3 min-w-0 space-y-2 pb-2">
           {rows.map((argument, index) =>
             managedReason !== undefined ? (
-              <code key={argument.id} className="block min-w-0 truncate text-meta">
+              <code key={argument.id} className="block min-w-0 truncate text-xs">
                 {argument.value}
               </code>
             ) : (
@@ -549,7 +587,7 @@ function SecretSettingsControl({
         id={inputId}
         aria-describedby={descriptionId}
         aria-label={field.label}
-        size="settings"
+        size="sm"
         className="min-w-0 flex-1"
         value={reference ?? ""}
         configured={reference === undefined && configured}
@@ -586,13 +624,13 @@ function ProviderSettingsSelect({
   readonly field: ProviderSettingsFieldModel;
   readonly value: unknown;
   readonly inputId: string;
-  readonly size: "sm" | "xs" | "compact";
+  readonly size: "sm" | "xs";
   readonly className?: string | undefined;
   readonly onChange: ProviderSettingsFormProps["onChange"];
 }) {
   const options = field.options ?? [];
   const fallback = options[0]?.value ?? "";
-  const current = readProviderConfigString(value, field.key) || fallback;
+  const current = readSelectValue(value, field.key, options);
   const label = options.find((option) => option.value === current)?.label ?? current;
   return (
     <Select
@@ -602,13 +640,7 @@ function ProviderSettingsSelect({
         onChange(nextProviderConfigWithFieldValue(value, field, next === fallback ? "" : next));
       }}
     >
-      <SelectTrigger
-        variant={size === "compact" ? "well" : "default"}
-        id={inputId}
-        size={size}
-        className={className}
-        aria-label={field.label}
-      >
+      <SelectTrigger id={inputId} size={size} className={className} aria-label={field.label}>
         <SelectValue>{label}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="start" alignItemWithTrigger={false}>
@@ -637,11 +669,11 @@ function ProviderSettingsTextInput({
 }) {
   const [rejected, setRejected] = useState<string | null>(null);
   return (
-    <div className="flex w-full min-w-0 flex-col gap-1 @min-[26rem]/settings-row:w-50">
+    <div className="flex w-full min-w-0 flex-col gap-1 @min-[32rem]/settings-row:w-56">
       <DraftInput
         id={inputId}
         aria-describedby={descriptionId}
-        size="settings"
+        size="sm"
         className="w-full max-w-full"
         type={field.control === "password" ? "password" : undefined}
         autoComplete={field.control === "password" ? "off" : undefined}
@@ -660,7 +692,7 @@ function ProviderSettingsTextInput({
         spellCheck={false}
       />
       {rejected !== null ? (
-        <p className="text-caption text-destructive">
+        <p className="text-2xs text-destructive">
           <T>Enter a valid value. It was not saved.</T>
         </p>
       ) : null}
@@ -727,15 +759,15 @@ function ProviderSettingsFieldRow({
           field={field}
           value={value}
           inputId={inputId}
-          size="compact"
-          className="w-full max-w-full @min-[26rem]/settings-row:w-50"
+          size="sm"
+          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
           onChange={onChange}
         />
       ) : field.control === "textarea" ? (
         <Textarea
           id={inputId}
           aria-describedby={descriptionId}
-          className="w-full max-w-full @min-[26rem]/settings-row:w-[min(24rem,50cqw)]"
+          className="w-full max-w-full @min-[32rem]/settings-row:w-[min(24rem,50cqw)]"
           value={readProviderConfigString(value, field.key)}
           onChange={(event) =>
             onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
@@ -753,11 +785,11 @@ function ProviderSettingsFieldRow({
           onChange={onChange}
         />
       ) : field.secret ? (
-        <div className="flex w-full min-w-0 items-center gap-2 @min-[26rem]/settings-row:w-50">
+        <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
           <SecretInput
             id={inputId}
             aria-describedby={descriptionId}
-            size="settings"
+            size="sm"
             className="min-w-0 flex-1"
             configured={secretConfigured}
             value=""
@@ -906,9 +938,8 @@ export function ProviderSettingsForm({
   managed,
   environmentId,
 }: ProviderSettingsFormProps) {
-  const formId = useId();
   const resolve = useMessages();
-  const fields = deriveProviderSettingsFields(definition, value, resolve);
+  const fields = deriveProviderSettingsFields(definition, value ?? {}, resolve);
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
     readProviderConfigString(value, "source") === "local";
@@ -924,7 +955,7 @@ export function ProviderSettingsForm({
           key={field.key}
           field={field}
           value={value}
-          idPrefix={`${idPrefix}-${formId}`}
+          idPrefix={idPrefix}
           variant={variant}
           onChange={onChange}
           managedReason={managed?.keys.has(field.key) ? managed.reason : undefined}

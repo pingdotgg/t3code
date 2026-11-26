@@ -26,7 +26,10 @@ export function NotificationSettings() {
     <SettingsRow
       {...searchableSetting("thread-notifications")}
       description={
-        permissionMessage ?? gt("System alerts when a thread finishes, fails, or needs you.")
+        permissionMessage ??
+        gt(
+          "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
+        )
       }
       control={
         <Select
@@ -75,8 +78,7 @@ export function NotificationSettings() {
           }}
         >
           <SelectTrigger
-            variant="well"
-            size="compact"
+            size="sm"
             className="w-full sm:w-56"
             aria-label={gt("Thread notifications")}
           >
@@ -84,7 +86,7 @@ export function NotificationSettings() {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {Object.entries(NOTIFICATION_MODE_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
+              <SelectItem key={value} hideIndicator value={value}>
                 {m(label)}
               </SelectItem>
             ))}

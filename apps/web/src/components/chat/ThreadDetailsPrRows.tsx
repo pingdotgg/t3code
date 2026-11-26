@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { ThreadDetailsMoreButton } from "./ThreadDetailsControl";
 import type {
   EnvironmentId,
@@ -13,12 +14,7 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import { useMessages } from "gt-react";
-import {
-  useState,
-  type ComponentProps,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
@@ -31,8 +27,7 @@ import { useProjects, useQuietThreadShell } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { beginLayoutContentDrag } from "../../layout/layoutDrag";
-import { readThreadPullRequestSurface, useOpenPrLink } from "../../lib/openPullRequestLink";
+import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import {
   linkedPullRequestSnapshotStatus,
   prStatusIndicator,
@@ -45,7 +40,6 @@ function ThreadDetailsPrLinkRow({
   environmentId,
   link,
   onOpen,
-  onPress,
   onActed,
   onStopWatching,
   composerTarget,
@@ -53,7 +47,6 @@ function ThreadDetailsPrLinkRow({
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
-  onPress: (event: ReactPointerEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
   composerTarget?: ComposerThreadTarget | undefined;
@@ -80,21 +73,11 @@ function ThreadDetailsPrLinkRow({
       project={project}
       label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
       onOpen={onOpen}
-      onPress={onPress}
       onStopWatching={onStopWatching}
       composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}
     />
   );
-}
-
-function beginPullRequestLinkDrag(
-  event: ReactPointerEvent<HTMLElement>,
-  threadRef: ScopedThreadRef,
-  url: string,
-) {
-  const surface = readThreadPullRequestSurface(threadRef, url);
-  if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
 }
 
 function ThreadDetailsPrRows({
@@ -126,15 +109,13 @@ function ThreadDetailsPrRows({
             },
           });
   const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
-  const visibleLinks = visibleThreadPullRequests(links);
-  if (currentLink === null || visibleLinks.length <= 1) return currentRow;
-  const restCount = visibleLinks.length - 1;
-  const currentKey = threadPullRequestKeyOf(currentLink);
-  const rest = expanded
-    ? pullRequestListLines(resolveThreadPullRequestChains(visibleLinks))
-        .map((line) => line.link)
-        .filter((link) => threadPullRequestKeyOf(link) !== currentKey)
-    : [];
+  const rest =
+    currentLink === null
+      ? []
+      : pipe(visibleThreadPullRequests(links), resolveThreadPullRequestChains, pullRequestListLines)
+          .map((line) => line.link)
+          .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
+  if (rest.length === 0) return currentRow;
 
   return (
     <>
@@ -147,7 +128,6 @@ function ThreadDetailsPrRows({
               environmentId={row.environmentId}
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
-              onPress={(event) => beginPullRequestLinkDrag(event, threadRef, link.url)}
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
               composerTarget={row.composerTarget}
@@ -157,7 +137,7 @@ function ThreadDetailsPrRows({
       ) : null}
       <ThreadDetailsMoreButton
         expanded={expanded}
-        remaining={restCount}
+        remaining={rest.length}
         onToggle={() => setExpanded(!expanded)}
       />
     </>
@@ -217,7 +197,6 @@ export function ThreadDetailsThreadPrRows({
       project={rowProject}
       label={`#${number}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
       onOpen={(event) => openPrLink(event, url)}
-      onPress={(event) => beginPullRequestLinkDrag(event, threadRef, url)}
       composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}
     />

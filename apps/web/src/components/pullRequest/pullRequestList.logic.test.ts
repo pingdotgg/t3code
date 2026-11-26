@@ -1,5 +1,7 @@
-import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import type {
+  EnvironmentId,
+  ProjectId,
   PullRequestAction,
   PullRequestListEntry,
   PullRequestSummary,
@@ -21,16 +23,16 @@ import {
   pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
+  withDiffStat,
   partitionPullRequestsWithPriority,
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
+  selectedPullRequestLabels,
   pullRequestLabelChoices,
   rankPullRequestMatches,
   rankPullRequestsBlockedOnAuthor,
   rankPullRequestsByMergeReadiness,
   sortPullRequestGroups,
-  displayPullRequestGroups,
-  settlePullRequestSortStats,
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
@@ -88,6 +90,7 @@ describe("visible pull request line-count targets", () => {
       {
         environmentId: ENV_1,
         projectId: "project-1",
+        repository: "pingdotgg/t3code",
         number: 1,
         additions: 1,
         deletions: 1,
@@ -104,6 +107,24 @@ describe("visible pull request line-count targets", () => {
     expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
       { projectId: "project-1", repository: "pingdotgg/t3code", number: 2 },
     ]);
+  });
+
+  it("matches diff stats by repository, ignoring case", () => {
+    const own = entry({ additions: 0, deletions: 0, number: 42 });
+    const stat = { environmentId: ENV_1, projectId: "project-1", number: 42, deletions: 2 };
+    const stats = mergePullRequestDiffStats(new Map(), [
+      { ...stat, repository: "other/lib", additions: 120 },
+    ]);
+
+    expect(withDiffStat(own, stats)).toEqual(own);
+    expect(
+      withDiffStat(
+        own,
+        mergePullRequestDiffStats(stats, [
+          { ...stat, repository: "PingDotGG/T3Code", additions: 7 },
+        ]),
+      ),
+    ).toMatchObject({ additions: 7, deletions: 2 });
   });
 
   it("keeps every per-environment batch within the stats contract limit", () => {
@@ -285,70 +306,6 @@ describe("default merge-readiness ranking", () => {
     );
   });
 
-  it.each(["ready", "largest", "smallest"] as const)(
-    "%s uses loaded counts but keeps late detail counts in place",
-    (sort) => {
-      const rows = [1, 2, 3].map((number) => entry({ number, additions: 0, deletions: 0 }));
-      const groups = [{ key: "others", label: "Others", entries: rows }] as const;
-      const batches = [
-        { ...rows[0]!, additions: 100, deletions: 0 },
-        { ...rows[1]!, additions: 10, deletions: 0 },
-      ];
-      const loadedStats = mergePullRequestDiffStats(new Map(), batches);
-      const initial = settlePullRequestSortStats(null, sort, new Map(), null, false);
-      const partialStats = mergePullRequestDiffStats(new Map(), batches.slice(0, 1));
-      const partial = settlePullRequestSortStats(
-        initial,
-        sort,
-        partialStats,
-        batches.slice(0, 1),
-        false,
-      );
-      expect(partial).toBe(initial);
-      const settling = displayPullRequestGroups(
-        groups,
-        sort,
-        "",
-        partialStats,
-        partial.stats,
-        "all",
-      )[0]!.entries;
-      expect(settling.map((row) => row.number)).toEqual([1, 2, 3]);
-      expect(settling[0]!.additions).toBe(100);
-
-      const settled = settlePullRequestSortStats(partial, sort, loadedStats, batches, true);
-      const display = (stats: typeof loadedStats) =>
-        displayPullRequestGroups(groups, sort, "", stats, settled.stats, "all")[0]!.entries;
-      const expected = sort === "largest" ? [1, 2, 3] : [2, 1, 3];
-      expect(display(loadedStats).map((row) => row.number)).toEqual(expected);
-      const shown = display(loadedStats);
-      display(mergePullRequestDiffStats(loadedStats, batches)).forEach((row, index) =>
-        expect(row).toBe(shown[index]),
-      );
-
-      const detail = { ...rows[2]!, additions: sort === "largest" ? 1_000 : 1, deletions: 0 };
-      const detailStats = mergePullRequestDiffStats(loadedStats, [detail]);
-      expect(
-        settlePullRequestSortStats(settled, sort, detailStats, [...batches, detail], true),
-      ).toBe(settled);
-      const filled = display(detailStats);
-      expect(filled.map((row) => row.number)).toEqual(expected);
-      expect(filled.find((row) => row.number === 3)?.additions).toBe(detail.additions);
-      const reset = settlePullRequestSortStats(
-        settled,
-        `${sort}:refetched`,
-        detailStats,
-        null,
-        false,
-      );
-      expect(
-        displayPullRequestGroups(groups, sort, "", detailStats, reset.stats, "all")[0]!.entries.map(
-          (row) => row.number,
-        ),
-      ).toEqual(sort === "largest" ? [3, 1, 2] : [3, 2, 1]);
-    },
-  );
-
   // regression: #9453 authored pull requests were not prioritized
   it("keeps authored work first and ranks each group by readiness", () => {
     const authoredWaiting = entry({ number: 1, checksState: "pending" });
@@ -475,18 +432,6 @@ describe("remembered pull request list controls", () => {
       setItem: (key: string, value: string) => void held.set(key, value),
     };
   };
-
-  it("remembers the selected project member independently of the server scope", () => {
-    const storage = makeStorage();
-    const preferences = {
-      involvement: "all",
-      state: "open",
-      projectId: ProjectId.make("main"),
-      projectEnvironmentId: EnvironmentId.make("cups"),
-    } as const;
-    writePullRequestListPreferences(preferences, storage);
-    expect(readPullRequestListPreferences(storage)).toEqual(preferences);
-  });
 
   // regression: #9188 corrupt stored list controls broke the page
   it("falls back to the default controls when storage is corrupt", () => {
@@ -1060,6 +1005,17 @@ describe("filter picker choices", () => {
     expect(choices).toEqual([
       { name: "size:XL", color: "d93f0b", count: 7 },
       { name: "bug", color: null, count: 0 },
+    ]);
+  });
+
+  it("restores a selected label's color and count from loaded facets or host labels", () => {
+    const loaded = [{ name: "bug", color: "d73a4a", count: 5 }];
+    const hosted = [{ name: "size:XL", color: "d93f0b" }];
+
+    expect(selectedPullRequestLabels(loaded, hosted, ["BUG", "size:xl", "custom"])).toEqual([
+      { name: "bug", color: "d73a4a", count: 5 },
+      { name: "size:XL", color: "d93f0b", count: 0 },
+      { name: "custom", color: null, count: 0 },
     ]);
   });
 });

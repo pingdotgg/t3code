@@ -857,13 +857,6 @@ function makeReplayQueryRunner(
         reconnectMcpServer: () => Effect.die("unexpected MCP reconnect in replay"),
         callMcpTool: () => Effect.die("unexpected MCP tool call in replay"),
         listPermissionRules: Effect.die("unexpected permission rules read in replay"),
-        // Recorded CLIs answer no context-usage request, so replays keep plain usage.
-        getContextUsage: Effect.fail(
-          new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-            method: "getContextUsage",
-            cause: new Error("Unsupported control request subtype"),
-          }),
-        ),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),

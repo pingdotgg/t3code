@@ -11,8 +11,8 @@ import {
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { reportMarkdownActionFailure, type TableCopyFormat } from "./markdownActionFailure";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const TABLE_COPY_SERIALIZERS: Record<TableCopyFormat, (table: Element) => string> = {
   markdown: serializeTableElementToMarkdown,
@@ -45,36 +45,29 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
 
   return (
     <div ref={containerRef} className="chat-markdown-table-container">
-      <div
-        data-markdown-table
-        className="overflow-hidden rounded-row-card surface-well shadow-none!"
-      >
-        <ScrollArea chainVerticalScroll scrollFade className="w-full max-w-full">
-          <table {...props}>{children}</table>
-        </ScrollArea>
-      </div>
+      <ScrollArea radius="none" chainVerticalScroll scrollFade className="w-full max-w-full">
+        <table {...props}>{children}</table>
+      </ScrollArea>
       {/* Stays within the row's px-1: the chat lane clips sideways overflow. */}
       <div className="mt-0.5 -mx-1 flex items-center justify-end select-none">
         <Menu>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <MenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost-muted"
-                      size="icon-xs"
-                      aria-label={copyLabel}
-                    />
-                  }
-                />
-              }
-            >
-              {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{copyLabel}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost-muted"
+                    size="icon-xs"
+                    aria-label={copyLabel}
+                  />
+                }
+              />
+            }
+            label={copyLabel}
+          >
+            {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+          </SharedTooltipTrigger>
           <MenuPopup align="end">
             <MenuItem onClick={() => handleCopy("markdown")}>
               <T>Copy as Markdown</T>

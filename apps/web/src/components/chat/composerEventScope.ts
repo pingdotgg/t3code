@@ -67,7 +67,7 @@ export function focusRequestedPermission(open: boolean, trigger: HTMLElement | n
 }
 
 /** Focuses the checked permission in the menu this trigger opened. */
-function focusCheckedPermission(trigger: HTMLElement | null): void {
+export function focusCheckedPermission(trigger: HTMLElement | null): void {
   const popupId = trigger?.getAttribute("aria-controls");
   const popup = popupId ? document.getElementById(popupId) : null;
   popup
@@ -94,8 +94,4 @@ export function takeOpenTarget(trigger: HTMLElement | null): "effort" | "permiss
     return "permissions";
   }
   return null;
-}
-
-export function isInsideComposerEditor(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest('[data-testid="composer-editor"]') !== null;
 }

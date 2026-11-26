@@ -4,7 +4,6 @@ import {
   getTraitSelectChange,
   replaceDescriptorCurrentValue,
   selectableProviderOptionChoices,
-  isReasoningControl,
   isReasoningSelect,
 } from "@t3tools/client-runtime/model-traits";
 import {
@@ -22,17 +21,16 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
-  resolveSelectableModel,
 } from "@t3tools/shared/model";
 import { msg, T, useMessages } from "gt-react";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { memo } from "react";
+import { GaugeIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
-  MenuRadioItemIndicator,
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
@@ -41,10 +39,9 @@ import { getProviderModelCapabilities, keepsUnavailableModelOptions } from "../.
 import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { useComposerMenuState } from "./useComposerMenuState";
-import { DESCRIPTOR_PRESETS_BY_KIND } from "../settings/customModelEditor.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -75,40 +72,26 @@ function savedOptionLabel(id: string, resolve: MessageResolver): string {
         .replace(/^./, (character) => character.toUpperCase());
 }
 
-/**
- * Read-only descriptors for saved values whose model metadata is unavailable
- * (provider not installed, catalog not loaded, or model missing from it).
- * A value from the driver's known preset keeps that preset's labels and
- * choices; anything else shows verbatim.
- */
 function buildUnavailableModelOptionDescriptors(
   selections: ProviderOptions | null | undefined,
-  provider: ProviderDriverKind | undefined,
   resolve: MessageResolver,
 ): ReadonlyArray<ProviderOptionDescriptor> {
-  const presets = provider ? DESCRIPTOR_PRESETS_BY_KIND[provider] : undefined;
-  return (selections ?? []).map((selection) => {
-    if (typeof selection.value === "boolean") {
-      return {
-        id: selection.id,
-        label: savedOptionLabel(selection.id, resolve),
-        type: "boolean" as const,
-        currentValue: selection.value,
-      };
-    }
-    const value = selection.value;
-    const choices = presets?.find((preset) => preset.id === selection.id)?.choices;
-    return {
-      id: selection.id,
-      label: savedOptionLabel(selection.id, resolve),
-      type: "select" as const,
-      options:
-        choices?.some((choice) => choice.id === value) === true
-          ? choices.map(({ id, label }) => ({ id, label: resolve(label) }))
-          : [{ id: value, label: value }],
-      currentValue: value,
-    };
-  });
+  return (selections ?? []).map((selection) =>
+    typeof selection.value === "boolean"
+      ? {
+          id: selection.id,
+          label: savedOptionLabel(selection.id, resolve),
+          type: "boolean" as const,
+          currentValue: selection.value,
+        }
+      : {
+          id: selection.id,
+          label: savedOptionLabel(selection.id, resolve),
+          type: "select" as const,
+          options: [{ id: selection.value, label: selection.value }],
+          currentValue: selection.value,
+        },
+  );
 }
 
 type TraitsPersistence =
@@ -144,15 +127,14 @@ function getSelectedTraits(
   resolve: MessageResolver = m,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
-  const modelIsUnavailable = keepsUnavailableModelOptions(provider, model)
-    ? !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider))
-    : resolveSelectableModel(provider, model, models) === null;
+  const modelIsUnavailable =
+    keepsUnavailableModelOptions(provider, model) &&
+    !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider));
   const descriptors = modelIsUnavailable
     ? buildUnavailableModelOptionDescriptors(
         includePlanAgent
           ? modelOptions
           : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
-        provider,
         resolve,
       )
     : getProviderOptionDescriptors({
@@ -322,7 +304,6 @@ export interface TraitsMenuContentProps {
   allowPromptInjectedEffort?: boolean;
   includePlanAgent?: boolean | undefined;
   triggerClassName?: string;
-  triggerVariant?: "toolbar" | "settings";
 }
 
 export type TraitsSelectionInput = TraitsMenuContentProps & TraitsPersistence;
@@ -407,26 +388,18 @@ export const ULTRATHINK_IN_BODY_NOTE = msg(
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
 );
 
-export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?: boolean }) {
+const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelectionInput) {
   const traits = useTraitsSelection(props);
   const resolve = useMessages();
   const {
     descriptors,
-    selectDescriptors: allSelectDescriptors,
-    booleanDescriptors: allBooleanDescriptors,
+    selectDescriptors,
+    booleanDescriptors,
     primarySelectDescriptor,
     ultrathinkInBodyText,
     hasAnyControls,
     modelIsUnavailable,
   } = traits;
-  const inReasoningMenu = (descriptor: ProviderOptionDescriptor) =>
-    !props.reasoningOnly ||
-    isReasoningControl(descriptor) ||
-    descriptor.id === "serviceTier" ||
-    descriptor.id === "fastMode" ||
-    descriptor.id === "ultracode";
-  const selectDescriptors = allSelectDescriptors.filter(inReasoningMenu);
-  const booleanDescriptors = allBooleanDescriptors.filter(inReasoningMenu);
 
   if (!hasAnyControls) {
     return null;
@@ -435,17 +408,17 @@ export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?
   if (modelIsUnavailable) {
     return (
       <>
-        {descriptors.filter(inReasoningMenu).map((descriptor, index) => {
+        {descriptors.map((descriptor, index) => {
           const value = traits.currentLabel(descriptor);
           if (!value) return null;
           return (
             <div key={descriptor.id}>
               {index > 0 ? <MenuDivider /> : null}
               <MenuGroup>
-                <div className="px-2 pt-1.5 pb-1 text-muted-foreground text-meta">
+                <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
                   {descriptor.label}
                 </div>
-                <div className="px-2 pb-1.5 text-muted-foreground/80 text-meta">{value}</div>
+                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">{value}</div>
               </MenuGroup>
             </div>
           );
@@ -460,11 +433,11 @@ export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?
         <div key={descriptor.id}>
           {index > 0 ? <MenuDivider /> : null}
           <MenuGroup>
-            <div className="px-2 pt-1.5 pb-1 text-muted-foreground text-meta">
+            <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
               {descriptor.label}
             </div>
             {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
-              <div className="px-2 pb-1.5 text-muted-foreground/80 text-meta">
+              <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
                 {resolve(ULTRATHINK_IN_BODY_NOTE)}
               </div>
             ) : null}
@@ -481,15 +454,12 @@ export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?
                   disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
                 >
                   <span className="flex w-full min-w-0 flex-col">
-                    <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                      <span className="flex min-w-0 items-center gap-1">
-                        <span className="min-w-0 truncate">{option.label}</span>
-                        {option.isDefault ? <DefaultBadge /> : null}
-                      </span>
-                      <MenuRadioItemIndicator />
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className="min-w-0 truncate">{option.label}</span>
+                      {option.isDefault ? <DefaultBadge /> : null}
                     </span>
                     {option.description ? (
-                      <span className="max-w-56 text-pretty text-muted-foreground/80 text-meta">
+                      <span className="max-w-56 text-pretty text-muted-foreground/80 text-xs">
                         {option.description}
                       </span>
                     ) : null}
@@ -504,7 +474,9 @@ export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?
         <div key={descriptor.id}>
           {index > 0 || selectDescriptors.length > 0 ? <MenuDivider /> : null}
           <MenuGroup>
-            <div className="px-2 py-1.5 text-muted-foreground text-meta">{descriptor.label}</div>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+              {descriptor.label}
+            </div>
             <MenuRadioGroup
               value={descriptor.currentValue === true ? "on" : "off"}
               onValueChange={(value) => traits.changeBoolean(descriptor.id, value === "on")}
@@ -519,7 +491,6 @@ export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?
                         <T context="toggle state">Off</T>
                       )}
                     </span>
-                    <MenuRadioItemIndicator />
                   </span>
                 </MenuRadioItem>
               ))}
@@ -529,32 +500,9 @@ export function TraitsMenuContent(props: TraitsSelectionInput & { reasoningOnly?
       ))}
     </>
   );
-}
+});
 
-/** The traits trigger's text ("High", "High · Fast"), or null when the model has no traits. */
-export function resolveTraitsTriggerLabel(input: {
-  provider: ProviderDriverKind;
-  models: ReadonlyArray<ServerProviderModel>;
-  model: string | null | undefined;
-  modelOptions: ProviderOptions | null | undefined;
-  includePlanAgent?: boolean | undefined;
-}): string | null {
-  const visibility = getTraitsSectionVisibility({
-    ...input,
-    promptUltrathink: "none",
-    allowPromptInjectedEffort: false,
-  });
-  if (!visibility.hasAnyControls) return null;
-  // The trigger label already pairs speed with reasoning ("High Fast").
-  const { label } = buildTraitsTriggerDisplay({
-    descriptors: visibility.descriptors,
-    primarySelectDescriptorId: visibility.primarySelectDescriptor?.id ?? null,
-    ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
-  });
-  return label.length > 0 ? label : null;
-}
-
-export function TraitsPicker({
+export const TraitsPicker = memo(function TraitsPicker({
   size = "sm",
   hidden = false,
   disabled = false,
@@ -584,7 +532,6 @@ export function TraitsPicker({
     resolve,
   );
   const isCodexStyle = props.provider === "codex";
-  const triggerVariant = props.triggerVariant;
 
   return (
     <Menu
@@ -593,70 +540,45 @@ export function TraitsPicker({
         setIsMenuOpen(open && !disabled);
       }}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <ComposerControl
-                  disabled={disabled}
-                  aria-label={triggerLabel}
-                  size={size}
-                  variant={triggerVariant ?? "toolbar"}
-                  className={cn(
-                    isCodexStyle
-                      ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
-                      : "shrink-0 whitespace-nowrap",
-                    props.triggerClassName,
-                  )}
-                />
-              }
-            />
-          }
-        >
-          {isCodexStyle ? (
-            <span
-              className={cn(
-                "flex min-w-0 w-full items-center",
-                size === "xs" ? "gap-1" : "gap-1.5",
-              )}
-            >
-              <span data-composer-control-compact-icon className="pointer-events-none">
-                <ComposerControlIcon
-                  icon={BrainIcon}
-                  size={size}
-                  className={triggerVariant === "settings" ? "size-3.5" : "size-3"}
-                />
-              </span>
-              <span data-composer-control-label className="min-w-0 truncate">
-                {triggerLabel}
-              </span>
+      <SharedTooltipTrigger
+        render={
+          <MenuTrigger
+            render={
+              <ComposerControl
+                disabled={disabled}
+                aria-label={triggerLabel}
+                size={size}
+                className={cn(
+                  isCodexStyle
+                    ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                    : "shrink-0 whitespace-nowrap",
+                  props.triggerClassName,
+                )}
+              />
+            }
+          />
+        }
+        label={triggerLabel}
+      >
+        {isCodexStyle ? (
+          <span
+            className={cn("flex min-w-0 w-full items-center", size === "xs" ? "gap-1" : "gap-1.5")}
+          >
+            <ComposerControlIcon icon={GaugeIcon} size={size} />
+            <span data-composer-control-label className="min-w-0 truncate">
+              {triggerLabel}
             </span>
-          ) : (
-            <>
-              <span data-composer-control-compact-icon className="pointer-events-none">
-                <ComposerControlIcon
-                  icon={BrainIcon}
-                  size={size}
-                  className={triggerVariant === "settings" ? "size-3.5" : "size-3"}
-                />
-              </span>
-              <span data-composer-control-label>{triggerLabel}</span>
-            </>
-          )}
-          {triggerVariant === "settings" ? (
-            <ChevronDownIcon
-              aria-hidden="true"
-              className="size-3.5 shrink-0 text-muted-foreground"
-              data-composer-control-chevron
-            />
-          ) : null}
-        </TooltipTrigger>
-        <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
-      </Tooltip>
-      <MenuPopup spacing="relaxed" align="start">
+          </span>
+        ) : (
+          <>
+            <ComposerControlIcon icon={GaugeIcon} size={size} />
+            <span data-composer-control-label>{triggerLabel}</span>
+          </>
+        )}
+      </SharedTooltipTrigger>
+      <MenuPopup align="start">
         <TraitsMenuContent {...props} />
       </MenuPopup>
     </Menu>
   );
-}
+});

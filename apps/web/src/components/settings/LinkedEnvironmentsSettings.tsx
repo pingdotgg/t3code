@@ -1,4 +1,3 @@
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import {
   linkBackBlockLabel,
@@ -38,7 +37,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
-import { StatusDot } from "../ui/status-dot";
+import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import {
@@ -106,12 +105,7 @@ export function LinkedEnvironmentsSettings({
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
-      title={search.title}
-      titleAction={
-        environmentLabel === null ? null : (
-          <span className="text-meta text-muted-foreground">{environmentLabel}</span>
-        )
-      }
+      title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
       headerAction={
         canLink ? (
           <div className="flex items-center gap-2">
@@ -166,28 +160,25 @@ function LinkedEnvironmentRow({
       <div className={ITEM_ROW_INNER_CLASSNAME}>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
-            <StatusDot
-              label={status}
-              size="md"
-              tone={
+            <ConnectionStatusDot
+              tooltipText={status}
+              dotClassName={
                 health.kind === "reachable"
                   ? health.expiresInDays === null
-                    ? "success"
-                    : "warning"
+                    ? "bg-success"
+                    : "bg-warning"
                   : health.kind === "expired" || health.kind === "failing"
-                    ? "danger"
-                    : "neutral"
+                    ? "bg-destructive"
+                    : "bg-muted-foreground/30"
               }
+              pingClassName={null}
             />
-            <h3 className="text-label text-foreground">{link.label}</h3>
+            <h3 className="text-sm font-medium text-foreground">{link.label}</h3>
           </div>
-          <Tooltip>
-            <TooltipTrigger render={<p tabIndex={0} className="text-meta text-muted-foreground" />}>
-              {status}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{m(accessConfig[link.access].label)}</TooltipPopup>
-          </Tooltip>
-          <p className="truncate text-meta text-muted-foreground/80">{link.urls.join(", ")}</p>
+          <p className="text-xs text-muted-foreground">
+            {m(accessConfig[link.access].label)} · {status}
+          </p>
+          <p className="truncate text-xs text-muted-foreground/80">{link.urls.join(", ")}</p>
         </div>
         {canUnlink ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -538,12 +529,12 @@ export function LinkEnvironmentDialog({
               />
             ) : null}
             {machine?.linked ? (
-              <p className="text-meta text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 <T>Already linked. Linking again renews it with the access you pick.</T>
               </p>
             ) : null}
             {through !== null ? (
-              <p className="text-meta text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {gt(
                   "{via} links to {target} at full access, so it gets the pairing code. No code to paste.",
                   { via: via?.label ?? "", target: through.label },
@@ -552,7 +543,7 @@ export function LinkEnvironmentDialog({
             ) : null}
             {needsAddress && through === null ? (
               <label className="block space-y-1.5">
-                <span className="block text-caption text-foreground">
+                <span className="block text-xs font-medium text-foreground">
                   <T>Address</T>
                 </span>
                 <Input
@@ -569,7 +560,7 @@ export function LinkEnvironmentDialog({
                   spellCheck={false}
                 />
                 {machine !== null ? (
-                  <span className="block text-meta text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground">
                     <T>
                       This app has no address for <Var>{machine.label}</Var> that another machine
                       can reach. Enter its https or Tailscale address.
@@ -583,7 +574,7 @@ export function LinkEnvironmentDialog({
             ) : null}
             {selected === null || canMint || through !== null ? null : (
               <label className="block space-y-1.5">
-                <span className="block text-caption text-foreground">
+                <span className="block text-xs font-medium text-foreground">
                   <T>Pairing code</T>
                 </span>
                 <Input
@@ -600,7 +591,7 @@ export function LinkEnvironmentDialog({
                   spellCheck={false}
                 />
                 {machine !== null ? (
-                  <span className="block text-meta text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground">
                     <T>
                       Create a link on <Var>{machine.label}</Var>: Settings → Sharing & access →
                       Authorized clients → Create link, then paste its code here.
@@ -611,20 +602,20 @@ export function LinkEnvironmentDialog({
             )}
             <LinkAccessPicker value={access} onChange={setAccess} disabled={busy} />
             {machine === null || source === null ? null : backOffer.kind === "offered" ? (
-              <label className="flex cursor-pointer items-start gap-2.5 text-body has-data-disabled:cursor-default">
+              <label className="flex cursor-pointer items-start gap-2.5 text-sm has-data-disabled:cursor-default">
                 <Checkbox
                   checked={alsoLinkBack}
                   disabled={busy}
                   onCheckedChange={setAlsoLinkBack}
                 />
                 <span className="min-w-0 space-y-0.5">
-                  <span className="block text-label text-foreground">
+                  <span className="block font-medium text-foreground">
                     {gt("Also link {target} back to {source}", {
                       source: source.label,
                       target: machine.label,
                     })}
                   </span>
-                  <span className="block text-meta text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground">
                     {gt("Agents on {target} can then work on {source} too.", {
                       source: source.label,
                       target: machine.label,
@@ -633,7 +624,7 @@ export function LinkEnvironmentDialog({
                 </span>
               </label>
             ) : backOffer.kind === "blocked" ? (
-              <p className="text-meta text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {linkBackBlockLabel(
                   backOffer.reason,
                   { source: source.label, target: machine.label },
@@ -644,7 +635,7 @@ export function LinkEnvironmentDialog({
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
-          <DialogClose disabled={busy} render={<Button variant="secondary" type="button" />}>
+          <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
             <T>Cancel</T>
           </DialogClose>
           <Button form={formId} type="submit" disabled={busy || !ready}>
@@ -695,7 +686,7 @@ export function useForgetPeerLink(environmentId: EnvironmentId, link: PeerLinkSu
           type: "warning",
           title: gt("{label} did not answer", { label: link.label }),
           description: gt(
-            "Revoke the T3 Code connection in {label}''s Sharing & access to end the session there too.",
+            "Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
             { label: link.label },
           ),
         });

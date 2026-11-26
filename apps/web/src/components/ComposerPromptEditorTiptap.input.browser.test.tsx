@@ -28,8 +28,6 @@ import { cdp, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, fakeTimers, render } from "../../test/render";
 
-import "~/index.css";
-
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
 import { isMacPlatform } from "~/lib/utils";
 import { registerCommands } from "~/shortcuts/dispatcher";
@@ -69,12 +67,11 @@ function Composer({
   onCommandKeyDown = () => false,
   importContextFragment,
   literalText = false,
-  placeholder = "",
   disabled = false,
+  placeholder = "",
   placeholderSuffix,
 }: {
   value: string;
-  placeholder?: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
@@ -82,6 +79,7 @@ function Composer({
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
   disabled?: boolean;
+  placeholder?: string;
   placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
@@ -421,26 +419,21 @@ it.each([false, true])(
   },
 );
 
-it("draws typed text on the placeholder's pixels", async () => {
-  const text = "Run the tests again";
-  await using screen = await render(
-    <Composer value="" richTextEnabled skills={[]} placeholder={text} />,
-  );
-  const textRect = (root: Element | null) => {
-    const node = root && document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
-    if (!node) throw new Error("Text is missing");
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    const { x, y, width, height } = range.getBoundingClientRect();
-    return { x, y, width, height };
-  };
-  const shown = textRect(screen.container.querySelector("[data-composer-placeholder]"));
-  const editor = editorIn(screen.container);
-  await act(async () => {
-    editor.commands.insertContent(text);
-  });
-  expect(textRect(editor.view.dom.querySelector("p"))).toEqual(shown);
-});
+it.each([
+  { code: "echo @prod next", from: 11, to: 16, expected: "echo @prod( next)" },
+  { code: "echo next @prod", from: 1, to: 11, expected: "(echo next )@prod" },
+])(
+  "wraps selected code next to a literal mention in $code",
+  async ({ code, from, to, expected }) => {
+    await using screen = await mountEditor(`\`\`\`\n${code}\n\`\`\``);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.setTextSelection({ from, to });
+      typeText(editor, from, to, "(");
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`\`\`\`\n${expected}\n\`\`\``);
+  },
+);
 
 it("lets composition replace selected text without surrounding it", async () => {
   await using screen = await mountEditor("word");
@@ -451,6 +444,16 @@ it("lets composition replace selected text without surrounding it", async () => 
     typeText(editor, 1, 5, '"');
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
+});
+
+it("keeps replacement behavior at a prose mention boundary", async () => {
+  await using screen = await mountEditor("echo @prod next");
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection({ from: 7, to: 12 });
+    typeText(editor, 7, 12, "(");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("echo @prod(");
 });
 
 // CDP drives Chrome's own IME path, which skips deleting a range bounded by an uneditable chip.
@@ -1304,7 +1307,10 @@ describe("composer context undo lifetime", () => {
       const retained = composer.retained();
       expect(retained.files.get(fileContextReference(file).contextId)?.file).toBe(file.file);
 
+      const editorBeforeSwitch = composer.editor();
       await composer.show("b");
+      // Thread switches swap the draft into the same editor rather than rebuilding it.
+      expect(composer.editor()).toBe(editorBeforeSwitch);
       expect(retained.files.size).toBe(0);
       await composer.undo();
       expect(serializeEditorDoc(composer.editor().state.doc).value).toBe(destinationValue);

@@ -6,13 +6,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 
 import {
-  type ClientSettings,
+  type DatabaseMigrationProgress,
   type DesktopSnapShotEvent,
   DEFAULT_CLIENT_SETTINGS,
 } from "@t3tools/contracts";
@@ -80,21 +81,20 @@ function parseMailtoAddress(rawUrl: string): Option.Option<string> {
   }
 }
 
-function macosWindowButtonPosition(zoomFactor: number) {
-  return {
-    x: 16,
-    y: Math.round((MACOS_WORKSPACE_TOPBAR_HEIGHT * zoomFactor) / 2 - MACOS_WINDOW_BUTTON_RADIUS),
-  };
-}
-
 function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
   if (window.isDestroyed() || window.isFullScreen()) return;
-  window.setWindowButtonPosition(macosWindowButtonPosition(window.webContents.getZoomFactor()));
+  window.setWindowButtonPosition({
+    x: 16,
+    y: Math.round(
+      (MACOS_WORKSPACE_TOPBAR_HEIGHT * window.webContents.getZoomFactor()) / 2 -
+        MACOS_WINDOW_BUTTON_RADIUS,
+    ),
+  });
 }
 
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
-const TITLEBAR_LIGHT_SYMBOL_COLOR = "#282828";
-const TITLEBAR_DARK_SYMBOL_COLOR = "#fafafa";
+const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
+const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
@@ -161,23 +161,17 @@ const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
   platform: NodeJS.Platform,
-  appIconPath: Option.Option<string>,
 ): { icon: string } | Record<string, never> {
   if (platform === "darwin") return {};
   const ext = platform === "win32" ? "ico" : "png";
-  return Option.match(
-    Option.orElse(appIconPath, () => iconPaths[ext]),
-    {
-      onNone: () => ({}),
-      onSome: (icon) => ({ icon }),
-    },
-  );
+  return Option.match(iconPaths[ext], {
+    onNone: () => ({}),
+    onSome: (icon) => ({ icon }),
+  });
 }
 
-// The default theme's window chrome (--app-chrome-background), so the first
-// paint and resize gaps match the chrome around the content.
 function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#000000" : "#e4e4e4";
+  return shouldUseDarkColors ? "#000000" : "#ffffff";
 }
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
@@ -275,12 +269,18 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
+function buildConnectingSplashDataUrl(
+  shouldUseDarkColors: boolean,
+  progress: DatabaseMigrationProgress | null,
+): string {
   const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
-  const label = shouldUseDarkColors ? "#a2a2a2" : "#727272";
-  const accent = shouldUseDarkColors ? "#fafafa" : "#282828";
-  const track = shouldUseDarkColors ? "rgba(250,250,250,0.18)" : "rgba(40,40,40,0.18)";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
+  const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
+  const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
+  const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
+  const message = progress
+    ? `Upgrading database (${progress.current} of ${progress.total})`
+    : "Connecting to WSL…";
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">${message}</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -339,7 +339,10 @@ function getWindowTitleBarOptions(
   if (platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      trafficLightPosition: macosWindowButtonPosition(1),
+      trafficLightPosition: {
+        x: 16,
+        y: MACOS_WORKSPACE_TOPBAR_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS,
+      },
     };
   }
 
@@ -460,18 +463,8 @@ export const make = Effect.gen(function* () {
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
-    const appIcon = Option.match(
-      yield* clientSettings.get.pipe(Effect.orElseSucceed(() => Option.none<ClientSettings>())),
-      { onNone: () => DEFAULT_CLIENT_SETTINGS.appIcon, onSome: (settings) => settings.appIcon },
-    );
-    const iconOption = getIconOption(
-      iconPaths,
-      environment.platform,
-      yield* assets.resolveAppIconPath(appIcon),
-    );
-    // The native background and caption symbols follow the chrome, which stays
-    // dark in the light, black chrome appearance.
-    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkChrome;
+    const iconOption = getIconOption(iconPaths, environment.platform);
+    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
     const persistedBounds = persistedSettings.mainWindowBounds;
     const displayBoundsResult = yield* Effect.sync(() => {
@@ -648,6 +641,8 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
+      // The guest always runs the app's own preload, whatever the element asked for.
+      webPreferences.preload = environment.previewPickPreloadPath;
       webPreferences.sandbox = true;
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
@@ -891,26 +886,11 @@ export const make = Effect.gen(function* () {
 
     if (environment.platform === "darwin") {
       // Mouse drivers can deliver Back/Forward as macOS swipe gestures instead of buttons.
-      window.on("swipe", (_event, direction) =>
-        runPromise(
-          Effect.gen(function* () {
-            const settings = yield* clientSettings.get.pipe(
-              Effect.orElseSucceed(() => Option.none()),
-            );
-            if (
-              Option.isSome(settings) &&
-              settings.value.layoutThreeFingerSwipe &&
-              settings.value.scrollingWorkspacesEnabled
-            ) {
-              window.webContents.send(MENU_ACTION_CHANNEL, `layout-swipe-${direction}`);
-              return;
-            }
-            const history = window.webContents.navigationHistory;
-            if (direction === "left" && history.canGoBack()) history.goBack();
-            else if (direction === "right" && history.canGoForward()) history.goForward();
-          }),
-        ),
-      );
+      window.on("swipe", (_event, direction) => {
+        const history = window.webContents.navigationHistory;
+        if (direction === "left" && history.canGoBack()) history.goBack();
+        else if (direction === "right" && history.canGoForward()) history.goForward();
+      });
       window.on("enter-full-screen", () => {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
@@ -1186,15 +1166,34 @@ export const make = Effect.gen(function* () {
     }
     yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
+    let renderedUrl: string | undefined;
+    const progressFiber = runFork(
+      Effect.gen(function* () {
+        if (splash.isDestroyed() || (yield* Ref.get(desktopState.quitting))) return;
+        const progress = yield* Ref.get(desktopState.databaseMigrationProgress);
+        const url = buildConnectingSplashDataUrl(shouldUseDarkColors, progress);
+        if (url === renderedUrl) return;
+        const loaded = yield* Effect.promise(() =>
+          splash.loadURL(url).then(
+            () => true,
+            () => false,
+          ),
+        );
+        if (loaded) renderedUrl = url;
+      }).pipe(Effect.repeat(Schedule.spaced("1 second"))),
+    );
     splash.once("closed", () => {
-      void runPromise(Ref.set(splashWindowRef, Option.none()));
+      runFork(
+        Fiber.interrupt(progressFiber).pipe(
+          Effect.andThen(Ref.set(splashWindowRef, Option.none())),
+        ),
+      );
     });
     splash.once("ready-to-show", () => {
       if (!splash.isDestroyed()) {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     Effect.catch((error) =>
@@ -1306,7 +1305,7 @@ export const make = Effect.gen(function* () {
       else webContents.toggleDevTools();
     }),
     syncAppearance: Effect.gen(function* () {
-      const shouldUseDarkColors = yield* electronTheme.shouldUseDarkChrome;
+      const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
       yield* electronWindow.syncAllAppearance((window, { titleBarOverlay }) =>
         syncWindowAppearance(window, titleBarOverlay, shouldUseDarkColors, environment.platform),
       );

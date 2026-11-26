@@ -39,31 +39,6 @@ Build new UI the same way. Compose or extend a component instead of copying its 
 When a call site repeats a treatment another one already uses, make it a variant or a slot on the
 shared component. A new composer banner or notice uses the `ComposerBanner` slots.
 
-## Building or porting UI
-
-Compose before you style. In order: a `components/ui` export with a `variant` and `size`; a
-feature slot set such as `SettingsSection`/`SettingsRow`, `ComposerBanner` or `ComposerControl`;
-only then your own markup. Check the result on `/design-system` and under two surface styles from
-the Appearance settings.
-
-- Text takes a role (`<Text variant tone>`, or `text-title` … `text-micro`). Status is
-  `StatusDot`, counts are `Badge`.
-- A look that belongs to one feature stays in that feature's component. Never add a feature's
-  variant to `components/ui` to pass lint; `t3code/no-new-ui-variants` names every new one.
-
-### Surfaces
-
-The surface styles repaint the `surface-*` utilities in [`index.css`](../../apps/web/src/index.css);
-they can't repaint `bg-card border rounded-lg`. `t3code/no-raw-surface` flags those ingredients.
-
-- A block is `surface-card rounded-card`; an opaque part inside a panel `surface-card-fill`; a
-  panel `surface-panel`; a raised control `surface-raised`; an inset field `surface-well`; a tinted
-  notice `surface-tint` or `Alert`; an overlay `surface-popover` or `surface-floating`.
-- Radius is a token: `rounded-card`, `rounded-row`, `rounded-item`, `rounded-control`,
-  `rounded-badge`, `rounded-kbd`, `rounded-pane`, or `rounded-full`.
-- Shadows come from the surface, or `shadow-dialog` and `shadow-composer`. A divider is `border-t`
-  or `border-b` with `border-divider`.
-
 ## Handlers in large components
 
 V8 gives every closure created in one render a single shared scope. A memoized handler keeps
@@ -100,18 +75,3 @@ that calls no hook. Lint misses some bailouts, notably `try` with `finally` and
 compiles every file and fails on any skip. Async handlers rarely need `try`: an
 atom command settles into a result, so cleanup can follow the `await`. `useStableCallback` still
 marks handlers that leave a large component, as described above.
-
-## Lint ceilings
-
-`t3code/no-raw-type-classes`, `t3code/no-styled-raw-controls`, `t3code/no-raw-surface` and
-`t3code/no-new-ui-variants` freeze existing debt per file in
-[`lint-ceilings.json`](../../lint-ceilings.json). A file's count must equal its ceiling, and a
-`components/ui` file's variants must match its list, so headroom can't hide a new occurrence. After
-you remove occurrences, merge main, or cherry-pick, run `vp run lint:ceilings`: it lowers each
-entry to the file's count and deletes it at zero. It never raises an entry or adds a file or
-variant, so a file over its ceiling, or one missing from the table, has to be fixed. Don't edit the
-table by hand.
-
-`vp run check:changed` runs `vp run lint:ceilings --check`, which compares the table with the last
-pushed one (the parents of the commits no remote has) and fails on a raise or a new entry. CI's
-shallow checkout can't make that comparison, so there only review catches a raise.

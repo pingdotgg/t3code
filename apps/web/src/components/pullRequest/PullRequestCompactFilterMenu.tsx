@@ -2,30 +2,35 @@ import { useGT } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PullRequestFilterOptionIcon,
   type PullRequestFilterOption,
 } from "./PullRequestListFilters";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function PullRequestCompactFilterMenu<Value extends string>({
   label,
   triggerIcon,
   triggerLabel,
+  outlined = false,
   iconOnly = false,
   value,
   options,
   onChange,
+  className,
 }: {
   label: string;
   triggerIcon?: ReactNode;
   triggerLabel?: string;
+  outlined?: boolean;
   iconOnly?: boolean;
   value: Value;
   options: ReadonlyArray<PullRequestFilterOption<Value>>;
   onChange: (value: Value) => void;
+  className?: string;
 }) {
   const gt = useGT();
   const current = options.find((option) => option.value === value) ?? options[0];
@@ -37,16 +42,26 @@ export function PullRequestCompactFilterMenu<Value extends string>({
           triggerLabel || iconOnly ? gt("{label}: {value}", { label, value: current.label }) : label
         }
         title={iconOnly ? gt("{label}: {value}", { label, value: current.label }) : undefined}
-        render={<Button variant="secondary" size={iconOnly ? "icon" : "default"} />}
-        className="min-w-0"
+        render={
+          outlined ? (
+            <Button variant="outline" size={iconOnly ? "icon" : "default"} />
+          ) : (
+            <Button variant="ghost-muted" size="sm" />
+          )
+        }
+        className={cn("min-w-0", className)}
       >
         {iconOnly ? (
           <current.Icon aria-hidden className="size-4" />
+        ) : triggerLabel ? (
+          <>
+            {triggerIcon}
+            <span>{triggerLabel}</span>
+          </>
         ) : (
           <>
-            {triggerIcon ?? <current.Icon aria-hidden className="size-4 shrink-0" />}
-            <span className="truncate">{triggerLabel ?? current.label}</span>
-            <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
+            <span className="truncate">{current.label}</span>
+            <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground/70" />
           </>
         )}
       </MenuTrigger>
@@ -69,10 +84,12 @@ export function PullRequestCompactFilterMenu<Value extends string>({
             return option.unavailable === undefined ? (
               item
             ) : (
-              <Tooltip key={option.value}>
-                <TooltipTrigger render={item} />
-                <TooltipPopup side="right">{option.unavailable}</TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                key={option.value}
+                render={item}
+                label={option.unavailable}
+                side="right"
+              />
             );
           })}
         </MenuRadioGroup>

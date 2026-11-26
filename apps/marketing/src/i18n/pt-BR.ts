@@ -32,7 +32,7 @@ export const ptBR: Messages = {
     sourceLink: "Roube nosso código (legalmente)",
     alsoOnPhone: "Também no seu celular:",
     screenshotAlt:
-      "T3 Code com a lista de threads ao lado de uma thread do Claude aberta, cujo cartão de detalhes encaixado mostra a branch, as alterações, o pull request vinculado com os checks aprovados, os limites de uso, o contexto, uma automação e um fork",
+      "T3 Code executando subagentes do Claude, Codex, Muse e Gemini em uma mesma thread",
     endorsementsTitle: "Tolerado por mais de {users} devs",
     endorsementsSub: "Alguns até tuitaram sobre isso.",
     endorsementsLabel: "Depoimentos de desenvolvedores",
@@ -88,7 +88,6 @@ export const ptBR: Messages = {
     channelLabel: "Canal de versões",
     stable: "Estável",
     nightly: "Nightly",
-    nightlyTagline: "As novidades assim que chegam, antes do Estável. Pode ter arestas a aparar.",
     intelNote: "Tem um Mac com Intel? {link}.",
     intelLink: "Baixe a versão x64",
     armNote: "Usa ARM? Baixe o {deb} ou o {appimage} para arm64.",

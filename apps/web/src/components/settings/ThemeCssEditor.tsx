@@ -30,7 +30,8 @@ export function ThemeCssEditor({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.nativeEvent.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const editor = event.currentTarget;
     if (event.key === "Escape" && (tabIndents || event.repeat)) {
       event.preventDefault();
@@ -78,27 +79,25 @@ export function ThemeCssEditor({
   return (
     <div className="space-y-2">
       <div className="overflow-hidden rounded-lg border border-input bg-code text-foreground focus-within:border-ring focus-within:ring-3 focus-within:ring-inset focus-within:ring-ring/24">
-        <div className="p-3 font-mono text-meta leading-5">
-          <textarea
-            aria-label={gt("Custom CSS")}
-            aria-describedby={hintId}
-            autoCapitalize="off"
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-            wrap="off"
-            className="block h-46 w-full resize-none outline-none"
-            value={value}
-            onFocus={() => setTabIndents(true)}
-            onChange={(event) => {
-              onChange(event.currentTarget.value);
-              updatePosition(event.currentTarget);
-            }}
-            onSelect={(event) => updatePosition(event.currentTarget)}
-            onKeyDown={handleKeyDown}
-          />
-        </div>
-        <div className="flex items-center justify-between border-t border-input px-3 py-1 font-mono text-meta">
+        <textarea
+          aria-label={gt("Custom CSS")}
+          aria-describedby={hintId}
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          wrap="off"
+          className="block h-52 w-full resize-none bg-transparent p-3 font-mono text-xs leading-5 outline-none"
+          value={value}
+          onFocus={() => setTabIndents(true)}
+          onChange={(event) => {
+            onChange(event.currentTarget.value);
+            updatePosition(event.currentTarget);
+          }}
+          onSelect={(event) => updatePosition(event.currentTarget)}
+          onKeyDown={handleKeyDown}
+        />
+        <div className="flex items-center justify-between border-t border-input px-3 py-1 font-mono text-xs">
           <span>CSS</span>
           <span>
             <T>
@@ -108,7 +107,7 @@ export function ThemeCssEditor({
         </div>
       </div>
       <div className="flex items-start justify-between gap-2">
-        <p id={hintId} className="text-meta text-muted-foreground">
+        <p id={hintId} className="text-xs text-muted-foreground">
           {tabIndents
             ? gt("Tab indents. Shift+Tab unindents. Press Escape, then Tab to leave.")
             : gt("Tab moves to the next control.")}

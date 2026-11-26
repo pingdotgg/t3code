@@ -26,7 +26,7 @@ import {
   THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES,
   THREAD_RESUME_MAX_REPLAY_EVENTS,
 } from "./ThreadStream.ts";
-import { projectDomainEventForWire } from "@t3tools/shared/wireProjection";
+import { projectDomainEventForWire } from "./WireProjection.ts";
 
 const NOW = DateTime.makeUnsafe("2026-09-08T00:00:00.000Z");
 const THREAD_ID = ThreadId.make("thread-stream-test");

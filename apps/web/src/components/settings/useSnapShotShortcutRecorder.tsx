@@ -131,7 +131,7 @@ export function useSnapShotShortcutRecorder({
       <Button
         type="button"
         size="xs"
-        variant={recording ? "secondary" : "secondary"}
+        variant={recording ? "secondary" : "outline"}
         disabled={disabled}
         aria-label={
           displayShortcut

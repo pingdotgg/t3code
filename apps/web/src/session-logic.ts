@@ -102,7 +102,7 @@ export type PendingUserInput = ThreadPendingUserInput;
 
 export type TimelineAttempt = Pick<
   OrchestrationV2RunAttempt,
-  "id" | "runId" | "attemptOrdinal" | "rootNodeId" | "status" | "startedAt" | "completedAt"
+  "id" | "runId" | "attemptOrdinal" | "rootNodeId" | "status" | "completedAt"
 >;
 
 export type TimelineEntry = (
@@ -503,8 +503,13 @@ function projectedWorkEntry(
         item.steps.find((step) => step.status === "pending");
       return {
         ...common,
-        label: resolve(msg("Tasks {done}/{total}"), { done, total: item.steps.length }),
-        ...(current ? { detail: current.text } : {}),
+        label: current
+          ? resolve(msg("Tasks {done}/{total} · {current}"), {
+              done,
+              total: item.steps.length,
+              current: current.text,
+            })
+          : resolve(msg("Tasks {done}/{total}"), { done, total: item.steps.length }),
       };
     }
     case "approval_request":
@@ -647,7 +652,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
               ...(item.senderThreadId !== undefined ? { senderThreadId: item.senderThreadId } : {}),
               ...(item.linkedSender !== undefined ? { linkedSender: item.linkedSender } : {}),
               ...(item.idleCompaction !== undefined ? { idleCompaction: item.idleCompaction } : {}),
-              ...(item.retryOfRunId !== undefined ? { retryOfRunId: item.retryOfRunId } : {}),
               ...(item.scheduledTaskId !== undefined
                 ? { scheduledTaskId: item.scheduledTaskId }
                 : {}),

@@ -75,7 +75,7 @@ const SORTS = {
 const FILTER_ROW_STYLE =
   Platform.OS === "android"
     ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }
-    : { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10, gap: 8 };
+    : { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
 
 function choices<Value extends string>(
   options: Readonly<Record<Value, string>>,
@@ -165,7 +165,8 @@ export function IssuesScreen(
   const continuable = [...held].filter(([, page]) => Object.keys(page.nextCursors).length > 0);
   const moreFailure = [...held.values()].find((page) => page.moreFailure)?.moreFailure ?? null;
   const loadMore = async (retry = false) => {
-    if (loading.current || (moreFailure !== null && !retry)) return;
+    // With nothing to continue, the spinner and new pages would only re-fire onEndReached forever.
+    if (loading.current || continuable.length === 0 || (moreFailure !== null && !retry)) return;
     loading.current = true;
     setLoadingMore(true);
     const loaded = await Promise.all(

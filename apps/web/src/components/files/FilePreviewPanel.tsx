@@ -1,7 +1,7 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
-import { T, useGT, useMessages, Var } from "gt-react";
-import { m } from "~/i18n/messages";
+import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import {
@@ -47,15 +47,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  CodeXmlIcon,
-  EllipsisIcon,
-  FolderTree,
-  Globe2,
-  MessageSquarePlusIcon,
-} from "lucide-react";
+import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -75,13 +67,6 @@ import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { fileManagerActionForPath } from "~/components/chat/OpenInPicker.logic";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
-import {
-  formatMediaLength,
-  formatMediaSize,
-  mediaFormatLabel,
-  mediaMetadataParts,
-  useMediaByteSize,
-} from "~/components/media/mediaFileInfo";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -94,11 +79,7 @@ import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type { ChatFileAttachment } from "~/types";
 import { isHostPath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { Button } from "~/components/ui/button";
-import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useComposerHandleContext } from "~/composerHandleContext";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
@@ -112,7 +93,6 @@ import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
-import { addFileMentionToChat } from "./addFileToChat";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
@@ -120,7 +100,6 @@ import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import { PreviewImage } from "./PreviewImage";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileExplorerPane } from "./FileExplorerPane";
-import { FileMediaDetails } from "./FileMediaDetails";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { ChunkedMarkdown } from "./ChunkedMarkdown";
@@ -140,7 +119,6 @@ import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
   FILE_SURFACE_SUBHEADER_CLASS,
-  FileRenderedViewToggle,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
@@ -160,7 +138,6 @@ import {
 } from "./filePreviewMode";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
-import { observeResize } from "~/lib/observeResize";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
   getOptimisticProjectFileQueryData,
@@ -175,15 +152,12 @@ const NO_FILE_REVISION_ATOM = Atom.make(null);
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
-  /** The repository's root when `cwd` is a project folder inside it. */
-  repositoryRoot?: string | undefined;
   projectName: string;
   projectId?: ProjectId | undefined;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
   threadRef: ScopedThreadRef;
-  /** The composer comments go to; without one (a threadless surface) there are none. */
-  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
+  composerDraftTarget: ScopedThreadRef | DraftId;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInShortcutEnabled: boolean;
@@ -248,7 +222,7 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure") {
     return (
       <MediaActions source={actionsSource}>
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-meta leading-relaxed text-error-foreground">
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
           <T>Unable to load workspace image.</T>
         </div>
       </MediaActions>
@@ -357,7 +331,7 @@ export function WorkspaceBrowserPreview(props: {
 
   if (assetUrl._tag === "Failure") {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-meta leading-relaxed text-error-foreground">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
         <T>Unable to load file preview.</T>
       </div>
     );
@@ -467,32 +441,16 @@ function WorkspaceVideoPreview(props: {
       ? ""
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
   const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
-  const [videoMetadata, setVideoMetadata] = useState<{
-    width: number;
-    height: number;
-    duration: number;
-  } | null>(null);
-  const sizeBytes = useMediaByteSize(latestUrl);
-  const metadata = mediaMetadataParts([
-    mediaFormatLabel(props.name),
-    videoMetadata && videoMetadata.width > 0
-      ? `${videoMetadata.width}×${videoMetadata.height}`
-      : null,
-    videoMetadata ? formatMediaLength(videoMetadata.duration) : null,
-    formatMediaSize(sizeBytes),
-  ]);
 
   return (
-    <div className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col items-center gap-2.5 overflow-auto p-4">
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
       <MediaVideoPlayer
         src={latestUrl}
         sourceFailed={assetUrl._tag === "Failure"}
         label={props.name}
         revision={revision}
         preload="metadata"
-        transport="custom"
-        onMetadata={setVideoMetadata}
-        className="flex max-h-[calc(100%-2.375rem)] min-h-0 w-full max-w-5xl shrink items-center justify-center overflow-hidden rounded-lg border border-divider bg-black"
+        className="flex h-full min-h-0 w-full max-w-5xl items-center justify-center"
         videoClassName="aspect-auto max-h-full w-auto max-w-full"
         onRetry={refreshAssetUrl}
         actionsSource={{
@@ -503,14 +461,6 @@ function WorkspaceVideoPreview(props: {
           asset: { environmentId: props.environmentId, resource },
         }}
       />
-      <div className="w-full max-w-5xl">
-        <FileMediaDetails
-          environmentId={props.environmentId}
-          cwd={props.workspaceRoot}
-          relativePath={props.name}
-          metadata={metadata}
-        />
-      </div>
     </div>
   );
 }
@@ -627,28 +577,6 @@ function WorkspaceDocumentPreview(props: {
   );
 }
 
-/** Below this surface width the file actions fold into the More menu. */
-const FILE_ACTIONS_FOLD_WIDTH_PX = 600;
-
-/**
- * Below this surface width the tree no longer sits beside the preview: the
- * preview fills the surface and Back swaps it for the tree (pen r7Vc3).
- */
-const FILE_EXPLORER_SIDE_WIDTH_PX = 760;
-
-/** Whether the element renders narrower than `width`, kept current as it resizes. */
-function useElementNarrowerThan(element: HTMLElement | null, width: number): boolean {
-  const [narrow, setNarrow] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the preview viewport width to choose its responsive file layout.
-  useEffect(() => {
-    if (!element) return;
-    const measure = () => setNarrow(element.clientWidth > 0 && element.clientWidth < width);
-    measure();
-    return observeResize(element, measure);
-  }, [element, width]);
-  return narrow;
-}
-
 function clampFileLine(contents: string, requestedLine: number): number {
   let lineCount = 1;
   for (let index = 0; index < contents.length; index += 1) {
@@ -692,42 +620,30 @@ interface FileRevealState {
   scrollTop: number;
   scrollContainer: HTMLElement | null;
   restoreFrameId: number | null;
-}
-
-// A file pane tab unmounts while another tab of its pane shows, so its offset outlives the panel.
-const savedFileScrollTops = new Map<string, number>();
-const SAVED_FILE_SCROLL_TOPS_LIMIT = 200;
-
-function saveFileScrollTop(key: string, scrollTop: number) {
-  savedFileScrollTops.delete(key);
-  savedFileScrollTops.set(key, scrollTop);
-  if (savedFileScrollTops.size > SAVED_FILE_SCROLL_TOPS_LIMIT) {
-    const oldest = savedFileScrollTops.keys().next().value;
-    if (oldest !== undefined) savedFileScrollTops.delete(oldest);
-  }
+  /** Where CodeView settled on the revealed line, while the view is still there. */
+  revealedScrollTop: number | null;
 }
 
 function useFileLineReveal(
-  scrollScope: string,
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
-): FilePostRender {
+): (scroller: "virtualizer" | "codeView") => FilePostRender {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
 
-  return (fileContainer, instance, phase) => {
+  return (scroller) => (fileContainer, instance, phase) => {
     if (relativePath === null) return;
 
-    const scrollKey = `${scrollScope}\u0000${relativePath}`;
     const existingState = revealStatesByPath.get(relativePath);
     const state: FileRevealState = existingState ?? {
       frameId: null,
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
-      scrollTop: savedFileScrollTops.get(scrollKey) ?? 0,
+      scrollTop: 0,
       scrollContainer: null,
       restoreFrameId: null,
+      revealedScrollTop: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
 
@@ -750,7 +666,12 @@ function useFileLineReveal(
       const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
       if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
-      saveFileScrollTop(scrollKey, state.scrollTop);
+      // A rebuilt CodeView estimates its line heights again, so a saved offset no longer points at
+      // the line. Starting the worker pool rebuilds the viewer right after its first render.
+      if (state.revealedScrollTop !== null && state.revealedScrollTop === state.scrollTop) {
+        state.handledRequestId = null;
+      }
+      state.revealedScrollTop = null;
       state.scrollContainer = null;
       return;
     }
@@ -800,9 +721,12 @@ function useFileLineReveal(
     }
 
     if (!scrollContainer) return;
-    fileContainer.style.minHeight = `${Math.ceil(
-      Math.max(instance.height, scrollContainer.clientHeight),
-    )}px`;
+    // CodeView's file element is the mounted window of rows, which the viewer sizes and places.
+    if (scroller === "virtualizer") {
+      fileContainer.style.minHeight = `${Math.ceil(
+        Math.max(instance.height, scrollContainer.clientHeight),
+      )}px`;
+    }
 
     if (state.handledRequestId === revealRequestId || state.frameId !== null) {
       return;
@@ -869,13 +793,19 @@ function useFileLineReveal(
           cancelGuard();
           return;
         }
-        const targetTop = resolveScrollTarget(line);
+        // CodeView's file element holds only its mounted rows, so only a mounted row places the line.
+        const targetTop =
+          scroller === "codeView" &&
+          !(fileContainer.shadowRoot ?? fileContainer).querySelector(`[data-line="${line}"]`)
+            ? null
+            : resolveScrollTarget(line);
         if (
           targetTop !== null &&
           Math.abs(scrollContainer.scrollTop - targetTop) > REVEAL_GUARD_TOLERANCE_PX
         ) {
           scrollContainer.scrollTop = targetTop;
         }
+        if (scroller === "codeView") state.revealedScrollTop = scrollContainer.scrollTop;
         guardFrameId = requestAnimationFrame(holdTarget);
       };
       guardFrameId = requestAnimationFrame(holdTarget);
@@ -901,8 +831,18 @@ function useFileLineReveal(
         }
         updateFileLinkReveal(fileContainer, line);
 
-        scrollContainer.scrollTop = targetTop;
         state.handledRequestId = revealRequestId;
+        if (scroller === "codeView") {
+          // That window's geometry cannot place the line, so the viewer scrolls to it.
+          // It centers its estimate of the line, and rows it mounts on arrival can still move it.
+          instance.scrollToLine(line, "center", (result) => {
+            if (result !== "settled") return;
+            state.revealedScrollTop = scrollContainer.scrollTop;
+            guardScrollTarget(line);
+          });
+          return;
+        }
+        scrollContainer.scrollTop = targetTop;
         guardScrollTarget(line);
       });
     };
@@ -938,8 +878,7 @@ interface EditableFileSurfaceProps {
   projectId?: ProjectId | undefined;
   cwd: string;
   relativePath: string;
-  /** The composer comments go to; without one (a threadless surface) there are none. */
-  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
+  composerDraftTarget: ScopedThreadRef | DraftId;
   contents: string;
   resolvedTheme: "light" | "dark";
   revealRequestId: number;
@@ -968,15 +907,13 @@ function EditableFileSurface({
   onPendingChange,
   onEditorChange,
 }: EditableFileSurfaceProps) {
-  const gt = useGT();
   const messages = useMessages();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const promptCommentIds = new Set(
-    useComposerDraftStore((store) =>
-      composerDraftTarget
-        ? (store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS)
-        : EMPTY_REVIEW_COMMENTS,
+    useComposerDraftStore(
+      (store) =>
+        store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
     ).map((comment) => comment.id),
   );
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
@@ -1021,15 +958,16 @@ function EditableFileSurface({
     setEditedContents(file.contents);
     setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
     changeFileSaveSession(saveTarget, file.contents);
-    if (!nextLineAnnotations || !composerDraftTarget) return;
+    if (!nextLineAnnotations) return;
     const remapped = remapFileCommentAnnotations(nextLineAnnotations);
     // The editor hands back the array it was given until an edit moves an annotation.
     setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));
     for (const annotation of remapped) {
       for (const entry of annotation.metadata.entries) {
         if (entry.kind !== "comment" || !promptCommentIds.has(entry.id)) continue;
-        addReviewComment(composerDraftTarget, {
-          ...buildFileReviewComment({
+        addReviewComment(
+          composerDraftTarget,
+          buildFileReviewComment({
             id: entry.id,
             filePath: relativePath,
             startLine: entry.startLine,
@@ -1037,15 +975,14 @@ function EditableFileSurface({
             text: entry.text,
             contents: file.contents,
           }),
-          ...(entry.createdAt !== undefined ? { createdAt: entry.createdAt } : {}),
-        });
+        );
       }
     }
   };
 
   const removeAnnotationEntry = (entryId: string) => {
     setSelectedRange(null);
-    if (composerDraftTarget) removeReviewComment(composerDraftTarget, entryId);
+    removeReviewComment(composerDraftTarget, entryId);
     setLineAnnotations((current) => {
       return current.flatMap((annotation) => {
         const entries = annotation.metadata.entries.filter((entry) => entry.id !== entryId);
@@ -1059,11 +996,10 @@ function EditableFileSurface({
     const entry = lineAnnotations
       .flatMap((annotation) => annotation.metadata.entries)
       .find((candidate) => candidate.id === entryId);
-    // oxlint-disable-next-line react/purity -- Submission timestamps are read in this event handler (oxc#27309).
-    const createdAt = new Date().toISOString();
-    if (entry && composerDraftTarget) {
-      addReviewComment(composerDraftTarget, {
-        ...buildFileReviewComment({
+    if (entry) {
+      addReviewComment(
+        composerDraftTarget,
+        buildFileReviewComment({
           id: entry.id,
           filePath: relativePath,
           startLine: entry.startLine,
@@ -1071,8 +1007,7 @@ function EditableFileSurface({
           text,
           contents,
         }),
-        createdAt,
-      });
+      );
     }
     setLineAnnotations((current) =>
       current.map((annotation) => ({
@@ -1080,7 +1015,7 @@ function EditableFileSurface({
         metadata: {
           entries: annotation.metadata.entries.map((annotationEntry) =>
             annotationEntry.id === entryId
-              ? { ...annotationEntry, kind: "comment", text, createdAt }
+              ? { ...annotationEntry, kind: "comment", text }
               : annotationEntry,
           ),
         },
@@ -1142,7 +1077,7 @@ function EditableFileSurface({
   }, [hasOpenCommentForm, setSelectedRange]);
   const handleLineSelectionEnd = (range: SelectedLineRange | null) => {
     setSelectedRange(range);
-    if (range && composerDraftTarget) {
+    if (range) {
       beginComment(range);
     }
   };
@@ -1168,7 +1103,7 @@ function EditableFileSurface({
     <EditProvider createEditor={createFileEditor}>
       <div ref={surfaceRef} className="flex min-h-0 flex-1">
         <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 scroll-pt-[var(--surface-top-inset,0px)] overflow-auto pt-under-header"
+          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
           config={{
             overscrollSize: 600,
             intersectionObserverMargin: 1200,
@@ -1181,7 +1116,7 @@ function EditableFileSurface({
             onEditChange={handleEditChange}
             options={{
               disableFileHeader: true,
-              enableGutterUtility: composerDraftTarget !== undefined && !hasOpenCommentForm,
+              enableGutterUtility: !hasOpenCommentForm,
               enableLineSelection: !hasOpenCommentForm,
               onGutterUtilityClick: setSelectedRange,
               onLineSelectionChange: setSelectedRange,
@@ -1203,7 +1138,7 @@ function EditableFileSurface({
               );
               if (entries.length === 0) return null;
               return (
-                <div className="flex flex-col gap-2 pt-1.5 pr-3 pb-2 pl-10">
+                <div className="py-1">
                   {entries.map((entry) => (
                     <DiffCommentAnnotation
                       key={entry.id}
@@ -1217,10 +1152,6 @@ function EditableFileSurface({
                       ])}
                       kind={entry.kind}
                       rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine, messages)}
-                      createdAt={entry.createdAt}
-                      // A saved file comment is the composer's context entry for it.
-                      stateLabel={entry.kind === "comment" ? gt("In composer") : undefined}
-                      submitLabel={gt("Done", { $context: "button, saves a file comment" })}
                       text={entry.text}
                       onCancel={() => removeAnnotationEntry(entry.id)}
                       onComment={(text) => submitAnnotationEntry(entry.id, text)}
@@ -1306,6 +1237,19 @@ function RenderedMarkdownSurface({
   );
 }
 
+function renderedToggleLabel(
+  mode: "markdown" | "mermaid" | "html" | "table",
+  rendered: boolean,
+  resolve: MessageResolver,
+): string {
+  if (mode === "mermaid")
+    return rendered ? resolve(msg("Show Mermaid source")) : resolve(msg("Show rendered diagram"));
+  if (mode === "markdown")
+    return rendered ? resolve(msg("Show markdown source")) : resolve(msg("Show rendered markdown"));
+  if (mode === "table") return rendered ? resolve(msg("Show source")) : resolve(msg("Show table"));
+  return rendered ? resolve(msg("Show HTML source")) : resolve(msg("Show rendered page"));
+}
+
 function initialExplorerOpen(): boolean {
   try {
     return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
@@ -1318,7 +1262,6 @@ function initialExplorerOpen(): boolean {
 export default function FilePreviewPanel({
   environmentId,
   cwd,
-  repositoryRoot,
   projectName,
   projectId,
   relativePath: requestedPath,
@@ -1339,12 +1282,10 @@ export default function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
-  // Neither (a threadless surface): the server knows no thread, so assets go by cwd too.
-  const draft = typeof composerDraftTarget !== "object";
+  const draft = typeof composerDraftTarget === "string";
   const gt = useGT();
   const m = useMessages();
   const { resolvedTheme } = useTheme();
-  const composerRef = useComposerHandleContext();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
@@ -1408,6 +1349,11 @@ export default function FilePreviewPanel({
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isFolder ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
+  const showExplorer = shouldShowFileExplorer({
+    relativePath: previewPath,
+    explorerOpen,
+    attachmentOpen: attachment !== undefined,
+  });
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
     false,
@@ -1427,21 +1373,7 @@ export default function FilePreviewPanel({
   const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
     null,
   );
-  const [breadcrumbElement, setBreadcrumbElement] = useState<HTMLDivElement | null>(null);
-  // Narrow rows use a source icon and move Add to chat into the More menu.
-  const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(null);
-  const foldActions = useElementNarrowerThan(surfaceElement, FILE_ACTIONS_FOLD_WIDTH_PX);
-  const stackExplorer = useElementNarrowerThan(surfaceElement, FILE_EXPLORER_SIDE_WIDTH_PX);
-  // A stacked surface shows the preview or the tree, never both. Browsing is
-  // tied to the reveal it started from, so opening this file again brings the
-  // preview back.
-  const revealKey = `${relativePath ?? ""}:${revealRequestId}`;
-  const [browsingRevealKey, setBrowsingRevealKey] = useState<string | null>(null);
-  const browsingFiles = browsingRevealKey === revealKey;
-  const openFileFromSurface = (path: string) => {
-    setBrowsingRevealKey(null);
-    onOpenFile(path);
-  };
+  const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = previewPath ? isMarkdownPreviewFile(previewPath) : false;
   const isMermaid = previewPath !== null && /\.(mmd|mermaid)$/i.test(previewPath);
   const [renderMermaidPreferred, setRenderMermaidPreferred] = useLocalStorage(
@@ -1457,27 +1389,8 @@ export default function FilePreviewPanel({
   const markdownRenderable = isMarkdown && (file.data?.byteLength ?? 0) <= FULL_TEXT_MAX_BYTES;
   const renderMarkdown = markdownRenderable && renderMarkdownPreferred && revealHandled;
   const renderMermaid = isMermaid && renderMermaidPreferred && revealHandled;
-  const canBrowseFiles = !isHostFile && previewPath !== null;
-  const showExplorer = shouldShowFileExplorer({
-    relativePath: previewPath,
-    explorerOpen: stackExplorer ? browsingFiles : explorerOpen,
-    attachmentOpen: attachment !== undefined,
-  });
-  const showPreview = previewPath !== null && !(stackExplorer && showExplorer);
-  // A stacked tree stays mounted behind the preview so Back keeps its search,
-  // expansion and reveal instead of rebuilding them.
-  const mountExplorer = showExplorer || (stackExplorer && canBrowseFiles);
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
-  const readOnlyNotice =
-    Boolean(relativePath) && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending;
-  const truncatedNotice =
-    previewPath !== null &&
-    attachment === undefined &&
-    !isMedia &&
-    !renderBrowserFile &&
-    file.data?.truncated === true &&
-    renderMermaid;
   const renderedMode = isMermaid
     ? ("mermaid" as const)
     : isMarkdown
@@ -1600,7 +1513,6 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(previewPath);
   // Navigating up preserves the file tab; retain the trail's path spelling to find its folder tab.
   const navigateToFolder = (crumbPath: string) => {
-    setBrowsingRevealKey(null);
     const path =
       breadcrumbTrail !== null && breadcrumbPathOf(breadcrumbTrail) === crumbPath
         ? breadcrumbTrail
@@ -1613,15 +1525,7 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
-  // Mentions resolve against the workspace, so only workspace files can be added.
-  const canAddToChat =
-    previewPath !== null && relativePath !== null && !isHostFile && composerRef !== null;
-  const onFilePostRender = useFileLineReveal(
-    `${environmentId}\u0000${cwd}`,
-    relativePath,
-    revealLine,
-    revealRequestId,
-  );
+  const fileLineReveal = useFileLineReveal(relativePath, revealLine, revealRequestId);
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
     canReadFiles &&
@@ -1637,22 +1541,16 @@ export default function FilePreviewPanel({
       : NO_FILE_REVISION_ATOM,
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the current breadcrumb in view as its path or available width changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the breadcrumb DOM so the deepest and current crumbs are in view after commit
   useEffect(() => {
-    const element = breadcrumbElement;
-    if (!element) return;
-    const revealCurrentCrumb = () => {
-      const crumbs = element.querySelectorAll<HTMLElement>("[data-file-crumb]");
-      // Show the deepest crumb when it fits, but never at the cost of the current one.
-      crumbs[crumbs.length - 1]?.scrollIntoView({ block: "nearest", inline: "end" });
-      element
-        .querySelector<HTMLElement>("[data-current-file-crumb='true']")
-        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    };
-    revealCurrentCrumb();
-    return observeResize(element, revealCurrentCrumb);
+    const crumbs = breadcrumbRef.current?.querySelectorAll<HTMLElement>("[data-file-crumb]");
+    // Show the deepest crumb when it fits, but never at the cost of the current one.
+    crumbs?.[crumbs.length - 1]?.scrollIntoView({ block: "nearest", inline: "end" });
+    breadcrumbRef.current
+      ?.querySelector<HTMLElement>("[data-current-file-crumb='true']")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new path or trail re-renders the crumbs, so the current one scrolls back into view.
-  }, [breadcrumbElement, breadcrumbPath, breadcrumbTrail]);
+  }, [breadcrumbPath, breadcrumbTrail]);
 
   const toggleExplorer = () => {
     setExplorerOpen((current) => {
@@ -1694,206 +1592,140 @@ export default function FilePreviewPanel({
   if (attachment === undefined && !canReadFiles) {
     if (fileAccess.isPending) {
       return (
-        <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-body text-muted-foreground">
+        <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Spinner className="size-4" />
           <T>Checking file access...</T>
         </div>
       );
     }
     return (
-      <div className="p-4 text-body text-muted-foreground">
+      <div className="p-4 text-sm text-muted-foreground">
         {fileAccess.error ?? gt("This connection cannot read host files.")}
       </div>
     );
   }
 
-  const setRendered = (pressed: boolean) => {
-    if (pressed === rendered) return;
-    setRenderedPreferred(pressed);
-    setHandledReveal(
-      pressed && relativePath !== null ? { path: relativePath, requestId: revealRequestId } : null,
-    );
-  };
-  const addToChat = () => {
-    if (relativePath) addFileMentionToChat(composerRef, relativePath);
-  };
-  const fileHeader =
-    breadcrumbPath !== null && breadcrumbTrail !== null
-      ? {
-          crumbs: (
-            <ScrollArea
-              radius="none"
-              ref={setBreadcrumbElement}
-              hideScrollbars
-              scrollFade
-              className="min-w-0 flex-1"
-              data-file-breadcrumbs
-            >
-              <div className="flex h-full w-max min-w-full items-center text-meta">
-                <FileBreadcrumbs
-                  cwd={cwd}
-                  environmentId={environmentId}
-                  isFolder={isFolder}
-                  onNavigateFolder={navigateToFolder}
-                  onOpenFile={openFileFromSurface}
-                  projectName={projectName}
-                  relativePath={breadcrumbPath}
-                  trail={breadcrumbTrail}
-                  workspaceMutationId={workspaceMutationId}
-                />
-              </div>
-            </ScrollArea>
-          ),
-          actions: (
-            <>
-              {canBrowseFiles && stackExplorer ? (
-                <FileSurfaceAction
-                  label={browsingFiles ? gt("Back to file") : gt("Back to files")}
-                  onPress={() => setBrowsingRevealKey(browsingFiles ? null : revealKey)}
-                >
-                  {browsingFiles ? (
-                    <ArrowRightIcon className="size-3.5" />
-                  ) : (
-                    <ArrowLeftIcon className="size-3.5" />
-                  )}
-                </FileSurfaceAction>
-              ) : null}
-              {canToggleRendered && renderedMode && !foldActions ? (
-                <FileRenderedViewToggle
-                  mode={renderedMode}
-                  rendered={rendered}
-                  onRenderedChange={setRendered}
-                />
-              ) : null}
-              {canToggleRendered && renderedMode && foldActions ? (
-                <FileSurfaceAction
-                  label={rendered ? gt("Show source") : gt("Show preview")}
-                  pressed={!rendered}
-                  onPress={() => setRendered(!rendered)}
-                >
-                  <CodeXmlIcon className="size-3.5" />
-                </FileSurfaceAction>
-              ) : null}
-              {canAddToChat && !foldActions ? (
-                <FileSurfaceAction label={gt("Add to chat")} onPress={addToChat}>
-                  <MessageSquarePlusIcon className="size-3.5" />
-                </FileSurfaceAction>
-              ) : null}
-              {absolutePath &&
-              (environmentId === primaryEnvironmentId ||
-                environmentId === hostEnvironmentId ||
-                remoteOpenState.mode !== "local-exec") ? (
-                <OpenInPicker
-                  enableShortcut={openInShortcutEnabled}
-                  environmentId={environmentId}
-                  keybindings={keybindings}
-                  availableEditors={availableEditors}
-                  openInCwd={absolutePath}
-                  openInCwdIsFile={file.isFile}
-                  compact
-                  fileManagerAction={fileManagerAction}
-                />
-              ) : null}
-              {showsRawText ||
-              canOpenInBrowser ||
-              copyableContents !== null ||
-              (showsLargeText && absolutePath !== null && relativePath !== null) ||
-              (foldActions && canAddToChat) ? (
-                <Menu>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <MenuTrigger
-                          render={
-                            <Button
-                              type="button"
-                              className="shrink-0"
-                              aria-label={gt("More file actions")}
-                              variant="ghost"
-                              size="icon-sm"
-                            />
-                          }
-                        />
-                      }
-                    >
-                      <EllipsisIcon className="size-3.5" />
-                    </TooltipTrigger>
-                    <TooltipPopup>
-                      <T>More file actions</T>
-                    </TooltipPopup>
-                  </Tooltip>
-                  <MenuPopup align="end">
-                    {foldActions && canAddToChat ? (
-                      <MenuItem onClick={addToChat}>
-                        <MessageSquarePlusIcon aria-hidden />
-                        <T>Add to chat</T>
-                      </MenuItem>
-                    ) : null}
-                    {showsRawText ? (
-                      <MenuCheckboxItem checked={wordWrap} onCheckedChange={setWordWrapOverride}>
-                        <T>Word wrap</T>
-                      </MenuCheckboxItem>
-                    ) : null}
-                    {copyableContents !== null ? (
-                      <MenuItem
-                        closeOnClick={false}
-                        onClick={() => copyToClipboard(copyableContents, undefined)}
-                      >
-                        {isCopied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-                        {isCopied ? <T>Copied</T> : <T>Copy contents</T>}
-                      </MenuItem>
-                    ) : null}
-                    {showsLargeText && absolutePath && relativePath ? (
-                      <LargeFileActions
-                        environmentId={environmentId}
-                        threadRef={threadRef}
-                        absolutePath={absolutePath}
-                        draftCwd={draft ? cwd : null}
-                        name={relativePath}
-                        copyContents={copyLargeText}
-                      />
-                    ) : null}
-                    {canOpenInBrowser ? (
-                      <MenuItem onClick={handleOpenInBrowser}>
-                        <Globe2 aria-hidden />
-                        <T>Open file in preview browser</T>
-                      </MenuItem>
-                    ) : null}
-                  </MenuPopup>
-                </Menu>
-              ) : null}
-              {canBrowseFiles && !stackExplorer ? (
-                <FileSurfaceAction
-                  label={explorerOpen ? gt("Hide file explorer") : gt("Show file explorer")}
-                  pressed={explorerOpen}
-                  onPress={toggleExplorer}
-                >
-                  <FolderTree className="size-3.5" />
-                </FileSurfaceAction>
-              ) : null}
-            </>
-          ),
-        }
-      : null;
-
   return (
-    <div
-      ref={setSurfaceElement}
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
-    >
-      {fileHeader ? (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      {breadcrumbPath !== null && breadcrumbTrail !== null ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
-          {fileHeader.crumbs}
-          {fileHeader.actions}
+          <ScrollArea
+            radius="none"
+            ref={breadcrumbRef}
+            hideScrollbars
+            scrollFade
+            className="min-w-0 flex-1"
+            data-file-breadcrumbs
+          >
+            <div className="flex h-full w-max min-w-full items-center text-xs">
+              <FileBreadcrumbs
+                cwd={cwd}
+                environmentId={environmentId}
+                onNavigateFolder={navigateToFolder}
+                onOpenFile={onOpenFile}
+                projectName={projectName}
+                relativePath={breadcrumbPath}
+                trail={breadcrumbTrail}
+                workspaceMutationId={workspaceMutationId}
+              />
+            </div>
+          </ScrollArea>
+          {absolutePath &&
+          (environmentId === primaryEnvironmentId ||
+            environmentId === hostEnvironmentId ||
+            remoteOpenState.mode !== "local-exec") ? (
+            <OpenInPicker
+              environmentId={environmentId}
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              enableShortcut={openInShortcutEnabled}
+              openInCwd={absolutePath}
+              openInCwdIsFile={file.isFile}
+              compact
+              fileManagerAction={fileManagerAction}
+            />
+          ) : null}
+          {canToggleRendered && renderedMode ? (
+            <FileSurfaceAction
+              label={renderedToggleLabel(renderedMode, rendered, m)}
+              pressed={rendered}
+              onPress={() => {
+                const pressed = !rendered;
+                setRenderedPreferred(pressed);
+                setHandledReveal(
+                  pressed && relativePath !== null
+                    ? { path: relativePath, requestId: revealRequestId }
+                    : null,
+                );
+              }}
+            >
+              {rendered ? (
+                <Code2Icon className="size-3.5" />
+              ) : renderedMode === "table" ? (
+                <Table2Icon className="size-3.5" />
+              ) : (
+                <EyeIcon className="size-3.5" />
+              )}
+            </FileSurfaceAction>
+          ) : null}
+          {showsRawText ? (
+            <FileSurfaceAction
+              label={wordWrap ? gt("Disable word wrap") : gt("Enable word wrap")}
+              pressed={wordWrap}
+              onPress={() => setWordWrapOverride(!wordWrap)}
+            >
+              <WrapTextIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+          {copyableContents !== null ? (
+            <FileSurfaceAction
+              label={isCopied ? gt("Copied") : gt("Copy contents")}
+              onPress={() => copyToClipboard(copyableContents, undefined)}
+            >
+              {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+            </FileSurfaceAction>
+          ) : null}
+          {showsLargeText && absolutePath && relativePath ? (
+            <LargeFileActions
+              environmentId={environmentId}
+              threadRef={threadRef}
+              absolutePath={absolutePath}
+              draftCwd={draft ? cwd : null}
+              name={relativePath}
+              copyContents={copyLargeText}
+            />
+          ) : null}
+          {canOpenInBrowser ? (
+            <FileSurfaceAction
+              label={gt("Open file in preview browser")}
+              onPress={handleOpenInBrowser}
+            >
+              <Globe2 className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+          {!isHostFile && previewPath !== null ? (
+            <FileSurfaceAction
+              label={explorerOpen ? gt("Hide file explorer") : gt("Show file explorer")}
+              pressed={explorerOpen}
+              onPress={toggleExplorer}
+            >
+              <FolderTree className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
         </div>
       ) : null}
-      {readOnlyNotice ? (
-        <div className="shrink-0 border-b px-3 py-1.5 text-caption text-muted-foreground">
+      {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
+        <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
           <T>Read-only connection. Unsaved edits are kept until write access returns.</T>
         </div>
       ) : null}
-      {truncatedNotice && file.data ? (
-        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-caption text-warning-foreground">
+      {previewPath &&
+      attachment === undefined &&
+      !isMedia &&
+      !renderBrowserFile &&
+      file.data?.truncated &&
+      renderMermaid ? (
+        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
           {gt(
             "{count, plural, one {Preview limited to the first 1 MB of a {formatted} byte file.} other {Preview limited to the first 1 MB of a {formatted} byte file.}}",
             { count: file.data.byteLength, formatted: file.data.byteLength.toLocaleString() },
@@ -1902,7 +1734,7 @@ export default function FilePreviewPanel({
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
-          className={cn("min-w-0 flex-1 flex-col overflow-hidden", showPreview ? "flex" : "hidden")}
+          className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
         >
           {mayOpenEditor ? (
             // Panel focus lands here and passes to the editor once it attaches. sr-only keeps the
@@ -1985,7 +1817,7 @@ export default function FilePreviewPanel({
               copyContents={copyLargeText}
               preview={file.data?.contents ?? ""}
               sizeBytes={file.data?.byteLength ?? 0}
-              onPostRender={onFilePostRender}
+              onPostRender={fileLineReveal("codeView")}
               workspaceMutationId={workspaceMutationId}
               revealLine={revealLine}
               revealRequestId={revealRequestId}
@@ -2007,37 +1839,41 @@ export default function FilePreviewPanel({
               refreshRevision={fileRefreshRevision}
             />
           ) : relativePath && file.error && file.data === null ? (
-            <FileSurfaceFailure
-              message={
-                <>
+            <div
+              role="alert"
+              className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col overflow-auto"
+            >
+              <div className="my-auto flex shrink-0 flex-col gap-3 px-6 py-6 text-center text-xs leading-relaxed">
+                <p className="text-destructive">
                   {file.readError ? filePreviewReadErrorMessage(file.readError, m) : file.error}
-                  {attemptedPath ? (
-                    <span className="mt-2 block">
-                      <T>
-                        Attempted path
-                        <code className="block break-all font-mono text-foreground select-all">
-                          <Var>{attemptedPath}</Var>
-                        </code>
-                      </T>
-                    </span>
-                  ) : null}
-                  {!isHostFile ? (
-                    <span className="mt-2 block">
-                      <T>
-                        Workspace folder:{" "}
-                        <code className="break-all font-mono select-all">
-                          <Var>{file.readError?.cwd ?? cwd}</Var>
-                        </code>
-                        . Check the link's path or locate the file in Files.
-                      </T>
-                    </span>
-                  ) : null}
-                </>
-              }
-              onRetry={file.refresh}
-            />
+                </p>
+                {attemptedPath ? (
+                  <p className="text-muted-foreground">
+                    <T>
+                      Attempted path
+                      <code className="block break-all font-mono text-foreground select-all">
+                        <Var>{attemptedPath}</Var>
+                      </code>
+                    </T>
+                  </p>
+                ) : null}
+                {!isHostFile ? (
+                  <p className="text-muted-foreground">
+                    <T>
+                      Workspace folder:{" "}
+                      <code className="break-all font-mono select-all">
+                        <Var>{file.readError?.cwd ?? cwd}</Var>
+                      </code>
+                      . Check the link's path or locate the file in Files.
+                    </T>
+                  </p>
+                ) : null}
+              </div>
+            </div>
           ) : relativePath && file.data === null ? (
-            <FileSurfaceLoading />
+            <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+              <Spinner size="lg" />
+            </div>
           ) : relativePath && file.data ? (
             renderMermaid ? (
               <Suspense fallback={<FileSurfaceLoading />}>
@@ -2067,7 +1903,7 @@ export default function FilePreviewPanel({
                 name={relativePath}
                 text={file.data.contents}
                 cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
-                onPostRender={onFilePostRender}
+                onPostRender={fileLineReveal("codeView")}
                 wordWrap={wordWrap}
               />
             ) : (
@@ -2083,7 +1919,7 @@ export default function FilePreviewPanel({
                   resolvedTheme={resolvedTheme}
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}
-                  onPostRender={onFilePostRender}
+                  onPostRender={fileLineReveal("virtualizer")}
                   onPendingChange={onPendingChange}
                   onEditorChange={handleEditorChangeStable}
                 />
@@ -2091,8 +1927,8 @@ export default function FilePreviewPanel({
             )
           ) : null}
         </div>
-        {mountExplorer ? (
-          <FileExplorerPane resizable={showPreview && showExplorer} visible={showExplorer}>
+        {showExplorer ? (
+          <FileExplorerPane resizable={Boolean(previewPath)}>
             <div
               className="contents"
               onClick={focusEditorOnTreeRowClickOrEnter}
@@ -2103,7 +1939,6 @@ export default function FilePreviewPanel({
               <FileBrowserPanel
                 key={`${environmentId}:${hostFolderPath ?? cwd}`}
                 environmentId={environmentId}
-                repositoryRoot={repositoryRoot}
                 cwd={hostFolderPath ?? cwd}
                 projectName={hostFolderPath ?? projectName}
                 hostFolder={hostFolderPath !== null}
@@ -2113,8 +1948,7 @@ export default function FilePreviewPanel({
                     : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
                 }
                 selectedPathRevealId={revealRequestId}
-                visible={showExplorer}
-                onOpenFile={openFileFromSurface}
+                onOpenFile={onOpenFile}
                 answersPanelFind={!previewPath}
                 workspaceMutationId={workspaceMutationId}
                 {...(previewPath && !isMedia && !isPdf
@@ -2182,9 +2016,9 @@ function LargeFileActions(props: {
   };
   return (
     <>
-      <MenuItem
-        closeOnClick={false}
-        onClick={() => {
+      <FileSurfaceAction
+        label={isCopied ? gt("Copied") : gt("Copy contents")}
+        onPress={() => {
           const copy = props.copyContents.current;
           if (!copy) return;
           void copy()
@@ -2192,12 +2026,12 @@ function LargeFileActions(props: {
             .catch(showError);
         }}
       >
-        {isCopied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-        {isCopied ? <T>Copied</T> : <T>Copy contents</T>}
-      </MenuItem>
-      <MenuItem
+        {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      </FileSurfaceAction>
+      <FileSurfaceAction
+        label={saving ? gt("Preparing file…") : gt("Save file")}
         disabled={saving}
-        onClick={() => {
+        onPress={() => {
           setSaving(true);
           void (async () => {
             const url = await refreshAssetUrl();
@@ -2215,9 +2049,8 @@ function LargeFileActions(props: {
             .finally(() => setSaving(false));
         }}
       >
-        <DownloadIcon aria-hidden />
-        {saving ? gt("Preparing file…") : gt("Save file")}
-      </MenuItem>
+        <DownloadIcon className="size-3.5" />
+      </FileSurfaceAction>
     </>
   );
 }

@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { T, Var } from "gt-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { environmentPresentations } from "../../state/presentation";
 import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
@@ -31,7 +31,6 @@ export function ChatGptWelcomeCoordinator() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedProfiles);
-  const continueRef = useRef<HTMLButtonElement>(null);
   const profiles = [...presentations].flatMap(([environmentId, presentation]) =>
     presentation.connection.phase !== "connected"
       ? []
@@ -63,29 +62,27 @@ export function ChatGptWelcomeCoordinator() {
         if (!open) dismiss();
       }}
     >
-      <DialogPopup className="sm:max-w-md" showCloseButton={false} initialFocus={continueRef}>
+      <DialogPopup>
         <DialogHeader>
-          <OpenAI aria-hidden className="mb-3 size-8 text-strong-foreground" />
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <DialogTitle>
-              <T>Your ChatGPT plan is connected</T>
-            </DialogTitle>
-            <DialogDescription>
-              <T>
-                Your ChatGPT plan covers eligible Codex usage. Manage shared usage and credit
-                settings in ChatGPT.
-              </T>
-            </DialogDescription>
-            <p className="min-w-0 wrap-anywhere text-meta text-dim-foreground">
-              <T>
-                <Var>{next?.providerName}</Var> on <Var>{next?.environmentLabel}</Var>
-              </T>
-            </p>
-          </div>
+          <OpenAI className="mb-2 size-8" aria-hidden="true" />
+          <DialogTitle>
+            <T>Your ChatGPT plan is connected</T>
+          </DialogTitle>
+          <DialogDescription>
+            <T>
+              Eligible usage in T3 Code uses your ChatGPT plan. Manage your shared usage and any
+              credit settings in ChatGPT.
+            </T>
+          </DialogDescription>
+          <p className="text-xs text-muted-foreground">
+            <T>
+              <Var>{next?.providerName}</Var> on <Var>{next?.environmentLabel}</Var>
+            </T>
+          </p>
         </DialogHeader>
-        <DialogFooter className="sm:items-center">
-          <ChatGptUsageButton size="default" variant="secondary" className="sm:mr-auto" />
-          <Button ref={continueRef} onClick={dismiss}>
+        <DialogFooter>
+          <ChatGptUsageButton />
+          <Button onClick={dismiss}>
             <T>Continue</T>
           </Button>
         </DialogFooter>

@@ -13,8 +13,7 @@ import {
 } from "./CommandPalette.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { COMMAND_PALETTE_META_ICON_CLASS } from "./ThreadCommandSubtitle";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { COMMAND_PALETTE_META_ICON_CLASS, CommandPaletteMetaDot } from "./ThreadCommandSubtitle";
 
 export interface CommandPaletteProjectLocation {
   readonly kind: "local" | "remote";
@@ -61,18 +60,7 @@ export function buildProjectSearchItems(input: ProjectItemsInput, resolve: Messa
         resolve,
       );
       return members.length > 1 ? (
-        <Tooltip>
-          <TooltipTrigger render={<span tabIndex={0} />}>
-            {metadata.environmentLabels.length} machines
-          </TooltipTrigger>
-          <TooltipPopup>
-            {metadata.environmentLabels.map((label) => (
-              <span className="block" key={label}>
-                {label}
-              </span>
-            ))}
-          </TooltipPopup>
-        </Tooltip>
+        <span className="truncate">{metadata.environmentLabels.join(" · ")}</span>
       ) : (
         <ProjectLocationDescription
           location={input.locationByEnvironmentId.get(project.environmentId)}
@@ -126,13 +114,16 @@ function ProjectLocationDescription(props: {
     machine: "server",
   };
   return (
-    <span className="flex min-w-0 items-center gap-2">
+    <span className="flex min-w-0 items-center gap-1">
       {props.current ? (
-        <span className="shrink-0">
-          <T context="this project is the current one">Current</T>
-        </span>
+        <>
+          <span className="shrink-0">
+            <T context="this project is the current one">Current</T>
+          </span>
+          <CommandPaletteMetaDot />
+        </>
       ) : null}
-      <span className="inline-flex min-w-0 max-w-1/2 shrink-0 items-center gap-1">
+      <span className="inline-flex min-w-0 items-center gap-1">
         {location.kind === "remote" ? (
           <EnvironmentMachineIcon
             aria-hidden
@@ -142,7 +133,8 @@ function ProjectLocationDescription(props: {
         ) : null}
         <span className="truncate">{location.label}</span>
       </span>
-      <span className="min-w-0 truncate">{props.workspaceRoot}</span>
+      <CommandPaletteMetaDot />
+      <span className="min-w-0 flex-1 truncate">{props.workspaceRoot}</span>
     </span>
   );
 }

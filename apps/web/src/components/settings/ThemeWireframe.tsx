@@ -1,124 +1,128 @@
-// Preview appearance modes with default-theme tokens, regardless of the active theme.
-// Set both foreground variables because foreground utilities read --contrast-foreground.
-import { ListFilterIcon, PlusIcon } from "lucide-react";
-import type { CSSProperties } from "react";
-import type { AppearanceChoice } from "../../hooks/useTheme";
-import { LayoutPaneSkeleton, PaneJoinTab, PaneNotchTab } from "../../layout/PaneSkeleton";
+import { cn } from "../../lib/utils";
+import type { ThemeCardPreviewColors } from "./ThemePreviewCircles";
 
-type Tone = "light" | "dark";
-
-const TONE_TOKENS = {
-  light: { chrome: "#e4e4e4", pane: "#f5f5f5", foreground: "#252525" },
-  dark: { chrome: "#000000", pane: "#151515", foreground: "#d4d4d4" },
-} as const;
-
-function chromeVars(tone: Tone) {
-  const t = TONE_TOKENS[tone];
-  return {
-    colorScheme: tone,
-    "--app-chrome-background": t.chrome,
-    "--foreground": t.foreground,
-    "--contrast-foreground": t.foreground,
-  } as CSSProperties;
-}
-
-function paneVars(tone: Tone) {
-  const t = TONE_TOKENS[tone];
-  return {
-    colorScheme: tone,
-    "--background": t.pane,
-    "--foreground": t.foreground,
-    "--contrast-foreground": t.foreground,
-  } as CSSProperties;
-}
-
-const THREAD_ROW_WIDTHS = ["w-4/5", "w-3/5", "w-[70%]", "w-1/2"] as const;
-
-// Light, black chrome keeps the notch tab in the app too (index.css).
-function WireframeWindow({ chrome, pane, notch }: { chrome: Tone; pane: Tone; notch?: boolean }) {
+function ThemeWireframePane({
+  colors,
+  clip,
+}: {
+  colors: ThemeCardPreviewColors;
+  clip?: "left" | "right" | undefined;
+}) {
+  const line = "rgb(127 127 127 / 0.25)";
   return (
-    <div className="absolute inset-0 bg-(--app-chrome-background)" style={chromeVars(chrome)}>
-      <div className="absolute inset-y-0 left-0 flex w-[21%] flex-col gap-1.25 px-1.5 pt-1.5 pb-1.75">
-        <div className="flex gap-0.75">
-          <div className="size-1 rounded-full bg-foreground/25" />
-          <div className="size-1 rounded-full bg-foreground/25" />
-          <div className="size-1 rounded-full bg-foreground/25" />
-        </div>
-        <div className="h-2 rounded-full bg-foreground/12" />
-        <div className="h-2.5 rounded-sm bg-foreground/10" />
-        {THREAD_ROW_WIDTHS.map((width) => (
-          <div className={`h-0.5 ${width} rounded-full bg-foreground/20`} key={width} />
-        ))}
-        <div className="mt-auto h-0.5 w-3/5 rounded-full bg-foreground/20" />
-        <div className="h-2 rounded-sm bg-foreground/10" />
-      </div>
-      {notch ? (
-        <div
-          className="absolute top-[3px] right-[3px] bottom-[3px] left-[21%] flex flex-col overflow-hidden rounded-md rounded-tl-none bg-background"
-          style={paneVars(pane)}
-        >
-          <PaneNotchTab className="h-3 w-[42%] shrink-0 gap-1 px-1.25" style={chromeVars(chrome)}>
-            <div className="size-1 shrink-0 rounded-full bg-foreground/40" />
-            <div className="h-0.5 flex-1 rounded-full bg-foreground/35" />
-          </PaneNotchTab>
-          <LayoutPaneSkeleton shape="chat" />
-        </div>
-      ) : (
-        <div className="absolute top-[3px] right-[3px] bottom-[3px] left-[21%] flex flex-col">
-          <div className="flex h-3 shrink-0 items-center text-foreground/45">
-            {/* The app's 10px radius and ear on its 41px joined tab, at this 12px tab. */}
-            <PaneJoinTab radius={3} className="h-full w-[42%] gap-1 px-1.25" style={paneVars(pane)}>
-              <div className="size-1 shrink-0 rounded-full bg-foreground/40" />
-              <div className="h-0.5 flex-1 rounded-full bg-foreground/35" />
-            </PaneJoinTab>
-            <PlusIcon absoluteStrokeWidth strokeWidth={1} className="ms-1 size-1.5 shrink-0" />
-            <ListFilterIcon
-              absoluteStrokeWidth
-              strokeWidth={1}
-              className="ms-auto me-1 size-1.5 shrink-0"
-            />
-          </div>
-          <div
-            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md rounded-tl-none bg-background"
-            style={paneVars(pane)}
+    <span
+      className="absolute inset-0"
+      style={
+        clip === undefined
+          ? undefined
+          : {
+              clipPath:
+                clip === "left"
+                  ? "polygon(0 0, calc(50% - 1px) 0, calc(50% - 1px) 100%, 0 100%)"
+                  : "polygon(calc(50% + 1px) 0, 100% 0, 100% 100%, calc(50% + 1px) 100%)",
+            }
+      }
+    >
+      <span className="absolute inset-0" style={{ backgroundColor: colors.canvas }} />
+      <span
+        className="absolute inset-y-0 left-0 w-[22%]"
+        style={{ backgroundColor: colors.sidebar, boxShadow: `inset -1px 0 0 ${line}` }}
+      />
+
+      <span
+        className="absolute left-[3%] top-[8%] h-[8%] w-[16%] rounded-md"
+        style={{ backgroundColor: colors.surface, boxShadow: `inset 0 0 0 1px ${line}` }}
+      />
+      <span
+        className="absolute left-[3%] top-[22%] h-[7%] w-[16%] rounded-md"
+        style={{ backgroundColor: colors.accentSurface }}
+      />
+      <span
+        className="absolute left-[3%] top-[32%] h-[7%] w-[16%] rounded-md"
+        style={{ backgroundColor: colors.messageSurface, opacity: 0.7 }}
+      />
+      <span
+        className="absolute left-[3%] top-[42%] h-[7%] w-[16%] rounded-md"
+        style={{ backgroundColor: colors.messageSurface, opacity: 0.5 }}
+      />
+
+      <span
+        className="absolute right-[28%] top-[11%] h-[9%] w-[24%] rounded-lg"
+        style={{ backgroundColor: colors.messageSurface }}
+      />
+      <span
+        className="absolute left-[27%] top-[28%] h-[5%] w-[34%] rounded-sm"
+        style={{ backgroundColor: line }}
+      />
+      <span
+        className="absolute left-[27%] top-[38%] h-[5%] w-[26%] rounded-sm"
+        style={{ backgroundColor: line }}
+      />
+
+      <span
+        className="absolute bottom-[8%] left-[26%] right-[6%] flex h-[15%] items-center justify-between rounded-md px-1"
+        style={{
+          backgroundColor: colors.surface,
+          boxShadow: `inset 0 0 0 1px ${line}`,
+        }}
+      >
+        <span
+          className="block h-[26%] w-[34%] rounded-full"
+          style={{ backgroundColor: line, opacity: 0.7 }}
+        />
+        <span
+          className="block aspect-square h-[58%] rounded-full"
+          style={{ backgroundColor: colors.messageAction }}
+        />
+      </span>
+
+      <span
+        className="absolute right-[5%] top-[8%] h-[46%] w-[20%] rounded-lg"
+        style={{
+          backgroundColor: colors.surface,
+          boxShadow: `inset 0 0 0 1px ${line}, 0 2px 5px rgb(0 0 0 / 0.14)`,
+        }}
+      >
+        {[0, 1, 2].map((row) => (
+          <span
+            className="absolute left-[11%] right-[11%] flex items-center gap-1"
+            key={row}
+            style={{ top: `${10 + row * 30}%`, height: "20%" }}
           >
-            <LayoutPaneSkeleton shape="chat" />
-          </div>
-        </div>
-      )}
-    </div>
+            <span
+              className="block aspect-square h-[26%] rounded-full"
+              style={{
+                backgroundColor:
+                  row === 0 ? "#34d399" : row === 1 ? colors.messageAction : "#fbbf24",
+                opacity: 0.55,
+              }}
+            />
+            <span className="block h-[30%] w-[52%] rounded-sm" style={{ backgroundColor: line }} />
+          </span>
+        ))}
+      </span>
+    </span>
   );
 }
 
-export function ThemeWireframe({ mode }: { mode: AppearanceChoice }) {
-  // Light frames rim with black alpha and the rest with white.
-  const rim = mode === "light" ? "#00000014" : "#ffffff14";
+export function ThemeWireframe({
+  className,
+  panes,
+}: {
+  className?: string;
+  panes: ReadonlyArray<{ colors: ThemeCardPreviewColors; clip?: "left" | "right" }>;
+}) {
   return (
-    <div
+    <span
       aria-hidden
-      className="relative aspect-[188/120] w-full overflow-hidden rounded-card-thumbnail"
-    >
-      {mode === "system" ? (
-        <>
-          <WireframeWindow chrome="dark" pane="dark" />
-          {/* Keep light paint off the dark rim and clip the split without an antialiased path. */}
-          <div className="absolute inset-y-0 left-0 w-1/2 overflow-hidden">
-            <div className="relative h-full w-[200%]">
-              <WireframeWindow chrome="light" pane="light" />
-            </div>
-          </div>
-        </>
-      ) : mode === "dark" ? (
-        <WireframeWindow chrome="dark" pane="dark" />
-      ) : mode === "black-chrome" ? (
-        <WireframeWindow chrome="dark" pane="light" notch />
-      ) : (
-        <WireframeWindow chrome="light" pane="light" />
+      className={cn(
+        "relative block w-full overflow-hidden rounded-lg border border-border/60",
+        className,
       )}
-      <div
-        className="pointer-events-none absolute inset-0 rounded-card-thumbnail"
-        style={{ boxShadow: `inset 0 0 0 1px ${rim}` }}
-      />
-    </div>
+    >
+      {panes.map((pane) => (
+        <ThemeWireframePane clip={pane.clip} colors={pane.colors} key={pane.clip ?? "pane"} />
+      ))}
+    </span>
   );
 }

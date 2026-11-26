@@ -2,16 +2,27 @@ import { msg } from "gt-react";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
-import { AgentFeedbackMode } from "@t3tools/contracts";
+import {
+  AgentFeedbackMode,
+  DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT,
+  MAX_WORKFLOW_SKIPPED_RUNS_KEPT,
+} from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
-import { Button, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
+import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { commitNumberFieldOnEnter } from "./commitNumberFieldOnEnter";
 import { ScopedSwitch } from "./ScopedSwitch";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
@@ -32,65 +43,13 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <WorkflowsRow />
+        <WorkflowSkippedRunsRow />
         <PromptSuggestionsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
         <AgentFeedbackRow />
       </SettingsSection>
-      <SettingsSection
-        id="redesign"
-        title={gt("Redesign", { $context: "settings section, labs features of the redesign" })}
-      >
-        <ScrollingWorkspacesRow />
-        <TurnWorkFoldRow />
-      </SettingsSection>
     </SettingsPageContainer>
-  );
-}
-
-function ScrollingWorkspacesRow() {
-  const searchableSetting = useSearchableSetting();
-  const gt = useGT();
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  return (
-    <SettingsRow
-      {...searchableSetting("scrolling-workspaces")}
-      description={gt(
-        "Panes scroll sideways instead of shrinking, and you can keep several workspaces with an overview, swipes and a layout tour. Splits, tabs and layout templates work either way.",
-      )}
-      control={
-        <Switch
-          checked={settings.scrollingWorkspacesEnabled}
-          onCheckedChange={(checked) =>
-            updateSettings({ scrollingWorkspacesEnabled: Boolean(checked) })
-          }
-          aria-label={gt("Scrolling workspaces")}
-        />
-      }
-    />
-  );
-}
-
-function TurnWorkFoldRow() {
-  const searchableSetting = useSearchableSetting();
-  const gt = useGT();
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  return (
-    <SettingsRow
-      {...searchableSetting("turn-work-fold")}
-      description={gt(
-        "Gather a running turn's tool calls and notes under one Working line that folds into its Worked for row when the turn ends, with the tool calls inside shown open.",
-      )}
-      control={
-        <Switch
-          checked={settings.turnWorkFoldEnabled}
-          onCheckedChange={(checked) => updateSettings({ turnWorkFoldEnabled: Boolean(checked) })}
-          aria-label={gt("Fold each turn's work")}
-        />
-      }
-    />
   );
 }
 
@@ -102,6 +61,7 @@ function BoringSidebarRow() {
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar")}
+      devicePreference
       description={gt(
         "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
       )}
@@ -130,6 +90,7 @@ function BoringSidebarMultilineRow() {
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
+      devicePreference
       className="px-0 py-2 sm:px-0"
       description={gt(
         "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
@@ -162,7 +123,7 @@ function GuestLinksRowWithSignIn() {
         "Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
       )}
       control={
-        <Button size="sm" variant="secondary" onClick={openAuthPrompt}>
+        <Button size="sm" variant="outline" onClick={openAuthPrompt}>
           <T>Sign in</T>
         </Button>
       }
@@ -196,8 +157,10 @@ function GuestLinksRow() {
         <T>
           Share a thread with a guest who watches it live in a browser and sends messages you
           approve. Needs T3 Connect: sign in and link this machine in{" "}
-          <InlineButton render={<Link to="/settings/access" />}>Sharing & access</InlineButton>.
-          Turning it off stops every guest link.
+          <Link to="/settings/access" className="underline underline-offset-2">
+            Sharing & access
+          </Link>
+          . Turning it off stops every guest link.
         </T>
       }
       control={
@@ -226,8 +189,10 @@ function LinkedEnvironmentsRow() {
         <T>
           Let agents here work on your other machines, and theirs here. Turn it on for each machine,
           then link them in{" "}
-          <InlineButton render={<Link to="/settings/connections" />}>Connections</InlineButton>.
-          While off, nothing new starts over a link; running tasks finish.
+          <Link to="/settings/connections" className="underline underline-offset-2">
+            Connections
+          </Link>
+          . While off, nothing new starts over a link; running tasks finish.
         </T>
       }
       control={
@@ -264,6 +229,61 @@ function WorkflowsRow() {
           onCheckedChange={(checked) => updateSettings({ workflowsEnabled: Boolean(checked) })}
           aria-label={gt("Workflows")}
         />
+      }
+    />
+  );
+}
+
+const NO_GROUPING: Intl.NumberFormatOptions = { useGrouping: false };
+
+export function WorkflowSkippedRunsRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["workflowSkippedRunsKept"]);
+  const gt = useGT();
+  if (!settings.workflowsEnabled) return null;
+  const kept = settings.workflowSkippedRunsKept;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("workflow-skipped-runs")}
+      settingKeys={["workflowSkippedRunsKept"]}
+      description={gt(
+        "How many skipped runs each workflow keeps in its history. Older skipped runs are deleted; runs that did something are always kept.",
+      )}
+      resetAction={
+        mixed || kept !== DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset skipped runs kept to default")}
+            onClick={() =>
+              updateSettings({ workflowSkippedRunsKept: DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT })
+            }
+          />
+        ) : null
+      }
+      control={
+        <div className="w-24">
+          <NumberField
+            value={mixed ? null : kept}
+            min={0}
+            max={MAX_WORKFLOW_SKIPPED_RUNS_KEPT}
+            format={NO_GROUPING}
+            size="sm"
+            onValueCommitted={(value) => {
+              if (value === null || !Number.isInteger(value) || (!mixed && value === kept)) return;
+              updateSettings({ workflowSkippedRunsKept: value });
+            }}
+          >
+            <NumberFieldGroup>
+              <NumberFieldInput
+                aria-label={gt("Skipped runs kept")}
+                placeholder={mixed ? gt("Mixed") : undefined}
+                onKeyDown={commitNumberFieldOnEnter}
+              />
+            </NumberFieldGroup>
+          </NumberField>
+        </div>
       }
     />
   );
@@ -309,16 +329,19 @@ function SimlockHostsRow() {
       description={
         <T>
           Let the Device panel lease simulators and emulators from your own{" "}
-          <InlineButton
-            render={
-              <a href="https://incubator.callstack.com/simlock/" target="_blank" rel="noreferrer" />
-            }
+          <a
+            href="https://incubator.callstack.com/simlock/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
           >
             Simlock
-          </InlineButton>{" "}
+          </a>{" "}
           pool, added in{" "}
-          <InlineButton render={<Link to="/settings/devices" />}>Devices</InlineButton>. An alpha
-          that may change or break. T3 Code never installs Simlock.
+          <Link to="/settings/devices" className="underline underline-offset-2">
+            Devices
+          </Link>
+          . An alpha that may change or break. T3 Code never installs Simlock.
         </T>
       }
       control={
@@ -432,7 +455,7 @@ function AgentFeedbackRow() {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {AGENT_FEEDBACK_MODES.map((mode) => (
-              <SelectItem key={mode} value={mode}>
+              <SelectItem key={mode} hideIndicator value={mode}>
                 {m(AGENT_FEEDBACK_MODE_LABELS[mode])}
               </SelectItem>
             ))}

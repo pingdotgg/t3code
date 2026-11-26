@@ -163,13 +163,6 @@ export const preparePairingRegistration = Effect.fn(
   if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
     return yield* compatibilityError;
   }
-  // The connect that follows registration skips its own descriptor read.
-  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-  const rememberDescriptor = remote.rememberCheckedDescriptor(
-    target.httpBaseUrl,
-    Option.some(descriptor),
-    routeKeepsItsHost({ target: route.target, profile: Option.some(route.profile) }),
-  );
   // A key-bound session renews itself, but only on a host that can renew it. The proof is made
   // before the one-time code is sent, so a device that cannot sign keeps the code for bearer.
   const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
@@ -189,7 +182,6 @@ export const preparePairingRegistration = Effect.fn(
       clientMetadata: presentation.metadata,
       dpopProof: dpopProof.value,
     }).pipe(Effect.mapError(mapRemoteEnvironmentError));
-    yield* rememberDescriptor;
     return new BearerConnectionRegistration({
       ...route,
       credential: new DpopConnectionCredential({
@@ -203,7 +195,13 @@ export const preparePairingRegistration = Effect.fn(
     credential: target.credential,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
-  yield* rememberDescriptor;
+  // The connect that follows registration skips its own descriptor read.
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+  yield* remote.rememberCheckedDescriptor(
+    target.httpBaseUrl,
+    Option.some(descriptor),
+    routeKeepsItsHost({ target: route.target, profile: Option.some(route.profile) }),
+  );
 
   return new BearerConnectionRegistration({
     ...route,

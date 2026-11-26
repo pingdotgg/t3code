@@ -84,26 +84,23 @@ it.each(["merge", "enable-auto-merge"] as const)(
   async (primaryAction) => {
     const perform = vi.fn(async () => true);
     const { PullRequestPrimaryAction } = await import("./PullRequestDetailActions");
-    function Control({ mergeBlockedReason }: { mergeBlockedReason: string | null }) {
-      const inlineConfirm = useInlineActionConfirm("owner/repo/7");
-      return (
-        <PullRequestPrimaryAction
-          handoff={null}
-          unavailable={false}
-          onResolve={() => undefined}
-          inlineConfirm={inlineConfirm}
-          primaryAction={primaryAction}
-          mergeBlockedReason={mergeBlockedReason}
-          armedAutoMergeLabel="Auto-merge enabled"
-          pendingAutoMergeLabel="Auto-merge (squash)"
-          selectedMergeMethod="squash"
-          selectedMergeMethodLabel="Squash and merge"
-          pendingAction={null}
-          perform={perform}
-        />
-      );
-    }
-    await using screen = await render(<Control mergeBlockedReason="Checking stack membership…" />);
+    const control = (mergeBlockedReason: string | null) => (
+      <PullRequestPrimaryAction
+        pullRequestKey="owner/repo/7"
+        primaryAction={primaryAction}
+        mergeBlockedReason={mergeBlockedReason}
+        autoMergeArmed={false}
+        armedAutoMergeLabel="Auto-merge enabled"
+        pendingAutoMergeLabel="Auto-merge (squash)"
+        selectedMergeMethod="squash"
+        selectedMergeMethodLabel="Squash and merge"
+        statePresentation={null}
+        pendingAction={null}
+        perform={perform}
+        resolveConflicts={null}
+      />
+    );
+    await using screen = await render(control("Checking stack membership…"));
     using _timers = fakeTimers();
     const button = screen.getByRole("button");
     await userEvent.tab();
@@ -111,7 +108,7 @@ it.each(["merge", "enable-auto-merge"] as const)(
     await expect.element(button).toHaveAccessibleDescription("Checking stack membership…");
     await userEvent.keyboard("{Enter}{Enter} ");
     expect(perform).not.toHaveBeenCalled();
-    await screen.rerender(<Control mergeBlockedReason={null} />);
+    await screen.rerender(control(null));
     await userEvent.click(button);
     expect(perform).not.toHaveBeenCalled();
     await userEvent.click(button);

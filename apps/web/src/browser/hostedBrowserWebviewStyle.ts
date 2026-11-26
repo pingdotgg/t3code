@@ -8,8 +8,6 @@ export interface HostedBrowserWebviewSize {
 export interface HostedBrowserWebviewWrapperStyle {
   readonly left: number;
   readonly top: number;
-  /** An active wrapper sits at the origin; its slot's placement moves it (browserSurfaceStore). */
-  readonly transformOrigin?: string;
   readonly width: number;
   readonly height: number;
   readonly zIndex: number;
@@ -40,9 +38,8 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
   } = input;
   if (active && rect) {
     return {
-      left: 0,
-      top: 0,
-      transformOrigin: "0 0",
+      left: rect.x,
+      top: rect.y,
       width: rect.width,
       height: rect.height,
       zIndex,

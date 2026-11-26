@@ -10,12 +10,10 @@ export function CommandBlock({
   command,
   className,
   prominent = false,
-  compact = false,
 }: {
   readonly command: string;
   readonly className?: string;
   readonly prominent?: boolean;
-  readonly compact?: boolean;
 }) {
   const gt = useGT();
   const { copyToClipboard, isCopied } = useCopyToClipboard({
@@ -29,17 +27,13 @@ export function CommandBlock({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 rounded-control surface-well font-mono",
-        compact
-          ? "h-8 gap-2 pr-1.5 pl-2.5 text-caption"
-          : prominent
-            ? "px-4 py-3.5 text-prompt"
-            : "px-3 py-2.5 text-body",
+        "flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/50 font-mono",
+        prominent ? "px-4 py-3.5 text-base" : "px-3 py-2.5 text-sm",
         className,
       )}
     >
       <span className="min-w-0 truncate">
-        {compact ? null : <span className="mr-2 text-muted-foreground">$</span>}
+        <span className="mr-2 text-muted-foreground">$</span>
         {command}
       </span>
       <Button

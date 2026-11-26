@@ -8,6 +8,7 @@ import type {
   PullRequestMergeability,
   PullRequestReviewDecision,
   PullRequestState,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
@@ -16,22 +17,21 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
-  MessageSquarePlusIcon,
   OctagonXIcon,
   UserCheckIcon,
   UserRoundIcon,
   UserRoundXIcon,
 } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
-import { type CSSProperties, type ReactNode, useState } from "react";
+import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
-import { Button, InlineButton } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { RowTooltip } from "../workItem/WorkItemRowTooltip";
+import { InlineButton } from "../ui/button";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 import {
@@ -41,46 +41,22 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequestIcons";
 
-export function AddToChatIconButton({ onClick }: { onClick: () => void }) {
-  const gt = useGT();
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            aria-label={gt("Add to chat")}
-            onClick={onClick}
-          />
-        }
-      >
-        <MessageSquarePlusIcon className="size-3" />
-      </TooltipTrigger>
-      <TooltipPopup>{gt("Add to chat")}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
 export function PullRequestLabelChip({
   label,
   size = "sm",
   className,
   focusable = false,
   children,
-  ...props
 }: {
   label: Pick<PullRequestLabel, "name" | "color" | "description">;
   size?: "sm" | "default";
   className?: string;
   focusable?: boolean;
   children?: ReactNode;
-  "data-row-label"?: string;
 }) {
   const color = pullRequestLabelColor(label.color);
   const badge = (
     <Badge
-      {...props}
       size={size}
       variant={color ? "label" : "secondary"}
       className={cn("min-w-0 max-w-40 shrink justify-start", className)}
@@ -93,7 +69,7 @@ export function PullRequestLabelChip({
     </Badge>
   );
   if (!label.description) return badge;
-  return <RowTooltip render={badge} popup={<TooltipPopup>{label.description}</TooltipPopup>} />;
+  return <SharedTooltipTrigger render={badge} label={label.description} />;
 }
 
 function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
@@ -108,13 +84,13 @@ function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
       return {
         Icon: UserRoundXIcon,
         label: msg("Changes requested"),
-        toneClassName: "text-warning-foreground",
+        toneClassName: "text-amber-600/90 dark:text-amber-400/80",
       };
     case "review-required":
       return {
         Icon: UserRoundIcon,
         label: msg("Awaiting review"),
-        toneClassName: "text-dim-foreground",
+        toneClassName: "text-muted-foreground/60",
       };
   }
 }
@@ -127,13 +103,13 @@ export function PullRequestReviewDecisionGlyph({
   const m = useMessages();
   const presentation = reviewDecisionPresentation(decision);
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
-        <span className="sr-only">{m(presentation.label)}</span>
-      </TooltipTrigger>
-      <TooltipPopup>{m(presentation.label)}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<span className="inline-flex shrink-0" />}
+      label={m(presentation.label)}
+    >
+      <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+      <span className="sr-only">{m(presentation.label)}</span>
+    </SharedTooltipTrigger>
   );
 }
 
@@ -188,16 +164,16 @@ export function PullRequestStateGlyph({
   const m = useMessages();
   const presentation = resolvePullRequestState({ state, isDraft }, m);
   return (
-    <RowTooltip
+    <SharedTooltipTrigger
       render={<span className="inline-flex shrink-0" />}
-      popup={<TooltipPopup>{presentation.label}</TooltipPopup>}
+      label={presentation.label}
     >
       <presentation.Icon
         role="img"
         aria-label={presentation.label}
         className={cn("size-4 shrink-0", presentation.toneClassName, className)}
       />
-    </RowTooltip>
+    </SharedTooltipTrigger>
   );
 }
 
@@ -226,16 +202,16 @@ export function PullRequestConflictGlyph({
   );
   if (presentation === null) return null;
   return (
-    <RowTooltip
+    <SharedTooltipTrigger
       render={<span className="inline-flex shrink-0" />}
-      popup={<TooltipPopup>{presentation.label}</TooltipPopup>}
+      label={presentation.label}
     >
       <presentation.Icon
         role="img"
         aria-label={presentation.label}
         className={cn("size-4 shrink-0", presentation.toneClassName, className)}
       />
-    </RowTooltip>
+    </SharedTooltipTrigger>
   );
 }
 
@@ -243,17 +219,17 @@ const CHECK_STATUS_PRESENTATION = {
   pending: {
     label: msg("Running", { $context: "check status" }),
     Icon: Spinner,
-    toneClassName: "text-warning-foreground",
+    toneClassName: "text-amber-500",
   },
   "action-required": {
     label: msg("Awaiting action"),
     Icon: CircleDotIcon,
-    toneClassName: "text-warning-foreground",
+    toneClassName: "text-amber-600 dark:text-amber-400/90",
   },
   success: {
     label: msg("Passed", { $context: "check status" }),
     Icon: CircleCheckIcon,
-    toneClassName: "text-success-foreground",
+    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
   },
   failure: {
     label: msg("Failed", { $context: "check status" }),
@@ -263,17 +239,17 @@ const CHECK_STATUS_PRESENTATION = {
   cancelled: {
     label: msg("Cancelled", { $context: "check status" }),
     Icon: OctagonXIcon,
-    toneClassName: "text-dim-foreground",
+    toneClassName: "text-muted-foreground/70",
   },
   skipped: {
     label: msg("Skipped", { $context: "check status" }),
     Icon: CircleSlashIcon,
-    toneClassName: "text-dim-foreground",
+    toneClassName: "text-muted-foreground/70",
   },
   neutral: {
     label: msg("Neutral", { $context: "check status" }),
     Icon: CircleDashedIcon,
-    toneClassName: "text-dim-foreground",
+    toneClassName: "text-muted-foreground/70",
   },
 } as const satisfies Record<
   PullRequestCheckStatus,
@@ -321,7 +297,7 @@ const CHECKS_STATE_PRESENTATION = {
   pending: {
     label: msg("Some checks haven't completed yet"),
     Icon: CircleDotIcon,
-    toneClassName: "text-warning-foreground",
+    toneClassName: "text-amber-600 dark:text-amber-400/90",
   },
 } as const satisfies Record<
   PullRequestChecksState,
@@ -349,22 +325,19 @@ export function pullRequestChecksState(
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
     label: msg("Approved", { $context: "review outcome" }),
-    verb: msg("approved", { $context: "review outcome, shown after the reviewer's name" }),
     staleLabel: msg("Approved earlier changes", {
       $context: "tooltip: this approval was given before the latest commits were pushed",
     }),
     Icon: CircleCheckIcon,
-    toneClassName: "text-success-foreground",
-    ringClassName: "ring-2 ring-success",
-    staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--success)_35%,var(--background))]",
-    fillClassName: "fill-success",
+    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+    ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
+    staleRingClassName:
+      "ring-2 ring-[color-mix(in_srgb,var(--color-emerald-500)_35%,var(--background))] dark:ring-[color-mix(in_srgb,var(--color-emerald-400)_35%,var(--background))]",
+    fillClassName: "fill-emerald-500 dark:fill-emerald-400",
     badgeVariant: "success",
   },
   "changes-requested": {
     label: msg("Changes requested"),
-    verb: msg("requested changes", {
-      $context: "review outcome, shown after the reviewer's name",
-    }),
     staleLabel: msg("Changes requested earlier changes", {
       $context:
         "tooltip: the reviewer requested changes on an older version, before the latest commits",
@@ -378,14 +351,11 @@ const REVIEW_OUTCOME_PRESENTATION = {
   },
   dismissed: {
     label: msg("Review dismissed"),
-    verb: msg("had a review dismissed", {
-      $context: "review outcome, shown after the pull request author's name",
-    }),
     staleLabel: msg("Review dismissed earlier changes", {
       $context: "tooltip: a review of an older version, before the latest commits, was dismissed",
     }),
     Icon: CircleDashedIcon,
-    toneClassName: "text-dim-foreground",
+    toneClassName: "text-muted-foreground/70",
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
@@ -396,7 +366,6 @@ const REVIEW_OUTCOME_PRESENTATION = {
   PullRequestReviewOutcome,
   {
     label: string;
-    verb: string;
     staleLabel: string;
     Icon: typeof CircleCheckIcon;
     toneClassName: string;
@@ -465,13 +434,6 @@ export function PullRequestReviewOutcomeAvatarBadge({
   );
 }
 
-export function pullRequestReviewOutcomeVerb(
-  outcome: PullRequestReviewOutcome,
-  resolve: MessageResolver = m,
-): string {
-  return resolve(REVIEW_OUTCOME_PRESENTATION[outcome].verb);
-}
-
 export function pullRequestReviewOutcomeLabel(
   outcome: PullRequestReviewOutcome,
   resolve: MessageResolver = m,
@@ -516,7 +478,7 @@ export function PullRequestActorAvatar({
         className,
       )}
     >
-      {login.slice(0, 1).toUpperCase()}
+      {[...login][0]?.toUpperCase()}
     </span>
   ) : (
     <img
@@ -536,14 +498,17 @@ export function PullRequestActorLabel({
   variant = "label",
   tooltip = true,
   profileUrl,
+  threadRef = null,
 }: {
   actor: PullRequestActor | null;
   className?: string;
   variant?: "label" | "avatar";
   tooltip?: boolean;
   profileUrl?: string | null;
+  threadRef?: ScopedThreadRef | null;
 }) {
   const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   const login = actor?.login ?? "ghost";
   const label = (
     <span className={cn("flex min-w-0 items-baseline", variant === "label" && "gap-1.5")}>
@@ -556,32 +521,37 @@ export function PullRequestActorLabel({
   const placement = cn("flex min-w-0 shrink", className);
   if (!tooltip) return <span className={placement}>{label}</span>;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          profileUrl ? (
-            <InlineButton
-              className={placement}
-              render={
-                <a
-                  href={profileUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={gt("Open {login}'s profile", { login })}
-                />
-              }
-            />
-          ) : (
-            <span className={placement} />
-          )
-        }
-      >
-        {label}
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        profileUrl ? (
+          <InlineButton
+            className={placement}
+            render={
+              <a
+                href={profileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={gt("Open {login}'s profile", { login })}
+              />
+            }
+            onClick={(event) => {
+              event.preventDefault();
+              void openLink(profileUrl, { event }).catch(console.error);
+            }}
+          />
+        ) : (
+          <span className={placement} />
+        )
+      }
+      label={
+        <>
+          {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
+          {profileUrl ? ` · ${gt("Open profile")}` : ""}
+        </>
+      }
+    >
+      {label}
+    </SharedTooltipTrigger>
   );
 }
 
@@ -600,7 +570,39 @@ export function PullRequestDiffStat({
   return (
     <span className={cn("inline-flex items-baseline gap-1 tabular-nums", className)}>
       <span className="text-diff-addition-foreground">+{formatDiffCount(additions)}</span>
-      <span className="text-diff-deletion-foreground">-{formatDiffCount(deletions)}</span>
+      <span className="text-diff-deletion">-{formatDiffCount(deletions)}</span>
+    </span>
+  );
+}
+
+function separatorKey(segment: ReactNode): string {
+  return `separator:${isValidElement(segment) ? String(segment.key) : String(segment)}`;
+}
+
+export function PullRequestMetaLine({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const segments = Children.toArray(children);
+  return (
+    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
+      {segments.flatMap((segment, index) =>
+        index === 0
+          ? segment
+          : [
+              <span
+                aria-hidden
+                className="shrink-0 text-muted-foreground/50"
+                key={separatorKey(segment)}
+              >
+                ·
+              </span>,
+              segment,
+            ],
+      )}
     </span>
   );
 }

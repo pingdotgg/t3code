@@ -1,18 +1,20 @@
 import { useGT } from "gt-react";
-import { History, X } from "lucide-react";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { X } from "lucide-react";
 
 import { isValidHistoryTimestamp, type BrowserHistoryEntry } from "~/browserHistoryStore";
 import { RelativeTime } from "~/components/RelativeTime";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+
+import { PreviewFaviconIcon } from "./PreviewFaviconIcon";
 
 interface Props {
+  threadRef: ScopedThreadRef;
   entry: BrowserHistoryEntry;
   onOpen: () => void;
   onRemove: () => void;
 }
 
-/** A plain history row: page title, then its address; the visit time is in the tooltip. */
-export function PreviewRecentUrlCard({ entry, onOpen, onRemove }: Props) {
+export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Props) {
   const gt = useGT();
   const parsed = new URL(entry.url);
   const path = parsed.pathname === "/" ? "" : parsed.pathname;
@@ -22,46 +24,27 @@ export function PreviewRecentUrlCard({ entry, onOpen, onRemove }: Props) {
   ) : null;
   return (
     <div className="group relative flex w-full items-center">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              onClick={onOpen}
-              className="flex h-8 w-full min-w-0 items-center gap-2.5 rounded-control px-2.5 pr-9 text-left hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            />
-          }
-        >
-          <History aria-hidden className="size-3.25 shrink-0 text-dim-foreground" />
-          {entry.title ? (
-            <span className="min-w-0 shrink truncate text-sm text-foreground">{entry.title}</span>
-          ) : null}
-          <span
-            className={
-              entry.title
-                ? "min-w-0 flex-1 truncate text-caption text-dim-foreground"
-                : "min-w-0 flex-1 truncate text-body text-foreground"
-            }
-          >
-            {label}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-center gap-3 px-3 py-3 pr-10 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <PreviewFaviconIcon threadRef={threadRef} url={entry.url} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-sm font-medium text-foreground">
+            {entry.title ?? label}
           </span>
-        </TooltipTrigger>
-        <TooltipPopup>
-          {visitedAt ? (
-            <span className="flex flex-col gap-0.5">
-              <span>{entry.url}</span>
-              <span>{visitedAt}</span>
-            </span>
-          ) : (
-            entry.url
-          )}
-        </TooltipPopup>
-      </Tooltip>
+          <span className="truncate text-xs text-muted-foreground">
+            {entry.title ? `${label} · ` : ""}
+            {visitedAt}
+          </span>
+        </div>
+      </button>
       <button
         type="button"
         aria-label={gt("Remove {url} from history", { url: label })}
         onClick={onRemove}
-        className="absolute right-2 rounded-kbd p-1 text-muted-foreground opacity-0 hover:surface-ghost-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100"
+        className="absolute right-3 rounded p-1 text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100"
       >
         <X className="size-3.5" />
       </button>

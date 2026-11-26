@@ -1,5 +1,5 @@
 import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
-import { page, userEvent } from "vite-plus/test/browser";
+import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -218,13 +218,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     await click("Show more");
     await click("Use Kilo Code");
 
-    expect(document.body.textContent).toContain("v4.2.0");
-    const version = [...document.querySelectorAll("[tabindex]")].find(
-      (element) => element.textContent === "v4.2.0",
-    );
-    if (!version) throw new Error("Prepared ACP version is missing");
-    await userEvent.hover(version);
-    await expect.element(page.getByText("binary", { exact: true })).toBeVisible();
+    expect(document.body.textContent).toContain("v4.2.0 · binary");
     await click("Continue to sign-in");
     expect(settingsHooks.mutate).toHaveBeenCalledWith({
       operation: "create",
@@ -259,7 +253,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(document.body.textContent).toContain("Executable is required.");
     expect(settingsHooks.mutate).not.toHaveBeenCalled();
 
-    await type('input[id^="add-provider-acpRegistry-manual-"][id$="-commandPath"]', "dsh");
+    await type("#add-provider-acpRegistry-manual-commandPath", "dsh");
     const commandArgs = ["--profile", "acp", " literal $(value) ; ", ""];
     for (const [index, argument] of commandArgs.entries()) {
       await click("Add argument");

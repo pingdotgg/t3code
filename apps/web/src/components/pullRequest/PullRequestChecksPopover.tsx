@@ -16,9 +16,8 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Button, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { groupPullRequestChecks } from "./pullRequestDetail.logic";
 import {
@@ -28,6 +27,7 @@ import {
   pullRequestChecksStatePresentation,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 // Fetch only on open to avoid per-row requests.
 function LazyChecksBody({
@@ -45,11 +45,11 @@ function LazyChecksBody({
     useMessages(),
   );
   if (detailQuery.error !== null) {
-    return <p className="text-muted-foreground text-meta">{detailQuery.error}</p>;
+    return <p className="text-muted-foreground text-xs">{detailQuery.error}</p>;
   }
   if (detailQuery.data === null) {
     return (
-      <p className="text-muted-foreground text-meta">
+      <p className="text-muted-foreground text-xs">
         {detailQuery.isPending ? gt("Loading checks…") : gt("No checks reported")}
       </p>
     );
@@ -74,7 +74,7 @@ function ChecksBody({
   const hasDetails = visibleChecks.some((check) => check.url !== null);
   if (checks.length === 0) {
     return (
-      <p className="text-muted-foreground text-meta">
+      <p className="text-muted-foreground text-xs">
         <T>No checks reported</T>
       </p>
     );
@@ -94,19 +94,20 @@ function ChecksBody({
             (check, index) => (
               /* oxlint-disable react/no-array-index-key -- Check names can repeat; these status rows have no local state. */ <li
                 key={`${index}:${check.name}`}
-                className="col-span-full grid grid-cols-subgrid items-center text-meta"
+                className="col-span-full grid grid-cols-subgrid items-center text-xs"
               >
                 <PullRequestCheckStatusIcon status={check.status} />
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 truncate">{check.name}</span>} />
-                  <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={<span className="min-w-0 truncate">{check.name}</span>}
+                  label={check.description ?? check.name}
+                />
                 <span className="justify-self-end whitespace-nowrap text-muted-foreground">
                   {pullRequestCheckStatusLabel(check, resolve)}
                 </span>
                 {check.url === null ? null : (
-                  <InlineButton
-                    tone="default"
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
                     onClick={() => {
                       if (!check.url) return;
                       void openLink(check.url).catch((error: unknown) => {
@@ -119,7 +120,7 @@ function ChecksBody({
                     }}
                   >
                     <T>Details</T>
-                  </InlineButton>
+                  </button>
                 )}
               </li>
             ) /* oxlint-enable react/no-array-index-key */,
@@ -148,7 +149,6 @@ export function PullRequestChecksPopover({
   reference,
   threadRef = null,
   variant = "icon",
-  label,
   className,
   render,
 }: {
@@ -159,8 +159,6 @@ export function PullRequestChecksPopover({
   reference?: PullRequestRef;
   threadRef?: ScopedThreadRef | null;
   variant?: "icon" | "count";
-  /** Words beside the icon, for a listing row that states its status rather than only showing it. */
-  label?: React.ReactNode;
   className?: string;
   render?: React.ReactElement;
 }) {
@@ -186,36 +184,22 @@ export function PullRequestChecksPopover({
             <span
               role="button"
               tabIndex={0}
-              className={cn(
-                "inline-flex shrink-0 cursor-pointer items-center rounded-kbd outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                // A labelled trigger truncates before the row time beside it is cut off.
-                label !== undefined && "min-w-0 shrink gap-1.25",
-                className,
-              )}
+              className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
             />
           )
         }
         onClick={(event) => event.stopPropagation()}
       >
-        <presentation.Icon
-          aria-hidden
-          className={cn(
-            label === undefined ? "size-3.5" : "size-3 shrink-0",
-            presentation.toneClassName,
-          )}
-        />
-        {label !== undefined && variant === "icon" ? label : null}
+        <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
         {variant === "count" && countLabel !== null ? (
           <span className="min-w-0 truncate tabular-nums">{countLabel}</span>
         ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" width="md" side="bottom">
-        <p className="mb-2 text-label">{presentation.label}</p>
-        {summary === null ? null : (
-          <p className="mb-2 text-muted-foreground text-meta">{summary}</p>
-        )}
+        <p className="mb-2 font-medium text-sm">{presentation.label}</p>
+        {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {stale ? (
-          <p className="text-muted-foreground text-meta">
+          <p className="text-muted-foreground text-xs">
             <T>Check details are out of date. Refresh the pull request to update them.</T>
           </p>
         ) : checks !== undefined ? (

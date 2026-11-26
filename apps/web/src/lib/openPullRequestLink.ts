@@ -15,15 +15,10 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 
 import { canOpenLinksInApp } from "../browser/browserLinkTarget";
 import { useOpenLink } from "../browser/useOpenLink";
-import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { m } from "../i18n/messages";
-import {
-  PULL_REQUESTS_PANEL_REF,
-  pullRequestSurface,
-  useRightPanelStore,
-  type PullRequestSurface,
-} from "../rightPanelStore";
+import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import {
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
@@ -33,7 +28,7 @@ import {
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProject, readProjects, readThreadShell, useProjects } from "../state/entities";
 import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
-import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "../state/environments";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { reviewEnvironment } from "../state/review";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
@@ -67,41 +62,6 @@ export function pullRequestLinkPanelTarget(input: {
     primaryEnvironmentId: input.primaryEnvironmentId,
     lendHostProject: input.lendHostProject,
   });
-}
-
-function panelPullRequestTarget(
-  panelRef: ScopedThreadRef,
-  target: NonNullable<ReturnType<typeof resolveChangeRequestLinkTarget>>,
-  url: string,
-) {
-  const { project, repository, number, host } = target;
-  return {
-    // The standalone PR panel has a synthetic ref; each tab keeps its real environment.
-    ...(panelRef.environmentId === project.environmentId
-      ? {}
-      : { environmentId: project.environmentId }),
-    projectId: project.id,
-    ...(host === undefined ? {} : { host }),
-    repository,
-    url,
-    number,
-  };
-}
-
-export function readThreadPullRequestSurface(
-  threadRef: ScopedThreadRef,
-  url: string,
-): PullRequestSurface | null {
-  if (!getClientSettings().pullRequestLinksOpenInApp) return null;
-  const target = pullRequestLinkPanelTarget({
-    url,
-    environmentId: threadRef.environmentId,
-    primaryEnvironmentId: readPrimaryEnvironmentId(),
-    lendHostProject: true,
-  });
-  return target === null
-    ? null
-    : pullRequestSurface(panelPullRequestTarget(threadRef, target, url));
 }
 
 function shouldOpenPullRequestExternally(
@@ -158,8 +118,16 @@ export function useOpenChangeRequestLink(
       };
       if (resolvedPanelRef) {
         useRightPanelStore.getState().openPullRequest(resolvedPanelRef, {
-          ...panelPullRequestTarget(resolvedPanelRef, target, targetUrl),
+          // The standalone PR panel has a synthetic ref; each tab keeps its real environment.
+          ...(resolvedPanelRef.environmentId === project.environmentId
+            ? {}
+            : { environmentId: project.environmentId }),
+          projectId: project.id,
+          ...(host === undefined ? {} : { host }),
+          repository,
+          url: targetUrl,
           ...(revealUrl === undefined ? {} : { revealUrl }),
+          number,
         });
         // The pull request list keeps its selection in the URL; the Issues page's panel does not.
         if (resolvedPanelRef === PULL_REQUESTS_PANEL_REF) {

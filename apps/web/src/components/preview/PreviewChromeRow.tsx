@@ -18,8 +18,8 @@ import { T, useGT } from "gt-react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
-import { StatusDot } from "~/components/ui/status-dot";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { Tooltip, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import { cn } from "~/lib/utils";
 
 interface Props {
@@ -96,74 +96,70 @@ export function PreviewChromeRow({
     <div className="relative">
       <form
         onSubmit={submit}
-        className="flex min-h-12.5 shrink-0 items-center gap-1.5 px-3 py-2.5"
-        data-preview-chrome
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        data-surface-subheader
       >
         <div className="flex items-center gap-0.5" role="group" aria-label={gt("Navigation")}>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={canGoBack ? onBack : NOOP}
-                  disabled={!canGoBack}
-                  aria-label={gt("Back", { $context: "browser navigation" })}
-                  type="button"
-                />
-              }
-            >
-              <ArrowLeft />
-            </TooltipTrigger>
-            <TooltipPopup>
-              <T context="browser navigation">Back</T>
-            </TooltipPopup>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={canGoForward ? onForward : NOOP}
-                  disabled={!canGoForward}
-                  aria-label={gt("Forward", { $context: "browser navigation" })}
-                  type="button"
-                />
-              }
-            >
-              <ArrowRight />
-            </TooltipTrigger>
-            <TooltipPopup>
-              <T context="browser navigation">Forward</T>
-            </TooltipPopup>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={refreshDisabled ? NOOP : loading ? onStopLoading : onRefresh}
-                  disabled={refreshDisabled}
-                  aria-label={
-                    loading ? gt("Stop", { $context: "stop loading the page" }) : gt("Refresh")
-                  }
-                  type="button"
-                />
-              }
-            >
-              <RefreshIcon refreshing={loading} />
-            </TooltipTrigger>
-            <TooltipPopup>
-              {loading ? gt("Stop", { $context: "stop loading the page" }) : gt("Refresh")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={canGoBack ? onBack : NOOP}
+                disabled={!canGoBack}
+                aria-label={gt("Back", { $context: "browser navigation" })}
+                type="button"
+              />
+            }
+            label={
+              <>
+                <T context="browser navigation">Back</T>
+              </>
+            }
+          >
+            <ArrowLeft />
+          </SharedTooltipTrigger>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={canGoForward ? onForward : NOOP}
+                disabled={!canGoForward}
+                aria-label={gt("Forward", { $context: "browser navigation" })}
+                type="button"
+              />
+            }
+            label={
+              <>
+                <T context="browser navigation">Forward</T>
+              </>
+            }
+          >
+            <ArrowRight />
+          </SharedTooltipTrigger>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={refreshDisabled ? NOOP : loading ? onStopLoading : onRefresh}
+                disabled={refreshDisabled}
+                aria-label={
+                  loading ? gt("Stop", { $context: "stop loading the page" }) : gt("Refresh")
+                }
+                type="button"
+              />
+            }
+            label={loading ? gt("Stop", { $context: "stop loading the page" }) : gt("Refresh")}
+          >
+            <RefreshIcon refreshing={loading} />
+          </SharedTooltipTrigger>
         </div>
 
         {leadingActions}
 
-        <InputGroup variant="default" className="group/address h-7.5 flex-1">
+        <InputGroup variant="ghost" className="group/address h-7 flex-1">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -196,7 +192,7 @@ export function PreviewChromeRow({
                   aria-label={gt("Search or enter URL")}
                   data-workspace-focus-default
                   spellCheck={false}
-                  readOnly={inputDisabled}
+                  disabled={inputDisabled}
                   data-preview-url-input
                   size="sm"
                 />
@@ -207,116 +203,93 @@ export function PreviewChromeRow({
             <InputGroupAddon align="inline-end">
               {}
               <span className="pointer-events-none flex opacity-0 transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/address:pointer-events-auto group-hover/address:opacity-100">
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={onOpenInBrowser}
-                        aria-label={gt("Open in system browser")}
-                        type="button"
-                      />
-                    }
-                  >
-                    <ExternalLink />
-                  </TooltipTrigger>
-                  <TooltipPopup>
-                    <T>Open in system browser</T>
-                  </TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={onOpenInBrowser}
+                      aria-label={gt("Open in system browser")}
+                      type="button"
+                    />
+                  }
+                  label={
+                    <>
+                      <T>Open in system browser</T>
+                    </>
+                  }
+                >
+                  <ExternalLink />
+                </SharedTooltipTrigger>
               </span>
             </InputGroupAddon>
           ) : null}
         </InputGroup>
 
         {onPickElement ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={pickActive ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  onClick={onPickElement}
-                  disabled={pickDisabled}
-                  aria-label={pickActive ? gt("Cancel annotation") : gt("Annotate preview")}
-                  aria-pressed={pickActive ? "true" : "false"}
-                  type="button"
-                />
-              }
-            >
-              <MousePointerClick className={cn(pickActive && "text-primary")} />
-            </TooltipTrigger>
-            <TooltipPopup>
-              {pickDisabled && pickDisabledReason
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant={pickActive ? "secondary" : "ghost"}
+                size="icon-xs"
+                onClick={onPickElement}
+                disabled={pickDisabled}
+                aria-label={pickActive ? gt("Cancel annotation") : gt("Annotate preview")}
+                aria-pressed={pickActive ? "true" : "false"}
+                type="button"
+              />
+            }
+            label={
+              pickDisabled && pickDisabledReason
                 ? pickDisabledReason
                 : pickActive
                   ? gt("Cancel annotation (Esc)")
-                  : gt("Annotate elements, regions, and drawings")}
-            </TooltipPopup>
-          </Tooltip>
+                  : gt("Annotate elements, regions, and drawings")
+            }
+          >
+            <MousePointerClick className={cn(pickActive && "text-primary")} />
+          </SharedTooltipTrigger>
         ) : null}
         {onCapture ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={recording ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  onClick={(event) => onCapture(event.shiftKey)}
-                  aria-label={recording ? gt("Stop recording") : gt("Capture screenshot")}
-                  type="button"
-                  className="relative"
-                  disabled={captureDisabled}
-                />
-              }
-            >
-              <Camera className={cn(recording && "text-destructive")} />
-              {recording ? (
-                <span className="absolute right-0.5 top-0.5 flex">
-                  <StatusDot tone="danger" pulse />
-                </span>
-              ) : null}
-            </TooltipTrigger>
-            <TooltipPopup>
-              <span className="flex flex-col gap-0.5">
-                <span>
-                  {recording
-                    ? gt("Stop recording")
-                    : gt("Screenshot", { $context: "button, captures the page" })}
-                </span>
-                {!recording ? (
-                  <span>
-                    <T>Shift-click to record</T>
-                  </span>
-                ) : null}
-              </span>
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant={recording ? "secondary" : "ghost"}
+                size="icon-xs"
+                onClick={(event) => onCapture(event.shiftKey)}
+                aria-label={recording ? gt("Stop recording") : gt("Capture screenshot")}
+                type="button"
+                className="relative"
+                disabled={captureDisabled}
+              />
+            }
+            label={recording ? gt("Stop recording") : gt("Screenshot · Shift-click to record")}
+          >
+            <Camera className={cn(recording && "text-destructive")} />
+            {recording ? (
+              <span className="absolute right-0.5 top-0.5 size-1.5 motion-safe:animate-status-pulse rounded-full bg-destructive" />
+            ) : null}
+          </SharedTooltipTrigger>
         ) : null}
         {onPictureInPicture ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={pictureInPicture ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  onClick={onPictureInPicture}
-                  aria-label={
-                    pictureInPicture ? gt("Close floating preview") : gt("Float preview over chat")
-                  }
-                  aria-pressed={pictureInPicture ? "true" : "false"}
-                  type="button"
-                  disabled={pictureInPictureDisabled}
-                />
-              }
-            >
-              <PictureInPicture2 className={cn(pictureInPicture && "text-primary")} />
-            </TooltipTrigger>
-            <TooltipPopup>
-              {pictureInPicture ? gt("Close floating preview") : gt("Float preview over chat")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant={pictureInPicture ? "secondary" : "ghost"}
+                size="icon-xs"
+                onClick={onPictureInPicture}
+                aria-label={
+                  pictureInPicture ? gt("Close floating preview") : gt("Float preview over chat")
+                }
+                aria-pressed={pictureInPicture ? "true" : "false"}
+                type="button"
+                disabled={pictureInPictureDisabled}
+              />
+            }
+            label={pictureInPicture ? gt("Close floating preview") : gt("Float preview over chat")}
+          >
+            <PictureInPicture2 className={cn(pictureInPicture && "text-primary")} />
+          </SharedTooltipTrigger>
         ) : null}
         {trailingActions}
       </form>

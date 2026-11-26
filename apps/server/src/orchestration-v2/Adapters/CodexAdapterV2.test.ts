@@ -699,6 +699,7 @@ function codexReplayPreamble(input: {
   readonly prompt: string;
   readonly sentPrompt?: string;
   readonly effort?: string;
+  readonly interactionMode?: "plan" | "default";
   readonly turnPolicy?: Pick<
     typeof CodexClient.V2TurnStartParams.Type,
     "approvalPolicy" | "sandboxPolicy"
@@ -804,7 +805,7 @@ function codexReplayPreamble(input: {
           summary: "auto",
           ...(input.effort === undefined ? {} : { effort: input.effort }),
           collaborationMode: {
-            mode: "default",
+            mode: input.interactionMode ?? "default",
             settings: {
               model: "gpt-5.4",
               ...(input.effort === undefined ? {} : { reasoning_effort: input.effort }),
@@ -1881,6 +1882,239 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect.each([
+    { serverName: "t3-code", asked: true, expected: { own: true } },
+    { serverName: "t3-code-direct", asked: true, expected: { own: true } },
+    // A server T3 Code did not register, or a request T3 Code did not make: named as ever.
+    { serverName: "deploys", asked: true, expected: { own: false } },
+    { serverName: "t3-code", asked: false, expected: { own: false } },
+  ] as const)(
+    "shows an approval from $serverName (asked by T3 Code: $asked) as T3 Code's own: $expected.own",
+    ({ serverName, asked, expected }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "own-approval-thread";
+        const nativeTurnId = "own-approval-turn";
+        const prompt = "Open a pull request.";
+        const message = "Push tools and run this repository's hook file .husky/pre-push?";
+        const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
+        const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `own-approval-${serverName}-${asked}`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId,
+                prompt,
+                turnPolicy: {
+                  approvalPolicy: "on-request",
+                  sandboxPolicy: { type: "workspaceWrite" },
+                },
+              }),
+              {
+                type: "emit_inbound",
+                frame: {
+                  id: 0,
+                  method: "mcpServer/elicitation/request",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    serverName,
+                    mode: "form",
+                    message,
+                    requestedSchema: { type: "object", properties: {} },
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: { id: 0, result: { action: "accept", content: {} } },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+              ? Queue.offer(pending, event.runtimeRequest)
+              : Effect.void,
+        );
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const ownAsked = asked
+          ? yield* sessions.recordApprovalRequest(harness.threadId, { message, pushHooks })
+          : undefined;
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("own-approval-attempt"),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode: "auto-accept-edits" },
+        });
+        const request = yield* Queue.take(pending);
+        const card = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+        );
+        const item = card?.type === "turn_item.updated" ? card.turnItem : undefined;
+        assert.deepInclude(item, { prompt: message });
+        if (expected.own) {
+          assert.deepInclude(item, { pushHooks });
+          assert.notProperty(item, "appName");
+        } else {
+          assert.deepInclude(item, { appName: serverName });
+          assert.notProperty(item, "pushHooks");
+        }
+        if (ownAsked !== undefined) {
+          assert.notProperty(
+            yield* sessions.findApprovalRequest(harness.threadId, message),
+            "approved",
+          );
+        }
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "accept",
+        });
+        yield* harness.firstTerminal;
+        // What the person answered in the app stays with the request T3 Code made, and with
+        // no other: a request under T3's server name that T3 Code did not make gets none.
+        if (ownAsked !== undefined) {
+          const kept = yield* sessions.takeApprovalRequest(harness.threadId, ownAsked);
+          if (expected.own) assert.deepInclude(kept, { approved: true });
+          else assert.notProperty(kept, "approved");
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["plan", "default"] as const)(
+    "shows what T3 Code's own tool asks to the person in a Full access turn (%s mode)",
+    (interactionMode) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "own-approval-full-access-thread";
+        const nativeTurnId = "own-approval-full-access-turn";
+        const prompt = "Open a pull request.";
+        const message = "Push tools and run this repository's hook file .husky/pre-push?";
+        const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };
+        const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `own-approval-full-access-${interactionMode}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt, interactionMode }),
+              {
+                type: "emit_inbound",
+                frame: {
+                  id: 0,
+                  method: "mcpServer/elicitation/request",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    serverName: "t3-code",
+                    mode: "form",
+                    message,
+                    requestedSchema: { type: "object", properties: {} },
+                  },
+                },
+              },
+              { type: "expect_outbound", frame: { id: 0, result: { action: "decline" } } },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+              ? Queue.offer(pending, event.runtimeRequest)
+              : Effect.void,
+        );
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const ownAsked = yield* sessions.recordApprovalRequest(harness.threadId, {
+          message,
+          pushHooks,
+        });
+        // Another call's request, answered while this one waits, leaves this one T3 Code's own.
+        const answered = yield* sessions.recordApprovalRequest(harness.threadId, {
+          message: "Push docs and run this repository's hook file .husky/pre-push?",
+        });
+        yield* sessions.forgetApprovalRequest(harness.threadId, answered);
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`own-approval-full-access-${interactionMode}-attempt`),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          runtimePolicy: {
+            ...turnInput.runtimePolicy,
+            runtimeMode: "full-access",
+            interactionMode,
+          },
+        });
+        const request = yield* Effect.raceFirst(
+          Queue.take(pending),
+          harness.firstTerminal.pipe(
+            Effect.andThen(Effect.die("T3 Code's own request was answered without the person")),
+          ),
+        );
+        const card = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+        );
+        assert.deepInclude(card?.type === "turn_item.updated" ? card.turnItem : undefined, {
+          prompt: message,
+          pushHooks,
+        });
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "decline",
+        });
+        yield* harness.firstTerminal;
+        assert.deepInclude(yield* sessions.takeApprovalRequest(harness.threadId, ownAsked), {
+          approved: false,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
 
   it.effect.each([
     { runtimeMode: "full-access", turnIdKind: "present" },
@@ -4557,135 +4791,87 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect.each(["reset", "billable-only", "missing", "other-turn-reset", "late-reset"] as const)(
-    "compacts Codex with %s token telemetry",
-    (usageKind) =>
-      Effect.gen(function* () {
-        const nativeThreadId = "compact-thread";
-        const nativeTurnId = "compact-turn";
-        const item = { type: "contextCompaction", id: "compact-item" };
-        const usageFrame = (tokens: number, inputTokens: number, turnId = nativeTurnId) => ({
-          type: "emit_inbound" as const,
-          label: "usage",
-          frame: {
-            method: "thread/tokenUsage/updated",
-            params: {
-              threadId: nativeThreadId,
-              turnId,
-              tokenUsage: {
-                total: {
-                  totalTokens: 9437579,
-                  inputTokens: 9408294,
-                  cachedInputTokens: 8982400,
-                  outputTokens: 29285,
-                  reasoningOutputTokens: 8756,
-                },
-                last: {
-                  totalTokens: tokens,
-                  inputTokens,
-                  cachedInputTokens: 0,
-                  outputTokens: 0,
-                  reasoningOutputTokens: 0,
-                },
-                modelContextWindow: 258400,
+  it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "compact-thread";
+      const nativeTurnId = "compact-turn";
+      const item = { type: "contextCompaction", id: "compact-item" };
+      const transcript = makeCodexReplayTranscript({
+        scenario: "native-compaction",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(0, 5),
+          {
+            type: "expect_outbound",
+            label: "compact",
+            frame: {
+              id: 3,
+              method: "thread/compact/start",
+              params: { threadId: nativeThreadId },
+            },
+          },
+          { type: "emit_inbound", label: "compact", frame: { id: 3, result: {} } },
+          {
+            type: "emit_inbound",
+            label: "start",
+            frame: {
+              method: "turn/started",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
               },
             },
           },
-        });
-        const transcript = makeCodexReplayTranscript({
-          scenario: "native-compaction",
-          entries: [
-            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(0, 5),
-            {
-              type: "expect_outbound",
-              label: "compact",
-              frame: {
-                id: 3,
-                method: "thread/compact/start",
-                params: { threadId: nativeThreadId },
+          ...(["item/started", "item/completed"] as const).map((method) => ({
+            type: "emit_inbound" as const,
+            label: method,
+            frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, item } },
+          })),
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
               },
             },
-            { type: "emit_inbound", label: "compact", frame: { id: 3, result: {} } },
-            {
-              type: "emit_inbound",
-              label: "start",
-              frame: {
-                method: "turn/started",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
-                },
-              },
-            },
-            ...(usageKind === "missing" ? [] : [usageFrame(223313, 222435)]),
-            {
-              type: "emit_inbound",
-              label: "compaction-start",
-              frame: {
-                method: "item/started",
-                params: { threadId: nativeThreadId, turnId: nativeTurnId, item },
-              },
-            },
-            ...(usageKind === "missing" ? [] : [usageFrame(226619, 223200)]),
-            ...(usageKind === "reset" ? [usageFrame(21607, 0)] : []),
-            ...(usageKind === "other-turn-reset" ? [usageFrame(21607, 0, "other-turn")] : []),
-            {
-              type: "emit_inbound",
-              label: "compaction-complete",
-              frame: {
-                method: "item/completed",
-                params: { threadId: nativeThreadId, turnId: nativeTurnId, item },
-              },
-            },
-            ...(usageKind === "late-reset" ? [usageFrame(21607, 0)] : []),
-            {
-              type: "emit_inbound",
-              label: "complete",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
-              },
-            },
-          ],
-        });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        assert.isDefined(harness.runtime.compactThread);
-        yield* harness.runtime.compactThread!(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("compact-attempt"),
-            text: "/compact",
-          }),
-        );
-        yield* harness.firstTerminal;
-        const items = harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "compaction"
-            ? [event.turnItem]
-            : [],
-        );
-        assert.deepEqual(
-          items.map((entry) => entry.status),
-          ["running", "completed"],
-        );
-        assert.equal(items[0]?.id, items[1]?.id);
-        assert.equal(items[1]?.beforeTokenCount, usageKind === "missing" ? undefined : 223313);
-        assert.equal(items[1]?.afterTokenCount, usageKind === "reset" ? 21607 : undefined);
-        assert.equal(harness.terminalEvents()[0]?.status, "completed");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      assert.isDefined(harness.runtime.compactThread);
+      yield* harness.runtime.compactThread!(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("compact-attempt"),
+          text: "/compact",
+        }),
+      );
+      yield* harness.firstTerminal;
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((entry) => entry.status),
+        ["running", "completed"],
+      );
+      assert.equal(items[0]?.id, items[1]?.id);
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
+    ),
   );
 
   it.effect.each([

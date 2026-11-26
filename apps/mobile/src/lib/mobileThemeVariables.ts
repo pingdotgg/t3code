@@ -60,13 +60,7 @@ function platformThemeVariables(
     ? defaults[appearance]
     : getMobileThemeVariables(themeId, appearance);
   const frame = themeColorWithAlpha(
-    variables[
-      appearance === "dark"
-        ? "--color-header"
-        : usesDefaultPalette
-          ? "--color-row-hover"
-          : "--color-drawer"
-    ],
+    variables[usesDefaultPalette ? "--color-row-hover" : "--color-drawer"],
     1,
   );
   if (platform === "ios" && usesDefaultPalette && appearance === "light") {
@@ -80,8 +74,16 @@ function platformThemeVariables(
   }
   if (platform !== "android") return variables;
 
+  // Android paints the drawer as the page inside a lighter frame, so dark cards lift off both.
   const screen = variables["--color-screen"];
-  const groupedCard = variables["--color-grouped-card"];
+  const groupedCard =
+    appearance === "dark"
+      ? themeColorWithContrast(
+          variables["--color-grouped-card"],
+          [screen, flattenThemeColor(frame, screen)],
+          1.2,
+        )
+      : variables["--color-grouped-card"];
   const readableOnCard = (role: (typeof CARD_TEXT_ROLES)[number]) =>
     [role, themeColorWithContrast(variables[role], groupedCard)] as const;
   return {

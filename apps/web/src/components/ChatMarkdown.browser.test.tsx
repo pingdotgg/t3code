@@ -8,7 +8,6 @@ import { commands, page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../test/render";
 import "../index.css";
 
-import type { LayoutDragContentSource } from "../layout/layoutDrag";
 import { filesystemEnvironment } from "../state/filesystem";
 import {
   hostRightPanel,
@@ -25,13 +24,6 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
-const dragSources = vi.hoisted(() => [] as LayoutDragContentSource[]);
-vi.mock(import("../layout/layoutDrag"), async (original) => ({
-  ...(await original()),
-  beginLayoutContentDrag: (_event, source) => {
-    dragSources.push(source);
-  },
-}));
 const nativeFileDrag = vi.hoisted(() => ({ enabled: false }));
 vi.mock(import("../useNativeFileDrag"), async (original) => {
   const actual = await original();
@@ -197,7 +189,6 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 function setup() {
   appearance.value = "light";
   parsedSources.length = 0;
-  dragSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
   nativeFileDrag.enabled = false;
   renderDiagram.mockReset();
@@ -324,19 +315,37 @@ it("sizes a raw HTML image by width and height written with px units", async () 
   expect({ width, height }).toEqual({ width: 14, height: 7 });
 });
 
-it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
+it("fades a streaming reply's blocks in once, not again when it remounts", async () => {
   setup();
+  const isFading = (element: Element) =>
+    element.getAnimations().some((animation) => animation instanceof CSSTransition);
   const message = (
-    <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text={"Finished block\n\nStill growing"}
+      isStreaming
+      streamingId="remounted-reply"
+    />
   );
   {
     await using first = await render(
-      <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\n"} isStreaming />,
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"Finished block\n\n"}
+        isStreaming
+        streamingId="remounted-reply"
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(isFading(first.getByText("Finished block").element())).toBe(true),
     );
     await first.rerender(message);
+    await vi.waitFor(() => expect(isFading(first.getByText("Still growing").element())).toBe(true));
   }
   await using screen = await render(message);
-  await expect.element(screen.getByText("Still growing")).toBeVisible();
+  await expect
+    .element(screen.getByText("Still growing"))
+    .toHaveStyle({ opacity: "1", transitionDuration: "0s" });
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 
@@ -589,49 +598,6 @@ describe("ChatMarkdown workspace file opens", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
-  });
-
-  it("resolves each dragged file link on its own, and a click does not cancel it", async () => {
-    setup();
-    const lookups = new Map<string, (value: unknown) => void>();
-    workspaceSearch.mockImplementation(
-      ({ input }: { input: { query: string } }) =>
-        new Promise((resolve) => lookups.set(input.query, resolve)),
-    );
-    using openFile = vi
-      .spyOn(useRightPanelStore.getState(), "openFile")
-      .mockImplementation(() => {});
-    await using screen = await renderText(
-      "[A](physics/notes/a.md) and [B](physics/notes/b.md) and [Other](/elsewhere/c.md:9)",
-      { cwd: "/school/physics", threadRef },
-    );
-    const [first, second, other] = screen.container.querySelectorAll("a");
-    for (const link of [first!, second!]) {
-      link.dispatchEvent(
-        new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }),
-      );
-    }
-    const resolves = dragSources.map((source) =>
-      source.kind === "surface" ? source.resolve?.() : undefined,
-    );
-    expect(resolves).toHaveLength(2);
-    await vi.waitFor(() => expect(lookups.size).toBe(2));
-
-    await act(async () => other!.click());
-    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/c.md", 9);
-    for (const [query, resolve] of lookups) {
-      resolve(
-        AsyncResult.success({
-          entries: [{ path: `notes/${query.endsWith("b.md") ? "b" : "a"}.md`, kind: "file" }],
-          truncated: false,
-        }),
-      );
-    }
-
-    expect(await Promise.all(resolves)).toEqual([
-      expect.objectContaining({ relativePath: expect.stringContaining("notes/a.md") }),
-      expect.objectContaining({ relativePath: expect.stringContaining("notes/b.md") }),
-    ]);
   });
 
   it("opens a path from markdown rendered in another checkout under that checkout", async () => {

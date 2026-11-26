@@ -2,6 +2,7 @@ import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
+import type { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Atom } from "effect/reactivity";
 import {
   USAGE_CONTRACT_VERSION,
@@ -9,16 +10,9 @@ import {
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import {
-  ChartNoAxesColumnIcon,
-  CircleAlertIcon,
-  ChevronDownIcon,
-  InfoIcon,
-  ServerIcon,
-  SlidersHorizontalIcon,
-} from "lucide-react";
+import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
 import { T, useGT, useLocale, useMessages, Var } from "gt-react";
-import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
@@ -74,18 +68,15 @@ import {
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
-import { PageEmptyState } from "../PageEmptyState";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
@@ -214,6 +205,7 @@ export function UsagePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
+  const modalActionsRef = useRef<DialogPrimitive.Root.Actions | null>(null);
   const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
@@ -292,6 +284,12 @@ export function UsagePage() {
       return;
 
     const command = resolveUsageShortcut(event, keybindings);
+    if (command === "usage.open") {
+      event.preventDefault();
+      event.stopPropagation();
+      modalActionsRef.current?.close();
+      return;
+    }
     const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
     const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
     if (!metricOption && !periodOption) return;
@@ -302,7 +300,7 @@ export function UsagePage() {
     if (periodOption && !showingLimits) selectWindow(periodOption.days);
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric and period shortcuts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric, period, and close shortcuts
   useEffect(() => {
     globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
     return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
@@ -369,29 +367,26 @@ export function UsagePage() {
 
   const windowLabel =
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
-      ? gt("{start} – {end}", {
+      ? gt("{start} to {end}", {
           start: formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12, locale),
           end: formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12, locale),
         })
-      : gt("{start} – {end}", {
+      : gt("{start} to {end}", {
           start: formatDayShort(shownWindow.sinceDay, locale),
           end: formatDayShort(shownWindow.untilDay, locale),
         });
   const windowOptionLabel = WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label;
   const metricOptionLabel = METRIC_OPTIONS.find((option) => option.value === metric)?.label;
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-1 items-center gap-x-3 gap-y-2 py-2 sm:grid-cols-[minmax(0,1fr)_auto] @4xl/usage-header:flex">
-      <WorkspaceBreadcrumb
-        ariaLabel={gt("Usage breadcrumb")}
-        className="min-w-0 max-sm:[&>ol]:flex-wrap"
-      >
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
+      <WorkspaceBreadcrumb ariaLabel={gt("Usage breadcrumb")} className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>
             <T>Usage</T>
           </h1>
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
-        <WorkspaceBreadcrumbItem className="min-w-10 shrink max-sm:shrink-0">
+        <WorkspaceBreadcrumbItem className="min-w-10 shrink">
           <UsageEnvironmentFilter
             environments={environments}
             selectedEnvironments={selectedEnvironments}
@@ -413,6 +408,11 @@ export function UsagePage() {
           />
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {!showingLimits ? (
+        <span className="hidden min-w-0 truncate text-xs text-muted-foreground @7xl/usage-header:block">
+          {windowLabel}
+        </span>
+      ) : null}
       <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @4xl/usage-header:flex">
         {/* Limits are always current, so they have no period. The period sits before the metric
             tabs so dropping it never moves them. */}
@@ -520,37 +520,25 @@ export function UsagePage() {
   );
 
   return (
-    <AppRouteModal label={gt("Usage")} variant="app-panel">
-      <div data-app-modal-pane="" className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 ps-5 pe-2">
+    <AppRouteModal label={gt("Usage")} actionsRef={modalActionsRef}>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
           {topbarContent}
           <AppRouteModalClose />
         </header>
 
         <ScrollArea className="min-h-0 flex-1" observeContent>
-          <WorkspacePageContainer
-            width="wide"
-            className="@container/usage-page max-w-[1040px] gap-5 pt-5.5"
-          >
+          <WorkspacePageContainer width="wide">
             {selectedEnvironments.length === 0 ? (
-              <PageEmptyState
-                fill
-                icon={<ServerIcon />}
-                title={
-                  environments.length === 0
-                    ? gt("No environments connected")
-                    : gt("No environment selected")
-                }
-                description={
-                  environments.length === 0
-                    ? showingLimits
-                      ? gt("Connect an environment to see limits.")
-                      : gt("Connect an environment to see usage.")
-                    : showingLimits
-                      ? gt("Select an environment to see limits.")
-                      : gt("Select an environment to see usage.")
-                }
-              />
+              <p className="text-sm text-muted-foreground">
+                {environments.length === 0
+                  ? showingLimits
+                    ? gt("Connect an environment to see limits.")
+                    : gt("Connect an environment to see usage.")
+                  : showingLimits
+                    ? gt("Select an environment to see limits.")
+                    : gt("Select an environment to see usage.")}
+              </p>
             ) : showingLimits ? (
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
@@ -560,48 +548,23 @@ export function UsagePage() {
             ) : shown === null ? (
               <UsageSkeleton />
             ) : !canReadDiagnostics ? (
-              <UsageNotice
-                icon={CircleAlertIcon}
-                title={gt("Usage unavailable")}
-                description={
-                  selectedEnvironments
-                    .filter((environment) => environment.error !== null)
-                    .map((environment) =>
-                      selectedEnvironments.length > 1
-                        ? gt("{environment}: {error}", {
-                            environment: environment.label,
-                            error: environment.error,
-                          })
-                        : environment.error,
-                    )
-                    .join(" ") || gt("Checking access to usage.")
-                }
-              />
-            ) : selectedEnvironments.every((environment) => environment.error !== null) ? (
-              <UsageNotice
-                icon={CircleAlertIcon}
-                title={gt("Could not read usage")}
-                description={selectedEnvironments
-                  .map((environment) =>
-                    gt("{environment}: {error}", {
-                      environment: environment.label,
-                      error: environment.error,
-                    }),
-                  )
-                  .join(" ")}
-              >
-                <Button size="sm" variant="secondary" onClick={() => void refresh()}>
-                  <RefreshIcon size="sm" />
-                  <T>Retry</T>
-                </Button>
-              </UsageNotice>
+              <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
+                {selectedEnvironments.map((environment) => (
+                  <p key={environment.environmentId}>
+                    {selectedEnvironments.length > 1
+                      ? gt("{environment}: {error}", {
+                          environment: environment.label,
+                          error: environment.error,
+                        })
+                      : environment.error}
+                  </p>
+                ))}
+              </div>
             ) : (
               <UsageOverview
                 merged={merged}
                 shownWindow={shownWindow}
                 hour12={hour12}
-                windowDays={windowDays}
-                windowLabel={windowLabel}
                 days={days}
                 hours={hours}
                 showingKept={showingKept}
@@ -646,18 +609,10 @@ export function UsagePage() {
   );
 }
 
-// Breakdown tables: a 28px head over a hairline, 34px rows on a fainter one.
-const TABLE_HEAD_ROW =
-  "h-7 border-b border-border text-left text-xs text-muted-foreground [&>th]:py-0";
-const TABLE_ROW =
-  "h-[34px] border-b border-border/60 transition-colors hover:bg-muted/50 [&>td]:py-0";
-
 function UsageOverview({
   merged,
   shownWindow,
   hour12,
-  windowDays,
-  windowLabel,
   days,
   hours,
   showingKept,
@@ -671,8 +626,6 @@ function UsageOverview({
   readonly merged: MergedUsage;
   readonly shownWindow: UsageSummaryInput;
   readonly hour12: boolean;
-  readonly windowDays: number;
-  readonly windowLabel: string;
   readonly days: readonly string[];
   readonly hours: readonly string[];
   readonly showingKept: boolean;
@@ -726,37 +679,14 @@ function UsageOverview({
   );
   const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
 
-  if (merged.sessions === 0 && sourceMessages.length === 0) {
-    // A kept empty answer says nothing about the newly requested period.
-    return showingKept ? (
-      <UsageSkeleton />
-    ) : (
-      <PageEmptyState
-        fill
-        icon={<ChartNoAxesColumnIcon />}
-        title={
-          windowDays === 1
-            ? gt("No usage in the past 24 hours")
-            : gt(
-                "{days, plural, one {No usage in the past {days} day} other {No usage in the past {days} days}}",
-                { days: windowDays },
-              )
-        }
-        description={gt(
-          "Sessions from your providers show up here once they run. Pick a longer period to look further back.",
-        )}
-      />
-    );
-  }
-
   return (
-    <div aria-busy={loadingPartial} className="flex flex-col gap-5">
+    <div aria-busy={loadingPartial} className="flex flex-col gap-6">
       {sourceMessages.map((message) => (
         <p key={message} className="mb-4 text-sm text-muted-foreground">
           {message}
         </p>
       ))}
-      <section className="grid gap-6 @min-[48rem]/usage-page:grid-cols-[18rem_minmax(0,1fr)]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           <div className="flex flex-col gap-1">
             <p
@@ -770,24 +700,15 @@ function UsageOverview({
                 : formatTokens(merged.totalTokens)}
             </p>
             <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <Tooltip>
-                <TooltipTrigger render={<span tabIndex={0} />}>
-                  <span className={figureClass(loadingPartial)}>
-                    {gt(
-                      "{count, plural, one {{formatted} sessions} other {{formatted} sessions}}",
-                      {
-                        count: merged.sessions,
-                        formatted: formatCount(merged.sessions, locale),
-                      },
-                    )}
-                  </span>
-                </TooltipTrigger>
-                <TooltipPopup>
-                  {metric === "cost"
-                    ? gt("API cost estimate")
-                    : gt("Sessions with processed tokens")}
-                </TooltipPopup>
-              </Tooltip>
+              <span>
+                <span className={figureClass(loadingPartial)}>
+                  {gt("{count, plural, one {{formatted} session} other {{formatted} sessions}}", {
+                    count: merged.sessions,
+                    formatted: formatCount(merged.sessions, locale),
+                  })}
+                </span>
+                {metric === "cost" && ` · ${gt("API estimate")}`}
+              </span>
               {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
                 <Popover>
                   <PopoverTrigger
@@ -839,15 +760,11 @@ function UsageOverview({
                       }}
                     />
                     <ProviderMark provider={provider} className="size-4" />
-                    {/* The name and the session count stay whole; a count with no
-                        room left wraps under the name. */}
-                    <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
-                      <span className="whitespace-nowrap">
-                        {PROVIDER_PRESENTATION[provider].label}
-                      </span>
+                    <span className="flex min-w-0 items-baseline gap-1.5">
+                      <span className="truncate">{PROVIDER_PRESENTATION[provider].label}</span>
                       <span
                         className={cn(
-                          "whitespace-nowrap text-2xs text-muted-foreground tabular-nums",
+                          "shrink-0 whitespace-nowrap text-2xs text-muted-foreground tabular-nums",
                           figureClass(providerLoading),
                           awaitingData && "invisible",
                         )}
@@ -869,26 +786,22 @@ function UsageOverview({
                         : formatTokens(totals?.totalTokens ?? 0)}
                   </dd>
                 </dl>
-                {}
                 <p
                   className={cn(
-                    "text-meta text-muted-foreground",
+                    "text-xs text-muted-foreground",
                     figureClass(providerLoading),
                     awaitingData && "invisible",
                   )}
                 >
-                  <Tooltip>
-                    <TooltipTrigger render={<span tabIndex={0} />}>
-                      {metric === "cost"
-                        ? gt("{share} of cost", { share: formatPercent(share) })
-                        : gt("{share} of tokens", { share: formatPercent(share) })}
-                    </TooltipTrigger>
-                    <TooltipPopup>
-                      {metric === "cost"
-                        ? gt("{tokens} tokens", { tokens: formatTokens(totals?.totalTokens ?? 0) })
-                        : formatUsd(totals?.costUsd ?? 0, locale)}
-                    </TooltipPopup>
-                  </Tooltip>
+                  {metric === "cost"
+                    ? gt("{share} of cost · {tokens} tokens", {
+                        share: formatPercent(share),
+                        tokens: formatTokens(totals?.totalTokens ?? 0),
+                      })
+                    : gt("{share} of tokens · {cost}", {
+                        share: formatPercent(share),
+                        cost: formatUsd(totals?.costUsd ?? 0, locale),
+                      })}
                 </p>
               </div>
             );
@@ -896,18 +809,15 @@ function UsageOverview({
         </div>
 
         <div className="flex min-w-0 flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <h2 className="min-w-0 truncate text-label text-foreground">
-              {shownHourly
-                ? metric === "tokens"
-                  ? gt("Hourly processed tokens")
-                  : gt("Hourly cost")
-                : metric === "tokens"
-                  ? gt("Daily processed tokens")
-                  : gt("Daily cost")}
-            </h2>
-            <span className="text-label text-foreground tabular-nums">{windowLabel}</span>
-          </div>
+          <h2 className="text-sm font-medium text-foreground">
+            {shownHourly
+              ? metric === "tokens"
+                ? gt("Hourly processed tokens")
+                : gt("Hourly cost")
+              : metric === "tokens"
+                ? gt("Daily processed tokens")
+                : gt("Daily cost")}
+          </h2>
           <UsageProviderChart
             providers={activeProviders}
             loadingProviders={chartLoadingProviders}
@@ -924,10 +834,8 @@ function UsageOverview({
         </div>
       </section>
 
-      {/* Section headings sit in a 28px row, 8px above their content, with or
-          without actions (the settings rhythm). The skeleton keeps the same rows. */}
       <section className="flex flex-col gap-2">
-        <h2 className="flex min-h-7 items-center text-sm font-medium text-foreground">
+        <h2 className="text-sm font-medium text-foreground">
           <T>Totals</T>
         </h2>
         <dl className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
@@ -989,8 +897,8 @@ function UsageOverview({
         </section>
       ) : null}
 
-      <section className="flex flex-col gap-2">
-        <div className="flex min-h-7 items-center justify-between gap-3">
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">
             <T>Breakdown</T>
           </h2>
@@ -1017,25 +925,20 @@ function UsageOverview({
         </div>
 
         {breakdown === "model" ? (
-          <table className="w-full table-fixed text-sm">
-            <colgroup>
-              <col />
-              <col className="w-30" />
-              <col className="w-30" />
-              <col className="w-30" />
-            </colgroup>
+          <table className="w-full text-sm">
             <thead>
-              <tr className={TABLE_HEAD_ROW}>
-                <th className="font-normal">
+              <tr className="border-b border-border text-right text-xs text-muted-foreground">
+                <th className="py-2 pr-3 pl-2 text-left font-normal">#</th>
+                <th className="w-full py-2 text-left font-normal">
                   <T>Model</T>
                 </th>
-                <th className="text-right font-normal">
+                <th className="py-2 pl-6 font-normal">
                   <T>Cost</T>
                 </th>
-                <th className="text-right font-normal">
+                <th className="hidden py-2 pl-6 font-normal sm:table-cell">
                   <T context="column heading, percentage share">Share</T>
                 </th>
-                <th className="text-right font-normal">
+                <th className="py-2 pr-2 pl-6 font-normal">
                   <T>Tokens</T>
                 </th>
               </tr>
@@ -1043,12 +946,12 @@ function UsageOverview({
             <tbody>
               {breakdownModels.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                  <td colSpan={5} className="py-6 text-center text-muted-foreground">
                     <T>No activity in this window.</T>
                   </td>
                 </tr>
               ) : (
-                breakdownModels.map((model) => {
+                breakdownModels.map((model, index) => {
                   const key = `${model.provider}:${model.model}`;
                   const value = metric === "tokens" ? model.totalTokens : model.costUsd;
                   const hasBar = value > 0 && breakdownPeak > 0;
@@ -1057,20 +960,21 @@ function UsageOverview({
                   return (
                     <tr
                       key={key}
-                      className={cn(TABLE_ROW, "relative has-focus-visible:bg-muted/50")}
+                      className="relative border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50 has-focus-visible:bg-muted/50"
                     >
-                      <td className="text-foreground">
-                        {}
+                      <td className="py-2.5 pr-3 pl-2 text-left text-xs">{index + 1}</td>
+                      <td className="py-2.5 text-left whitespace-normal">
                         <button
                           type="button"
-                          aria-label={model.model}
                           onClick={() => onSelectModel(key)}
-                          className="absolute inset-0 outline-none"
-                        />
-                        <span className={cn("flex min-w-0 items-center gap-2", !hasBar && "py-1")}>
+                          className={cn(
+                            "flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0",
+                            !hasBar && "py-1",
+                          )}
+                        >
                           <ProviderMark provider={model.provider} className="size-3.5" />
-                          <span className="truncate">{model.model}</span>
-                        </span>
+                          {model.model}
+                        </button>
                         {hasBar ? (
                           <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>
                             <div
@@ -1083,7 +987,7 @@ function UsageOverview({
                           </div>
                         ) : null}
                       </td>
-                      <td className={cn("text-right text-foreground tabular-nums", rowFigures)}>
+                      <td className={cn("py-2.5 pl-6 text-foreground", rowFigures)}>
                         {isModelCostUnknown(model) ? (
                           <span className="text-muted-foreground">
                             <T>Unpriced</T>
@@ -1092,14 +996,10 @@ function UsageOverview({
                           formatUsd(model.costUsd, locale)
                         )}
                       </td>
-                      <td
-                        className={cn("text-right text-muted-foreground tabular-nums", rowFigures)}
-                      >
-                        {share === null ? "-" : formatPercent(share)}
+                      <td className={cn("hidden py-2.5 pl-6 sm:table-cell", rowFigures)}>
+                        {share === null ? "" : formatPercent(share)}
                       </td>
-                      <td
-                        className={cn("text-right text-muted-foreground tabular-nums", rowFigures)}
-                      >
+                      <td className={cn("py-2.5 pr-2 pl-6", rowFigures)}>
                         {formatTokens(model.totalTokens)}
                       </td>
                     </tr>
@@ -1120,17 +1020,17 @@ function UsageOverview({
                 <col className="w-2/5" />
               </colgroup>
               <thead>
-                <tr className={TABLE_HEAD_ROW}>
-                  <th className="font-normal">{shownHourly ? gt("Hour") : gt("Day")}</th>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th className="py-2 pl-2 font-normal">{shownHourly ? gt("Hour") : gt("Day")}</th>
                   {activeProviders.map((provider) => (
-                    <th key={provider} className="pl-4 text-right font-normal">
+                    <th key={provider} className="py-2 pl-4 text-right font-normal">
                       {PROVIDER_PRESENTATION[provider].label}
                     </th>
                   ))}
-                  <th className="pl-4 text-right font-normal">
+                  <th className="py-2 pl-4 text-right font-normal">
                     <T>Total</T>
                   </th>
-                  <th className="pl-4 text-right font-normal">
+                  <th className="py-2 pr-2 pl-4 text-right font-normal">
                     <T>Tokens</T>
                   </th>
                 </tr>
@@ -1149,9 +1049,9 @@ function UsageOverview({
                   breakdownPeriods.map((period) => (
                     <tr
                       key={"hourStart" in period ? period.hourStart : period.day}
-                      className={TABLE_ROW}
+                      className="border-b border-border/50 transition-colors hover:bg-muted/50"
                     >
-                      <td className="text-foreground">
+                      <td className="py-2 pl-2 text-foreground">
                         {"hourStart" in period
                           ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12, locale)
                           : formatDayShort(period.day, locale)}
@@ -1160,7 +1060,7 @@ function UsageOverview({
                         <td
                           key={provider}
                           className={cn(
-                            "pl-4 text-right text-muted-foreground tabular-nums",
+                            "py-2 pl-4 text-right text-muted-foreground tabular-nums",
                             figureClass(loadingProviders.has(provider)),
                           )}
                         >
@@ -1169,7 +1069,7 @@ function UsageOverview({
                       ))}
                       <td
                         className={cn(
-                          "pl-4 text-right text-foreground tabular-nums",
+                          "py-2 pl-4 text-right text-foreground tabular-nums",
                           figureClass(loadingPartial),
                         )}
                       >
@@ -1177,7 +1077,7 @@ function UsageOverview({
                       </td>
                       <td
                         className={cn(
-                          "pl-4 text-right text-muted-foreground tabular-nums",
+                          "py-2 pr-2 pl-4 text-right text-muted-foreground tabular-nums",
                           figureClass(loadingPartial),
                         )}
                       >
@@ -1428,30 +1328,6 @@ function UsageEnvironmentFilter({
   );
 }
 
-/** The page's empty and error notice, in the shape the pull requests list uses. */
-function UsageNotice({
-  icon: Icon,
-  title,
-  description,
-  children,
-}: {
-  readonly icon: typeof ServerIcon;
-  readonly title: string;
-  readonly description: string;
-  readonly children?: ReactNode;
-}) {
-  return (
-    <Empty size="compact">
-      <Icon aria-hidden className="size-5.5 text-dim-foreground" />
-      <EmptyHeader>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{description}</EmptyDescription>
-      </EmptyHeader>
-      {children}
-    </Empty>
-  );
-}
-
 function UsageProviderFilter({
   hiddenProviders,
   onChange,
@@ -1518,7 +1394,7 @@ function UsageSkeleton() {
   const gt = useGT();
   return (
     <>
-      <section className="grid gap-6 @min-[48rem]/usage-page:grid-cols-[18rem_minmax(0,1fr)]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
             <Skeleton className="h-10 w-36" />
@@ -1549,7 +1425,7 @@ function UsageSkeleton() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="flex min-h-7 items-center text-sm font-medium text-foreground">
+        <h2 className="text-sm font-medium text-foreground">
           <T>Totals</T>
         </h2>
         <MetricSkeletons
@@ -1571,8 +1447,8 @@ function UsageSkeleton() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-2">
-        <div className="flex min-h-7 items-center justify-between gap-3">
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">
             <T>Breakdown</T>
           </h2>
@@ -1589,7 +1465,7 @@ function MetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
     <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
       {labels.map((label) => (
         <div key={label} className="flex flex-col gap-0.5">
-          <span className="text-meta text-muted-foreground">{label}</span>
+          <span className="text-xs text-muted-foreground">{label}</span>
           <Skeleton className="h-6 w-16" />
         </div>
       ))}

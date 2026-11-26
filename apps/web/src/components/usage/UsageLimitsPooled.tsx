@@ -1,5 +1,6 @@
 import {
   CHATGPT_USAGE_URL,
+  collectHttpQuotaSources,
   collectLimitAccounts,
   collectLimitPools,
   displayLimitWindows,
@@ -11,16 +12,10 @@ import {
   remainingPercent,
   type ResetCreditChoice,
 } from "@t3tools/shared/usageLimits";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { T, Var, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
-import {
-  AlertTriangleIcon,
-  ExternalLinkIcon,
-  GaugeIcon,
-  RotateCwIcon,
-  TicketIcon,
-} from "lucide-react";
+import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
   Fragment,
@@ -42,7 +37,6 @@ import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
 import {
@@ -208,12 +202,8 @@ function SegmentPopover({
         <Row label={gt("Left", { $context: "remaining usage" })}>{remaining}%</Row>
         {window.resetsAt ? (
           <Row label={gt("Resets", { $context: "when the usage window resets" })}>
-            <span className="flex flex-col items-end">
-              {resetsIn ? <span>{resetsIn}</span> : null}
-              <span>
-                {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
-              </span>
-            </span>
+            {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
+            {resetsIn ? ` · ${resetsIn}` : ""}
           </Row>
         ) : null}
         {timeLeft !== null ? (
@@ -233,7 +223,7 @@ function SegmentPopover({
               {choice.availableCount > 0 ? (
                 <Button
                   size="xs"
-                  variant="secondary"
+                  variant="outline"
                   disabled={redeem.busy || !redeem.canManageProviders}
                   className="ms-auto"
                   onClick={() => onRedeem(choice)}
@@ -460,11 +450,7 @@ function SegmentTriggers({
               account={account}
               className="min-w-0 truncate font-medium text-foreground"
             />
-          ) : (
-            <span className="min-w-0 truncate font-medium text-foreground">
-              {providerClients.get(account.driver)?.label ?? String(account.driver)}
-            </span>
-          )}
+          ) : null}
           {/* A single-account bar repeats the headline percentage. */}
           {showAccountName ? (
             <span className="shrink-0 font-semibold text-foreground tabular-nums">
@@ -476,6 +462,11 @@ function SegmentTriggers({
               {refillIn ?? ""}
               {credits ? (
                 <>
+                  {resetsIn ? (
+                    <span aria-hidden className="text-muted-foreground">
+                      ·
+                    </span>
+                  ) : null}
                   <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
                     <TicketIcon className="size-3" aria-hidden />
                     {credits}
@@ -532,6 +523,7 @@ function LegendRow({
         {resetsIn ?? ""}
         {credits ? (
           <>
+            {resetsIn ? <span aria-hidden>·</span> : null}
             <span
               aria-hidden
               className="inline-flex items-center gap-0.5 font-semibold text-foreground"
@@ -614,36 +606,33 @@ function PoolWindowCard({
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
 }) {
-  const gt = useGT();
   const m = useMessages();
   const nextRefill = pool.resets.find((reset) => reset.at > now && reset.restoresPercent > 0);
   return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-card border border-transparent surface-card-settings p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
+    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
         {label !== null ? (
-          <span className="text-label text-foreground">{label ?? pool.label}</span>
+          <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
         ) : null}
         <span className="flex items-baseline gap-2">
           <span className="text-3xl font-semibold text-foreground tabular-nums">
             {pool.remainingPercent}%
           </span>
-          <span className="inline-flex items-center gap-2 text-body text-muted-foreground">
+          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
             <span>
               <T context="remaining usage percentage">left</T>
             </span>
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
-        {nextRefill ? (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
-            <RotateCwIcon className="size-3 text-foreground" aria-hidden />
-            <span className="font-semibold text-foreground">+{nextRefill.restoresPercent}%</span>
-            {nextRefill.at <= now
-              ? gt("now", { $context: "a usage refill happens now" })
-              : gt("in {duration}", {
-                  duration: formatDuration(nextRefill.at - now, m),
-                  $context: "time until a usage window resets",
-                })}
+        {nextRefill && pool.columns.length > 1 ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            <T context="usage limit refill">
+              <span className="font-medium text-foreground">
+                ↻ +<Var>{nextRefill.restoresPercent}</Var>%
+              </span>{" "}
+              in <Var>{formatDuration(nextRefill.at - now, m)}</Var>
+            </T>
           </span>
         ) : null}
       </div>
@@ -661,9 +650,8 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   const windows = displayLimitWindows(pool);
   const m = useMessages();
   return (
-    // The heading row and its 8px gap match the settings sections; the cards keep 10px.
-    <section className="flex flex-col gap-2">
-      <h2 className="flex min-h-7 items-center gap-2 text-label text-foreground">
+    <section className="flex flex-col gap-3">
+      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
         <ProviderInstanceIcon
           driverKind={pool.driver}
           displayName={label}
@@ -672,30 +660,21 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           iconClassName="size-4 text-foreground/80"
         />
         {label}
-        {pool.accounts.length > 1 ? (
-          <span className="text-xs font-normal text-dim-foreground">
-            <T>
-              <Var>{pool.accounts.length}</Var> accounts, pooled
-            </T>
-          </span>
-        ) : null}
       </h2>
-      <div className="flex flex-col gap-2.5">
-        {windows.map((window) => {
-          const details =
-            pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool, m) : undefined;
-          return (
-            <PoolWindowCard
-              key={`${window.kind}:${window.id}`}
-              pool={window}
-              color={color}
-              now={now}
-              label={details?.label}
-              description={details?.description}
-            />
-          );
-        })}
-      </div>
+      {windows.map((window) => {
+        const details =
+          pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool, m) : undefined;
+        return (
+          <PoolWindowCard
+            key={`${window.kind}:${window.id}`}
+            pool={window}
+            color={color}
+            now={now}
+            label={details?.label}
+            description={details?.description}
+          />
+        );
+      })}
     </section>
   );
 }
@@ -712,22 +691,18 @@ export function UsageLimitsPooled({
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const quotaSources = collectHttpQuotaSources(presentations);
   const notices = collectLimitNotices(presentations, m);
   const externalLinks = collectExternalUsageLinks(presentations, m);
   return (
-    <div className="flex flex-col gap-7">
-      {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (
-        <Empty size="compact">
-          <GaugeIcon aria-hidden className="size-5.5 text-dim-foreground" />
-          <EmptyHeader>
-            <EmptyTitle>
-              <T>No limits to show</T>
-            </EmptyTitle>
-            <EmptyDescription>
-              <T>No provider on the selected environments reports subscription limits.</T>
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+    <div className="flex flex-col gap-8">
+      {pools.length === 0 &&
+      notices.length === 0 &&
+      externalLinks.length === 0 &&
+      quotaSources.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          <T>No provider on the selected environments reports subscription limits.</T>
+        </p>
       ) : null}
       <SegmentPopoverContext value={segmentPopover}>
         {pools.map((pool) => (
@@ -749,10 +724,35 @@ export function UsageLimitsPooled({
           ) : null
         }
       </Popover>
+      {quotaSources.map((source) => (
+        <section key={source.key} className="space-y-3 rounded-xl border p-4">
+          <h2 className="text-sm font-medium">{source.label}</h2>
+          {source.quotaAccounts?.map((account) => (
+            <div key={account.id} className="space-y-1">
+              <h3 className="text-sm font-medium">{account.label}</h3>
+              {account.windows.map((window) => {
+                const reset = formatResetsIn(window, now, m);
+                return (
+                  <div
+                    key={window.id}
+                    className="flex justify-between gap-3 text-sm text-muted-foreground"
+                  >
+                    <span>{window.label}</span>
+                    <span>
+                      {gt("{remaining}% left", { remaining: remainingPercent(window) })}
+                      {reset ? ` · ${reset}` : ""}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </section>
+      ))}
       {externalLinks.map((link) => (
         <section
           key={link.url}
-          className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-transparent surface-card-settings p-4"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
         >
           <div className="flex min-w-0 flex-1 items-center gap-3">
             {link.url === CHATGPT_USAGE_URL ? (
@@ -760,15 +760,15 @@ export function UsageLimitsPooled({
             ) : null}
             <div className="min-w-0 space-y-1">
               <h2 className="text-sm font-medium">{link.label}</h2>
-              <p className="text-caption break-words text-muted-foreground">
+              <p className="text-xs break-words text-muted-foreground">
                 {link.accounts.join(", ")}
               </p>
               {link.url === CHATGPT_USAGE_URL ? (
-                <p className="text-meta text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   <T>View usage in ChatGPT with your connected account.</T>
                 </p>
               ) : link.message ? (
-                <p className="max-w-xl text-meta text-muted-foreground">{link.message}</p>
+                <p className="max-w-xl text-xs text-muted-foreground">{link.message}</p>
               ) : null}
             </div>
           </div>

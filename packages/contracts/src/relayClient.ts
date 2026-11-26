@@ -35,10 +35,6 @@ export const RelayClientInstallProgressEventSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("progress"),
     stage: RelayClientInstallProgressStageSchema,
-    // Facts learned by earlier stages, sent once known: the downloaded size
-    // rides the "verifying" event, the passed sha256 check the next one.
-    downloadedBytes: Schema.optional(Schema.Number),
-    checksumVerified: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("complete"),

@@ -1,14 +1,13 @@
 import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import { useMessages } from "gt-react";
+import { T, useMessages, Var } from "gt-react";
 import { parsePullRequestAnchor, pullRequestLinkCommit } from "@t3tools/shared/pullRequestAnchor";
-import type { EnvironmentId, PullRequestActor, PullRequestRef } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import {
   cloneElement,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
-  type ElementType,
   type MouseEvent,
   type ReactElement,
   type ReactNode,
@@ -20,7 +19,6 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
-import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { pullRequestLinkSubject, pullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import {
@@ -68,9 +66,9 @@ export function PullRequestLinkPreview({
       : null,
   );
   // A link to a comment or commit shows that, read from the activity the panel shares.
-  const anchor = parsePullRequestAnchor(originalUrl);
-  const linksCommit = pullRequestLinkCommit(originalUrl) !== null;
-  const namesSubject = anchor?.kind === "timeline" || linksCommit;
+  const namesSubject =
+    parsePullRequestAnchor(originalUrl)?.kind === "timeline" ||
+    pullRequestLinkCommit(originalUrl) !== null;
   const activityQuery = useEnvironmentQuery(
     open && namesSubject
       ? pullRequestEnvironment.activity({
@@ -81,14 +79,6 @@ export function PullRequestLinkPreview({
   );
   const subject =
     activityQuery.data === null ? null : pullRequestLinkSubject(originalUrl, activityQuery.data);
-  const pendingSubject =
-    activityQuery.data !== null || activityQuery.error !== null
-      ? null
-      : linksCommit
-        ? "commit"
-        : anchor?.kind === "timeline" && !/^event-/i.test(anchor.anchor)
-          ? "comment"
-          : null;
   const summary = useSharedPullRequestSummary(
     open ? target.environmentId : null,
     open ? target.input : null,
@@ -128,6 +118,12 @@ export function PullRequestLinkPreview({
     card === null
       ? null
       : resolvePullRequestState({ state: card.state, isDraft: card.isDraft ?? false }, messages);
+  const authorLabel =
+    card?.author === null
+      ? "ghost"
+      : card?.author?.name && card.author.name !== card.author.login
+        ? `${card.author.name} (@${card.author.login})`
+        : (card?.author?.login ?? null);
 
   return (
     <PreviewCard open={open} onOpenChange={setOpen} actionsRef={previewActionsRef}>
@@ -151,37 +147,39 @@ export function PullRequestLinkPreview({
               fallback
             ) : (
               <div className="min-w-0">
-                <WorkItemPreviewCardHeader
-                  scope={card.repository}
-                  keyLabel={`#${card.number}`}
-                  state={state}
-                />
-                {pendingSubject === "comment" ? (
-                  <LinkedCommentSkeleton />
-                ) : pendingSubject === "commit" ? (
-                  <LinkedCommitSkeleton />
-                ) : subject?.kind === "comment" ? (
+                <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+                  <span className="min-w-0 truncate">{card.repository}</span>
+                  <span className="shrink-0">#{card.number}</span>
+                  <span aria-hidden>·</span>
+                  {state === null ? null : (
+                    <span className="inline-flex shrink-0 items-center gap-1">
+                      <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
+                      {state.label}
+                    </span>
+                  )}
+                </div>
+                {subject?.kind === "comment" ? (
                   <LinkedComment subject={subject} />
                 ) : subject?.kind === "commit" ? (
                   <LinkedCommit commit={subject.commit} />
                 ) : (
-                  <WorkItemPreviewCardTitle>{card.title}</WorkItemPreviewCardTitle>
+                  <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+                    {card.title}
+                  </p>
                 )}
-                {card.author === undefined || subject !== null || pendingSubject !== null ? null : (
-                  <WorkItemPreviewCardAuthor
-                    actor={card.author}
-                    opened={
-                      preview !== null ? (
-                        <span className="block">
+                {card.author === undefined || subject !== null ? null : (
+                  <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <PullRequestActorAvatar actor={card.author} className="size-4" />
+                    <span className="min-w-0 truncate">{authorLabel}</span>
+                    {preview === null ? null : (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="shrink-0">
                           opened <RelativeTime timestamp={preview.createdAt} />
                         </span>
-                      ) : previewQuery.error === null ? (
-                        <SkeletonLine>
-                          <Skeleton className="h-3 w-20" />
-                        </SkeletonLine>
-                      ) : null
-                    }
-                  />
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -189,132 +187,6 @@ export function PullRequestLinkPreview({
         </PreviewCardPopup>
       ) : null}
     </PreviewCard>
-  );
-}
-
-/** A hover card's first line, shared by pull requests and issues: scope, key and state. */
-export function WorkItemPreviewCardHeader({
-  scope,
-  keyLabel,
-  state,
-  stateLabel = false,
-}: {
-  scope: string;
-  keyLabel: string;
-  /** Says the state in words, for a tracker whose workflow names its own states. */
-  stateLabel?: boolean;
-  state: {
-    readonly Icon: ElementType<{
-      className?: string;
-      "aria-label"?: string;
-      "aria-hidden"?: boolean;
-    }>;
-    readonly label: string;
-    readonly toneClassName: string;
-  } | null;
-}) {
-  return (
-    <div className="flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
-      <span className="min-w-0 truncate">{scope}</span>
-      <span className="shrink-0">{keyLabel}</span>
-      {state === null ? null : stateLabel ? (
-        <span className="ms-1 inline-flex shrink-0 items-center gap-1">
-          <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
-          {state.label}
-        </span>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-            <state.Icon aria-label={state.label} className={`size-3 ${state.toneClassName}`} />
-          </TooltipTrigger>
-          <TooltipPopup>{state.label}</TooltipPopup>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
-
-export function WorkItemPreviewCardTitle({ children }: { children: ReactNode }) {
-  return <p className="mt-1 text-label leading-snug text-foreground text-pretty">{children}</p>;
-}
-
-/** Who opened it, and when once that is known. */
-export function WorkItemPreviewCardAuthor({
-  actor,
-  opened,
-}: {
-  actor: PullRequestActor | null;
-  opened: ReactNode;
-}) {
-  const label =
-    actor === null
-      ? "ghost"
-      : actor.name && actor.name !== actor.login
-        ? `${actor.name} (@${actor.login})`
-        : actor.login;
-  return (
-    <div className="mt-2 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-      <PullRequestActorAvatar actor={actor} className="size-4" />
-      <span className="min-w-0">
-        <span className="block truncate">{label}</span>
-        {opened}
-      </span>
-    </div>
-  );
-}
-
-function SkeletonLine({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <span className={`flex h-lh items-center ${className}`}>{children}</span>;
-}
-
-function LinkedCommentSkeleton() {
-  return (
-    <div className="mt-2 min-w-0">
-      <div className="flex min-w-0 items-center gap-1.5 text-meta">
-        <Skeleton shape="pill" className="size-4 shrink-0" />
-        <SkeletonLine className="text-label">
-          <Skeleton className="h-3 w-24" />
-        </SkeletonLine>
-        <Skeleton className="h-3 w-16" />
-      </div>
-      <div className="mt-1.5 text-meta leading-relaxed">
-        <SkeletonLine>
-          <Skeleton className="h-3 w-full" />
-        </SkeletonLine>
-        <SkeletonLine>
-          <Skeleton className="h-3 w-full" />
-        </SkeletonLine>
-        <SkeletonLine>
-          <Skeleton className="h-3 w-full" />
-        </SkeletonLine>
-        <SkeletonLine>
-          <Skeleton className="h-3 w-2/3" />
-        </SkeletonLine>
-      </div>
-    </div>
-  );
-}
-
-function LinkedCommitSkeleton() {
-  return (
-    <div className="mt-2 min-w-0">
-      <div className="text-label leading-snug">
-        <SkeletonLine>
-          <Skeleton className="h-3.5 w-full" />
-        </SkeletonLine>
-        <SkeletonLine>
-          <Skeleton className="h-3.5 w-2/3" />
-        </SkeletonLine>
-      </div>
-      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-meta">
-        <SkeletonLine>
-          <Skeleton className="h-3 w-12" />
-        </SkeletonLine>
-        <Skeleton shape="pill" className="size-4 shrink-0" />
-        <Skeleton className="h-3 w-16" />
-        <Skeleton className="h-3 w-12" />
-      </div>
-    </div>
   );
 }
 
@@ -328,24 +200,32 @@ function LinkedComment({
   subject: Extract<ReturnType<typeof pullRequestLinkSubject>, { kind: "comment" }>;
 }) {
   const outcome = pullRequestReviewOutcome(subject.reviewState);
+  const author = (
+    <span className="min-w-0 truncate font-medium text-foreground">
+      {actorLabel(subject.author)}
+    </span>
+  );
   return (
     <div className="mt-2 min-w-0">
-      <div className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
         <PullRequestActorAvatar actor={subject.author} className="size-4" />
-        <span className="min-w-0 truncate text-label text-foreground">
-          {actorLabel(subject.author)}
-        </span>
         {outcome === null ? (
-          <span className="shrink-0">commented</span>
+          <T>
+            <Var>{author}</Var> <span className="shrink-0">commented</span>
+          </T>
         ) : (
-          <PullRequestReviewOutcomeBadge outcome={outcome} className="shrink-0" />
+          <>
+            {author}
+            <PullRequestReviewOutcomeBadge outcome={outcome} className="shrink-0" />
+          </>
         )}
+        <span aria-hidden>·</span>
         <span className="shrink-0">
           <RelativeTime timestamp={subject.createdAt} />
         </span>
       </div>
       {subject.excerpt === null ? null : (
-        <p className="mt-1.5 line-clamp-4 text-meta leading-relaxed text-foreground text-pretty">
+        <p className="mt-1.5 line-clamp-4 text-xs leading-relaxed text-foreground text-pretty">
           {subject.excerpt}
         </p>
       )}
@@ -361,17 +241,19 @@ function LinkedCommit({
   const author = commit.authors?.[0];
   return (
     <div className="mt-2 min-w-0">
-      <p className="text-label leading-snug text-foreground text-pretty">
+      <p className="text-sm font-medium leading-snug text-foreground text-pretty">
         {commit.messageHeadline}
       </p>
-      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
         <code className="shrink-0 font-mono">{commit.oid.slice(0, 7)}</code>
         {author === undefined ? null : (
           <>
+            <span aria-hidden>·</span>
             <PullRequestActorAvatar actor={author} className="size-4" />
             <span className="min-w-0 truncate">{actorLabel(author)}</span>
           </>
         )}
+        <span aria-hidden>·</span>
         <span className="shrink-0">
           <RelativeTime timestamp={commit.committedDate} />
         </span>

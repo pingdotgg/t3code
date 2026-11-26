@@ -12,6 +12,7 @@ import {
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
+  parseMarkdownSandboxFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskEdits";
 import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
@@ -114,7 +115,7 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { SharedTooltipProvider, SharedTooltipTrigger } from "./ui/shared-tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
@@ -249,6 +250,8 @@ interface ChatMarkdownProps {
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
+  /** Identifies a streaming reply across remounts, so text already shown does not fade in again. */
+  streamingId?: string | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
   className?: string;
   lineBreaks?: boolean;
@@ -280,6 +283,7 @@ export interface ChatMarkdownContextReference {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const NO_EXTENSIONS: MarkdownExtensions = {};
+const shownStreamingIds = new Set<string>();
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -312,17 +316,17 @@ function CodexArtifactTemplateCard(props: {
       aria-label={gt("{name} template", { name: props.template.displayName })}
       dir={textDirection(props.template.displayName)}
       data-chat-markdown-artifact-template
-      className="my-[0.65rem] flex w-full min-w-0 items-center gap-3 rounded-card border border-transparent surface-card px-3 py-2.5 text-foreground"
+      className="my-[0.65rem] flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/70 bg-card/60 px-3 py-2.5 text-foreground shadow-xs"
       data-artifact-kind={props.template.artifactKind}
       data-markdown-copy={`${props.template.displayName} (${presentationLabel})\n\n`}
       data-skill-name={props.template.skillName}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-control surface-well text-muted-foreground">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-xs">
           <Icon aria-hidden className="size-5" />
         </span>
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-strong-foreground">
+          <div className="truncate text-sm font-medium text-foreground">
             {props.template.displayName}
           </div>
           <div className="text-xs text-muted-foreground">{presentationLabel}</div>
@@ -333,7 +337,7 @@ function CodexArtifactTemplateCard(props: {
           data-thread-find-ignore
           type="button"
           size="sm"
-          variant="secondary"
+          variant="outline"
           className="shrink-0"
           onClick={() => props.onUse?.(props.template)}
         >
@@ -363,7 +367,6 @@ function orderedListGutterStyle(
   return { "--list-gutter": `${markerWidth + 2}ch` };
 }
 
-/** GitHub alert kinds use the matching semantic status tone. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
   { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
@@ -377,32 +380,32 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
   note: {
     label: msg("Note"),
     Icon: InfoIcon,
-    borderClassName: "border-info/70",
-    titleClassName: "text-info-foreground",
+    borderClassName: "border-blue-500/70",
+    titleClassName: "text-blue-600 dark:text-blue-400",
   },
   tip: {
     label: msg("Tip"),
     Icon: LightbulbIcon,
-    borderClassName: "border-success/70",
-    titleClassName: "text-success-foreground",
+    borderClassName: "border-emerald-500/70",
+    titleClassName: "text-emerald-600 dark:text-emerald-400",
   },
   important: {
     label: msg("Important"),
     Icon: MessageSquareWarningIcon,
-    borderClassName: "border-update/70",
-    titleClassName: "text-update-foreground",
+    borderClassName: "border-purple-500/70",
+    titleClassName: "text-purple-600 dark:text-purple-400",
   },
   warning: {
     label: msg("Warning"),
     Icon: TriangleAlertIcon,
-    borderClassName: "border-warning/70",
-    titleClassName: "text-warning-foreground",
+    borderClassName: "border-amber-500/70",
+    titleClassName: "text-amber-600 dark:text-amber-500",
   },
   caution: {
     label: msg("Caution"),
     Icon: OctagonAlertIcon,
-    borderClassName: "border-error/70",
-    titleClassName: "text-error-foreground",
+    borderClassName: "border-red-500/70",
+    titleClassName: "text-red-600 dark:text-red-400",
   },
 };
 
@@ -444,6 +447,7 @@ function markdownUrlTransform(href: string) {
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   if (isLocalEditorFileHref(href)) return href;
+  if (parseMarkdownSandboxFileLink(href)) return href;
   return rewriteMarkdownFileUriHref(href) ?? safeUrl(href);
 }
 
@@ -941,19 +945,6 @@ function useChatMarkdownState(
     }
     return findAgentDirectoryMatch(workspaceRelativePath, agentRoots, searchRoot);
   };
-  const resolvePanelPath = (
-    fileLinkMeta: MarkdownFileLinkMeta,
-    panelPath: string,
-  ): string | Promise<string> => {
-    if (
-      fileLinkMeta.workspaceLookupPath === null ||
-      !cwd ||
-      workspaceLinkLookupQuery(panelPath, cwd) === null
-    ) {
-      return panelPath;
-    }
-    return findWorkspaceFileMatch(fileLinkMeta).then((match) => match ?? panelPath);
-  };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
     // The panel reads relative paths from the thread's folder. A pull request body's `cwd` is the
@@ -974,23 +965,27 @@ function useChatMarkdownState(
             : path,
           fileLinkMeta.line,
         );
-    const path = resolvePanelPath(fileLinkMeta, panelPath);
-    if (typeof path === "string") {
-      openAt(path);
+    if (
+      fileLinkMeta.workspaceLookupPath === null ||
+      !cwd ||
+      workspaceLinkLookupQuery(panelPath, cwd) === null
+    ) {
+      openAt(panelPath);
       return;
     }
     // Anything the user opens in this panel meanwhile, such as a file from the picker, wins.
     const panelRef = rightPanelHostRef(threadRef);
     const panelKey = scopedThreadKey(panelRef);
     const userActionRevision = useRightPanelStore.getState().markUserAction(panelRef);
-    void path.then((resolved) => {
+    void (async () => {
+      const match = await findWorkspaceFileMatch(fileLinkMeta);
       if (
         scopedThreadKey(rightPanelHostRef(threadRef)) !== panelKey ||
         useRightPanelStore.getState().getUserActionRevision(panelRef) !== userActionRevision
       )
         return;
-      openAt(resolved);
-    });
+      openAt(match ?? panelPath);
+    })();
   };
   const fileLinkChip = (
     fileLinkMeta: MarkdownFileLinkMeta,
@@ -1066,7 +1061,6 @@ function useChatMarkdownState(
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
-        resolvePanelPath={(path) => resolvePanelPath(fileLinkMeta, path)}
         onOpenMedia={
           threadRef && canPreviewMedia
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
@@ -1608,7 +1602,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       source.startsWith("[") && source.includes("](")
         ? source
         : `[${(label || fileLinkMeta.basename).replace(/[\\[\]]/g, "\\$&")}](${normalizedHref})`;
-    const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref);
+    // Media previews resolve the parsed host path; they do not understand the sandbox: scheme.
+    const chip = fileLinkChip(
+      fileLinkMeta,
+      copyMarkdown,
+      parseMarkdownSandboxFileLink(normalizedHref) ? undefined : normalizedHref,
+    );
     return isMarkdownFileLinkLabel(label, normalizedHref) ? (
       chip
     ) : (
@@ -2092,6 +2091,15 @@ function ChatMarkdown({
   renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
+  const { isStreaming, streamingId } = props;
+  const [textAtMount] = useState(text);
+  const [remounted] = useState(
+    () => streamingId !== undefined && shownStreamingIds.has(streamingId),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Records the reply outside React so the next mount after a thread switch or virtualized scroll knows it was shown.
+  useEffect(() => {
+    if (isStreaming && streamingId !== undefined) shownStreamingIds.add(streamingId);
+  }, [isStreaming, streamingId]);
   // Streaming re-renders only the last block; offsets for task edits, and extensions that read
   // the whole message, need the whole text.
   const streamingBlocks =
@@ -2117,25 +2125,26 @@ function ChatMarkdown({
       ref={bindMarkdownRef}
       className={cn(
         "chat-markdown w-full min-w-0 [overflow-wrap:anywhere] [word-break:break-word]",
-        !inline && "text-sm leading-relaxed text-foreground",
+        !inline &&
+          "text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]",
         className,
       )}
-      data-streaming={componentState.isStreaming ? "" : undefined}
+      data-streaming={
+        componentState.isStreaming && (!remounted || text !== textAtMount) ? "" : undefined
+      }
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        <SharedTooltipProvider>
-          {blocks.map((source, index) => (
-            <MarkdownSource
-              // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
-              key={index}
-              text={source}
-              markdown={markdown}
-              // Every block before the last is finished, so its parse can be reused.
-              cache={!props.isStreaming || index < blocks.length - 1}
-            />
-          ))}
-        </SharedTooltipProvider>
+        {blocks.map((source, index) => (
+          <MarkdownSource
+            // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
+            key={index}
+            text={source}
+            markdown={markdown}
+            // Every block before the last is finished, so its parse can be reused.
+            cache={!props.isStreaming || index < blocks.length - 1}
+          />
+        ))}
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />

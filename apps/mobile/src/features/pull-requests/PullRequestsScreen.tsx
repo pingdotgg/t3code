@@ -1,9 +1,9 @@
-import { pullRequestProjectFilterQueries } from "@t3tools/client-runtime/pull-request-project-filter";
 import { usePaneRole } from "../../components/ui/Pane";
 import { Button } from "../../components/ui/Button";
 import {
-  applyPullRequestDraftFilterChange,
+  applyPullRequestFilterChange,
   parsePullRequestQuery,
+  pullRequestMenuFilters,
 } from "@t3tools/client-runtime/pull-request-query";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
@@ -29,7 +29,6 @@ import { PullRequestListRow } from "./PullRequestListRow";
 import {
   PullRequestListFilters,
   usePullRequestListFilters,
-  usePullRequestProjectGroups,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
 import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
@@ -126,7 +125,6 @@ export function PullRequestsScreen(
   const debouncedQuery = useDebouncedValue(tab.query.trim(), 180);
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
   const typedQuery = tab.searchMode === "resting" ? "" : tab.query;
-  const typedDraft = parsePullRequestQuery(typedQuery).filters.draft;
   const listControls = usePullRequestListControls();
   const selectedEnvironmentId = listControls.environmentId;
   const environmentId = environments.some((item) => item.environmentId === selectedEnvironmentId)
@@ -151,42 +149,23 @@ export function PullRequestsScreen(
     () => withoutScratchProjectScope(savedControls, allProjects),
     [allProjects, savedControls],
   );
-  const projectGroups = usePullRequestProjectGroups();
-  const projects = pullRequestProjectChoices(allProjects, {
-    environmentId,
-    controls,
-    groups: projectGroups,
-    servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
-  });
-  const selectedProject = controls.projectId
-    ? { id: controls.projectId, environmentId: controls.projectEnvironmentId }
-    : undefined;
-  const projectRefs =
-    selectedProject === undefined
-      ? undefined
-      : (projects.find(
-          (project) =>
-            project.id === selectedProject.id &&
-            project.environmentId === selectedProject.environmentId,
-        )?.memberProjectRefs ?? []);
-  const targets = pullRequestProjectFilterQueries(
-    projects,
-    environments
-      .filter(
-        (environment) =>
-          configs.get(environment.environmentId) !== undefined &&
-          (environmentId === null || environment.environmentId === environmentId),
-      )
-      .map((environment) => environment.environmentId)
-      .sort(),
-    selectedProject,
-  ).map(({ environmentId: targetEnvironmentId, projectIds }) => ({
-    environmentId: targetEnvironmentId,
-    input: {
-      ...pullRequestListInput({ ...controls, projectId: undefined }, query),
-      ...(projectIds ? { projectIds } : {}),
-    },
-  }));
+  const targets = useMemo(
+    () =>
+      environments
+        .filter(
+          (environment) =>
+            configs.get(environment.environmentId) !== undefined &&
+            (environmentId === null || environment.environmentId === environmentId) &&
+            (!controls.projectEnvironmentId ||
+              environment.environmentId === controls.projectEnvironmentId),
+        )
+        .sort((left, right) => left.environmentId.localeCompare(right.environmentId))
+        .map((environment) => ({
+          environmentId: environment.environmentId,
+          input: pullRequestListInput(controls, query),
+        })),
+    [environments, environmentId, configs, controls, query],
+  );
   const result = usePullRequestList(targets);
   const connectedTargets = targets.filter((target) =>
     environments.some(
@@ -212,9 +191,8 @@ export function PullRequestsScreen(
         query,
         result.data.localSearchHosts,
         new Set(connectedKey.split("\n")),
-        projectRefs,
       ),
-    [result.entries, controls, query, result.data, connectedKey, projectRefs],
+    [result.entries, controls, query, result.data, connectedKey],
   );
   const facets = pullRequestListFacets(result.entries);
   const [knownFacets, setKnownFacets] = useState({ environmentId, source: facets, ...facets });
@@ -242,6 +220,14 @@ export function PullRequestsScreen(
   }
   const labelColors =
     knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
+  const projects = pullRequestProjectChoices(allProjects, {
+    environmentId,
+    controls,
+    environmentLabels: new Map(
+      environments.map((item) => [item.environmentId, item.environmentLabel]),
+    ),
+    servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
+  });
   const filters = usePullRequestListFilters({
     environments: environments.map((item) => ({
       id: String(item.environmentId),
@@ -249,11 +235,12 @@ export function PullRequestsScreen(
     })),
     environmentId,
     onEnvironmentChange: listControls.setEnvironmentId,
-    value: typedDraft
-      ? { ...controls, filters: { ...controls.filters, draft: typedDraft } }
-      : controls,
+    value: {
+      ...controls,
+      filters: pullRequestMenuFilters(parsePullRequestQuery(typedQuery).filters, controls.filters),
+    },
     onChange: (next) => {
-      const update = applyPullRequestDraftFilterChange(typedQuery, controls.filters, next.filters);
+      const update = applyPullRequestFilterChange(typedQuery, controls.filters, next.filters);
       listControls.setControls(environmentId, { ...next, filters: update.filters });
       if (update.query !== typedQuery)
         workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });

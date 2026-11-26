@@ -4,12 +4,11 @@ import { useGT } from "gt-react";
 import { ChevronRightIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { cn } from "../../lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -22,14 +21,15 @@ import {
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
+import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ScopeChoice {
   label: string;
-  secondary?: readonly string[];
+  secondary?: string;
   icon: ReactNode;
   search: SettingsScopeSearch;
 }
-import { useLayoutPageLocation } from "../../layout/pageNavigation";
 
 export function SettingsScopeNotice({
   children,
@@ -48,7 +48,7 @@ export function SettingsScopeNotice({
   const gt = useGT();
   const { selectScope, search, groups } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
-  const pathname = useLayoutPageLocation().pathname;
+  const pathname = useRenderedSettingsPathname();
   const { environments } = useEnvironments();
   const environmentIcon = (environment: EnvironmentPresentation | undefined) =>
     environment ? (
@@ -77,7 +77,7 @@ export function SettingsScopeNotice({
               };
           return {
             label: primary,
-            secondary: [member.workspaceRoot, secondary].filter(Boolean),
+            secondary: [secondary, member.workspaceRoot].filter(Boolean).join(" · "),
             icon: environmentIcon(environment),
             search: {
               project: group.projectKey,
@@ -95,12 +95,10 @@ export function SettingsScopeNotice({
                 (other) =>
                   other.projectKey !== group.projectKey && other.displayName === group.displayName,
               )
-                ? settingsScopeProjectMachines(group, environments).flatMap(
-                    ({ primary, secondary }) => [primary, secondary].filter(Boolean),
-                  )
+                ? settingsScopeProjectMachines(group, environments)
                 : []),
               group.workspaceRoot,
-            ].filter(Boolean),
+            ].join(" · "),
             icon: <ProjectFavicon project={group} className="size-4 shrink-0" />,
             search: selectProjectAxis(search, group.projectKey),
           }))
@@ -115,7 +113,7 @@ export function SettingsScopeNotice({
                 const { primary, secondary } = settingsScopeEnvironmentLabels(entry, environments);
                 return {
                   label: primary,
-                  secondary: [secondary || settingsScopeEnvironmentAddress(entry)],
+                  secondary: secondary || settingsScopeEnvironmentAddress(entry),
                   icon: environmentIcon(entry),
                   search: { machine: entry.environmentId },
                 };
@@ -128,52 +126,47 @@ export function SettingsScopeNotice({
               },
             ];
     return choices.map((choice) => (
-      <div key={JSON.stringify(choice.search)} className={ITEM_ROW_CLASSNAME}>
-        <Button
-          size="sm-multiline"
-          variant="secondary"
-          className="w-full"
-          onClick={() => {
-            if (targetId)
-              void navigate({
-                to: pathname,
-                search: () => ({
-                  project: undefined,
-                  machine: undefined,
-                  checkout: undefined,
-                  ...choice.search,
-                }),
-                hash: targetId,
-              });
-            else selectScope(choice.search);
-          }}
-        >
-          <span className="flex min-w-0 flex-1 items-center gap-3 text-left">
-            {choice.icon}
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-label">{choice.label}</span>
-              {choice.secondary?.length ? (
-                <span className="flex min-w-0 flex-col text-meta text-muted-foreground">
-                  {choice.secondary.map((detail) => (
-                    <Tooltip key={detail}>
-                      <TooltipTrigger render={<span className="block truncate" />}>
-                        {detail}
-                      </TooltipTrigger>
-                      <TooltipPopup>{detail}</TooltipPopup>
-                    </Tooltip>
-                  ))}
-                </span>
-              ) : null}
-            </span>
-            <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-          </span>
-        </Button>
-      </div>
+      <button
+        key={JSON.stringify(choice.search)}
+        type="button"
+        className={cn(
+          ITEM_ROW_CLASSNAME,
+          "flex w-full min-w-0 cursor-pointer items-center gap-3 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        )}
+        onClick={() => {
+          if (targetId)
+            void navigate({
+              to: pathname,
+              search: () => ({
+                project: undefined,
+                machine: undefined,
+                checkout: undefined,
+                ...choice.search,
+              }),
+              hash: targetId,
+            });
+          else selectScope(choice.search);
+        }}
+      >
+        {choice.icon}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{choice.label}</span>
+          {choice.secondary ? (
+            <SharedTooltipTrigger
+              render={<span className="block truncate text-xs text-muted-foreground" />}
+              label={choice.secondary}
+            >
+              {choice.secondary}
+            </SharedTooltipTrigger>
+          ) : null}
+        </span>
+        <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+      </button>
     ));
   };
   const notice = (
     <div className="space-y-3">
-      <p role="status" className="px-3 text-body text-muted-foreground sm:px-4">
+      <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
         {children}
       </p>
       <div className="space-y-4">

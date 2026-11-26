@@ -2,7 +2,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
-import { useGT, useMessages } from "gt-react";
+import { useGT } from "gt-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -16,6 +16,7 @@ import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
+import { Skeleton } from "../ui/skeleton";
 
 const PREVIEW_SKILLS: ReadonlyArray<ServerProviderSkill> = [
   { name: "frontend-design", path: ".agents/skills/frontend-design/SKILL.md", enabled: true },
@@ -30,7 +31,6 @@ function noop() {}
 
 export function PromptFontPreview() {
   const gt = useGT();
-  const messages = useMessages();
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [prompt, setPrompt] = useState(PROMPT_PREVIEW_TEXT);
   const [cursor, setCursor] = useState(PROMPT_PREVIEW_TEXT.length);
@@ -39,7 +39,7 @@ export function PromptFontPreview() {
     setCursor(nextCursor);
   };
   return (
-    <div className="mt-1 mb-2 rounded-control surface-well px-3 py-2">
+    <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
       <ComposerPromptEditor
         ariaLabel={gt("Prompt font preview")}
         editorRef={editorRef}
@@ -48,7 +48,7 @@ export function PromptFontPreview() {
         contextRecords={EMPTY_COMPOSER_CONTEXT_RECORDS}
         skills={PREVIEW_SKILLS}
         disabled={false}
-        placeholder={messages(DEFAULT_COMPOSER_PLACEHOLDER)}
+        placeholder={DEFAULT_COMPOSER_PLACEHOLDER}
         className="max-h-42"
         onChange={onChange}
         onPaste={noop}
@@ -123,10 +123,9 @@ export function CodeFontPreview() {
   // An appearance switch keeps the previous theme's preview up while the new one renders.
   const [htmlByFile, setHtmlByFile] = useState(loadedHtml);
   if (loadedHtml !== null && loadedHtml !== htmlByFile) setHtmlByFile(loadedHtml);
-  if (htmlByFile === null) return null;
-  // Boxed like the terminal preview below it.
+  if (htmlByFile === null) return <Skeleton shape="card" className="mt-1 mb-2 h-32" />;
   return (
-    <div className="mt-1 mb-2 space-y-2 overflow-hidden rounded-control border border-border">
+    <div className="mt-1 mb-2 space-y-2">
       {htmlByFile.map((html) => (
         <StaticDiffHtml key={html} html={html} />
       ))}
@@ -246,7 +245,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   return (
     <div
       ref={mountSurface}
-      className="relative mt-1 mb-2 overflow-hidden rounded-control border border-border"
+      className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
       aria-label={gt("Terminal font preview")}
     />
   );

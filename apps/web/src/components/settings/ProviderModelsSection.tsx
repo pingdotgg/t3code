@@ -17,8 +17,8 @@ import { MAX_CUSTOM_MODEL_LENGTH } from "../../modelSelection";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { CustomModelEditor } from "./CustomModelEditor";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "gpt-6.7-codex-ultra-preview",
@@ -174,6 +174,9 @@ export function ProviderModelsSection({
     modelOrder,
   });
   const favoriteCount = displayModels.filter((model) => favoriteModelSet.has(model.slug)).length;
+  const hiddenCount = displayModels.filter(
+    (model) => !model.isCustom && hiddenModelSet.has(model.slug),
+  ).length;
   const flagMissingReasoning = models.some(hasReasoningControl);
   const showFilter = models.length > FILTER_THRESHOLD;
   const normalizedFilter = filter.trim().toLowerCase();
@@ -340,7 +343,7 @@ export function ProviderModelsSection({
   };
 
   const groupLabel = (label: string, isFirst: boolean) => (
-    <div className={cn("px-2 pb-1.5 text-2xs text-dim-foreground", isFirst ? "pt-1" : "pt-5")}>
+    <div className={cn("px-2 pb-1.5 text-2xs text-muted-foreground", isFirst ? "pt-1" : "pt-5")}>
       {label}
     </div>
   );
@@ -383,6 +386,19 @@ export function ProviderModelsSection({
               {allBuiltInModelsHidden ? gt("Enable all") : gt("Disable all")}
             </Button>
           ) : null}
+          <span className="text-xs text-muted-foreground">
+            {gt("{count, plural, one {{count} model} other {{count} models}}", {
+              count: models.length,
+            })}
+            {favoriteCount > 0
+              ? ` · ${gt("{count, plural, one {{count} favorite} other {{count} favorites}}", {
+                  count: favoriteCount,
+                })}`
+              : ""}
+            {hiddenCount > 0
+              ? ` · ${gt("{count, plural, other {{count} hidden}}", { count: hiddenCount })}`
+              : ""}
+          </span>
         </div>
         {driverKind !== "antigravity" && !isAdding ? (
           <Button
@@ -477,7 +493,7 @@ export function ProviderModelsSection({
             spellCheck={false}
           />
           <div className="flex shrink-0 gap-2">
-            <Button size="sm" variant="secondary" disabled={isSaving} onClick={handleAdd}>
+            <Button size="sm" variant="outline" disabled={isSaving} onClick={handleAdd}>
               {gt("Add", { $context: "verb, adds a custom model" })}
             </Button>
             <Button size="sm" variant="ghost" onClick={cancelAdd}>
@@ -528,12 +544,7 @@ const ProviderModelRow = memo(function ProviderModelRow({
   const gt = useGT();
   const m = useMessages();
   const capLabels = describeModelCapabilities(model, flagMissingReasoning, m);
-  const descriptor = [
-    model.name !== model.slug ? model.slug : null,
-    model.isCustom ? gt("custom", { $context: "badge, user-added model" }) : null,
-    ...capLabels,
-  ].filter((part) => part !== null);
-  const nameClassName = cn("text-label", isHidden ? "text-muted-foreground" : "text-foreground");
+  const nameClassName = cn("text-xs", isHidden ? "text-muted-foreground" : "text-foreground/90");
   const pickerTooltip = model.isCustom
     ? gt("Custom models are always shown in the picker")
     : isHidden
@@ -544,146 +555,156 @@ const ProviderModelRow = memo(function ProviderModelRow({
     <div
       data-model-slug={model.slug}
       className={cn(
-        "grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 rounded-row px-2 py-1 transition-colors hover:surface-ghost-hover sm:grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] sm:gap-2",
+        "grid h-7 grid-cols-[1.5rem_minmax(0,1fr)_auto_minmax(5.5rem,auto)_auto] items-center gap-2 rounded-md px-2 transition-colors hover:bg-muted/30",
         isHidden && "opacity-50",
       )}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="icon-micro"
-              variant="ghost-muted"
-              disabled={!canWritePreferences}
-              onClick={() => onToggleFavorite(model.slug)}
-              aria-label={
-                isFavorite
-                  ? gt("Remove {name} from favorites", { name: model.name })
-                  : gt("Add {name} to favorites", { name: model.name })
-              }
-            />
-          }
-        >
-          <StarIcon
-            className={cn("size-3", isFavorite && "fill-current text-warning-foreground")}
+      <SharedTooltipTrigger
+        render={
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            disabled={!canWritePreferences}
+            onClick={() => onToggleFavorite(model.slug)}
+            aria-label={
+              isFavorite
+                ? gt("Remove {name} from favorites", { name: model.name })
+                : gt("Add {name} to favorites", { name: model.name })
+            }
           />
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          {isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={<span tabIndex={0} className="col-span-2 flex min-w-0 flex-col sm:col-span-1" />}
+        }
+        label={isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
+      >
+        <StarIcon className={cn("size-3", isFavorite && "fill-current text-warning")} />
+      </SharedTooltipTrigger>
+      <span className="flex min-w-0 items-baseline gap-2">
+        <SharedTooltipTrigger
+          render={
+            <span tabIndex={0} className="flex min-w-0 items-baseline gap-2 overflow-hidden" />
+          }
+          label={
+            <>
+              <div>{model.name}</div>
+              {model.name !== model.slug ? (
+                <code className="font-mono text-2xs text-muted-foreground">{model.slug}</code>
+              ) : null}
+            </>
+          }
+          align="start"
         >
-          <span className={cn(nameClassName, "max-sm:wrap-anywhere sm:truncate")}>
-            {model.name}
+          <span className={cn(nameClassName, "max-w-full shrink-0 truncate")}>{model.name}</span>
+          {model.name !== model.slug ? (
+            <code className="truncate font-mono text-2xs text-muted-foreground/70">
+              {model.slug}
+            </code>
+          ) : null}
+        </SharedTooltipTrigger>
+        {model.isCustom ? (
+          <span className="shrink-0 text-2xs text-muted-foreground/70">
+            {gt("custom", { $context: "badge, user-added model" })}
           </span>
-        </TooltipTrigger>
-        <TooltipPopup side="top" align="start">
-          <div>{model.name}</div>
-          {descriptor.map((detail) => (
-            <span key={detail} className="block">
-              {detail}
-            </span>
-          ))}
-        </TooltipPopup>
-      </Tooltip>
-      <span className="col-start-2 flex shrink-0 items-center justify-end gap-0.5 sm:col-start-auto">
+        ) : null}
+      </span>
+      <span className="text-2xs text-muted-foreground/70">
+        {capLabels.length > 0 ? (
+          <span className="hidden sm:inline">{capLabels.join(" · ")}</span>
+        ) : null}
+      </span>
+      <span className="flex shrink-0 items-center justify-end gap-0.5">
         {!isHidden && !isFiltering ? (
           <>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-micro"
-                    variant="ghost-muted"
-                    disabled={!canWritePreferences || !canMoveUp}
-                    onClick={() => onMove(model.slug, -1)}
-                    aria-label={gt("Move {name} up", { name: model.name })}
-                  />
-                }
-              >
-                <ArrowUpIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                <T>Move up</T>
-              </TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-micro"
-                    variant="ghost-muted"
-                    disabled={!canWritePreferences || !canMoveDown}
-                    onClick={() => onMove(model.slug, 1)}
-                    aria-label={gt("Move {name} down", { name: model.name })}
-                  />
-                }
-              >
-                <ArrowDownIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                <T>Move down</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  disabled={!canWritePreferences || !canMoveUp}
+                  onClick={() => onMove(model.slug, -1)}
+                  aria-label={gt("Move {name} up", { name: model.name })}
+                />
+              }
+              label={
+                <>
+                  <T>Move up</T>
+                </>
+              }
+            >
+              <ArrowUpIcon className="size-3" />
+            </SharedTooltipTrigger>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  disabled={!canWritePreferences || !canMoveDown}
+                  onClick={() => onMove(model.slug, 1)}
+                  aria-label={gt("Move {name} down", { name: model.name })}
+                />
+              }
+              label={
+                <>
+                  <T>Move down</T>
+                </>
+              }
+            >
+              <ArrowDownIcon className="size-3" />
+            </SharedTooltipTrigger>
           </>
         ) : null}
         {model.isCustom ? (
           <>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-micro"
-                    variant="ghost-muted"
-                    disabled={!canManageCustomModels}
-                    aria-label={gt("Edit {name}", { name: model.slug })}
-                    onClick={() => onToggleEdit(model.slug)}
-                  />
-                }
-              >
-                <PencilIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                <T>Edit name and options</T>
-              </TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-micro"
-                    variant="ghost-muted"
-                    disabled={!canManageCustomModels}
-                    aria-label={gt("Remove {name}", { name: model.slug })}
-                    onClick={() => onRemove(model.slug)}
-                  />
-                }
-              >
-                <XIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                <T>Remove custom model</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  disabled={!canManageCustomModels}
+                  aria-label={gt("Edit {name}", { name: model.slug })}
+                  onClick={() => onToggleEdit(model.slug)}
+                />
+              }
+              label={
+                <>
+                  <T>Edit name and options</T>
+                </>
+              }
+            >
+              <PencilIcon className="size-3" />
+            </SharedTooltipTrigger>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  disabled={!canManageCustomModels}
+                  aria-label={gt("Remove {name}", { name: model.slug })}
+                  onClick={() => onRemove(model.slug)}
+                />
+              }
+              label={
+                <>
+                  <T>Remove custom model</T>
+                </>
+              }
+            >
+              <XIcon className="size-3" />
+            </SharedTooltipTrigger>
           </>
         ) : null}
       </span>
       {/* Disabled switches receive no pointer events; wrap the tooltip trigger. */}
-      <Tooltip>
-        <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-          <Switch
-            size="sm"
-            checked={!isHidden}
-            disabled={!canWritePreferences || model.isCustom}
-            onCheckedChange={(checked) => onSetHidden(model.slug, !checked)}
-            aria-label={gt("Show {name} in the model picker", { name: model.name })}
-          />
-        </TooltipTrigger>
-        <TooltipPopup side="top">{pickerTooltip}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<span className="flex shrink-0 items-center" />}
+        label={pickerTooltip}
+      >
+        <Switch
+          size="sm"
+          checked={!isHidden}
+          disabled={!canWritePreferences || model.isCustom}
+          onCheckedChange={(checked) => onSetHidden(model.slug, !checked)}
+          aria-label={gt("Show {name} in the model picker", { name: model.name })}
+        />
+      </SharedTooltipTrigger>
     </div>
   );
 });

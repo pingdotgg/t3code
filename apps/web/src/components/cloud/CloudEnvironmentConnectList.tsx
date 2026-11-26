@@ -36,7 +36,7 @@ import { cn } from "~/lib/utils";
 import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useRelayEnvironmentDiscovery, useRetainedRelayEnvironments } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { StatusDot } from "../ui/status-dot";
+import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { Checkbox } from "../ui/checkbox";
@@ -44,6 +44,7 @@ import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
 
 const EMPTY_DISCOVERY_REFRESH_INTERVAL_MS = 5_000;
@@ -324,7 +325,7 @@ export function CloudEnvironmentConnectRows({
           <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
           <Button
             size="sm"
-            variant="secondary"
+            variant="outline"
             className="mt-3"
             onClick={() => void refreshRelayEnvironments()}
           >
@@ -366,44 +367,44 @@ export function CloudEnvironmentConnectRows({
       savedEnvironment?.serverConfig ??
         (descriptor === undefined ? null : { environment: descriptor }),
     );
-    const dotTone = savedConnection
+    const dotClassName = savedConnection
       ? savedConnection.tone === "connected"
-        ? "success"
+        ? "bg-success"
         : savedConnection.tone === "connecting"
-          ? "warning"
+          ? "bg-warning"
           : savedConnection.tone === "error"
-            ? "danger"
-            : "neutral"
+            ? "bg-destructive"
+            : "bg-muted-foreground/35"
       : availability === "online"
-        ? "success"
+        ? "bg-success"
         : availability === "error"
-          ? "danger"
+          ? "bg-destructive"
           : availability === "checking"
-            ? "warning"
-            : "neutral";
+            ? "bg-warning"
+            : "bg-muted-foreground/35";
     const notAdded = savedWithoutRelay.has(environment.environmentId)
       ? gt("Saved without T3 Connect")
       : gt("Not added");
     const statusText =
       unsupported && !savedEnvironment
-        ? gt("Client not supported")
+        ? `T3 Connect · ${notAdded} · ${gt("Client not supported")}`
         : offlineReason !== null
           ? offlineReason
           : savedConnection
             ? savedConnection.statusText
             : availability === "online"
-              ? gt("Relay online")
+              ? `T3 Connect · ${notAdded} · ${gt("Relay online")}`
               : availability === "offline"
-                ? gt("Relay offline")
+                ? `T3 Connect · ${notAdded} · ${gt("Relay offline")}`
                 : availability === "checking"
-                  ? gt("Checking relay status…")
+                  ? `T3 Connect · ${notAdded} · ${gt("Checking relay status…")}`
                   : (errorDisplayMessage(Option.getOrNull(error), m) ??
-                    gt("Relay status unavailable"));
+                    `T3 Connect · ${notAdded} · ${gt("Relay status unavailable")}`);
     if (selection) {
       return (
         <label
           key={environment.environmentId}
-          className="flex cursor-pointer items-center gap-3 rounded-control border border-border surface-card px-3 py-2.5 has-disabled:cursor-default"
+          className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 has-disabled:cursor-default"
         >
           <Checkbox
             checked={!unsupported && selection.selectedIds.has(environment.environmentId)}
@@ -423,11 +424,9 @@ export function CloudEnvironmentConnectRows({
             className="size-4 shrink-0 text-muted-foreground"
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-strong-foreground">
-              {environment.label}
-            </span>
+            <span className="block truncate text-sm font-medium">{environment.label}</span>
             {unsupportedDetail !== null ? (
-              <span className="mt-0.5 block text-meta text-muted-foreground">
+              <span className="mt-0.5 block text-xs text-muted-foreground">
                 {unsupportedDetail}
               </span>
             ) : null}
@@ -451,10 +450,7 @@ export function CloudEnvironmentConnectRows({
                         ? gt("Unavailable")
                         : gt("Checking…")))}
             </TooltipTrigger>
-            <TooltipPopup>
-              <span className="block">{unsupportedDetail ?? statusText}</span>
-              {!savedEnvironment ? <span className="block">{notAdded}</span> : null}
-            </TooltipPopup>
+            <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
           </Tooltip>
         </label>
       );
@@ -464,14 +460,15 @@ export function CloudEnvironmentConnectRows({
         <div className={ITEM_ROW_INNER_CLASSNAME}>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <StatusDot
-                size="md"
-                tone={dotTone}
-                ping={
+              <ConnectionStatusDot
+                dotClassName={dotClassName}
+                pingClassName={
                   savedConnection?.tone === "connecting" ||
                   (savedConnection === null && availability === "checking")
+                    ? "bg-warning/60 duration-2000"
+                    : null
                 }
-                label={
+                tooltipText={
                   unsupportedDetail !== null
                     ? unsupportedDetail
                     : offlineReason !== null
@@ -493,9 +490,7 @@ export function CloudEnvironmentConnectRows({
                 kind={machineKind}
                 className="size-4 shrink-0 text-muted-foreground"
               />
-              <p className="truncate text-sm font-medium text-strong-foreground">
-                {environment.label}
-              </p>
+              <p className="truncate text-sm font-medium">{environment.label}</p>
             </div>
             <p
               className={cn(
@@ -509,21 +504,20 @@ export function CloudEnvironmentConnectRows({
                   : "text-muted-foreground",
               )}
             >
-              <span className="block">{statusText}</span>
-              {!savedEnvironment ? <span className="block">{notAdded}</span> : null}
+              {statusText}
             </p>
           </div>
           {unsupported && !savedEnvironment ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
-                <Button size="sm" disabled>
-                  <T context="verb, adds an environment">Add</T>
-                </Button>
-              </TooltipTrigger>
-              <TooltipPopup>{unsupportedDetail ?? gt("Client not supported")}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<span className="inline-flex" tabIndex={0} />}
+              label={unsupportedDetail ?? gt("Client not supported")}
+            >
+              <Button size="sm" disabled>
+                <T context="verb, adds an environment">Add</T>
+              </Button>
+            </SharedTooltipTrigger>
           ) : savedConnection ? (
-            <Button size="sm" variant="secondary" disabled>
+            <Button size="sm" variant="outline" disabled>
               {savedConnection.buttonLabel}
             </Button>
           ) : (

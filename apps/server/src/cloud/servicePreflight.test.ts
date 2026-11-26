@@ -98,26 +98,6 @@ it.layer(NodeServices.layer)("service preflight database", (it) => {
           .status,
       ).toBe("ready");
 
-      // Startup forgets the removed Bots migration at any id, so it must not block or read as newer.
-      for (const botId of [99, 103]) {
-        const bot = path.join(path.dirname(databasePath), `bot-${botId}.sqlite`);
-        const botDb = new NodeSqlite.DatabaseSync(bot);
-        botDb.exec(
-          "CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, name TEXT)",
-        );
-        const insertBot = botDb.prepare("INSERT INTO effect_sql_migrations VALUES (?, ?)");
-        for (const [id, name] of migrationManifest.filter(([id]) => id < botId)) {
-          insertBot.run(id, name);
-        }
-        insertBot.run(botId, "ProjectionProjectBot");
-        botDb.close();
-        expect(
-          runServicePreflight({ databasePath: bot, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL })
-            .status,
-        ).toBe("ready");
-        expect(databaseMigrationHead(bot)).toBe(BUILD_MIGRATION_HEAD);
-      }
-
       const newerId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
       insert.run(newerId, "FromNightly");
       db.close();

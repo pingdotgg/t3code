@@ -1,11 +1,11 @@
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import { TerminalIcon } from "lucide-react";
 
 import type { ContextPresentationCapability } from "../contextPresentationRegistry";
 import { ContextChipPopover, ContextChipShell } from "../contextChipParts";
+import { terminalContextDisplayLabel } from "~/lib/terminalContext";
 
 interface TerminalContextInlineChipProps {
-  label: string;
   terminalLabel: string;
   lineStart: number;
   lineEnd: number;
@@ -15,8 +15,10 @@ interface TerminalContextInlineChipProps {
 }
 
 export function TerminalContextInlineChip(props: TerminalContextInlineChipProps) {
-  const { label, terminalLabel, lineStart, lineEnd, text, detailsMode, expired = false } = props;
+  const { terminalLabel, lineStart, lineEnd, text, detailsMode, expired = false } = props;
   const gt = useGT();
+  const resolve = useMessages();
+  const label = terminalContextDisplayLabel(props, resolve);
 
   if (!expired && text.length > 0 && detailsMode === "popover") {
     return (
@@ -26,9 +28,9 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
         label={label}
         accessibleLabel={gt("Terminal excerpt, {label}", { label })}
       >
-        <div className="overflow-hidden rounded-control border border-border bg-popover">
+        <div className="overflow-hidden rounded-md border border-border/70 bg-background/80">
           <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
-            <TerminalIcon className="size-4 shrink-0 text-success-foreground" aria-hidden />
+            <TerminalIcon className="size-4 shrink-0 text-success" aria-hidden />
             <span className="min-w-0 truncate text-sm font-medium text-foreground">
               {terminalLabel}
             </span>

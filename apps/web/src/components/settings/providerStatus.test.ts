@@ -40,12 +40,11 @@ describe("getProviderSummary", () => {
       getProviderSummary({
         ...provider,
         status: "error",
-        auth: { status: "unauthenticated", label: "ChatGPT" },
+        auth: { status: "unauthenticated" },
         message: "Run codex login.",
       }),
     ).toEqual({
       headline: "Not authenticated",
-      authLabel: "ChatGPT",
       detail: "Run codex login.",
     });
   });
@@ -65,7 +64,7 @@ describe("Antigravity with unchecked sign-in", () => {
     for (const auth of [unchecked.auth, { status: "unknown", type: "oauth-personal" }] as const) {
       const candidate = { ...unchecked, auth };
       expect.soft(getProviderSummary(candidate)).toEqual({
-        headline: "Sign-in not checked",
+        headline: "Installed · Sign-in not checked",
         detail: unchecked.message,
       });
       expect(getProviderStatusKey(candidate)).toBe("neutral");

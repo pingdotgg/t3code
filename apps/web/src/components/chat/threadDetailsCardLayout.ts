@@ -2,9 +2,8 @@ import type { PreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout"
 import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
 
 export const THREAD_DETAILS_CARD_GAP = 12;
-// The docked card is fixed; popovers and find bars use --thread-details-panel-width.
-const THREAD_DETAILS_CARD_WIDTH = 272;
-const THREAD_DETAILS_BOTTOM_GAP = 18;
+// Keep in sync with --thread-details-panel-width.
+const THREAD_DETAILS_CARD_WIDTH = 280;
 
 export function resolveThreadDetailsCardDensity(
   height: number,
@@ -42,8 +41,8 @@ export function resolveThreadDetailsCardLayout({
   const y = gap + topInset;
   const height =
     overlapsDetailsCard && frame && frame.x + frame.width > x - gap && frame.x < x + width + gap
-      ? Math.min(container.height - y - THREAD_DETAILS_BOTTOM_GAP, frame.y - y - gap)
-      : container.height - y - THREAD_DETAILS_BOTTOM_GAP;
+      ? Math.min(container.height - y - gap, frame.y - y - gap)
+      : container.height - y - gap;
   if (height < 160) return null;
   return {
     x,

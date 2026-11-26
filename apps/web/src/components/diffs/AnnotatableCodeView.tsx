@@ -8,7 +8,6 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
-import { useGT } from "gt-react";
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -29,7 +28,6 @@ interface DiffCommentAnnotationEntry {
   range: SelectedLineRange;
   rangeLabel: string;
   text: string;
-  createdAt?: string | undefined;
 }
 
 interface DiffCommentAnnotationGroup {
@@ -87,8 +85,7 @@ interface AnnotatableCodeViewProps {
   pendingFiles: ReadonlyArray<FileDiffMetadata>;
   sectionId: string;
   sectionTitle: string;
-  /** The composer comments go to; without one (a threadless surface) there are none. */
-  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
+  composerDraftTarget: ScopedThreadRef | DraftId;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   onScroll?: CodeViewProps<DiffCommentAnnotationGroup, undefined>["onScroll"];
@@ -102,8 +99,6 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
-  /** Told each time a comment from this view lands in the composer draft. */
-  onCommentAdded?: (commentId: string) => void;
   onFileCollapsedChange: (fileKey: string, collapsed: boolean) => void;
 }
 
@@ -129,16 +124,12 @@ export function AnnotatableCodeView({
   renderHeaderMetadata,
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
-  onCommentAdded,
   onFileCollapsedChange,
 }: AnnotatableCodeViewProps) {
-  const gt = useGT();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const reviewComments = useComposerDraftStore(
-    (store) =>
-      (composerDraftTarget && store.getComposerDraft(composerDraftTarget)?.reviewComments) ||
-      EMPTY_REVIEW_COMMENTS,
+    (store) => store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
   );
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
@@ -185,7 +176,6 @@ export function AnnotatableCodeView({
             range,
             rangeLabel: comment.rangeLabel,
             text: comment.text,
-            createdAt: comment.createdAt,
           });
         }, []);
       const annotations = draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
@@ -213,7 +203,7 @@ export function AnnotatableCodeView({
     if (draft?.annotation.metadata.entries.some((entry) => entry.id === entryId)) {
       setDraft(null);
       setDraftText("");
-    } else if (composerDraftTarget) {
+    } else {
       removeReviewComment(composerDraftTarget, entryId);
     }
   };
@@ -221,7 +211,7 @@ export function AnnotatableCodeView({
   const submitEntry = (entryId: string, text: string) => {
     const entry = draft?.annotation.metadata.entries.find((candidate) => candidate.id === entryId);
     const file = draft ? filesByKey.get(draft.fileKey) : undefined;
-    if (!entry || !file || !composerDraftTarget) return;
+    if (!entry || !file) return;
     const comment = buildDiffReviewComment({
       id: entry.id,
       sectionId,
@@ -231,11 +221,7 @@ export function AnnotatableCodeView({
       range: entry.range,
       text,
     });
-    if (comment) {
-      // oxlint-disable-next-line react/purity -- Submission timestamps are read in this event handler (oxc#27309).
-      addReviewComment(composerDraftTarget, { ...comment, createdAt: new Date().toISOString() });
-      onCommentAdded?.(comment.id);
-    }
+    if (comment) addReviewComment(composerDraftTarget, comment);
     setSelectedLines(null);
     setDraft(null);
     setDraftText("");
@@ -291,7 +277,7 @@ export function AnnotatableCodeView({
       onSelectedLinesChange={setSelectedLines}
       options={{
         ...options,
-        enableGutterUtility: composerDraftTarget !== undefined && draft === null,
+        enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
         onItemCollapsedChange: (_item, nextItem) =>
@@ -306,8 +292,11 @@ export function AnnotatableCodeView({
           : null
       }
       renderAnnotation={(...[annotation]) => {
+        const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
-          <div className="flex flex-col gap-2 pt-1.5 pr-3 pb-2 pl-10">
+          <div
+            className={hasDraft ? "py-1" : "divide-y divide-border/30 border-y border-border/30"}
+          >
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
                 key={entry.id}
@@ -321,10 +310,6 @@ export function AnnotatableCodeView({
                 ])}
                 kind={entry.kind}
                 rangeLabel={entry.rangeLabel}
-                createdAt={entry.createdAt}
-                // Saved comments here are read back from the composer draft they live in.
-                stateLabel={entry.kind === "comment" ? gt("In composer") : undefined}
-                submitLabel={gt("Done", { $context: "button, saves a file comment" })}
                 text={entry.kind === "draft" ? draftText : entry.text}
                 onTextChange={setDraftText}
                 onCancel={() => removeEntry(entry.id)}

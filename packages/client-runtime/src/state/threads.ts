@@ -226,10 +226,7 @@ function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadStat
         ? value.status
         : statusWithoutLiveData(value.data),
     error: Option.none(),
-    history:
-      value.history.loading || value.history.error !== null
-        ? { ...value.history, loading: false, error: null }
-        : value.history,
+    history: { ...value.history, loading: false, error: null },
   };
 }
 

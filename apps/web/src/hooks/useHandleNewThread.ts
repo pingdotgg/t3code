@@ -10,18 +10,14 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
-import { flushSync } from "react-dom";
 import {
   composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
-  NO_PROJECTS_DRAFT_ID,
   type DraftId,
-  type DraftSessionState,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
-import { useDraftSendOnOpenStore } from "../draftSendOnOpenStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
@@ -47,12 +43,11 @@ import {
   threadHasStarted,
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { trackPendingWorkspaceDefault } from "../lib/draftWorkspaceDefaults";
 import { peekT3ProjectFile, readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
-import { layoutDraftIds, selectLayoutOpenAnchor } from "../layout/layoutModel";
-import { runInNewLayoutTab, useLayoutStore } from "../layout/layoutStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings, useClientSettings } from "./useSettings";
@@ -76,44 +71,12 @@ export function readLastUsedProjectKey(): string | null {
   }
 }
 
-// Drafts that opened before their project's t3.json was read. A send waits for the file's
-// workspace default unless the user has already chosen a workspace.
-interface ProvisionalWorkspace {
-  readonly envMode: DraftThreadEnvMode;
-  // A reused draft keeps an earlier "manual" marker; only a switch to manual after opening is a choice.
-  readonly openedManual: boolean;
-}
-
-const pendingWorkspaceDefaults = new Map<
-  DraftId,
-  ProvisionalWorkspace & { readonly settled: Promise<void> }
->();
-
-function keepsProvisionalWorkspace(
-  draft: DraftSessionState | null,
-  provisional: ProvisionalWorkspace,
-): draft is DraftSessionState {
-  return (
-    draft !== null &&
-    draft.promotedTo == null &&
-    draft.envMode === provisional.envMode &&
-    draft.worktreePath === null &&
-    (provisional.openedManual || draft.environmentSelection !== "manual")
-  );
-}
-
-export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | null {
-  const pending = pendingWorkspaceDefaults.get(draftId);
-  if (pending === undefined) return null;
-  const draft = useComposerDraftStore.getState().getDraftSession(draftId);
-  return keepsProvisionalWorkspace(draft, pending) ? pending.settled : null;
-}
-
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  workspaceExplicit?: boolean;
 }
 
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
@@ -122,6 +85,9 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
+    ...(options?.envMode !== undefined || options?.startFromOrigin !== undefined
+      ? { workspaceExplicit: true }
+      : {}),
   };
 }
 
@@ -137,7 +103,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     return resolveThreadRouteTarget(currentRouteParams);
   };
 
-  const openNewThread = (
+  return (
     projectRef: ScopedProjectRef,
     options?: {
       branch?: string | null;
@@ -282,31 +248,15 @@ export function createNewThreadHandler(router: AnyRouter) {
       }
       const envMode = envModeFor(null);
       const applyProjectFile = (draftId: DraftId) => {
-        const provisional: ProvisionalWorkspace = {
-          envMode,
-          openedManual: getDraftSession(draftId)?.environmentSelection === "manual",
-        };
-        const settled = projectFileRead
-          .then((projectFile) => {
-            const fileEnvMode = envModeFor(projectFile);
-            const draft = getDraftSession(draftId);
-            if (fileEnvMode === envMode || !keepsProvisionalWorkspace(draft, provisional)) return;
-            // Commit before a waiting send re-reads the composer's workspace.
-            flushSync(() =>
-              setDraftThreadContext(draftId, {
-                envMode: fileEnvMode,
-                ...(draft.startFromOrigin === startFromOriginFor(envMode)
-                  ? { startFromOrigin: startFromOriginFor(fileEnvMode) }
-                  : {}),
-              }),
-            );
-          })
-          .finally(() => {
-            if (pendingWorkspaceDefaults.get(draftId)?.settled === settled) {
-              pendingWorkspaceDefaults.delete(draftId);
-            }
-          });
-        pendingWorkspaceDefaults.set(draftId, { ...provisional, settled });
+        trackPendingWorkspaceDefault(
+          draftId,
+          projectRef,
+          { envMode, startFromOrigin: startFromOriginFor(envMode) },
+          projectFileRead.then((projectFile) => {
+            const envMode = envModeFor(projectFile);
+            return { envMode, startFromOrigin: startFromOriginFor(envMode) };
+          }),
+        );
       };
       return { envMode, applyProjectFile };
     };
@@ -331,11 +281,8 @@ export function createNewThreadHandler(router: AnyRouter) {
     if (storedDraftThreadRef && reusableStoredDraftThread === null) {
       markPromotedDraftThreadByRef(storedDraftThreadRef);
     }
-    // An empty draft already open in a tab must keep its own identity.
-    const draftIdsInTabs = layoutDraftIds(useLayoutStore.getState().layout);
     const emptyStoredDraftThread =
       reusableStoredDraftThread &&
-      !draftIdsInTabs.has(reusableStoredDraftThread.draftId) &&
       !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
         ? reusableStoredDraftThread
         : null;
@@ -363,6 +310,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             worktreePath: null,
             envMode: defaultEnvMode.envMode,
             startFromOrigin: startFromOriginFor(defaultEnvMode.envMode),
+            workspaceExplicit: false,
           };
         }
         if (workspaceContext) {
@@ -424,7 +372,6 @@ export function createNewThreadHandler(router: AnyRouter) {
       currentRouteTarget?.kind === "draft" &&
       latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
       latestActiveDraftThread.promotedTo == null &&
-      !draftIdsInTabs.has(currentRouteTarget.draftId) &&
       !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
     ) {
       if (
@@ -462,6 +409,9 @@ export function createNewThreadHandler(router: AnyRouter) {
         worktreePath: options?.worktreePath ?? null,
         envMode: initialEnvMode,
         startFromOrigin: options?.startFromOrigin ?? startFromOriginFor(initialEnvMode),
+        ...(options?.envMode !== undefined || options?.startFromOrigin !== undefined
+          ? { workspaceExplicit: true }
+          : {}),
         runtimeMode: defaultRuntimeMode,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });
@@ -480,36 +430,6 @@ export function createNewThreadHandler(router: AnyRouter) {
       return { draftId, threadId };
     })();
   };
-  return async (...args: Parameters<typeof openNewThread>) => {
-    const open = () => openNewThread(...args);
-    // A new thread replaces the focused tab (cmd+N), kept or not; callers may place it elsewhere.
-    const store = useLayoutStore.getState();
-    const anchor = store.newTabRequest === null ? selectLayoutOpenAnchor(store.layout) : null;
-    const opened = await (anchor
-      ? runInNewLayoutTab(open, { replaceTabId: anchor.tab.id })
-      : open());
-    if (opened) takeNoProjectsDraft(opened.draftId);
-    return opened;
-  };
-}
-
-/**
- * What was typed on the no-projects home moves into the first thread opened
- * once a project exists, unless that thread already holds its own text.
- */
-function takeNoProjectsDraft(draftId: DraftId) {
-  const { getComposerDraft, moveComposerContent } = useComposerDraftStore.getState();
-  const sendOnMove = useDraftSendOnOpenStore.getState().armed;
-  if (
-    !composerDraftHasUserContent(getComposerDraft(NO_PROJECTS_DRAFT_ID)) ||
-    composerDraftHasUserContent(getComposerDraft(draftId))
-  ) {
-    if (sendOnMove) useDraftSendOnOpenStore.setState({ armed: false });
-    return;
-  }
-  moveComposerContent(NO_PROJECTS_DRAFT_ID, draftId);
-  // Send on the no-projects home: this draft sends what just moved in.
-  if (sendOnMove) useDraftSendOnOpenStore.setState({ armed: false, draftId });
 }
 
 export function resolveDefaultProjectRef(

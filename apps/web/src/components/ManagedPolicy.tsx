@@ -2,9 +2,7 @@ import type { ManagedPolicySummary } from "@t3tools/contracts";
 import { T, Var } from "gt-react";
 import { BuildingIcon } from "lucide-react";
 import type { ReactNode } from "react";
-
-import { InlineButton } from "./ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 /**
  * A control an administrator's policy turns off: shown inert, with the policy's reason on hover
@@ -19,31 +17,29 @@ export function ManagedControl({
 }) {
   if (reason === undefined) return children;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={0}
-            role="group"
-            aria-disabled="true"
-            aria-label={reason}
-            className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          />
-        }
-      >
-        <span inert className="inline-flex opacity-50">
-          {children}
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{reason}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span
+          tabIndex={0}
+          role="group"
+          aria-disabled="true"
+          aria-label={reason}
+          className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        />
+      }
+      label={reason}
+    >
+      <span inert className="inline-flex opacity-50">
+        {children}
+      </span>
+    </SharedTooltipTrigger>
   );
 }
 
 /** One line of policy text with the building mark, for places a whole feature is managed. */
 export function ManagedNotice({ children }: { children: ReactNode }) {
   return (
-    <p className="flex items-start gap-2 text-muted-foreground text-meta leading-relaxed">
+    <p className="flex items-start gap-2 text-muted-foreground text-xs leading-relaxed">
       <BuildingIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
       <span>{children}</span>
     </p>
@@ -60,9 +56,14 @@ export function ManagedByOrganization({ policy }: { policy: ManagedPolicySummary
       {policy.supportUrl ? (
         <>
           {" "}
-          <InlineButton render={<a href={policy.supportUrl} target="_blank" rel="noreferrer" />}>
+          <a
+            href={policy.supportUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-foreground underline underline-offset-2"
+          >
             <T>Get help</T>
-          </InlineButton>
+          </a>
         </>
       ) : null}
     </ManagedNotice>

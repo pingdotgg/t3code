@@ -31,8 +31,7 @@ export const ru: Messages = {
     downloadForAndroid: "Скачать для Android",
     sourceLink: "Украдите наш код (легально)",
     alsoOnPhone: "Есть и для телефона:",
-    screenshotAlt:
-      "T3 Code со списком тредов рядом с открытым тредом Claude, в закреплённой карточке деталей которого видны ветка, изменения, связанный пул-реквест с пройденными проверками, лимиты использования, контекст, автоматизация и форк",
+    screenshotAlt: "T3 Code запускает субагентов Claude, Codex, Muse и Gemini в одном треде",
     endorsementsTitle: "Более {users} разработчиков не против",
     endorsementsSub: "Некоторые даже написали об этом в X.",
     endorsementsLabel: "Отзывы разработчиков",
@@ -85,7 +84,6 @@ export const ru: Messages = {
     channelLabel: "Канал релизов",
     stable: "Стабильный",
     nightly: "Nightly",
-    nightlyTagline: "Новые изменения сразу, раньше стабильной версии. Возможны шероховатости.",
     intelNote: "Mac на Intel? {link}.",
     intelLink: "Скачайте сборку x64",
     armNote: "На ARM? Скачайте {deb} или {appimage} для arm64.",

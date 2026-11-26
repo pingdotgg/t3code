@@ -37,7 +37,8 @@ export function settingsScopeEnvironmentLabel(
   environment: ScopeEnvironment,
   environments: readonly ScopeEnvironment[],
 ) {
-  return settingsScopeEnvironmentLabels(environment, environments).primary;
+  const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
+  return secondary ? `${primary} · ${secondary}` : primary;
 }
 
 export function settingsScopeProjectMachines(
@@ -47,19 +48,13 @@ export function settingsScopeProjectMachines(
 ) {
   const machines = group.memberProjects.map((member) => {
     const environment = environments.find((entry) => entry.environmentId === member.environmentId);
-    if (!environment)
-      return { primary: member.environmentLabel ?? member.environmentId, secondary: "" };
+    if (!environment) return member.environmentLabel ?? member.environmentId;
     const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
     const address =
       secondary || (includeAddresses ? settingsScopeEnvironmentAddress(environment) : "");
-    return { primary, secondary: address };
+    return includeAddresses || address ? `${primary} · ${address}` : primary;
   });
-  return machines.filter(
-    (machine, index) =>
-      machines.findIndex(
-        (other) => other.primary === machine.primary && other.secondary === machine.secondary,
-      ) === index,
-  );
+  return Array.from(new Set(machines));
 }
 
 export const ALL_ENVIRONMENTS_VALUE = "all";
@@ -165,17 +160,3 @@ export function selectSingleEnvironmentScope(
     candidates[0];
   return selected ? { ...search, machine: selected.environmentId } : search;
 }
-
-/** Pages whose settings belong to this device and do not offer scope selection. */
-export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
-  "/settings/general",
-  "/settings/appearance",
-  "/settings/chat",
-  "/settings/diffs",
-  "/settings/layout",
-  "/settings/snap-shot",
-  "/settings/connections",
-  // Network access and authorized clients belong to the environment serving this app.
-  "/settings/access",
-  "/settings/about",
-]);

@@ -1,4 +1,3 @@
-import { cn } from "~/lib/utils";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -22,8 +21,8 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
-import { ClientSettingsRecoveryGate } from "../components/ClientSettingsRecoveryGate";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
+import { WorktreeLayoutApprovalDialogHost } from "../components/WorktreeLayoutApprovalDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -41,6 +40,7 @@ import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
+import { SharedTooltipProvider } from "../components/ui/shared-tooltip";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
 import { useClientSettings } from "../hooks/useSettings";
@@ -50,7 +50,6 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { useUiStateStore } from "../uiStateStore";
-import { wasLayoutSavedBeforeLoad } from "../layout/layoutStore";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { GUEST_PAGE_PATH } from "../guestPage";
@@ -145,7 +144,11 @@ function RootRouteView() {
   return (
     <ToastProvider>
       <AnchoredToastProvider>
-        <RootRouteBranch />
+        {/* One tooltip for every trigger in the app: mounting a tooltip per trigger made opening a
+            thread, panel or message pay for tooltips nobody hovers. */}
+        <SharedTooltipProvider>
+          <RootRouteBranch />
+        </SharedTooltipProvider>
       </AnchoredToastProvider>
     </ToastProvider>
   );
@@ -202,6 +205,7 @@ function RootRouteBranch() {
       <SnapShotCoordinator />
       <ReopenClosedViewShortcut />
       <ConfirmDialogHost />
+      <WorktreeLayoutApprovalDialogHost />
       <CustomSnoozeDialogHost />
       <GuestShareDialogHost />
       <ProjectCloneToastCoordinator />
@@ -221,7 +225,7 @@ function RootRouteBranch() {
   );
 
   return (
-    <ClientSettingsRecoveryGate>
+    <>
       <ChatGptWelcomeCoordinator />
       {isWelcome ? (
         <>
@@ -242,7 +246,7 @@ function RootRouteBranch() {
       )}
       {/* Above both shells and the router, so drafts survive navigation, including to /welcome. */}
       <ThemeEditorHost />
-    </ClientSettingsRecoveryGate>
+    </>
   );
 }
 
@@ -267,17 +271,17 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
         >
           <T>Try again</T>
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
+        <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
           <T>Reload app</T>
         </Button>
         <CopyErrorButton report={report} />
       </div>
 
-      <div className="mt-5 overflow-hidden rounded-card border border-transparent surface-card">
+      <div className="mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
         <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
           <T>Error report</T>
         </p>
-        <pre className="max-h-64 overflow-auto border-t border-border/70 bg-well px-3 py-2 text-xs whitespace-pre-wrap text-foreground">
+        <pre className="max-h-64 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs whitespace-pre-wrap text-foreground/85">
           {report}
         </pre>
       </div>
@@ -296,12 +300,8 @@ function CopyErrorButton({ report }: { report: string }) {
   const gt = useGT();
 
   return (
-    <Button size="sm" variant="secondary" onClick={() => copyToClipboard(report)}>
-      {isCopied ? (
-        <CheckIcon className={cn(isCopied && "text-success")} />
-      ) : (
-        <CopyIcon className={cn(isCopied && "text-success")} />
-      )}
+    <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
+      {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
       {isCopied ? gt("Copied") : gt("Copy error")}
     </Button>
   );
@@ -391,9 +391,7 @@ function EventRouter({
         );
       useUiStateStore.getState().setProjectExpanded(bootstrapProjectKey, true);
 
-      // A first run opens the starter thread; after that the saved layout
-      // decides, so a user who closed everything sees the launcher.
-      if (readPathname() !== "/" || wasLayoutSavedBeforeLoad()) {
+      if (readPathname() !== "/") {
         return;
       }
       if (skipInitialBootstrapNavigationRef.current) {

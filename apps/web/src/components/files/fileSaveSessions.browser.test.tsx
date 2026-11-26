@@ -76,12 +76,9 @@ describe("file save sessions in React", () => {
         <MarkdownSurface />
       </StrictMode>,
     );
-    expect(runAtomCommand).toHaveBeenCalledTimes(1);
-    expect(onPendingChange).toHaveBeenLastCalledWith("README.md", true);
     finishWrite();
     getUnsavedFile.mockReturnValue(null);
-    // Cover a recovered draft's debounce without draining the connection runtime's recurring polls.
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.runAllTimersAsync();
 
     expect(runAtomCommand.mock.calls.map(([, , request]) => request)).toEqual([
       {

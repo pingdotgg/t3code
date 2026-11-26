@@ -1,40 +1,18 @@
-import { mergeProps } from "@base-ui/react/merge-props";
-import { useRender } from "@base-ui/react/use-render";
-import { type PullRequestUpdateMethod } from "@t3tools/contracts";
+import type { PullRequestUpdateMethod } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 import { TriangleAlertIcon } from "lucide-react";
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
+
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 interface BaseFreshness {
   readonly behindBy: number | null;
   readonly methods: ReadonlyArray<PullRequestUpdateMethod>;
-}
-
-function PullRequestFreshnessTrigger({
-  className,
-  render,
-  ...props
-}: useRender.ComponentProps<"button">) {
-  return useRender({
-    defaultTagName: "button",
-    render,
-    props: mergeProps<"button">(
-      {
-        type: "button",
-        className: cn(
-          "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          className,
-        ),
-      },
-      props,
-    ),
-  });
 }
 
 function PullRequestBaseFreshnessWarning({
@@ -72,14 +50,23 @@ function PullRequestBaseFreshnessWarning({
         openOnHover
         delay={0}
         closeDelay={120}
-        render={<PullRequestFreshnessTrigger aria-label={summary} className={className} />}
+        render={
+          <button
+            type="button"
+            aria-label={summary}
+            className={cn(
+              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              className,
+            )}
+          />
+        }
       >
         {children}
         <TriangleAlertIcon aria-hidden className={cn("size-3.5 shrink-0", iconClassName)} />
       </PopoverTrigger>
       <PopoverPopup align="start" side="bottom" className="max-w-80" padding="compact">
-        <p className="text-meta text-foreground">{summary}</p>
-        <p className="mt-0.5 text-meta text-muted-foreground">
+        <p className="text-xs text-foreground">{summary}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
           <T>Changes can be cleanly merged.</T>
         </p>
         {freshness.methods.length > 0 ? (
@@ -88,7 +75,7 @@ function PullRequestBaseFreshnessWarning({
               <Button
                 key={method}
                 size="xs"
-                variant="secondary"
+                variant="outline"
                 disabled={pending}
                 onClick={() => onUpdate(method)}
               >
@@ -111,7 +98,6 @@ export function PullRequestBaseBranch({
   pending,
   onUpdate,
   iconClassName,
-  compact = false,
 }: {
   readonly baseBranch: string;
   readonly freshness: BaseFreshness | null;
@@ -119,7 +105,6 @@ export function PullRequestBaseBranch({
   readonly pending: boolean;
   readonly onUpdate: (method: PullRequestUpdateMethod) => void;
   readonly iconClassName?: string;
-  readonly compact?: boolean;
 }) {
   const gt = useGT();
   const label = (
@@ -145,31 +130,16 @@ export function PullRequestBaseBranch({
         iconClassName={iconClassName}
         className="max-w-[40%]"
       >
-        <span
-          className={cn("flex min-w-0 items-center gap-1", compact && "@max-sm/pr-header:hidden")}
-        >
-          {label}
-        </span>
+        {label}
       </PullRequestBaseFreshnessWarning>
     );
   }
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            className={cn(
-              "inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1",
-              compact && "@max-sm/pr-header:hidden",
-            )}
-          >
-            {label}
-          </span>
-        }
-      />
-      <TooltipPopup side="top">
-        {stacked ? gt("Stacked on {baseBranch}", { baseBranch }) : baseBranch}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">{label}</span>
+      }
+      label={stacked ? gt("Stacked on {baseBranch}", { baseBranch }) : baseBranch}
+    />
   );
 }

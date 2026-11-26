@@ -68,7 +68,7 @@ import {
 import type { ModelOption } from "../../lib/modelOptions";
 import { m, type MessageResolver } from "../../i18n/messages";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
-import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+import { scoreSlashSkillQuery } from "./composerSlashSkillSearch";
 
 const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<unknown> = Atom.make<void>(undefined).pipe(
   Atom.withLabel("mobile:provider-workspace-snapshot-refresh:idle"),
@@ -356,12 +356,11 @@ export function useComposerCommandMenu({
     cwd: trigger?.kind === "path" ? projectCwd : null,
     query: trigger?.kind === "path" ? trigger.query : null,
   });
-  const isThreadTrigger = trigger?.kind === "path" || trigger?.kind === "pull-request";
   // Mounts older settled threads matching the mention, here and on linked machines, which shells
   // may leave out.
   useThreadSearch(
-    isThreadTrigger && environmentId ? [environmentId, ...linkedEnvironments.keys()] : [],
-    trigger?.query ?? "",
+    trigger?.kind === "path" && environmentId ? [environmentId, ...linkedEnvironments.keys()] : [],
+    trigger?.kind === "path" ? trigger.query : "",
     { titlesOnly: true },
   );
   const pullRequestSearch = useComposerPullRequestSearch({
@@ -376,21 +375,9 @@ export function useComposerCommandMenu({
     if (!trigger) return [];
 
     if (trigger.kind === "pull-request") {
-      // `#` lists pull requests, then threads; a bare `#` offers the most recent threads.
-      const threadItems = environmentId
-        ? matchComposerThreadItems({
-            shells: threadShells,
-            environmentId,
-            linkedEnvironments,
-            excludeThreadId: currentThreadId,
-            query: trigger.query,
-            allowEmptyQuery: true,
-            now,
-          })
-        : [];
-      const pullRequestItems = pullRequestSearch.entries.map((entry) => ({
+      return pullRequestSearch.entries.map((entry) => ({
         id: `pr:${entry.projectId}:${threadPullRequestKeyOf(entry)}`,
-        type: "pull-request" as const,
+        type: "pull-request",
         pullRequest: {
           number: entry.number,
           title: entry.title,
@@ -407,7 +394,6 @@ export function useComposerCommandMenu({
             : `${entry.repository} · `
         }${entry.title}`,
       }));
-      return [...pullRequestItems, ...threadItems];
     }
 
     if (trigger.kind === "slash-command") {
@@ -436,8 +422,12 @@ export function useComposerCommandMenu({
       );
 
       const skillItems = visibleSkills
-        .filter((skill) => matchesSlashSkillQuery(skill, q))
-        .map((skill) => ({
+        .flatMap((skill) => {
+          const score = scoreSlashSkillQuery(skill, q);
+          return score === null ? [] : [{ skill, score }];
+        })
+        .sort((left, right) => left.score - right.score)
+        .map(({ skill }) => ({
           id: `skill:${skill.name}`,
           type: "skill" as const,
           skill,
@@ -608,7 +598,7 @@ export function useComposerCommandMenu({
       return;
     }
     if (item.type === "thread") {
-      if (!ownerKey || (trigger.kind !== "path" && trigger.kind !== "pull-request")) return;
+      if (!ownerKey || trigger.kind !== "path") return;
       const shell = threadShells.find(
         (candidate) =>
           candidate.environmentId === item.thread.environmentId &&

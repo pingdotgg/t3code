@@ -1,16 +1,14 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { useGT, useMessages } from "gt-react";
+import { T, useGT } from "gt-react";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
-import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 
-import { resolvePullRequestState } from "./pullRequestPresentation";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { Badge } from "../ui/badge";
-import { Button, InlineButton } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Button } from "../ui/button";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
@@ -20,250 +18,203 @@ interface CrumbsPullRequest {
   readonly provider: string;
   readonly number: number;
   readonly repository: string;
-  readonly state: "open" | "merged" | "closed";
-  readonly isDraft: boolean;
+  readonly title: string;
 }
 
-/** What a detail's crumbs name: where it lives, and its own key linking to the host. */
-export interface WorkItemCrumbsSubject {
-  readonly url: string;
-  /** The repository or tracker scope, such as `owner/repo` or a Linear team. */
-  readonly scope: string;
-  readonly scopeUrl: string | null;
-  /** `#123`, or a tracker's own key. */
-  readonly keyLabel: string;
-  readonly keyAriaLabel: string;
-  /** The host's name in "Open on GitHub" and the link's context menu. */
-  readonly openLabel: string;
-}
-
-const openKeyContextMenu = (event: ReactMouseEvent, subject: WorkItemCrumbsSubject): void => {
+const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest): void => {
   event.preventDefault();
   event.stopPropagation();
   void showPullRequestLinkContextMenu({
-    url: subject.url,
-    openLabel: subject.openLabel,
+    url: detail.url,
+    openLabel: openOnHostLabel(sourceControlClients.get(detail.provider)),
     position: { x: event.clientX, y: event.clientY },
     source: contextMenuSourceOf(event),
   });
 };
 
-function BackButton({
-  onBack,
-  label,
-  tooltip,
-}: {
-  onBack: () => void;
-  label: string;
-  tooltip: string;
-}) {
+const ROW_CLASS_NAME =
+  "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none sm:text-xs";
+
+function BackButton({ onBack, focusable }: { onBack: () => void; focusable: boolean }) {
+  const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            onClick={onBack}
-            className="-ms-1.25"
-            aria-label={label}
-          >
-            <ArrowLeftIcon aria-hidden className="size-3.5" />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
+          {...(focusable ? {} : { tabIndex: -1 })}
+          onClick={onBack}
+          className="-ml-1.5"
+          aria-label={gt("Back to this thread's pull requests")}
+        >
+          <ArrowLeftIcon aria-hidden className="size-3.5" />
+        </Button>
+      }
+      label={
+        <>
+          <T>Back to pull requests</T>
+        </>
+      }
+    />
   );
 }
 
-function KeyLink({
-  subject,
-  threadRef = null,
+function NumberLink({
+  detail,
+  threadRef,
   toneClassName,
   openOnHostText,
+  focusable,
 }: {
-  subject: WorkItemCrumbsSubject;
-  threadRef?: ScopedThreadRef | null;
+  detail: CrumbsPullRequest;
+  threadRef: ScopedThreadRef | null;
   toneClassName: string;
   openOnHostText: string;
+  focusable: boolean;
 }) {
+  const gt = useGT();
   const openLink = useOpenLink(threadRef);
   return (
-    <span className={cn("inline-flex shrink-0", toneClassName)}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <InlineButton
-              tone={null}
-              onClick={(event) => void openLink(subject.url, { event }).catch(console.error)}
-              onAuxClick={(event) => {
-                if (event.button === 1) void openLink(subject.url, { event }).catch(console.error);
-              }}
-              onContextMenu={(event) => openKeyContextMenu(event, subject)}
-              aria-label={subject.keyAriaLabel}
-            >
-              {subject.keyLabel}
-              <ExternalLinkIcon aria-hidden className="size-[13px]" />
-            </InlineButton>
-          }
-        />
-        <TooltipPopup side="top">{openOnHostText}</TooltipPopup>
-      </Tooltip>
-    </span>
+    <SharedTooltipTrigger
+      render={
+        <button
+          type="button"
+          {...(focusable ? {} : { tabIndex: -1 })}
+          onClick={(event) => void openLink(detail.url, { event }).catch(console.error)}
+          onAuxClick={(event) => {
+            if (event.button === 1) void openLink(detail.url, { event }).catch(console.error);
+          }}
+          onContextMenu={(event) => openNumberContextMenu(event, detail)}
+          className={cn(
+            "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
+            toneClassName,
+          )}
+          aria-label={gt(
+            "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
+            {
+              term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
+              number: detail.number,
+            },
+          )}
+        >
+          #{detail.number}
+          <ExternalLinkIcon aria-hidden className="size-2.5" />
+        </button>
+      }
+      label={openOnHostText}
+    />
   );
 }
 
 /**
- * A detail's first line, shared by pull requests and issues: back, the scope, the key in its
- * state's ink, and a badge for any state but open.
+ * The repository and number above the title, swapped for the number and title once the reader has
+ * scrolled the title away.
  */
-export function WorkItemDetailCrumbs({
-  subject,
-  threadRef = null,
-  toneClassName,
-  openOnHostText,
-  badge,
-  back,
-  children,
-}: {
-  subject: WorkItemCrumbsSubject | null;
-  threadRef?: ScopedThreadRef | null;
-  toneClassName: string | null;
-  openOnHostText: string;
-  badge?: ReactNode;
-  back?: { readonly onBack: () => void; readonly label: string; readonly tooltip: string };
-  children?: ReactNode;
-}) {
-  const gt = useGT();
-  const openLink = useOpenLink(threadRef);
-  return (
-    <div className="mt-2 flex min-h-6 min-w-0 items-center gap-1.5 pl-4 text-label text-muted-foreground">
-      {subject && toneClassName ? (
-        <>
-          {back ? <BackButton {...back} /> : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                subject.scopeUrl ? (
-                  <InlineButton
-                    tone="muted"
-                    className="min-w-16 shrink @max-sm/pr-header:hidden"
-                    onClick={(event) => {
-                      if (subject.scopeUrl)
-                        void openLink(subject.scopeUrl, { event }).catch(console.error);
-                    }}
-                    onAuxClick={(event) => {
-                      if (event.button === 1 && subject.scopeUrl)
-                        void openLink(subject.scopeUrl, { event }).catch(console.error);
-                    }}
-                  >
-                    <span className="truncate">{subject.scope}</span>
-                  </InlineButton>
-                ) : (
-                  <span className="min-w-16 truncate @max-sm/pr-header:hidden">
-                    {subject.scope}
-                  </span>
-                )
-              }
-            />
-            <TooltipPopup side="top">
-              {subject.scopeUrl
-                ? gt("Open {repository} repository", { repository: subject.scope })
-                : subject.scope}
-            </TooltipPopup>
-          </Tooltip>
-          <KeyLink
-            subject={subject}
-            threadRef={threadRef}
-            toneClassName={toneClassName}
-            openOnHostText={openOnHostText}
-          />
-          {badge}
-          {children}
-        </>
-      ) : null}
-    </div>
-  );
-}
-
 export function PullRequestDetailCrumbs({
   detail,
-  threadRef = null,
+  threadRef,
   toneClassName,
+  condensed,
   repositoryUrl,
   openOnHostText,
   onBack,
-  children,
 }: {
   detail: CrumbsPullRequest | null;
-  threadRef?: ScopedThreadRef | null;
+  threadRef: ScopedThreadRef | null;
   toneClassName: string | null;
+  condensed: boolean;
   repositoryUrl: string | null;
   openOnHostText: string;
   onBack: (() => void) | undefined;
-  children?: ReactNode;
 }) {
   const gt = useGT();
-  const messages = useMessages();
-  const state = detail ? resolvePullRequestState(detail, messages) : null;
-  const term = detail
-    ? changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest)
-    : null;
+  const openLink = useOpenLink(threadRef);
+  const ready = detail !== null && toneClassName !== null;
   return (
-    <WorkItemDetailCrumbs
-      threadRef={threadRef}
-      subject={
-        detail && term
-          ? {
-              url: detail.url,
-              scope: detail.repository,
-              scopeUrl: repositoryUrl,
-              keyLabel: `#${detail.number}`,
-              keyAriaLabel: gt(
-                "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
-                { term, number: detail.number },
-              ),
-              openLabel: openOnHostLabel(sourceControlClients.get(detail.provider)),
-            }
-          : null
-      }
-      toneClassName={state ? toneClassName : null}
-      openOnHostText={openOnHostText}
-      {...(onBack && term
-        ? {
-            back: {
-              onBack,
-              label: gt(
-                "Back to this thread's {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
-                { term },
-              ),
-              tooltip: gt(
-                "Back to {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
-                { term },
-              ),
-            },
-          }
-        : {})}
-      badge={
-        detail && state && (detail.state !== "open" || detail.isDraft) ? (
-          <Badge
-            size="status"
-            variant={
-              detail.state === "merged"
-                ? "merged"
-                : detail.state === "closed"
-                  ? "error"
-                  : "secondary"
-            }
-          >
-            <state.Icon aria-hidden />
-            <span className="@max-sm/pr-header:sr-only">{state.label}</span>
-          </Badge>
-        ) : null
-      }
-    >
-      {children}
-    </WorkItemDetailCrumbs>
+    <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
+      <div
+        aria-hidden={condensed}
+        inert={condensed}
+        data-workspace-scroll-swap
+        className={cn(
+          ROW_CLASS_NAME,
+          condensed
+            ? "pointer-events-none -translate-y-1 opacity-0 duration-100"
+            : "translate-y-0 opacity-100 delay-50 duration-150",
+        )}
+      >
+        {ready ? (
+          <>
+            {onBack ? <BackButton onBack={onBack} focusable /> : null}
+            <SharedTooltipTrigger
+              render={
+                repositoryUrl ? (
+                  <button
+                    type="button"
+                    onClick={(event) =>
+                      void openLink(repositoryUrl, { event }).catch(console.error)
+                    }
+                    onAuxClick={(event) => {
+                      if (event.button === 1)
+                        void openLink(repositoryUrl, { event }).catch(console.error);
+                    }}
+                    className="min-w-0 cursor-pointer truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    {detail.repository}
+                  </button>
+                ) : (
+                  <span className="min-w-0 truncate font-medium text-muted-foreground">
+                    {detail.repository}
+                  </span>
+                )
+              }
+              label={
+                repositoryUrl
+                  ? gt("Open {repository} repository", { repository: detail.repository })
+                  : detail.repository
+              }
+            />
+            <NumberLink
+              detail={detail}
+              threadRef={threadRef}
+              toneClassName={toneClassName}
+              openOnHostText={openOnHostText}
+              focusable
+            />
+          </>
+        ) : null}
+      </div>
+      <div
+        aria-hidden={!condensed}
+        inert={!condensed}
+        data-workspace-scroll-swap
+        className={cn(
+          ROW_CLASS_NAME,
+          condensed
+            ? "translate-y-0 opacity-100 delay-50 duration-150"
+            : "pointer-events-none translate-y-1 opacity-0 duration-100",
+        )}
+      >
+        {ready ? (
+          <>
+            {onBack ? <BackButton onBack={onBack} focusable={condensed} /> : null}
+            <NumberLink
+              detail={detail}
+              threadRef={threadRef}
+              toneClassName={toneClassName}
+              openOnHostText={openOnHostText}
+              focusable={condensed}
+            />
+            <SharedTooltipTrigger
+              render={
+                <span className="min-w-0 truncate font-medium text-foreground">{detail.title}</span>
+              }
+              label={detail.title}
+            />
+          </>
+        ) : null}
+      </div>
+    </div>
   );
 }

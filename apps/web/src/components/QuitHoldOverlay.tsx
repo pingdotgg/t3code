@@ -57,7 +57,7 @@ export function QuitHoldOverlay() {
   const shortcut = isMacPlatform(navigator.platform) ? "⌘Q" : "Ctrl+Q";
   const message =
     visibleMode === "hold"
-      ? gt("Hold {shortcut} to quit", { shortcut })
+      ? gt("Hold {shortcut} or press twice to quit", { shortcut })
       : gt("Press {shortcut} again to quit", { shortcut });
   return (
     <div

@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useGT } from "gt-react";
-import { MessageSquarePlusIcon, TextQuoteIcon } from "lucide-react";
+import { PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -22,35 +22,34 @@ import {
 import {
   assistantCitationNavigation,
   assistantCitationRoute,
-  type AssistantCitationScope,
 } from "../../lib/assistantCitationNavigation";
 import { cn } from "~/lib/utils";
 import { useQuietThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
+import {
+  AssistantCitationCommentEditor,
+  type AssistantCitationCommentDictation,
+} from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { textDirection } from "~/textDirection";
 
-function useCitationSourceLinkProps(
-  citation: AssistantCitation,
-  scope: AssistantCitationScope = "passage",
-) {
+function useCitationSourceLinkProps(citation: AssistantCitation) {
   const navigate = useNavigate();
   const sourceThread = useQuietThreadShell(
     scopeThreadRef(citation.environmentId, citation.threadId),
   );
   return {
-    ...assistantCitationRoute(citation, sourceThread, scope),
+    ...assistantCitationRoute(citation, sourceThread),
     "data-markdown-copy": serializeAssistantCitation(citation),
     onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
       }
       event.preventDefault();
-      void navigate(assistantCitationNavigation(citation, sourceThread, scope));
+      void navigate(assistantCitationNavigation(citation, sourceThread));
     },
   };
 }
@@ -63,7 +62,6 @@ const flat = (text: string) => text.replace(/\s+/g, " ");
  */
 function ResponseCard({
   citation,
-  scope = "passage",
   copyMarkdown,
   cardCopyMarkdown = copyMarkdown,
   label,
@@ -74,7 +72,6 @@ function ResponseCard({
   trailing,
 }: {
   citation: AssistantCitation;
-  scope?: AssistantCitationScope;
   copyMarkdown: string;
   cardCopyMarkdown?: string;
   label: string;
@@ -84,7 +81,7 @@ function ResponseCard({
   leading: boolean;
   trailing: boolean;
 }) {
-  const linkProps = useCitationSourceLinkProps(citation, scope);
+  const linkProps = useCitationSourceLinkProps(citation);
   return (
     // One copy boundary for the card and its comment, so a copied card carries the comment once.
     <span
@@ -97,13 +94,12 @@ function ResponseCard({
         data-markdown-copy={cardCopyMarkdown}
         // The response is findable in its own message; here it is clamped and mostly hidden.
         data-thread-find-ignore
-        data-response-card
         aria-label={label}
         // The message's markdown styles colour and underline links; a card is neither.
-        className="block min-w-0 cursor-pointer rounded-lg surface-bubble-quote px-2.5 py-1.5 text-start text-body text-muted-foreground! no-underline! wrap-break-word focus-visible:outline-2 focus-visible:outline-ring"
+        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-sm text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
       >
         {title ? (
-          <span className="block truncate text-meta text-foreground/80" dir="auto">
+          <span className="block truncate text-xs font-medium text-foreground/80" dir="auto">
             {title}
           </span>
         ) : null}
@@ -175,7 +171,6 @@ export function ResponseReplyCard({
   return (
     <ResponseCard
       citation={record.citation}
-      scope="response"
       copyMarkdown={copyMarkdown}
       label={gt("Go to the response this replies to: {label}", { label: record.label })}
       title={record.subagents?.map((subagent) => subagent.title).join(", ")}
@@ -204,14 +199,11 @@ export function AssistantCitationChip({
   };
 }) {
   const gt = useGT();
-  const navigate = useNavigate();
-  const sourceThread = useQuietThreadShell(
-    scopeThreadRef(citation.environmentId, citation.threadId),
-  );
   const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
+  const dictationRef = useRef<AssistantCitationCommentDictation>(null);
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
     useState<AssistantCitationSourceAnchor | null>(null);
@@ -222,7 +214,7 @@ export function AssistantCitationChip({
   useEffect(() => {
     if (!commentOpen) draftCommentRef.current = null;
   }, [commentOpen]);
-  const settleDraftOnClose = (reason: string): boolean => {
+  const settleDraft = (reason: string): boolean => {
     const dismissal = resolveAssistantCitationCommentDismissal({
       reason,
       draft: draftCommentRef.current,
@@ -231,14 +223,19 @@ export function AssistantCitationChip({
     if (dismissal.kind === "commit") return commentEditor?.onSave(dismissal.comment) ?? true;
     return dismissal.kind !== "keep-open";
   };
+  // Closing unmounts the editor, which would discard its dictation, so it stays open until that lands.
+  const settleDraftOnClose = (reason: string): boolean => {
+    const finishing =
+      reason !== "escape-key" &&
+      dictationRef.current?.finish((comment) => {
+        draftCommentRef.current = comment;
+        if (settleDraft(reason)) commentEditor?.onOpenChange(false);
+      });
+    return !finishing && settleDraft(reason);
+  };
+  // The timeline virtualizes rows, so a vanished source is routine; the user may still be typing.
   const onSourceUnavailable = useEffectEvent(() => {
-    if (!sourceAnchor) return;
-    if (settleDraftOnClose("none")) {
-      commentEditor?.onOpenChange(false);
-    } else {
-      // Keep the draft mounted and stop tracking the detached range.
-      setUnavailableSourceAnchor(sourceAnchor);
-    }
+    if (sourceAnchor) setUnavailableSourceAnchor(sourceAnchor);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the cited DOM source while the comment editor is open and reacts when it disappears
   useEffect(() => {
@@ -258,7 +255,9 @@ export function AssistantCitationChip({
           const rects = activeSourceAnchor.range.getClientRects();
           const rect =
             rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
-          // A quote can end inside horizontally clipped code or a table.
+          // Code blocks and tables scroll sideways inside the message, so the cited
+          // text can end in their hidden overflow. Base UI only shifts the popup while
+          // it still touches the anchor, so clamp the anchor to the message's width.
           const bounds = activeSourceAnchor.source.getBoundingClientRect();
           const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
           const right = Math.max(Math.min(rect.right, bounds.right), left);
@@ -273,7 +272,7 @@ export function AssistantCitationChip({
       className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
       aria-label={gt("View cited assistant text: {label}", { label })}
     >
-      <TextQuoteIcon aria-hidden="true" />
+      <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]" dir={textDirection(label)}>
         {label}
       </ContextChipLabel>
@@ -305,7 +304,7 @@ export function AssistantCitationChip({
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
-            <MessageSquarePlusIcon aria-hidden="true" />
+            <PencilIcon aria-hidden="true" />
           </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
@@ -349,10 +348,8 @@ export function AssistantCitationChip({
                 key={serializeAssistantCitation(citation)}
                 citation={citation}
                 inputRef={commentInputRef}
+                dictationRef={dictationRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
-                onViewSource={() => {
-                  void navigate(assistantCitationNavigation(citation, sourceThread));
-                }}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;
                   commentEditor.onDraftChange?.(comment);

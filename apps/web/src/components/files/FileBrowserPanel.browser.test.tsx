@@ -1,11 +1,10 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
-import { Sheet, SheetPopup } from "~/components/ui/sheet";
+import { RightPanelSheet } from "~/components/RightPanelSheet";
 import { dismissContextMenu } from "~/contextMenuFallback";
-import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
 import { act, render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
@@ -21,6 +20,7 @@ const directory: {
   entries: readonly ProjectEntry[];
   load: () => Promise<void>;
   refresh: () => void;
+  revalidate: (directoryPath: string) => void;
   ready: boolean;
   error: null;
   isPending: boolean;
@@ -29,6 +29,7 @@ const directory: {
   entries,
   load: () => Promise.resolve(),
   refresh: () => {},
+  revalidate: () => {},
   ready: true,
   error: null,
   isPending: false,
@@ -109,25 +110,37 @@ describe("FileBrowserPanel", () => {
     );
     using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
     using clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
-    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
-    findTreeRow("README.md")!.dispatchEvent(
-      new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        button: 2,
-      }),
-    );
-    const action = page.getByRole("menuitem", { name: "Copy mention", exact: true });
-    await expect.element(action).toBeVisible();
-    await userEvent.click(action);
+
+    async function openRowMenu(path: string) {
+      await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
+      findTreeRow(path)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+    }
+
+    await openRowMenu("src/");
+    const copyPath = page.getByRole("menuitem", { name: "Copy path", exact: true });
+    await userEvent.click(copyPath);
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("/repo/src"));
+
+    await openRowMenu("README.md");
+    const copyMention = page.getByRole("menuitem", { name: "Copy mention", exact: true });
+    await expect.element(copyMention).toBeVisible();
+    await userEvent.click(copyMention);
     await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
 
+    // Hover can take focus when the keyboard menu reopens under the pointer.
+    await commands.resetPointer();
     const row = findTreeRow("README.md")!;
     await userEvent.keyboard("{Tab}");
     row.focus();
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-    await expect.element(action).toHaveFocus();
+    await expect.element(copyPath).toHaveFocus();
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
@@ -302,24 +315,17 @@ describe("FileBrowserPanel", () => {
   it("Escape in the file search clears it without closing the panel sheet", async () => {
     const onCloseSheet = vi.fn();
     await using _screen = await render(
-      <Sheet
-        open
-        onOpenChange={(open) => {
-          if (!open) onCloseSheet();
-        }}
-      >
-        <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
-          <FileBrowserPanel
-            environmentId={EnvironmentId.make("env-files")}
-            cwd="/repo"
-            projectName="repo"
-            selectedPath={null}
-            selectedPathRevealId={0}
-            onOpenFile={() => {}}
-            workspaceMutationId={null}
-          />
-        </SheetPopup>
-      </Sheet>,
+      <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
+        <FileBrowserPanel
+          environmentId={EnvironmentId.make("env-files")}
+          cwd="/repo"
+          projectName="repo"
+          selectedPath={null}
+          selectedPathRevealId={0}
+          onOpenFile={() => {}}
+          workspaceMutationId={null}
+        />
+      </RightPanelSheet>,
     );
     const search = page.getByRole("searchbox", { name: "Search repo files" });
     await userEvent.fill(search, "read");
@@ -373,10 +379,74 @@ describe("FileBrowserPanel", () => {
       );
     }
 
+    using revalidate = vi.spyOn(directory, "revalidate");
     await using _second = await render(panel());
     await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
     await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+
+    // Refresh revalidates the folders behind the rows on screen: the open one and the root.
+    // The tree can render its rows again at any time, so compare folders, not calls.
+    revalidate.mockClear();
+    await userEvent.click(page.getByRole("button", { name: "Refresh workspace files" }));
+    expect(new Set(revalidate.mock.calls.flat())).toEqual(new Set(["src", ""]));
   });
+
+  it("opens a chain of single folders from one click and keeps it closed once closed", async () => {
+    const chain: readonly ProjectEntry[] = [
+      { path: "tests", kind: "directory" },
+      { path: "tests/edit", kind: "directory" },
+      { path: "tests/edit/unit", kind: "directory" },
+      { path: "tests/edit/unit/a.ts", kind: "file" },
+    ];
+    const panel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-single-folder-chain"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing(chain.slice(0, 1));
+    {
+      await using screen = await render(panel());
+      await vi.waitFor(() => expect(findTreeRow("tests/")).not.toBeNull());
+      findTreeRow("tests/")!.click();
+      await vi.waitFor(() =>
+        expect(findTreeRow("tests/")!.getAttribute("aria-expanded")).toBe("true"),
+      );
+      for (const listed of [2, 3, 4]) {
+        directory.entries = chain.slice(0, listed);
+        await screen.rerender(panel());
+      }
+      await vi.waitFor(() => expect(findTreeRow("tests/edit/unit/a.ts")).not.toBeNull());
+
+      findTreeRow("tests/edit/unit/")!.click();
+      await vi.waitFor(() => expect(findTreeRow("tests/edit/unit/a.ts")).toBeNull());
+      directory.entries = [...chain, { path: "tests/edit/unit/b.ts", kind: "file" }];
+      await screen.rerender(panel());
+      expect(findTreeRow("tests/edit/unit/")!.getAttribute("aria-expanded")).toBe("false");
+    }
+
+    directory.entries = [...chain, { path: "pkg", kind: "directory" }];
+    await using remounted = await render(panel());
+    await vi.waitFor(() => expect(findTreeRow("tests/edit/unit/")).not.toBeNull());
+    expect(findTreeRow("tests/edit/unit/")!.getAttribute("aria-expanded")).toBe("false");
+
+    // An ignored folder can hold tens of thousands of entries, so it still opens by hand.
+    findTreeRow("pkg/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("pkg/")!.getAttribute("aria-expanded")).toBe("true"));
+    directory.entries = [
+      ...directory.entries,
+      { path: "pkg/node_modules", kind: "directory", ignored: true },
+    ];
+    await remounted.rerender(panel());
+    await vi.waitFor(() => expect(findTreeRow("pkg/node_modules/")).not.toBeNull());
+    expect(findTreeRow("pkg/node_modules/")!.getAttribute("aria-expanded")).toBe("false");
+  });
+
   describe("revealing a folder while folders above it are still loading", () => {
     const roots = Array.from({ length: 12 }, (_, index): ProjectEntry => {
       return { path: `d${String(index).padStart(2, "0")}`, kind: "directory" };
@@ -397,22 +467,17 @@ describe("FileBrowserPanel", () => {
       />
     );
     // The tree mounts empty and measures itself before the first listing arrives, as it does for real.
-    // The panel's flex layout sizes the tree, so these load the app stylesheet.
     async function renderRevealedPanel(cwd: string) {
-      const style = document.createElement("style");
-      style.textContent = appCss;
-      document.head.append(style);
       writeExpandedDirectories(`env-files:${cwd}`, ["d01/", "d01/sub/"]);
       directory.ready = false;
       await using stack = new AsyncDisposableStack();
-      stack.defer(() => style.remove());
       const screen = stack.use(await render(renderPanel(cwd), { container: sizedContainer() }));
       directory.entries = roots;
       directory.ready = true;
       await screen.rerender(renderPanel(cwd));
       await vi.waitFor(() => expect(isTreeRowInView("d09/")).toBe(true));
-      const owned = stack.move();
-      return Object.assign(screen, { [Symbol.asyncDispose]: () => owned.disposeAsync() });
+      stack.move();
+      return screen;
     }
 
     it("keeps the revealed folder in view as restored folders above it load", async () => {

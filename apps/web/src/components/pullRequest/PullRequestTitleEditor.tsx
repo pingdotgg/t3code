@@ -10,7 +10,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { PullRequestDetailTitleRow } from "./PullRequestDetailLayout";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { readableFailure } from "./pullRequestDetail.logic";
@@ -22,19 +22,22 @@ import { changeRequestTermKind } from "./changeRequestTerm";
 export function PullRequestTitleEditor({
   environmentId,
   reference,
+  pullRequestKey,
   detail,
   canWriteSourceControl,
-  value: titleDraft,
-  onValueChange,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  pullRequestKey: string;
   detail: PullRequestDetail;
   canWriteSourceControl: boolean;
-  value: string | null;
-  onValueChange: (value: string | null) => void;
 }) {
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
+  const [titleScope, setTitleScope] = useState<{
+    readonly pullRequestKey: string;
+    readonly text: string;
+  } | null>(null);
+  const titleDraft = titleScope?.pullRequestKey === pullRequestKey ? titleScope.text : null;
   const gt = useGT();
   const [titleSaving, setTitleSaving] = useState(false);
 
@@ -42,16 +45,16 @@ export function PullRequestTitleEditor({
     const title = next.trim();
     if (!canWriteSourceControl || titleSaving) return;
     if (title.length === 0 || title === detail.title) {
-      onValueChange(null);
+      setTitleScope(null);
       return;
     }
     setTitleSaving(true);
     // The new title shows while the host takes it, so the editor closes at once.
-    onValueChange(null);
+    setTitleScope(null);
     const result = await update({ environmentId, input: { ...reference, title } });
     setTitleSaving(false);
     if (result._tag === "Failure") {
-      onValueChange(title);
+      setTitleScope({ pullRequestKey, text: title });
       toastManager.add({
         type: "error",
         title: m(msg("The title could not be saved")),
@@ -63,66 +66,21 @@ export function PullRequestTitleEditor({
     }
   };
 
-  return (
-    <WorkItemTitleEditor
-      title={detail.title}
-      canEdit={canEditPullRequestChangeRequest(detail)}
-      draft={titleDraft}
-      onDraftChange={onValueChange}
-      saving={titleSaving}
-      canSave={canWriteSourceControl}
-      label={gt(
-        "{term, select, mr {Merge request} cr {Change request} other {Pull request}} title",
-        {
-          term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
-        },
-      )}
-      onSave={(next) => void saveTitle(next)}
-    />
-  );
-}
-
-/**
- * A detail's title, shared by pull requests and issues: the heading with its edit button, or
- * the field that renames it in place while `draft` holds text.
- */
-export function WorkItemTitleEditor({
-  title,
-  canEdit,
-  draft,
-  onDraftChange,
-  saving,
-  canSave = true,
-  label,
-  onSave,
-}: {
-  title: string;
-  canEdit: boolean;
-  draft: string | null;
-  onDraftChange: (draft: string | null) => void;
-  saving: boolean;
-  canSave?: boolean;
-  label: string;
-  onSave: (draft: string) => void;
-}) {
-  const gt = useGT();
-  if (draft === null) {
+  if (titleDraft === null) {
     return (
       <PullRequestDetailTitleRow className="group gap-1">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <h1 className="min-w-0 flex-1 text-title leading-(--pr-title-leading) [--pr-title-leading:1.3] wrap-anywhere text-foreground [--type-title:0.9375rem]">
-                {title}
-              </h1>
-            }
-          />
-          <TooltipPopup side="top">{title}</TooltipPopup>
-        </Tooltip>
-        {canEdit ? (
+        <SharedTooltipTrigger
+          render={
+            <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug">
+              {detail.title}
+            </h1>
+          }
+          label={detail.title}
+        />
+        {canEditPullRequestChangeRequest(detail) ? (
           <PullRequestEditButton
             aria-label={gt("Edit title")}
-            onClick={() => onDraftChange(title)}
+            onClick={() => setTitleScope({ pullRequestKey, text: detail.title })}
           />
         ) : null}
       </PullRequestDetailTitleRow>
@@ -133,32 +91,43 @@ export function WorkItemTitleEditor({
       <Input
         autoFocus
         size="sm"
-        disabled={saving}
-        value={draft}
-        aria-label={label}
-        onChange={(event) => onDraftChange(event.target.value)}
+        disabled={titleSaving}
+        value={titleDraft}
+        aria-label={gt(
+          "{term, select, mr {Merge request} cr {Change request} other {Pull request}} title",
+          {
+            term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
+          },
+        )}
+        onChange={(event) => setTitleScope({ pullRequestKey, text: event.target.value })}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === "Enter") {
             event.preventDefault();
-            onSave(draft);
+            void saveTitle(titleDraft);
           } else if (event.key === "Escape") {
             event.preventDefault();
-            onDraftChange(null);
+            event.stopPropagation();
+            setTitleScope(null);
           }
         }}
       />
       <div className="flex justify-end gap-2">
-        <Button size="xs" variant="ghost" disabled={saving} onClick={() => onDraftChange(null)}>
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={titleSaving}
+          onClick={() => setTitleScope(null)}
+        >
           <T>Cancel</T>
         </Button>
         <Button
           size="xs"
-          variant="secondary"
-          disabled={!canSave || saving || draft.trim().length === 0}
-          onClick={() => onSave(draft)}
+          variant="outline"
+          disabled={!canWriteSourceControl || titleSaving || titleDraft.trim().length === 0}
+          onClick={() => void saveTitle(titleDraft)}
         >
-          {saving ? gt("Saving...") : gt("Save")}
+          {titleSaving ? gt("Saving...") : gt("Save")}
         </Button>
       </div>
     </div>

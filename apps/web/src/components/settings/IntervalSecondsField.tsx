@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { commitNumberFieldOnEnter } from "./commitNumberFieldOnEnter";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -36,7 +37,7 @@ export function IntervalSecondsField({
       value={field.draft}
       min={min}
       step={step}
-      size="compact"
+      size="sm"
       className="w-32"
       onValueChange={(draft) => setField((current) => ({ ...current, draft }))}
       onValueCommitted={(next) => {
@@ -67,7 +68,7 @@ export function IntervalSecondsField({
     >
       <NumberFieldGroup>
         <NumberFieldDecrement aria-label={labels.decrease} />
-        <NumberFieldInput aria-label={labels.input} />
+        <NumberFieldInput aria-label={labels.input} onKeyDown={commitNumberFieldOnEnter} />
         <NumberFieldIncrement aria-label={labels.increase} />
       </NumberFieldGroup>
     </NumberField>

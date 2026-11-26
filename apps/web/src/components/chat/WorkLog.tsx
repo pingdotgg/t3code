@@ -1,16 +1,24 @@
-import { useId, useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { cn } from "../../lib/utils";
+
+const GroupedRows = createContext(false);
 
 /** Groups may span virtualized timeline items. Each part owns its trailing space. */
 export function WorkLogBlock({
   layout = "standalone",
   continues = false,
-  precedesPrompt = false,
   children,
 }: {
   layout?: "standalone" | "group-header" | "group-content";
   continues?: boolean | undefined;
-  precedesPrompt?: boolean | undefined;
   children: ReactNode;
 }) {
   return (
@@ -18,12 +26,9 @@ export function WorkLogBlock({
       className={
         continues || layout === "group-header"
           ? "pb-0"
-          : // Ends a turn: reply footers keep air under their icon buttons, so pb-6 keeps their pb-4 gap.
-            precedesPrompt
-            ? "pb-6"
-            : layout === "group-content"
-              ? "pb-1"
-              : "pb-2"
+          : layout === "group-content"
+            ? "pb-1"
+            : "pb-2"
       }
     >
       {children}
@@ -32,7 +37,11 @@ export function WorkLogBlock({
 }
 
 export function WorkLogList({ children }: { children: ReactNode }) {
-  return <div className="flex min-w-0 flex-col gap-1 ps-4">{children}</div>;
+  return (
+    <GroupedRows value>
+      <div className="flex min-w-0 flex-col">{children}</div>
+    </GroupedRows>
+  );
 }
 
 type RowContent = {
@@ -43,7 +52,7 @@ type RowContent = {
 };
 
 const focusRingClassName =
-  "rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  "rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
 type LineProps = Omit<ComponentProps<"div">, "className" | "style" | "children">;
 
@@ -52,12 +61,12 @@ function WorkLogLine({ icon, label, trailing, wrapLabel, ...lineProps }: RowCont
     <div
       {...lineProps}
       className={cn(
-        "flex min-h-6 min-w-0 gap-1.25 text-body select-none min-[640px]:[--type-body:0.8125rem] min-[640px]:[--type-label:0.8125rem] [&_*]:select-none",
+        "flex min-h-6 min-w-0 gap-1.5 text-sm leading-relaxed select-none [&_*]:select-none",
         wrapLabel ? "items-start" : "items-center",
         lineProps.role === "button" && focusRingClassName,
       )}
     >
-      <div className="flex min-w-0 flex-1 items-baseline gap-1.25">
+      <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
         {icon ? (
           <span className="relative w-6 shrink-0 leading-0">
             <span className="inline-block size-6 overflow-hidden align-[calc(0.5cap_-_0.75rem)]">
@@ -79,47 +88,12 @@ function WorkLogLine({ icon, label, trailing, wrapLabel, ...lineProps }: RowCont
   );
 }
 
-/** The action word of a row ("Read", "Ran", "Edit"): the label role in the text tier. */
-export function WorkLogVerb({
-  children,
-  tone = "default",
-}: {
-  children: ReactNode;
-  /** `error` for an action that failed, `muted` for one still running or stopped. */
-  tone?: "default" | "error" | "muted";
-}) {
-  return (
-    <span
-      className={cn(
-        "shrink-0 text-label",
-        tone === "error"
-          ? "text-error-foreground"
-          : tone === "muted"
-            ? "text-muted-foreground"
-            : "text-foreground",
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
-/**
- * What the action touched ("ChatComposer.tsx", a command): body type in the dim
- * tier, truncating first. `mono` for commands and code.
- */
-export function WorkLogTarget({ children, mono = false }: { children: ReactNode; mono?: boolean }) {
-  return (
-    <span className={cn("min-w-0 truncate text-body text-dim-foreground", mono && "font-mono")}>
-      {children}
-    </span>
-  );
-}
-
-function rowClassName(interactive: boolean, focusable = interactive) {
+function useRowClassName(interactive: boolean, focusable = interactive) {
+  const grouped = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md pe-1.5 text-left transition-colors",
-    interactive && "cursor-pointer hover:surface-ghost-hover",
+    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors",
+    grouped ? "py-0" : "py-0.5",
+    interactive && "cursor-pointer",
     focusable && focusRingClassName,
   );
 }
@@ -131,7 +105,7 @@ export function WorkLogButton({
   wrapLabel = false,
   ...buttonProps
 }: RowContent & Omit<ComponentProps<"button">, "className" | "style" | "children">) {
-  const className = rowClassName(true);
+  const className = useRowClassName(true);
   return (
     <button {...buttonProps} type="button" className={className}>
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
@@ -156,7 +130,7 @@ export function WorkLogRow({
   children,
   ...rowProps
 }: RowContent & RowProps) {
-  const className = rowClassName(rowProps.onClick !== undefined, false);
+  const className = useRowClassName(rowProps.onClick !== undefined, false);
   const detailsId = useId();
   return (
     <div {...rowProps} className={className}>
@@ -181,7 +155,7 @@ export function WorkLogDetails({
   followLive = false,
 }: {
   children: ReactNode;
-  kind?: "text" | "panel";
+  kind?: "text" | "panel" | "media";
 
   followLive?: boolean;
 }) {
@@ -194,7 +168,6 @@ export function WorkLogDetails({
       scroller.scrollTop = scroller.scrollHeight;
     }
   });
-  // Text and panel edges start on the row's label line.
   return (
     <div
       ref={scrollerRef}
@@ -203,10 +176,12 @@ export function WorkLogDetails({
         atLiveEdgeRef.current = scrollHeight - scrollTop - clientHeight <= LIVE_EDGE_PX;
       }}
       className={cn(
-        "ms-7.5 cursor-auto",
+        "cursor-auto",
         kind === "text"
-          ? "flex max-h-96 flex-col gap-3 overflow-auto pe-0.5 py-1 select-text"
-          : "mt-0.5 mb-1.5 pb-2",
+          ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
+          : kind === "panel"
+            ? "mt-0.5 mb-1.5 pb-2"
+            : "mt-1",
       )}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
@@ -215,7 +190,3 @@ export function WorkLogDetails({
     </div>
   );
 }
-
-/** A command's output inside an opened row, in a `WorkLogDetails` panel. */
-export const WORK_LOG_OUTPUT_CLASS_NAME =
-  "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-muted-foreground text-(length:--font-size-code,var(--text-2xs)) leading-relaxed select-text";

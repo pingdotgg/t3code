@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import {
@@ -41,9 +41,6 @@ export function SourceControlTokenSettings({
     definition.kind === "github"
       ? gt("read and write access to pull requests and contents")
       : credentials.tokenAccess;
-  const id = useId();
-  const hostInputId = `${definition.kind}-token-host-${environmentId}-${id}`;
-  const tokenInputId = `${definition.kind}-token-${environmentId}-${id}`;
   const { tokens } = useEnvironmentSettings(environmentId, (settings) =>
     readHostCredentialSettings(settings, definition.kind),
   );
@@ -97,14 +94,14 @@ export function SourceControlTokenSettings({
     >
       {/* Locked while saving: a successful save clears the draft, which would drop edits made mid-request. */}
       <fieldset disabled={saving} className="contents">
-        <p className="max-w-2xl text-meta leading-relaxed text-muted-foreground">
+        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
           <T>
             A token saved here is used before{" "}
-            <code className="rounded bg-muted px-1 py-px text-caption">
+            <code className="rounded bg-muted px-1 py-px text-2xs">
               <Var>{credentials.tokenEnvVar}</Var>
             </code>{" "}
             and the{" "}
-            <code className="rounded bg-muted px-1 py-px text-caption">
+            <code className="rounded bg-muted px-1 py-px text-2xs">
               <Var>{credentials.cliName}</Var>
             </code>{" "}
             login, so <Var>{definition.label}</Var> works without the{" "}
@@ -127,11 +124,11 @@ export function SourceControlTokenSettings({
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={hostInputId}>
+            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>
               <T>Host</T>
             </Label>
             <Input
-              id={hostInputId}
+              id={`${definition.kind}-token-host-${environmentId}`}
               autoComplete="off"
               size="sm"
               placeholder={defaultHost}
@@ -140,11 +137,11 @@ export function SourceControlTokenSettings({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={tokenInputId}>
+            <Label htmlFor={`${definition.kind}-token-${environmentId}`}>
               <T>Token</T>
             </Label>
             <SecretSourceInput
-              id={tokenInputId}
+              id={`${definition.kind}-token-${environmentId}`}
               size="sm"
               aria-label={gt("{host} token", { host: definition.label })}
               environmentId={environmentId}
@@ -157,7 +154,7 @@ export function SourceControlTokenSettings({
           </div>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-meta text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {savedHosts.length === 0
               ? gt("No token saved; the server uses {envVar} or the {cliName} login.", {
                   envVar: credentials.tokenEnvVar,
@@ -169,7 +166,7 @@ export function SourceControlTokenSettings({
             {isSaved ? (
               <Button
                 size="xs"
-                variant="secondary"
+                variant="outline"
                 disabled={saving}
                 onClick={() => void save(normalizedHost, "")}
               >

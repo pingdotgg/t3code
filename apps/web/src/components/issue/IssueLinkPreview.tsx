@@ -7,11 +7,7 @@ import { RelativeTime } from "~/components/RelativeTime";
 import { issueEnvironment } from "~/state/issues";
 import { useEnvironmentQuery } from "~/state/query";
 
-import {
-  WorkItemPreviewCardAuthor,
-  WorkItemPreviewCardHeader,
-  WorkItemPreviewCardTitle,
-} from "../pullRequest/PullRequestLinkPreview";
+import { PullRequestActorAvatar } from "../pullRequest/pullRequestPresentation";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { issueStatePresentation } from "./issuePresentation";
@@ -72,7 +68,7 @@ export function IssueLinkPreviewFallback({
 }) {
   const detail = useEnvironmentQuery(issueEnvironment.detail(target)).data;
   return detail === null ? (
-    <p className="break-all text-meta text-muted-foreground">{originalUrl}</p>
+    <p className="break-all text-xs text-muted-foreground">{originalUrl}</p>
   ) : (
     <IssuePreviewCardBody detail={detail} />
   );
@@ -81,25 +77,37 @@ export function IssueLinkPreviewFallback({
 function IssuePreviewCardBody({ detail }: { detail: IssueDetail }) {
   const state = issueStatePresentation(detail.state);
   const createdAt = <RelativeTime timestamp={detail.createdAt} />;
+  const author = detail.author;
+  const authorLabel =
+    author === null
+      ? "ghost"
+      : author.name && author.name !== author.login
+        ? `${author.name} (@${author.login})`
+        : author.login;
   return (
     <div className="min-w-0">
-      <WorkItemPreviewCardHeader
-        scope={detail.scope}
-        keyLabel={detail.displayKey}
-        state={state}
-        stateLabel
-      />
-      <WorkItemPreviewCardTitle>{detail.title}</WorkItemPreviewCardTitle>
-      <WorkItemPreviewCardAuthor
-        actor={detail.author}
-        opened={
-          <span className="block">
-            <T>
-              opened <Var>{createdAt}</Var>
-            </T>
-          </span>
-        }
-      />
+      <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+        <span className="min-w-0 truncate">{detail.scope}</span>
+        <span className="shrink-0">{detail.displayKey}</span>
+        <span aria-hidden>·</span>
+        <span className="inline-flex shrink-0 items-center gap-1">
+          <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
+          {state.label}
+        </span>
+      </div>
+      <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+        {detail.title}
+      </p>
+      <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <PullRequestActorAvatar actor={author} className="size-4" />
+        <span className="min-w-0 truncate">{authorLabel}</span>
+        <span aria-hidden>·</span>
+        <span className="shrink-0">
+          <T>
+            opened <Var>{createdAt}</Var>
+          </T>
+        </span>
+      </div>
     </div>
   );
 }

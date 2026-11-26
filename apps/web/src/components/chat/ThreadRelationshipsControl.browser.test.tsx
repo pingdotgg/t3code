@@ -46,7 +46,6 @@ vi.mock(import("../../state/environments"), () => ({
   useEnvironments: (() => []) as never,
   usePrimaryEnvironment: (() => null) as never,
   useEnvironment: (() => null) as never,
-  useEnvironmentMachines: (() => new Map()) as never,
   useEnvironmentProviders: (() => new Map()) as never,
 }));
 vi.mock(import("../../state/peerLinks"), () => ({
@@ -88,7 +87,6 @@ function setup() {
     thread: {
       id: threadId,
       title: "Fork",
-      modelSelection: makeThreadProjectionFixture().thread.modelSelection,
       activeProviderThreadId: null,
       lineage: { parentThreadId: ThreadId.make("source"), relationshipToParent: "fork" },
       forkedFrom: null,
@@ -120,7 +118,7 @@ it.each([
   if (action === "merge") {
     await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
   } else {
-    await screen.getByRole("button", { name: "Lineage actions" }).click();
+    await screen.getByRole("button", { name: "More thread actions" }).click();
     await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
   }
 
@@ -128,7 +126,7 @@ it.each([
   await expect
     .element(
       screen.getByRole("button", {
-        name: action === "merge" ? "Merge back to source conversation" : "Lineage actions",
+        name: action === "merge" ? "Merge back to source conversation" : "More thread actions",
       }),
     )
     .toBeEnabled();
@@ -139,8 +137,6 @@ it.each([
   ["disconnect", "Could not disconnect agent session"],
 ])("clears the previous %s error after a successful retry", async (action, title) => {
   setup();
-  const container = document.createElement("div");
-  container.style.paddingTop = "240px";
   await using screen = await render(
     <ToastProvider timeout={0}>
       <ThreadRelationshipsPanel
@@ -150,14 +146,14 @@ it.each([
         showSideChats
       />
     </ToastProvider>,
-    { router: "/environment/fork", container },
+    { router: "/environment/fork" },
   );
 
   const runAction = async () => {
     if (action === "merge") {
       await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
     } else {
-      await screen.getByRole("button", { name: "Lineage actions" }).click();
+      await screen.getByRole("button", { name: "More thread actions" }).click();
       await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
     }
   };
@@ -176,7 +172,7 @@ it.each([
     );
   });
   if (action === "disconnect") {
-    await expect.element(screen.getByRole("button", { name: "Lineage actions" })).toBeEnabled();
+    await expect.element(screen.getByRole("button", { name: "More thread actions" })).toBeEnabled();
   }
 });
 
@@ -219,11 +215,7 @@ it("opens an idle child beside the thread, and in its place with the modifier", 
       showSideChats
     />,
   );
-  const previousAgents = screen.getByRole("button", { name: "Previous agents" });
-  await expect.element(previousAgents).toHaveAttribute("aria-expanded", "false");
-  await expect.element(screen.getByRole("button", { name: /Idle child/ })).not.toBeInTheDocument();
-  await previousAgents.click();
-  await expect.element(previousAgents).toHaveAttribute("aria-expanded", "true");
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
   const child = screen.getByRole("button", { name: /Idle child/ });
   await expect.element(child).toBeEnabled();
   const panelRef = scopeThreadRef(environmentId, projection.thread.id);
@@ -237,10 +229,6 @@ it("opens an idle child beside the thread, and in its place with the modifier", 
   });
   expect(screen.router?.state.location.pathname).toBe("/");
   // Idle children can be omitted from the shell; the route loads the child's own detail.
-  // The menu can stay open after a pick; reopen it only if it closed.
-  if (previousAgents.element().getAttribute("aria-expanded") !== "true") {
-    await previousAgents.click();
-  }
   await child.click({ modifiers: [isMacPlatform(navigator.platform) ? "Meta" : "Control"] });
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/local/omitted-child"),
@@ -322,7 +310,6 @@ it("shows a side chat's full title in its tooltip", async () => {
     {
       id: "side",
       title: longTitle,
-      modelSelection: makeThreadProjectionFixture().thread.modelSelection,
       lineage: {
         parentThreadId: threadId,
         relationshipToParent: "fork",
@@ -346,7 +333,7 @@ it("shows a side chat's full title in its tooltip", async () => {
   );
 });
 
-it("folds a finished remote subagent into previous agents with its full title in its tooltip", async () => {
+it("shows a remote subagent's full title in its tooltip even when its environment is unavailable", async () => {
   setup();
   const longTitle = "Investigate a remote subagent issue across linked environments";
   const remoteEnvId = EnvironmentId.make("remote-env");
@@ -395,10 +382,11 @@ it("folds a finished remote subagent into previous agents with its full title in
     { router: "/environment/fork" },
   );
 
+  // A finished remote task sits with the other finished agents, not in its own list.
   await expect
-    .element(page.getByRole("button", { name: new RegExp(longTitle) }))
+    .element(screen.getByRole("button", { name: new RegExp(longTitle) }))
     .not.toBeInTheDocument();
-  await screen.getByRole("button", { name: "Previous agents" }).click();
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
   const row = screen.getByRole("button", { name: new RegExp(longTitle) });
   // A long environment label must not squeeze the title out of the row.
   expect(
@@ -571,7 +559,6 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   const projection = makeThreadProjectionFixture();
   state.projection = projection;
   state.relatedShells = Array.from({ length: count }, (_, index) => ({
-    ...projection.thread,
     id: ThreadId.make(`subagent-${index}`),
     title: `Subagent ${index}`,
     forkedFrom: null,
@@ -601,32 +588,9 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
     .getByTestId("panel")
     .element()
     .querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
-  expect(list.scrollHeight).toBe(list.clientHeight);
+  list.scrollTop = list.scrollHeight;
+  if (count > 6) expect(list.scrollTop).toBeGreaterThan(0);
   viewport.scrollTop = 0;
   await userEvent.wheel(list, { delta: { y: 300 } });
   await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
-});
-
-it("hides the Lineage card when an active session has no relatives", async () => {
-  setup();
-  const projection = makeThreadProjectionFixture();
-  state.projection = {
-    ...projection,
-    thread: {
-      ...projection.thread,
-      id: threadId,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-      forkedFrom: null,
-    },
-    providerSessions: [{ id: "session", status: "ready" }],
-  };
-  await using _screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={threadId}
-      showLineage
-      showSideChats
-    />,
-  );
-  await expect.element(page.getByRole("region", { name: "Lineage" })).not.toBeInTheDocument();
 });

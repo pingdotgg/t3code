@@ -64,7 +64,7 @@ export function SourceControlHostSettings({
         <div className="flex justify-end pt-2">
           <Button
             size="xs"
-            variant="secondary"
+            variant="outline"
             onClick={() =>
               void save(Object.fromEntries(Object.keys(saved ?? {}).map((key) => [key, ""])))
             }

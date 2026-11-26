@@ -20,8 +20,6 @@ import { WS_METHODS } from "./rpc.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
-  [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
-  [WS_METHODS.agentSessionsImportWithProgress]: AuthOrchestrationOperateScope,
   // An MCP sign-in stores a credential for the agent, as an account sign-in does.
   [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
   [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
@@ -74,6 +72,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.workspaceAddTaskFolderRepository]: AuthSourceControlWriteScope,
+  // The server runs an approved layout command: approving one is running code there, as a terminal does.
+  [WS_METHODS.workspaceApproveLayoutCommands]: AuthTerminalOperateScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,

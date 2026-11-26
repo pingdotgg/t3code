@@ -23,9 +23,9 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SecretInput } from "./SecretInput";
 import { classifySecretProvider } from "./SecretProviderDialog.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface SecretSource {
   readonly id: SecretProviderId;
@@ -72,7 +72,6 @@ export function SecretSourceSelect(props: {
   readonly sources: ReadonlyArray<Pick<SecretSource, "id" | "label">>;
   readonly label: string;
   readonly disabled?: boolean;
-  readonly settings?: boolean;
   readonly onValueChange: (provider: SecretProviderId | null) => void;
 }) {
   const gt = useGT();
@@ -93,8 +92,7 @@ export function SecretSourceSelect(props: {
       {...(props.disabled === undefined ? {} : { disabled: props.disabled })}
     >
       <SelectTrigger
-        variant={props.settings ? "well" : "default"}
-        size={props.settings ? "compact" : "sm"}
+        size="sm"
         className="w-auto min-w-0 shrink-0"
         aria-label={gt("{label} source", { label: props.label })}
         title={title}
@@ -176,39 +174,37 @@ function SecretCheckButton(props: {
           ? gt("Secret resolved")
           : state.detail;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex">
-            <Button
-              type="button"
-              size="icon-micro"
-              variant="ghost-muted"
-              disabled={props.disabled === true || !canCheck || state?.status === "checking"}
-              onClick={() => void run()}
-              aria-label={
-                state?.status === "failed"
-                  ? gt("{label} failed: {detail}", { label: props.label, detail: state.detail })
-                  : state?.status === "resolved"
-                    ? gt("{label} resolved", { label: props.label })
-                    : props.label
-              }
-            >
-              {state?.status === "checking" ? (
-                <Spinner />
-              ) : state?.status === "resolved" ? (
-                <CheckIcon className="text-success-foreground" />
-              ) : state?.status === "failed" ? (
-                <AlertTriangleIcon className="text-destructive" />
-              ) : (
-                <RefreshCwIcon />
-              )}
-            </Button>
-          </span>
-        }
-      />
-      <TooltipPopup side="top">{description}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span className="inline-flex">
+          <Button
+            type="button"
+            size="icon-micro"
+            variant="ghost-muted"
+            disabled={props.disabled === true || !canCheck || state?.status === "checking"}
+            onClick={() => void run()}
+            aria-label={
+              state?.status === "failed"
+                ? gt("{label} failed: {detail}", { label: props.label, detail: state.detail })
+                : state?.status === "resolved"
+                  ? gt("{label} resolved", { label: props.label })
+                  : props.label
+            }
+          >
+            {state?.status === "checking" ? (
+              <Spinner />
+            ) : state?.status === "resolved" ? (
+              <CheckIcon className="text-success-foreground" />
+            ) : state?.status === "failed" ? (
+              <AlertTriangleIcon className="text-destructive" />
+            ) : (
+              <RefreshCwIcon />
+            )}
+          </Button>
+        </span>
+      }
+      label={description}
+    />
   );
 }
 
@@ -255,7 +251,6 @@ export function SecretSourceInput({
         value={provider}
         sources={sources}
         label={label}
-        settings={input.size === "settings"}
         onValueChange={(next) => {
           setRejectedReference(null);
           if (next === null) {
@@ -278,7 +273,7 @@ export function SecretSourceInput({
         <div className="flex min-w-0 items-center gap-1.5">
           <DraftInput
             {...(input.id !== undefined ? { id: input.id } : {})}
-            size={input.size === "settings" ? "settings" : "sm"}
+            size="sm"
             font="mono"
             className="min-w-0 flex-1"
             value={rejectedReference ?? reference}
@@ -322,7 +317,7 @@ export function SecretSourceInput({
           ) : null}
         </div>
         {rejectedReference !== null ? (
-          <p className="text-meta text-destructive">
+          <p className="text-2xs text-destructive">
             {definition
               ? invalidSecretReferenceText(definition.invalidReferenceMessage, messages)
               : gt("Enter a valid secret reference.")}

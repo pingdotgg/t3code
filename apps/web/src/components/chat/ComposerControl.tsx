@@ -1,52 +1,37 @@
 import { mergeProps } from "@base-ui/react/merge-props";
+import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { useRender } from "@base-ui/react/use-render";
 import type { ComponentType, SVGProps } from "react";
 
 import { cn } from "~/lib/utils";
 
 export type ComposerControlSize = "sm" | "xs";
-export type ComposerControlVariant = "toolbar" | "settings";
 
-/**
- * The composer toolbar's control look. `sm` is the expanded toolbar; `xs` is the quiet 22px chip in
- * the tray row. `aria-pressed` marks a toggle that is on (plan mode).
- */
-function composerControlClassName(
-  size: ComposerControlSize,
-  className?: string,
-  variant: ComposerControlVariant = "toolbar",
-) {
+function composerControlClassName(size: ComposerControlSize, className?: string) {
   return cn(
-    "relative inline-flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-(--control-radius) border border-transparent text-base outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 data-disabled:pointer-events-none data-disabled:opacity-64 pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 [&:active:not([aria-haspopup])]:scale-[0.97] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:-mx-0.5 [&_svg[data-composer-control-icon]]:mx-0",
+    "relative inline-flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-(--control-radius) border border-transparent text-base outline-none hover:bg-accent data-pressed:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 data-disabled:pointer-events-none data-disabled:opacity-64 pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 [&:active:not([aria-haspopup])]:scale-[0.97] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:-mx-0.5 [&_svg[data-composer-control-icon]]:mx-0",
     "[&_:is([data-composer-control-label],[data-chat-provider-model-picker-label])]:[text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:[&_:is([data-composer-control-label],[data-chat-provider-model-picker-label])]:py-1.5",
     size === "xs"
-      ? "h-5.5 gap-1.25 has-[[data-composer-label]]:gap-1.5 px-2 text-meta text-muted-foreground hover:text-foreground [&_svg]:mx-0 [&_svg:not([class*='size-'])]:size-3 has-[svg[data-composer-chevron]]:pe-1.25"
-      : "h-7 gap-1.5 px-2.5 font-medium text-secondary-label [&_svg:not([class*='text-'])]:text-muted-foreground hover:text-foreground sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
-    "aria-pressed:surface-selected-soft aria-pressed:text-strong-foreground aria-pressed:hover:surface-ghost-hover",
-    variant === "settings"
-      ? "surface-well text-foreground"
-      : "hover:surface-ghost-hover data-pressed:surface-ghost-hover",
-    variant === "settings" && "h-7 font-normal sm:h-7",
+      ? "h-7 gap-1 has-[[data-composer-label]]:gap-1.5 px-1.75 font-normal text-foreground/70 text-sm hover:text-foreground dark:text-muted-foreground sm:h-6 sm:text-xs [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5 [&_svg]:mx-0 [&_svg[data-composer-control-chevron]]:ms-0 [&_svg[data-composer-control-chevron]]:-me-1"
+      : "h-7 gap-1.5 px-2 font-medium text-foreground/80 [&_svg:not([class*='text-'])]:text-muted-foreground hover:text-foreground sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
+    "aria-pressed:bg-accent aria-pressed:text-accent-foreground aria-pressed:hover:bg-accent/80",
     className,
   );
 }
 
 type ComposerControlProps = useRender.ComponentProps<"button"> & {
   size?: ComposerControlSize;
-  variant?: ComposerControlVariant;
 };
 
 export function ComposerControl({
   className,
   size = "sm",
-  variant = "toolbar",
   render,
   ...props
 }: ComposerControlProps) {
   const defaultProps = {
-    className: composerControlClassName(size, className, variant),
+    className: composerControlClassName(size, className),
     type: render ? undefined : ("button" as const),
-    "data-settings-picker": variant === "settings" ? "" : undefined,
   };
   return useRender({
     defaultTagName: "button",
@@ -76,5 +61,21 @@ export function ComposerControlIcon({
       )}
       data-composer-control-icon
     />
+  );
+}
+
+export function ComposerSelectControl({
+  className,
+  children,
+  size = "sm",
+  ...props
+}: Omit<SelectPrimitive.Trigger.Props, "className"> & {
+  className?: string | undefined;
+  size?: ComposerControlSize;
+}) {
+  return (
+    <SelectPrimitive.Trigger className={composerControlClassName(size, className)} {...props}>
+      {children}
+    </SelectPrimitive.Trigger>
   );
 }

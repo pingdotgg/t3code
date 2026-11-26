@@ -1,13 +1,8 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
 import { dismissContextMenu } from "../contextMenuFallback";
-import { findLayoutTab, selectFocusedTab } from "../layout/layoutModel";
-import { selectIntendedLayout, useLayoutStore } from "../layout/layoutStore";
 import { useRightPanelStore } from "../rightPanelStore";
 
 const AREA_SELECTOR = "[data-workspace-area]";
-const PANE_SELECTOR = "[data-layout-tab-id]";
 const FOCUS_BOUNDARY_SELECTOR =
   '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open], [data-slot$="-popup"]:not([data-slot="tooltip-popup"]):not([role="tooltip"])';
 const FOCUSABLE_SELECTOR =
@@ -27,7 +22,6 @@ export interface WorkspaceFocusTarget {
   area: string;
   selector?: string;
   restore?: boolean;
-  surface?: { threadKey: string; surfaceId: string };
 }
 
 function workspaceArea(element: Element): HTMLElement | null {
@@ -35,50 +29,6 @@ function workspaceArea(element: Element): HTMLElement | null {
   if (area) return area;
   const root = element.getRootNode();
   return root instanceof ShadowRoot ? workspaceArea(root.host) : null;
-}
-
-function workspaceAreaKey(area: HTMLElement) {
-  return JSON.stringify([
-    area.closest<HTMLElement>(PANE_SELECTOR)?.dataset.layoutTabId,
-    area.dataset.workspaceFocusKey ?? area.dataset.workspaceArea,
-  ]);
-}
-
-function paneId(element: Element | null | undefined): string | undefined {
-  return element?.closest<HTMLElement>(PANE_SELECTOR)?.dataset.layoutTabId;
-}
-
-/** The message box of the main chat a side chat area belongs to, when that chat is on screen. */
-function sideChatParentComposer(area: HTMLElement, areas: HTMLElement[]) {
-  if (!area.closest("[data-side-chat-pane]")) return undefined;
-  const { layout } = useLayoutStore.getState();
-  const tabContent = (element: HTMLElement) => {
-    const id = paneId(element);
-    return id === undefined
-      ? undefined
-      : findLayoutTab(layout, (tab) => tab.id === id)?.tab.content;
-  };
-  const sideChat = tabContent(area);
-  if (sideChat?.kind !== "surface") return undefined;
-  const parentKey = scopedThreadKey(sideChat.threadRef);
-  return areas.find((candidate) => {
-    if (
-      candidate.dataset.workspaceArea !== "composer" ||
-      candidate.closest("[data-side-chat-pane]")
-    )
-      return false;
-    const content = tabContent(candidate);
-    return (
-      content?.kind === "chat" &&
-      content.target.kind === "server" &&
-      scopedThreadKey(content.target.threadRef) === parentKey
-    );
-  });
-}
-
-function claimWorkspacePane(area: HTMLElement) {
-  const tabId = area.closest<HTMLElement>(PANE_SELECTOR)?.dataset.layoutTabId;
-  if (tabId) useLayoutStore.getState().focusTab(tabId);
 }
 
 function isWorkspaceElementVisible(element: HTMLElement): boolean {
@@ -91,18 +41,6 @@ function isWorkspaceElementVisible(element: HTMLElement): boolean {
     return false;
   const style = getComputedStyle(element);
   if (style.display === "none" || style.visibility === "hidden") return false;
-  const clip = element.closest<HTMLElement>("[data-layout-clip]");
-  if (clip) {
-    const bounds = clip.getBoundingClientRect();
-    const rect = element.getBoundingClientRect();
-    if (
-      rect.right <= bounds.left ||
-      rect.left >= bounds.right ||
-      rect.bottom <= bounds.top ||
-      rect.top >= bounds.bottom
-    )
-      return false;
-  }
   const root = element.getRootNode();
   if (
     root instanceof ShadowRoot &&
@@ -144,58 +82,6 @@ export function canReturnFocusTo(element: HTMLElement) {
   );
 }
 
-let returnedSurfaceFocus: HTMLElement | null = null;
-
-export function isReturnedSurfaceFocus() {
-  return returnedSurfaceFocus !== null && document.activeElement === returnedSurfaceFocus;
-}
-
-export function holdSurfaceFocusOrigin(host: HTMLElement, initialOrigin: Element | null) {
-  const doc = host.ownerDocument;
-  let origin = initialOrigin instanceof HTMLElement ? initialOrigin : null;
-  // A pane's tab strip is portalled outside its content slot.
-  const contains = (target: EventTarget | null) =>
-    target instanceof Element &&
-    (host.contains(target) ||
-      (host.dataset.layoutTabId !== undefined &&
-        target.closest<HTMLElement>("[data-layout-pane-tab]")?.dataset.layoutPaneTab ===
-          host.dataset.layoutTabId));
-  let ownsFocus = contains(doc.activeElement);
-  const remember = (event: FocusEvent) => {
-    const entered = contains(event.target);
-    const from = event.relatedTarget;
-    if (
-      entered &&
-      !ownsFocus &&
-      from instanceof HTMLElement &&
-      !contains(from) &&
-      canReturnFocusTo(from)
-    ) {
-      origin = from;
-    }
-    ownsFocus = entered;
-  };
-  doc.addEventListener("focusin", remember);
-  return () => {
-    doc.removeEventListener("focusin", remember);
-    if (!ownsFocus || !origin || !canReturnFocusTo(origin)) {
-      return;
-    }
-    const tabId = paneId(origin);
-    if (tabId) useLayoutStore.getState().focusTab(tabId);
-    const target = origin;
-    returnedSurfaceFocus = target;
-    target.addEventListener(
-      "blur",
-      () => {
-        if (returnedSurfaceFocus === target) returnedSurfaceFocus = null;
-      },
-      { once: true },
-    );
-    origin.focus({ preventScroll: true });
-  };
-}
-
 /**
  * Brings a restored control into view, innermost scrolling list first.
  * scrollIntoView would also scroll overflow-hidden layout containers out of place.
@@ -209,23 +95,10 @@ function revealInScrollers(target: HTMLElement) {
   }
 }
 
-/** What finds a remembered control again once its surface mounts anew. */
-const describeControl = (element: HTMLElement) => ({
-  tagName: element.tagName,
-  id: element.id,
-  label: element.getAttribute("aria-label"),
-  text: element.matches("button") ? element.textContent : null,
-});
-
 /** Keeps area focus local, like VS Code's layout service focusPart/visible-neighbour actions. */
 export function createWorkspaceFocusController(doc: Document) {
-  // Held weakly: one remembered control would keep its closed surface's whole tree alive.
-  const lastFocused = new Map<
-    string,
-    ReturnType<typeof describeControl> & { element: WeakRef<HTMLElement> }
-  >();
-  let lastArea: HTMLElement | undefined;
-  let lastAreaKey: string | undefined;
+  const lastFocused = new Map<string, HTMLElement>();
+  let lastArea: string | undefined;
   // An area that took focus itself from the keyboard, or the non-tabbable default (the
   // conversation's scroller) standing in for it. Chromium's :focus-visible also matches a
   // clicked area after any later key press, so the ring and window return read this mark.
@@ -252,24 +125,20 @@ export function createWorkspaceFocusController(doc: Document) {
     const area = workspaceArea(event.target);
     if (!area?.dataset.workspaceArea) return;
     if (arrived && standsInFor(event.target, area)) markKeyboardArea(event.target);
-    lastArea = area;
-    const key = workspaceAreaKey(area);
-    lastAreaKey = key;
+    lastArea = area.dataset.workspaceArea;
+    const key = area.dataset.workspaceFocusKey ?? lastArea;
     lastFocused.delete(key);
     // Custom file trees retarget focusin to their nonfocusable shadow host.
     const target = event.composedPath().find((element) => element instanceof HTMLElement);
-    const control = target instanceof HTMLElement ? target : event.target;
-    lastFocused.set(key, { element: new WeakRef(control), ...describeControl(control) });
+    lastFocused.set(key, target instanceof HTMLElement ? target : event.target);
     // Surface history must not retain an unbounded number of detached panel trees.
     if (lastFocused.size > 64) lastFocused.delete(lastFocused.keys().next().value!);
   };
   doc.addEventListener("focusin", remember);
 
   const focusArea = (area: HTMLElement, restore = true, nested = true) => {
-    const key = workspaceAreaKey(area);
-    const remembered = restore ? lastFocused.get(key) : undefined;
-    const previous = remembered?.element.deref();
-    const shape = previous ? describeControl(previous) : remembered;
+    const key = area.dataset.workspaceFocusKey ?? area.dataset.workspaceArea!;
+    const previous = restore ? lastFocused.get(key) : undefined;
     const usable = (element: HTMLElement) =>
       isWorkspaceElementVisible(element) && !element.matches(":disabled");
     const belongs = (element: HTMLElement) => workspaceArea(element) === area && usable(element);
@@ -289,14 +158,17 @@ export function createWorkspaceFocusController(doc: Document) {
     // Panel surfaces may unmount when hidden. Recover the same named control when
     // it mounts again, without sharing focus history between different surface tabs.
     const restored =
-      shape && !previous?.isConnected
+      previous && !previous.isConnected
         ? Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
             (element) =>
               belongs(element) &&
-              element.tagName === shape.tagName &&
-              ((shape.id && element.id === shape.id) ||
-                (shape.label && element.getAttribute("aria-label") === shape.label) ||
-                (shape.text?.trim() && element.textContent === shape.text)),
+              element.tagName === previous.tagName &&
+              ((previous.id && element.id === previous.id) ||
+                (previous.getAttribute("aria-label") &&
+                  element.getAttribute("aria-label") === previous.getAttribute("aria-label")) ||
+                (previous.matches("button") &&
+                  previous.textContent?.trim() &&
+                  element.textContent === previous.textContent)),
           )
         : undefined;
     const surface = area.querySelector<HTMLElement>("[data-right-panel-surface-content]");
@@ -328,7 +200,6 @@ export function createWorkspaceFocusController(doc: Document) {
       const root = target.getRootNode();
       const active = root instanceof ShadowRoot ? root.activeElement : doc.activeElement;
       if (active === target || (active && target.contains(active))) {
-        claimWorkspacePane(area);
         if (target !== area && !isConversation) revealInScrollers(target);
         // Focusing the already focused area fires no focusin, as when F6 has nowhere else to go.
         if (standsInFor(target, area)) markKeyboardArea(target);
@@ -337,50 +208,20 @@ export function createWorkspaceFocusController(doc: Document) {
     }
     return false;
   };
-  const focus = (
-    name: string,
-    restore = true,
-    selector?: string,
-    preferredPane?: string,
-    surfaceTarget?: WorkspaceFocusTarget["surface"],
-  ) => {
+  const focus = (name: string, restore = true, selector?: string) => {
     const areas = Array.from(doc.querySelectorAll<HTMLElement>(AREA_SELECTOR)).filter(
       isWorkspaceElementVisible,
     );
-    const findArea = (candidates: HTMLElement[]) =>
+    const area =
       name === "content"
-        ? (candidates.find((element) => element.dataset.workspaceArea === "composer") ??
-          candidates.find(
+        ? (areas.find((element) => element.dataset.workspaceArea === "composer") ??
+          areas.find(
             (element) =>
-              element.dataset.workspaceArea === "pull-requests" ||
-              element.dataset.workspaceArea === "issues" ||
-              element.dataset.workspaceArea === "workflows" ||
-              element.matches("main"),
+              element.dataset.workspaceArea === "pull-requests" || element.matches("main"),
           ) ??
-          candidates.find((element) => element.dataset.workspaceArea === "conversation") ??
-          candidates.find((element) => element.dataset.workspaceArea === "panel") ??
-          candidates.find((element) => element.dataset.workspaceArea === "launcher"))
-        : candidates.find((element) => element.dataset.workspaceArea === name);
-    const currentPane =
-      preferredPane ??
-      paneId(doc.activeElement) ??
-      doc.querySelector<HTMLElement>('[data-layout-pane-focused="true"]')?.dataset.layoutTabId;
-    const surfaceTab = surfaceTarget
-      ? findLayoutTab(
-          useLayoutStore.getState().layout,
-          (tab) =>
-            tab.content.kind === "surface" &&
-            scopedThreadKey(tab.content.threadRef) === surfaceTarget.threadKey &&
-            tab.content.surfaceId === surfaceTarget.surfaceId,
-        )?.tab.id
-      : undefined;
-    const localArea = findArea(areas.filter((element) => paneId(element) === currentPane));
-    const area = surfaceTarget
-      ? surfaceTab && findArea(areas.filter((element) => paneId(element) === surfaceTab))
-      : (localArea ??
-        (currentPane && (name === "content" || name === "panel" || name === "details")
-          ? undefined
-          : findArea(areas)));
+          areas.find((element) => element.dataset.workspaceArea === "conversation") ??
+          areas.find((element) => element.dataset.workspaceArea === "panel"))
+        : areas.find((element) => element.dataset.workspaceArea === name);
     if (!area) return false;
     const surface = area.querySelector("[data-right-panel-surface-content]");
     // A lazy surface's Suspense fallback is empty. Wait for its content instead
@@ -391,9 +232,7 @@ export function createWorkspaceFocusController(doc: Document) {
       const target = area.querySelector<HTMLElement>(selector);
       if (!target || !isWorkspaceElementVisible(target)) return false;
       target.focus({ preventScroll: true });
-      if (doc.activeElement !== target) return false;
-      claimWorkspacePane(area);
-      return true;
+      return doc.activeElement === target;
     }
     return focusArea(area, restore);
   };
@@ -423,41 +262,20 @@ export function createWorkspaceFocusController(doc: Document) {
       )
     )
       return false;
-    const groups = new Map<HTMLElement, HTMLElement[]>();
-    for (const area of (appModal ?? doc).querySelectorAll<HTMLElement>(AREA_SELECTOR)) {
-      if (!isWorkspaceElementVisible(area)) continue;
-      const group = area.closest<HTMLElement>(PANE_SELECTOR) ?? area;
-      const areas = groups.get(group) ?? [];
-      areas.push(area);
-      groups.set(group, areas);
-    }
-    const order = (area: HTMLElement) => Number(area.dataset.workspaceOrder);
-    const areas = Array.from(groups.values())
-      .map((group) => group.sort((left, right) => order(left) - order(right)))
-      .sort((left, right) => order(left[0]!) - order(right[0]!))
-      .flat();
+    const areas = Array.from((appModal ?? doc).querySelectorAll<HTMLElement>(AREA_SELECTOR))
+      .filter(isWorkspaceElementVisible)
+      .sort(
+        (left, right) => Number(left.dataset.workspaceOrder) - Number(right.dataset.workspaceOrder),
+      );
     if (areas.length === 0) return false;
-    const activeArea = doc.activeElement ? workspaceArea(doc.activeElement) : null;
-    const currentArea = fromArea
-      ? (areas.find(
-          (area) =>
-            area.dataset.workspaceArea === fromArea &&
-            area.closest('[data-layout-pane-focused="true"]'),
-        ) ?? areas.find((area) => area.dataset.workspaceArea === fromArea))
-      : (activeArea ?? lastArea);
-    const currentKey = activeArea ? workspaceAreaKey(activeArea) : lastAreaKey;
-    // A side chat nests areas with the main chat's names, so the focused area itself wins.
-    const exact = currentArea ? areas.indexOf(currentArea) : -1;
+    const activeArea = doc.activeElement?.closest<HTMLElement>(AREA_SELECTOR);
+    const currentId = fromArea ?? activeArea?.dataset.workspaceArea ?? lastArea;
+    // A side chat nests areas with the main chat's names, so prefer the focused element.
+    const activeIndex = fromArea || !activeArea ? -1 : areas.indexOf(activeArea);
     const current =
-      exact === -1
-        ? areas.findIndex((area) => !fromArea && workspaceAreaKey(area) === currentKey)
-        : exact;
-    // Shift+F6 leaves a side chat for its main chat's message box in one press, as on main.
-    const parentComposer =
-      direction === -1 && current !== -1
-        ? sideChatParentComposer(areas[current]!, areas)
-        : undefined;
-    if (parentComposer && focusArea(parentComposer, true, false)) return true;
+      activeIndex === -1
+        ? areas.findIndex((area) => area.dataset.workspaceArea === currentId)
+        : activeIndex;
     const index =
       current === -1
         ? direction === 1
@@ -473,11 +291,8 @@ export function createWorkspaceFocusController(doc: Document) {
   const recover = (event: FocusEvent) => {
     const lost = event.target;
     if (!(lost instanceof HTMLElement) || event.relatedTarget) return;
-    const lostArea = workspaceArea(lost);
-    const lostAreaKey = lostArea ? workspaceAreaKey(lostArea) : undefined;
-    // Focus lost inside the timeline goes back to that pane's composer, as on main.
-    const toComposer = lostArea?.dataset.workspaceArea === "conversation";
-    const tabId = lost.closest<HTMLElement>(PANE_SELECTOR)?.dataset.layoutTabId;
+    const areaName = workspaceArea(lost)?.dataset.workspaceArea;
+    const recoveryArea = areaName === "conversation" ? "composer" : areaName;
     const label = lost.getAttribute("aria-label");
     requestAnimationFrame(() => {
       if (
@@ -488,16 +303,8 @@ export function createWorkspaceFocusController(doc: Document) {
         (isWorkspaceElementVisible(lost) && !lost.matches(":disabled"))
       )
         return;
-      const layout = selectIntendedLayout();
-      if (
-        tabId &&
-        findLayoutTab(layout, (tab) => tab.id === tabId) &&
-        selectFocusedTab(layout)?.id !== tabId
-      )
-        return;
       const remounted = Array.from(doc.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
         (element) =>
-          element.closest<HTMLElement>(PANE_SELECTOR)?.dataset.layoutTabId === tabId &&
           element.tagName === lost.tagName &&
           ((lost.id && element.id === lost.id) ||
             (label && element.getAttribute("aria-label") === label)) &&
@@ -505,17 +312,7 @@ export function createWorkspaceFocusController(doc: Document) {
           !element.matches(":disabled"),
       );
       if (remounted) remounted.focus({ preventScroll: true });
-      else if (toComposer) {
-        if (!focus("composer", true, undefined, tabId)) focus("content");
-      } else {
-        const area = lostAreaKey
-          ? Array.from(doc.querySelectorAll<HTMLElement>(AREA_SELECTOR)).find(
-              (candidate) =>
-                workspaceAreaKey(candidate) === lostAreaKey && isWorkspaceElementVisible(candidate),
-            )
-          : undefined;
-        if (!area || !focusArea(area)) focus("content");
-      }
+      else if (!recoveryArea || !focus(recoveryArea)) focus("content");
     });
   };
   doc.addEventListener("focusout", recover);
@@ -523,14 +320,12 @@ export function createWorkspaceFocusController(doc: Document) {
   // A request names a destination React has not committed yet, so it retries as the
   // DOM changes. User input cancels it, and it gives up after two seconds.
   let pending: WorkspaceFocusTarget | undefined;
-  let pendingPane: string | undefined;
   let frame = 0;
   let deadline = 0;
   let cancelOnInput = false;
   const observer = new MutationObserver(() => schedule());
   const cancelRequest = () => {
     pending = undefined;
-    pendingPane = undefined;
     cancelOnInput = false;
     observer.disconnect();
     cancelAnimationFrame(frame);
@@ -539,19 +334,12 @@ export function createWorkspaceFocusController(doc: Document) {
   const schedule = () => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
-      if (
-        pending &&
-        focus(pending.area, pending.restore, pending.selector, pendingPane, pending.surface)
-      )
-        cancelRequest();
+      if (pending && focus(pending.area, pending.restore, pending.selector)) cancelRequest();
     });
   };
   const request = (target: WorkspaceFocusTarget) => {
     cancelRequest();
     pending = target;
-    pendingPane =
-      paneId(doc.activeElement) ??
-      doc.querySelector<HTMLElement>('[data-layout-pane-focused="true"]')?.dataset.layoutTabId;
     // The key or click that made the request may still be propagating.
     queueMicrotask(() => {
       if (pending === target) cancelOnInput = true;
@@ -610,24 +398,13 @@ export function startWorkspaceFocus(router: AnyRouter): () => void {
       if (previous.userActionRevisionByThreadKey[threadKey] === revision) continue;
       const next = state.byThreadKey[threadKey];
       const before = previous.byThreadKey[threadKey];
-      if (
-        next?.isOpen &&
-        next.activeSurfaceId &&
-        (!before?.isOpen || next.activeSurfaceId !== before.activeSurfaceId)
-      )
-        requestWorkspaceFocus({
-          area: "panel",
-          surface: { threadKey, surfaceId: next.activeSurfaceId },
-        });
+      if (next?.isOpen && (!before?.isOpen || next.activeSurfaceId !== before.activeSurfaceId))
+        requestWorkspaceFocus({ area: "panel" });
     }
   });
   const stopRoute = router.subscribe("onResolved", ({ fromLocation, toLocation }) => {
     if (toLocation.pathname === "/pull-requests" && fromLocation?.pathname !== "/pull-requests")
       requestWorkspaceFocus({ area: "pull-requests" });
-    if (toLocation.pathname === "/issues" && fromLocation?.pathname !== "/issues")
-      requestWorkspaceFocus({ area: "issues" });
-    if (toLocation.pathname === "/workflows" && fromLocation?.pathname !== "/workflows")
-      requestWorkspaceFocus({ area: "workflows" });
   });
   return () => {
     stopPanels();
@@ -646,16 +423,6 @@ export function moveWorkspaceFocus(direction: 1 | -1, fromArea?: string): boolea
 export function requestWorkspaceFocus(target: WorkspaceFocusTarget) {
   focusRequestVersion++;
   controller?.request(target);
-}
-
-/** Puts the keyboard in the message box of the side chat a surface tab shows. */
-export function requestSideChatComposerFocus(threadRef: ScopedThreadRef, surfaceId: string) {
-  const threadId = surfaceId.slice("thread:".length);
-  requestWorkspaceFocus({
-    area: "panel",
-    surface: { threadKey: scopedThreadKey(threadRef), surfaceId },
-    selector: `[data-side-chat-pane="${CSS.escape(threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
-  });
 }
 
 export function requestWorkspaceContentFocus() {

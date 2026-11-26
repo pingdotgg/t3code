@@ -7,21 +7,26 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import {
   THREAD_DETAILS_PANEL_ROW_CLASS,
-  THREAD_DETAILS_PANEL_CHOICE_ROW_CLASS,
+  THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
   THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   THREAD_DETAILS_PANEL_META_ACTION_CLASS,
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_SELECT_LABEL_CLASS,
+  THREAD_DETAILS_PANEL_SELECT_ICON_CLASS,
 } from "./threadDetailsPanelStyles";
-import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
-  heading:
-    // oxlint-disable-next-line t3code/no-untranslated-copy -- class names, not copy
-    "flex min-w-0 flex-1 items-center gap-2 rounded-md text-left text-caption text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-  usage:
-    "col-span-full col-start-1 row-start-1 grid min-w-0 grid-cols-subgrid items-center rounded-md text-left text-meta text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-  choice: THREAD_DETAILS_PANEL_CHOICE_ROW_CLASS,
+  title: cn(
+    THREAD_DETAILS_PANEL_ROW_CLASS,
+    "h-auto min-h-8 items-start pt-1.5 pb-0 disabled:opacity-100 sm:h-auto [&>svg]:mt-px",
+  ),
+  select: THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
+  primary: THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
+  secondary: THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
   icon: THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   meta: THREAD_DETAILS_PANEL_META_ACTION_CLASS,
 };
@@ -31,7 +36,6 @@ export function ThreadDetailsControl({
   part = "row",
   multiline = false,
   tone = "default",
-  chevronAlign = "text",
   className,
   children,
   size = "default",
@@ -43,8 +47,6 @@ export function ThreadDetailsControl({
   part?: keyof typeof parts;
   multiline?: boolean;
   tone?: "default" | "muted" | "primary" | "destructive";
-  /** A choice row's chevron lines up with the text or the 12px icons ending the rows around it. */
-  chevronAlign?: "text" | "icon";
 }) {
   const control = useRender({
     defaultTagName: "button",
@@ -52,29 +54,38 @@ export function ThreadDetailsControl({
     props: mergeProps<"button">(
       {
         type: render ? undefined : "button",
-        ...({ "data-part": part } as Record<string, string>),
+        // The touch target stays centered within the panel's 32px rows; spilling past them makes scrolling lists overflow.
         className: cn(
+          "relative inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap border outline-none transition-[box-shadow,scale] [&:not([aria-haspopup]):not(:disabled):not([aria-disabled=true])]:will-change-[scale] [&:active:not([aria-haspopup])]:scale-[0.97] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:after:absolute pointer-coarse:after:top-1/2 pointer-coarse:after:left-1/2 pointer-coarse:after:size-full pointer-coarse:after:min-h-8 pointer-coarse:after:min-w-8 pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 [&_svg]:shrink-0",
           parts[part],
-          multiline && "h-auto min-h-9 py-1.5 disabled:opacity-100 sm:h-auto sm:min-h-9",
-          tone === "muted" && "text-muted-foreground hover:text-foreground",
-          tone === "primary" && "text-primary hover:text-primary",
+          multiline && "h-auto min-h-8 py-1.5 disabled:opacity-100 sm:h-auto",
+          tone === "muted" && "text-muted-foreground hover:text-foreground/80",
+          tone === "primary" &&
+            // The row surface forces a faint hover fill with !important; the pill keeps its own.
+            "bg-black/[0.035] text-foreground/80 hover:text-foreground hover:!bg-black/[0.06] data-pressed:!bg-black/[0.06] dark:bg-white/[0.08] dark:hover:!bg-white/[0.12] dark:data-pressed:!bg-white/[0.12]",
           tone === "destructive" &&
-            "text-destructive-foreground hover:text-destructive-foreground data-pressed:text-destructive-foreground",
+            "text-destructive hover:text-destructive data-pressed:text-destructive",
+          // Keep the inset focus ring clear of the 20px PR action label.
+          part === "meta" &&
+            (tone === "primary" || tone === "destructive") &&
+            "h-5 focus-visible:ring-1 focus-visible:ring-offset-0",
+          part === "meta" &&
+            tone === "destructive" &&
+            "bg-destructive/10 hover:!bg-destructive/16 data-pressed:!bg-destructive/16 dark:hover:!bg-destructive/16 dark:data-pressed:!bg-destructive/16",
           className,
         ),
       },
       props,
       {
         children:
-          part === "choice" ? (
+          part === "select" ? (
             <>
-              {children}
-              <ChevronRightIcon
-                className={cn(
-                  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-                  chevronAlign === "icon" && "me-0",
-                )}
-              />
+              <span data-slot="select-label" className={THREAD_DETAILS_PANEL_SELECT_LABEL_CLASS}>
+                {children}
+              </span>
+              <span data-slot="select-icon" className={THREAD_DETAILS_PANEL_SELECT_ICON_CLASS}>
+                <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
+              </span>
             </>
           ) : (
             children

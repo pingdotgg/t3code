@@ -7,7 +7,6 @@ import type { ReactNode } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
-import { THREAD_LIST_V2_SIDEBAR_ROW_STYLE } from "../threads/thread-list-v2-row-appearance";
 import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -54,7 +53,7 @@ const resolveOptions = <Key extends string>(
 const ROW_STYLE =
   Platform.OS === "android"
     ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }
-    : { paddingTop: 16, paddingBottom: 10, gap: 8 };
+    : { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
 const id = (field: string, value: string) => JSON.stringify([field, value]);
 function choices(field: string, options: Readonly<Record<string, string>>, selected: string) {
   return Object.entries(options).map(([value, title]) => ({
@@ -65,7 +64,6 @@ function choices(field: string, options: Readonly<Record<string, string>>, selec
 }
 
 type ProjectOrder = readonly {
-  readonly label: string;
   readonly memberProjectRefs: readonly ScopedProjectRef[];
   readonly pinned: boolean;
   readonly archived: boolean;
@@ -75,7 +73,6 @@ const sameProjectOrder = (previous: ProjectOrder, next: ProjectOrder) =>
   previous.every((group, index) => {
     const members = next[index]!.memberProjectRefs;
     return (
-      group.label === next[index]!.label &&
       group.pinned === next[index]!.pinned &&
       group.archived === next[index]!.archived &&
       group.memberProjectRefs.length === members.length &&
@@ -101,7 +98,6 @@ const sidebarProjectOrderFamily = Atom.family((mode: SidebarProjectGroupingMode)
       pendingTasks: [],
       projectSortOrder: "updated_at",
     }).map((scope) => ({
-      label: scope.title,
       memberProjectRefs: scope.projectRefs,
       pinned: scope.pinned,
       archived: scope.archived,
@@ -109,9 +105,12 @@ const sidebarProjectOrderFamily = Atom.family((mode: SidebarProjectGroupingMode)
   ).pipe(Atom.withEquality(sameProjectOrder)),
 );
 
-export function usePullRequestProjectGroups() {
+function useProjectsInSidebarOrder<Project extends { id: string; environmentId: string }>(
+  projects: readonly Project[],
+) {
   const { sidebarProjectGroupingMode } = useMobileProjectGroupingSettings();
-  return useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
+  const scopes = useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
+  return sortProjectsByGroupOrder(projects, scopes);
 }
 
 export interface PullRequestFilterMenu {
@@ -141,7 +140,7 @@ export function usePullRequestListFilters(props: {
 }) {
   const { value } = props;
   const m = useMessages();
-  const projects = sortProjectsByGroupOrder(props.projects, usePullRequestProjectGroups());
+  const projects = useProjectsInSidebarOrder(props.projects);
   const selectedLabels = value.filters.labels?.flat() ?? [];
   const selectedLabelSet = new Set(selectedLabels);
   const author = value.filters.author;
@@ -433,16 +432,11 @@ export function PullRequestListFilters(props: {
       horizontal
       showsHorizontalScrollIndicator={false}
       style={{ overflow: "visible" }}
-      // The first pill lines up with the rows' content: iOS rows use `px-4` on phone and the
-      // card padding in the sidebar; Android sidebar rows sit at 8dp margin + 12dp padding.
-      contentContainerClassName={Platform.OS === "ios" && !props.sidebar ? "px-4" : undefined}
+      // In the Android sidebar the first pill lines up with the rows' content instead
+      // (8dp row margin + 12dp padding).
       contentContainerStyle={
-        props.sidebar
-          ? {
-              ...ROW_STYLE,
-              paddingHorizontal:
-                Platform.OS === "android" ? 20 : THREAD_LIST_V2_SIDEBAR_ROW_STYLE.paddingHorizontal,
-            }
+        props.sidebar && Platform.OS === "android"
+          ? { ...ROW_STYLE, paddingHorizontal: 20 }
           : ROW_STYLE
       }
     >

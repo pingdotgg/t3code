@@ -1,7 +1,7 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
-import { T, useGT } from "gt-react";
+import { useGT } from "gt-react";
 import { useState, type CSSProperties } from "react";
 
 import { observeIntersection } from "../../lib/observeIntersection";
@@ -9,7 +9,6 @@ import { cn } from "../../lib/utils";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { Button } from "../ui/button";
 import { OpenMediaLink } from "./OpenMediaLink";
-import { VideoTransport } from "./MediaTransport";
 import { MediaActions, type MediaActionSource } from "./MediaActions";
 
 interface MediaVideoPlayerProps {
@@ -29,12 +28,6 @@ interface MediaVideoPlayerProps {
   readonly copyMarkdown?: string | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
-  /** "custom" swaps the browser's controls for the redesign's transport bar. */
-  readonly transport?: "native" | "custom" | undefined;
-  /** Reports the intrinsic size and length once metadata loads. */
-  readonly onMetadata?:
-    | ((metadata: { width: number; height: number; duration: number }) => void)
-    | undefined;
 }
 
 export function MediaVideoPlayer({
@@ -54,13 +47,8 @@ export function MediaVideoPlayer({
   copyMarkdown,
   onRetry,
   actionsSource,
-  transport = "native",
-  onMetadata,
 }: MediaVideoPlayerProps) {
   const gt = useGT();
-  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
-  const [playerElement, setPlayerElement] = useState<HTMLSpanElement | null>(null);
-  const customTransport = transport === "custom" && !onOpen;
   const [playbackSource, setPlaybackSource] = useState<{
     src: string;
     revision: string | null;
@@ -89,7 +77,6 @@ export function MediaVideoPlayer({
 
   // Retry and failure remount the element, so its listeners live and die with it.
   const attachVideo = (video: HTMLVideoElement) => {
-    setVideo(video);
     const pauseWhenHidden = () => {
       // Native fullscreen can hide the inline page while this video is still visible.
       const fullscreen =
@@ -105,7 +92,6 @@ export function MediaVideoPlayer({
       document.removeEventListener("fullscreenchange", pauseWhenHidden);
       video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
       video.pause();
-      setVideo(null);
       // A detached element's pause event never reaches onPause.
       setPlaying(false);
     };
@@ -113,7 +99,6 @@ export function MediaVideoPlayer({
 
   // On the wrapper, not the video: re-running the video's ref callback would pause playback.
   const observePreload = (player: HTMLSpanElement) => {
-    setPlayerElement(player);
     if (src === null || failed || preload === "metadata" || preloaded) return;
     return observeIntersection(
       player,
@@ -143,12 +128,7 @@ export function MediaVideoPlayer({
   const player = (
     <span
       ref={observePreload}
-      className={cn(
-        "relative inline-block align-middle",
-        customTransport &&
-          "[&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:bg-black",
-        className,
-      )}
+      className={cn("relative inline-block align-middle", className)}
       style={style}
       data-markdown-copy={copyMarkdown}
     >
@@ -162,10 +142,8 @@ export function MediaVideoPlayer({
         >
           <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
             <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-            <T>Video unavailable</T>
+            {[gt("Video unavailable"), label, unavailableDetail].filter(Boolean).join(" · ")}
           </span>
-          {label ? <span>{label}</span> : null}
-          {unavailableDetail ? <span>{unavailableDetail}</span> : null}
           <span className="flex flex-wrap items-center justify-center gap-2">
             {latestSrc !== null || onRetry ? (
               <Button
@@ -189,7 +167,7 @@ export function MediaVideoPlayer({
           aria-label={label || gt("Video preview")}
           aria-hidden={onOpen ? true : undefined}
           autoPlay={onOpen ? false : autoPlay}
-          controls={!onOpen && !customTransport}
+          controls={!onOpen}
           muted={onOpen ? true : undefined}
           playsInline
           preload={preload === "metadata" || preloaded ? "metadata" : "none"}
@@ -200,24 +178,9 @@ export function MediaVideoPlayer({
           )}
           style={style}
           onLoadedMetadata={(event) => {
-            const video = event.currentTarget;
-            prepareVideoFirstFrame(video);
+            prepareVideoFirstFrame(event.currentTarget);
             if (sourceRevision !== null) setPlaybackSource({ src, revision: sourceRevision });
-            onMetadata?.({
-              width: video.videoWidth,
-              height: video.videoHeight,
-              duration: video.duration,
-            });
           }}
-          onClick={
-            customTransport
-              ? (event) => {
-                  const video = event.currentTarget;
-                  if (video.paused || video.ended) void video.play().catch(() => undefined);
-                  else video.pause();
-                }
-              : undefined
-          }
           onPlay={() => {
             setPlaying(true);
             setPlaybackSource({ src, revision: sourceRevision });
@@ -238,9 +201,6 @@ export function MediaVideoPlayer({
           style={style}
         />
       )}
-      {customTransport && src !== null && !failed ? (
-        <VideoTransport video={video} fullscreenTarget={playerElement} />
-      ) : null}
       {onOpen ? (
         <button
           type="button"

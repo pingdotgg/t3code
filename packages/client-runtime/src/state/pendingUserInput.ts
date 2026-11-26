@@ -17,13 +17,6 @@ export interface PendingUserInputDraftAnswer {
 
 export type PendingUserInputAnswer = string | ReadonlyArray<string>;
 
-/** Providers may group questions into one request or issue several requests at once. */
-export function countPendingUserInputQuestions(
-  requests: ReadonlyArray<{ readonly questions: ReadonlyArray<PendingUserInputQuestion> }>,
-): number {
-  return requests.reduce((count, request) => count + request.questions.length, 0);
-}
-
 function normalizeDraftAnswer(value: string | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -167,7 +160,10 @@ export function togglePendingUserInputOptionSelection(
   };
 }
 
-/** Every question's answer keyed by question id, or null while any is unanswered. */
+/**
+ * The answers to submit keyed by question id, or null while a question still needs one.
+ * An optional single choice left unselected is skipped: it gets no entry.
+ */
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<PendingUserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
@@ -175,8 +171,10 @@ export function buildPendingUserInputAnswers(
   const entries: Array<[string, PendingUserInputAnswer]> = [];
 
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
+    const draft = draftAnswers[question.id];
+    const answer = resolvePendingUserInputAnswer(question, draft);
     if (answer === null) {
+      if (question.required === false && !draft?.attachmentsBlocked) continue;
       return null;
     }
     entries.push([question.id, answer]);

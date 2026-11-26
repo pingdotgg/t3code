@@ -5,7 +5,6 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { formatModelSlugName } from "@t3tools/shared/model";
 import { RegistryContext } from "@effect/atom-react";
 import { T, useGT } from "gt-react";
 import {
@@ -18,11 +17,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDownIcon } from "lucide-react";
-import { Kbd } from "../ui/kbd";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
@@ -36,6 +32,7 @@ import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /** Holds the page still behind the open picker; its lifetime is the popup element's. */
 function lockBackgroundScroll(popup: HTMLElement | null) {
@@ -113,11 +110,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   open?: boolean;
   popupAlign?: "start" | "end";
   triggerClassName?: string;
-  triggerVariant?: "toolbar" | "settings";
   triggerLabel?: string;
   triggerAriaLabel?: string;
-  /** Extra controls under the model list, such as the model's traits in settings. */
-  popupFooter?: ReactNode;
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -182,9 +176,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? gt("Choose model")
-      : props.model
-        ? formatModelSlugName(props.model)
-        : gt("Choose model");
+      : props.model || gt("Choose model");
   const withUnavailable = (model: string, isUnavailable: boolean | undefined) =>
     isUnavailable ? gt("{model} (Unavailable)", { model }) : model;
   const triggerLabel = selectedModel
@@ -280,13 +272,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const allModelNames = selectedEntries
     ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || gt("Choose models")
     : undefined;
-  const triggerTooltipContent = (
-    <span className="flex flex-col gap-1">
-      <span>{props.triggerLabel ?? allModelNames ?? triggerLabel}</span>
-      {props.triggerDetail ? <span>{props.triggerDetail}</span> : null}
-      {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
-    </span>
-  );
+  const triggerTooltipContent = [
+    props.triggerLabel ?? allModelNames ?? triggerLabel,
+    props.triggerDetail,
+    shortcutLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
   const triggerTextProps = {
@@ -366,7 +358,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               .filter(Boolean)
               .join(", ")}
             size={size}
-            variant={props.triggerVariant ?? "toolbar"}
             data-chat-provider-model-picker="true"
             data-composer-shortcut={props.triggerShortcuts}
             onClick={(event) => {
@@ -410,13 +401,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       accentColor={selection.entry.accentColor}
                       acpRegistryAgentId={selection.entry.acpRegistryAgentId}
                       acpRegistryIconUrl={selection.entry.acpRegistryIconUrl}
-                      className="size-4 rounded-full bg-(--chat-composer-surface,var(--background)) ring-2 ring-(--chat-composer-surface,var(--background))"
+                      className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
                       iconClassName="size-4"
                     />
                   ) : null,
                 )}
               {selectedEntries.length > 3 ? (
-                <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-surface,var(--background))">
+                <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-glass-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-glass-surface,var(--background))">
                   +{selectedEntries.length - 3}
                 </span>
               ) : null}
@@ -432,10 +423,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
                 showBadge={showInstanceBadge}
                 className="size-4"
-                iconClassName={cn(
-                  props.triggerVariant === "settings" ? "size-3.5" : "size-[11px]",
-                  props.activeProviderIconClassName,
-                )}
+                iconClassName={cn("size-4", props.activeProviderIconClassName)}
                 indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
                 badgeClassName={cn(
                   "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
@@ -447,10 +435,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {props.isComposerOwned ? (
             <span {...triggerTextProps}>{triggerText}</span>
           ) : (
-            <Tooltip>
-              <TooltipTrigger render={<span {...triggerTextProps} />}>{triggerText}</TooltipTrigger>
-              <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<span {...triggerTextProps} />}
+              label={triggerTooltipContent}
+            >
+              {triggerText}
+            </SharedTooltipTrigger>
           )}
           {props.triggerSuffix}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
@@ -459,13 +449,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </Badge>
           ) : null}
         </span>
-        {props.triggerVariant === "settings" ? (
-          <ChevronDownIcon
-            aria-hidden="true"
-            className="size-3.5 shrink-0 text-muted-foreground"
-            data-composer-control-chevron
-          />
-        ) : null}
       </PopoverTrigger>
       <PopoverPopup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
@@ -518,7 +501,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         {props.selectedModels === undefined && !docked ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
         ) : null}
-        {props.popupFooter}
       </PopoverPopup>
     </Popover>
   );

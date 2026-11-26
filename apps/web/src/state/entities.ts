@@ -305,6 +305,12 @@ export function readProjects(): ReadonlyArray<EnvironmentProject> {
   return appAtomRegistry.get(environmentProjects.projectsAtom);
 }
 
+export function subscribeProjects(
+  listener: (projects: ReadonlyArray<EnvironmentProject>) => void,
+): () => void {
+  return appAtomRegistry.subscribe(environmentProjects.projectsAtom, listener);
+}
+
 export function waitForProject(
   ref: ScopedProjectRef,
   timeoutMs = 10_000,
@@ -349,15 +355,6 @@ export function readThreadTurnItems(ref: ScopedThreadRef) {
 
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
-}
-
-/** The shell list leaves out idle subagents, so an open one's lineage comes from its detail. */
-export function readThreadLineage(ref: ScopedThreadRef) {
-  return (
-    readThreadShell(ref)?.lineage ??
-    appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection.thread.lineage ??
-    null
-  );
 }
 
 export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Promise<boolean> {
@@ -441,14 +438,9 @@ export function selectThreadRelationshipShells(
   const current = threads.find((thread) => thread.id === threadId);
   const currentParentId = current === undefined ? null : shellParentThreadId(current);
   if (currentParentId !== null) named.add(currentParentId);
-  return threads.filter((thread) => {
-    const parentId = shellParentThreadId(thread);
-    return (
-      named.has(thread.id) ||
-      parentId === threadId ||
-      (currentParentId !== null && parentId === currentParentId)
-    );
-  });
+  return threads.filter(
+    (thread) => named.has(thread.id) || shellParentThreadId(thread) === threadId,
+  );
 }
 
 const relationshipShellsAtomFamily = Atom.family((key: string) => {

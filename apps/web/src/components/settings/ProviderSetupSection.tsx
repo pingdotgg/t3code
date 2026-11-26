@@ -22,10 +22,9 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
-import { Meter } from "../ui/meter";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ProviderSetupSectionProps {
   readonly environmentId: EnvironmentId;
@@ -66,7 +65,7 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
               {props.environmentLabel}
             </span>
             {!props.enabled && !props.readOnly ? (
-              <Button size="sm" variant="secondary" onClick={props.onEnable}>
+              <Button size="sm" variant="outline" onClick={props.onEnable}>
                 <T>Enable Antigravity</T>
               </Button>
             ) : null}
@@ -249,9 +248,13 @@ function ProviderSetupActions({
               {installation?.phase === "downloading" &&
               installation.totalBytes !== null &&
               installation.totalBytes > 0 ? (
-                <Meter
-                  role="progressbar"
+                <progress
                   aria-label={gt("Antigravity download")}
+                  // Forced-colors mode repaints the track and fill as Canvas, and
+                  // appearance:auto cannot bring the native widget back: the
+                  // preflight border reset marks every <progress> as author-styled,
+                  // so Chromium keeps its fallback paint. Use system colors instead.
+                  className="block h-1 w-full appearance-none overflow-hidden rounded-full bg-muted forced-colors:border [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary forced-colors:[&::-moz-progress-bar]:bg-[Highlight] [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary forced-colors:[&::-webkit-progress-value]:bg-[Highlight]"
                   value={installation.downloadedBytes}
                   max={installation.totalBytes}
                 />
@@ -269,7 +272,7 @@ function ProviderSetupActions({
                 {installActive && installation.operationId ? (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     disabled={actionsDisabled}
                     onClick={() => {
                       const operationId = installation.operationId;
@@ -284,7 +287,7 @@ function ProviderSetupActions({
                 ) : !installActive && provider.setup?.canInstall ? (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     disabled={actionsDisabled || authActive}
                     onClick={() =>
                       void runCommand(gt("Starting installation"), () => startInstall(target))
@@ -304,25 +307,25 @@ function ProviderSetupActions({
                 ) : null}
               </div>
               {installation?.canRemove && !installActive ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        className="col-start-1 row-start-1"
-                        aria-label={gt("Remove downloaded runtime")}
-                        disabled={actionsDisabled || authActive}
-                        onClick={() => void removeRuntime()}
-                      />
-                    }
-                  >
-                    <Trash2Icon className="size-3.5" />
-                  </TooltipTrigger>
-                  <TooltipPopup>
-                    <T>Remove downloaded runtime</T>
-                  </TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="col-start-1 row-start-1"
+                      aria-label={gt("Remove downloaded runtime")}
+                      disabled={actionsDisabled || authActive}
+                      onClick={() => void removeRuntime()}
+                    />
+                  }
+                  label={
+                    <>
+                      <T>Remove downloaded runtime</T>
+                    </>
+                  }
+                >
+                  <Trash2Icon className="size-3.5" />
+                </SharedTooltipTrigger>
               ) : null}
             </div>
           </div>
@@ -345,7 +348,7 @@ function ProviderSetupActions({
           {queryError ? (
             <Button
               size="sm"
-              variant="secondary"
+              variant="outline"
               className="w-fit"
               onClick={() => {
                 authQuery.refresh();

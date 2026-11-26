@@ -253,11 +253,12 @@ export function useComposerAttachmentIntake(input: {
           type: "info",
           title: m(msg("Large paste attached as {name}", { name: attached.name })),
           description: m(
-            msg("Use {shortcut} to keep a large paste inline.", {
+            msg("{size} · Use {shortcut} to keep a large paste inline.", {
+              size: formatAttachmentSize(attached.sizeBytes, m),
               shortcut: isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V",
             }),
           ),
-          data: { hideCopyButton: true, body: formatAttachmentSize(attached.sizeBytes, m) },
+          data: { hideCopyButton: true },
         });
       }
     }
@@ -436,10 +437,7 @@ export function useComposerAttachmentIntake(input: {
               "Remove this image from the message?\nIt is referenced in your text; removing it also removes every reference.",
             ),
           ),
-      {
-        variant: "destructive",
-        confirmLabel: m(msg("Remove", { $context: "verb, confirms removing an attachment" })),
-      },
+      { variant: "destructive" },
     );
     if (!confirmation) {
       removeComposerImageFromDraft(imageId);

@@ -8,7 +8,6 @@ import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
-import { PanelFrame } from "../ui/panel-frame";
 import {
   activeWorkflowPaneIndex,
   closeWorkflowPaneTab,
@@ -25,6 +24,7 @@ import WorkflowThreadPane, {
   useOpenThreadPage,
   WorkflowThreadTabLabel,
 } from "./WorkflowThreadPane";
+import { useWorkflowThreadOpen } from "./useWorkflowThreadOpen";
 
 /**
  * The pane beside a run: a tab per transcript or reference opened from it. Only the tab that
@@ -60,22 +60,34 @@ export default function WorkflowPane({
       (reference) => reference.kind === tab.kind && reference.key === tab.key,
     ) ?? null;
   const activeReference = active === undefined || "thread" in active ? null : referenceOf(active);
+  const activeThread = active !== undefined && "thread" in active ? threadOf(active) : null;
+  const activeThreadOpen = useWorkflowThreadOpen(
+    environmentId,
+    activeThread?.environmentId ?? environmentId,
+  ).open;
   const openFull =
     active === undefined
       ? null
       : "thread" in active
-        ? () => openThreadPage(threadOf(active))
+        ? // Nowhere to go while this client neither knows the environment nor reads it through the run's.
+          activeThreadOpen === "unavailable"
+          ? null
+          : () =>
+              openThreadPage(
+                threadOf(active),
+                activeThreadOpen === "linked" ? environmentId : undefined,
+              )
         : activeReference === null
           ? null
           : openReferencePage(activeReference);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PanelFrame.Toolbar density="compact" className="h-(--workspace-topbar-height)">
+      <div className="flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-2 pe-2">
         <div
           role="tablist"
           aria-label={gt("Open beside the run")}
-          className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
+          className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto"
         >
           {tabs.map((tab, index) => (
             <div
@@ -83,18 +95,17 @@ export default function WorkflowPane({
                 "thread" in tab ? `thread:${tab.env ?? ""}:${tab.thread}` : `${tab.kind}:${tab.key}`
               }
               className={cn(
-                "flex max-w-56 min-w-0 shrink-0 items-center rounded-control text-meta",
+                "flex max-w-56 min-w-0 shrink-0 items-center rounded-md text-xs",
                 index === activeIndex
-                  ? "surface-selected text-foreground"
+                  ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <Button
-                variant="ghost"
-                size="xs"
+              <button
+                type="button"
                 role="tab"
                 aria-selected={index === activeIndex}
-                className="min-w-0"
+                className="flex min-w-0 cursor-pointer items-center gap-1.5 py-1 ps-2 pe-1"
                 onClick={() => onChange(openWorkflowPaneTab(state, tab))}
               >
                 {"thread" in tab ? (
@@ -107,7 +118,7 @@ export default function WorkflowPane({
                 ) : (
                   <ReferenceTabLabel reference={referenceOf(tab)} fallback={tab.kind} />
                 )}
-              </Button>
+              </button>
               <Button
                 variant="ghost"
                 size="icon-xs"
@@ -141,11 +152,12 @@ export default function WorkflowPane({
         >
           <XIcon />
         </Button>
-      </PanelFrame.Toolbar>
+      </div>
       <div role="tabpanel" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {active === undefined ? null : "thread" in active ? (
           <WorkflowThreadPane
             key={`${active.env ?? ""}:${active.thread}`}
+            viaEnvironmentId={environmentId}
             threadRef={threadOf(active)}
           />
         ) : activeReference !== null ? (
@@ -155,7 +167,7 @@ export default function WorkflowPane({
             reference={activeReference}
           />
         ) : (
-          <p className="p-3 text-meta text-muted-foreground" role="status">
+          <p className="p-3 text-xs text-muted-foreground" role="status">
             {detail.data === null ? gt("Loading…") : gt("This run no longer lists it.")}
           </p>
         )}

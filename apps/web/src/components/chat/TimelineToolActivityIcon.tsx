@@ -83,7 +83,7 @@ export function ToolActivityIconView(props: {
   muted: boolean;
 }) {
   const { resolvedTheme } = use(TimelineRowCtx);
-  const fallbackClassName = props.className;
+  const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-60");
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
@@ -140,7 +140,12 @@ function NativeAppToolActivityIcon(props: {
     app: props.app,
   });
   if (asset._tag !== "Success") {
-    return <WorkEntryIcon name={props.fallbackName} className={props.className} />;
+    return (
+      <WorkEntryIcon
+        name={props.fallbackName}
+        className={cn(props.className, props.muted && "opacity-70 light:brightness-60")}
+      />
+    );
   }
   const cacheKey = getProjectFaviconCacheKey(
     activeThreadEnvironmentId,
@@ -181,11 +186,18 @@ function ToolActivityImageIcon(props: {
   return (
     <>
       {displayedSrc === null ? (
-        <WorkEntryIcon name={props.fallbackName} className={props.className} />
+        <WorkEntryIcon
+          name={props.fallbackName}
+          className={cn(props.className, props.muted && "opacity-70 light:brightness-60")}
+        />
       ) : null}
       {displayedSrc ? (
         <span
-          className={cn(props.className, "inline-block overflow-hidden rounded-xs bg-background")}
+          className={cn(
+            props.className,
+            "inline-block overflow-hidden rounded-xs bg-background",
+            props.muted && "dark:opacity-70",
+          )}
         >
           <img
             src={displayedSrc}
@@ -193,7 +205,7 @@ function ToolActivityImageIcon(props: {
             aria-hidden
             decoding="async"
             referrerPolicy="no-referrer"
-            className={"block size-full object-contain"}
+            className={cn("block size-full object-contain", props.muted && "light:brightness-70")}
             onError={() => handleLoadError(displayedSrc)}
           />
         </span>

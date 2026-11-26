@@ -25,10 +25,10 @@ interface ImportMeta {
 declare global {
   interface Window {
     desktopBridge?: DesktopBridge;
-    /** Gap diagnostics when opted in; replay helpers are dev-only. */
+    /** Dev builds only, from DevReplayHost. Agents call these from the browser console. */
     t3dev?: {
-      replayScenarios?: () => ReadonlyArray<string>;
-      replay?: (scenario?: string) => Promise<ThreadId>;
-    } & Partial<typeof import("./components/chat/TimelineGapRecorder").timelineGapDevApi>;
+      readonly replayScenarios: () => ReadonlyArray<string>;
+      readonly replay: (scenario?: string) => Promise<ThreadId>;
+    };
   }
 }

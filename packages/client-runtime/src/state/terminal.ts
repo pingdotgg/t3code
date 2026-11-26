@@ -81,14 +81,12 @@ export function createTerminalEnvironmentAtoms<R, E>(
       label: "environment-data:terminal:observe",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
         Stream.suspend(() =>
-          subscribe(WS_METHODS.terminalObserve, input).pipe(
-            Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
-          ),
+          subscribe(WS_METHODS.terminalObserve, {
+            ...input,
+            supportsSnapshotSequenceState: true,
+          }).pipe(Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent)),
         ),
     }),
-    // Attach opens a missing session, so it lives only while a view shows the
-    // terminal: kept idle, a closed terminal's attach would re-subscribe on
-    // the next reconnect and spawn a hidden shell.
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
       // The server sizes the PTY to every attached viewer, so a closed view must detach now.
@@ -101,6 +99,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
             ...input,
             ...(replied ? { resume: true } : {}),
             maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+            supportsSnapshotSequenceState: true,
           })),
         ).pipe(
           Stream.onFirst(() =>

@@ -14,9 +14,6 @@ let slowRpcAckThresholdMs = SLOW_RPC_ACK_THRESHOLD_MS;
 
 export interface SlowRpcAckRequest {
   readonly requestId: string;
-  readonly method: string;
-  /** The environment the request went to, when it has one. */
-  readonly environmentId: string | null;
   readonly startedAt: string;
   readonly startedAtMs: number;
   readonly tag: string;
@@ -71,12 +68,7 @@ function rpcAckThresholdMs(method: string): number {
     : slowRpcAckThresholdMs;
 }
 
-export function trackRpcRequestSent(
-  requestId: string,
-  method: string,
-  tag = method,
-  environmentId: string | null = null,
-): void {
+export function trackRpcRequestSent(requestId: string, method: string, tag = method): void {
   if (!shouldTrackRpcAck(method)) {
     return;
   }
@@ -88,8 +80,6 @@ export function trackRpcRequestSent(
   const thresholdMs = rpcAckThresholdMs(method);
   const request: SlowRpcAckRequest = {
     requestId,
-    method,
-    environmentId,
     startedAt: new Date(startedAtMs).toISOString(),
     startedAtMs,
     tag,

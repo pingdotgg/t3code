@@ -9,13 +9,13 @@ import {
   useCommandPaletteMount,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
-import { Dialog, DialogPopup } from "../components/ui/dialog";
+import { useThemeEditorStore } from "../components/settings/themeEditorStore";
 import { installCommandPaletteCommands } from "./commandPaletteCommands";
 
 const keybindings = compileResolvedKeybindingsConfig([
   { key: "mod+k", command: "commandPalette.toggle" },
-  { key: "mod+p", command: "filePicker.toggle" },
-  { key: "mod+shift+f", command: "projectSearch.toggle" },
+  { key: "mod+alt+shift+t", command: "themeEditor.toggle" },
+  { key: "mod+u", command: "usage.open" },
 ]);
 
 function MountedPalette() {
@@ -25,57 +25,10 @@ function MountedPalette() {
 
 function setup() {
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
+  useThemeEditorStore.setState(useThemeEditorStore.getInitialState(), true);
 }
 
 describe("command palette shortcuts", () => {
-  it.each([
-    { appPage: true, expected: true },
-    { appPage: false, expected: false },
-  ])(
-    "opens over an app page but yields to a dialog: appPage=$appPage",
-    async ({ appPage, expected }) => {
-      setup();
-      using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-      await using screen = await render(
-        <>
-          <MountedPalette />
-          <Dialog open>
-            <DialogPopup aria-label="Settings" data-app-modal={appPage ? "" : undefined}>
-              <input aria-label="Setting" />
-            </DialogPopup>
-          </Dialog>
-        </>,
-        { router: "/settings/appearance" },
-      );
-      using commands = new DisposableStack();
-      commands.defer(
-        installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
-      );
-
-      await userEvent.keyboard("{Control>}k{/Control}");
-
-      expect(useCommandPaletteStore.getState().open).toBe(expected);
-    },
-  );
-  it.each([
-    { mode: "files", keys: "{Control>}p{/Control}" },
-    { mode: "content", keys: "{Control>}{Shift>}f{/Shift}{/Control}" },
-  ])("close direct $mode search on Escape", async ({ mode, keys }) => {
-    setup();
-    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    await using screen = await render(<MountedPalette />, { router: "/" });
-    using commands = new DisposableStack();
-    commands.defer(
-      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
-    );
-
-    await userEvent.keyboard(keys);
-    expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode });
-
-    await userEvent.keyboard("{Escape}");
-    expect(useCommandPaletteStore.getState()).toMatchObject({ open: false, mode });
-  });
-
   it("stay inert on routes without the palette", async () => {
     setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
@@ -90,7 +43,7 @@ describe("command palette shortcuts", () => {
     expect(useCommandPaletteStore.getState().open).toBe(false);
   });
 
-  it("open the palette while it is mounted, and it closes when it unmounts", async () => {
+  it("open the palette while it is mounted, keep it open on repeat, and it closes when it unmounts", async () => {
     setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     await using screen = await render(<MountedPalette />, { router: "/" });
@@ -100,6 +53,17 @@ describe("command palette shortcuts", () => {
     );
 
     await userEvent.keyboard("{Control>}k{/Control}");
+    expect(useCommandPaletteStore.getState().open).toBe(true);
+
+    const repeatEvent = new KeyboardEvent("keydown", {
+      key: "k",
+      ctrlKey: true,
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(repeatEvent);
+    expect(repeatEvent.defaultPrevented).toBe(true);
     expect(useCommandPaletteStore.getState().open).toBe(true);
 
     await screen.rerender(<div />);
@@ -187,6 +151,33 @@ describe("command palette shortcuts", () => {
     input.element().dispatchEvent(freshEscape);
     expect(freshEscape.defaultPrevented).toBe(true);
     expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode: "command" });
+  });
+
+  it("ignore held theme editor and Usage shortcuts", async () => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await render(<MountedPalette />, { router: "/" });
+    using commands = new DisposableStack();
+    commands.defer(
+      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
+    );
+    using navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+
+    for (const keys of [
+      { key: "T", ctrlKey: true, altKey: true, shiftKey: true },
+      { key: "u", ctrlKey: true },
+    ]) {
+      const event = new KeyboardEvent("keydown", {
+        ...keys,
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.body.dispatchEvent(event);
+      expect(event.defaultPrevented, keys.key).toBe(true);
+    }
+    expect(useThemeEditorStore.getState().session).toBeNull();
+    expect(navigate).not.toHaveBeenCalled();
   });
 });
 

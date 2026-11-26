@@ -1,19 +1,12 @@
-import "~/index.css";
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
-  AgentSessionImportProjectChangedError,
   EnvironmentId,
   IssueTrackerKind,
   ORCHESTRATION_V2_WS_METHODS,
-  NodeId,
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   RunId,
-  RuntimeRequestId,
   ThreadId,
-  TurnItemId,
   WS_METHODS,
-  type AgentSessionImportInput,
   type IssueDetail,
   type IssueRef,
   type ThreadIssueLink,
@@ -24,7 +17,6 @@ import {
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
 import type * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
@@ -41,9 +33,8 @@ import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
-import { useLayoutStore } from "~/layout/layoutStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
 import {
@@ -55,7 +46,6 @@ import {
   dispatchedCommands,
   emitThreadEvent,
   hasPendingAssetUrl,
-  fakeDriver,
   installFakeEnvironment,
   rejectPendingCommand,
   threadWithHistory,
@@ -115,7 +105,7 @@ function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
   return { calls, release, [Symbol.dispose]: () => answer[Symbol.dispose]() };
 }
 
-// The socket is the only fake layer; see test/appScenarios.renders.tsx.
+// The socket is the only fake layer.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
   const [actual, { fakeDriver }, Layer] = await Promise.all([
     importOriginal<{ readonly ConnectionDriver: Context.Key<unknown, FakeDriver> }>(),
@@ -143,20 +133,6 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-async function appViewport(width = 1400, height = 900) {
-  const previous = { width: window.innerWidth, height: window.innerHeight };
-  await page.viewport(width, height);
-  return {
-    [Symbol.asyncDispose]: () => page.viewport(previous.width, previous.height),
-  };
-}
-
-function appContainer() {
-  const container = document.createElement("div");
-  container.style.cssText = "height: 100dvh; width: 100%;";
-  return container;
-}
-
 it("opens a linked Linear issue from an inactive thread's sidebar badge", async () => {
   const style = document.createElement("style");
   style.textContent = stylesheet;
@@ -176,7 +152,7 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     url: "https://linear.app/example/issue/WEB-123/add-keyboard-support",
     source: "manual",
     linkedAt: "2026-01-01T00:00:00.000Z",
-    displayKey: issueRef.key,
+    displayKey: "#123",
     title: "Add keyboard support",
   };
   const completed = {
@@ -189,7 +165,22 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   const grouped = threadWithHistory("issue-grouped", 1);
   using _environment = installFakeEnvironment([
     first,
-    { ...linked, issues: [issue] },
+    {
+      ...linked,
+      issues: [issue],
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 124,
+          url: "https://github.com/pingdotgg/t3code/pull/124",
+          source: "manual",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ],
+    },
     { ...grouped, issues: [completed, issue] },
   ]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
@@ -256,15 +247,26 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     name: `Issue ${issue.displayKey}: ${issue.title}, Open`,
   });
   await expect.element(badge).toBeVisible();
-  expect(badge.element().querySelector("svg")).toHaveClass(/text-success-foreground/);
+  expect(badge.element().querySelector("span")).toHaveClass(/text-emerald-600/);
+  expect(badge.element()).toHaveTextContent("123");
+  expect(badge.element()).not.toHaveTextContent("#");
+  const prBadge = page.getByRole("link", { name: "PR #124, status pending" });
+  await expect.element(prBadge).toHaveTextContent("124");
+  for (const control of [badge, prBadge]) {
+    expect(control.element().querySelector("span")).toHaveClass(
+      "contents",
+      "text-xs",
+      "tabular-nums",
+    );
+  }
   const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
   await vi.waitFor(() =>
-    expect(groupedBadge.element().querySelector("svg")).toHaveClass(/text-success-foreground/),
+    expect(groupedBadge.element().querySelector("span")).toHaveClass(/text-emerald-600/),
   );
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });
-  await userEvent.hover(previewLink);
+  await userEvent.hover(previewLink.getByText("sam", { exact: true }));
   await expect.element(previewLink).toBeVisible();
   const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
   await act(() => previewLink.element().dispatchEvent(contextMenu));
@@ -292,7 +294,6 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
 });
 
 it("a machine chip stashed in one thread restores with its machine in another", async () => {
-  await using _viewport = await appViewport();
   const other = threadWithHistory("thread-stash-restore", 1);
   const asking = threadWithQuestion("thread-stash-question", "Which file should change?");
   using _environment = installFakeEnvironment([other, asking]);
@@ -312,7 +313,6 @@ it("a machine chip stashed in one thread restores with its machine in another", 
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   const editor = page.getByTestId("composer-editor");
@@ -351,7 +351,6 @@ it("a machine chip stashed in one thread restores with its machine in another", 
 });
 
 it("a question that opens while a stashed file is checked keeps a machine stash", async () => {
-  await using _viewport = await appViewport();
   const thread = threadWithHistory("thread-stash-late-question", 1);
   const asking = threadWithQuestion("thread-stash-late-question", "Which file should change?");
   const [request] = asking.runtimeRequests ?? [];
@@ -386,7 +385,6 @@ it("a question that opens while a stashed file is checked keeps a machine stash"
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText("Answer 0 for thread-stash-late-question.")).toBeVisible();
@@ -407,110 +405,7 @@ it("a question that opens while a stashed file is checked keeps a machine stash"
   usePromptStashStore.getState().takeEntry("stash-late-question");
 });
 
-it("imports Pi conversations through the environment RPC and can retry a changed project", async () => {
-  await using _viewport = await appViewport();
-  useLayoutStore.getState().reset();
-  using _layout = { [Symbol.dispose]: () => useLayoutStore.getState().reset() };
-  using _environment = installFakeEnvironment([], { acceptCommands: true });
-  const scan = vi.fn(() =>
-    Effect.succeed({
-      candidates: [
-        {
-          path: "/workspace/render",
-          title: "Terminal sessions",
-          projectId: PROJECT_ID,
-          sources: ["claudeAgent", "codex", "pi"] as const,
-          threadCount: 3,
-          lastActiveAt: "2026-03-17T19:12:28.000Z",
-          alreadyImported: true,
-        },
-      ],
-      scannedAt: "2026-03-18T09:00:30.000Z",
-    }),
-  );
-  let changed = true;
-  const importSessions = vi.fn((_input: AgentSessionImportInput) =>
-    changed
-      ? Effect.fail(new AgentSessionImportProjectChangedError({ projectId: PROJECT_ID }))
-      : Effect.succeed({ importedCount: 2, skippedCount: 1 }),
-  );
-  const connect = fakeDriver.connect;
-  using _connection = vi.spyOn(fakeDriver, "connect").mockImplementation((entry) =>
-    connect(entry).pipe(
-      Effect.map((lease) => ({
-        ...lease,
-        session: {
-          ...lease.session,
-          client: new Proxy(lease.session.client, {
-            get(target, method, receiver) {
-              if (method === WS_METHODS.agentSessionsScan) return scan;
-              if (method === WS_METHODS.agentSessionsImport) return importSessions;
-              if (method === WS_METHODS.projectsReadFile)
-                return ({ relativePath }: { relativePath: string }) =>
-                  Effect.succeed({
-                    relativePath,
-                    contents: "",
-                    byteLength: 0,
-                    truncated: false,
-                    exists: false,
-                  });
-              return Reflect.get(target, method, receiver);
-            },
-          }),
-        },
-      })),
-    ),
-  );
-  // Reconnect with this test's import handlers rather than a previous app's live lease.
-  appAtomRegistry.reset();
-  using _registry = { [Symbol.dispose]: () => appAtomRegistry.reset() };
-  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
-  const router = getRouter(createMemoryHistory({ initialEntries: ["/welcome"] }));
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    container: appContainer(),
-    router: false,
-  });
-  await expect
-    .element(page.getByRole("button", { name: "Review all 1", exact: true }))
-    .toBeVisible();
-  await page.getByRole("button", { name: "Review all 1", exact: true }).click();
-  await expect.element(page.getByRole("img", { name: "Pi", exact: true })).toBeVisible();
-  await expect.element(page.getByRole("img", { name: "Claude Code", exact: true })).toBeVisible();
-  await expect.element(page.getByRole("img", { name: "Codex", exact: true })).toBeVisible();
-  await page.getByText("Import projects and their threads", { exact: true }).click();
-  await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
-  await expect
-    .element(page.getByText("Could not import thread history.", { exact: true }))
-    .toBeVisible();
-  await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
-
-  expect(importSessions).toHaveBeenCalledTimes(1);
-  await expect
-    .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
-    .not.toBeInTheDocument();
-  await vi.waitFor(() => expect(router.state.location.pathname).not.toBe("/welcome"));
-  changed = false;
-  await router.navigate({ to: "/welcome" });
-  await expect.element(page.getByRole("heading", { name: "Welcome to T3 Code" })).toBeVisible();
-  await page.getByText("Import projects and their threads", { exact: true }).click();
-  await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
-  await expect
-    .element(page.getByText("Imported 2 threads. 1 thread could not be imported.", { exact: true }))
-    .toBeVisible();
-  expect(importSessions).toHaveBeenCalledTimes(2);
-  expect(importSessions).toHaveBeenLastCalledWith({
-    projectId: PROJECT_ID,
-    expectedWorkspaceRoot: "/workspace/render",
-  });
-  await expect
-    .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
-    .not.toBeInTheDocument();
-});
-
 it("a new draft does not load its reserved thread before the server lists it", async () => {
-  await using _viewport = await appViewport();
   using _environment = installFakeEnvironment([]);
   using fetchSpy = vi.spyOn(globalThis, "fetch");
   __setClientSettingsForTests({
@@ -527,7 +422,6 @@ it("a new draft does not load its reserved thread before the server lists it", a
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByTestId("composer-editor")).toBeVisible();
@@ -587,86 +481,6 @@ it("a failed image-only first send of a new thread keeps the new draft", async (
   await expect.element(editor).toHaveTextContent("next draft");
   // With no text there is nothing to copy.
   expect(page.getByText("Copy message", { exact: true }).query()).toBeNull();
-});
-
-it("answers a pending question while an oversized message draft is set aside", async () => {
-  await using _viewport = await appViewport();
-  const thread = threadWithHistory("oversized-question-draft", 0);
-  using _environment = installFakeEnvironment([thread]);
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const target = scopeThreadRef(ENVIRONMENT_ID, thread.id);
-  const oversizedDraft = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1);
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
-  );
-  await router.load();
-  // AppRoot owns the router.
-  await using _app = await render(<AppRoot router={router} />, {
-    container: appContainer(),
-    router: false,
-  });
-  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
-
-  const requestId = RuntimeRequestId.make("oversized-draft-question");
-  const nodeId = NodeId.make("oversized-draft-node");
-  const now = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
-  await act(async () => {
-    await emitThreadEvent(thread.id, {
-      type: "runtime-request.updated",
-      payload: {
-        id: requestId,
-        nodeId,
-        providerTurnId: null,
-        nativeRequestRef: null,
-        kind: "user_input",
-        status: "pending",
-        responseCapability: { type: "message" },
-        createdAt: now,
-        resolvedAt: null,
-      },
-    });
-    await emitThreadEvent(thread.id, {
-      type: "turn-item.updated",
-      payload: {
-        id: TurnItemId.make("oversized-draft-question-card"),
-        threadId: thread.id,
-        runId: null,
-        nodeId,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 0,
-        status: "completed",
-        title: null,
-        startedAt: now,
-        completedAt: now,
-        updatedAt: now,
-        type: "user_input_request",
-        requestId,
-        questions: [
-          {
-            id: "scope",
-            header: "Scope",
-            question: "Which scope should we use?",
-            options: [],
-            initialAnswer: "Composer",
-          },
-        ],
-      },
-    });
-  });
-  await expect.element(page.getByText("Which scope should we use?", { exact: true })).toBeVisible();
-  await act(() => {
-    useComposerDraftStore.getState().setPrompt(target, oversizedDraft);
-  });
-  await expect.element(page.getByText(/Prompt is 1 character over/)).not.toBeInTheDocument();
-  await page.getByRole("button", { name: "Answer", exact: true }).click();
-  await expect.element(page.getByRole("button", { name: /Submitting/ }).first()).toBeVisible();
-  expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe(oversizedDraft);
 });
 
 it.each(["new", "existing"] as const)(
@@ -760,9 +574,9 @@ it.each(["new", "existing"] as const)(
 );
 
 it("a file picked after the phone composer collapses still attaches", async () => {
-  await using _viewport = await appViewport(390, 844);
   const thread = threadWithHistory("thread-40993", 1);
   using _environment = installFakeEnvironment([thread]);
+  await page.viewport(390, 844);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -773,13 +587,12 @@ it("a file picked after the phone composer collapses still attaches", async () =
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   using _uploads = acceptAttachmentUploads();
   const editor = page.getByTestId("composer-editor");
   await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: "Expand composer" }));
+  await userEvent.click(editor);
   await expect.element(page.getByRole("button", { name: "Attach files" })).toBeVisible();
   const input = document.querySelector<HTMLInputElement>(
     'form[data-chat-composer-form] input[type="file"]',
@@ -787,28 +600,17 @@ it("a file picked after the phone composer collapses still attaches", async () =
   expect(input).not.toBeNull();
 
   // Opening the native picker blurs the editor, which collapses the phone composer.
-  await vi.waitFor(() => {
-    const surface = document.querySelector("[data-chat-composer-mobile-collapsed]");
-    if (surface?.getAttribute("data-chat-composer-mobile-collapsed") !== "true") {
-      const editorEl = editor.element() as HTMLElement;
-      editorEl.focus();
-      editorEl.blur();
-    }
-    expect(surface?.getAttribute("data-chat-composer-mobile-collapsed")).toBe("true");
-  });
+  (editor.element() as HTMLElement).blur();
   await expect.element(page.getByRole("button", { name: "Attach files" })).not.toBeInTheDocument();
   const files = new DataTransfer();
   files.items.add(new File([PNG], "picked.png", { type: "image/png" }));
   input!.files = files.files;
   input!.dispatchEvent(new Event("change", { bubbles: true }));
 
-  await expect.element(page.getByRole("button", { name: "Preview picked.png" })).toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: "Expand composer" }));
   await expect.element(page.getByRole("img", { name: "picked.png" })).toBeVisible();
 });
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
-  await using _viewport = await appViewport();
   const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -822,7 +624,6 @@ it("opens the thread actions menu for an older settled thread the shell leaves o
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
@@ -835,7 +636,6 @@ it("opens the thread actions menu for an older settled thread the shell leaves o
 });
 
 it("retains each thread's diff selection when returning from another thread or Settings", async () => {
-  await using _viewport = await appViewport();
   const a = threadWithHistory("diff-selection-a", 1);
   const b = threadWithHistory("diff-selection-b", 1);
   using _environment = installFakeEnvironment([a, b]);
@@ -852,7 +652,6 @@ it("retains each thread's diff selection when returning from another thread or S
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
@@ -901,7 +700,6 @@ it("retains each thread's diff selection when returning from another thread or S
 });
 
 it("a stashed prompt ending in a file chip restores with the chip", async () => {
-  await using _viewport = await appViewport();
   using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -917,7 +715,6 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   const chip = page.getByRole("button", { name: "Preview package.json" });
@@ -937,7 +734,6 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
 });
 
 it("a rejected send leaves the timeline when a new draft was typed meanwhile", async () => {
-  await using _viewport = await appViewport();
   const thread = threadWithHistory("rejected-send", 1);
   using _environment = installFakeEnvironment([thread], {
     acceptCommands: true,
@@ -953,7 +749,6 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
@@ -975,7 +770,6 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
 });
 
 it("Enter on an empty prompt resumes an interrupted thread", async () => {
-  await using _viewport = await appViewport();
   const history = threadWithHistory("interrupted", 1);
   const interruptedRun = { ...history.runs[0]!, status: "interrupted" as const };
   const thread = { ...history, runs: [interruptedRun] };
@@ -990,7 +784,6 @@ it("Enter on an empty prompt resumes an interrupted thread", async () => {
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByRole("button", { name: "Resume thread" })).toBeVisible();
@@ -1006,7 +799,6 @@ it("Enter on an empty prompt resumes an interrupted thread", async () => {
 });
 
 it("opening a thread or returning to the window on a touch tablet does not focus the composer", async () => {
-  await using _viewport = await appViewport();
   const realMatchMedia = window.matchMedia.bind(window);
   using _touch = vi
     .spyOn(window, "matchMedia")
@@ -1026,7 +818,6 @@ it("opening a thread or returning to the window on a touch tablet does not focus
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
-    container: appContainer(),
     router: false,
   });
   const composer = page.getByTestId("composer-editor");
@@ -1053,7 +844,6 @@ it("opening a thread or returning to the window on a touch tablet does not focus
 });
 
 it("a mounted thread view lets go of the thread structures it has replaced", async () => {
-  await using _viewport = await appViewport();
   // Items are shared with the fixture, so a reopen's snapshot also carries the earlier updates.
   const history = threadWithHistory("updated", 3);
   const items = [...history.items];
@@ -1066,10 +856,7 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   });
   const router = getRouter(createMemoryHistory({ initialEntries: ["/"] }));
   await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    container: appContainer(),
-    router: false,
-  });
+  await using _app = await render(<AppRoot router={router} />, { router: false });
   const open = async (threadId: ThreadId, text: string) => {
     await act(() =>
       router.navigate({
@@ -1114,13 +901,11 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
   using _environment = installFakeEnvironment([thread], {
     keybindings: mergeWithDefaultKeybindings(
       compileResolvedKeybindingsConfig([
-        { key: "ctrl+t", command: "threadPanel.toggle", when: "rightPanelOpen && !terminalFocus" },
+        { key: "ctrl+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
         { key: "ctrl+t", command: "rightPanel.toggle", when: "!rightPanelOpen" },
       ]),
     ),
   });
-  // Reconnect so this test's keybindings replace a previous app's live config.
-  appAtomRegistry.reset();
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -1133,23 +918,15 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
     // AppRoot brings its own router.
     router: false,
   });
-  // Panes retired rightPanel.new; the side pane is the thread's right panel.
-  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
-  const sidePaneOpen = () =>
-    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).isOpen;
   const composer = page.getByTestId("composer-editor");
-  const details = page.getByRole("button", { name: "Toggle thread details panel", exact: true });
-  await expect.element(details).toBeVisible();
-  // As clicking the panel toggle and its Files tab did.
-  await act(() => useRightPanelStore.getState().open(threadRef, "files"));
-  await vi.waitFor(() => expect(sidePaneOpen()).toBe(true));
-  const detailsOpen = details.element().getAttribute("aria-expanded");
+  const toggle = page.getByRole("button", { name: "Toggle right panel", exact: true });
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await page.getByRole("button", { name: /^Files/ }).click();
   await composer.click();
   await userEvent.keyboard("{Control>}t{/Control}");
-  await expect
-    .element(details)
-    .toHaveAttribute("aria-expanded", detailsOpen === "true" ? "false" : "true");
-  expect(sidePaneOpen()).toBe(true);
+  await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
 });
 
 it("selecting a side-chat tab focuses that side chat's composer", async () => {
@@ -1169,6 +946,8 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  useRightPanelStore.getState().openThread(parentRef, otherSide.id);
+  useRightPanelStore.getState().openThread(parentRef, side.id);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
   );
@@ -1178,10 +957,6 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
     router: false,
   });
   using _focus = { [Symbol.dispose]: startWorkspaceFocus(router) };
-  await act(() => {
-    useRightPanelStore.getState().openThread(parentRef, otherSide.id);
-    useRightPanelStore.getState().openThread(parentRef, side.id);
-  });
   const mainEditor = screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true });
   const sideEditor = screen.getByRole("textbox", { name: `Message ${side.title}`, exact: true });
   await expect.element(sideEditor).toBeVisible();
@@ -1200,12 +975,6 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
   await expect.element(sideEditor).toHaveFocus();
   await expect.element(mainEditor).toHaveTextContent("main draft");
-
-  // Shift+F6 goes straight back to the main chat; its tab, already showing, brings the box back.
-  await userEvent.keyboard("{Shift>}{F6}{/Shift}");
-  await expect.element(mainEditor).toHaveFocus();
-  await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
-  await expect.element(sideEditor).toHaveFocus();
 });
 
 it("a subagent tab shows its read-only bar under no header of its own", async () => {
@@ -1222,6 +991,7 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  useRightPanelStore.getState().openThread(parentRef, subagent.id);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
   );
@@ -1229,9 +999,6 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
   await using screen = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
     router: false,
-  });
-  await act(() => {
-    useRightPanelStore.getState().openThread(parentRef, subagent.id);
   });
   const pane = screen.getByTestId("side-thread-pane");
   // No header of its own: the tab names it, and only a side chat has actions to put in one.
@@ -1248,9 +1015,6 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {
   await page.viewport(1400, 900);
-  // Side chats an earlier test left in the pane layout would count as open tabs.
-  useLayoutStore.getState().reset();
-  using _layout = { [Symbol.dispose]: () => useLayoutStore.getState().reset() };
   const thread = threadWithHistory("side-attachments", 1);
   let holdFork = false;
   using _environment = installFakeEnvironment([thread], {

@@ -240,23 +240,6 @@ describe("all-environment PR list", () => {
         merged.localSearchHosts,
       ).map((row) => row.environmentId),
     ).toEqual([mbp]);
-    expect(
-      filterPullRequestList(
-        [
-          ...merged.entries,
-          { ...entry(3, { projectId: ProjectId.make("unrelated") }), environmentId: mbp },
-        ],
-        { ...DEFAULT_PR_LIST_CONTROLS, projectId: "project", projectEnvironmentId: mbp },
-        merged.viewers,
-        "",
-        merged.localSearchHosts,
-        undefined,
-        [cups, mbp].map((environmentId) => ({
-          environmentId,
-          projectId: ProjectId.make("project"),
-        })),
-      ).map((row) => row.environmentId),
-    ).toEqual([mbp, cups]);
   });
 });
 
@@ -439,20 +422,18 @@ describe("pullRequestProjectChoices", () => {
     pullRequestProjectChoices(projects, {
       environmentId: null,
       controls: { ...DEFAULT_PR_LIST_CONTROLS, ...scope },
-      groups: [
-        {
-          label: "t3code",
-          memberProjectRefs: projects.map((project) => ({
-            environmentId: project.environmentId,
-            projectId: project.id,
-          })),
-        },
-      ],
+      environmentLabels: new Map([
+        [laptop, "laptop"],
+        [desktop, "desktop"],
+      ]),
       servesPullRequests,
     }).map(({ id, environmentId, title }) => ({ id, environmentId, title }));
 
-  it("lists one sidebar group across environments that serve pull requests", () => {
-    expect(choices(() => true)).toEqual([{ id: "main", environmentId: laptop, title: "t3code" }]);
+  it("lists each repository once per environment that serves pull requests", () => {
+    expect(choices(() => true)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code · desktop" },
+      { id: "main", environmentId: laptop, title: "t3code · laptop" },
+    ]);
     expect(choices((environmentId) => environmentId === desktop)).toEqual([
       { id: "main", environmentId: desktop, title: "t3code" },
     ]);
@@ -461,7 +442,8 @@ describe("pullRequestProjectChoices", () => {
   it("keeps the saved scope when its environment stops serving or has not loaded", () => {
     const scope = { projectId: "worktree", projectEnvironmentId: laptop };
     expect(choices((environmentId) => environmentId === desktop, scope)).toEqual([
-      { id: "worktree", environmentId: laptop, title: "t3code" },
+      { id: "main", environmentId: desktop, title: "t3code · desktop" },
+      { id: "worktree", environmentId: laptop, title: "t3code · laptop" },
     ]);
     expect(choices(() => false, scope)).toEqual([
       { id: "worktree", environmentId: laptop, title: "t3code" },

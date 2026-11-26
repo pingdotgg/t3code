@@ -100,18 +100,6 @@ export function issueOrder(sort: IssueListSort) {
   return (left: IssueListEntry, right: IssueListEntry) => date(right) - date(left);
 }
 
-// A row keeps its object while its entry and environment hold, so a memoized row skips the list's
-// re-renders.
-const listedIssueEntries = new WeakMap<IssueListEntry, EnvironmentIssueEntry>();
-
-function listedIssueEntry(entry: IssueListEntry, environmentId: EnvironmentId) {
-  const held = listedIssueEntries.get(entry);
-  if (held?.environmentId === environmentId) return held;
-  const listed = { ...entry, environmentId };
-  listedIssueEntries.set(entry, listed);
-  return listed;
-}
-
 export function groupIssues(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
   query: string,
@@ -153,7 +141,7 @@ export function groupIssues(
       // Environments holding the same repository answer the same issue; the first one keeps it.
       if (listed.has(entry.url)) continue;
       listed.add(entry.url);
-      group.rows.push(listedIssueEntry(entry, environmentId));
+      group.rows.push({ ...entry, environmentId });
     }
     for (const error of page.errors) {
       const project = projects.find(

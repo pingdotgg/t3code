@@ -246,12 +246,12 @@ export function getProviderUpdateRunOutcome(
   | { readonly status: "updated"; readonly message: string | null }
   | { readonly status: "failed"; readonly line: string } {
   if (isAtomCommandInterrupted(run.result)) return { status: "interrupted" };
-  const label = PROVIDER_DISPLAY_NAMES[run.driver] ?? run.driver;
+  const label = `${run.machineLabel} · ${PROVIDER_DISPLAY_NAMES[run.driver] ?? run.driver}`;
   if (run.result._tag === "Failure") {
     const error = squashAtomCommandFailure(run.result);
     return {
       status: "failed",
-      line: `${label}: ${thrownErrorMessage(error, resolve) ?? resolve(msg("Provider update failed."))}\n${run.machineLabel}`,
+      line: `${label}: ${thrownErrorMessage(error, resolve) ?? resolve(msg("Provider update failed."))}`,
     };
   }
   const provider = run.result.value.providers.find(
@@ -260,13 +260,10 @@ export function getProviderUpdateRunOutcome(
   const updateState = provider?.updateState;
   const restartNotice = provider ? getProviderRestartNotice(provider) : null;
   return updateState?.status === "succeeded"
-    ? {
-        status: "updated",
-        message: restartNotice ? `${label}: ${restartNotice}\n${run.machineLabel}` : null,
-      }
+    ? { status: "updated", message: restartNotice ? `${label}: ${restartNotice}` : null }
     : {
         status: "failed",
-        line: `${label}: ${updateState?.message ?? resolve(msg("Provider update did not finish."))}\n${run.machineLabel}`,
+        line: `${label}: ${updateState?.message ?? resolve(msg("Provider update did not finish."))}`,
       };
 }
 

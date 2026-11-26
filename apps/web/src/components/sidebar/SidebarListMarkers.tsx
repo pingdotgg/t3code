@@ -80,8 +80,6 @@ export function SidebarDragBoundary(props: {
   label: string;
   visible: boolean;
   isDropTarget: boolean;
-  /** A resting hairline, drawn in the space the pinned grid leaves above it. */
-  rule?: boolean;
 }) {
   return (
     <SortableSidebarMarker
@@ -89,9 +87,6 @@ export function SidebarDragBoundary(props: {
       data-testid={`sidebar-${props.marker}`}
       className="pointer-events-none relative mx-0.5 -mb-px h-0"
     >
-      {props.rule && !props.visible ? (
-        <span aria-hidden className="absolute inset-x-1 -top-1 h-px bg-sidebar-foreground/10" />
-      ) : null}
       {props.visible ? (
         <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
           <span
@@ -123,9 +118,7 @@ export function SidebarSectionHeader(props: {
   className?: string;
   dragging?: boolean;
   isDropTarget?: boolean;
-  /** Keeps the header's layout space while removing it from keyboard and accessibility trees. */
-  concealed?: boolean;
-  toggle: { expanded: boolean; onToggle: (header: HTMLElement) => void } | null;
+  toggle: { expanded: boolean; onToggle: () => void };
 }) {
   const shelf =
     props.marker === "working-header"
@@ -141,17 +134,11 @@ export function SidebarSectionHeader(props: {
     >
       <CollapsibleSectionHeader
         data-sidebar-row={`shelf:${shelf}`}
-        aria-hidden={props.concealed ? true : undefined}
-        tabIndex={props.concealed ? -1 : undefined}
-        // A click must not focus the toggle: Chromium shows the focus ring on
-        // a clicked button once any key is pressed, even a lone modifier.
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={(event) => props.toggle?.onToggle(event.currentTarget)}
-        disabled={props.toggle === null}
-        expanded={props.toggle?.expanded}
-        tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "shelf"}
+        onClick={props.toggle.onToggle}
+        expanded={props.toggle.expanded}
+        tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
         data-testid={`sidebar-${shelf}-shelf-toggle`}
-        accessory={<span className="text-meta tabular-nums">{props.count}</span>}
+        accessory={<span className="font-normal tabular-nums">{props.count}</span>}
       >
         {props.label}
       </CollapsibleSectionHeader>

@@ -6,8 +6,6 @@ import {
   buildMenuItems,
   type DefaultBranchConfirmableAction,
   hasUsableGitMenuContent,
-  buildSyncMenuItems,
-  commitPushShortcutPressActs,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
@@ -158,17 +156,6 @@ describe("when: on default ref without open PR", () => {
 });
 
 describe("when: local changes are behind upstream", () => {
-  it("blocks pulling a diverged branch until it is rebased or merged", () => {
-    const diverged = status({ aheadCount: 1, behindCount: 1 });
-    const items = buildSyncMenuItems(diverged, false);
-    assert.isTrue(items.pull?.disabled);
-    assert.equal(
-      items.pull?.disabledReason,
-      "Branch has diverged from upstream. Rebase/merge first.",
-    );
-    assert.isFalse(buildSyncMenuItems(status({ behindCount: 1 }), false).pull?.disabled);
-  });
-
   it("keeps the commit action available without pushing, with or without an open PR", () => {
     const behind = status({ hasWorkingTreeChanges: true, behindCount: 2 });
     const commit = {
@@ -277,18 +264,6 @@ describe("requiresDefaultBranchConfirmation", () => {
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push_pr", true));
     assert.isFalse(requiresDefaultBranchConfirmation("commit_push", false));
     assert.isFalse(requiresDefaultBranchConfirmation("push", false));
-  });
-});
-
-describe("commitPushShortcutPressActs", () => {
-  it("acts once, only for the control in the focused pane", () => {
-    const press = { defaultPrevented: false, repeat: false };
-    assert.isTrue(commitPushShortcutPressActs({ ...press, paneFocused: true }));
-    assert.isFalse(commitPushShortcutPressActs({ ...press, paneFocused: false }));
-    assert.isFalse(
-      commitPushShortcutPressActs({ ...press, paneFocused: true, defaultPrevented: true }),
-    );
-    assert.isFalse(commitPushShortcutPressActs({ ...press, paneFocused: true, repeat: true }));
   });
 });
 

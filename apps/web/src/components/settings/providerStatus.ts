@@ -7,25 +7,23 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../../i18n/messages";
 
-import type { StatusDotTone } from "../ui/status-dot";
-
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
-    dot: "neutral",
+    dot: "bg-muted-foreground/50",
   },
   error: {
-    dot: "danger",
+    dot: "bg-destructive",
   },
   neutral: {
-    dot: "neutral",
+    dot: "bg-muted-foreground",
   },
   ready: {
-    dot: "success",
+    dot: "bg-success",
   },
   warning: {
-    dot: "warning",
+    dot: "bg-warning",
   },
-} as const satisfies Record<string, { dot: StatusDotTone }>;
+} as const;
 
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
@@ -87,14 +85,15 @@ export function getProviderSummary(
   if (provider.auth.status === "unauthenticated") {
     const authLabel = providerAuthLabel(provider.auth, resolve);
     return {
-      headline: resolve(msg("Not authenticated")),
-      authLabel,
+      headline: authLabel
+        ? resolve(msg("Not authenticated · {method}", { method: authLabel }))
+        : resolve(msg("Not authenticated")),
       detail: provider.message ?? null,
     };
   }
   if (isAntigravitySignInUnchecked(provider)) {
     return {
-      headline: resolve(msg("Sign-in not checked")),
+      headline: resolve(msg("Installed · Sign-in not checked")),
       detail: provider.message ?? null,
     };
   }
@@ -115,8 +114,9 @@ export function getProviderSummary(
   if (provider.auth.status === "authenticated") {
     const authLabel = providerAuthLabel(provider.auth, resolve);
     return {
-      headline: resolve(msg("Authenticated")),
-      authLabel,
+      headline: authLabel
+        ? resolve(msg("Authenticated · {method}", { method: authLabel }))
+        : resolve(msg("Authenticated")),
       detail: provider.message ?? null,
     };
   }

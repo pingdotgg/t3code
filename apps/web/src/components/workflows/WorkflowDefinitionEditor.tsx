@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useBlocker } from "@tanstack/react-router";
 import { T, useGT, Var } from "gt-react";
-import { CircleAlertIcon, FileCode2Icon, PlusIcon } from "lucide-react";
+import { FileCode2Icon, PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 
@@ -22,12 +22,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
-import { FILE_LINK_REVEAL_UNSAFE_CSS } from "../files/fileSurfaceChrome";
 import { useEditableAfterHighlight } from "../files/useEditableAfterHighlight";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
-import { Badge } from "../ui/badge";
-import { Button, ContentButton } from "../ui/button";
-import { Empty, EmptyDescription, EmptyHeader } from "../ui/empty";
+import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { type DiskChange, diskChange, staleAfterSave } from "./WorkflowDefinitionEditor.logic";
 import { WorkflowsEmpty } from "./WorkflowRunsView";
@@ -66,32 +62,23 @@ function ProblemList({
   readonly problems: ReadonlyArray<WorkflowDefinitionProblem>;
 }) {
   return (
-    <Alert
-      variant="error"
-      density="strip"
-      edge="bottom"
-      controlAlignment="first-line"
-      className="shrink-0"
-    >
-      <CircleAlertIcon aria-hidden />
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>
-        <ul className="max-h-32 space-y-1 overflow-auto">
-          {problems.map((problem) => (
-            <li key={`${problem.line}:${problem.message}`} className="whitespace-pre-wrap">
-              {problem.line === undefined ? null : (
-                <span className="font-mono text-foreground">
-                  <T>
-                    Line <Var>{problem.line}</Var>:
-                  </T>{" "}
-                </span>
-              )}
-              {problem.message}
-            </li>
-          ))}
-        </ul>
-      </AlertDescription>
-    </Alert>
+    <div role="alert" className="shrink-0 border-b bg-destructive/4 px-4 py-2 text-xs">
+      <p className="font-medium text-destructive-foreground">{title}</p>
+      <ul className="mt-1 max-h-32 space-y-1 overflow-auto text-muted-foreground">
+        {problems.map((problem) => (
+          <li key={`${problem.line}:${problem.message}`} className="whitespace-pre-wrap">
+            {problem.line === undefined ? null : (
+              <span className="font-mono text-foreground">
+                <T>
+                  Line <Var>{problem.line}</Var>:
+                </T>{" "}
+              </span>
+            )}
+            {problem.message}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -259,7 +246,7 @@ function Surface({
         ? null
         : createPortal(
             <>
-              <span className="shrink-0 text-meta text-muted-foreground" role="status">
+              <span className="shrink-0 text-xs text-muted-foreground" role="status">
                 {canSave || offline ? status : gt("Read-only")}
               </span>
               {canSave && onDelete !== undefined ? (
@@ -285,17 +272,14 @@ function Surface({
             actions,
           )}
       {stale ? (
-        <Alert variant="warning" density="strip" edge="bottom" role="status" className="shrink-0">
-          <CircleAlertIcon aria-hidden />
-          <AlertDescription>
+        <div role="status" className="flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs">
+          <span className="min-w-0 flex-1 text-muted-foreground">
             <T>The file changed on disk while you were editing. Saving replaces that change.</T>
-          </AlertDescription>
-          <AlertAction>
-            <Button size="xs" variant="secondary" disabled={saving} onClick={adopt}>
-              <T>Load the file and drop my changes</T>
-            </Button>
-          </AlertAction>
-        </Alert>
+          </span>
+          <Button size="xs" variant="outline" disabled={saving} onClick={adopt}>
+            <T>Load the file and drop my changes</T>
+          </Button>
+        </div>
       ) : null}
       {onDisk.length > 0 && problems.length === 0 ? (
         <ProblemList
@@ -318,7 +302,7 @@ function Surface({
       )}
       <EditProvider createEditor={createEditor}>
         <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto [--code-background:var(--code-surface)]"
+          className="min-h-0 flex-1 overflow-auto"
           config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
         >
           <File
@@ -333,7 +317,6 @@ function Surface({
               theme: resolveDiffThemeName(resolvedTheme),
               preferredHighlighter: PREFERRED_HIGHLIGHTER,
               themeType: resolvedTheme,
-              unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
               onPostRender: (_container, instance, phase) => onPostRender(instance.file, phase),
             }}
             className="min-h-full"
@@ -408,7 +391,7 @@ export default function WorkflowDefinitionEditor({
       );
     }
     return (
-      <p className="p-6 text-body text-muted-foreground" role="status">
+      <p className="p-6 text-sm text-muted-foreground" role="status">
         <T>Loading the workflow files…</T>
       </p>
     );
@@ -453,13 +436,11 @@ export default function WorkflowDefinitionEditor({
   const between = (
     <>
       {away === null ? null : (
-        <Alert variant="default" density="strip" edge="bottom" role="status" className="shrink-0">
-          <AlertDescription>
-            {gt("{name} is not connected. What you write here stays, and saves once it is back.", {
-              name: away,
-            })}
-          </AlertDescription>
-        </Alert>
+        <div role="status" className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
+          {gt("{name} is not connected. What you write here stays, and saves once it is back.", {
+            name: away,
+          })}
+        </div>
       )}
       {query.error === null || away !== null ? null : (
         <ProblemList
@@ -513,7 +494,7 @@ export default function WorkflowDefinitionEditor({
       <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl space-y-3 p-4 sm:p-6">
           <div className="flex items-start gap-3">
-            <p className="min-w-0 flex-1 text-meta text-muted-foreground">
+            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
               <T>
                 Every file in{" "}
                 <code className="font-mono text-foreground">
@@ -523,7 +504,7 @@ export default function WorkflowDefinitionEditor({
               </T>
             </p>
             {single || !canChange ? null : naming === null ? (
-              <Button size="sm" variant="secondary" onClick={() => setNaming("")}>
+              <Button size="sm" variant="outline" onClick={() => setNaming("")}>
                 <PlusIcon />
                 <T>New file</T>
               </Button>
@@ -546,50 +527,43 @@ export default function WorkflowDefinitionEditor({
                     if (event.key === "Escape") setNaming(null);
                   }}
                 />
-                <Button size="sm" type="submit" variant="secondary">
+                <Button size="sm" type="submit" variant="outline">
                   <T context="verb, create the workflow file">Create</T>
                 </Button>
               </form>
             )}
           </div>
           {files.length === 0 ? (
-            <div className="surface-card rounded-card">
-              <Empty size="compact">
-                <EmptyHeader>
-                  <EmptyDescription>
-                    <T>
-                      No workflows yet. Make the first file here, or ask an agent to write one in
-                      that folder.
-                    </T>
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            </div>
+            <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+              <T>
+                No workflows yet. Make the first file here, or ask an agent to write one in that
+                folder.
+              </T>
+            </p>
           ) : (
-            <ul className="surface-card divide-y divide-divider overflow-hidden rounded-card">
+            <ul className="divide-y rounded-lg border">
               {files.map((candidate) => (
                 <li key={candidate.name}>
-                  <ContentButton
-                    className="group/file block w-full cursor-pointer text-start"
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-start hover:bg-accent/50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                     onClick={() => open(candidate.name)}
                   >
-                    <span className="flex w-full items-center gap-3 px-4 py-3 group-hover/file:surface-ghost-hover group-focus-visible/file:ring-2 group-focus-visible/file:ring-inset group-focus-visible/file:ring-ring">
-                      <FileCode2Icon className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-mono text-body">{candidate.name}</span>
-                        <span className="block truncate text-meta text-muted-foreground">
-                          {candidate.workflows.length === 0
-                            ? gt("Defines no workflows")
-                            : candidate.workflows.map((tag) => tag.replace(/@\d+$/, "")).join(", ")}
-                        </span>
+                    <FileCode2Icon className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-mono text-sm">{candidate.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {candidate.workflows.length === 0
+                          ? gt("Defines no workflows")
+                          : candidate.workflows.map((tag) => tag.replace(/@\d+$/, "")).join(", ")}
                       </span>
-                      {candidate.problems.length > 0 ? (
-                        <Badge variant="error">
-                          <T>Does not load</T>
-                        </Badge>
-                      ) : null}
                     </span>
-                  </ContentButton>
+                    {candidate.problems.length > 0 ? (
+                      <span className="shrink-0 text-xs font-medium text-destructive-foreground">
+                        <T>Does not load</T>
+                      </span>
+                    ) : null}
+                  </button>
                 </li>
               ))}
             </ul>

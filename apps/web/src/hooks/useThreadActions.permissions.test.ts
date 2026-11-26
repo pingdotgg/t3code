@@ -70,6 +70,8 @@ vi.mock("../state/session", () => ({
   environmentSession: { sessionStateAtom: "session" },
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
+  readEnvironmentScopeDenied: (environmentId: string, scope: string) =>
+    state.scopes.get(environmentId)?.has(scope) !== true,
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
@@ -155,9 +157,6 @@ vi.mock("../composerDraftStore", () => ({
         state.localEffects.push(`clear-draft:${ref.threadId}`),
       clearProjectDraftThreadById: () => state.localEffects.push("clear-project-draft"),
     }),
-}));
-vi.mock("../components/ThreadSurfaceTab", () => ({
-  discardThreadSurfaces: () => state.localEffects.push("discard-surfaces"),
 }));
 vi.mock("../terminalUiStateStore", () => ({
   useTerminalUiStateStore: (select: (store: unknown) => unknown) =>
@@ -354,8 +353,8 @@ describe("thread action permissions", () => {
     state.confirm.mockResolvedValue(false);
     await useThreadActions().confirmAndDeleteThread(target, "Archived release notes");
     expect(state.confirm).toHaveBeenCalledWith(
-      'This deletes "Archived release notes" and its chat history.',
-      expect.objectContaining({ variant: "destructive", title: "Delete thread?" }),
+      expect.stringContaining('Delete thread "Archived release notes"?'),
+      { variant: "destructive" },
     );
     expect(state.requests).toEqual([]);
   });

@@ -15,7 +15,7 @@ import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { setAppearanceMode } from "../../hooks/useTheme";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const diffAtoms = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string, addition = "after()") =>
     [
@@ -59,6 +59,9 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+    onlyTestFilesDiffAtom: Atom.make(
+      AsyncResult.success({ ...firstPage, patch: filePatch("a.test.ts") }),
+    ),
     testFileDiffAtom: Atom.make(() =>
       AsyncResult.success({
         patch:
@@ -73,11 +76,13 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     pagedDiffAtom,
   };
 });
+const { diffAtom, onlyTestFilesDiffAtom, testFileDiffAtom, pagedDiffAtom } = diffAtoms;
 
 const mocks = vi.hoisted(() => ({
   paged: false,
   shortPages: false,
   withTestFile: false,
+  onlyTestFiles: false,
   refreshed: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
@@ -128,6 +133,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
         if (mocks.paged) return pagedDiffAtom(mocks.shortPages)(input.cursor ?? "first");
+        if (mocks.onlyTestFiles) return onlyTestFilesDiffAtom;
         return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
     },
@@ -197,6 +203,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.paged = paged;
   mocks.shortPages = false;
   mocks.withTestFile = false;
+  mocks.onlyTestFiles = false;
   mocks.refreshed = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
@@ -237,6 +244,19 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+it("can show test files again from the narrow Code tab empty state", async () => {
+  setup({ paged: false });
+  mocks.onlyTestFiles = true;
+  const container = document.createElement("div");
+  container.className = "h-[700px] w-[429px]";
+  await using screen = await render(tab(0), { container });
+  await screen.getByRole("button", { name: "Hide test files", exact: true }).click();
+
+  await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Show test files", exact: true }).click();
+  await expect.element(screen.getByText("a.test.ts", { exact: true }).first()).toBeVisible();
 });
 
 it("restores saved Viewed folds, follows cleared marks, and allows explicit expansion", async () => {
@@ -320,15 +340,11 @@ async function expectFileHeaderShown(
   container: HTMLElement,
   path: string,
 ) {
-  await expect.element(screen.getByText(path, { exact: true }).first()).toBeInTheDocument();
+  const header = screen.getByText(path, { exact: true }).first();
+  await expect.element(header).toBeInTheDocument();
   await vi.waitFor(() => {
-    const header = screen
-      .getByText(path, { exact: true })
-      .elements()
-      .find((element) => element.checkVisibility());
-    if (!header) throw new Error(`No visible file header for ${path}`);
     const bounds = container.querySelector(".diff-render-surface")!.getBoundingClientRect();
-    const { top, bottom } = header.getBoundingClientRect();
+    const { top, bottom } = header.element().getBoundingClientRect();
     expect(top).toBeGreaterThanOrEqual(bounds.top);
     expect(bottom).toBeLessThanOrEqual(bounds.bottom);
   });
@@ -351,10 +367,10 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
       __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     },
   };
-  window.localStorage.setItem("t3code.diffHideTestFiles", "true");
   const container = pagedContainer();
   await using screen = await render(tab(0), { container });
-  await expectFileHeaderShown(screen, container, "early-0.ts");
+  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+  await screen.getByRole("button", { name: "Hide test files" }).click();
 
   const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
   const settled = vi.fn();
@@ -468,7 +484,7 @@ async function renderShortPages(stack: AsyncDisposableStack) {
     ),
   );
   const container = document.createElement("div");
-  container.className = "flex h-[1000px] w-[900px]";
+  container.className = "h-[1000px] w-[900px]";
   const screen = stack.use(await render(tab(0), { container }));
   const loadNextPage = async () => {
     await screen.getByRole("button", { name: "Show file tree", exact: true }).click();
@@ -482,12 +498,7 @@ async function renderShortPages(stack: AsyncDisposableStack) {
     const scroller = container.querySelector(".diff-render-surface")!;
     const header = await vi.waitFor(() => {
       scroller.scrollTop = scroller.scrollHeight;
-      const visible = screen
-        .getByText(path, { exact: true })
-        .elements()
-        .find((element) => element.checkVisibility());
-      if (!visible) throw new Error(`No visible file header for ${path}`);
-      return visible;
+      return screen.getByText(path, { exact: true }).element();
     });
     const { host } = header.getRootNode() as ShadowRoot;
     return page.elementLocator(host).getByRole("button", { name: /^(Expand|Collapse) diff$/ });
@@ -645,7 +656,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
   );
   await using screen = await render(withThread(true), { container });
   const marker = screen.getByRole("button", { name: "Resolved conversation", exact: true });
-  const card = (state: string) => screen.getByRole("button", { name: `${state}, 1 comment` });
+  const card = (state: string) => screen.getByRole("button", { name: `${state} · 1 comment` });
   const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
 
   await expect.element(marker).toHaveAttribute("aria-expanded", "false");
@@ -654,8 +665,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
   await marker.click();
   await expect.element(marker).toHaveAttribute("aria-expanded", "true");
   await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
-  // The redesigned card keeps a reply field open instead of a Reply button.
-  await reply().click();
+  await screen.getByRole("button", { name: "Reply", exact: true }).click();
   await reply().fill("Unsent");
 
   // Hidden conversations stay mounted, so the unsent reply is still there.
@@ -730,7 +740,7 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
     { container },
   );
   const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
-  await reply().click();
+  await screen.getByRole("button", { name: "Reply", exact: true }).click();
   await reply().fill("Unsent");
 
   setAppearanceMode("light");

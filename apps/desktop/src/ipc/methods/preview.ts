@@ -1,7 +1,6 @@
 import {
   DesktopPreviewAnnotationSendEnabledInputSchema,
   DesktopPreviewAnnotationThemeInputSchema,
-  DesktopPreviewForwardedShortcutsInputSchema,
   DesktopPreviewAnnotationVoiceStateSchema,
   DesktopPreviewPickElementInputSchema,
   DesktopPreviewArtifactInputSchema,
@@ -40,6 +39,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as NodeURL from "node:url";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as LoopbackTunnel from "../../preview/LoopbackTunnel.ts";
@@ -364,6 +364,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }) {
     const manager = yield* PreviewManager.PreviewManager;
     const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
     const session = yield* manager.getBrowserSession(scope, persistent, namespace);
@@ -372,7 +373,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
-      preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
+      preloadUrl: NodeURL.pathToFileURL(environment.previewPickPreloadPath).href,
     };
   }),
 });
@@ -466,16 +467,6 @@ const setAnnotationTheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setAnnotationTheme")(function* ({ theme }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setAnnotationTheme(theme);
-  }),
-});
-
-const setForwardedKeyChords = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_SET_FORWARDED_KEY_CHORDS_CHANNEL,
-  payload: DesktopPreviewForwardedShortcutsInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.setForwardedKeyChords")(function* ({ shortcuts }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.setForwardedKeyChords(shortcuts);
   }),
 });
 
@@ -586,7 +577,6 @@ export const methods = [
   listPortForwards,
   sharesLoopback,
   setAnnotationTheme,
-  setForwardedKeyChords,
   setAnnotationSendEnabled,
   pickElement,
   cancelPickElement,
