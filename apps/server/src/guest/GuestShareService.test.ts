@@ -760,23 +760,36 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
 it.effect("ends a running command's output once the owner stops sharing", () =>
   Effect.gen(function* () {
     const { orchestrator, guestShares, credential } = yield* shareThread;
+    const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
     const command = yield* writeItem("item:running", {
       type: "command_execution",
       status: "running",
       input: "ls /work/src",
+      output: "before-close\n",
     });
-    const collecting = yield* Stream.runCollect(
-      yield* guestShares.commandOutput(session, command),
-    ).pipe(Effect.forkChild);
+    const opened = yield* Deferred.make<void>();
+    const collecting = yield* (yield* guestShares.commandOutput(session, command)).pipe(
+      Stream.tap(() => Deferred.succeed(opened, undefined)),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* Deferred.await(opened);
+    // Let the periodic revocation fiber finish its initial open-share check and enter its 30s wait.
+    yield* TestClock.adjust("1 second");
     yield* orchestrator.dispatch({
       type: "thread.guest-share.close",
       commandId: CommandId.make("close-during-command"),
       threadId,
     });
+    yield* commandOutputs.append({ threadId, itemId: command, chunk: "SECRET_AFTER_CLOSE\n" });
+    yield* TestClock.adjust("1 second");
+    const endedBeforeRecheck = collecting.pollUnsafe() !== undefined;
+    // Advance past the fallback poll so an unpatched server finishes cleanly and fails on the leak assertion.
     yield* TestClock.adjust("30 seconds");
     const frames = Array.from(yield* Fiber.join(collecting));
-    assert.isTrue(frames.every((frame) => frame.running));
+    assert.isFalse(frames.some((frame) => frame.text.includes("SECRET_AFTER_CLOSE")));
+    assert.isTrue(endedBeforeRecheck);
     assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.commandOutput(session, command))));
   }).pipe(Effect.provide(layerTest)),
 );
