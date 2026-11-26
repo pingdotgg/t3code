@@ -42,7 +42,13 @@ const testState = vi.hoisted(() => {
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() =>
       openDraftRoute === null
-        ? { ...draftSession, promotedTo: null, startFromOrigin: false }
+        ? {
+            ...draftSession,
+            environmentId: "environment-ssh",
+            projectId: "project-remote",
+            promotedTo: null,
+            startFromOrigin: false,
+          }
         : {
             logicalProjectKey: "remote-project",
             promotedTo: null,
@@ -201,6 +207,7 @@ vi.mock("../components/Sidebar.logic", () => ({
 vi.mock("../composerDraftStore", () => {
   const useComposerDraftStore = Object.assign(() => null, {
     getState: () => testState.draftStore,
+    subscribe: () => () => {},
   });
   return {
     composerDraftHasUserContent: () => false,
@@ -261,11 +268,8 @@ vi.mock("../uiStateStore", () => ({
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
-import {
-  readPendingWorkspaceDefault,
-  resolveDefaultProjectRef,
-  useNewThreadHandler,
-} from "./useHandleNewThread";
+import { readPendingWorkspaceDefault } from "../lib/retargetDraftWorkspace";
+import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
 
 describe.each([
   ["new", null],
