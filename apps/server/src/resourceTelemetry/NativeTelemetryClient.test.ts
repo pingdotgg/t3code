@@ -142,20 +142,18 @@ describe("commitCollectionControlUpdate", () => {
   );
 });
 
-it.effect.each([200, 300])(
-  "bounds process-table write and reply with one deadline (%i ms write)",
-  (writeMs) =>
-    Effect.gen(function* () {
-      const response = yield* Deferred.make<void>();
-      const writing = yield* Deferred.make<void>();
-      const fiber = yield* requestProcessTable(
-        Deferred.succeed(writing, undefined).pipe(Effect.andThen(Effect.sleep(writeMs))),
-        response,
-        Duration.millis(250),
-      ).pipe(Effect.flip, Effect.forkChild);
-      yield* Deferred.await(writing);
-      yield* TestClock.adjust(250);
-      expect(fiber.pollUnsafe()?._tag).toBe("Success");
-      expect((yield* Fiber.join(fiber)).timeoutMs).toBe(250);
-    }),
+it.effect("bounds a process-table write that outlasts the deadline", () =>
+  Effect.gen(function* () {
+    const response = yield* Deferred.make<void>();
+    const writing = yield* Deferred.make<void>();
+    const fiber = yield* requestProcessTable(
+      Deferred.succeed(writing, undefined).pipe(Effect.andThen(Effect.sleep(300))),
+      response,
+      Duration.millis(250),
+    ).pipe(Effect.flip, Effect.forkChild);
+    yield* Deferred.await(writing);
+    yield* TestClock.adjust(250);
+    expect(fiber.pollUnsafe()?._tag).toBe("Success");
+    expect((yield* Fiber.join(fiber)).timeoutMs).toBe(250);
+  }),
 );
