@@ -254,18 +254,6 @@ export function hasScheduledTaskDraftChanges(
   return draftSignature(initial) !== draftSignature(current);
 }
 
-export function moveDraftToThread(
-  draft: ScheduledTaskDraft,
-  thread: { readonly id: ThreadId; readonly projectId: ProjectId },
-): ScheduledTaskDraft {
-  return {
-    ...draft,
-    threadId: thread.id,
-    projectId: thread.projectId,
-    threadMode: draft.threadMode === "new_thread" ? "continue" : draft.threadMode,
-  };
-}
-
 /** Leaves the thread but keeps the mode. Matches MCP: new threads stay out of the shared checkout. */
 export function unbindDraftFromThread(draft: ScheduledTaskDraft): ScheduledTaskDraft {
   if (draft.threadId === null) return draft;
@@ -278,11 +266,16 @@ export function unbindDraftFromThread(draft: ScheduledTaskDraft): ScheduledTaskD
   };
 }
 
+/** Back in the task's own project, its saved thread returns; a read-only picker can't offer it. */
 export function changeDraftProject(
   draft: ScheduledTaskDraft,
   projectId: ProjectId,
 ): ScheduledTaskDraft {
   if (projectId === draft.projectId) return draft;
+  const saved = draft.task;
+  if (saved?.threadId && projectId === saved.projectId && draft.threadMode !== "new_thread") {
+    return { ...draft, projectId, threadId: saved.threadId };
+  }
   return { ...unbindDraftFromThread(draft), projectId };
 }
 
