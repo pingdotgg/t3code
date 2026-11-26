@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import type { RuntimeMode } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -266,8 +265,10 @@ export function acpReadTargetsInRoot(input: {
   if (paths.size > MAX_ACP_CHANGED_PATHS) return "unknown";
   const targets: Array<string | null> = [];
   for (const raw of paths) {
-    const expanded = expandHomePath(raw, NodeOS.homedir());
-    if (expanded.startsWith("~")) return "unknown";
+    // Substitute home without normalizing: `..` must resolve after symlinks, not before.
+    const expanded = raw.startsWith("~")
+      ? `${NodeOS.homedir()}${raw.length > 1 ? NodePath.sep : ""}${raw.slice(2)}`
+      : raw;
     const resolved = resolveAcpPermissionPath(expanded, input.cwd);
     if (resolved === undefined) return "unknown";
     const canonical = acpCanonicalPathForContainment(resolved);

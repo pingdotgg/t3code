@@ -45,18 +45,20 @@ it.effect("resolves thread and fork attachment ownership including extracted sid
     yield* sql`INSERT INTO orchestration_v2_projection_runs
       (run_id, thread_id, ordinal, provider, status, requested_at, completed_at, payload_json) VALUES
       ('rolled-before', 'parent', 1, 'test', 'rolled_back', '2025-01-01', '2025-02-01', '{}'),
-      ('boundary', 'parent', 2, 'test', 'completed', '2025-01-01', NULL, '{}'),
-      ('later', 'parent', 3, 'test', 'completed', '2025-04-01', NULL, '{}')`;
+      ('held', 'parent', 2, 'test', 'queued', '2025-01-01', NULL, '{}'),
+      ('boundary', 'parent', 3, 'test', 'completed', '2025-01-01', NULL, '{}'),
+      ('later', 'parent', 4, 'test', 'completed', '2025-04-01', NULL, '{}')`;
     const included = yield* attach("parent", "boundary");
     const rolledBefore = yield* attach("parent", "rolled-before");
     const later = yield* attach("parent", "later");
+    const held = yield* attach("parent", "held");
     const childOwn = yield* attach("child", null, "png");
 
     yield* sql`INSERT INTO orchestration_v2_projection_threads
       (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json, fork_run_ids_json)
       VALUES
       ('child', 'p', 'child', 'test', 'auto', 'default', '2025-03-01', '2025-03-01',
-        '{"forkedFrom":{"type":"run","threadId":"parent","runId":"boundary"}}', '["boundary"]'),
+        '{"forkedFrom":{"type":"run","threadId":"parent","runId":"boundary"}}', '["boundary","held"]'),
       ('side', 'p', 'side', 'test', 'auto', 'default', '2025-03-01', '2025-03-01',
         '{"forkedFrom":{"type":"run","threadId":"parent","runId":"boundary"},"lineage":{"sideChat":true}}', '["boundary"]')`;
 
@@ -67,6 +69,7 @@ it.effect("resolves thread and fork attachment ownership including extracted sid
     assert.isTrue(yield* check("child", included));
     assert.isTrue(yield* check("child", childOwn));
     assert.isFalse(yield* check("child", later));
+    assert.isFalse(yield* check("child", held));
     assert.isFalse(yield* check("side", included));
     assert.isFalse(yield* check("unrelated", included));
 

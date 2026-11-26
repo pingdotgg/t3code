@@ -2406,7 +2406,10 @@ export const threadOwnsAttachmentSql = Effect.fn("ProjectionStore.threadOwnsAtta
       allowedRunIds === null
         ? sql`r.status <> 'rolled_back'`
         : allowedRunIds.size > 0
-          ? sql`r.run_id IN ${sql.in([...allowedRunIds])}`
+          ? // Forks do not inherit undelivered queued input.
+            sql`r.run_id IN ${sql.in([...allowedRunIds])} AND NOT (
+              r.status IN ('queued', 'cancelled') AND json_extract(r.payload_json, '$.startedAt') IS NULL
+            )`
           : sql`0`;
     const visible = sql`((item.run_id IS NULL AND ${runless ? 1 : 0}) OR EXISTS (
       SELECT 1 FROM orchestration_v2_projection_runs AS r

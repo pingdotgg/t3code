@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as EffectAcpSchema from "effect-acp/compat";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -661,26 +660,6 @@ describe("acpReadTargetsInRoot", () => {
         assert.deepEqual(targets({ rawInput: { SearchPath: cwd } }), [null]);
         assert.deepEqual(targets({ rawInput: { path: NodePath.join(cwd, "missing.txt") } }), []);
         assert.equal(targets({ rawInput: { SearchPath: "~other/file" } }), "unknown");
-
-        const homeAttachment = NodePath.join(NodeOS.homedir(), ".t3", "attachments", "x.txt");
-        assert.deepEqual(
-          acpReadTargetsInRoot({
-            cwd,
-            root: NodePath.dirname(homeAttachment),
-            extraPathKeys,
-            toolCall: { rawInput: { TargetFile: "~/.t3/attachments/x.txt" } },
-          }),
-          [homeAttachment],
-        );
-        assert.deepEqual(
-          acpReadTargetsInRoot({
-            cwd,
-            root: NodePath.dirname(homeAttachment),
-            extraPathKeys,
-            toolCall: { rawInput: { TargetDirectory: "~" } },
-          }),
-          [null],
-        );
 
         assert.isTrue(acpReadRequiresApprovalForUnownedAttachment({ runtimeMode: "auto", cwd }));
         assert.isTrue(

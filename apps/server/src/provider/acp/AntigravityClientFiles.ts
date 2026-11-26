@@ -60,13 +60,14 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
       candidate = parent;
     }
     if (input.attachmentsDir !== undefined) {
+      const attachmentsDir = input.attachmentsDir;
       const attachmentsRoot = yield* input.fileSystem
-        .realPath(input.attachmentsDir)
-        .pipe(Effect.option);
-      if (Option.isSome(attachmentsRoot) && isInsideRoot(path, attachmentsRoot.value, real)) {
+        .realPath(attachmentsDir)
+        .pipe(Effect.orElseSucceed(() => path.resolve(attachmentsDir)));
+      if (isInsideRoot(path, attachmentsRoot, real)) {
         const allowed =
           input.isAllowedAttachment !== undefined &&
-          normalizeForCompare(path.dirname(real)) === normalizeForCompare(attachmentsRoot.value) &&
+          normalizeForCompare(path.dirname(real)) === normalizeForCompare(attachmentsRoot) &&
           (yield* input.isAllowedAttachment(real));
         return allowed ? real : yield* outside;
       }

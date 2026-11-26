@@ -787,7 +787,7 @@ export interface AcpAdapterV2Flavor {
   readonly enablePostSettleContinuation?: AcpNegotiatedFlag;
   /** A native request after prompt settlement starts a continuation before it is handled. */
   readonly wakeOnDetachedRequest?: boolean;
-  /** Allow unregistered native child sessions (e.g. agy early subagent reads) to read active thread attachments. */
+  /** Child sessions the agent has not reported yet read attachments as the active thread. */
   readonly fallbackUnregisteredSubagentAttachments?: boolean;
   /** Additional flavor-specific rawInput keys whose values name read permission file targets. */
   readonly readPermissionPathKeys?: ReadonlyArray<string>;
