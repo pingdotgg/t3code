@@ -706,6 +706,23 @@ describe("composer file attachments", () => {
     );
   });
 
+  it("keeps the app-owned copy of a long valid filename within the filesystem limit", async () => {
+    const name = `${"a".repeat(246)}.txt`;
+    mocks.pickFile.mockResolvedValue({
+      canceled: false,
+      assets: [{ uri: "file:///downloads/long.txt", name, mimeType: "text/plain", size: 42 }],
+    });
+
+    const result = await pickComposerFiles({ existingCount: 0 });
+
+    expect(result.error).toBeNull();
+    expect(result.files.map((file) => file.name)).toEqual([name]);
+    // The stored basename fills the 255-byte limit and keeps the extension.
+    expect(result.files[0]).toMatchObject({
+      fileUri: `${STORED}-${"a".repeat(237)}.txt`,
+    });
+  });
+
   it("preserves Android picker metadata instead of using the content URI document id", async () => {
     const uri = "content://com.android.providers.media.documents/document/video%3A18";
     mocks.pickFile.mockResolvedValue({

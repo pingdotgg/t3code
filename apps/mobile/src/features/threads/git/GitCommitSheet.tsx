@@ -28,6 +28,12 @@ type GitCommitSheetProps = StaticScreenProps<
   } & GitRepositoryRouteParams
 >;
 
+// The sheet unmounts on submit, so a failed commit's exclusions are kept here for the retry.
+const retainedExclusions = new Map<
+  string,
+  { readonly refName: string | null; readonly excluded: ReadonlySet<string> }
+>();
+
 export function GitCommitSheet(props: GitCommitSheetProps) {
   const repository = gitRepositoryTargetFromRoute(props.route.params);
   const gt = useGT();
@@ -52,8 +58,22 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
+  const selectionKey =
+    selectedThread !== null && selectedThreadCwd !== null
+      ? `${selectedThread.environmentId}\u0000${selectedThreadCwd}`
+      : null;
+  const retained = selectionKey === null ? undefined : retainedExclusions.get(selectionKey);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(
+    retained?.excluded ?? new Set(),
+  );
+  const [selectionBranch, setSelectionBranch] = useState(
+    retained?.refName ?? gitStatus.data?.refName ?? null,
+  );
+  if (gitStatus.data && selectionBranch !== gitStatus.data.refName) {
+    setSelectionBranch(gitStatus.data.refName);
+    setExcludedFiles(new Set());
+  }
 
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
   const allSelected = excludedFiles.size === 0;
@@ -64,13 +84,23 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
   const runCommitAction = async (featureBranch: boolean) => {
     if (!canWriteSourceControl || (featureBranch && !canCreateFeatureBranch)) return;
     const commitMessage = dialogCommitMessage.trim();
+    if (selectionKey !== null) {
+      retainedExclusions.set(selectionKey, { refName: selectionBranch, excluded: excludedFiles });
+    }
     navigation.goBack();
-    await gitActions.onRunSelectedThreadGitAction({
+    const result = await gitActions.onRunSelectedThreadGitAction({
       action: "commit",
       featureBranch,
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
     });
+    if (
+      selectionKey !== null &&
+      result?.commit.status === "created" &&
+      retainedExclusions.get(selectionKey)?.excluded === excludedFiles
+    ) {
+      retainedExclusions.delete(selectionKey);
+    }
   };
 
   return (
