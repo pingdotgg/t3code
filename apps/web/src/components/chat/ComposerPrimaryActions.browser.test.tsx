@@ -2,6 +2,7 @@ import "~/index.css";
 
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 
 vi.mock("~/hooks/useSettings", () => ({
@@ -29,6 +30,7 @@ function setup() {
     isPreparingWorktree: false,
     hasSendableContent: false,
     onPreviousPendingQuestion: vi.fn(),
+    onNextPendingQuestion: vi.fn(),
     onInterrupt: vi.fn(),
     onResume: vi.fn(),
     onSubmitMessage: vi.fn(),
@@ -194,3 +196,42 @@ it("swaps the collapsed composer's send button for Stop while a turn can be stop
   await screen.rerender(collapsed({ canInterrupt: false }));
   await expect.element(screen.getByRole("button", { name: "Send message" })).toBeVisible();
 });
+
+it.each([true, false])(
+  "pages between questions in both directions without an answer (compact: %s)",
+  async (compact) => {
+    const props = setup();
+    const pendingAction = (questionIndex: number, isLastQuestion: boolean) => ({
+      questionIndex,
+      isLastQuestion,
+      canAdvance: false,
+      isResponding: false,
+      isComplete: false,
+    });
+    const view = (questionIndex: number, isLastQuestion: boolean) => (
+      <ComposerPrimaryActions
+        {...props}
+        compact={compact}
+        isRunning={false}
+        canInterrupt={false}
+        pendingAction={pendingAction(questionIndex, isLastQuestion)}
+      />
+    );
+    const previous = () => screen.getByRole("button", { name: "Previous question" });
+    const next = () => screen.getByRole("button", { name: "Show next question" });
+    await using screen = await render(view(0, false));
+    await expect.element(previous()).toBeDisabled();
+    await expect.element(next()).toBeEnabled();
+    await userEvent.click(next());
+    expect(props.onNextPendingQuestion).toHaveBeenCalledTimes(1);
+
+    await screen.rerender(view(1, true));
+    await expect.element(next()).toBeDisabled();
+    await userEvent.click(previous());
+    expect(props.onPreviousPendingQuestion).toHaveBeenCalledTimes(1);
+
+    await screen.rerender(view(0, true));
+    expect(previous().query()).toBeNull();
+    expect(next().query()).toBeNull();
+  },
+);

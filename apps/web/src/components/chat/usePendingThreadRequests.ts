@@ -664,6 +664,17 @@ export function usePendingThreadRequests(input: {
     onPreviousActivePendingUserInputQuestion,
   );
 
+  const onNextActivePendingUserInputQuestion = () => {
+    const { activePendingProgress } = readPendingUserInputDraft(draftScope);
+    if (!activePendingProgress || activePendingProgress.isLastQuestion) {
+      return;
+    }
+    setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
+  };
+  const onNextActivePendingUserInputQuestionStable = useStableCallback(
+    onNextActivePendingUserInputQuestion,
+  );
+
   return {
     pendingApprovals,
     pendingUserInputs,
@@ -678,5 +689,6 @@ export function usePendingThreadRequests(input: {
     onAdvanceActivePendingUserInput,
     onAdvanceActivePendingUserInputStable,
     onPreviousActivePendingUserInputQuestion: onPreviousActivePendingUserInputQuestionStable,
+    onNextActivePendingUserInputQuestion: onNextActivePendingUserInputQuestionStable,
   };
 }

@@ -502,6 +502,7 @@ export interface ChatComposerProps {
   onAdvanceActivePendingUserInput: () => void;
   onDismissActivePendingUserInput: (requestId: RuntimeRequestId) => void;
   onPreviousActivePendingUserInputQuestion: () => void;
+  onNextActivePendingUserInputQuestion: () => void;
   onChangeActivePendingUserInputCustomAnswer: (
     questionId: string,
     value: string,
@@ -605,6 +606,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onAdvanceActivePendingUserInput,
     onDismissActivePendingUserInput,
     onPreviousActivePendingUserInputQuestion,
+    onNextActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
     onProviderModelSelect,
     onOpenProviderSetup,
@@ -4038,6 +4040,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       hasSendableContent={false}
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                      onNextPendingQuestion={onNextActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryActionStable}
                     />
                   </div>
@@ -4134,6 +4137,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onSubmitMessage={handleSubmitMessageStable}
                     onResume={onResume}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                    onNextPendingQuestion={onNextActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryActionStable}
                     compactBeforeSendTokens={props.resumeCompactionTokens}
                     hideCompactToggle={dictationTakesFooter}

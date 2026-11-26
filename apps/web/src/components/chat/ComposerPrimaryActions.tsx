@@ -10,6 +10,7 @@ import { msg, useGT, useMessages } from "gt-react";
 import {
   CheckIcon,
   ChevronLeftIcon,
+  ChevronRightIcon,
   Minimize2Icon,
   PlayIcon,
   CornerUpRightIcon,
@@ -22,6 +23,7 @@ import { cn, isMacPlatform } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
+import { Group } from "../ui/group";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
@@ -65,6 +67,7 @@ interface ComposerPrimaryActionsProps {
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
+  onNextPendingQuestion: () => void;
   onInterrupt: () => void;
   compactBeforeSendTokens?: number | null;
   hideCompactToggle?: boolean;
@@ -256,6 +259,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onSubmitMessage,
   onResume,
   onPreviousPendingQuestion,
+  onNextPendingQuestion,
   onInterrupt,
   compactBeforeSendTokens = null,
   hideCompactToggle = false,
@@ -307,29 +311,29 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-        {pendingAction.questionIndex > 0 ? (
-          compact ? (
+        {pendingAction.questionIndex > 0 || !pendingAction.isLastQuestion ? (
+          <Group>
             <Button
               size="icon-sm"
               variant="outline"
               {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
-              disabled={pendingAction.isResponding}
+              disabled={pendingAction.isResponding || pendingAction.questionIndex === 0}
               aria-label={gt("Previous question")}
             >
               <ChevronLeftIcon className="size-3.5" />
             </Button>
-          ) : (
             <Button
-              size="sm"
+              size="icon-sm"
               variant="outline"
               {...pointerFocusProps}
-              onClick={onPreviousPendingQuestion}
-              disabled={pendingAction.isResponding}
+              onClick={onNextPendingQuestion}
+              disabled={pendingAction.isResponding || pendingAction.isLastQuestion}
+              aria-label={gt("Show next question")}
             >
-              {gt("Previous", { $context: "button that goes to the previous question" })}
+              <ChevronRightIcon className="size-3.5" />
             </Button>
-          )
+          </Group>
         ) : null}
         {children}
         <button

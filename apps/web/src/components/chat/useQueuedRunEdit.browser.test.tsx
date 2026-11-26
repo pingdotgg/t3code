@@ -169,6 +169,7 @@ function Harness(props: {
       isEditingQueuedMessage
       onSubmitMessage={() => void result.saveEdit(savedContent(draft.prompt), () => {})}
       onPreviousPendingQuestion={() => {}}
+      onNextPendingQuestion={() => {}}
       onInterrupt={() => {}}
     />
   ) : null;

@@ -246,6 +246,23 @@ it("stays on an unanswered question when the composer submits", async () => {
   await expect.element(screen.getByRole("status")).toHaveTextContent("Question 2");
 });
 
+it("moves forward to an unanswered question and stops at the last one", async () => {
+  const environmentId = EnvironmentId.make("forward-environment");
+  await using _screen = await render(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={questionProjection(threadRef.threadId)}
+    />,
+  );
+  for (const expected of [1, 2, 2]) {
+    await act(() => requests.onNextActivePendingUserInputQuestion());
+    expect(requests.activePendingQuestionIndex).toBe(expected);
+  }
+  expect(requests.activePendingProgress?.answeredQuestionCount).toBe(0);
+  await act(() => requests.onPreviousActivePendingUserInputQuestion());
+  expect(requests.activePendingQuestionIndex).toBe(1);
+});
+
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("scope-environment");
