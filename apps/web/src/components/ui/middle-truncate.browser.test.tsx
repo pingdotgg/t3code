@@ -14,7 +14,7 @@ const narrow = (value: string) => (
 describe("MiddleTruncate", () => {
   it("does not clip a short value that replaces a truncated one", async () => {
     await using screen = await render(narrow("t3/investigate-release-build-times"));
-    const label = () => screen.container.querySelector("[title] > span");
+    const label = () => screen.container.querySelector("[title] > span > span");
     await expect.poll(() => label()?.hasAttribute("data-overflow")).toBe(true);
 
     await screen.rerender(narrow("main"));
@@ -34,7 +34,7 @@ describe("MiddleTruncate", () => {
       </>,
     );
     const heads = () => [
-      ...screen.container.querySelectorAll<HTMLElement>("[title] > span:first-child"),
+      ...screen.container.querySelectorAll<HTMLElement>("[title] > span > span:first-child"),
     ];
 
     await vi.waitFor(() =>
@@ -59,10 +59,26 @@ describe("MiddleTruncate", () => {
     expect(width("split")).toBeCloseTo(width("whole"), 0);
   });
 
+  it.each([
+    ["t3/investigate-release-build-times", "ltr"],
+    ["ענף/תיקון-בניית-השחרור-האיטית", "rtl"],
+  ] as const)("cuts %j at the head's end inside an RTL row", async (value, direction) => {
+    await using screen = await render(<div dir="rtl">{narrow(value)}</div>);
+    const [head, tail] = [
+      ...screen.container.querySelectorAll<HTMLElement>("[title] > span > span"),
+    ];
+    await expect.poll(() => head?.hasAttribute("data-overflow")).toBe(true);
+    const headBox = head!.getBoundingClientRect();
+    const tailBox = tail!.getBoundingClientRect();
+
+    if (direction === "ltr") expect(headBox.left).toBeLessThan(tailBox.left);
+    else expect(headBox.left).toBeGreaterThan(tailBox.left);
+  });
+
   it("keeps the raw value's tail when collapsing its spaces", async () => {
     await using screen = await render(<MiddleTruncate value={"longprefix a  b.txt"} />);
 
-    expect(screen.container.querySelector("[title] > span:last-child")?.textContent).toBe(
+    expect(screen.container.querySelector("[title] > span > span:last-child")?.textContent).toBe(
       "x a b.txt",
     );
   });

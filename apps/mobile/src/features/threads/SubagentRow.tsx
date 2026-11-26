@@ -16,6 +16,7 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
@@ -91,7 +92,7 @@ export function SubagentRow(props: {
           </View>
           {props.elapsed}
           {presentation.canOpenThread ? (
-            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
+            <ForwardChevron size={12} tintColorClassName="accent-icon-subtle" />
           ) : null}
         </View>
         <SubagentMetadata environmentId={props.environmentId} subagent={props.subagent} />

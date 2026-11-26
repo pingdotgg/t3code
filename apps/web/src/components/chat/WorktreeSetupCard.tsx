@@ -234,20 +234,23 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
     line: lines[lines.length - OUTPUT_TAIL_LINES + slot] ?? "",
   }));
   return (
-    <pre
-      className={cn(
-        "mb-1 ms-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
-        failed
-          ? "border-destructive/20 bg-error-surface text-destructive-foreground"
-          : "border-border bg-code text-muted-foreground",
-      )}
-    >
-      {rows.map(({ slot, line }) => (
-        <div key={slot} className="truncate whitespace-pre">
-          {line.length === 0 ? "\u00a0" : line}
-        </div>
-      ))}
-    </pre>
+    // The margin sits outside the <pre>, which stays left-to-right in an RTL interface.
+    <div className="mb-1 ms-8">
+      <pre
+        className={cn(
+          "overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
+          failed
+            ? "border-destructive/20 bg-error-surface text-destructive-foreground"
+            : "border-border bg-code text-muted-foreground",
+        )}
+      >
+        {rows.map(({ slot, line }) => (
+          <div key={slot} className="truncate whitespace-pre">
+            {line.length === 0 ? "\u00a0" : line}
+          </div>
+        ))}
+      </pre>
+    </div>
   );
 }
 
@@ -372,7 +375,7 @@ export function WorktreeSetupCard({
         <p className="mt-1 ms-8 text-xs text-muted-foreground">{snapshot.error}</p>
       ) : null}
 
-      <div className="mt-0.5 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
+      <div className="mt-0.5 ms-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
         <Button
           type="button"
           size="xs"

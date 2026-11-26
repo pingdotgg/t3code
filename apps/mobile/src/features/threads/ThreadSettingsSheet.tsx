@@ -58,6 +58,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { AppText as Text } from "../../components/ui/AppText";
 import { AppBar } from "../../components/ui/AppBar";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -249,12 +250,7 @@ function DisclosureRow(props: {
           {props.value}
         </Text>
       ) : null}
-      <SymbolView
-        name="chevron.right"
-        size={12}
-        tintColorClassName="accent-icon-subtle"
-        type="monochrome"
-      />
+      <ForwardChevron size={12} tintColorClassName="accent-icon-subtle" type="monochrome" />
     </Pressable>
   );
 }

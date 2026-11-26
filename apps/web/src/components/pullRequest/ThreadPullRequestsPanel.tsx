@@ -160,7 +160,7 @@ function LinkRowImpl({
         setMenuPosition({ x: event.clientX, y: event.clientY });
         setMenuOpen(true);
       }}
-      style={{ paddingLeft: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
+      style={{ paddingInlineStart: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
     >
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
       {snapshot === null ? (

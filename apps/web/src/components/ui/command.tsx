@@ -212,7 +212,8 @@ function CommandShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn(
-        "ms-auto font-medium font-sans text-secondary-label text-xs tracking-widest",
+        // <kbd> stays left-to-right (index.css), so in RTL its inline start is the label side.
+        "ms-auto rtl:ms-0 rtl:me-auto font-medium font-sans text-secondary-label text-xs tracking-widest",
         className,
       )}
       data-slot="command-shortcut"

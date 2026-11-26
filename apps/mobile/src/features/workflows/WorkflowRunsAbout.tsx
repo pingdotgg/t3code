@@ -9,7 +9,7 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import { useGT, useMessages } from "gt-react-native";
 import { Pressable, View } from "react-native";
 
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { useServerConfigs } from "../../state/entities";
@@ -72,7 +72,7 @@ export function WorkflowRunsAbout(props: {
             <Text className={cn("font-t3-medium text-xs", WORKFLOW_TONE_CLASS[state.tone])}>
               {state.word}
             </Text>
-            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+            <ForwardChevron size={12} tintColorClassName="accent-icon-muted" />
           </Pressable>
         );
       })}

@@ -18,6 +18,7 @@ import { ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { Chip } from "../../components/ui/Chip";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
@@ -234,9 +235,7 @@ function WorkflowMemberRow(props: {
             </Text>
           </View>
           <WorkflowElapsed timing={member} />
-          {canOpen ? (
-            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
-          ) : null}
+          {canOpen ? <ForwardChevron size={12} tintColorClassName="accent-icon-subtle" /> : null}
         </View>
         {labels.length > 0 || metadata.speed !== null ? (
           <View className="min-w-0 flex-row items-center">

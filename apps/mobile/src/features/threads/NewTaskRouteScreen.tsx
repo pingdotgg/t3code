@@ -13,6 +13,7 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import {
   groupIconFallbacks,
   pickableProjectGroups,
@@ -440,12 +441,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       <T>Start a task without a project</T>
                     </Text>
                   </View>
-                  <SymbolView
-                    name="chevron.right"
-                    size={14}
-                    tintColorClassName="accent-chevron"
-                    type="monochrome"
-                  />
+                  <ForwardChevron size={14} tintColorClassName="accent-chevron" type="monochrome" />
                 </Pressable>
               </View>
             )
@@ -624,8 +620,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                             : selectionTarget.workspaceRoot}
                         </Text>
                       </View>
-                      <SymbolView
-                        name="chevron.right"
+                      <ForwardChevron
                         size={14}
                         tintColorClassName="accent-chevron"
                         type="monochrome"

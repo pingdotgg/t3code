@@ -5,6 +5,7 @@ import { useGT } from "gt-react-native";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { SymbolView } from "../../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../../components/ui/ForwardChevron";
 import { PullRequestMarkdown } from "../PullRequestMarkdown";
 import { Menu } from "../../../components/ui/Menu";
 
@@ -106,7 +107,7 @@ export function GuideOutline({
               </View>
             </View>
             <View className="pt-2">
-              <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+              <ForwardChevron size={12} tintColorClassName="accent-icon-muted" />
             </View>
           </Pressable>
         );

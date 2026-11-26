@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useLinkedThreadReach } from "../../state/linkedThread";
@@ -131,7 +132,7 @@ function BackgroundWorkRow(props: {
         <Text className="text-xs text-foreground-muted">{m(KIND_LABELS[item.kind])}</Text>
       </View>
       {openTarget === null ? null : (
-        <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
+        <ForwardChevron size={12} tintColorClassName="accent-icon-subtle" />
       )}
     </View>
   );

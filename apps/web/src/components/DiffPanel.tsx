@@ -1325,7 +1325,7 @@ export default function DiffPanel({
                 }
               >
                 <span className="min-w-0 max-w-48 truncate">{comparisonHeadRef}</span>
-                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70 rtl:rotate-180" />
               </TooltipTrigger>
               <TooltipPopup side="top">
                 {`${comparisonHeadRef} → ${comparisonBaseRef}`}

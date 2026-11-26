@@ -1476,7 +1476,7 @@ export function PullRequestsPage() {
         rightPanelPresent ? (
           <span
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-full w-7 [-webkit-app-region:no-drag]"
+            className="pointer-events-none absolute inset-y-0 start-full w-7 [-webkit-app-region:no-drag]"
           />
         ) : (
           openPanelControls

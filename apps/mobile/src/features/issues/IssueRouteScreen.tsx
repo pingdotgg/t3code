@@ -25,6 +25,7 @@ import { RelativeTime } from "../../components/RelativeTime";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar } from "../../components/ui/AppBar";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { Chip } from "../../components/ui/Chip";
@@ -298,7 +299,7 @@ function LinkedPullRequests(props: {
                   : ""}
               </Text>
             </View>
-            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+            <ForwardChevron size={12} tintColorClassName="accent-icon-muted" />
           </Pressable>
         );
       })}
@@ -367,7 +368,7 @@ function LinkedThreads(props: { readonly params: IssueParams; readonly host: str
                 </Text>
               ) : null}
             </View>
-            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+            <ForwardChevron size={12} tintColorClassName="accent-icon-muted" />
           </Pressable>
         );
       })}

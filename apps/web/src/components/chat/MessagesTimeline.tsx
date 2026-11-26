@@ -1804,13 +1804,13 @@ function ContextCompactionTimelineRow({
           {row.title ? (
             <T>
               <Var>{row.title}</Var> <Var>{row.tokenCounts.before}</Var>
-              <ArrowRightIcon aria-hidden="true" className="size-3" />
+              <ArrowRightIcon aria-hidden="true" className="size-3 rtl:rotate-180" />
               <Var>{row.tokenCounts.after}</Var> tokens
             </T>
           ) : (
             <T>
               Context compacted <Var>{row.tokenCounts.before}</Var>
-              <ArrowRightIcon aria-hidden="true" className="size-3" />
+              <ArrowRightIcon aria-hidden="true" className="size-3 rtl:rotate-180" />
               <Var>{row.tokenCounts.after}</Var> tokens
             </T>
           )}

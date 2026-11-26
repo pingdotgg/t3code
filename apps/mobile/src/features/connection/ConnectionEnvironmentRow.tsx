@@ -28,6 +28,7 @@ import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { environmentStatusText } from "./environmentStatusText";
 import type { MessageResolver } from "../../i18n/messages";
+import { useForwardChevron } from "../../i18n/direction";
 
 function connectionStatusLabel(
   environment: ConnectedEnvironmentSummary,
@@ -64,6 +65,7 @@ export function ConnectionEnvironmentRow(props: {
 }) {
   const gt = useGT();
   const m = useMessages();
+  const forwardChevron = useForwardChevron();
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
   const serverConfig = useAtomValue(
@@ -209,7 +211,7 @@ export function ConnectionEnvironmentRow(props: {
           }}
         >
           <SymbolView
-            name={props.opensDetails ? "chevron.right" : "chevron.down"}
+            name={props.opensDetails ? forwardChevron : "chevron.down"}
             size={12}
             tintColorClassName="accent-icon-subtle"
             type="monochrome"

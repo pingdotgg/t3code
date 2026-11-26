@@ -123,6 +123,7 @@ import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3too
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { textDirection } from "@t3tools/shared/textDirection";
 import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
@@ -926,8 +927,7 @@ function MessageAttachmentFile(props: {
               {fileTypeLabel} · {sizeLabel}
             </Text>
           </View>
-          <SymbolView
-            name="chevron.right"
+          <ForwardChevron
             size={12}
             tintColorClassName="accent-foreground-muted"
             type="monochrome"

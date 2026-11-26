@@ -52,6 +52,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "../../components/ui/Button";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import {
   EnvironmentMachineSymbol,
   ENVIRONMENT_MACHINE_SYMBOLS,
@@ -429,12 +430,7 @@ function PickerRow(props: {
       >
         {props.value}
       </Text>
-      <SymbolView
-        name="chevron.right"
-        size={14}
-        tintColorClassName="accent-chevron"
-        type="monochrome"
-      />
+      <ForwardChevron size={14} tintColorClassName="accent-chevron" type="monochrome" />
     </Pressable>
   );
 }
@@ -1219,12 +1215,7 @@ function TaskForm({
                   {formatTime(draft.schedule.timeOfDay)}
                   {runAtZone ? ` ${runAtZone}` : ""}
                 </Text>
-                <SymbolView
-                  name="chevron.right"
-                  size={14}
-                  tintColorClassName="accent-chevron"
-                  type="monochrome"
-                />
+                <ForwardChevron size={14} tintColorClassName="accent-chevron" type="monochrome" />
               </Pressable>
               {timePickerOpen ? (
                 <DateTimePicker
@@ -1316,8 +1307,7 @@ function TaskForm({
                     >
                       {label}
                     </Text>
-                    <SymbolView
-                      name="chevron.right"
+                    <ForwardChevron
                       size={14}
                       tintColorClassName="accent-chevron"
                       type="monochrome"

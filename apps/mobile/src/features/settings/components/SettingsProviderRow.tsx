@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useGT } from "gt-react-native";
 import { Pressable, View } from "react-native";
 
-import { SymbolView } from "../../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../../components/ui/ForwardChevron";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { ThemedSwitch } from "../../../components/ui/ThemedSwitch";
 import { cn } from "../../../lib/cn";
@@ -95,12 +95,7 @@ export function SettingsProviderRow(props: {
           onPress={props.onPress}
           style={{ minWidth: 24, minHeight: 44, alignItems: "center", justifyContent: "center" }}
         >
-          <SymbolView
-            name="chevron.right"
-            size={12}
-            tintColorClassName="accent-icon-subtle"
-            type="monochrome"
-          />
+          <ForwardChevron size={12} tintColorClassName="accent-icon-subtle" type="monochrome" />
         </Pressable>
       ) : null}
     </View>

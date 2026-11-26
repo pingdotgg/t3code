@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { Sheet } from "../../components/ui/Sheet";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -118,7 +119,7 @@ function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps & SetupDetailsCon
             <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
               <T>Details</T>
             </Text>
-            <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
+            <ForwardChevron size={10} tintColorClassName="accent-icon-muted" />
           </View>
         </Pressable>
       </View>
@@ -220,7 +221,7 @@ function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps & SetupDetailsCon
       >
         {elapsed(snapshot.startedAt, snapshot.endedAt, now, messages)}
       </Text>
-      <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
+      <ForwardChevron size={10} tintColorClassName="accent-icon-muted" />
     </Pressable>
   );
 }

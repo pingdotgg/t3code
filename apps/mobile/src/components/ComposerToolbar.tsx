@@ -19,6 +19,7 @@ import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
+import { useForwardChevron } from "../i18n/direction";
 
 const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
@@ -49,6 +50,7 @@ export function ComposerInlineControl(props: {
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
   const reducedMotion = useReducedMotion();
+  const forwardChevron = useForwardChevron();
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
   const iconSize = props.size === "large" ? 20 : smallIconSize;
@@ -123,7 +125,7 @@ export function ComposerInlineControl(props: {
         ) : null}
         {props.showChevron === false ? null : (
           <SymbolView
-            name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
+            name={props.chevronDirection === "right" ? forwardChevron : "chevron.down"}
             size={Math.round((props.size === "large" ? 12 : 10) * scale)}
             tintColorClassName={
               props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"

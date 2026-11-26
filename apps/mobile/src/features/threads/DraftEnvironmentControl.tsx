@@ -4,7 +4,7 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 
@@ -39,7 +39,7 @@ export function DraftEnvironmentControl(props: {
           on <Var>{props.label}</Var>
         </T>
       </Text>
-      <SymbolView name="chevron.right" size={11} tintColorClassName="accent-icon-muted" />
+      <ForwardChevron size={11} tintColorClassName="accent-icon-muted" />
       {disconnected ? <ConnectionStatusDot state="error" pulse={false} size={6} /> : null}
     </Pressable>
   );

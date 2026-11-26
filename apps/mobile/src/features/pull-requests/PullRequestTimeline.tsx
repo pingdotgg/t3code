@@ -18,6 +18,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { byTimestamp, relativeTime } from "../../lib/time";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
@@ -324,7 +325,7 @@ export function pullRequestTimelineRows(
                   </Text>
                 </>
               )}
-              <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+              <ForwardChevron size={12} tintColorClassName="accent-icon-muted" />
             </View>
             <Text className="text-xs text-foreground-muted">
               {thread.isResolved

@@ -491,7 +491,7 @@ function ProcessTreeName({
   return (
     <div
       className="grid min-w-0 grid-cols-[1.25rem_0.375rem_minmax(0,1fr)] items-center gap-2"
-      style={{ paddingLeft: `${Math.min(process.depth, 7) * 10}px` }}
+      style={{ paddingInlineStart: `${Math.min(process.depth, 7) * 10}px` }}
     >
       {hasChildren ? (
         <Button
@@ -601,7 +601,7 @@ function ProcessTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-3xs uppercase tracking-widest text-muted-foreground/65">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">
+              <th className="px-4 py-2 font-semibold sm:ps-5">
                 <T>Process</T>
               </th>
               <th className="px-3 py-2 font-semibold">
@@ -631,7 +631,7 @@ function ProcessTable({
               <th className="px-3 py-2 text-end font-semibold">
                 <T>PID</T>
               </th>
-              <th className="px-2 py-2 text-end font-semibold sm:pr-4">
+              <th className="px-2 py-2 text-end font-semibold sm:pe-4">
                 <T>Kill</T>
               </th>
             </tr>
@@ -646,7 +646,7 @@ function ProcessTable({
             ) : null}
             {visible.map((process) => (
               <tr key={processIdentityKey(process)} className="hover:bg-muted/20">
-                <td className="px-4 py-2 sm:pl-5">
+                <td className="px-4 py-2 sm:ps-5">
                   <ProcessTreeName
                     process={process}
                     collapsed={collapsed.has(processIdentityKey(process))}
@@ -683,7 +683,7 @@ function ProcessTable({
                 <td className="px-3 py-2 text-end font-mono tabular-nums text-muted-foreground">
                   {process.identity.pid}
                 </td>
-                <td className="px-2 py-2 text-end sm:pr-4">
+                <td className="px-2 py-2 text-end sm:pe-4">
                   <ProcessActions
                     process={process}
                     canMaintainEnvironment={canMaintainEnvironment}
@@ -728,7 +728,7 @@ function HistoryProcessTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-3xs uppercase tracking-widest text-muted-foreground/65">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">
+              <th className="px-4 py-2 font-semibold sm:ps-5">
                 <T>Process</T>
               </th>
               <th className="px-3 py-2 font-semibold">
@@ -752,7 +752,7 @@ function HistoryProcessTable({
               <th className="px-3 py-2 text-end font-semibold">
                 <T>Samples</T>
               </th>
-              <th className="px-3 py-2 text-end font-semibold sm:pr-5">
+              <th className="px-3 py-2 text-end font-semibold sm:pe-5">
                 <T>PID</T>
               </th>
             </tr>
@@ -767,7 +767,7 @@ function HistoryProcessTable({
             ) : null}
             {processes.map((process) => (
               <tr key={processIdentityKey(process)} className="hover:bg-muted/20">
-                <td className="px-4 py-2 sm:pl-5">
+                <td className="px-4 py-2 sm:ps-5">
                   <SharedTooltipTrigger
                     render={
                       <span className="block truncate font-medium text-foreground">
@@ -799,7 +799,7 @@ function HistoryProcessTable({
                 <td className="px-3 py-2 text-end font-mono tabular-nums text-muted-foreground">
                   {process.sampleCount}
                 </td>
-                <td className="px-3 py-2 text-end font-mono tabular-nums text-muted-foreground sm:pr-5">
+                <td className="px-3 py-2 text-end font-mono tabular-nums text-muted-foreground sm:pe-5">
                   {process.identity.pid}
                 </td>
               </tr>
@@ -825,7 +825,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
         </colgroup>
         <thead className="border-b border-border/60 text-3xs uppercase tracking-widest text-muted-foreground/65">
           <tr>
-            <th className="px-4 py-2 font-semibold sm:pl-5">
+            <th className="px-4 py-2 font-semibold sm:ps-5">
               <T>Component</T>
             </th>
             <th className="px-3 py-2 font-semibold">
@@ -840,7 +840,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
             <th className="px-3 py-2 text-end font-semibold">
               <T>Count</T>
             </th>
-            <th className="px-3 py-2 text-end font-semibold sm:pr-5">
+            <th className="px-3 py-2 text-end font-semibold sm:pe-5">
               <T>Time</T>
             </th>
           </tr>
@@ -855,7 +855,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
           ) : null}
           {entries.map((entry) => (
             <tr key={`${entry.component}:${entry.operation}`} className="hover:bg-muted/20">
-              <td className="truncate px-4 py-2 font-medium text-foreground sm:pl-5">
+              <td className="truncate px-4 py-2 font-medium text-foreground sm:ps-5">
                 {entry.component}
               </td>
               <td className="truncate px-3 py-2 text-muted-foreground">{entry.operation}</td>
@@ -866,7 +866,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
                 {formatBytes(entry.logicalWriteBytes)}
               </td>
               <td className="px-3 py-2 text-end font-mono tabular-nums">{entry.count}</td>
-              <td className="px-3 py-2 text-end font-mono tabular-nums text-muted-foreground sm:pr-5">
+              <td className="px-3 py-2 text-end font-mono tabular-nums text-muted-foreground sm:pe-5">
                 {(entry.durationMs / 1_000).toFixed(2).replace(/\.0+$/, "")}s
               </td>
             </tr>

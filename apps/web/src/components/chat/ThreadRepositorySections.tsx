@@ -111,7 +111,10 @@ const RepositorySection = memo(function RepositorySection(props: {
         aria-controls={props.expanded ? bodyId : undefined}
         onClick={() => props.onToggle(props.sectionKey)}
       >
-        <Chevron className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} aria-hidden />
+        <Chevron
+          className={cn(THREAD_DETAILS_PANEL_CHEVRON_CLASS, !props.expanded && "rtl:rotate-180")}
+          aria-hidden
+        />
         <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
           <span className="max-w-2/3 shrink-0 truncate">{props.name}</span>
           <span className="min-w-0 truncate font-normal text-muted-foreground">

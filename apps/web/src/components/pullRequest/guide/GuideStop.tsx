@@ -290,7 +290,7 @@ export function GuideStop({
                   Next: <Var>{nextTitle}</Var>
                 </T>
               </span>
-              <ArrowRightIcon aria-hidden />
+              <ArrowRightIcon aria-hidden className="rtl:rotate-180" />
             </Button>
           ) : onFinish !== null ? (
             <Button onClick={onFinish}>

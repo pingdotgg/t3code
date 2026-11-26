@@ -4,7 +4,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { useInterfaceDirection } from "../../i18n/direction";
+import { useForwardChevron } from "../../i18n/direction";
 import { T, useGT } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
@@ -45,7 +45,7 @@ const FileTreeRow = function FileTreeRow(props: {
 }) {
   const { node, depth } = props.item;
   const gt = useGT();
-  const collapsedChevron = useInterfaceDirection() === "rtl" ? "chevron.left" : "chevron.right";
+  const collapsedChevron = useForwardChevron();
 
   return (
     <Pressable

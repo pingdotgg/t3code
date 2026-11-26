@@ -70,6 +70,7 @@ import {
   type ParamListBase,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
@@ -294,12 +295,7 @@ function ListRow(props: {
         {"right" in props ? (
           props.right
         ) : !props.disabled ? (
-          <SymbolView
-            name="chevron.right"
-            size={13}
-            tintColorClassName="accent-chevron"
-            type="monochrome"
-          />
+          <ForwardChevron size={13} tintColorClassName="accent-chevron" type="monochrome" />
         ) : null}
       </View>
     </Pressable>

@@ -235,10 +235,10 @@ export default function ProjectScriptsControl({
             <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
               {shortcutLabel &&
                 (presentation === "menu" ? (
-                  <MenuShortcut className="ms-0 mr-7">{shortcutLabel}</MenuShortcut>
+                  <MenuShortcut className="ms-0 mr-7 rtl:me-7">{shortcutLabel}</MenuShortcut>
                 ) : (
                   <span className="transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
-                    <MenuShortcut className="ms-0">{shortcutLabel}</MenuShortcut>
+                    <MenuShortcut className="ms-0 rtl:me-0">{shortcutLabel}</MenuShortcut>
                   </span>
                 ))}
               <span
