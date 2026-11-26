@@ -223,7 +223,7 @@ it.effect("reads the client-facing protocol from the first X-Forwarded-Proto val
     Effect.gen(function* () {
       for (const [forwardedProto, issuer] of [
         ["https, http", ORIGIN],
-        [" HTTPS ", ORIGIN],
+        ["HTTPS , http", ORIGIN],
         ["http, https", "http://box.example.ts.net"],
       ] as const) {
         const response = yield* handler(
