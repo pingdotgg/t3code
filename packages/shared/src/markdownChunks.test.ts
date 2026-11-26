@@ -355,12 +355,38 @@ describe("withMarkdownDefinitions", () => {
       "",
     ],
   ])("preserves the first reference with %s", (_, first, href, title) => {
-    const text = `[Release][release notes]\n\n${first}\n\n${"x".repeat(4100)}\n\n# Next\n[release notes]: /later`;
+    const text = `${first}\n\n${"x".repeat(4100)}\n\n# Next\n[release notes]: /later\n\n[Release][release notes]`;
     const { chunks, definitions } = splitMarkdown(text);
     expect(chunks).toHaveLength(2);
-    const rendered = html(withMarkdownDefinitions(chunks[0]!.text, definitions));
+    const rendered = html(withMarkdownDefinitions(chunks[1]!.text, definitions));
     expect(rendered).toContain(`href="${href}"`);
     if (title) expect(rendered).toContain(title);
+  });
+
+  it("shares a wrapped label at the Markdown length limit with an escaped bracket", () => {
+    const definition = `[${"a".repeat(995)}\\]\nct]: /first`;
+    expect(splitMarkdown(definition).definitions).toBe(definition);
+  });
+
+  it("leaves oversized titles with their source definitions", () => {
+    const title = "t".repeat(16 * 1024);
+    const text = `[id]\n\n[id]:\n  /first\n  "${title}"\n\n# Next`;
+    const { chunks, definitions } = splitMarkdown(text);
+    expect(definitions).toBe("");
+    expect(html(withMarkdownDefinitions(chunks[0]!.text, definitions))).toContain(
+      `title="${title}"`,
+    );
+  });
+
+  it.each([
+    ["inline links", "[a](/x)".repeat(2000), "\n\n", 64],
+    ["link-like text separated by thematic breaks", "[note] text\n***", "\n", 2000],
+    ["invalid definitions separated by thematic breaks", "[note]: /invalid)\n***", "\n", 2000],
+  ])("keeps long runs of %s out of shared definitions", (_, block, separator, count) => {
+    const text = Array.from({ length: count }, () => block).join(separator);
+    const { chunks, definitions } = splitMarkdown(text);
+    expect(definitions).toBe("");
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
   });
 
   it("keeps a display math opener and its contents out of shared definitions", () => {

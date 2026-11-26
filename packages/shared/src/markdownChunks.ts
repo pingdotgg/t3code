@@ -103,9 +103,36 @@ const hasFrontmatterClose = (lines: readonly string[]) =>
 
 // Footnotes are left alone so each piece does not grow a footnote section.
 const LINK_DEFINITION_START = /^ {0,3}\[(?!\^)/;
+const LINK_LABEL_MAX_CHARS = 999;
+const LINK_TITLE_START = /^[ \t]*["'(]/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 const definitionParser = unified().use(remarkParse);
+
+function hasDefinitionLabel(lines: readonly string[], start: number): boolean {
+  const opener = LINK_DEFINITION_START.exec(lines[start]!);
+  if (!opener) return false;
+
+  let column = opener[0].length;
+  let labelChars = 0;
+  for (let index = start; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (BLANK_LINE.test(line)) return false;
+    const end = line.endsWith("\r") ? line.length - 1 : line.length;
+    for (; column < end && labelChars <= LINK_LABEL_MAX_CHARS; column++, labelChars++) {
+      const char = line[column];
+      if (char === "]") return line[column + 1] === ":";
+      if (char === "[") return false;
+      if (char === "\\" && /[\\[\]]/.test(line[column + 1] ?? "")) {
+        column++;
+        labelChars++;
+      }
+    }
+    if (labelChars > LINK_LABEL_MAX_CHARS) return false;
+    column = 0;
+  }
+  return false;
+}
 
 function readLinkDefinitions(lines: readonly string[], start: number) {
   const definitions = new Map<number, { text: string; end: number }>();
@@ -119,6 +146,7 @@ function readLinkDefinitions(lines: readonly string[], start: number) {
     if (
       BLANK_LINE.test(line) ||
       ATX_HEADING.test(line) ||
+      THEMATIC_BREAK.test(line) ||
       FENCE_OPEN.test(line) ||
       DISPLAY_MATH_OPEN.test(line)
     )
@@ -131,20 +159,25 @@ function readLinkDefinitions(lines: readonly string[], start: number) {
   }
 
   const text = lines.slice(start, end).join("\n");
+  let partialTitleStart: number | undefined;
   for (const node of definitionParser.parse(text).children) {
     if (node.type !== "definition" || !node.position) break;
     const { start: from, end: to } = node.position;
     const firstLine = start + from.line - 1;
     if (!LINK_DEFINITION_START.test(lines[firstLine]!)) break;
+    const lastLine = start + to.line - 1;
     definitions.set(firstLine, {
       text: text.slice(from.offset, to.offset),
-      end: start + to.line - 1,
+      end: lastLine,
     });
+    partialTitleStart =
+      capped && node.title == null && LINK_TITLE_START.test(lines[lastLine + 1] ?? "")
+        ? firstLine
+        : undefined;
   }
-  // Retry the last definition in the next batch, where its title may have more room.
-  if (capped && definitions.size > 1) {
-    const last = [...definitions.keys()].at(-1)!;
-    definitions.delete(last);
+  // Retry a cutoff title from its label. If the batch already started there, it cannot fit.
+  if (partialTitleStart !== undefined) {
+    definitions.delete(partialTitleStart);
   }
   return definitions;
 }
@@ -208,7 +241,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         if (
           !definition &&
           definitionChars < SHARED_DEFINITIONS_MAX_CHARS &&
-          LINK_DEFINITION_START.test(line)
+          hasDefinitionLabel(sourceLines, lineIndex)
         ) {
           pendingDefinitions = readLinkDefinitions(sourceLines, lineIndex);
           definition = pendingDefinitions.get(lineIndex);
