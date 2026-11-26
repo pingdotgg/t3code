@@ -20,6 +20,10 @@
   "2aa1c01bf8014725": "{organization} limita los hilos a Aceptar ediciones automáticamente.",
   "89563a8fff8bb751": "{organization} limita los hilos a Automático.",
   "5b7ff1208620c2c2": "{organization} limita los hilos a Acceso total.",
+  "069e0382ff2496f5": "La configuración de Claude de tu organización desactiva el modo automático.",
+  "8ccf7e0def66d339": "Tu configuración de Claude desactiva el modo automático.",
+  "04ac2410d2cc0666": "La configuración de Claude de este proyecto desactiva el modo automático.",
+  "7e27789f5d58960e": "La configuración de Claude desactiva el modo automático.",
   "9bf017edd3847eb1": "La política de {organization} no permite conectarse desde otros dispositivos.",
   "ef9533bcc048f17b": "La política de {organization} no permite T3 Connect.",
   "986b0873f913a840": "La política de {organization} no permite tareas de webhook.",
@@ -4932,8 +4936,6 @@
   "3f5c37167aa5034f": "El almacenamiento del navegador rechazó la escritura, así que el cuadro de mensaje se quedó como estaba. Libera datos del sitio y vuelve a intentarlo.",
   "41ba6c0b5c5e8b22": "El prompt del stash no sobrevivirá a una recarga",
   "94d7f150b3f7b291": "El almacenamiento del navegador no está disponible, así que este stash solo se guarda en memoria durante esta sesión.",
-  "f421c24666cd8c71": "Se descartó el prompt más antiguo del stash",
-  "1123f816ea2a6e3e": "El stash admite {max} prompts; se quitó el más antiguo para hacer sitio.",
   "c3a8f9b1b2e7d588": "Las imágenes del stash no se guardaron",
   "fc3feba263971bce": "El prompt se guardó en el stash, pero el almacenamiento del navegador rechazó sus imágenes. Faltarán si recargas.",
   "9e36559d0fa0cca8": "Las imágenes del stash no se adjuntaron",
@@ -11098,7 +11100,7 @@
   "4889f7885396c26b": "Worktrees",
   "2d96fe39105aae8f": "Registros rotados",
   "1214c77f4bf1ee81": "Artefactos del navegador",
-  "9831e9c703b3bdd0": "{omitted, plural, one {{environment}: {count} resultado más.} other {{environment}: {count} resultados más.}}",
+  "d9e33a2a8d404a96": "{omitted, plural, one {{environment}: {count} resultado más.} other {{environment}: {count} resultados más.}}",
   "c8192b219451a0d0": "{removed} quitados, {kept} conservados, {failed} fallidos",
   "cbd8bf91a856906a": "{removed} quitados, {kept} conservados",
   "754564dc0b82aff7": "{count, plural, one {Última ejecución {when}. {bytes} recuperados. No se pudo quitar {count} elemento.} other {Última ejecución {when}. {bytes} recuperados. No se pudieron quitar {count} elementos.}}",
@@ -12517,7 +12519,7 @@
   "7755500a4cde5066": "Cerrar el panel",
   "b8dcbc93a2ca1861": "Esta ejecución ya no lo incluye.",
   "115c69de3202f664": "Abrir",
-  "644eafa9048b62df": "{count, plural, =1 {1.er intento} =2 {2.º intento} =3 {3.er intento} other {{count}.º intento}}",
+  "a2bbf464a3be4882": "{count, plural, =1 {1.er intento} =2 {2.º intento} =3 {3.er intento} other {{count}.º intento}}",
   "e39f89c909df4db0": "No se pudo reanudar la ejecución",
   "865f034346b82f47": "¿Cancelar {title}? Sus agentes se detienen y la ejecución no se podrá reanudar.",
   "6bc75632fd9c9136": "No se pudo cancelar la ejecución",
@@ -12981,5 +12983,28 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Comprobando qué idiomas admite el modelo…"
+  "800966eb58181745": "Comprobando qué idiomas admite el modelo…",
+  "410dded6e21c280d": "El stash está lleno",
+  "1af8d12ac21cb183": "El stash admite {max} prompts. Restaura o elimina uno para hacer sitio; el campo de texto se dejó como estaba.",
+  "381ceed77cb8b2b3": "Detener {name}",
+  "5b9fda36b610d25c": "Detener",
+  "1d372f6d555dde3c": "Detener todos los dispositivos",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " más"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " más en Elementos vinculados"
+  ]
 }
