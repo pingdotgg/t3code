@@ -312,10 +312,6 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
 
 const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
 
-function isEscapeCancel(code: number): boolean {
-  return code === 0x18 || code === 0x1a; // CAN or SUB
-}
-
 /** Length of a complete escape sequence starting at `index` (an ESC), or -1 if unfinished. */
 function escapeLength(input: string, index: number): number {
   const next = input[index + 1];
@@ -327,15 +323,17 @@ function escapeLength(input: string, index: number): number {
       const code = input.charCodeAt(cursor);
       // Like xterm.js, a new ESC cancels an unfinished CSI so the next sequence parses intact.
       if (code === 0x1b) return cursor - index;
-      if (isEscapeCancel(code) || (code >= 0x40 && code <= 0x7e)) return cursor - index + 1;
+      // CAN and SUB cancel the CSI and are consumed.
+      if (code === 0x18 || code === 0x1a) return cursor - index + 1;
+      if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
     }
     return -1;
   }
   if (STRING_SEQUENCE_INTRODUCERS.has(next)) {
     // BEL/ST ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
-      const code = input.charCodeAt(cursor);
-      if (code === 0x07 || isEscapeCancel(code)) return cursor - index + 1;
+      if (input[cursor] === "\u0007") return cursor - index + 1;
+      if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor - index + 1;
       if (input[cursor] === "\n") return cursor - index;
       // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
       if (input[cursor] === ESC) {
