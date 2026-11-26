@@ -496,10 +496,14 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     while (cells.length && !hasCellText(cells.at(-1)!)) cells.pop();
     if (!cells.length) continue;
     const repeat = repeatCount(row.attrs["number-rows-repeated"]);
+    // Word emits no cells for the grid columns w:gridBefore skips at the start of a row.
+    const trPr = row.name === "tr" ? children(row).find((c) => c.name === "trPr") : undefined;
+    const before = trPr && children(trPr).find((c) => c.name === "gridBefore")?.attrs.val;
+    const skipped = before ? Math.max(0, Number.parseInt(before, 10) || 0) : 0;
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
-      let column = 0;
-      let gap = 0;
+      let column = skipped;
+      let gap = skipped;
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
         // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.

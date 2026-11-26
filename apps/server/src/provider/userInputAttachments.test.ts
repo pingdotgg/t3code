@@ -1122,14 +1122,29 @@ describe("question answer paths", () => {
               '<w:tr><w:tc><w:p><w:r><w:t>Tail</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>End</w:t></w:r></w:p></w:tc></w:tr>' +
               '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Merged</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc></w:tr>' +
               '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="0"/></w:tcPr><w:p><w:r><w:t>Zero</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Next</w:t></w:r></w:p></w:tc></w:tr>' +
+              '<w:tr><w:trPr><w:gridBefore w:val="1"/></w:trPr><w:tc><w:p><w:r><w:t>500</w:t></w:r></w:p></w:tc></w:tr>' +
+              '<w:tr><w:trPr><w:gridBefore w:val="1"/></w:trPr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Span</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Last</w:t></w:r></w:p></w:tc></w:tr>' +
               '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="513"/></w:tcPr><w:p><w:r><w:t>Wide</w:t></w:r></w:p></w:tc></w:tr>' +
               "</w:tbl></w:body></w:document>",
           },
           expected: [
-            "A\tB\tC\nTail\tEnd\nMerged\t\tTotal\nZero\tNext",
+            "A\tB\tC\nTail\tEnd\nMerged\t\tTotal\nZero\tNext\n\t500\n\tSpan\t\tLast\n",
             "[Extracted text truncated at document extraction limits.]",
           ],
           absent: ["Wide"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w"><w:body><w:tbl>' +
+              "<w:tr><w:tc><w:p><w:r><w:t>Kept</w:t></w:r></w:p></w:tc></w:tr>" +
+              '<w:tr><w:trPr><w:gridBefore w:val="512"/></w:trPr><w:tc><w:p><w:r><w:t>Far</w:t></w:r></w:p></w:tc></w:tr>' +
+              "</w:tbl></w:body></w:document>",
+          },
+          expected: ["Kept\n", "[Extracted text truncated at document extraction limits.]"],
+          absent: ["Far"],
         },
         {
           ext: "docx",
