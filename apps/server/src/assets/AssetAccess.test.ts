@@ -848,6 +848,34 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "a page link to a non-page is not promoted to a grant over its folder",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-page-link-" }),
+        );
+        yield* fs.writeFileString(path.join(root, "report.pdf"), "%PDF-1.4");
+        yield* fs.writeFileString(path.join(root, "private.html"), "<html>private</html>");
+        const link = path.join(root, "page.html");
+        yield* fs.symlink(path.join(root, "report.pdf"), link);
+        const issued = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: link },
+          workspaceRoot: root,
+        });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        const name = suffix.slice(separator + 1);
+        expect(yield* resolveAsset(token, name)).toMatchObject({
+          path: path.join(root, "report.pdf"),
+        });
+        expect(yield* resolveAsset(token, "private.html")).toBeNull();
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.skipIf(!symlinksSupported)("does not issue URLs for server state files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

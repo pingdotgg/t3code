@@ -517,6 +517,11 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     readonly requestedPath: string;
     readonly resource: AssetResource;
     readonly expiresAt: number;
+    /**
+     * Refuse a target that is not a page, so the caller can issue it as the media file it is.
+     * A grant over the folder is chosen by the requested name, which a link need not match.
+     */
+    readonly requirePageTarget?: boolean;
   }) {
     const path = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -581,6 +586,11 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     }
     // The response type follows the file a link points at, so that file must be previewable too.
     if (!isWorkspacePreviewEntryPath(canonicalFile)) {
+      return yield* new AssetPreviewTypeValidationError({
+        resource: input.resource,
+      });
+    }
+    if (input.requirePageTarget === true && !/\.html?$/i.test(canonicalFile)) {
       return yield* new AssetPreviewTypeValidationError({
         resource: input.resource,
       });
@@ -674,6 +684,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
               requestedPath,
               resource,
               expiresAt,
+              requirePageTarget: true,
             }),
           ),
           Effect.option,
