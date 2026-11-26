@@ -68,7 +68,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { waitForPendingWorkspaceDefault } from "../../lib/retargetDraftWorkspace";
+import { readPendingWorkspaceDefault } from "../../lib/draftWorkspaceDefaults";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -1834,7 +1834,7 @@ export function useComposerSend(input: ComposerSendInput) {
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
     const workspaceDefault =
-      draftId && !sendInFlightRef.current ? waitForPendingWorkspaceDefault(draftId) : null;
+      draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
     const { draftReady, sameRoute } = await waitBeforeSend(workspaceDefault);
     if (!draftReady || !sameRoute) return;

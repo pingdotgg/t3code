@@ -11,7 +11,8 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { getClientSettings } from "../hooks/useSettings";
-import { moveDraftWorkspace } from "./retargetDraftWorkspace";
+import { trackPendingWorkspaceDefault } from "./draftWorkspaceDefaults";
+import { retargetDraftWorkspace } from "./retargetDraftWorkspace";
 import { seedDraftModelSelection } from "./seedDraftModelSelection";
 
 /**
@@ -30,9 +31,6 @@ export function moveDraftToProject(draftId: DraftId, project: EnvironmentProject
     return false;
   }
   const projectRef = scopeProjectRef(project.environmentId, project.id);
-  const projectChanged =
-    session.environmentId !== project.environmentId || session.projectId !== project.id;
-  const workspace = projectChanged ? moveDraftWorkspace(session, projectRef, project) : null;
   store.setLogicalProjectDraftThreadId(
     deriveLogicalProjectKeyFromSettings(
       project,
@@ -40,9 +38,20 @@ export function moveDraftToProject(draftId: DraftId, project: EnvironmentProject
     ),
     projectRef,
     draftId,
-    workspace?.workspace,
   );
-  workspace?.applyProjectFile(draftId);
+  if (session.environmentId !== project.environmentId || session.projectId !== project.id) {
+    const current = { envMode: session.envMode, startFromOrigin: session.startFromOrigin };
+    // A send waits on this; a read stuck on a reconnecting machine falls back to no project file.
+    trackPendingWorkspaceDefault(
+      draftId,
+      projectRef,
+      current,
+      retargetDraftWorkspace(session, projectRef, AbortSignal.timeout(5_000)).then((workspace) => ({
+        ...current,
+        ...workspace,
+      })),
+    );
+  }
   seedDraftModelSelection(draftId, projectRef);
   return true;
 }
