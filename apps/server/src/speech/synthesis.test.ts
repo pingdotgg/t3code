@@ -15,6 +15,7 @@ import { localSynthesisLanguage, localSynthesisRuntime } from "./LocalSpeechSynt
 import {
   encodeMp3,
   pcm16Mono,
+  peakLimiter,
   speechLines,
   splitAtPunctuation,
   supertonicText,
@@ -44,6 +45,33 @@ it("reads the samples of a 16-bit PCM WAV past any chunk before its data", () =>
     sampleRate: 24_000,
     channels: 1,
   });
+});
+
+it("turns down peaks a model overshoots without touching quieter speech", () => {
+  const rate = 24_000;
+  const tone = (amplitude: number, seconds: number) =>
+    Float32Array.from(
+      { length: rate * seconds },
+      (_, index) => amplitude * Math.sin((2 * Math.PI * 220 * index) / rate),
+    );
+  const { limit, flush } = peakLimiter(rate, 1);
+  // A streaming model's parts can split a word; a peak right after a split is still caught.
+  const loud = tone(1.2, 0.5);
+  const quiet = tone(0.5, 0.1);
+  const out = [
+    ...limit(loud.subarray(0, 4_000)),
+    ...limit(loud.subarray(4_000)),
+    ...limit(new Float32Array(rate)),
+    ...limit(quiet),
+    ...flush(),
+  ];
+  expect(out).toHaveLength(rate / 200 + loud.length + rate + quiet.length);
+  expect(Math.max(...out.slice(0, rate / 200 + loud.length).map(Math.abs))).toBeLessThanOrEqual(
+    0.89,
+  );
+  // Once the release recovers, quiet speech passes through at its own level.
+  const drift = out.slice(-quiet.length).map((sample, index) => Math.abs(sample - quiet[index]!));
+  expect(Math.max(...drift)).toBeLessThan(0.001);
 });
 
 it("encodes model samples as clipped mono 16-bit PCM", () => {

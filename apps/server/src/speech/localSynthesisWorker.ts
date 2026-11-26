@@ -6,6 +6,7 @@ import {
   ENCODE_SLICE_SAMPLES,
   mp3Kbps,
   pcm16Mono,
+  peakLimiter,
   speechLines,
   splitAtPunctuation,
   wavAudio,
@@ -19,6 +20,7 @@ const entry = `
   const { pathToFileURL } = await import("node:url");
   const bindAudioCpp = ${bindAudioCpp.toString()};
   const pcm16Mono = ${pcm16Mono.toString()};
+  const peakLimiter = ${peakLimiter.toString()};
   const mp3Kbps = ${mp3Kbps.toString()};
   const speechLines = ${speechLines.toString()};
   const splitAtPunctuation = ${splitAtPunctuation.toString()};
@@ -70,6 +72,18 @@ const entry = `
         cancelled = false;
         // One encoder across every part keeps the MP3 a single seamless stream.
         let encoder;
+        let limiter;
+        let format;
+        const emit = async (samples) => {
+          const pcm = pcm16Mono(samples, format.channels);
+          if (pcm.length) process.send({ type: "t3-synthesis-pcm", pcm, rate: format.sampleRate });
+          // Encoding a text chunk takes longer than synthesizing it, so send it slice by slice.
+          for (let start = 0; start < pcm.length && !cancelled; start += ${ENCODE_SLICE_SAMPLES}) {
+            chunk(encoder.encodeBuffer(pcm.subarray(start, start + ${ENCODE_SLICE_SAMPLES})));
+            // Lets IPC deliver the slice, and a cancel arrive, before the next one.
+            await new Promise((resolve) => setImmediate(resolve));
+          }
+        };
         const { voiceClip, ...request } = message.request;
         if (voiceClip && !clips.has(voiceClip)) clips.set(voiceClip, wavAudio(readFileSync(voiceClip)));
         const voiceAudio = voiceClip && clips.get(voiceClip);
@@ -85,14 +99,9 @@ const entry = `
               if (!audio) break;
               spoke = true;
               encoder ??= new lame.Mp3Encoder(1, audio.sampleRate, mp3Kbps(audio.sampleRate));
-              const pcm = pcm16Mono(audio.samples, audio.channels);
-              if (pcm.length) process.send({ type: "t3-synthesis-pcm", pcm, rate: audio.sampleRate });
-              // Encoding a text chunk takes longer than synthesizing it, so send it slice by slice.
-              for (let start = 0; start < pcm.length && !cancelled; start += ${ENCODE_SLICE_SAMPLES}) {
-                chunk(encoder.encodeBuffer(pcm.subarray(start, start + ${ENCODE_SLICE_SAMPLES})));
-                // Lets IPC deliver the slice, and a cancel arrive, before the next one.
-                await new Promise((resolve) => setImmediate(resolve));
-              }
+              format ??= { sampleRate: audio.sampleRate, channels: audio.channels };
+              limiter ??= peakLimiter(audio.sampleRate, audio.channels);
+              await emit(limiter.limit(audio.samples));
             }
           } catch (error) {
             // A line already partly heard cannot be said again without repeating it.
@@ -110,7 +119,10 @@ const entry = `
             stream?.close();
           }
         }
-        if (encoder && !cancelled) chunk(encoder.flush());
+        if (encoder && !cancelled) {
+          await emit(limiter.flush());
+          chunk(encoder.flush());
+        }
         reply({ ok: true });
       }
     } catch (error) {
