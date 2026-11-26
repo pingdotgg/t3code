@@ -3,7 +3,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ScopedProjectRef,
+  type T3ProjectFile,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
   composerDraftHasUserContent,
@@ -22,8 +27,14 @@ import {
   selectProjectGroupingSettings,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { readProjects, readThreadShell, useProjects, useQuietThreadShell } from "../state/entities";
+import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import {
+  readProjects,
+  readThreadShell,
+  readThreadShells,
+  useProjects,
+  useQuietThreadShell,
+} from "../state/entities";
 import {
   draftModelSelectionApplies,
   hasExplicitComposerModelSelection,
@@ -31,9 +42,11 @@ import {
   resolveNewThreadModelSelectionOverride,
   threadHasStarted,
 } from "../lib/chatThreadActions";
-import { prepareDraftWorkspaceDefault } from "../lib/retargetDraftWorkspace";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { trackPendingWorkspaceDefault } from "../lib/draftWorkspaceDefaults";
+import { peekT3ProjectFile, readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -43,6 +56,7 @@ import * as Schema from "effect/Schema";
 import { useAtomValue } from "@effect/atom-react";
 import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
+import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
@@ -105,8 +119,8 @@ export function createNewThreadHandler(router: AnyRouter) {
     const projectGroupingSettings = selectProjectGroupingSettings(getClientSettings());
     // Read at call time; status pushes replace the config map and would recreate every sidebar handler.
     const environmentServerConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const targetServerConfig = environmentServerConfigs.get(projectRef.environmentId);
-    const targetServerSettings = targetServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
+    const targetServerSettings =
+      environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
     const {
       getComposerDraft,
       getDraftSessionByLogicalProjectKey,
@@ -190,13 +204,62 @@ export function createNewThreadHandler(router: AnyRouter) {
           currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
         destinationDraftId,
       });
+    const envModeFor = (projectFile: T3ProjectFile | null): DraftThreadEnvMode =>
+      resolveNewThreadEnvMode({
+        projectSettings: resolveProjectSettings(
+          targetServerSettings,
+          project?.id ?? null,
+          project,
+          projectFile,
+        ),
+        workspaceRoot: project?.workspaceRoot ?? null,
+        newProjectsRoot: environmentServerConfigs.get(projectRef.environmentId)?.newProjectsRoot,
+        projectHasThreads:
+          readThreadShells().some(
+            (thread) =>
+              thread.environmentId === projectRef.environmentId &&
+              thread.projectId === projectRef.projectId,
+          ) ||
+          readUnloadedThreadCount(
+            [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
+            [],
+          ) > 0,
+      });
     const startFromOriginFor = (envMode: DraftThreadEnvMode) =>
       resolveNewDraftStartFromOrigin({
         envMode,
         newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
       });
-    const resolveDefaultWorkspace = () =>
-      prepareDraftWorkspaceDefault(projectRef, project, targetServerConfig);
+    // The draft opens without waiting on t3.json: a cold read takes seconds on a loaded host.
+    // Its workspace default lands afterwards unless the user picked a workspace or sent first.
+    const resolveDefaultEnvMode = () => {
+      // Environment queries wait for a connection, so an offline machine's file is never read.
+      const consultProjectFile =
+        project !== undefined &&
+        projectSettings.settings.defaultThreadEnvMode === null &&
+        appAtomRegistry
+          .get(environmentSummaries.connectedEnvironmentIdsAtom)
+          .includes(project.environmentId);
+      if (!consultProjectFile) return { envMode: envModeFor(null), applyProjectFile: () => {} };
+      const projectFileRead = readT3ProjectFile(project.environmentId, project.workspaceRoot);
+      const cachedProjectFile = peekT3ProjectFile(project.environmentId, project.workspaceRoot);
+      if (cachedProjectFile !== undefined) {
+        return { envMode: envModeFor(cachedProjectFile), applyProjectFile: () => {} };
+      }
+      const envMode = envModeFor(null);
+      const applyProjectFile = (draftId: DraftId) => {
+        trackPendingWorkspaceDefault(
+          draftId,
+          projectRef,
+          { envMode, startFromOrigin: startFromOriginFor(envMode) },
+          projectFileRead.then((projectFile) => {
+            const envMode = envModeFor(projectFile);
+            return { envMode, startFromOrigin: startFromOriginFor(envMode) };
+          }),
+        );
+      };
+      return { envMode, applyProjectFile };
+    };
     const logicalProjectKey = project
       ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
       : scopedProjectKey(projectRef);
@@ -240,12 +303,13 @@ export function createNewThreadHandler(router: AnyRouter) {
         if (hasExplicitWorkspaceOption) {
           workspaceContext = pickExplicitWorkspaceOptions(options);
         } else if (!isDraftAlreadyOpen) {
-          const defaultWorkspace = resolveDefaultWorkspace();
-          applyProjectFile = defaultWorkspace.applyProjectFile;
+          const defaultEnvMode = resolveDefaultEnvMode();
+          applyProjectFile = defaultEnvMode.applyProjectFile;
           workspaceContext = {
             branch: null,
             worktreePath: null,
-            ...defaultWorkspace.workspace,
+            envMode: defaultEnvMode.envMode,
+            startFromOrigin: startFromOriginFor(defaultEnvMode.envMode),
             workspaceExplicit: false,
           };
         }
@@ -336,18 +400,15 @@ export function createNewThreadHandler(router: AnyRouter) {
     const threadId = newThreadId();
     const createdAt = new Date().toISOString();
     return (async () => {
-      const defaultWorkspace = options?.envMode === undefined ? resolveDefaultWorkspace() : null;
-      const initialEnvMode = options?.envMode ?? defaultWorkspace?.workspace.envMode ?? "local";
+      const defaultEnvMode = options?.envMode === undefined ? resolveDefaultEnvMode() : null;
+      const initialEnvMode = options?.envMode ?? defaultEnvMode?.envMode ?? "local";
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
         threadId,
         createdAt,
         branch: options?.branch ?? null,
         worktreePath: options?.worktreePath ?? null,
         envMode: initialEnvMode,
-        startFromOrigin:
-          options?.startFromOrigin ??
-          defaultWorkspace?.workspace.startFromOrigin ??
-          startFromOriginFor(initialEnvMode),
+        startFromOrigin: options?.startFromOrigin ?? startFromOriginFor(initialEnvMode),
         ...(options?.envMode !== undefined || options?.startFromOrigin !== undefined
           ? { workspaceExplicit: true }
           : {}),
@@ -360,7 +421,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
       }
       seedPrompt(draftId);
-      defaultWorkspace?.applyProjectFile(draftId);
+      defaultEnvMode?.applyProjectFile(draftId);
       await router.navigate({
         to: "/draft/$draftId",
         params: { draftId },

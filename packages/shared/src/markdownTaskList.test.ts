@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { markdownTaskMarkerOffset } from "./markdownTaskList.ts";
-import { setMarkdownTaskChecked } from "./markdownTaskEdits.ts";
+import { setMarkdownTaskChecked, taskListMarkerOffset } from "./markdownTaskEdits.ts";
+
+describe("taskListMarkerOffset", () => {
+  it("finds the marker on the line after a bare bullet", () => {
+    expect(taskListMarkerOffset("-\n  [ ] Task", 0)).toBe(4);
+    expect(taskListMarkerOffset("-\r\n  [ ] Task", 0)).toBe(5);
+    expect(taskListMarkerOffset("-\r  [ ] Task", 0)).toBe(4);
+    expect(taskListMarkerOffset("> > 1.\n> >    [ ] Task", 4)).toBe(14);
+    expect(taskListMarkerOffset("- First\n- Second", 0)).toBeNull();
+  });
+});
 
 describe("setMarkdownTaskChecked", () => {
   const markdown = "- [ ] First\n- [x] Second\n";
@@ -41,6 +51,8 @@ describe("markdownTaskMarkerOffset", () => {
     for (const text of ["Wrapped", "Wrapped onto two lines"]) {
       expect(markdownTaskMarkerOffset(markdown, 3, text, true)).toBe(markdown.lastIndexOf("[ ]"));
     }
+    expect(markdownTaskMarkerOffset("-\n  [ ] Task", 0, "Task", true)).toBe(4);
+    expect(markdownTaskMarkerOffset("> -\n>   [ ] Task", 0, "Task", true)).toBe(8);
   });
 
   it("tells identical labels apart by document index, across code blocks", () => {
