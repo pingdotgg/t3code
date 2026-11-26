@@ -435,7 +435,7 @@ describe("IssueService", () => {
     }),
   );
 
-  it.effect("shares one tracker read of an issue until a write changes it", () =>
+  it.effect("shares one tracker read of an issue until a write or an explicit refresh", () =>
     Effect.gen(function* () {
       let reads = 0;
       const service = yield* makeService({
@@ -467,6 +467,11 @@ describe("IssueService", () => {
       yield* service.comment({ ...ref, body: "Repro attached." });
       yield* service.detail(ref);
       expect(reads).toBe(3);
+
+      // An explicit refresh sees what changed on the tracker itself.
+      yield* service.detail({ ...ref, refresh: true });
+      yield* service.detail(ref);
+      expect(reads).toBe(4);
     }),
   );
 

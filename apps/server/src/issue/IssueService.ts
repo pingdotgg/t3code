@@ -23,6 +23,7 @@ import {
   type IssueCreateInput,
   type IssueCreateResult,
   type IssueDetail,
+  type IssueDetailInput,
   type IssueError,
   type IssueListEntry,
   type IssueListInput,
@@ -195,7 +196,7 @@ export class IssueService extends Context.Service<
   IssueService,
   {
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueError>;
-    readonly detail: (input: IssueRef) => Effect.Effect<IssueDetail, IssueError>;
+    readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetail, IssueError>;
     readonly linkMetadata: (input: IssueRef) => Effect.Effect<TrackerIssueLink, IssueError>;
     readonly comments: (
       input: IssueCommentsPageInput,
@@ -590,6 +591,9 @@ const make = Effect.gen(function* () {
 
   const detail: IssueService["Service"]["detail"] = (input) =>
     requireProject(input).pipe(
+      Effect.tap((project) =>
+        input.refresh === true ? invalidateDetail(project, input.key) : Effect.void,
+      ),
       Effect.flatMap((project) =>
         Cache.get(
           details,
