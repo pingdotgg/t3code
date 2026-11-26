@@ -118,6 +118,11 @@ export const make = Effect.gen(function* () {
       Effect.provideService(HostProcess.Platform, platform),
     );
 
+  // Termux and similar hosts have no /bin/sh, only an `sh` on PATH.
+  const shell = (yield* fileSystem.exists("/bin/sh").pipe(Effect.orElseSucceed(() => false)))
+    ? "/bin/sh"
+    : ((yield* resolve("sh", hostEnvironment)) ?? "/bin/sh");
+
   const run = (command: string, args: ReadonlyArray<string>) =>
     runner.run({ command, args, timeout: "5 seconds" }).pipe(Effect.option);
 
@@ -435,7 +440,7 @@ export const make = Effect.gen(function* () {
       const resolved = yield* resolve(command, env ?? hostEnvironment);
       if (resolved === null) return { command, args };
       const scope = yield* systemd;
-      if (scope === undefined) return agentScopeCommand({ command: resolved, args });
+      if (scope === undefined) return agentScopeCommand({ command: resolved, args, shell });
       yield* scope.applyMemoryLimits;
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       // A continuing shared scope cannot attribute a tool's OOM to one thread.
@@ -465,7 +470,7 @@ export const make = Effect.gen(function* () {
         ? resolved
         : `${process.cwd()}${path.sep}${resolved}`;
       return {
-        ...agentScopeCommand({ command: executable, args, scope: systemdScope }),
+        ...agentScopeCommand({ command: executable, args, scope: systemdScope, shell }),
         unit,
       };
     }),
