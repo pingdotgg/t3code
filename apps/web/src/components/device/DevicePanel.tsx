@@ -73,10 +73,15 @@ export function DevicePanel(props: {
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
   // Power-offs act on the environment, not the thread, so they outlive thread switches.
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
-  const [stopError, setStopError] = useState<{
-    readonly environmentId: string;
-    readonly message: string;
-  } | null>(null);
+  const [stopErrors, setStopErrors] = useState<Readonly<Record<string, string>>>({});
+  const stopError = stopErrors[environmentId];
+  const setStopError = (message: string | undefined) =>
+    setStopErrors((current) => {
+      const next = { ...current };
+      if (message === undefined) delete next[environmentId];
+      else next[environmentId] = message;
+      return next;
+    });
   const stoppingKey = (device: DeviceSummary) => `${environmentId}\u0000${deviceKey(device)}`;
   const isStopping = (device: DeviceSummary) => stopping.has(stoppingKey(device));
 
@@ -145,7 +150,7 @@ export function DevicePanel(props: {
   };
 
   const stopDevices = async (devices: readonly DeviceSummary[]) => {
-    setStopError(null);
+    setStopError(undefined);
     setStopping((current) => new Set([...current, ...devices.map(stoppingKey)]));
     const results = await Promise.all(
       devices.map((device) =>
@@ -162,8 +167,7 @@ export function DevicePanel(props: {
       ),
     );
     const failure = results.find((result) => result._tag === "Failure");
-    if (failure?._tag === "Failure")
-      setStopError({ environmentId, message: formatEnvironmentQueryError(failure.cause) });
+    if (failure?._tag === "Failure") setStopError(formatEnvironmentQueryError(failure.cause));
   };
 
   const floatActive = () => {
@@ -279,8 +283,8 @@ export function DevicePanel(props: {
           {operationError ? (
             <DeviceNotice onDismiss={() => setOperation(null)}>{operationError}</DeviceNotice>
           ) : null}
-          {stopError?.environmentId === environmentId ? (
-            <DeviceNotice onDismiss={() => setStopError(null)}>{stopError.message}</DeviceNotice>
+          {stopError !== undefined ? (
+            <DeviceNotice onDismiss={() => setStopError(undefined)}>{stopError}</DeviceNotice>
           ) : null}
         </div>
         <div className="@container relative flex min-h-0 flex-1">
