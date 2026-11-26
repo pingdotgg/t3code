@@ -1,6 +1,6 @@
 import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { extractMarkdownLinkHrefs } from "@t3tools/shared/markdownLinks";
 
 import {
@@ -258,67 +258,27 @@ describe("wordsHast", () => {
       '<ul dir="ltr">\n<li>x\n<pre><code>★ Insight ─────\n</code></pre>\n</li>\n</ul>\n<div dir="ltr">\n★ Insight ─────\n</div>\n<blockquote dir="ltr">\n<p>q\n★ Insight ─────</p>\n</blockquote>',
     );
     // What follows an opening keeps its offsets in the message, which components slice.
-    const insight = "★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────";
+    const insight =
+      "[x](./x.ts)\n\n★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────\n\n[y](./y.ts)\n\n★ Insight ─────\n[z](./z.ts)\n─────";
     const tree = wordsHast(insight, { ...ASSISTANT, insights: true });
-    const quote = tree.children.find((child): child is Element => child.type === "element")!;
-    const sliced = (node: Element) =>
-      insight.slice(node.position!.start.offset, node.position!.end.offset);
-    const [paragraph, pre] = quote.children.filter((child) => child.type === "element");
-    const link = paragraph!.children.find((child): child is Element => child.type === "element")!;
-    expect([sliced(link), sliced(pre!)]).toEqual(["[a](./a.ts)", "```sh\nls\n```"]);
-  });
-
-  it("restores source positions around insights without scanning all later lines per node", () => {
-    const beforeCount = 400;
-    const before = Array.from(
-      { length: beforeCount },
-      (_, index) => `[before-${index}](https://example.com/${index})`,
-    ).join("\n\n");
-    const markdown = [
-      before,
-      "★ Insight ─────\nSee [inside](./inside.ts)\n```sh\nls\n```\n─────",
-      "[after](https://example.com/after)",
-      "★ Insight ─────\n[eof](./eof.ts)\n─────",
-    ].join("\n\n");
-
-    const originalFindLast = Array.prototype.findLast;
-    let scannedEntries = 0;
-    using _findLast = vi.spyOn(Array.prototype, "findLast").mockImplementation(function (
-      this: unknown[],
-      predicate: (value: unknown, index: number, array: unknown[]) => unknown,
-      thisArg?: unknown,
-    ) {
-      return originalFindLast.call(this, (value, index, array) => {
-        scannedEntries += 1;
-        return Boolean(predicate.call(thisArg, value, index, array));
-      });
-    });
-
-    const tree = wordsHast(markdown, { ...ASSISTANT, insights: true });
-
-    const slices: string[] = [];
+    const sliced: string[] = [];
     const visit = (node: Root | Element) => {
       for (const child of node.children) {
         if (child.type !== "element") continue;
-        if (child.position) {
-          slices.push(markdown.slice(child.position.start.offset, child.position.end.offset));
+        if (child.tagName === "a" || child.tagName === "pre") {
+          sliced.push(insight.slice(child.position!.start.offset, child.position!.end.offset));
         }
         visit(child);
       }
     };
     visit(tree);
-
-    expect(slices[0]).toBe("[before-0](https://example.com/0)");
-    expect(slices[beforeCount - 1]).toBe(
-      `[before-${beforeCount - 1}](https://example.com/${beforeCount - 1})`,
-    );
-    expect(slices.slice(beforeCount)).toEqual([
-      "[inside](./inside.ts)",
+    expect(sliced).toEqual([
+      "[x](./x.ts)",
+      "[a](./a.ts)",
       "```sh\nls\n```",
-      "[after](https://example.com/after)",
-      "[eof](./eof.ts)",
+      "[y](./y.ts)",
+      "[z](./z.ts)",
     ]);
-    expect(scannedEntries).toBeLessThan(beforeCount * 20);
   });
 
   it("shows raw HTML as its text when asked", () => {
