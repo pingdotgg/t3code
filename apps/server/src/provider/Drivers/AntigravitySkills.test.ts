@@ -152,21 +152,27 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect("loads a root skill without scanning its children", () =>
+  it.effect("keeps child skills visible under a project root SKILL.md", () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
-      const root = path.join(input.cwd, ".agents", "skills");
-      const skillPath = yield* writeSkill(root, "---\nname: root-skill\n---\n");
-      yield* writeSkill(path.join(root, "child"), "---\nname: child-skill\n---\n");
+      const agentsRoot = path.join(input.cwd, ".agents", "skills");
+      const legacyRoot = path.join(input.cwd, ".agent", "skills");
+      yield* writeSkill(agentsRoot, "---\nname: root-skill\n---\n");
+      yield* writeSkill(legacyRoot, "---\nname: legacy-root-skill\n---\n");
+      const child = yield* writeSkill(
+        path.join(agentsRoot, "child"),
+        "---\nname: child-skill\n---\n",
+      );
+      const legacyChild = yield* writeSkill(
+        path.join(legacyRoot, "child"),
+        "---\nname: legacy-child-skill\n---\n",
+      );
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), [
-        { name: "root-skill", path: skillPath, scope: "project", enabled: true },
+        { name: "child-skill", path: child, scope: "project", enabled: true },
+        { name: "legacy-child-skill", path: legacyChild, scope: "project", enabled: true },
       ]);
-
-      yield* fileSystem.writeFileString(skillPath, "---\nname: [invalid\n---\n");
-      assert.deepEqual(yield* discoverAntigravitySkills(input), []);
     }),
   );
 

@@ -31,6 +31,7 @@ import {
   workflowReferenceIssue,
   workflowReferenceLabel,
   workflowReferencePullRequest,
+  workflowReferenceThreadId,
   workflowRunState,
   workflowSaidStart,
   workflowStepReferences,
@@ -685,6 +686,20 @@ describe("workflow references", () => {
     expect(workflowReferenceIssue(machine)).toBeNull();
   });
 
+  it("opens a thread subject as its thread, and names a web address by its host", () => {
+    expect(
+      workflowReferenceThreadId(
+        reference({ kind: "thread", key: "t1", address: { threadId: "t1" } }),
+      ),
+    ).toBe("t1");
+    expect(workflowReferenceThreadId(issue("412"))).toBeNull();
+    expect(
+      workflowReferenceLabel(
+        reference({ kind: "url", key: "u", url: "https://status.example.com/incidents/9" }),
+      ),
+    ).toBe("status.example.com");
+  });
+
   it("gives a step the things it touched", () => {
     const all = [issue("412"), pullRequest, machine];
     expect(workflowStepReferences(all, "checks")).toEqual([pullRequest]);
@@ -713,6 +728,21 @@ describe("workflowOneLine", () => {
     );
     expect(workflowOneLine("- See [the issue](https://x.test/2) first")).toBe(
       "See the issue first",
+    );
+    expect(workflowOneLine("_italic_ __bold__ *italic* **bold** (_nested_) **yes**_now_.")).toBe(
+      "italic bold italic bold (nested) yesnow.",
+    );
+    expect(workflowOneLine("Fixed **`foo_bar`** and _see `x`_ now.")).toBe(
+      "Fixed foo_bar and see x now.",
+    );
+  });
+
+  it("keeps underscores inside identifiers, paths and code", () => {
+    expect(workflowOneLine("Set MY_API_KEY in src/__tests__/my_module.test.ts and a__b__c.")).toBe(
+      "Set MY_API_KEY in src/__tests__/my_module.test.ts and a__b__c.",
+    );
+    expect(workflowOneLine("Run `__init__`, ``*glob*`` and `[api](url)` now.")).toBe(
+      "Run __init__, *glob* and [api](url) now.",
     );
   });
 });
