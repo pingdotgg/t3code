@@ -38,6 +38,7 @@ import {
   setLayoutStripViewportWidth,
   useLayoutStore,
 } from "./layoutStore";
+import { LayoutDropZones } from "./DropZones";
 import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -1084,4 +1085,59 @@ it("does not switch tabs when releasing the pointer after Escape cancels a tab d
   await new Promise((resolve) => setTimeout(resolve, 25));
 
   expect(focusedTabId()).toBe(first.id);
+});
+
+it("keeps the tab drag insertion marker inside an overflowing tab strip", async () => {
+  using _tabs = setup();
+  for (let index = 0; index < 12; index++) {
+    useLayoutStore
+      .getState()
+      .openTab(createLayoutLauncherContent(null), { placement: "active-pane" });
+  }
+  await using screen = await render(
+    <>
+      <Host />
+      <LayoutDropZones />
+    </>,
+  );
+  await page.viewport(900, 600);
+  const pane = screen.container.querySelector<HTMLElement>("[data-layout-pane-id]")!;
+  const strip = pane.querySelector<HTMLElement>("[data-layout-tab-strip]")!;
+  await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth));
+  const firstTab = strip.querySelector<HTMLElement>("[data-layout-pane-tab]")!;
+  const paneRect = pane.getBoundingClientRect();
+  const stripRect = strip.getBoundingClientRect();
+  const startRect = firstTab.getBoundingClientRect();
+  try {
+    firstTab.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerId: 1,
+        clientX: startRect.left + 8,
+        clientY: startRect.top + 8,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        pointerId: 1,
+        clientX: paneRect.right - 12,
+        clientY: stripRect.top + 8,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-layout-drag-overlay] .w-0\\.5")).not.toBeNull(),
+    );
+    const marker = document
+      .querySelector<HTMLElement>("[data-layout-drag-overlay] .w-0\\.5")!
+      .getBoundingClientRect();
+    expect(marker.left).toBeGreaterThanOrEqual(Math.max(paneRect.left, stripRect.left) - 1);
+    expect(marker.right).toBeLessThanOrEqual(Math.min(paneRect.right, stripRect.right) + 1);
+  } finally {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+  }
 });

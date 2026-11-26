@@ -80,6 +80,7 @@ export interface LayoutDragPane {
   paneId: string;
   rect: LayoutDragRect;
   tabs?: readonly { id: string; rect: LayoutDragRect }[];
+  tabStrip?: LayoutDragRect;
   /** A side panel or terminal pane: splits beside it, but no tabs into it. */
   companion: boolean;
 }
@@ -142,11 +143,30 @@ function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
       const paneId = element.dataset.layoutPaneId;
       const rect = element.getBoundingClientRect();
       if (!paneId || rect.width === 0 || rect.height === 0) return [];
-      const tabs = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
-        (tab) => ({ id: tab.dataset.layoutPaneTab!, rect: toRect(tab.getBoundingClientRect()) }),
-      );
+      const tabElements = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")];
+      const tabs = tabElements.map((tab) => ({
+        id: tab.dataset.layoutPaneTab!,
+        rect: toRect(tab.getBoundingClientRect()),
+      }));
+      const stripEl =
+        tabElements[0]?.closest<HTMLElement>("[data-layout-tab-strip]") ??
+        element.querySelector<HTMLElement>("[data-layout-tab-strip]");
+      const stripBox = stripEl ? toRect(stripEl.getBoundingClientRect()) : null;
+      const tabStrip = stripBox
+        ? {
+            ...stripBox,
+            left: Math.max(rect.left, stripBox.left),
+            right: Math.min(rect.right, stripBox.right),
+          }
+        : undefined;
       return [
-        { paneId, rect: toRect(rect), tabs, companion: element.dataset.layoutCompanion != null },
+        {
+          paneId,
+          rect: toRect(rect),
+          tabs,
+          ...(tabStrip ? { tabStrip } : {}),
+          companion: element.dataset.layoutCompanion != null,
+        },
       ];
     },
   );
