@@ -520,6 +520,14 @@ it.effect.each([999, 1000])("buffered mail with a 1s TTL claimed after %i ms", (
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
       const address = { workflow: "gate", channel: "ready" };
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: address.workflow,
+        version: 1,
+        engineTag: `${address.workflow}@1`,
+        idempotencyKey: "r1",
+        input: {},
+      });
       yield* store.waitOpened({
         runId: "r1",
         name: "go",
@@ -628,6 +636,9 @@ it.effect("tells the milestone hub of each run and question transition once", ()
       });
       yield* store.runEnded("r1", "cancelled", "stopped by a person", null);
       yield* store.runEnded("r1", "completed", null, null);
+      // An ended run opens no wait: it would claim channel mail meant for a live run.
+      yield* ask("too late", { title: "Still there?" });
+      assert.isUndefined(yield* store.waitAt({ runId: "r1", wait: "too late" }));
 
       assert.notInclude(
         (yield* hub.recent()).events.map((event) => event.workflowRunId),
