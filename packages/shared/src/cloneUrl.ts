@@ -32,6 +32,19 @@ function parseCloneUrl(url: string): {
   return null;
 }
 
+/**
+ * Drops what an HTTP(S) remote can carry as a login: userinfo and the query. SSH URLs keep
+ * their user, which is part of the address.
+ */
+export function withoutRemoteUrlCredentials(url: string): string {
+  if (!/^https?:\/\//i.test(url)) return url;
+  return url.replace(/^(https?:\/\/)[^/?#]*@/i, "$1").replace(/\?[^#]*/, "");
+}
+
+export function isScpLikeCloneUrl(url: string): boolean {
+  return SCP_LIKE_URL.test(url);
+}
+
 export function cloneUrlProtocol(url: string): CloneProtocol | null {
   return parseCloneUrl(url)?.protocol ?? null;
 }
@@ -56,13 +69,19 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
     const azure = /^([^/?#]+)\/([^/?#]+)\/_git\/([^/?#]+)$/.exec(parsed.path);
     return azure ? `git@ssh.dev.azure.com:v3/${azure[1]}/${azure[2]}/${azure[3]}` : null;
   }
+  // Bitbucket Cloud serves SSH only from `ssh.bitbucket.org` and HTTPS only from `bitbucket.org`.
+  const host = /^(?:(?:alt)?ssh\.)?bitbucket\.org$/i.test(parsed.host)
+    ? protocol === "ssh"
+      ? "ssh.bitbucket.org"
+      : "bitbucket.org"
+    : parsed.host;
   // SCP paths are literal; URI paths use percent escapes.
   try {
-    if (protocol === "ssh") return `git@${parsed.host}:${decodeURIComponent(parsed.path)}`;
+    if (protocol === "ssh") return `git@${host}:${decodeURIComponent(parsed.path)}`;
     const path = parsed.scp
       ? parsed.path.split("/").map(encodeURIComponent).join("/")
-      : parsed.path;
-    return `https://${parsed.host}/${path}`;
+      : parsed.path.replaceAll("#", "%23").replaceAll("?", "%3F");
+    return `https://${host}/${path}`;
   } catch {
     return null;
   }
@@ -80,7 +99,7 @@ export function cloneUrlRepositoryPath(url: string): string | null {
   if (isWindowsDrivePath(url.trim())) return null;
   const parsed = parseCloneUrl(url);
   if (!parsed) return null;
-  let repositoryPath = parsed.path.split(/[?#]/)[0]!;
+  let repositoryPath = parsed.path.split(parsed.scp ? "?" : /[?#]/, 1)[0]!;
   try {
     if (!parsed.scp) repositoryPath = decodeURIComponent(repositoryPath);
   } catch {

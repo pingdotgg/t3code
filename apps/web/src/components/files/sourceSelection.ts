@@ -51,8 +51,13 @@ export class SourceSelection {
   #pressed = false;
   /** A press that places a caret, where a collapsed selection is the click's and never a kept one. */
   #clicking = false;
-  /** The browser's selection as a render left it during a press, when nothing was drawn over it. */
-  #parked: { readonly range: StaticRange | undefined } | undefined;
+  /**
+   * The browser's selection as last left: by a render during a press when nothing was drawn over it,
+   * or (`clippedByRender`) as drawn clipped to the mounted rows, which must not be read back as the ends.
+   */
+  #parked:
+    | { readonly range: StaticRange | undefined; readonly clippedByRender: boolean }
+    | undefined;
 
   #use(text: string) {
     if (text === this.#text) return;
@@ -156,6 +161,14 @@ export class SourceSelection {
       this.#ends = undefined;
       return undefined;
     }
+    const parked = this.#parked;
+    if (
+      parked?.clippedByRender &&
+      (sameRange(range, parked.range) || (afterRender && !this.#pressed))
+    ) {
+      return this.#mounted(root);
+    }
+    if (parked?.clippedByRender) this.#parked = undefined;
     if (range && !(root.contains(range.startContainer) && root.contains(range.endContainer))) {
       this.#ends = undefined;
       return undefined;
@@ -222,10 +235,14 @@ export class SourceSelection {
     const focus = this.#pointAt(this.#ends.focus, mounted);
     const selection = document.getSelection();
     const range = selection?.getComposedRanges({ shadowRoots: [root] })[0];
+    const { anchor: anchorOffset, focus: focusOffset } = this.#ends;
+    const clipped =
+      Math.min(anchorOffset, focusOffset) < mounted.start ||
+      Math.max(anchorOffset, focusOffset) > mounted.end;
     if (this.#pressed && anchor.node === focus.node && anchor.offset === focus.offset) {
       // Chromium stops extending a drag once a script collapses its selection, so a drag whose
       // ends are both unmounted keeps what the browser has left of it.
-      this.#parked = { range };
+      this.#parked = { range, clippedByRender: false };
       return;
     }
     const [start, end] = selection?.direction === "backward" ? [focus, anchor] : [anchor, focus];
@@ -235,9 +252,17 @@ export class SourceSelection {
       range.endContainer === end.node &&
       range.endOffset === end.offset
     ) {
+      if (clipped) this.#parked = { range, clippedByRender: true };
       return;
     }
     selection?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
+    if (clipped) {
+      // A projected endpoint can become an interior point when its DOM row survives the next render.
+      this.#parked = {
+        range: selection?.getComposedRanges({ shadowRoots: [root] })[0],
+        clippedByRender: true,
+      };
+    }
   }
 
   /** Call after rows mount or unmount, to draw the selection onto the rows now there. */
@@ -249,6 +274,7 @@ export class SourceSelection {
   press(extending: boolean) {
     this.#pressed = true;
     this.#clicking = !extending;
+    if (!extending) this.#parked = undefined;
   }
 
   release(root: ShadowRoot, text: string) {

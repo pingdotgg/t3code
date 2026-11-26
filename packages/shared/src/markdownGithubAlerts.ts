@@ -7,7 +7,7 @@ interface MarkdownAstNode {
   children?: MarkdownAstNode[];
 }
 
-const GITHUB_ALERT_MARKER = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\r?\n|$)/i;
+export const GITHUB_ALERT_MARKER = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\r\n|\r|\n|$)/i;
 
 function readGithubAlert(node: MarkdownAstNode): void {
   if (node.type !== "blockquote") return;
@@ -21,7 +21,7 @@ function readGithubAlert(node: MarkdownAstNode): void {
 
   const remainder = text.value.slice(match[0].length);
   // An empty remainder may have next-line sibling content; preserve whether the marker ended its line.
-  const markerEndsItsLine = match[0].endsWith("\n");
+  const markerEndsItsLine = /[\r\n]$/.test(match[0]);
   if (remainder.length > 0) {
     text.value = remainder;
   } else if (markerEndsItsLine || paragraph.children?.length === 1) {

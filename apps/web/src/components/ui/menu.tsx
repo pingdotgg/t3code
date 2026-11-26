@@ -80,7 +80,7 @@ function MenuSearchInput({
   ...props
 }: Omit<InputProps, "className" | "size" | "unstyled" | "nativeInput"> & { busy?: boolean }) {
   return (
-    <div className="min-w-0 shrink-0 px-2 pt-1.5 pb-1">
+    <label className="block min-w-0 shrink-0 cursor-text px-2 pt-1.5 pb-1">
       <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
         {busy ? (
           <Spinner
@@ -102,12 +102,14 @@ function MenuSearchInput({
           unstyled
           onKeyDown={(event) => {
             // Menu typeahead would otherwise take the letters; arrows still reach the items.
-            if (event.key !== "ArrowDown" && event.key !== "Escape") event.stopPropagation();
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Escape") {
+              event.stopPropagation();
+            }
             onKeyDown?.(event);
           }}
         />
       </div>
-    </div>
+    </label>
   );
 }
 

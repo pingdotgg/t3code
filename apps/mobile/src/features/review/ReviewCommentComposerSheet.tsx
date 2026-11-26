@@ -1,7 +1,8 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useMemo, useState } from "react";
+import { T, useGT } from "gt-react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, View, useWindowDimensions } from "react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
@@ -15,6 +16,7 @@ import { cn } from "../../lib/cn";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
 import { useNativePaste } from "../../lib/useNativePaste";
+import { scheduleUnusedComposerAttachmentCleanup } from "../../state/use-composer-drafts";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { appendReviewCommentToDraft } from "../../state/use-thread-composer-state";
 import {
@@ -40,6 +42,7 @@ type ReviewCommentComposerSheetProps = StaticScreenProps<{
 
 export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProps) {
   const navigation = useNavigation();
+  const gt = useGT();
   const { width } = useWindowDimensions();
   const { themeAppearance: selectedTheme } = useAppearancePreferences();
   const target = useReviewCommentTarget();
@@ -47,6 +50,31 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const { environmentId, threadId } = props.route.params;
   const [commentText, setCommentText] = useState("");
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
+  const attachmentsRef = useRef(attachments);
+  const isMountedRef = useRef(true);
+  // Store file references before React commits, so closing the sheet can release them.
+  const replaceAttachments = (next: ReadonlyArray<DraftComposerImageAttachment>) => {
+    attachmentsRef.current = next;
+    setAttachments(next);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases owned image files when the sheet unmounts
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      scheduleUnusedComposerAttachmentCleanup(attachmentsRef.current);
+    };
+  }, []);
+
+  function appendImages(images: ReadonlyArray<DraftComposerImageAttachment>): void {
+    if (!isMountedRef.current) {
+      scheduleUnusedComposerAttachmentCleanup(images);
+      return;
+    }
+    if (images.length > 0) {
+      replaceAttachments([...attachmentsRef.current, ...images]);
+    }
+  }
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
 
   const { selectedLines, highlightedLinesById } = useMemo(() => {
@@ -70,11 +98,13 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const selectionLabel =
     selectedLines.length === 1
       ? firstNumber !== null
-        ? `Line ${firstNumber}`
-        : "File comment"
-      : firstNumber !== null && lastNumber !== null
-        ? `Lines ${firstNumber}-${lastNumber}`
-        : `${selectedLines.length} lines selected`;
+        ? gt("Line {line}", { line: firstNumber })
+        : gt("File comment")
+      : firstNumber !== null && lastNumber !== null && firstNumber < lastNumber
+        ? gt("Lines {first}-{last}", { first: firstNumber, last: lastNumber })
+        : gt("{count, plural, one {{count} lines selected} other {{count} lines selected}}", {
+            count: selectedLines.length,
+          });
   const previewHeight = Math.max(
     Math.min(selectedLines.length, REVIEW_COMMENT_PREVIEW_MAX_LINES) * codeSurface.rowHeight,
     codeSurface.rowHeight,
@@ -86,27 +116,25 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   };
   const handleNativePaste = useNativePaste((uris) => {
     void (async () => {
-      try {
-        const result = await convertPastedImagesToAttachments({
-          uris,
-          existingCount: attachments.length,
-        });
-        if (result.attachments.length > 0) {
-          setAttachments((current) => [...current, ...result.attachments]);
-        }
-        if (result.error) Dialog.alert("Could not paste image", result.error);
-      } catch (error) {
+      const result = await convertPastedImagesToAttachments({
+        uris,
+        existingCount: attachmentsRef.current.length,
+      }).catch((error: unknown) => {
         console.error("[review comment] error converting pasted images", error);
+        return null;
+      });
+      if (result === null) return;
+      appendImages(result.attachments);
+      if (result.error && isMountedRef.current) {
+        Dialog.alert(gt("Could not paste image"), result.error);
       }
     })();
   });
 
   async function handlePickImages(): Promise<void> {
-    const result = await pickComposerImages({ existingCount: attachments.length });
-    if (result.images.length > 0) {
-      setAttachments((current) => [...current, ...result.images]);
-    }
-    if (result.error) {
+    const result = await pickComposerImages({ existingCount: attachmentsRef.current.length });
+    appendImages(result.images);
+    if (result.error && isMountedRef.current) {
       setPendingConnectionError(result.error);
     }
   }
@@ -120,29 +148,30 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
       environmentId,
       threadId,
       text: formatReviewCommentContext(target, commentText),
-      attachments,
+      attachments: attachmentsRef.current,
     });
-    setAttachments([]);
+    scheduleUnusedComposerAttachmentCleanup(attachmentsRef.current);
+    replaceAttachments([]);
     dismissComposer();
   };
 
   return (
     <View className="flex-1 bg-sheet">
-      <SheetHeader title="Add Comment" onClose={dismissComposer} />
+      <SheetHeader title={gt("Add Comment")} onClose={dismissComposer} />
       <KeyboardSheetBody
         toolbar={
           target ? (
             <>
               <ControlPill
-                accessibilityLabel="Add image"
+                accessibilityLabel={gt("Add image")}
                 icon="plus"
                 onPress={() => void handlePickImages()}
               />
               <View className="flex-1" />
               <ControlPill
-                accessibilityLabel="Comment"
+                accessibilityLabel={gt("Comment", { $context: "verb, submit button" })}
                 icon="arrow.up"
-                label="Comment"
+                label={gt("Comment", { $context: "verb, submit button" })}
                 variant="primary"
                 disabled={!canSubmit}
                 onPress={handleSubmit}
@@ -153,9 +182,11 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
       >
         {!target ? (
           <View className="rounded-[22px] border border-border bg-card px-4 py-5">
-            <Text className="text-base font-t3-bold text-foreground">No selection</Text>
+            <Text className="text-base font-t3-bold text-foreground">
+              <T>No selection</T>
+            </Text>
             <Text className="mt-1 text-sm leading-normal text-foreground-muted">
-              Select a diff line or range first.
+              <T>Select a diff line or range first.</T>
             </Text>
           </View>
         ) : (
@@ -222,7 +253,9 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
             </View>
 
             <View className="min-h-0 flex-1 gap-2">
-              <Text className="text-sm font-t3-bold text-foreground">Comment</Text>
+              <Text className="text-sm font-t3-bold text-foreground">
+                <T context="noun, field label">Comment</T>
+              </Text>
               <View className="min-h-[132px] flex-1 overflow-hidden rounded-[20px] border border-border bg-card">
                 <View className="min-h-0 flex-1 px-4 pt-3.5">
                   <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1, minHeight: 0 }}>
@@ -230,7 +263,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                       autoFocus
                       multiline
                       scrollEnabled
-                      placeholder="Leave a comment..."
+                      placeholder={gt("Leave a comment...")}
                       textAlignVertical="top"
                       value={commentText}
                       onChangeText={setCommentText}
@@ -247,9 +280,12 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                       onPressPreview={setPreviewFile}
                       removeButtonPlacement="gutter"
                       onRemove={(imageId) => {
-                        setAttachments((current) =>
-                          current.filter((image) => image.id !== imageId),
-                        );
+                        const current = attachmentsRef.current;
+                        const removed = current.find((image) => image.id === imageId);
+                        replaceAttachments(current.filter((image) => image.id !== imageId));
+                        if (removed) {
+                          scheduleUnusedComposerAttachmentCleanup([removed]);
+                        }
                       }}
                     />
                   </View>
