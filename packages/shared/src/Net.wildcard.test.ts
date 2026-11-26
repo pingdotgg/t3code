@@ -78,7 +78,9 @@ describe("wildcard port selection", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const lanPort = yield* openServer(lan);
-          const loopbackPort = yield* openServer("::1");
+          const firstLoopbackPort = yield* openServer("::1");
+          const loopbackPort =
+            firstLoopbackPort === lanPort ? yield* openServer("::1") : firstLoopbackPort;
           const listen = NodeNet.Server.prototype.listen;
           let firstWildcard = true;
           const spy = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
