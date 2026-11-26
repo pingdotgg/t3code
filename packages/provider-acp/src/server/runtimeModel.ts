@@ -1109,8 +1109,6 @@ export interface AcpMcpToolCallIdentity {
   readonly input?: Record<string, unknown>;
 }
 
-const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
-
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -1126,6 +1124,177 @@ function acpMcpFallbackInput(value: string | undefined): Record<string, unknown>
     } catch {
       // Unknown shell quoting retains MCP identity but omits unparseable input.
     }
+  }
+  return undefined;
+}
+
+const ACP_MCP_FALLBACK_MENTION = /acp-mcp-call|T3_ACP_MCP_CALL/i;
+// The Windows launcher wraps `acp-mcp-call`; agents run it by variable or by its expanded path.
+const ACP_MCP_FALLBACK_LAUNCHER = /^(?:\$\{?(?:env:)?T3_ACP_MCP_CALL\}?|%T3_ACP_MCP_CALL%)$/i;
+const SHELL_PROGRAM = /^(?:sh|bash|zsh|dash|ash|ksh|fish|cmd|pwsh|powershell)(?:\.exe)?$/i;
+const SHELL_COMMAND_FLAG = /^(?:-[a-z]*c|-command|\/c)$/i;
+const SHELL_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const HEREDOC_DELIMITER = /[ \t]*([^\s;|&()<>]*)/y;
+const MAX_SHELL_WRAPPER_DEPTH = 2;
+
+interface ShellWord {
+  readonly start: number;
+  readonly raw: string;
+  readonly value: string;
+  /** Ordinal of the simple command the word belongs to. */
+  readonly command: number;
+  /** First word of its simple command, after any environment assignments. */
+  readonly leads: boolean;
+}
+
+/**
+ * Splits a command line into words on unquoted whitespace and command separators, so quoted text
+ * stays one word. Here-document bodies are data: they are kept as their command's stdin, as is the
+ * last word piped into a command.
+ */
+function shellWords(text: string): {
+  readonly words: ReadonlyArray<ShellWord>;
+  readonly stdin: ReadonlyMap<number, string>;
+} {
+  const words: ShellWord[] = [];
+  const stdin = new Map<number, string>();
+  const heredocs: Array<{ command: number; delimiter: string; stripTabs: boolean }> = [];
+  let command = 0;
+  let leads = true;
+  let start = -1;
+  let value = "";
+  let quote: string | undefined;
+  const flush = (end: number) => {
+    if (start === -1) return;
+    const raw = text.slice(start, end);
+    words.push({ start, raw, value, command, leads });
+    leads = leads && SHELL_ASSIGNMENT.test(raw);
+    start = -1;
+    value = "";
+  };
+  const nextCommand = () => {
+    command++;
+    leads = true;
+  };
+  let index = 0;
+  while (index < text.length) {
+    const char = text.charAt(index);
+    const next = text.charAt(index + 1);
+    if (quote !== undefined) {
+      if (char === quote) {
+        quote = undefined;
+      } else if (char === "\\" && quote === '"' && (next === '"' || next === "\\")) {
+        value += next;
+        index++;
+      } else {
+        value += char;
+      }
+      index++;
+      continue;
+    }
+    if (char === "\n") {
+      flush(index);
+      index++;
+      for (const heredoc of heredocs.splice(0)) {
+        const bodyStart = index;
+        let bodyEnd = text.length;
+        while (index < text.length) {
+          const lineEnd = text.indexOf("\n", index);
+          const line = text.slice(index, lineEnd === -1 ? text.length : lineEnd);
+          const lineStart = index;
+          index = lineEnd === -1 ? text.length : lineEnd + 1;
+          if ((heredoc.stripTabs ? line.replace(/^\t+/, "") : line) === heredoc.delimiter) {
+            bodyEnd = lineStart;
+            break;
+          }
+        }
+        stdin.set(heredoc.command, text.slice(bodyStart, bodyEnd));
+      }
+      nextCommand();
+      continue;
+    }
+    if (char === "<" && next === "<" && text.charAt(index + 2) !== "<") {
+      flush(index);
+      const stripTabs = text.charAt(index + 2) === "-";
+      HEREDOC_DELIMITER.lastIndex = index + (stripTabs ? 3 : 2);
+      const delimiter = HEREDOC_DELIMITER.exec(text)?.[1]?.replace(/['"\\]/g, "") ?? "";
+      if (delimiter.length > 0) heredocs.push({ command, delimiter, stripTabs });
+      index = HEREDOC_DELIMITER.lastIndex;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      flush(index);
+    } else if (";|&()".includes(char)) {
+      flush(index);
+      const piped = char === "|" && next !== "|" && text.charAt(index - 1) !== "|";
+      const last = words.at(-1);
+      const source = piped && last?.command === command ? last.raw : undefined;
+      // `&` after a pipe is PowerShell's call operator, which keeps the piped stdin.
+      if (char !== "&" || !stdin.has(command) || !leads) nextCommand();
+      if (source !== undefined) stdin.set(command, source);
+    } else {
+      if (start === -1) start = index;
+      if (char === "'" || char === '"') {
+        quote = char;
+      } else if (char === "\\" && (next === "'" || next === '"' || next === "\\")) {
+        value += next;
+        index++;
+      } else {
+        value += char;
+      }
+    }
+    index++;
+  }
+  flush(text.length);
+  return { words, stdin };
+}
+
+function shellProgramName(word: string): string {
+  return word.slice(Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\")) + 1);
+}
+
+/**
+ * A fallback call is the `acp-mcp-call` subcommand as a whole shell word, or its launcher in
+ * command position, followed by a T3 tool. Quoted text is one word, so a quoted mention is data
+ * unless it is the command string of a shell's `-c`.
+ */
+function acpMcpFallbackCall(
+  text: string,
+  depth = 0,
+): { readonly tool: string; readonly input?: Record<string, unknown> } | undefined {
+  if (!ACP_MCP_FALLBACK_MENTION.test(text)) return undefined;
+  const { words, stdin } = shellWords(text);
+  let shell = false;
+  let leads = false;
+  for (const [index, word] of words.entries()) {
+    const next = words[index + 1];
+    if (next === undefined) break;
+    if (word.leads) shell = false;
+    shell ||= SHELL_PROGRAM.test(shellProgramName(word.value));
+    const runsNext = shell && SHELL_COMMAND_FLAG.test(word.value);
+    if (runsNext && depth < MAX_SHELL_WRAPPER_DEPTH) {
+      const wrapped = acpMcpFallbackCall(next.value, depth + 1);
+      if (wrapped !== undefined) return wrapped;
+    }
+    const commandPosition = word.leads || leads;
+    leads = runsNext;
+    const calls =
+      word.value === "acp-mcp-call" ||
+      (commandPosition &&
+        (ACP_MCP_FALLBACK_LAUNCHER.test(word.value) ||
+          shellProgramName(word.value).toLowerCase() === "acp-mcp-call.cmd"));
+    if (!calls || next.command !== word.command || !T3_MCP_TOOL_NAMES.has(next.value)) continue;
+    const argument = words[index + 2];
+    const input =
+      argument === undefined || argument.command !== word.command
+        ? undefined
+        : argument.value === "-"
+          ? acpMcpFallbackInput(stdin.get(word.command))
+          : (acpMcpFallbackInput(argument.raw) ??
+            acpMcpFallbackInput(argument.value) ??
+            // An argv joined for display leaves the JSON unquoted.
+            acpMcpFallbackInput(text.slice(argument.start)));
+    return { tool: next.value, ...(input === undefined ? {} : { input }) };
   }
   return undefined;
 }
@@ -1263,11 +1432,8 @@ export function extractMcpToolCallIdentity(
     ...(options?.embeddedTerminalCommands ?? []),
   ];
   for (const command of commands) {
-    const match = ACP_MCP_FALLBACK_CALL.exec(command);
-    if (match?.[1] !== undefined) {
-      const input = acpMcpFallbackInput(match[2]);
-      return { server: "t3-code", tool: match[1], ...(input === undefined ? {} : { input }) };
-    }
+    const call = acpMcpFallbackCall(command);
+    if (call !== undefined) return { server: "t3-code", ...call };
   }
   return undefined;
 }

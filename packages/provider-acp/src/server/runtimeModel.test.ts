@@ -1692,11 +1692,37 @@ describe("extractMcpToolCallIdentity", () => {
       `ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" acp-mcp-call html_render - <<'EOF'\n${page}\nEOF`,
       `"$T3_ACP_MCP_NODE" acp-mcp-call html_render '{\n  "path": "/abs/page.html"\n}'`,
       `"$T3_ACP_MCP_NODE" acp-mcp-call html_render '${page}'\n\n[Command truncated]`,
+      `'${page}' | & $env:T3_ACP_MCP_CALL html_render -`,
+      `echo ${page} | "C:\\Users\\dev\\.t3\\acp\\acp-mcp-call.cmd" html_render -`,
+      `cmd /c "%T3_ACP_MCP_CALL%" html_render -`,
+      `/bin/zsh -lc "\\"$T3_ACP_MCP_NODE\\" acp-mcp-call html_render '{}'"`,
     ]) {
       expect(
         extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [command] })?.tool,
         command,
       ).toBe("html_render");
+    }
+  });
+
+  it("reads acp-mcp-call arguments passed on stdin", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-stdin",
+      kind: "execute",
+      title: "Ran command",
+      status: "in_progress",
+    });
+    const input = { path: "/abs/page.html", title: "Report", height: 420 };
+    const page = JSON.stringify(input);
+
+    for (const command of [
+      `"$T3_ACP_MCP_NODE" acp-mcp-call html_render - <<'EOF'\n${page}\nEOF`,
+      `'${page}' | & $env:T3_ACP_MCP_CALL html_render -`,
+    ]) {
+      expect(
+        extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [command] }),
+        command,
+      ).toEqual({ server: "t3-code", tool: "html_render", input });
     }
   });
 
@@ -1709,11 +1735,19 @@ describe("extractMcpToolCallIdentity", () => {
       status: "in_progress",
     });
 
-    expect(
-      extractMcpToolCallIdentity(toolCall, {
-        embeddedTerminalCommands: ['rg "acp-mcp-call" --hidden'],
-      }),
-    ).toBeUndefined();
+    for (const command of [
+      'rg "acp-mcp-call" --hidden',
+      "rg -n 'acp-mcp-call html_render' .",
+      "rg -c 'node acp-mcp-call html_render {}' .",
+      'rg "$T3_ACP_MCP_CALL" html_render',
+      "cat > notes.md <<'EOF'\nRun acp-mcp-call html_render '{}'\nEOF",
+      "node bin.ts acp-mcp-call; html_render",
+    ]) {
+      expect(
+        extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [command] }),
+        command,
+      ).toBeUndefined();
+    }
   });
 
   it("recovers T3 identity from pi-acp title-only fallback execs", () => {
