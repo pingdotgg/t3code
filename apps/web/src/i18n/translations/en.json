@@ -1680,6 +1680,7 @@
   "ee684530d91a5a5e": "worktree",
   "b0663b33a4d3331b": "remote",
   "708bd52b423651cb": "default",
+  "c82e7a5463d6744f": "Delete local branch {branch}",
   "4a293e5eccd4847d": "No refs found.",
   "24f207ab3dee1a15": "Start from remote",
   "4cc01e8063a057e9": "Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing.",
@@ -1720,6 +1721,8 @@
   "9e485e5ba6a96faa": "This connection cannot change the thread's branch.",
   "f5729e3a9c756694": "Failed to switch ref.",
   "7ea8def86795f863": "Failed to create and switch ref.",
+  "fda1b2412b12c0b0": "Delete local branch {branch}?",
+  "9d3a73ac6fdf66cc": "Could not delete branch",
   "282c2a1c64ead62d": "Checkout {term, select, mr {merge request} cr {change request} other {pull request}}",
   "bc81dfd7ade60791": "Branch: {branch}",
   "459e639b9a89964f": [

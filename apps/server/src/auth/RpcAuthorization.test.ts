@@ -90,6 +90,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("requires source-control write access to delete a local branch", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.vcsDeleteLocalBranch)).toBe(
+      AuthSourceControlWriteScope,
+    );
+  });
+
   it("lets file readers see a task folder and takes source control to add a repository to it", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.workspaceTaskFolder)).toBe(AuthFilesystemReadScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.workspaceAddTaskFolderRepository)).toBe(

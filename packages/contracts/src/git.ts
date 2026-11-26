@@ -204,6 +204,11 @@ export const VcsSwitchRefInput = Schema.Struct({
 });
 export type VcsSwitchRefInput = typeof VcsSwitchRefInput.Type;
 
+export const VcsDeleteLocalBranchInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  refName: GitRefName,
+});
+
 export const VcsInitInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   kind: Schema.optional(VcsDriverKind),
@@ -369,6 +374,7 @@ export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "branch_already_exists",
   "branch_checked_out_in_worktree",
+  "branch_not_fully_merged",
   "config_locked",
   "host_key_unverified",
   "not_a_repository",

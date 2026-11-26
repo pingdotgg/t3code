@@ -155,6 +155,7 @@ import {
   GitCommandError,
   VcsCreateRefInput,
   VcsCreateRefResult,
+  VcsDeleteLocalBranchInput,
   VcsCreateWorktreeInput,
   VcsCreateWorktreeResult,
   VcsInitInput,
@@ -550,6 +551,7 @@ export const WS_METHODS = {
   vcsRemoveWorktree: "vcs.removeWorktree",
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
+  vcsDeleteLocalBranch: "vcs.deleteLocalBranch",
   vcsInit: "vcs.init",
 
   gitRunStackedAction: "git.runStackedAction",
@@ -1937,6 +1939,11 @@ const WsVcsSwitchRefRpc = Rpc.make(WS_METHODS.vcsSwitchRef, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsDeleteLocalBranchRpc = Rpc.make(WS_METHODS.vcsDeleteLocalBranch, {
+  payload: VcsDeleteLocalBranchInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   payload: VcsInitInput,
   error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
@@ -2697,6 +2704,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsRemoveWorktreeRpc,
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
+  WsVcsDeleteLocalBranchRpc,
   WsVcsInitRpc,
   WsReviewGetBranchCommitsRpc,
   WsReviewGetDiffPreviewRpc,

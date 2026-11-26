@@ -1680,6 +1680,7 @@
   "ee684530d91a5a5e": "worktree",
   "b0663b33a4d3331b": "distante",
   "708bd52b423651cb": "par défaut",
+  "c82e7a5463d6744f": "Supprimer la branche locale {branch}",
   "4a293e5eccd4847d": "Aucune ref trouvée.",
   "24f207ab3dee1a15": "Partir du remote",
   "4cc01e8063a057e9": "Utilise le dernier commit de la branche distante suivie par la branche de base, même si son nom diffère. Sinon, utilise la branche du même nom sur origin. Utilise votre branche locale si cette branche distante n’existe pas.",
@@ -1720,6 +1721,8 @@
   "9e485e5ba6a96faa": "Cette connexion ne peut pas changer la branche du fil.",
   "f5729e3a9c756694": "Échec du changement de ref.",
   "7ea8def86795f863": "Échec de la création de la ref et du basculement.",
+  "fda1b2412b12c0b0": "Supprimer la branche locale {branch} ?",
+  "9d3a73ac6fdf66cc": "Impossible de supprimer la branche",
   "282c2a1c64ead62d": "Extraire la {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
   "bc81dfd7ade60791": "Branche : {branch}",
   "459e639b9a89964f": [
