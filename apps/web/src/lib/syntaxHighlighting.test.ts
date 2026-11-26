@@ -16,6 +16,11 @@ describe("dialect file types", () => {
 
 const SAMPLES = [
   {
+    name: "1C (BSL)",
+    code: 'Если Истина Тогда\n    Сообщить("Привет"); // Комментарий\nКонецЕсли;',
+    hints: ["bsl", "src/Module.bsl"],
+  },
+  {
     name: "assembly",
     code: "mov eax, 42 ; answer\nret",
     hints: [
