@@ -69,6 +69,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   ACP_EMPTY_OPTION_VALUE,
@@ -1648,6 +1649,194 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(promptTexts.slice(3), ["continue"], "a turn resumes only once");
     }).pipe(Effect.provide(layerTest)),
   );
+
+  it.live("pairs responses to concurrent same-method requests in request order", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-fifo-" });
+      const statusPath = path.join(directory, "status.json");
+      const instanceId = ProviderInstanceId.make("acp-test-concurrent-prompts");
+      const threadId = ThreadId.make("thread-acp-concurrent-prompts");
+      const sessionId = "concurrent-session";
+      const update = (sessionUpdate: Record<string, unknown>) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "session/update",
+          params: { sessionId, update: sessionUpdate },
+        },
+      });
+      // A prompt steer is a second session/prompt while the first still runs, so two
+      // same-method client requests are open at once when the first response arrives.
+      const transcript = yield* decodeAcpReplayTranscript(
+        {
+          provider: ACP_TEST_DRIVER,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "concurrent-prompts",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: {
+                  protocolVersion: 1,
+                  agentCapabilities: { sessionCapabilities: { close: {} } },
+                  authMethods: [],
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/new", result: { sessionId } },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            update({ sessionUpdate: "session_info_update", title: "before steer" }),
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            // In request order this cancelled response settles the original prompt, which
+            // the steer already superseded. Mis-paired onto the steer, it would end the
+            // turn as cancelled instead.
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "cancelled" },
+              },
+            },
+            update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "reply",
+              content: { type: "text", text: "after the steer" },
+            }),
+            update({ sessionUpdate: "session_info_update", title: "steer output" }),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/close", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/close", result: {} },
+            },
+          ],
+        } as never,
+        ACP_TEST_DRIVER,
+      );
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          steersWithPrompt: () => true,
+          makeRuntime: makeAcpReplayRuntime({
+            transcript,
+            statusPath,
+            scriptPath: yield* bundledReplayAgentPath,
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            fileSystem,
+          }),
+          assertComplete: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: directory,
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-concurrent-prompts"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const until = (predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
+        Effect.gen(function* () {
+          const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+          while (true) {
+            const event = yield* Queue.take(events);
+            seen.push(event);
+            if (predicate(event)) return seen;
+          }
+        });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 1,
+        }),
+      );
+      const started = yield* until(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.nativeMetadata?.title === "before steer",
+      );
+      const running = started.findLast((event) => event.type === "provider_turn.updated");
+      if (running?.type !== "provider_turn.updated") throw new Error("Missing active turn");
+      yield* runtime.steerTurn({
+        threadId,
+        runId: RunId.make(`run:${threadId}:1`),
+        providerThread,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("steer-concurrent-prompts"),
+          text: "steer message",
+          attachments: [],
+        },
+      });
+      const terminalEvents = yield* until((event) => event.type === "turn.terminal");
+      const terminal = terminalEvents.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      assert.isTrue(
+        terminalEvents.some(
+          (event) =>
+            event.type === "message.updated" && event.message.text.includes("after the steer"),
+        ),
+        "the continued turn's output lands before the steer response settles it",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-stop");
@@ -2137,6 +2326,7 @@ describe("AcpAdapterV2", () => {
         { label: "Blue", description: "Blue", value: "blue" },
       ],
       allowCustomAnswer: true,
+      required: false,
     },
   ];
 
@@ -2149,6 +2339,8 @@ describe("AcpAdapterV2", () => {
         answers: { q0: "Please wait" },
         content: { q0__other: "Please wait" },
       },
+      // regression: #43335 a choice the schema leaves optional could not be skipped
+      { scenario: "OMP skipped optional choice", answers: {}, content: {} },
     ].map((fixture) => ({
       ...fixture,
       settings: OMP_SETTINGS,
@@ -2177,6 +2369,7 @@ describe("AcpAdapterV2", () => {
             { label: "Approve", value: "Approve", description: "Commit the verified fix." },
             { label: "Hold", value: "Hold", description: "Hold" },
           ],
+          required: false,
         },
       ],
       result: { action: "accept", content: fixture.content },
@@ -2266,6 +2459,22 @@ describe("AcpAdapterV2", () => {
       questions: openCodeQuestions,
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
+    },
+    {
+      scenario: "OpenCode skipped optional choice",
+      settings: OPENCODE_SETTINGS,
+      schema: openCodeSchema,
+      questions: openCodeQuestions,
+      answers: {},
+      result: { action: "accept", content: {} },
+    },
+    {
+      scenario: "OpenCode required choice left unanswered is cancelled",
+      settings: OPENCODE_SETTINGS,
+      schema: { ...openCodeSchema, required: ["q0"] },
+      questions: openCodeQuestions.map(({ required: _, ...question }) => question),
+      answers: {},
+      result: { action: "cancel" },
     },
     {
       scenario: "Devin allowOther choice accepts a typed answer",
@@ -2959,8 +3168,159 @@ describe("AcpAdapterV2", () => {
             (error as ProviderAdapter.ProviderAdapterTurnStartError).cause,
             ProviderAdapter.ProviderCompactionUnsupportedError,
           );
+          assert.isTrue(
+            (error as ProviderAdapter.ProviderAdapterTurnStartError).refusedBeforePrompt,
+          );
         }
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  // A start that cannot reopen its session may be on a session the agent lost. It is not a refusal
+  // before the prompt, so the server's recovery for an unusable session still runs.
+  it.live("does not mark a start whose session failed to reopen as refused before its prompt", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-reopen-failure");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: () => ({ T3_ACP_FAIL_LOAD_SESSION: "1" }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-reopen-failure");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-reopen-failure"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const thread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      const lostThread: OrchestrationV2ProviderThread = {
+        ...thread,
+        nativeThreadRef: { driver: ACP_TEST_DRIVER, nativeId: "lost-session", strength: "strong" },
+      };
+      const now = yield* DateTime.now;
+      const error = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: lostThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: 1,
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+      assert.notEqual(
+        (error as ProviderAdapter.ProviderAdapterTurnStartError).refusedBeforePrompt,
+        true,
+      );
+      const methods = yield* pollProtocolMethods(protocolEvents);
+      assert.isTrue(methods.includes("session/load") || methods.includes("session/resume"));
+      assert.notInclude(methods, "session/prompt");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Only refusals that leave the session usable mark a start as refused before its prompt. A setup
+  // step other than the model can fail because the session is gone.
+  it.live("does not mark a start whose session setup failed as refused before its prompt", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-setup-failure");
+      const threadId = ThreadId.make("thread-acp-setup-failure");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: { T3_ACP_FAIL_SET_MODE_CONFIG_OPTION: "1" },
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const opened = { instanceId, model: "composer-2" } as const;
+      const withMode = {
+        instanceId,
+        model: "composer-2",
+        options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: "code" }],
+      } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-setup-failure"),
+        modelSelection: opened,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: opened,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const error = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: 1,
+            modelSelection: withMode,
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+      assert.notInstanceOf(
+        (error as ProviderAdapter.ProviderAdapterTurnStartError).cause,
+        ProviderAdapter.ProviderCompactionUnsupportedError,
+      );
+      assert.notEqual(
+        (error as ProviderAdapter.ProviderAdapterTurnStartError).refusedBeforePrompt,
+        true,
+      );
+      // The start reached the mode step the agent rejected, and sent no prompt.
+      const outgoing = Array.from(yield* Queue.takeAll(protocolEvents)).filter(
+        (event) => event.direction === "outgoing",
+      );
+      assert.isTrue(
+        outgoing.some(
+          (event) =>
+            rawProtocolMethod(event) === "session/set_config_option" &&
+            rawProtocolRequestParam(event, "configId") === "mode",
+        ),
+      );
+      assert.notInclude(outgoing.map(rawProtocolMethod), "session/prompt");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("reapplies a selection after a switch away from it failed partway", () =>
@@ -5000,7 +5360,7 @@ describe("AcpAdapterV2", () => {
       const search = items.find((item) => item.type === "file_search");
       assert.deepEqual(
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
-        { title: "Searched TODO in web", pattern: "apps/web" },
+        { title: "Searched TODO in web", pattern: "TODO" },
       );
       const fileSearch = (nativeId: string) => {
         const item = items.find(
@@ -5019,6 +5379,13 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(fileSearch("structured-search-query-only"), {
         pattern: "TODO",
         results: [{ fileName: "TODO", preview: "src/a.ts: TODO" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-grep-output"), {
+        pattern: "needle",
+        results: [
+          { fileName: "src/a.ts", line: 3, preview: "const needle = 1;" },
+          { fileName: "src/b.ts", line: 9, preview: "needle();" },
+        ],
       });
       assert.deepEqual(fileSearch("structured-search-query-no-output"), {
         pattern: "FIXME",
@@ -5267,7 +5634,9 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           onSessionConfigurationUpdate: (configOptions) =>
-            Effect.sync(() => publishedConfigurations.push(configOptions)),
+            Effect.sync(() => {
+              publishedConfigurations.push(configOptions);
+            }),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -5806,12 +6175,26 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const startup = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.filter(
+          (event) =>
+            event.type === "provider_session.updated" ||
+            (event.type === "provider_turn.updated" && event.providerTurn.status === "running"),
+        ),
+        Stream.runCollect,
       );
       assert.equal(runtimeOrdinalSeen, 2);
       assert.lengthOf(runtimeInputs, 2);
+      // Loading the thread into the replacement agent is reported, and cleared before the turn runs.
+      assert.deepEqual(
+        Array.from(startup, (event) =>
+          event.type === "provider_session.updated"
+            ? (event.providerSession.startupPhase ?? null)
+            : "turn running",
+        ).slice(0, 3),
+        ["resume", null, "turn running"],
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -7188,6 +7571,402 @@ describe("AcpAdapterV2", () => {
       yield* Fiber.join(turnFiber);
       assert.deepEqual(outcome, { outcome: "selected", optionId });
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  const startAutoAcceptEditsTurn = Effect.fn(function* (
+    name: string,
+    agentEnvironment?: (folders: {
+      readonly workspace: string;
+      readonly elsewhere: string;
+    }) => Readonly<Record<string, string>>,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-edit-cwd-" });
+    const elsewhere = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-edit-out-" });
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+    let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+    const makeRuntime = makeMockRuntime({
+      childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+      mockAgentPath: yield* bundledMockAgentPath,
+      environment: {
+        T3_ACP_HANG_PROMPT_FOREVER: "1",
+        ...agentEnvironment?.({ workspace, elsewhere }),
+      },
+      wrapRuntime: (runtime) => ({
+        ...runtime,
+        handleRequestPermission: (handler) =>
+          Effect.sync(() => {
+            requestPermission = handler;
+          }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+        handleSessionUpdate: (handler) =>
+          Effect.sync(() => {
+            sessionUpdate = handler;
+          }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+      }),
+    });
+    const instanceId = ProviderInstanceId.make(`acp-test-${name}`);
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        interruptPromptOnCancel: true,
+        makeRuntime: (input) =>
+          Effect.sync(() => {
+            runtimeInput = input;
+          }).pipe(Effect.andThen(makeRuntime(input))),
+      },
+      selfInvocation: yield* resolveSelfInvocation(),
+      clientTerminals: {},
+    });
+    const threadId = ThreadId.make(`thread-acp-${name}`);
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "auto-accept-edits",
+      interactionMode: "default",
+      cwd: workspace,
+    });
+    const modelSelection = { instanceId, model: "default" } as const;
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-acp-${name}`),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const turnFiber = yield* runtime
+      .startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      )
+      .pipe(Effect.forkScoped);
+    const acknowledge = runtimeInput?.onOutgoingResponse;
+    if (
+      requestPermission === undefined ||
+      sessionUpdate === undefined ||
+      acknowledge === undefined
+    ) {
+      return yield* Effect.die("ACP runtime must register its handlers");
+    }
+    const handleRequestPermission = requestPermission;
+    const options = [
+      { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ] as const;
+    /** Sends an edit permission request and returns the fiber waiting on its answer. */
+    const requestEdit = (
+      toolCallId: string,
+      request: { readonly sessionId?: string; readonly target?: string } = {},
+    ) =>
+      handleRequestPermission(
+        {
+          sessionId: request.sessionId ?? "mock-session-1",
+          toolCall: {
+            toolCallId,
+            title: "Edit file",
+            kind: "edit",
+            ...(request.target === undefined ? {} : { locations: [{ path: request.target }] }),
+          },
+          options,
+        },
+        { requestId: `${toolCallId}-request`, method: "session/request_permission" },
+      ).pipe(Effect.forkScoped);
+    /** Declines the approval the adapter raised and ends the turn. */
+    const declinePendingAndStop = Effect.fn(function* (
+      requestId: string,
+      fiber: Effect.Success<ReturnType<typeof requestEdit>>,
+    ) {
+      const pending = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        pending.type !== "runtime_request.updated" ||
+        pending.runtimeRequest.providerTurnId === null
+      ) {
+        return yield* Effect.die("Expected an ACP approval request");
+      }
+      const responseFiber = yield* runtime
+        .respondToRuntimeRequest({ requestId: pending.runtimeRequest.id, decision: "decline" })
+        .pipe(Effect.forkScoped);
+      const response = yield* Fiber.join(fiber);
+      yield* acknowledge(requestId);
+      yield* Fiber.join(responseFiber);
+      assert.deepEqual(response.outcome, { outcome: "selected", optionId: "reject-once" });
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: pending.runtimeRequest.providerTurnId,
+      });
+      yield* Fiber.join(turnFiber);
+    });
+    return {
+      path,
+      workspace,
+      elsewhere,
+      sessionUpdate,
+      acknowledge,
+      requestEdit,
+      declinePendingAndStop,
+      runtime,
+      providerThread,
+      turnFiber,
+    };
+  });
+
+  it.effect("auto-accepts an edit inside the thread's folder and asks about one outside it", () =>
+    Effect.gen(function* () {
+      const turn = yield* startAutoAcceptEditsTurn("edit-folder");
+      const inside = yield* turn
+        .requestEdit("edit-inside", { target: turn.path.join(turn.workspace, "src", "a.ts") })
+        .pipe(Effect.flatMap(Fiber.join));
+      yield* turn.acknowledge("edit-inside-request");
+      assert.deepEqual(inside.outcome, { outcome: "selected", optionId: "allow-once" });
+
+      const outsideFiber = yield* turn.requestEdit("edit-outside", {
+        target: turn.path.join(turn.elsewhere, "b.ts"),
+      });
+      yield* turn.declinePendingAndStop("edit-outside-request", outsideFiber);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "asks about an edit without a path from a session that did not start its tool call",
+    () =>
+      Effect.gen(function* () {
+        const turn = yield* startAutoAcceptEditsTurn("edit-other-session");
+        // The first request waits for the turn, so the tool call below lands in it.
+        const first = yield* turn
+          .requestEdit("edit-first", { target: turn.path.join(turn.workspace, "src", "a.ts") })
+          .pipe(Effect.flatMap(Fiber.join));
+        yield* turn.acknowledge("edit-first-request");
+        assert.deepEqual(first.outcome, { outcome: "selected", optionId: "allow-once" });
+        yield* turn.sessionUpdate({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "edit-shared",
+            title: "Edit file",
+            kind: "edit",
+            status: "pending",
+            locations: [{ path: turn.path.join(turn.workspace, "src", "b.ts") }],
+          },
+        });
+
+        // The session that started the tool call may name it by id alone.
+        const own = yield* turn.requestEdit("edit-shared").pipe(Effect.flatMap(Fiber.join));
+        yield* turn.acknowledge("edit-shared-request");
+        assert.deepEqual(own.outcome, { outcome: "selected", optionId: "allow-once" });
+
+        const otherFiber = yield* turn.requestEdit("edit-shared", { sessionId: "mock-session-2" });
+        yield* turn.declinePendingAndStop("edit-shared-request", otherFiber);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  const editNamedByIdAsks = (
+    name: string,
+    updates: (turn: {
+      readonly inside: string;
+      readonly outside: string;
+    }) => ReadonlyArray<Record<string, unknown>>,
+  ) =>
+    Effect.gen(function* () {
+      const turn = yield* startAutoAcceptEditsTurn(name);
+      const inside = turn.path.join(turn.workspace, "src", "a.ts");
+      // The first request waits for the turn, so the tool call below lands in it.
+      const first = yield* turn
+        .requestEdit("edit-first", { target: inside })
+        .pipe(Effect.flatMap(Fiber.join));
+      yield* turn.acknowledge("edit-first-request");
+      assert.deepEqual(first.outcome, { outcome: "selected", optionId: "allow-once" });
+      for (const update of updates({ inside, outside: turn.path.join(turn.elsewhere, "b.ts") })) {
+        yield* turn.sessionUpdate({
+          sessionId: "mock-session-1",
+          update: { toolCallId: "edit-tracked", ...update },
+        } as EffectAcpSchema.SessionNotification);
+      }
+      const fiber = yield* turn.requestEdit("edit-tracked");
+      yield* turn.declinePendingAndStop("edit-tracked-request", fiber);
+    }).pipe(Effect.provide(layerTest));
+
+  it.effect(
+    "asks about an edit named by id whose tool call named another folder before an update",
+    () =>
+      editNamedByIdAsks("edit-replaced-path", ({ inside, outside }) => [
+        {
+          sessionUpdate: "tool_call",
+          title: "Edit file",
+          kind: "edit",
+          status: "pending",
+          locations: [{ path: outside }],
+        },
+        { sessionUpdate: "tool_call_update", locations: [{ path: inside }] },
+      ]),
+  );
+
+  it.effect("asks about an edit named by id whose tool call left one location blank", () =>
+    editNamedByIdAsks("edit-blank-path", ({ inside }) => [
+      {
+        sessionUpdate: "tool_call",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        locations: [{ path: inside }, { path: " " }],
+      },
+    ]),
+  );
+
+  it.effect("asks about an edit named by id whose content chunk changes another folder", () =>
+    editNamedByIdAsks("edit-chunk-path", ({ inside, outside }) => [
+      {
+        sessionUpdate: "tool_call",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        locations: [{ path: inside }],
+      },
+      {
+        sessionUpdate: "tool_call_content_chunk",
+        content: { type: "diff", changes: [{ operation: "modify", path: outside }] },
+      },
+    ]),
+  );
+
+  it.effect("auto-accepts an edit named by id whose updates from the agent were all read", () =>
+    Effect.gen(function* () {
+      const turn = yield* startAutoAcceptEditsTurn("edit-read-updates", ({ workspace }) => ({
+        T3_ACP_EMIT_EDIT_UPDATES_THEN_REQUEST: JSON.stringify([
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "edit-tracked",
+            title: "Edit file",
+            kind: "edit",
+            status: "pending",
+            locations: [{ path: `${workspace}/src/a.ts` }],
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "edit-tracked",
+            locations: [{ path: `${workspace}/src/a.ts`, line: 3 }],
+          },
+        ]),
+      }));
+      const answerOrRequest = Option.getOrThrow(
+        yield* turn.runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              (event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "pending") ||
+              (event.type === "turn_item.updated" &&
+                event.turnItem.nativeItemRef?.nativeId?.includes("edit-answered:") === true),
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        answerOrRequest.type !== "turn_item.updated" ||
+        answerOrRequest.turnItem.providerTurnId === null
+      ) {
+        return assert.fail("The edit became an approval request");
+      }
+      assert.include(answerOrRequest.turnItem.nativeItemRef?.nativeId, "edit-answered:allow");
+      yield* turn.runtime.interruptTurn({
+        providerThread: turn.providerThread,
+        providerTurnId: answerOrRequest.turnItem.providerTurnId,
+      });
+      yield* Fiber.join(turn.turnFiber);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      update: "one location is not a path",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-tracked",
+        locations: [{ path: inside }, { path: 7 }],
+      }),
+    },
+    {
+      update: "a line number is not a whole number",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-tracked",
+        locations: [{ path: inside, line: -1 }],
+      }),
+    },
+    {
+      update: "tool call id cannot be read",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: 7,
+        locations: [{ path: inside }],
+      }),
+    },
+  ])(
+    "asks about an edit named by id after an update the agent sent could not be read: $update",
+    ({ later }) =>
+      Effect.gen(function* () {
+        // The agent process writes these to its output, so they pass through protocol decoding.
+        const turn = yield* startAutoAcceptEditsTurn("edit-unread-update", ({ workspace }) => {
+          const inside = `${workspace}/src/a.ts`;
+          return {
+            T3_ACP_EMIT_EDIT_UPDATES_THEN_REQUEST: JSON.stringify([
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "edit-tracked",
+                title: "Edit file",
+                kind: "edit",
+                status: "pending",
+                locations: [{ path: inside }],
+              },
+              later(inside),
+            ]),
+          };
+        });
+        const answerOrRequest = Option.getOrThrow(
+          yield* turn.runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                (event.type === "runtime_request.updated" &&
+                  event.runtimeRequest.status === "pending") ||
+                (event.type === "turn_item.updated" &&
+                  event.turnItem.nativeItemRef?.nativeId?.includes("edit-answered:") === true),
+            ),
+            Stream.runHead,
+          ),
+        );
+        if (
+          answerOrRequest.type !== "runtime_request.updated" ||
+          answerOrRequest.runtimeRequest.providerTurnId === null
+        ) {
+          return assert.fail("The edit was answered without an approval request");
+        }
+        yield* turn.runtime.respondToRuntimeRequest({
+          requestId: answerOrRequest.runtimeRequest.id,
+          decision: "decline",
+        });
+        yield* turn.runtime.interruptTurn({
+          providerThread: turn.providerThread,
+          providerTurnId: answerOrRequest.runtimeRequest.providerTurnId,
+        });
+        yield* Fiber.join(turn.turnFiber);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
@@ -12708,6 +13487,7 @@ describe("AcpAdapterV2", () => {
         const sessionId = providerThread.nativeThreadRef?.nativeId;
         if (sessionId == null) return assert.fail("expected native session id");
         let ordinal = 0;
+        const noteSetAt = "2026-11-23T14:02:17.000Z";
         const runTurn = (input: {
           readonly text: string;
           readonly note: string;
@@ -12728,7 +13508,7 @@ describe("AcpAdapterV2", () => {
                 ordinal,
                 messageText: input.text,
               }),
-              appContext: [{ key: "mcp_app_item-1", text: input.note }],
+              appContext: [{ key: "mcp_app_item-1", text: input.note, updatedAt: noteSetAt }],
             });
             const events = Array.from(
               yield* runtime.events.pipe(
@@ -12743,7 +13523,9 @@ describe("AcpAdapterV2", () => {
             };
           });
 
-        const tag = (note: string) => `<external_mcp_app_item-1>${note}</external_mcp_app_item-1>`;
+        // Every send, a resend included, says when the app set the note.
+        const tag = (note: string) =>
+          `<external_mcp_app_item-1 updated_at="${noteSetAt}">${note}</external_mcp_app_item-1>`;
 
         // An unsuccessful stop reason must not mark appContext delivered.
         const refusedTurn = yield* runTurn({
@@ -12774,7 +13556,9 @@ describe("AcpAdapterV2", () => {
             ordinal: interruptedOrdinal,
             messageText: "Interrupted attempt",
           }),
-          appContext: [{ key: "mcp_app_item-1", text: "Created Jira issue PROJ-42" }],
+          appContext: [
+            { key: "mcp_app_item-1", text: "Created Jira issue PROJ-42", updatedAt: noteSetAt },
+          ],
         });
         yield* Deferred.await(interruptedStarted);
         assert.include(prompts.at(-1) ?? "", tag("Created Jira issue PROJ-42"));
@@ -12874,7 +13658,9 @@ describe("AcpAdapterV2", () => {
             ordinal: restartOrdinal,
             messageText: "Trigger restart",
           }),
-          appContext: [{ key: "mcp_app_item-1", text: "Updated Jira issue PROJ-43" }],
+          appContext: [
+            { key: "mcp_app_item-1", text: "Updated Jira issue PROJ-43", updatedAt: noteSetAt },
+          ],
         });
         yield* Deferred.await(restartStarted);
         const restartInterruptFiber = yield* runtime
@@ -12902,6 +13688,96 @@ describe("AcpAdapterV2", () => {
         assert.isAbove(runtimeCount, 1);
         assert.include(postRestartTurn.prompt, tag("Updated Jira issue PROJ-43"));
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("sends an image to an agent without image prompts as a file path", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const host = yield* ProviderHost.ProviderHost;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const sent: Array<EffectAcpSchema.PromptRequest["prompt"]> = [];
+      const instanceId = ProviderInstanceId.make("acp-test-image-without-image-prompts");
+      const threadId = ThreadId.make("thread-acp-image-without-image-prompts");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload, promptOptions) =>
+                Effect.sync(() => void sent.push(payload.prompt)).pipe(
+                  Effect.andThen(runtime.prompt(payload, promptOptions)),
+                ),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-image-without-prompts"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const screenshot = {
+        type: "image",
+        id: "screenshot-1",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 8,
+      } as const;
+      const screenshotPath = host.resolveAttachmentPath(screenshot);
+      if (screenshotPath === null) return assert.fail("expected a screenshot path");
+      yield* fileSystem.writeFile(
+        screenshotPath,
+        Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+      );
+      const base = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now: yield* DateTime.now,
+        messageText: "What is in this screenshot?",
+      });
+
+      yield* runtime.startTurn({
+        ...base,
+        message: { ...base.message, attachments: [screenshot] },
+      });
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      assert.equal(Option.getOrThrow(terminal).status, "completed");
+      const blocks = sent[0] ?? [];
+      assert.deepEqual(
+        blocks.filter((block) => block.type !== "text"),
+        [],
+      );
+      assert.include(
+        blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n"),
+        `[Attached image "screenshot.png" is saved at: ${screenshotPath}]`,
+      );
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live(

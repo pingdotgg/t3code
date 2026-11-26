@@ -57,6 +57,7 @@ import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
+import { makeInterruptResultTurnItem } from "./runInterruptResult.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -846,20 +847,20 @@ export const layer: Layer.Layer<
                 allocateEventId,
               })
             : [];
-        const persistedStatus =
-          input.terminal.status === "completed" ? "waiting" : input.terminal.status;
+        // The run settles now; turn-end checkpoint capture follows on this thread's effect lane.
+        const persistedStatus = input.terminal.status;
         // Omit delegatedCompletion; the startup snapshot must not overwrite newer acknowledgements, successors, or Stop barriers.
         const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
           input.run;
         const finalizedRun: OrchestrationV2Run = {
           ...runWithoutDelegatedCompletion,
           status: persistedStatus,
-          completedAt: input.terminal.status === "completed" ? null : completedAt,
+          completedAt,
         };
         const finalizedRootNode: OrchestrationV2ExecutionNode = {
           ...input.rootNode,
           status: persistedStatus,
-          completedAt: input.terminal.status === "completed" ? null : completedAt,
+          completedAt,
           checkpointScopeId: input.checkpointScope.id,
         };
         const finalizedProviderThread: OrchestrationV2ProviderThread = {
@@ -1104,7 +1105,7 @@ export const layer: Layer.Layer<
               ? Effect.interrupt
               : Effect.logWarning(
                   "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                  { runId: input.run.id },
+                  { runId: input.run.id, cause },
                 ),
           ),
         );
@@ -2410,37 +2411,3 @@ export const layer: Layer.Layer<
  * always set one, so a missing reason means a person stopped the run.
  */
 export const USER_STOP_REASON = "Stopped by user";
-
-export function makeInterruptResultTurnItem(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly run: OrchestrationV2Run;
-  readonly rootNode: OrchestrationV2ExecutionNode;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly reason: string | undefined;
-  readonly completedAt: DateTime.Utc;
-}): OrchestrationV2TurnItem {
-  return {
-    id: input.idAllocator.derive.runSignalTurnItem({
-      runId: input.run.id,
-      signal: "interrupt-result",
-    }),
-    threadId: input.run.threadId,
-    runId: input.run.id,
-    nodeId: input.rootNode.id,
-    providerThreadId: input.providerThread.id,
-    providerTurnId: input.rootNode.providerTurnId,
-    nativeItemRef: null,
-    parentItemId: input.idAllocator.derive.runSignalTurnItem({
-      runId: input.run.id,
-      signal: "interrupt-request",
-    }),
-    ordinal: input.run.ordinal * 100 + 98,
-    status: "interrupted",
-    title: "Interrupted",
-    startedAt: input.completedAt,
-    completedAt: input.completedAt,
-    updatedAt: input.completedAt,
-    type: "run_interrupt_result",
-    message: input.reason ?? "Stopped by the provider",
-  };
-}

@@ -26,7 +26,12 @@ vi.mock(import("~/state/presentation"), async (original) => {
 vi.mock(import("~/state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const actual = await original();
-  const settings = Atom.make({ usagePriceOverrides: {}, usageModelAliases: {} });
+  const settings = Atom.make({
+    usagePriceOverrides: {
+      "priced-model": { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 4 },
+    },
+    usageModelAliases: { "my-preview": "gpt-4o" },
+  });
   return {
     ...actual,
     serverEnvironment: {
@@ -96,5 +101,34 @@ describe("UsagePriceOverrides", () => {
     await expect.element(page.getByRole("alert")).toHaveTextContent("Enter a model ID.");
     await expect.element(modelId).toHaveAttribute("aria-invalid", "true");
     await expect.element(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  });
+
+  it("leaves no pending change when a mapping goes back to its saved model", async () => {
+    await using _screen = await renderPrices();
+    const mapTo = page.getByLabelText("Map my-preview to model");
+    await userEvent.clear(mapTo);
+    await userEvent.type(page.getByLabelText("Input price for my-preview"), "2");
+    await userEvent.type(mapTo, "gpt-4o");
+
+    await expect
+      .element(page.getByRole("button", { name: "Discard changes" }))
+      .not.toBeInTheDocument();
+    expect(page.getByRole("alert").elements()).toEqual([]);
+    await expect
+      .element(page.getByRole("button", { name: "Apply to All environments" }))
+      .toBeEnabled();
+  });
+
+  it("keeps typed prices when a priced model's new mapping is cleared", async () => {
+    await using _screen = await renderPrices();
+    const input = page.getByLabelText("Input price for priced-model");
+    await userEvent.clear(input);
+    await userEvent.type(input, "2");
+    const mapTo = page.getByLabelText("Map priced-model to model");
+    await userEvent.type(mapTo, "gpt-4o");
+    await userEvent.clear(mapTo);
+
+    await expect.element(input).toHaveValue("2");
+    await expect.element(page.getByRole("button", { name: "Save changes" })).toBeEnabled();
   });
 });

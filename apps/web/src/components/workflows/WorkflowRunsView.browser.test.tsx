@@ -60,6 +60,8 @@ const state = vi.hoisted(() => ({
   commands: [] as Array<readonly [label: string | undefined, input: unknown]>,
   permitted: true,
   detailError: null as string | null,
+  linked: [] as ReadonlyArray<string>,
+  sessionId: null as string | null,
 }));
 const canOperate = Atom.make(true);
 const cannotOperate = Atom.make(false);
@@ -75,6 +77,8 @@ function setup(
   state.commands = [];
   state.permitted = true;
   state.detailError = null;
+  state.linked = [];
+  state.sessionId = null;
 }
 
 const environment = { environmentId, label: "Laptop" };
@@ -124,6 +128,19 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       state.commands.push([options.label, value.input]);
       return Promise.resolve({ _tag: "Success", value: undefined });
     }) as never,
+}));
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentSessionId: () => state.sessionId,
+}));
+vi.mock(import("../../state/peerLinks"), async (original) => ({
+  ...(await original()),
+  useLinkedEnvironments: ((id: EnvironmentId | null) =>
+    new Map(
+      id === environmentId
+        ? state.linked.map((link) => [EnvironmentId.make(link), "Build box"])
+        : [],
+    )) as never,
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
@@ -232,6 +249,57 @@ describe("WorkflowRunsView", () => {
     );
   });
 
+  it("shows what choices do and the links, and sends a choice that needs a reason only with one", async () => {
+    setup(
+      {
+        runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" })],
+        questions: [
+          {
+            ...question,
+            request: {
+              title: "Ship release 1.2?",
+              choices: ["Ship", "Hold", "Close as a duplicate of the earlier request"],
+              choiceDetails: [
+                { value: "Hold", description: "It waits a week", requireReason: true },
+              ],
+              links: [{ label: "The diff", url: "https://example.com/diff" }],
+            },
+          },
+        ],
+      },
+      { ship: [step({ name: "approve", kind: "ask", status: "running", endedAt: null })] },
+    );
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await expect.element(screen.getByText("It waits a week")).toBeVisible();
+    // A long label keeps a button as wide as itself, as before choices could say more.
+    const long = screen
+      .getByRole("button", { name: "Close as a duplicate of the earlier request" })
+      .element();
+    expect(long.scrollWidth).toBeLessThanOrEqual(long.clientWidth);
+    await expect
+      .element(screen.getByRole("link", { name: "The diff" }))
+      .toHaveAttribute("href", "https://example.com/diff");
+    await screen.getByRole("button", { name: "Hold", exact: true }).click();
+    await expect.element(screen.getByText("Hold needs a reason.")).toBeVisible();
+    expect(state.commands).toEqual([]);
+
+    await userEvent.fill(
+      screen.getByRole("textbox", { name: "Reason for Ship release 1.2?" }),
+      "Not this week",
+    );
+    await screen.getByRole("button", { name: "Hold", exact: true }).click();
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        [
+          "workflow answer",
+          { runId: "ship", name: "approve", choice: "Hold", reason: "Not this week" },
+        ],
+      ]),
+    );
+  });
+
   it("answers a question whose steps did not load, and says a linked run is not here", async () => {
     setup({
       runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" })],
@@ -281,6 +349,58 @@ describe("WorkflowRunsView", () => {
 
     await expect.element(screen.getByRole("button", { name: "Ship", exact: true })).toBeDisabled();
     await expect.element(screen.getByRole("button", { name: "Hold", exact: true })).toBeDisabled();
+  });
+
+  it("shows what a run is about in its row, and opens it from there", async () => {
+    const { steps: _steps, origin: _origin, state: _state, ...subject } = issue101;
+    setup({ runs: [run({ runId: "fix", title: "Fix the minutes", subject })], questions: [] });
+    const reference = vi.fn();
+    await using _desktop = await desktop();
+    await using screen = await render(page(null, { reference }));
+
+    const row = screen
+      .getByRole("navigation", { name: "Workflow runs" })
+      .getByRole("button", { name: "#101 Wrong minutes" });
+    await row.click();
+
+    expect(reference).toHaveBeenCalledWith("fix", subject);
+  });
+
+  it("marks a thread subject as open beside its run, and a subject's state as unknown", async () => {
+    setup({
+      runs: [
+        run({
+          runId: "talk",
+          title: "Talk it through",
+          subject: { kind: "thread", key: "t1", address: { threadId: "t1" }, title: "", url: null },
+        }),
+        run({
+          runId: "land",
+          title: "Land the fix",
+          subject: {
+            kind: "pullRequest",
+            key: "pr7",
+            address: { projectId: "p1", host: "github.com", repository: "acme/app", number: 7 },
+            title: "Fix the minutes",
+            url: "https://github.com/acme/app/pull/7",
+          },
+        }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page("talk", {}, { thread: "t1" }));
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(runs.getByRole("button", { name: "thread", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    // A subject does not say where its pull request stands, so it wears no state's ink.
+    const mark = runs
+      .getByRole("button", { name: "#7 Fix the minutes" })
+      .element()
+      .querySelector("svg");
+    expect(mark?.getAttribute("class")).toContain("text-muted-foreground");
   });
 
   it("says why a run paused at the step that failed, and resumes it", async () => {
@@ -421,6 +541,112 @@ describe("WorkflowRunsView", () => {
       .not.toBeInTheDocument();
   });
 
+  it("says You for this client's own answer, and names any other client that answered", async () => {
+    const answered = (name: string, minute: number, result: WorkflowStep["result"]) =>
+      step({ name, kind: "ask", startedAt: at(minute), endedAt: at(minute + 1), result });
+    const chrome = { answeredBy: "Chrome on Linux", answeredAt: at(2) };
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(12) })],
+        questions: [],
+      },
+      {
+        fix: [
+          answered("mine", 1, { choice: "Yes", ...chrome, answeredBySession: "this-browser" }),
+          // Another browser the server gives the same name.
+          answered("theirs", 3, { choice: "No", ...chrome, answeredBySession: "other-browser" }),
+          answered("agent", 5, {
+            choice: "Yes",
+            answeredBy: "Fix the login bug",
+            answeredAt: at(6),
+          }),
+          // Kept before answers recorded a session: named, as it was.
+          answered("old", 7, { choice: "Yes", reason: "Fine", ...chrome }),
+        ],
+      },
+    );
+    state.sessionId = "this-browser";
+    await using screen = await render(page("fix"));
+
+    const flow = screen.getByRole("navigation", { name: "Steps so far" });
+    await expect
+      .element(flow)
+      .toMatchTextContent(
+        /mine.*You said Yes.*theirs.*Chrome on Linux said No.*agent.*Fix the login bug said Yes.*old.*Chrome on Linux said Yes/,
+      );
+    const card = async (name: string) => {
+      await flow.getByRole("button", { name: new RegExp(name) }).click();
+      return screen.getByRole("region", { name });
+    };
+    await expect.element(await card("mine")).toMatchTextContent("You said Yes.");
+    await expect.element(await card("theirs")).toMatchTextContent("Chrome on Linux said No.");
+    await expect.element(await card("agent")).toMatchTextContent("Fix the login bug said Yes.");
+    await expect.element(await card("old")).toMatchTextContent("Chrome on Linux said Yes: Fine");
+  });
+
+  it("says who withdrew a question that ended unanswered, and why", async () => {
+    setup(
+      {
+        runs: [run({ runId: "ship", title: "Ship", status: "completed", endedAt: at(2) })],
+        questions: [],
+      },
+      {
+        ship: [
+          step({
+            name: "wanted",
+            kind: "ask",
+            endedAt: at(1),
+            detail: "withdrawn by t3 CLI: settled elsewhere",
+            result: { withdrawn: { by: "t3 CLI", reason: "settled elsewhere" } },
+          }),
+        ],
+      },
+    );
+    await using screen = await render(page("ship"));
+
+    const flow = screen.getByRole("navigation", { name: "Steps so far" });
+    await expect.element(flow).toMatchTextContent(/wanted.*withdrawn by t3 CLI/);
+    await flow.getByRole("button", { name: /wanted/ }).click();
+    await expect
+      .element(screen.getByRole("region", { name: "wanted" }))
+      .toMatchTextContent(/withdrawn · 1m 0s.*Withdrawn by t3 CLI: settled elsewhere/);
+  });
+
+  it("opens an agent's thread on an environment this server links to", async () => {
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(12) })],
+        questions: [],
+      },
+      {
+        fix: [
+          step({
+            name: "implement",
+            kind: "agent",
+            threadId: "thread-2",
+            environmentId: "build-box",
+          }),
+        ],
+      },
+    );
+    state.linked = ["build-box"];
+    const thread = vi.fn();
+    await using screen = await render(page("fix", { thread }));
+
+    await screen
+      .getByRole("navigation", { name: "Steps so far" })
+      .getByRole("button", { name: /implement/ })
+      .click();
+    const implement = screen.getByRole("region", { name: "implement" });
+    await expect.element(implement).toMatchTextContent(/on Build box/);
+    await expect.element(implement).not.toMatchTextContent(/Thread on build-box/);
+    await implement.getByRole("button", { name: "Transcript" }).click();
+    expect(thread).toHaveBeenCalledWith("fix", {
+      threadId: "thread-2",
+      environmentId: "build-box",
+    });
+  });
+
   it("opens an invoked run from its parent's story", async () => {
     setup(
       {
@@ -473,5 +699,259 @@ describe("WorkflowRunsView", () => {
     await screen.getByRole("option", { name: "report" }).click();
     await expect.element(screen.getByText("Starts on daily at 09:00")).toBeVisible();
     await expect.element(runs).toMatchTextContent("Has not run yet.");
+  });
+
+  it("counts the skipped runs of the workflow picked, not of every workflow", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, triggers: [] },
+        { name: "report", version: 1, triggers: ["webhook pings"] },
+      ],
+      runs: [
+        run({ runId: "rel", title: "Release 1.3", status: "completed", endedAt: at(3) }),
+        run({
+          runId: "s1",
+          workflow: "report",
+          title: "Ping 1",
+          status: "skipped",
+          endedAt: at(1),
+        }),
+        run({
+          runId: "s2",
+          workflow: "report",
+          title: "Ping 2",
+          status: "skipped",
+          endedAt: at(2),
+        }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await screen.getByRole("button", { name: "All", exact: true }).click();
+    await expect.element(screen.getByRole("button", { name: "Show 2 skipped" })).toBeVisible();
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await screen.getByRole("option", { name: "release" }).click();
+    await expect
+      .element(screen.getByRole("navigation", { name: "Workflow runs" }))
+      .not.toMatchTextContent(/skipped/);
+  });
+
+  const KIND_KEY = "t3code:workflows:question-kind";
+  const asked = (runId: string, kind?: string): WorkflowQuestion => ({
+    ...question,
+    runId,
+    ...(kind === undefined ? {} : { kind }),
+  });
+  const kindWorkflows = [
+    {
+      name: "release",
+      version: 1,
+      triggers: [],
+      asks: [
+        { kind: "feature", label: "Feature wanted?" },
+        { kind: "intended", label: "Bug or intended?" },
+      ],
+    },
+  ];
+  const otherKinds = [
+    run({ runId: "sticky", title: "Sticky header", status: "waiting" }),
+    run({ runId: "plain", title: "Release 1.4", status: "waiting" }),
+  ];
+  const kindsAsked = () =>
+    setup({
+      workflows: kindWorkflows,
+      runs: [...otherKinds, run({ runId: "dark", title: "Dark mode", status: "waiting" })],
+      questions: [asked("sticky", "intended"), asked("plain"), asked("dark", "feature")],
+    });
+  const featureAnswered = () =>
+    setup({
+      workflows: kindWorkflows,
+      runs: [
+        ...otherKinds,
+        run({ runId: "dark", title: "Dark mode", status: "completed", endedAt: at(6) }),
+      ],
+      questions: [asked("sticky", "intended"), asked("plain")],
+    });
+
+  it("narrows what needs you to one kind of question, and stays there once it is answered", async () => {
+    localStorage.removeItem(KIND_KEY);
+    kindsAsked();
+    await using _desktop = await desktop();
+    // Opened by its link, as a run picked from the list is.
+    await using screen = await render(page("dark"));
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(screen.getByText("Feature wanted? 1 · Bug or intended? 1 · Other 1"))
+      .toBeVisible();
+    await expect.element(runs.getByRole("button", { name: /Sticky header/ })).toBeVisible();
+
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await screen.getByRole("option", { name: "Feature wanted? 1" }).click();
+    await expect.element(runs.getByRole("button", { name: /Dark mode/ })).toBeVisible();
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(runs.getByRole("button", { name: /Release 1\.4/ }))
+      .not.toBeInTheDocument();
+
+    // Answering the last question of the kind keeps the filter: the other kinds stay out.
+    await screen.getByRole("button", { name: "Ship", exact: true }).click();
+    await vi.waitFor(() => expect(state.commands).toHaveLength(1));
+    featureAnswered();
+    await screen.rerender(page("dark"));
+    await expect.element(runs).toMatchTextContent("No questions of this kind wait on you.");
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("combobox", { name: "Kind of question" }))
+      .toMatchTextContent("Feature wanted? 0");
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("lists a question of a kind its workflow does not declare under Other, with those of no kind", async () => {
+    localStorage.removeItem(KIND_KEY);
+    setup({
+      workflows: kindWorkflows,
+      runs: [...otherKinds, run({ runId: "typo", title: "Typo fix", status: "waiting" })],
+      questions: [asked("sticky", "intended"), asked("plain"), asked("typo", "feture")],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(screen.getByText("Bug or intended? 1 · Other 2")).toBeVisible();
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await expect.element(screen.getByRole("option", { name: /feture/ })).not.toBeInTheDocument();
+    await screen.getByRole("option", { name: "Other 2" }).click();
+    await expect.element(runs.getByRole("button", { name: /Typo fix/ })).toBeVisible();
+    await expect.element(runs.getByRole("button", { name: /Release 1\.4/ })).toBeVisible();
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("shows by itself only a run that asks the picked kind, and none once it is answered", async () => {
+    localStorage.removeItem(KIND_KEY);
+    kindsAsked();
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    // With no kind picked, the first run that waits is shown: one of another kind.
+    await expect.element(screen.getByRole("heading", { name: "Sticky header" })).toBeVisible();
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await screen.getByRole("option", { name: "Feature wanted? 1" }).click();
+    await expect.element(screen.getByRole("heading", { name: "Dark mode" })).toBeVisible();
+
+    await screen.getByRole("button", { name: "Ship", exact: true }).click();
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        ["workflow answer", { runId: "dark", name: "approve", choice: "Ship" }],
+      ]),
+    );
+    featureAnswered();
+    await screen.rerender(page());
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(runs).toMatchTextContent("No questions of this kind wait on you.");
+    // No other kind's question, with its answers, takes the place beside the empty list.
+    await expect.element(screen.getByRole("article")).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: "Ship", exact: true }))
+      .not.toBeInTheDocument();
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("moves from an open run that asks another kind to one that asks the picked kind", async () => {
+    localStorage.removeItem(KIND_KEY);
+    kindsAsked();
+    const select = vi.fn();
+    await using _desktop = await desktop();
+    await using screen = await render(page("sticky", { select }));
+
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await screen.getByRole("option", { name: "Feature wanted? 1" }).click();
+    await vi.waitFor(() => expect(select).toHaveBeenCalledWith("dark"));
+    // Until the address follows, the open run is still in the list, so nothing shown is unlisted.
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .toHaveAttribute("aria-current", "true");
+    await expect
+      .element(runs.getByRole("button", { name: /Release 1\.4/ }))
+      .not.toBeInTheDocument();
+
+    await screen.rerender(page("dark", { select }));
+    await expect.element(screen.getByRole("heading", { name: "Dark mode" })).toBeVisible();
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("keeps a kind remembered from before through answering a run picked from the list", async () => {
+    localStorage.setItem(KIND_KEY, JSON.stringify("feature"));
+    kindsAsked();
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await runs.getByRole("button", { name: /Dark mode/ }).click();
+    featureAnswered();
+    await screen.rerender(page("dark"));
+    // The answered run is in no list that waits, and the list does not move on to All for it.
+    await expect.element(runs).toMatchTextContent("No questions of this kind wait on you.");
+    await expect
+      .element(screen.getByRole("combobox", { name: "Kind of question" }))
+      .toMatchTextContent("Feature wanted? 0");
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("opens the run that asks the picked kind, from the row of the run that invoked it", async () => {
+    localStorage.setItem(KIND_KEY, JSON.stringify("feature"));
+    setup({
+      workflows: kindWorkflows,
+      runs: [
+        run({ runId: "epic", title: "Epic", status: "waiting" }),
+        run({ runId: "dark", title: "Dark mode", status: "waiting", parentRunId: "epic" }),
+      ],
+      questions: [asked("epic", "intended"), asked("dark", "feature")],
+    });
+    const select = vi.fn();
+    await using _desktop = await desktop();
+    await using screen = await render(page(null, { select }));
+
+    // Listed for the question the run it invoked asks; its own is of another kind.
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await runs.getByRole("button", { name: /Epic/ }).click();
+    expect(select.mock.calls).toEqual([["dark"]]);
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("still shows a run opened by its link in a list that has it, whatever kind was picked before", async () => {
+    localStorage.setItem(KIND_KEY, JSON.stringify("feature"));
+    setup({
+      workflows: kindWorkflows,
+      runs: [
+        run({ runId: "busy", title: "Nightly sync" }),
+        run({ runId: "sticky", title: "Sticky header", status: "waiting" }),
+      ],
+      questions: [asked("sticky", "intended")],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page("busy"));
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(runs.getByRole("button", { name: /Nightly sync/ }))
+      .toHaveAttribute("aria-current", "true");
+    await expect
+      .element(screen.getByRole("combobox", { name: "Kind of question" }))
+      .not.toBeInTheDocument();
+    localStorage.removeItem(KIND_KEY);
   });
 });
