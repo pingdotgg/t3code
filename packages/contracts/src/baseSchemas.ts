@@ -320,6 +320,13 @@ export type RpcClientId = typeof RpcClientId.Type;
 export const ClientSurface = Schema.Literals(["web", "desktop", "mobile", "cli"]);
 export type ClientSurface = typeof ClientSurface.Type;
 
+/** The authenticated client surface that caused an orchestration event. */
+export const OrchestrationClientOrigin = Schema.Struct({
+  surface: Schema.optional(ClientSurface),
+  appVersion: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
+
 export const ClientOs = Schema.Literals([
   "macOS",
   "Windows",

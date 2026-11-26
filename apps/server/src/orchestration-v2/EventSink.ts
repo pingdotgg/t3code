@@ -32,6 +32,7 @@ import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectStoredEventForWire } from "./WireProjection.ts";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
+import { CurrentClientOrigin } from "./ClientOrigin.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -39,6 +40,10 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+
+const currentClientOrigin = Effect.map(CurrentClientOrigin, (origin) =>
+  origin === undefined ? {} : { origin },
+);
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -525,6 +530,7 @@ const layerBase: Layer.Layer<
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+            ...(yield* currentClientOrigin),
             events: normalized,
           });
           const outcomes = yield* applyStoredEvents(committed);
@@ -603,6 +609,7 @@ const layerBase: Layer.Layer<
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+              ...(yield* currentClientOrigin),
               events: normalized,
             });
             const outcomes = yield* applyStoredEvents(storedEvents);
@@ -669,6 +676,7 @@ const layerBase: Layer.Layer<
           );
           const storedEvents = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+            ...(yield* currentClientOrigin),
             events: normalized,
           });
           const outcomes = yield* applyStoredEvents(storedEvents);
@@ -699,7 +707,10 @@ const layerBase: Layer.Layer<
           }
 
           const normalized = yield* normalizeEvents(events);
-          const storedEvents = yield* eventStore.append({ events: normalized });
+          const storedEvents = yield* eventStore.append({
+            ...(yield* currentClientOrigin),
+            events: normalized,
+          });
           const outcomes = yield* applyStoredEvents(storedEvents);
           return { committed: true as const, storedEvents, outcomes };
         }),
@@ -845,6 +856,7 @@ const layerBase: Layer.Layer<
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
+            ...(yield* currentClientOrigin),
             events: normalized,
           });
           // A Stop that changes nothing can still queue the stop of its delegated tasks.

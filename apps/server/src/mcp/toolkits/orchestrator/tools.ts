@@ -1,4 +1,6 @@
 import {
+  OrchestratorApprovalInput,
+  OrchestratorApprovalResult,
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
   OrchestrationV2StopWorkflowInput,
@@ -38,6 +40,7 @@ import {
   ThreadMetadataMcpUpdateResult,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import * as Digest from "effect/crypto/Digest";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
@@ -206,6 +209,21 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   .annotate(Tool.Title, "Delete a scheduled task")
   .annotate(Tool.Destructive, true);
 
+const UserInputApprovalTool = Tool.make("t3_user_input_approval", {
+  description:
+    "Create the exact Claude Review approval card text, or read the answered card into a server-signed receipt. action:'question' returns the exact question and options; open one native input card with them. action:'receipt' needs the card's threadId and requestId and returns a short-lived token. The card must show the full comment body.",
+  parameters: OrchestratorApprovalInput,
+  success: OrchestratorApprovalResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [...dependencies, Digest.Digest],
+})
+  .annotate(Tool.Title, "Create a Claude Review approval receipt")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
 const RequestSecretTool = Tool.make("request_secret", {
   description:
     'Ask for secrets in a private card, one value per single-line input; never combine values in one. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
@@ -372,6 +390,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ScheduleTaskTool,
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
+  UserInputApprovalTool,
   RequestSecretTool,
   CreateThreadsTool,
   ThreadListTool,

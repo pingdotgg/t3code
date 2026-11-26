@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { type OrchestratorApprovalInput, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
@@ -11,6 +11,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+import * as UserInputApproval from "./UserInputApproval.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -136,6 +137,19 @@ const handlers = {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.deleteScheduledTask(scope, input);
     }),
+  ),
+  t3_user_input_approval: McpToolAccess.either(
+    (input) => input.action === "question",
+    McpToolAccess.reads((input: OrchestratorApprovalInput) =>
+      input.action === "question"
+        ? UserInputApproval.questionResult(input)
+        : Effect.die("unreachable approval question action"),
+    ),
+    McpToolAccess.actsAsCaller((input: OrchestratorApprovalInput) =>
+      input.action === "receipt"
+        ? UserInputApproval.receiptResult(input)
+        : Effect.die("unreachable approval receipt action"),
+    ),
   ),
   request_secret: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {

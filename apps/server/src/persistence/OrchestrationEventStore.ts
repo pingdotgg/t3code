@@ -9,6 +9,7 @@ import {
   NonNegativeInt,
   OrchestrationV2DomainEventJson,
   OrchestrationV2StoredEvent,
+  type OrchestrationClientOrigin,
   ProjectId,
   StoredProjectIcon,
   ThreadId,
@@ -53,6 +54,7 @@ export class OrchestrationEventStore extends Context.Service<
 
     readonly appendAgentEvents: (input: {
       readonly commandId?: CommandId;
+      readonly origin?: OrchestrationClientOrigin;
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, OrchestrationEventStoreError>;
 
@@ -198,7 +200,10 @@ const parseJson = (json: string) => {
   }
 };
 
-function metadataForV2Event(event: OrchestrationV2DomainEvent): Record<string, unknown> {
+function metadataForV2Event(
+  event: OrchestrationV2DomainEvent,
+  origin?: OrchestrationClientOrigin,
+): Record<string, unknown> {
   return {
     ...(event.runId === undefined ? {} : { runId: event.runId }),
     ...(event.nodeId === undefined ? {} : { nodeId: event.nodeId }),
@@ -207,6 +212,7 @@ function metadataForV2Event(event: OrchestrationV2DomainEvent): Record<string, u
       ? {}
       : { providerInstanceId: event.providerInstanceId }),
     ...(event.rawEventId === undefined ? {} : { rawEventId: event.rawEventId }),
+    ...(origin === undefined ? {} : { origin }),
   };
 }
 
@@ -230,11 +236,12 @@ const rowToV2StoredEvent = Effect.fnUntraced(function* (row: ApplicationEventRow
       : { providerInstanceId: values.providerInstanceId }),
     ...(values.rawEventId === undefined ? {} : { rawEventId: values.rawEventId }),
   });
-  const { sequence, commandId } = yield* decodeV2StoredEventHeader({
+  const { sequence, commandId, origin } = yield* decodeV2StoredEventHeader({
     sequence: row.sequence,
     commandId: row.command_id,
+    ...(values.origin === undefined ? {} : { origin: values.origin }),
   });
-  return { sequence, commandId, event };
+  return { sequence, commandId, ...(origin === undefined ? {} : { origin }), event };
 });
 
 const rowToProjectEvent = Effect.fnUntraced(function* (row: ApplicationEventRow) {
@@ -518,7 +525,7 @@ const makeEventStore = Effect.gen(function* () {
               ${input.commandId ?? null},
               ${event.rawEventId === undefined ? "server" : "provider"},
               ${storedPayload},
-              ${yield* encodeJson(metadataForV2Event(event))},
+              ${yield* encodeJson(metadataForV2Event(event, input.origin))},
               2
             )
             RETURNING sequence${
@@ -542,6 +549,7 @@ const makeEventStore = Effect.gen(function* () {
           return yield* decodeV2StoredEvent({
             sequence: rows[0]?.sequence,
             commandId: input.commandId ?? null,
+            ...(input.origin === undefined ? {} : { origin: input.origin }),
             event,
           });
         }),

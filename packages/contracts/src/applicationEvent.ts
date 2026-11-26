@@ -2,11 +2,11 @@ import * as Schema from "effect/Schema";
 
 import {
   ApprovalRequestId,
-  ClientSurface,
   CommandId,
   EventId,
   IsoDateTime,
   NonNegativeInt,
+  OrchestrationClientOrigin,
   ProjectId,
   ProviderItemId,
   TrimmedNonEmptyString,
@@ -15,12 +15,6 @@ import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { OrchestrationV2StoredEvent } from "./orchestrationV2.ts";
 import { ProjectScript, ProjectTrackedFolders, StoredProjectIcon } from "./project.ts";
-
-export const OrchestrationClientOrigin = Schema.Struct({
-  surface: Schema.optional(ClientSurface),
-  appVersion: Schema.optional(TrimmedNonEmptyString),
-});
-export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
 
 export const ApplicationEventMetadata = Schema.Struct({
   deferredTurn: Schema.optional(Schema.Boolean),

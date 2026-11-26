@@ -1,6 +1,7 @@
 import {
   type ApplicationProjectEvent,
   type ApplicationStoredEvent,
+  type OrchestrationClientOrigin,
   CommandId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
@@ -50,6 +51,7 @@ export type EventStoreV2Error = typeof EventStoreV2Error.Type;
 export interface EventStoreV2Shape {
   readonly append: (input: {
     readonly commandId?: CommandId;
+    readonly origin?: OrchestrationClientOrigin;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventStoreV2Error>;
   readonly appendProjectEvent: (
