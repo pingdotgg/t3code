@@ -4529,23 +4529,25 @@ function claudeFileChangeApprovalPrompt(
   input: ClaudeNativeToolInput,
 ): string | undefined {
   const normalizedName = classifyClaudeNativeTool(toolName).normalizedName;
-  const oldString = normalizedName === "edit" ? inputRecordValue(input, "old_string") : "";
-  const newString = inputRecordValue(input, normalizedName === "edit" ? "new_string" : "content");
-  if (
-    (normalizedName !== "edit" && normalizedName !== "write") ||
-    typeof oldString !== "string" ||
-    typeof newString !== "string"
-  ) {
-    return undefined;
-  }
-  // Write may replace an existing file, so its headers do not claim the file is new.
+  if (normalizedName !== "edit" && normalizedName !== "write") return undefined;
   const path = firstStringInputField(input, ["file_path"]) ?? "file";
+  const bound = (text: string) =>
+    text.length <= MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH
+      ? text
+      : `${withoutTrailingHighSurrogate(text.slice(0, MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH))}\n… ${(text.length - MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH).toLocaleString("en-US")} more characters are not shown`;
+  if (normalizedName === "write") {
+    const content = inputRecordValue(input, "content");
+    // Write can replace an existing file: its new body is the preview, not a diff from an empty file.
+    return typeof content === "string" && content.length > 0
+      ? bound(`Write replaces ${path} with:\n${content}`)
+      : undefined;
+  }
+  const oldString = inputRecordValue(input, "old_string");
+  const newString = inputRecordValue(input, "new_string");
+  if (typeof oldString !== "string" || typeof newString !== "string") return undefined;
   const patch = structuredPatch(path, path, oldString, newString);
   if (patch.hunks.length === 0) return undefined;
-  const diff = formatPatch(patch, FILE_HEADERS_ONLY);
-  if (diff.length <= MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH) return diff;
-  const shown = withoutTrailingHighSurrogate(diff.slice(0, MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH));
-  return `${shown}\n… ${(diff.length - shown.length).toLocaleString("en-US")} more characters of the diff are not shown`;
+  return bound(formatPatch(patch, FILE_HEADERS_ONLY));
 }
 
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {

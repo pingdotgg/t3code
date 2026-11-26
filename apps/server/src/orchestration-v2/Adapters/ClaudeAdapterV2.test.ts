@@ -1459,7 +1459,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         {
           toolName: "Write",
           input: { file_path: "/workspace/notes.md", content: "# Notes\nSome body.\n" },
-          expected: ["+# Notes", "+Some body."],
+          expected: ["Write replaces /workspace/notes.md with:", "# Notes\nSome body."],
         },
       ];
       for (const [index, testCase] of cases.entries()) {
