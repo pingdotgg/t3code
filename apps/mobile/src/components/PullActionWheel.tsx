@@ -31,11 +31,11 @@ import {
   overscrollPastEnd,
   pointPullAction,
   pullFromStretch,
+  pullNeedleAngle,
+  pullSlotAngle,
   selectedPullAction,
   shouldRunPullAction,
-  swingPosition,
   trackPull,
-  wheelAngle,
 } from "./pull-action-wheel";
 
 export type PullActionTone = "primary" | "success" | "warning";
@@ -109,52 +109,75 @@ export function usePullActionWheel(actions: ReadonlyArray<PullAction>, defaultIn
   const distance = useSharedValue(0);
   const armedAt = useSharedValue<number | null>(null);
   const drag = useSharedValue<"idle" | "pulling" | "keyboard">("idle");
-  const position = useSharedValue(defaultIndex);
+  const needle = useSharedValue(0);
   const pointed = useSharedValue(-1);
   const selected = useSharedValue(-1);
+  const aimDx = useSharedValue(0);
+  const aimDy = useSharedValue(0);
   const fingerX = useSharedValue(0);
+  const fingerY = useSharedValue(0);
   const pullStartX = useSharedValue<number | null>(null);
+  const pullStartY = useSharedValue(0);
   const { progress: keyboard } = useReanimatedKeyboardAnimation();
 
-  const choose = (nextPosition: number, tick: boolean) => {
+  const steer = (tick: boolean) => {
     "worklet";
-    position.set(nextPosition);
     const options = choices.get();
-    const nextPointed = pointPullAction(nextPosition, pointed.get(), options.count);
+    const dx = aimDx.get();
+    const dy = aimDy.get();
+    needle.set(pullNeedleAngle(dx, dy, options.count, options.defaultIndex));
+    const nextPointed = pointPullAction(
+      dx,
+      dy,
+      armedAt.get() !== null,
+      pointed.get(),
+      options.count,
+      options.defaultIndex,
+    );
     pointed.set(nextPointed);
     const next = selectedPullAction(nextPointed, options.enabledMask);
     if (next === selected.get()) return;
     selected.set(next);
     if (tick && next >= 0) runOnJS(selectionHaptic)();
   };
+  const aim = (dx: number, dy: number) => {
+    "worklet";
+    aimDx.set(dx);
+    aimDy.set(dy);
+  };
   const begin = () => {
     "worklet";
     armedAt.set(null);
     pullStartX.set(null);
+    aim(0, 0);
     drag.set(keyboard.get() < 0.01 ? "pulling" : "keyboard");
     pointed.set(-1);
     selected.set(-1);
-    choose(choices.get().defaultIndex, false);
+    steer(false);
   };
   const update = (next: number) => {
     "worklet";
     if (drag.get() !== "pulling" || next === distance.get()) return;
-    if (next === 0) pullStartX.set(null);
-    else if (SCROLL_PULL_SWING_FROM_FEED_TOUCHES && pullStartX.get() === null) {
+    if (next === 0) {
+      pullStartX.set(null);
+      aim(0, 0);
+    } else if (SCROLL_PULL_SWING_FROM_FEED_TOUCHES && pullStartX.get() === null) {
       pullStartX.set(fingerX.get());
-      choose(choices.get().defaultIndex, true);
+      pullStartY.set(fingerY.get());
+      aim(0, 0);
     }
     distance.set(next);
     const nextArmedAt = trackPull(armedAt.get(), next, THRESHOLD, Date.now());
-    if (nextArmedAt === armedAt.get()) return;
+    const arming = nextArmedAt !== null && armedAt.get() === null;
     armedAt.set(nextArmedAt);
-    if (nextArmedAt !== null && selected.get() >= 0) runOnJS(armedHaptic)();
+    steer(!arming);
+    if (arming && selected.get() >= 0) runOnJS(armedHaptic)();
   };
-  const swing = (dx: number) => {
+  const swing = (dx: number, dy: number) => {
     "worklet";
     if (drag.get() !== "pulling") return;
-    const options = choices.get();
-    choose(swingPosition(dx, options.count, options.defaultIndex), true);
+    aim(dx, dy);
+    steer(true);
   };
   const release = (released: boolean, velocity: number) => {
     "worklet";
@@ -186,8 +209,9 @@ export function usePullActionWheel(actions: ReadonlyArray<PullAction>, defaultIn
         return;
       }
       if (drag.get() === "idle") begin();
+      aim(event.dx, event.dy);
       update(pullFromStretch(event.distance));
-      swing(event.dx);
+      swing(event.dx, event.dy);
     },
     ["onPull", "onPullEnd"],
   );
@@ -198,15 +222,18 @@ export function usePullActionWheel(actions: ReadonlyArray<PullAction>, defaultIn
     onTouchesDown: (event) => {
       "worklet";
       const touch = event.allTouches[0];
-      if (touch) fingerX.set(touch.absoluteX);
+      if (!touch) return;
+      fingerX.set(touch.absoluteX);
+      fingerY.set(touch.absoluteY);
     },
     onTouchesMove: (event) => {
       "worklet";
       const touch = event.allTouches[0];
       if (!touch) return;
       fingerX.set(touch.absoluteX);
+      fingerY.set(touch.absoluteY);
       const startX = pullStartX.get();
-      if (startX !== null) swing(touch.absoluteX - startX);
+      if (startX !== null) swing(touch.absoluteX - startX, pullStartY.get() - touch.absoluteY);
     },
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- LegendList owns the scroll view's event props, so the pull listens on its view tag the way Reanimated's useScrollOffset does
@@ -224,7 +251,7 @@ export function usePullActionWheel(actions: ReadonlyArray<PullAction>, defaultIn
     scrollRef,
     stretchEvents: enabled ? stretchEvents : undefined,
     swingGesture,
-    wheel: enabled ? { actions, distance, armedAt, position, selected } : null,
+    wheel: enabled ? { actions, distance, armedAt, needle, selected } : null,
   };
 }
 
@@ -239,13 +266,13 @@ function useToneColors(): Record<PullActionTone, string> {
 }
 
 function slot(index: number, count: number) {
-  const angle = (wheelAngle(index, count) * Math.PI) / 180;
+  const angle = (pullSlotAngle(index, count) * Math.PI) / 180;
   return { x: RADIUS * Math.sin(angle), y: HUB_Y - RADIUS * Math.cos(angle) };
 }
 
 function wheelGeometry(count: number) {
   const halfWidth = Math.max(Math.abs(slot(0, count).x) + LABEL_WIDTH / 2, BUTTON);
-  const arcAngle = ((Math.abs(wheelAngle(0, count)) + 16) * Math.PI) / 180;
+  const arcAngle = ((Math.abs(pullSlotAngle(0, count)) + 16) * Math.PI) / 180;
   const arcX = RADIUS * Math.sin(arcAngle);
   const arcY = HUB_Y - RADIUS * Math.cos(arcAngle);
   return {
@@ -260,7 +287,7 @@ export function PullActionWheel(props: {
   readonly bottom: number;
   readonly screenColor: string;
 }) {
-  const { actions, distance, armedAt, position, selected } = props.wheel;
+  const { actions, distance, armedAt, needle, selected } = props.wheel;
   const count = actions.length;
   const toneColors = useToneColors();
   const colors = actions.map((action) => toneColors[action.tone]);
@@ -282,7 +309,7 @@ export function PullActionWheel(props: {
   }));
   const needleStyle = useAnimatedStyle(() => ({
     backgroundColor: colors[selected.get()] ?? mutedColor,
-    transform: [{ rotate: `${wheelAngle(position.get(), count)}deg` }],
+    transform: [{ rotate: `${needle.get()}deg` }],
   }));
   const ringProps = useAnimatedProps(() => ({
     stroke: colors[selected.get()] ?? mutedColor,

@@ -27,7 +27,7 @@ class T3ScrollPullModule : Module() {
   }
 }
 
-/** Reports a scroll view drag's pull past its end and sideways travel; touches pass through. */
+/** Reports a drag's pull past the end and the finger's travel; touches pass through. */
 class T3ScrollPullView(
   context: Context,
   appContext: AppContext
@@ -39,7 +39,9 @@ class T3ScrollPullView(
   private var lastY: Int? = null
   private var pull = 0
   private var pullStartX: Float? = null
+  private var pullStartY = 0f
   private var swing = 0f
+  private var lift = 0f
   private var pulling = false
   private var multiTouch = false
   private var velocityTracker: VelocityTracker? = null
@@ -121,7 +123,8 @@ class T3ScrollPullView(
         // A stretch at the end takes the travel ScrollView could not scroll, and gives it back
         // before scrolling again, so the unscrolled travel is the pull.
         val unscrolled = previous - y - (target.scrollY - scrollYBefore)
-        update(if (target.canScrollVertically(1)) 0 else max(0, pull + unscrolled), event.x)
+        val next = if (target.canScrollVertically(1)) 0 else max(0, pull + unscrolled)
+        update(next, event.x, event.y)
       }
       MotionEvent.ACTION_POINTER_DOWN -> {
         end(released = false)
@@ -137,16 +140,24 @@ class T3ScrollPullView(
     }
   }
 
-  private fun update(next: Int, x: Float) {
+  private fun update(next: Int, x: Float, y: Float) {
     val density = resources.displayMetrics.density
-    val startX = if (next > 0) pullStartX ?: x else null
-    pullStartX = startX
+    if (next <= 0) {
+      pullStartX = null
+    } else if (pullStartX == null) {
+      pullStartX = x
+      pullStartY = y
+    }
+    val startX = pullStartX
     val nextSwing = startX?.let { (x - it) / density } ?: 0f
-    if (next == pull && (next == 0 || nextSwing == swing)) return
+    val nextLift = if (startX != null) (pullStartY - y) / density else 0f
+    val fingerMoved = nextSwing != swing || nextLift != lift
+    if (next == pull && (next == 0 || !fingerMoved)) return
     pull = next
     swing = nextSwing
+    lift = nextLift
     pulling = true
-    onPull(mapOf("distance" to next / density, "dx" to nextSwing))
+    onPull(mapOf("distance" to next / density, "dx" to nextSwing, "dy" to nextLift))
   }
 
   private fun end(released: Boolean) {
@@ -155,6 +166,7 @@ class T3ScrollPullView(
     pull = 0
     pullStartX = null
     swing = 0f
+    lift = 0f
     lastY = null
   }
 

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  PULL_SWING_PER_ACTION,
+  PULL_AIM_HYSTERESIS_DEGREES,
+  PULL_FAN_DEGREES,
   overscrollPastEnd,
   pointPullAction,
   selectedPullAction,
   shouldRunPullAction,
-  swingPosition,
   trackPull,
 } from "./pull-action-wheel";
 
@@ -61,27 +61,19 @@ describe("pull release", () => {
 });
 
 describe("pull wheel selection", () => {
-  const ALL = 0b111;
-  function swing(moves: ReadonlyArray<number>, options = { count: 3, defaultIndex: 1, mask: ALL }) {
-    const pointed = moves.reduce(
-      (previous, dx) =>
-        pointPullAction(
-          swingPosition(dx, options.count, options.defaultIndex),
-          previous,
-          options.count,
-        ),
-      pointPullAction(options.defaultIndex, -1, options.count),
-    );
-    return selectedPullAction(pointed, options.mask);
-  }
+  const pick = (dx: number, dy: number, previous = 1, armed = true) =>
+    pointPullAction(dx, dy, armed, previous, 3, 1);
+  const atAngle = (degrees: number) => Math.tan((degrees * Math.PI) / 180) * 150;
 
-  it("follows the finger with a dead band, clamps, and selects nothing on a disabled action", () => {
-    const half = PULL_SWING_PER_ACTION / 2;
-    expect(swing([0])).toBe(1);
-    expect(swing([-half - 4])).toBe(1);
-    expect(swing([-PULL_SWING_PER_ACTION])).toBe(0);
-    expect(swingPosition(-PULL_SWING_PER_ACTION * 9, 3, 1)).toBe(0);
-    expect(swingPosition(PULL_SWING_PER_ACTION * 9, 3, 1)).toBe(2);
-    expect(swing([-PULL_SWING_PER_ACTION], { count: 3, defaultIndex: 1, mask: 0b110 })).toBe(-1);
+  it("picks the cone the finger points into from the pull's start, once armed", () => {
+    const pastCentreEdge = atAngle(PULL_FAN_DEGREES / 6 + PULL_AIM_HYSTERESIS_DEGREES / 2);
+    expect(pick(0, 150)).toBe(1);
+    expect(pick(-150, 150)).toBe(0);
+    expect(pick(150, 150)).toBe(2);
+    expect(pick(pastCentreEdge, 150)).toBe(1);
+    expect(pick(pastCentreEdge, 150, 2)).toBe(2);
+    expect(pick(400, 10)).toBe(2);
+    expect(selectedPullAction(pick(-150, 150), 0b110)).toBe(-1);
+    expect(pick(-150, 150, 1, false)).toBe(1);
   });
 });

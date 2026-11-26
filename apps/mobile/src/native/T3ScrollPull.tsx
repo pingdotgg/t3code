@@ -3,7 +3,7 @@ import { View, type StyleProp, type ViewStyle } from "react-native";
 
 /** Distances in dp, velocity in dp/ms; `released` is false when the touch was cancelled. */
 export type ScrollPullEvent =
-  | { readonly distance: number; readonly dx: number }
+  | { readonly distance: number; readonly dx: number; readonly dy: number }
   | { readonly released: boolean; readonly velocity: number };
 
 export interface T3ScrollPullProps {

@@ -53,14 +53,29 @@ export function shouldRunPullAction(
   );
 }
 
-export const PULL_SWING_PER_ACTION = 56;
-// A finger resting on the line between two actions would flip the selection back and forth.
-export const PULL_SWING_HYSTERESIS = 0.2;
-export const PULL_WHEEL_SPREAD_DEGREES = 52;
+// Equal cones across this fan, centred on straight up; past its edges the outer action holds.
+export const PULL_FAN_DEGREES = 135;
+// A finger resting on the line between two cones would flip the selection back and forth.
+export const PULL_AIM_HYSTERESIS_DEGREES = 6;
+// Closer to where the pull started than this, the finger's direction is noise.
+export const PULL_AIM_MIN_TRAVEL = 16;
 
-export function swingPosition(dx: number, count: number, defaultIndex: number) {
+/** Degrees from straight up, positive to the right, of `dx` sideways and `dy` upward travel. */
+export function pullFingerAngle(dx: number, dy: number) {
   "worklet";
-  return Math.min(Math.max(defaultIndex + dx / PULL_SWING_PER_ACTION, 0), Math.max(count - 1, 0));
+  return (Math.atan2(dx, dy) * 180) / Math.PI;
+}
+
+export function pullSlotAngle(index: number, count: number) {
+  "worklet";
+  return -PULL_FAN_DEGREES / 2 + (PULL_FAN_DEGREES / count) * (index + 0.5);
+}
+
+export function pullNeedleAngle(dx: number, dy: number, count: number, defaultIndex: number) {
+  "worklet";
+  if (Math.hypot(dx, dy) < PULL_AIM_MIN_TRAVEL) return pullSlotAngle(defaultIndex, count);
+  const half = PULL_FAN_DEGREES / 2;
+  return Math.min(Math.max(pullFingerAngle(dx, dy), -half), half);
 }
 
 export function isPullActionEnabled(enabledMask: number, index: number) {
@@ -68,24 +83,30 @@ export function isPullActionEnabled(enabledMask: number, index: number) {
   return (enabledMask & (1 << index)) !== 0;
 }
 
-export function pointPullAction(position: number, previous: number, count: number) {
+/** The action whose cone the finger is in; the default until the pull is armed. */
+export function pointPullAction(
+  dx: number,
+  dy: number,
+  armed: boolean,
+  previous: number,
+  count: number,
+  defaultIndex: number,
+) {
   "worklet";
+  if (!armed || Math.hypot(dx, dy) < PULL_AIM_MIN_TRAVEL) return defaultIndex;
+  const angle = pullNeedleAngle(dx, dy, count, defaultIndex);
+  const cone = PULL_FAN_DEGREES / count;
   if (
     previous >= 0 &&
     previous < count &&
-    Math.abs(position - previous) <= 0.5 + PULL_SWING_HYSTERESIS
+    Math.abs(angle - pullSlotAngle(previous, count)) <= cone / 2 + PULL_AIM_HYSTERESIS_DEGREES
   ) {
     return previous;
   }
-  return Math.min(Math.max(Math.round(position), 0), count - 1);
+  return Math.min(Math.max(Math.floor((angle + PULL_FAN_DEGREES / 2) / cone), 0), count - 1);
 }
 
 export function selectedPullAction(pointed: number, enabledMask: number) {
   "worklet";
   return pointed >= 0 && isPullActionEnabled(enabledMask, pointed) ? pointed : -1;
-}
-
-export function wheelAngle(position: number, count: number) {
-  "worklet";
-  return (position - (count - 1) / 2) * PULL_WHEEL_SPREAD_DEGREES;
 }
