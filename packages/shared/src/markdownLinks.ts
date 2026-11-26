@@ -420,11 +420,31 @@ function hasExternalScheme(path: string): boolean {
   return !POSITION_ONLY_PATTERN.test(rest);
 }
 
+export function parseMarkdownSandboxFileLink(href: string): FilePathPosition | null {
+  const prefix = /^sandbox:(?=\/)/i.exec(href);
+  if (!prefix) return null;
+
+  const source = splitMarkdownLinkSearchAndHash(href.slice(prefix[0].length));
+  const path = safeDecodeURIComponent(source.path);
+  // A sandbox URI names a local file on the thread host, never a network share.
+  if (path.length < 2 || isNetworkPath(path) || path.includes("\0") || /[\t\r\n]/.test(path)) {
+    return null;
+  }
+  const position = splitFilePathPosition(
+    stripSlashPrefixedWindowsDrive(path),
+    safeDecodeURIComponent(source.hash),
+  );
+  return ELIDED_PATH_SEGMENT_PATTERN.test(position.path) ? null : position;
+}
+
 export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const normalized = normalizeMarkdownLinkDestination(href);
   if (normalized.length === 0 || normalized.startsWith("#") || normalized.startsWith("//")) {
     return null;
   }
+
+  const sandboxFile = parseMarkdownSandboxFileLink(normalized);
+  if (sandboxFile) return sandboxFile;
 
   const source =
     (normalized.toLowerCase().startsWith("file:") ? parseFileUrlHref(normalized) : null) ??
