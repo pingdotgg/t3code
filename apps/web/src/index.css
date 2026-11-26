@@ -3546,3 +3546,249 @@ html.dark[data-kaluwa-look]
   ):not(:focus-visible) {
   box-shadow: inset 0 1px 0 var(--kaluwa-hl);
 }
+
+/* Fork: Kaluwa's titlebar tabs (components/kaluwaTabs). Values come from the theme lab the owner
+   approved; the strip sets --kaluwa-tab-radius and --kaluwa-tab-height from the tab settings
+   and data-tab-style to pill, folder or line. Tabs are no-drag; the strip's empty space is the
+   titlebar's, so the window still drags from it. */
+.kaluwa-tabs {
+  --kaluwa-tab-fill: var(--card);
+  --kaluwa-tab-hover: color-mix(in srgb, var(--foreground) 6%, transparent);
+  --kaluwa-avatar: 13px;
+  display: flex;
+  flex: 1;
+  align-self: stretch;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+
+  @variant dark {
+    --kaluwa-tab-fill: color-mix(in srgb, var(--background), var(--foreground) 10%);
+  }
+}
+.kaluwa-tabs-list {
+  display: flex;
+  flex: 0 1 auto;
+  align-self: stretch;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.kaluwa-tabs-list::-webkit-scrollbar {
+  display: none;
+}
+.kaluwa-tabs-list[data-overflow-start] {
+  mask-image: linear-gradient(to right, transparent, #000 1.5rem);
+}
+.kaluwa-tabs-list[data-overflow-end] {
+  mask-image: linear-gradient(to left, transparent, #000 1.5rem);
+}
+.kaluwa-tabs-list[data-overflow-start][data-overflow-end] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 1.5rem,
+    #000 calc(100% - 1.5rem),
+    transparent
+  );
+}
+.kaluwa-tab {
+  /* The avatar's badge and pip outline themselves in --sidebar; here that is the tab's fill. */
+  --sidebar: var(--background);
+  position: relative;
+  display: flex;
+  flex: 0 1 190px;
+  align-items: center;
+  gap: 7px;
+  min-width: 7.5rem;
+  height: var(--kaluwa-tab-height, 30px);
+  padding: 0 6px 0 10px;
+  border-radius: var(--kaluwa-tab-radius, 8px);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  outline: none;
+  touch-action: pan-x;
+  -webkit-app-region: no-drag;
+  transition:
+    background-color 0.12s,
+    color 0.12s,
+    box-shadow 0.12s;
+}
+.kaluwa-tab:hover {
+  color: var(--foreground);
+  background: var(--kaluwa-tab-hover);
+}
+.kaluwa-tab[aria-selected="true"] {
+  color: var(--foreground);
+}
+.kaluwa-tab:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.kaluwa-tab[data-dragging] {
+  z-index: 3;
+  cursor: grabbing;
+  transition: none;
+}
+.kaluwa-tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.kaluwa-tab-draft-icon {
+  flex: none;
+  width: var(--kaluwa-avatar);
+  height: var(--kaluwa-avatar);
+  color: var(--muted-foreground);
+}
+.kaluwa-tab-env {
+  display: grid;
+  flex: none;
+  color: color-mix(in srgb, var(--kaluwa-swatch-steel, #7ea6c9) 78%, var(--foreground));
+}
+.kaluwa-tab-env svg {
+  width: 11px;
+  height: 11px;
+}
+.kaluwa-tab-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--muted-foreground);
+  opacity: 0;
+}
+.kaluwa-tab-close svg {
+  width: 10px;
+  height: 10px;
+}
+.kaluwa-tab:hover .kaluwa-tab-close,
+.kaluwa-tab[aria-selected="true"] .kaluwa-tab-close {
+  opacity: 1;
+}
+.kaluwa-tab-close:hover {
+  color: var(--foreground);
+  background: var(--kaluwa-tab-hover);
+}
+.kaluwa-tab-new {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--control-radius, 8px);
+  color: var(--muted-foreground);
+}
+.kaluwa-tab-new:hover {
+  color: var(--foreground);
+  background: var(--kaluwa-tab-hover);
+}
+.kaluwa-tab-new:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.kaluwa-tab-new svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Pill: the active tab is a raised fill with the Lift highlight; hairlines split the rest. */
+.kaluwa-tabs[data-tab-style="pill"] .kaluwa-tab[aria-selected="true"] {
+  --sidebar: var(--kaluwa-tab-fill);
+  background: var(--kaluwa-tab-fill);
+  box-shadow:
+    inset 0 0 0 1px var(--border),
+    inset 0 1px 0 var(--kaluwa-hl, transparent),
+    0 1px 2px rgb(0 0 0 / 12%);
+}
+.kaluwa-tabs[data-tab-style="pill"] .kaluwa-tab + .kaluwa-tab:not([aria-selected="true"])::before {
+  content: "";
+  position: absolute;
+  top: 28%;
+  bottom: 28%;
+  left: -1.5px;
+  width: 1px;
+  background: var(--border);
+}
+.kaluwa-tabs[data-tab-style="pill"] .kaluwa-tab[aria-selected="true"] + .kaluwa-tab::before,
+.kaluwa-tabs[data-tab-style="pill"] .kaluwa-tab:hover::before,
+.kaluwa-tabs[data-tab-style="pill"] .kaluwa-tab:hover + .kaluwa-tab::before {
+  display: none;
+}
+
+/* Attached "folder" tabs sit on the titlebar's bottom edge and flare into the page. */
+.kaluwa-tabs[data-tab-style="folder"] .kaluwa-tabs-list {
+  align-items: flex-end;
+  gap: 0;
+  padding-inline: var(--kaluwa-tab-radius, 8px);
+}
+.kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab {
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--kaluwa-tab-radius, 8px) var(--kaluwa-tab-radius, 8px) 0 0;
+}
+.kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab[aria-selected="true"] {
+  z-index: 2;
+  border-color: var(--border);
+  background: var(--background);
+}
+.kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab[aria-selected="true"]::before,
+.kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab[aria-selected="true"]::after {
+  --kaluwa-tab-foot: calc(var(--kaluwa-tab-radius, 8px) - 1px);
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: var(--kaluwa-tab-radius, 8px);
+  height: var(--kaluwa-tab-radius, 8px);
+  pointer-events: none;
+}
+.kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab[aria-selected="true"]::before {
+  right: 100%;
+  background: radial-gradient(
+    circle at 0 0,
+    transparent var(--kaluwa-tab-foot),
+    var(--border) var(--kaluwa-tab-foot),
+    var(--border) var(--kaluwa-tab-radius, 8px),
+    var(--background) calc(var(--kaluwa-tab-radius, 8px) + 0.5px)
+  );
+}
+.kaluwa-tabs[data-tab-style="folder"] .kaluwa-tab[aria-selected="true"]::after {
+  left: 100%;
+  background: radial-gradient(
+    circle at 100% 0,
+    transparent var(--kaluwa-tab-foot),
+    var(--border) var(--kaluwa-tab-foot),
+    var(--border) var(--kaluwa-tab-radius, 8px),
+    var(--background) calc(var(--kaluwa-tab-radius, 8px) + 0.5px)
+  );
+}
+
+/* Underline: flat tabs the full titlebar height, the active one underlined in the accent. */
+.kaluwa-tabs[data-tab-style="line"] .kaluwa-tabs-list {
+  align-items: stretch;
+  gap: 4px;
+}
+.kaluwa-tabs[data-tab-style="line"] .kaluwa-tab {
+  height: auto;
+  border-radius: 0;
+  background: none;
+}
+.kaluwa-tabs[data-tab-style="line"] .kaluwa-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--primary);
+}

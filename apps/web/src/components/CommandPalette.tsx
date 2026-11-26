@@ -286,6 +286,7 @@ import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { suggestAppAccessForRemote } from "./sourceControlAppAccessToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { useKaluwaThreadTabPaletteItems } from "./kaluwaTabs/useKaluwaThreadTabPaletteItems";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import {
@@ -447,6 +448,8 @@ function OpenCommandPaletteDialog(props: {
   const messages = useMessages();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
+  // Fork: Kaluwa's titlebar tab actions.
+  const kaluwaTabItems = useKaluwaThreadTabPaletteItems();
   const { openChildSearch, setOpen } = props;
   // Keyed by palette session: the intent and restored search only seed this
   // mount, and closing must not change what the closing palette shows.
@@ -1809,6 +1812,9 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  // Fork: Kaluwa's titlebar tabs.
+  actionItems.push(...kaluwaTabItems);
 
   // Fork: Kaluwa's Extensions page
   actionItems.push({

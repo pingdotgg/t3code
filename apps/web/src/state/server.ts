@@ -18,6 +18,7 @@ import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/serv
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import { moveThreadTabRulesLast } from "../kaluwa/kaluwaThreadTabShortcuts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -138,8 +139,9 @@ export function createShortcutKeybindingsAtom(input: {
     const environments = [...get(input.environmentsAtom).values()];
     return environments.find(isConnectedWithConfig)?.serverConfig?.keybindings ?? null;
   });
+  // Fork: Kaluwa's tab rules go last so they win while the tab strip shows.
   return Atom.make((get): ServerConfig["keybindings"] =>
-    mergeWithDefaultKeybindings(get(customAtom) ?? []),
+    moveThreadTabRulesLast(mergeWithDefaultKeybindings(get(customAtom) ?? [])),
   );
 }
 

@@ -24,6 +24,7 @@ import { isElectron } from "./env";
 import { isEditableFocused } from "./lib/editableFocus";
 import { projectScriptIdFromCommand } from "./projectScripts";
 import { getKeyboardLayoutMap } from "./keyboardLayout";
+import { kaluwaThreadTabsShortcutContext } from "./kaluwa/kaluwaThreadTabShortcuts";
 
 export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
 export function shortcutKeyFromEvent(
@@ -80,6 +81,8 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     isDesktop: isElectron,
     editableFocus: false,
     isMac: isMacPlatform(resolvePlatform(options)),
+    // Fork: Kaluwa's titlebar tabs claim their shortcuts only while they show.
+    ...kaluwaThreadTabsShortcutContext(),
     ...options?.context,
   };
 }

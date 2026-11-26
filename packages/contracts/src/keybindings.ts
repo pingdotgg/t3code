@@ -55,6 +55,27 @@ const MODEL_PICKER_KEYBINDING_COMMANDS = [
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ] as const;
 
+// Fork: Kaluwa's titlebar tabs.
+export const THREAD_TAB_JUMP_KEYBINDING_COMMANDS = [
+  "threadTab.jump.1",
+  "threadTab.jump.2",
+  "threadTab.jump.3",
+  "threadTab.jump.4",
+  "threadTab.jump.5",
+  "threadTab.jump.6",
+  "threadTab.jump.7",
+  "threadTab.jump.8",
+  "threadTab.jump.9",
+] as const;
+
+const THREAD_TAB_KEYBINDING_COMMANDS = [
+  "threadTab.new",
+  "threadTab.close",
+  "threadTab.next",
+  "threadTab.previous",
+  ...THREAD_TAB_JUMP_KEYBINDING_COMMANDS,
+] as const;
+
 export const STATIC_KEYBINDING_COMMANDS = [
   "workspace.focusNext",
   "workspace.focusPrevious",
@@ -118,6 +139,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "usage.period.quarter",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
+  ...THREAD_TAB_KEYBINDING_COMMANDS,
 ] as const;
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([

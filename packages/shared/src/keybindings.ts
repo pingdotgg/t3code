@@ -8,6 +8,7 @@ import {
   type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
+  THREAD_TAB_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 
 export {
@@ -153,6 +154,25 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+2", command: "usage.period.week", when: "usagePageOpen" },
   { key: "mod+shift+3", command: "usage.period.month", when: "usagePageOpen" },
   { key: "mod+shift+4", command: "usage.period.quarter", when: "usagePageOpen" },
+  // Fork: Kaluwa's titlebar tabs. `kaluwaTabs` is only true while the tab strip shows, and the
+  // web client moves these rules last so they win over the thread jumps and right panel keys.
+  {
+    key: "mod+t",
+    command: "threadTab.new",
+    when: "kaluwaTabs && !terminalFocus && !kaluwaPanelFocus",
+  },
+  {
+    key: "mod+w",
+    command: "threadTab.close",
+    when: "kaluwaTabs && !terminalFocus && !kaluwaPanelFocus",
+  },
+  { key: "ctrl+tab", command: "threadTab.next", when: "kaluwaTabs" },
+  { key: "ctrl+shift+tab", command: "threadTab.previous", when: "kaluwaTabs" },
+  ...THREAD_TAB_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+    key: `mod+${index + 1}`,
+    command,
+    when: "kaluwaTabs && !modelPickerOpen && isDesktop",
+  })),
 ];
 
 function normalizeKeyToken(token: string): string {
