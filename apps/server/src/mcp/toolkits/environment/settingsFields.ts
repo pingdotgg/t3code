@@ -56,6 +56,7 @@ export const AGENT_SETTING_ACCESS = {
   guestSharingEnabled: "user",
   linkedEnvironmentsEnabled: "user",
   workflowsEnabled: "user",
+  workflowSkippedRunsKept: "user",
   promptSuggestionsEnabled: "write",
   sidebarAutoSettleKeepPullRequests: "write",
   sidebarAutoSettleOnMerge: "write",
