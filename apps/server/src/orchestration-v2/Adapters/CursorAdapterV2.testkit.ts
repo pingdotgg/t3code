@@ -741,7 +741,6 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
         : { override: input.runtimePolicyOverride }),
     }),
     threadId,
-    mcpSession: undefined,
     platform: yield* HostProcess.Platform,
   });
   const sendOptions = {

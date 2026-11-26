@@ -953,6 +953,179 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("runs without MCP servers a Cursor team policy blocks and says so once", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-blocked-" });
+      const attempts: Array<{
+        readonly mcpServers: Record<string, unknown> | undefined;
+        readonly text: string;
+      }> = [];
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-blocked-thread");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("cursor-blocked-environment"),
+        threadId,
+        providerSessionId: "cursor-blocked-session",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer synthetic-cursor-token",
+        browserToolsAvailable: true,
+        capabilities: new Set(["device"]),
+      });
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      // The SDK wraps its InlineMcpServersBlockedError in an UnknownAgentError.
+      const policyRejection = () => {
+        const blocked = Object.assign(
+          new Error(
+            "Inline mcpServers were rejected by team MCP policy and were not started: t3-code (teamPolicy): Blocked by team policy",
+          ),
+          {
+            name: "InlineMcpServersBlockedError",
+            servers: [{ name: "t3-code", reason: "teamPolicy", message: "Blocked by team policy" }],
+          },
+        );
+        return new CursorAgentSdk.CursorAgentSdkRunnerError({
+          method: "run.start",
+          cause: Object.assign(new Error(blocked.message, { cause: blocked }), {
+            name: "UnknownAgentError",
+          }),
+        });
+      };
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: (openInput) =>
+            Effect.succeed({
+              agentId: openInput.agentId ?? "native-cursor-blocked",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) => {
+                const mcpServers = input.options?.mcpServers;
+                attempts.push({
+                  mcpServers,
+                  text: typeof input.message === "string" ? input.message : input.message.text,
+                });
+                // Like the SDK, the policy covers the agent's own servers as well as the turn's.
+                if ([openInput.options.mcpServers, mcpServers].some((set) => set?.["t3-code"])) {
+                  return Effect.fail(policyRejection());
+                }
+                const runId = `native-cursor-blocked-run-${attempts.length}`;
+                return Effect.succeed({
+                  agentId: "native-cursor-blocked",
+                  runId,
+                  wait: Effect.succeed({
+                    id: runId,
+                    requestId: `native-request-${attempts.length}`,
+                    status: "finished" as const,
+                    model: { id: "composer-2.5" },
+                    durationMs: 1,
+                  }),
+                  cancel: Effect.void,
+                });
+              },
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-blocked-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const send = Effect.fnUntraced(function* (runOrdinal: number) {
+        yield* runtime.startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make(`cursor-blocked-run-${runOrdinal}`),
+          runOrdinal,
+          providerTurnOrdinal: runOrdinal,
+          attemptId: RunAttemptId.make(`cursor-blocked-attempt-${runOrdinal}`),
+          rootNodeId: NodeId.make(`cursor-blocked-root-${runOrdinal}`),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-blocked-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor blocked MCP",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make(`cursor-blocked-message-${runOrdinal}`),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Open the app.",
+            attachments: [],
+          },
+        });
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        return events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem]
+            : [],
+        );
+      });
+
+      const firstNotices = yield* send(1);
+      assert.lengthOf(attempts, 2);
+      assert.property(attempts[0]!.mcpServers, "t3-code");
+      assert.include(attempts[0]!.text, "## T3 Code orchestration");
+      assert.isUndefined(attempts[1]!.mcpServers);
+      assert.notInclude(attempts[1]!.text, "## T3 Code orchestration");
+      assert.notInclude(attempts[1]!.text, "## T3 Code devices");
+      assert.lengthOf(firstNotices, 1);
+      assert.equal(firstNotices[0]!.level, "warning");
+
+      // Later turns skip the blocked server up front, without another notice.
+      const secondNotices = yield* send(2);
+      assert.lengthOf(attempts, 3);
+      assert.isUndefined(attempts[2]!.mcpServers);
+      assert.notInclude(attempts[2]!.text, "## T3 Code orchestration");
+      assert.lengthOf(secondNotices, 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("sends T3 instructions to each Cursor conversation that lacks them", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2983,7 +3156,6 @@ describe("CursorAdapterV2", () => {
                 cwd: home,
               },
               threadId: ThreadId.make("cursor-attribution-thread"),
-              mcpSession: undefined,
               platform: "linux",
             }),
           ),
@@ -3026,7 +3198,6 @@ describe("CursorAdapterV2", () => {
                 cwd: home,
               },
               threadId: ThreadId.make(`cursor-new-model-${model}`),
-              mcpSession: undefined,
               platform: "linux",
             }),
             threadId: ThreadId.make(`cursor-new-model-${model}`),
@@ -3224,21 +3395,24 @@ describe("CursorAdapterV2", () => {
         cwd: "/workspace",
       },
       threadId,
-      mcpSession,
       platform: "linux",
     });
-    assert.deepEqual(options.mcpServers, cursorMcpServers(mcpSession));
-
-    const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
-    assert.notInclude(logged, "secret-cursor-api-key");
-    assert.notInclude(logged, "secret-cursor-mcp-token");
+    assert.notInclude(
+      JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options)),
+      "secret-cursor-api-key",
+    );
+    assert.notInclude(
+      JSON.stringify(
+        CursorAgentSdk.loggedCursorSendOptions({ mcpServers: cursorMcpServers(mcpSession)! }),
+      ),
+      "secret-cursor-mcp-token",
+    );
   });
 
   it("loads project settings only when runtime policy permits unrestricted execution", () => {
     const input = {
       modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
       threadId: ThreadId.make("cursor-project-settings"),
-      mcpSession: undefined,
       platform: "linux" as const,
     };
     const policy = { cwd: "/workspace", interactionMode: "default" as const };
@@ -3476,8 +3650,8 @@ describe("CursorAdapterV2", () => {
           },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
         };
-        // The agent is created with T3's server only; the resolved servers go with each turn.
-        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        // Cursor checks an agent's own servers against team policy, so every server goes with each turn.
+        assert.isUndefined(openedWith?.mcpServers);
         yield* sendTurn(1);
         assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
         // A server switched off between turns stays off on the next one.
