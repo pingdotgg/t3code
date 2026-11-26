@@ -1719,8 +1719,11 @@ describe("AcpAdapterV2", () => {
                     cancel: Effect.sync(() => {
                       cancelCalls += 1;
                     }).pipe(Effect.andThen(Deferred.succeed(cancelled, undefined)), Effect.asVoid),
-                    prompt: (payload) =>
-                      Effect.sync(() => {
+                    prompt: (payload, promptOptions) =>
+                      Effect.gen(function* () {
+                        if (promptOptions?.dispatched) {
+                          yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                        }
                         promptRuntimes.push(generation);
                         promptTexts.push(
                           payload.prompt
@@ -1848,6 +1851,141 @@ describe("AcpAdapterV2", () => {
         );
         assert.deepEqual(promptRuntimes, [1, 2, 3]);
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("delivers consecutive prompt-steers without dropping a superseded steer", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const instanceId = ProviderInstanceId.make("acp-test-consecutive-steers");
+      const threadId = ThreadId.make("thread-acp-consecutive-steers");
+      const initialStarted = yield* Deferred.make<void>();
+      const releaseInitial = yield* Deferred.make<void>();
+      const steer1Busy = yield* Deferred.make<void>();
+      const steer1Delivered = yield* Deferred.make<void>();
+      const steer2Sent = yield* Deferred.make<void>();
+      const releaseSteer2 = yield* Deferred.make<void>();
+      const watchedSessions: Array<string> = [];
+      const promptTexts: Array<string> = [];
+      let steer1Attempts = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          steersWithPrompt: () => true,
+          watchPromptOutcome: (sessionId) =>
+            Effect.sync(() => {
+              watchedSessions.push(sessionId);
+              return () => Effect.undefined;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload, promptOptions) =>
+                Effect.gen(function* () {
+                  const text = payload.prompt
+                    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                    .join("\n");
+                  if (promptOptions?.dispatched) {
+                    yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                  }
+                  if (text === "first steer") {
+                    steer1Attempts += 1;
+                    if (steer1Attempts === 1) {
+                      yield* Deferred.succeed(steer1Busy, undefined);
+                      return yield* EffectAcpErrors.AcpRequestError.internalError(
+                        "Agent is already processing another request",
+                      );
+                    }
+                    yield* Deferred.await(steer2Sent);
+                    promptTexts.push(text);
+                    yield* Deferred.succeed(steer1Delivered, undefined);
+                    return { stopReason: "end_turn" as const };
+                  }
+                  if (text === "second steer") {
+                    promptTexts.push(text);
+                    yield* Deferred.succeed(steer2Sent, undefined);
+                    yield* Deferred.await(releaseSteer2);
+                    return { stopReason: "end_turn" as const };
+                  }
+                  promptTexts.push(text);
+                  yield* Deferred.succeed(initialStarted, undefined);
+                  yield* Deferred.await(releaseInitial);
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-consecutive-steers"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const turnInput = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now,
+        ordinal: 1,
+      });
+      const collectTerminal = yield* Effect.forkChild(
+        runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      yield* runtime.startTurn(turnInput);
+      yield* Deferred.await(initialStarted);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, `${watchedSessions[0]}:turn:1`),
+      });
+
+      yield* runtime.steerTurn!({
+        threadId,
+        runId: turnInput.runId,
+        providerThread,
+        providerTurnId,
+        message: { ...turnInput.message, text: "first steer", attachments: [] },
+      });
+      yield* Deferred.await(steer1Busy);
+      // Second steer advances promptSequence while the first steer is in busy-retry sleep.
+      yield* runtime.steerTurn!({
+        threadId,
+        runId: turnInput.runId,
+        providerThread,
+        providerTurnId,
+        message: { ...turnInput.message, text: "second steer", attachments: [] },
+      });
+      yield* Deferred.await(steer2Sent);
+      yield* Deferred.await(steer1Delivered);
+      yield* Deferred.succeed(releaseInitial, undefined);
+      yield* Deferred.succeed(releaseSteer2, undefined);
+
+      const events = Array.from(yield* Fiber.join(collectTerminal));
+      const terminal = events.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      assert.include(promptTexts, "first steer");
+      assert.include(promptTexts, "second steer");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("pairs responses to concurrent same-method requests in request order", () =>

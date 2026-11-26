@@ -208,21 +208,20 @@ function mergeAcpAppContext(
 function sendPromptWhenIdle(
   turn: { readonly interrupted: boolean; readonly finalized: boolean },
   prompt: () => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>,
-  superseded: () => boolean = () => false,
 ): Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> {
-  // A Stop or a prompt-steer can land before dispatch or during a busy wait, so recheck before each send.
-  const stopped = () => turn.interrupted || turn.finalized || superseded();
+  // Only stop sending when the turn itself has ended; supersession must not drop a queued steer.
+  const turnEnded = () => turn.interrupted || turn.finalized;
   return Effect.suspend(() =>
-    stopped()
+    turnEnded()
       ? Effect.succeed({ stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse)
       : prompt().pipe(
           Effect.catchIf(
-            (error) => isAgentBusyPromptError(error) && !stopped(),
+            (error) => isAgentBusyPromptError(error) && !turnEnded(),
             (error) =>
               Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
                 Effect.andThen(
                   Effect.suspend(() =>
-                    stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt, superseded),
+                    turnEnded() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt),
                   ),
                 ),
               ),
@@ -10210,12 +10209,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 : undefined;
             yield* followPrompt(
               context,
-              (superseded) =>
+              () =>
                 compactSession === undefined
-                  ? sendPromptWhenIdle(
-                      context,
-                      () => runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
-                      superseded,
+                  ? sendPromptWhenIdle(context, () =>
+                      runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
                     ).pipe(Effect.ensuring(Deferred.succeed(context.promptDispatched, undefined)))
                   : Deferred.succeed(context.promptDispatched, undefined).pipe(
                       Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
@@ -10270,6 +10267,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             text,
             turnInput.message.attachments,
           );
+          let notDispatched = false;
+          let promptInvoked = false;
           const [dispatched, context] = yield* runtimeTransitionPermit.withPermit(
             Effect.gen(function* () {
               const context = yield* Ref.get(activeTurn);
@@ -10359,16 +10358,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const releasedForSteer = context.foregroundIdle;
                   yield* followPrompt(
                     context,
-                    (superseded) =>
-                      sendPromptWhenIdle(
-                        context,
-                        () =>
-                          runtime.prompt(
-                            { prompt: steerPrompt },
-                            { dispatched, released: releasedForSteer },
-                          ),
-                        superseded,
-                      ).pipe(Effect.ensuring(Deferred.succeed(dispatched, undefined))),
+                    () =>
+                      sendPromptWhenIdle(context, () => {
+                        promptInvoked = true;
+                        return runtime.prompt(
+                          { prompt: steerPrompt },
+                          { dispatched, released: releasedForSteer },
+                        );
+                      }).pipe(
+                        Effect.onExit((exit) =>
+                          Effect.gen(function* () {
+                            const dispatchedAlready = yield* Deferred.isDone(dispatched);
+                            if (!promptInvoked || (Exit.isFailure(exit) && !dispatchedAlready)) {
+                              notDispatched = true;
+                            }
+                            if (!dispatchedAlready) {
+                              yield* Deferred.succeed(dispatched, undefined);
+                            }
+                          }),
+                        ),
+                      ),
                     {
                       generation,
                       checkPromptOutcome,
@@ -10391,6 +10400,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }),
           );
           yield* Deferred.await(dispatched);
+          if (notDispatched) {
+            return yield* context.interrupted
+              ? new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver,
+                  detail: `Provider turn ${turnInput.providerTurnId} ended before it could be steered.`,
+                })
+              : new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                  driver,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
+                });
+          }
           // A wake run sent no prompt, so its inactivity watchdog waits for this one.
           yield* Deferred.succeed(context.promptDispatched, undefined);
         });
@@ -10785,7 +10806,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (effect, turnInput) =>
               effect.pipe(
                 Effect.mapError((cause) =>
-                  cause._tag === "ProviderAdapterSteerRunUnsupportedError"
+                  cause._tag === "ProviderAdapterSteerRunUnsupportedError" ||
+                  cause._tag === "ProviderAdapterSteerDeclinedError"
                     ? cause
                     : new ProviderAdapter.ProviderAdapterSteerRunError({
                         driver,
