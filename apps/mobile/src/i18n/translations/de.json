@@ -1,4 +1,5 @@
 {
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} Zeichen in der Mitte wird nicht angezeigt.} other {… {hidden} Zeichen in der Mitte werden nicht angezeigt.}} Der Text endet mit:",
   "4bcfa3b976a421cf": "Nebenchat",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread auf {machine}",
@@ -4608,7 +4609,7 @@
   "55b562c00e37321b": "Der Agent konnte nicht zwangsweise gestoppt werden",
   "ede15a83eedec569": "Runde gestoppt; der Agent wird noch beendet",
   "f360accf1ccac178": "Runde gestoppt; der Agentenprozess läuft weiter",
-  "967f83de030790dd": "{count, plural, =0 {Er wird mit anderen arbeitenden Threads geteilt. Stoppe diese, um ihn freizugeben.} one {Er wird mit {count} arbeitenden Thread geteilt. Stoppe diesen, um ihn freizugeben.} other {Er wird mit {count} arbeitenden Threads geteilt. Stoppe diese, um ihn freizugeben.}}",
+  "72e41eb83e88cefa": "{count, plural, =0 {Er wird mit anderen arbeitenden Threads geteilt. Stoppe diese, um ihn freizugeben.} one {Er wird mit {count} arbeitenden Thread geteilt. Stoppe diesen, um ihn freizugeben.} other {Er wird mit {count} arbeitenden Threads geteilt. Stoppe diese, um ihn freizugeben.}}",
   "5536ab75119ee3f9": "Thread konnte nicht aktualisiert werden",
   "04c7bba52daa6f53": "Ziel konnte nicht aktualisiert werden",
   "f5f145b33e2a9380": "Wird gestoppt...",

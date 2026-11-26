@@ -1,0 +1,12 @@
+diff --git a/encoding.d.ts b/encoding.d.ts
+index 25d66ee44948f2cefc74f7afc387c5a61c0590c2..691795f1e67b1da04e97de5081d3fabb47eedeac 100644
+--- a/encoding.d.ts
++++ b/encoding.d.ts
+@@ -18,7 +18,6 @@
+  * @module @exodus/bytes/encoding.js
+  */
+ 
+-/// <reference types="node" />
+ 
+ /**
+  * Convert an encoding [label](https://encoding.spec.whatwg.org/#names-and-labels) to its name,
