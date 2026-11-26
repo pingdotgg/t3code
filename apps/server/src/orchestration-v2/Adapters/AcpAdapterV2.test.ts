@@ -10874,6 +10874,14 @@ describe("AcpAdapterV2", () => {
           yield* acp.request("_test/switched", {});
           yield* acp.drainEvents;
           assert.lengthOf(offers, 1, "the snapshot session has no continuation route");
+          yield* runtime.resumeThread({ providerThread: other });
+          assert.deepEqual(
+            offers.map((wake) => [wake.threadId, wake.providerThreadId]),
+            [
+              [threadId, providerThread.id],
+              [other.appThreadId, other.id],
+            ],
+          );
           const usage = yield* runtime.events.pipe(
             Stream.filter((e) => e.type === "provider_thread.updated"),
             Stream.takeUntil((e) => e.providerThread.contextUsage?.usedTokens === 38),

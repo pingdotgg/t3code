@@ -10882,13 +10882,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
                   } else if (threadInput.providerThread.appThreadId !== null) {
-                    yield* continuationPermit.withPermit(
+                    const hasRetainedWake = yield* continuationPermit.withPermit(
                       Ref.set(lastTurnRoute, {
                         nativeSessionId: sessionId,
                         threadId: threadInput.providerThread.appThreadId,
                         providerThreadId: threadInput.providerThread.id,
-                      }),
+                      }).pipe(
+                        Effect.andThen(Ref.get(wakeBuffer)),
+                        Effect.map((buffered) =>
+                          buffered.some((frame) => frame.sessionId === sessionId),
+                        ),
+                      ),
                     );
+                    if (hasRetainedWake && (yield* Ref.get(activeTurn)) === null) {
+                      yield* offerContinuationRun(sessionId);
+                    }
                   }
                   const now = yield* DateTime.now;
                   return {
