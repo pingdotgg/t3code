@@ -16,6 +16,7 @@ import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as EffectAcpErrors from "effect-acp/errors";
@@ -188,12 +189,17 @@ interface AntigravityProviderState {
   readonly authRevision: number;
 }
 
+export class AntigravityProbeIncompatibility extends Schema.TaggedError<AntigravityProbeIncompatibility>()(
+  "AntigravityProbeIncompatibility",
+  { version: Schema.String, detail: Schema.String },
+) {}
+
 interface AntigravityProviderOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly stampIdentity: (snapshot: ServerProviderDraft) => Effect.Effect<ServerProvider>;
   readonly probe: Effect.Effect<
     EffectAcpSchema.InitializeResponse,
-    EffectAcpErrors.AcpError | ProviderSetupError
+    EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
@@ -309,14 +315,19 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const result = yield* options.probe.pipe(Effect.timeoutOption(timeoutMs), Effect.result);
     const initialized =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
-    const version = initialized?.agentInfo?.version;
     const failure = Result.isFailure(result) ? result.failure : undefined;
-    const missingInstallation = failure !== undefined && isMissingInstallation(failure);
+    const incompatible = failure?._tag === "AntigravityProbeIncompatibility" ? failure : undefined;
+    const version = incompatible?.version ?? initialized?.agentInfo?.version;
+    const missingInstallation =
+      failure !== undefined &&
+      failure._tag !== "AntigravityProbeIncompatibility" &&
+      isMissingInstallation(failure);
+    const detail = failure?._tag === "ProviderSetupError" ? failure.detail : incompatible?.detail;
     const errorMessage =
       initialized !== undefined
         ? undefined
-        : failure?._tag === "ProviderSetupError"
-          ? failure.detail.trim() || "Antigravity could not complete its local health check."
+        : detail !== undefined
+          ? detail.trim() || "Antigravity could not complete its local health check."
           : missingInstallation
             ? "Antigravity ACP runtime is not installed or its executable could not be found."
             : failure
