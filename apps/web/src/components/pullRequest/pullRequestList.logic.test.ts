@@ -38,6 +38,7 @@ import {
   pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
+  withDiffStat,
 } from "./pullRequestList.logic";
 import { pullRequestGroups } from "./pullRequestListGroups.logic";
 import {
@@ -76,6 +77,25 @@ function entry(
 }
 
 describe("visible pull request line-count targets", () => {
+  it("keeps a same-numbered pull request from another repository out of a row's line counts", () => {
+    const listed = entry({ additions: 0, deletions: 0, number: 42 });
+    const linkedElsewhere = {
+      environmentId: "env-1",
+      projectId: "project-1",
+      repository: "other/lib",
+      number: 42,
+      additions: 900,
+      deletions: 300,
+    };
+    const statsByRow = mergePullRequestDiffStats(new Map(), [linkedElsewhere]);
+
+    expect(withDiffStat(listed, statsByRow)).toMatchObject({ additions: 0, deletions: 0 });
+    const key = pullRequestEntryKey(listed);
+    expect([
+      ...pullRequestStatsKeysToRequest(new Map([[key, listed]]), new Set([key]), [], statsByRow),
+    ]).toEqual([key]);
+  });
+
   it("does not request a row again after its received batch is pruned", () => {
     const entries = [
       entry({ additions: 0, deletions: 0, number: 1 }),
