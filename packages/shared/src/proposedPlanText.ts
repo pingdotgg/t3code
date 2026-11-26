@@ -11,7 +11,10 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
       fence = marker;
       continue;
     }
-    const heading = line.match(/^ {0,3}#{1,6}[ \t]+(.+)$/)?.[1]?.trim();
+    const heading = line
+      .match(/^ {0,3}#{1,6}[ \t]+(.+)$/)?.[1]
+      ?.replace(/^#+[ \t]*$/, "")
+      .trim();
     if (heading) return heading;
   }
   return null;
