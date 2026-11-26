@@ -5,6 +5,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
+import { page } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
@@ -199,6 +200,32 @@ describe("DevicePanel thread switches", () => {
       [threadB, phoneTarget],
       [threadA, phoneTarget],
     ]);
+  });
+});
+
+describe("DevicePanel device headings", () => {
+  it("shows Android Devices above a phone listed alongside an emulator", async () => {
+    setup();
+    const emulator = { ...phone, platform: "android", version: "Android 15" } as const;
+    const usbPhone = {
+      ...emulator,
+      id: "usb",
+      name: "USB Phone",
+      booted: true,
+      physical: true,
+    } as const;
+    currentState = { ...deviceState, devices: [emulator, usbPhone] };
+    await using screen = await render(devicePanel(threadA), { container });
+
+    const section = screen.getByText(usbPhone.name, { exact: true }).element().closest("section");
+    expect(section).toBeInstanceOf(HTMLElement);
+    await expect
+      .element(
+        page
+          .elementLocator(section!)
+          .getByRole("heading", { name: "Android Devices", exact: true }),
+      )
+      .toBeVisible();
   });
 });
 
