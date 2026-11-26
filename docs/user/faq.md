@@ -2,21 +2,15 @@
 
 ## Is HYR Code a harness?
 
-No. A harness is what turns an LLM into an agent: it gives the model tools, a way to call them, runs them, and hands the results back. Claude Code is kind of a harness. It is an interface (the TUI, the Code tab in the desktop app) plus a harness underneath (the Anthropic Agent SDK). Codex is the same split: the app plus the Codex App Server. HYR Code uses those harnesses. It is not a harness, and it does not work without one.
+No. A harness turns an LLM into an agent (tools, execution loop, and results)—like Claude Code's Agent SDK or Codex App Server. HYR Code drives those harnesses through one fast interface; it does not work without at least one installed agent.
 
-Chef = LLM. Kitchen = harness. HYR Code = the restaurant that lets you bring whatever kitchen you want. Our MCP is a cookbook we hand the kitchen, but the chef won't open it unless you tell them to :) I wrote the long version here: [What is a harness?](https://t3.gg/blog/post/what-is-a-harness)
-
-Bring your own: Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, Kiro, Pi, Muse Code, or fx. [Provider setup](./install.md#providers)
+Bring your own: Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, Kiro, Pi, Muse Code, fx, or any [ACP agent](./providers-acp.md). See [Provider setup](./install.md#providers). (Longer read: [What is a harness?](https://t3.gg/blog/post/what-is-a-harness))
 
 ## Why use HYR Code instead of Claude Code or the Codex app?
 
-We were inspired by the Codex desktop app, Conductor, Claude Desktop, and Cursor Glass, but none met our bar. What you get:
-
-- Bring your own sub. Claude, Codex, and whatever else you already have installed.
-- Best in class remote. Run `t3 up` on any box and drive it from anywhere.
-- Truly 100% open source code (MIT). If we go the wrong direction, fork it under your own branding.
-
-Every harness feels nearly identical in here, so you can stop worrying about harnesses and focus on building :) [Install](./install.md)
+- **Bring your own subscription**: Use Claude, Codex, and every other agent you already have installed in one place.
+- **Remote-first**: Run `t3 up` on any box and drive it from anywhere.
+- **Open source (MIT)**: Fork the source code under your own branding if you ever want something different.
 
 ## Can I use HYR Code with my Claude Code subscription?
 
@@ -24,7 +18,7 @@ Yes.
 
 ## How much does HYR Code cost?
 
-Nothing. There's no way to pay us to use HYR Code. You bring your own sub. The source code is free and open source (MIT). You still pay your provider like you already do. [Install](./install.md)
+Nothing. You pay your own model/agent providers.
 
 ## Can I fork or redistribute HYR Code?
 
@@ -32,11 +26,11 @@ Yes, for the source code. The [MIT License](../../LICENSE) applies only to the s
 
 ## Why is my Claude 5-hour limit draining so fast?
 
-It shouldn't anymore. HYR Code drives Claude through Anthropic's Agent SDK, and Anthropic's 5h meter used to charge Agent SDK usage about 1.7x more than using Claude Code directly. Weekly limits were never affected. Since v0.1.7, Claude in HYR Code drains your 5h limit at the same rate as Claude Code. Still seeing it? [Update HYR Code](./updating.md) on the machine that runs your agents. [Tracking issue](https://github.com/pingdotgg/t3code/issues/24649)
+Since v0.1.7, Claude in HYR Code drains your 5-hour limit at the same rate as Claude Code directly (an earlier Anthropic Agent SDK discrepancy has been resolved). If you still see it, [update HYR Code](./updating.md) on the machine running your agents.
 
 ## How do I use HYR Code remotely?
 
-Your agents run wherever HYR Code runs: your desktop, a server, a VPS. Run `t3 up` on that machine, then connect over your local network or Tailscale. HYR Code release builds do not include T3 Connect. [Remote access](./remote-access.md)
+Your agents run wherever the HYR Code server runs (desktop, server, or VPS). Run `t3 up` on that machine, then connect over your local network or Tailscale. HYR Code release builds do not include T3 Connect. See [Remote access](./remote-access.md).
 
 ## How do I use HYR Code on my phone?
 
@@ -48,17 +42,15 @@ HYR Code uses the same provider integrations as upstream T3 Code. The T3 Code te
 
 ## Can I add a bunch of accounts for one provider?
 
-I don't think HYR Code is the right place to manage a pile of accounts. If we add an auto-switcher, we are risking TOS bans for our users.
-
-A separate work account is fine. Setup for two: [Codex](./providers-codex.md#use-multiple-accounts) · [Claude](./providers-claude.md#separate-accounts-or-configurations). For a bigger pool, manage them outside HYR Code with a self-hosted proxy like [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). I walked through how I use 6 Claude subs and 3 Codex subs in [this video](https://www.youtube.com/watch?v=D8PikZ1KhUo), and wrote up the setup in [this guide](https://gist.github.com/t3dotgg/59a521d2ee8d70aaf90e280c175072af). Hand it to your agent and it will walk you through it. Early apologies if it gets you banned 💀 After you set up a hub, HYR Code can show its pooled limits under Usage. [Connect a hub](./usage.md#connect-a-cliproxyapi-hub)
+HYR Code intentionally does not include an automatic multi-account switcher to avoid risking provider TOS bans. Adding a separate work/personal account is supported ([Codex](./providers-codex.md#use-multiple-accounts), [Claude](./providers-claude.md#multiple-accounts-and-presets)). For larger pools managed externally (e.g. via [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)), HYR Code can display pooled limits under Usage ([Connect a hub](./usage.md#connect-a-cliproxyapi-hub)).
 
 ## Can I use an API key or OpenRouter instead of a subscription?
 
-Yes. Add another provider instance in Settings and give it its own keys and endpoint. Claude has a full OpenRouter recipe. Your subscription setup stays untouched. [OpenRouter](./providers-claude.md#openrouter) · [Provider instances](./install.md#providers)
+Yes. Add another provider instance in **Settings → Providers** with its own environment variables and endpoint (your subscription setup stays untouched). See [OpenRouter for Claude](./providers-claude.md#openrouter-and-local-routers) and [Providers](./install.md#providers).
 
 ## Does HYR Code support local models?
 
-No. HYR Code is a serious developer tool. Locally runnable models are not capable of meaningful engineering work.
+No. HYR Code focuses on frontier coding agents.
 
 ## Does my code go to T3 servers?
 
@@ -66,16 +58,16 @@ No. Your code and prompts go from your machine to your provider (Anthropic, Open
 
 ## Worktrees are eating my disk. How do I clean them up?
 
-Open **Settings → Worktrees → Cleanup** and turn on automatic worktree cleanup. You can also run it now from there. Worktrees add up fast. One user cleared 500 GB. [Storage cleanup](./project-settings.md#storage-cleanup)
+Enable automatic cleanup or run **Delete now** in **Settings → Worktrees → Cleanup**. See [Storage cleanup](./project-settings.md#storage-cleanup).
 
 ## Is there voice input?
 
-Yes. On iPhone and Android, dictation uses on-device speech by default, with the option to use a paired environment. On macOS 26 or later, desktop users can choose Apple Speech directly under **On this Mac** or choose an environment. Web and other desktop users can enable dictation by choosing an environment. The transcript goes into your draft for review. See [Voice input](./voice-input.md).
+Yes—on-device speech on iOS, Android, and macOS 26+ desktop, or via a paired environment on web/desktop/mobile. See [Voice input](./voice-input.md).
 
 ## Does it work on Windows, Mac, and Linux?
 
-The source code runs on all three. HYR Code publishes a desktop build for macOS on Apple silicon only. On Windows, Linux, and Intel Macs, build HYR Code from source; the downloads and package managers for those platforms install upstream T3 Code. [Install](./install.md)
+The source code runs on all three. HYR Code publishes a desktop build for macOS on Apple silicon only. On Windows, Linux, and Intel Macs, build HYR Code from source; the downloads and package managers for those platforms install upstream T3 Code. Windows users can also run agents inside WSL. See [Install](./install.md).
 
 ## Why is my provider not showing up?
 
-Almost always, the CLI is not installed or not on the `PATH` of the machine that runs the server. (Not your phone. The computer.) Log in on that machine first, like `codex login` or `claude auth login`. Still missing? Point **Binary path** at it in provider settings. Version managers love to cause this one. [Provider setup](./install.md#providers)
+Usually the provider CLI is not installed, not signed in, or not on the `PATH` of the **server machine** (especially with version managers). Authenticate on the server machine first (e.g. `codex login` or `claude auth login`) and set **Binary path** in **Settings → Providers** if needed.

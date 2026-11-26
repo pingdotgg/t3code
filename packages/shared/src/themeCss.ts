@@ -45,6 +45,68 @@ export function themeCssValueFetches(value: string): boolean {
   return code.includes("\\") || fetchesOutsideStrings(code);
 }
 
+const WHITESPACE = String.raw`[ \t\n\f\r]`;
+const NAME_ESCAPE = String.raw`\\(?:[0-9a-fA-F]{1,6}(?:\r\n|${WHITESPACE})?|[^\n\r\f0-9a-fA-F])`;
+const NAME = String.raw`(?:${NAME_ESCAPE}|[-\w\u0080-\uffff])+`;
+const BLOCK_TOKENS = new RegExp(
+  String.raw`\/\*[\s\S]*?(?:\*\/|$)|${STRING}|(${NAME})(\()?|[()[\]{};]`,
+  "g",
+);
+// An unquoted url() is one token: quotes, comments and brackets inside it are part of the address.
+const UNQUOTED_URL = new RegExp(String.raw`(?!${WHITESPACE}*["'])(?:${NAME_ESCAPE}|[^)])*\)?`, "y");
+const NAME_ESCAPES = new RegExp(
+  String.raw`\\(?:([0-9a-fA-F]{1,6})(?:\r\n|${WHITESPACE})?|([^]))`,
+  "g",
+);
+const CLOSERS: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
+
+const isUrlFunction = (name: string) =>
+  name
+    .replace(NAME_ESCAPES, (_, hex?: string, char?: string) =>
+      hex ? String.fromCodePoint(Math.min(Number.parseInt(hex, 16), 0x10ffff)) : (char ?? ""),
+    )
+    .toLowerCase() === "url";
+
+/**
+ * The CSS without the declarations that `drop` refuses, asked only for text that could load a
+ * remote file. A browser hides a var() shorthand's text once a later declaration overrides one of
+ * its longhands, so only the source has it. Brackets are tracked as the CSS parser does; an unsure
+ * split is left out, so one candidate can hold several declarations or rules.
+ */
+export function themeCssWithoutDeclarations(
+  css: string,
+  drop: (candidate: string) => boolean,
+): string {
+  let kept = "";
+  const open: string[] = [];
+  let start = 0;
+  const cut = (end: number) => {
+    const text = css.slice(start, end);
+    const candidate = text.includes("\\") || fetchesOutsideStrings(text);
+    kept += (candidate && drop(text) ? "" : text) + css.slice(end, end + 1);
+    start = end + 1;
+  };
+  BLOCK_TOKENS.lastIndex = 0;
+  for (let match = BLOCK_TOKENS.exec(css); match; match = BLOCK_TOKENS.exec(css)) {
+    const [token, name, paren] = match;
+    if (name !== undefined) {
+      if (!paren) continue;
+      UNQUOTED_URL.lastIndex = BLOCK_TOKENS.lastIndex;
+      const url = isUrlFunction(name) && UNQUOTED_URL.test(css);
+      if (url) BLOCK_TOKENS.lastIndex = UNQUOTED_URL.lastIndex;
+      else open.push(")");
+    } else if (token in CLOSERS && (token !== "{" || open.length > 0)) {
+      open.push(CLOSERS[token] ?? "");
+    } else if (token === open.at(-1)) {
+      open.pop();
+    } else if (open.length === 0 && (token === ";" || token === "{" || token === "}")) {
+      cut(match.index);
+    }
+  }
+  cut(css.length);
+  return kept;
+}
+
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
 export function themeCssLoadsRemoteFiles(css: string): boolean {
   const code = withoutStrings(css, true);

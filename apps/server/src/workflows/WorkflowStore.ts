@@ -417,10 +417,13 @@ export class WorkflowStore extends Context.Service<
       readonly tag?: string | undefined;
       /** Runs about this: the subject's kind and key, or text that is its web address or key. */
       readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
+      /** Only skipped runs no other run invoked (true), or only the rest (false). */
+      readonly skippedTopLevel?: boolean | undefined;
     }) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
     /** Forgets every trigger but these, so one that comes back starts over. */
+    readonly triggerIds: Effect.Effect<ReadonlyArray<string>>;
     readonly triggersKeep: (triggerIds: ReadonlyArray<string>) => Effect.Effect<void>;
     /** The hook's token: the one kept for it, or `fresh` from now on. */
     readonly hookToken: (hookId: string, fresh: string) => Effect.Effect<string>;
@@ -956,15 +959,16 @@ export const make = Effect.gen(function* () {
         INSERT INTO workflow_waits (
           run_id, name, workflow, token, key, schema_json, request_json, watch_json, deadline,
           opened_at
-        ) VALUES (
+        ) SELECT
           ${wait.runId}, ${wait.name}, ${wait.workflow}, ${wait.token}, ${wait.key ?? null},
           ${wait.schemaJson}, ${wait.requestJson}, ${wait.watchJson}, ${wait.deadline}, ${at}
-        )
+        FROM workflow_runs WHERE run_id = ${wait.runId} AND ended_at IS NULL
         ON CONFLICT (run_id, name) DO NOTHING
         RETURNING name
       `.pipe(Effect.orDie);
+      if (opened.length === 0) return;
       yield* PubSub.publish(changes, wait.runId);
-      if (opened.length === 0 || wait.requestJson === null) return;
+      if (wait.requestJson === null) return;
       yield* tell(wait.runId, `${wait.runId}:${wait.name}:${at}`, at, {
         type: "workflow.needs_input",
         step: wait.name,
@@ -1418,6 +1422,11 @@ export const make = Effect.gen(function* () {
         ...(prefix === null
           ? []
           : [sql`idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix}\u{10FFFF}`}`]),
+        ...(filter.skippedTopLevel === undefined
+          ? []
+          : filter.skippedTopLevel
+            ? [sql`status = 'skipped' AND parent_run_id IS NULL`]
+            : [sql`NOT (status = 'skipped' AND parent_run_id IS NULL)`]),
         ...(filter.tag === undefined
           ? []
           : [
@@ -1489,6 +1498,11 @@ export const make = Effect.gen(function* () {
         ON CONFLICT (trigger_id) DO UPDATE SET next_at = excluded.next_at
       `.pipe(Effect.orDie);
     }),
+    triggerIds: sql<{ trigger_id: string }>`SELECT trigger_id FROM workflow_triggers`.pipe(
+      Effect.map((rows) => rows.map((row) => row.trigger_id)),
+      Effect.orDie,
+      Effect.withSpan("WorkflowStore.triggerIds"),
+    ),
     triggersKeep: Effect.fn("WorkflowStore.triggersKeep")(function* (triggerIds) {
       const kept = yield* sql<{ trigger_id: string }>`SELECT trigger_id FROM workflow_triggers`;
       for (const { trigger_id } of kept) {
@@ -1539,7 +1553,12 @@ export const make = Effect.gen(function* () {
     referenceNoted: Effect.fn("WorkflowStore.referenceNoted")(function* (runId, step, reference) {
       const at = yield* now;
       const addressJson = jsonText(reference.address);
-      const title = reference.title.slice(0, REFERENCE_TITLE_KEPT);
+      const title = reference.title.slice(
+        0,
+        splitsSurrogatePair(reference.title, REFERENCE_TITLE_KEPT)
+          ? REFERENCE_TITLE_KEPT - 1
+          : REFERENCE_TITLE_KEPT,
+      );
       const changed = yield* sql
         .withTransaction(
           Effect.gen(function* () {

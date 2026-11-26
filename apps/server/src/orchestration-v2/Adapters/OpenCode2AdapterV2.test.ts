@@ -924,7 +924,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(started);
-      assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+      assert.include(yield* Fiber.join(terminal), { status: "interrupted", promptDropped: true });
       assert.lengthOf(prompts, 0);
     }),
   );
@@ -8659,6 +8659,41 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const input = turnInput(thread);
       yield* runtime.startTurn({ ...input, message: { ...input.message, text: "/goal clear" } });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  // regression: #41870
+  it.effect("does not tell the user to retry /goal resume when OpenCode has no paused goal", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("command.list", "<any>"),
+          reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+          reply("message.list", { data: [], cursor: {} }),
+          out("session.command", { sessionID: SESSION, name: "goal", text: "resume" }),
+          reply("session.command", {
+            status: 500,
+            body: {
+              _tag: "CommandExecutionError",
+              command: "goal",
+              message: "No paused goal to resume.",
+            },
+          }),
+        ],
+        { version: "2.2.5" },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const input = turnInput(thread);
+      yield* runtime
+        .startTurn({ ...input, message: { ...input.message, text: "/goal resume" } })
+        .pipe(Effect.ignore);
+      const ended = yield* Fiber.join(terminal);
+      if (ended?.status !== "completed") {
+        const message = ended?.failure?.message ?? "";
+        assert.notInclude(message, "Retry the turn");
+        assert.match(message, /paused goal|no goal/iu);
+      }
     }),
   );
 

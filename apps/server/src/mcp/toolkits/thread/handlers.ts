@@ -20,11 +20,14 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import { providerOptionDescriptors, refuseAgentModePick } from "../../delegatedTaskModes.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import { rejectionText } from "../../../orchestration-v2/runOutput.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -237,6 +240,21 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           threads,
           projection: { thread },
         } = yield* readThread(input.threadId);
+        const modelSelection = input.modelSelection;
+        if (modelSelection !== undefined) {
+          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          yield* refuseAgentModePick({
+            callerRuntimeMode: (yield* readCaller()).limits.runtimeMode,
+            picked: modelSelection.options,
+            descriptors: providerOptionDescriptors(
+              providers.find((provider) => provider.instanceId === modelSelection.instanceId),
+            ),
+            held:
+              thread.modelSelection.instanceId === modelSelection.instanceId
+                ? thread.modelSelection.options
+                : undefined,
+          });
+        }
         let sequence = 0;
         if (input.requestTags !== undefined) {
           sequence = (yield* threads
@@ -248,7 +266,6 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             })
             .pipe(Effect.mapError(dispatchFailure))).sequence;
         }
-        const modelSelection = input.modelSelection;
         if (modelSelection !== undefined) {
           const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
           sequence = (yield* threads
@@ -318,10 +335,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               ? new OrchestratorMcpFailure({
                   code: "invalid_request",
                   // The agent wrote the value, so it is told what in it did not fit.
-                  message:
-                    error.cause instanceof Error
-                      ? `${error.message}\n${error.cause.message.slice(0, 2000)}`
-                      : error.message,
+                  message: rejectionText(error),
                 })
               : unavailable(),
           ),

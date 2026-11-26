@@ -151,14 +151,14 @@ diff --git a/apps/server/src/serverRuntimeStartup.ts b/apps/server/src/serverRun
 index 4bf684def4..24a397026d 100644
 --- a/apps/server/src/serverRuntimeStartup.ts
 +++ b/apps/server/src/serverRuntimeStartup.ts
-@@ -46,7 +46,6 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+@@ -50,7 +50,6 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
  import * as ServerSettings from "./serverSettings.ts";
  import { forkParked, forkParkedFiber } from "./serverActivation.ts";
  import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 -import { getServerOwners } from "./telemetry/Identify.ts";
  import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
  import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
- import {
+ import { headlessServeOutput, resolveLocalOrigin } from "./startupAccess.ts";
 @@ -175,7 +174,6 @@ const recordStartupHeartbeat = Effect.gen(function* () {
      threadCount,
      projectCount,
@@ -171,14 +171,14 @@ diff --git a/apps/server/src/telemetry/AnalyticsService.ts b/apps/server/src/tel
 index eb222ae743..83cb2e5d39 100644
 --- a/apps/server/src/telemetry/AnalyticsService.ts
 +++ b/apps/server/src/telemetry/AnalyticsService.ts
-@@ -66,12 +66,12 @@ function retryDelayMs(failures: number, random: number): number {
- 
+@@ -69,12 +69,12 @@ function retryDelayMs(failures: number, random: number): number {
+
  const TelemetryEnvConfig = Config.all({
-   posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
+   ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(
 -    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
 +    Config.withDefault(""),
    ),
-   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
+   ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(
 -    Config.withDefault("https://ingest.t3.codes"),
 +    Config.withDefault(""),
    ),
@@ -187,7 +187,7 @@ index eb222ae743..83cb2e5d39 100644
    flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
    maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
      Config.withDefault(1_000),
-@@ -363,4 +363,12 @@ export const make = Effect.gen(function* () {
+@@ -393,4 +393,12 @@ export const make = Effect.gen(function* () {
    return AnalyticsService.of({ record, flush, recordOwners });
  });
  

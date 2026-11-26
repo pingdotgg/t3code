@@ -750,7 +750,7 @@ function markdownExcerpt(body: string): string | null {
   // Never end on a lone high surrogate.
   const last = text.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return `${text.slice(0, end)}…`;
+  return `${text.slice(0, end).trimEnd()}…`;
 }
 
 /** The comment or commit a pull request link names, for its hover card; null for the PR itself. */
@@ -930,7 +930,7 @@ function bounded(value: string): string {
   if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
     end -= 1;
   }
-  return `${trimmed.slice(0, end)}...`;
+  return `${trimmed.slice(0, end).trimEnd()}...`;
 }
 
 function boundedField(value: string): string {
@@ -1573,7 +1573,7 @@ export function readableFailure(failure: unknown, hint: string): string {
   let end = FAILURE_DETAIL_MAX_LENGTH - 1;
   const last = detail.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return `${detail.slice(0, end)}…`;
+  return `${detail.slice(0, end).trimEnd()}…`;
 }
 
 const isGitCommandError = Schema.is(GitCommandError);

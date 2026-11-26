@@ -10,7 +10,6 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useNavigate } from "@tanstack/react-router";
@@ -35,6 +34,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   boundAttachmentIds,
   type ComposerSendSnapshot,
+  deriveComposerSendTitle,
   type makeThreadErrorSetter,
   withMessageContext,
 } from "../ChatView.logic";
@@ -126,7 +126,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     readonly isCurrentSend: () => boolean;
     readonly draftChangedDuringPreparation: () => boolean;
   }) => {
-    const { attachments: attachmentsSnapshot, messageText } = sendSnapshot;
+    const { attachments: attachmentsSnapshot } = sendSnapshot;
     const failedSelections: ModelSelection[] = [];
     let clearedDraft = false;
     let releasedComposer = false;
@@ -145,10 +145,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
       const context = buildOutgoingMessageContext(
         boundAttachmentIds(attachments, attachmentsSnapshot),
       );
-      const title = deriveThreadTitleSeed(
-        { text: messageText, attachments: attachmentsSnapshot },
-        m,
-      );
+      const title = deriveComposerSendTitle(sendSnapshot);
       clearComposerDraftContent(composerDraftTarget);
       if (currentRouteThreadKeyRef.current === routeThreadKey) {
         promptRef.current = "";

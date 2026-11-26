@@ -37,7 +37,6 @@ import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildPullRequestTimeline,
   groupPullRequestTimelineConversations,
@@ -75,6 +74,7 @@ import {
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
 import { changeRequestTermKind, type ChangeRequestTermKind } from "./changeRequestTerm";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ReactionSurface {
   revealAnchor?: string | null;
@@ -198,24 +198,24 @@ function AddToChatButton({
   const gt = useGT();
   const onAddToChat = reactions.onAddToChat;
   return onAddToChat === undefined ? null : (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            className="-mt-1 shrink-0"
-            aria-label={gt("Add to chat")}
-            onClick={() => onAddToChat(comment)}
-          />
-        }
-      >
-        <MessageSquarePlusIcon className="size-3" />
-      </TooltipTrigger>
-      <TooltipPopup>
-        <T>Add to chat</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          className="-mt-1 shrink-0"
+          aria-label={gt("Add to chat")}
+          onClick={() => onAddToChat(comment)}
+        />
+      }
+      label={
+        <>
+          <T>Add to chat</T>
+        </>
+      }
+    >
+      <MessageSquarePlusIcon className="size-3" />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -614,7 +614,7 @@ function ReviewThreadEvent({
       ) : null}
       {thread.hasMoreReplies ? (
         <div className="px-2">
-          <PullRequestMoreReplies {...thread} />
+          <PullRequestMoreReplies {...thread} threadRef={reactions.threadRef} />
         </div>
       ) : null}
     </div>
@@ -756,30 +756,29 @@ function ReviewVerdictEvent({
         <div className="min-w-0 flex-1">
           <h2 className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <ActorName actor={event.actor} />
-            <Tooltip disabled={!stale}>
-              <TooltipTrigger
-                render={
-                  <span
-                    className={cn(
-                      "font-medium lowercase",
-                      stale
-                        ? "text-muted-foreground opacity-70"
-                        : pullRequestReviewOutcomeToneClassName(outcome),
-                    )}
-                  />
-                }
-              >
-                {stale ? (
-                  <>
-                    <span aria-hidden>{pullRequestReviewOutcomeLabel(outcome, resolve)}</span>
-                    <span className="sr-only">{staleReviewOutcomeLabel(outcome, gt)}</span>
-                  </>
-                ) : (
-                  pullRequestReviewOutcomeLabel(outcome, resolve)
-                )}
-              </TooltipTrigger>
-              <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome, resolve)}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              disabled={!stale}
+              render={
+                <span
+                  className={cn(
+                    "font-medium lowercase",
+                    stale
+                      ? "text-muted-foreground opacity-70"
+                      : pullRequestReviewOutcomeToneClassName(outcome),
+                  )}
+                />
+              }
+              label={pullRequestReviewOutcomeStaleLabel(outcome, resolve)}
+            >
+              {stale ? (
+                <>
+                  <span aria-hidden>{pullRequestReviewOutcomeLabel(outcome, resolve)}</span>
+                  <span className="sr-only">{staleReviewOutcomeLabel(outcome, gt)}</span>
+                </>
+              ) : (
+                pullRequestReviewOutcomeLabel(outcome, resolve)
+              )}
+            </SharedTooltipTrigger>
           </h2>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <PullRequestMetaLine className="flex-wrap text-2xs text-muted-foreground">

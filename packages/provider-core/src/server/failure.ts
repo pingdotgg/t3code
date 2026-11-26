@@ -175,17 +175,19 @@ function curatedCauseMessages(cause: unknown): {
           break;
         }
         case "CommandExecutionError": {
-          // Only OpenCode's fixed-shape goal length text is shown; other command output stays hidden.
+          // Only OpenCode's fixed-shape goal text is shown; other command output stays hidden.
           const rejection = stringField(cause, "message");
-          if (
-            (cause as Record<string, unknown>).command === "goal" &&
-            rejection !== undefined &&
-            OPENCODE_GOAL_LENGTH_REJECTION.test(rejection)
-          ) {
+          if ((cause as Record<string, unknown>).command !== "goal" || rejection === undefined) {
+            break;
+          }
+          if (OPENCODE_GOAL_LENGTH_REJECTION.test(rejection)) {
             return {
               known: `OpenCode rejected the goal: ${rejection} Shorten it and send /goal again.`,
               category: categoryMessage(),
             };
+          }
+          if (rejection === "No paused goal to resume.") {
+            return { known: "OpenCode has no paused goal to resume.", category: categoryMessage() };
           }
           break;
         }
