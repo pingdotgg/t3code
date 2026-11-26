@@ -594,12 +594,11 @@ function remarkPreserveCodeMeta() {
 function remarkNormalizeLinksAndTagInlineCode() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
-      if (
-        (node.type === "link" || node.type === "definition") &&
-        typeof node.url === "string" &&
-        /^[A-Za-z]:[\\/]/.test(node.url)
-      ) {
-        node.url = `file:///${node.url.replaceAll("\\", "/")}`;
+      if ((node.type === "link" || node.type === "definition") && typeof node.url === "string") {
+        const path = node.url.replace(/%5C/gi, "\\");
+        if (/^[A-Za-z]:[\\/]/.test(path)) {
+          node.url = `file:///${path.replaceAll("\\", "/")}`;
+        }
       }
       if (node.type === "inlineCode" && !insideLink) {
         node.data = {
