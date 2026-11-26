@@ -176,7 +176,7 @@ describe("observability", () => {
         if (name !== "other") span.attribute("db.system.name", "sqlite");
         if (name === "logged") span.event("diagnostic", span.status.startTime);
         span.end(
-          span.status.startTime + (name === "slow" ? 100_000_000n : 1n),
+          span.status.startTime + (name === "slow" ? 10_000_000n : 9_999_999n),
           name === "failed" ? Exit.fail("busy") : Exit.void,
         );
       }

@@ -642,7 +642,7 @@ class LocalFileSpan implements Tracer.Span {
       this.attributes.get("db.system.name") === "sqlite" &&
       ExitRuntime.isSuccess(traceExit) &&
       this.events.length === 0 &&
-      endTime - this.status.startTime < 100_000_000n &&
+      endTime - this.status.startTime < 10_000_000n &&
       !this.traceId.endsWith("00")
     )
       return;
