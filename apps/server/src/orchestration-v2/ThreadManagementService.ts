@@ -977,7 +977,8 @@ const make = Effect.gen(function* () {
       target.thread.interactionMode === "plan" &&
       input.createdBy !== "system" &&
       input.scheduledTaskId === undefined &&
-      limit?.interactionMode !== "plan"
+      limit?.interactionMode !== "plan" &&
+      !(yield* hasReceipt(input.commandId))
     ) {
       yield* dispatch({
         type: "thread.interaction-mode.set",
