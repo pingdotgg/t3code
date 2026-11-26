@@ -1,4 +1,7 @@
 {
+  "6c6e16b9488f8b91": "Scrolla för att läsa allt.",
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} tecken i mitten visas inte.} other {… {hidden} tecken i mitten visas inte.}} Texten slutar med:",
+  "011b1ef726fa9928": "Scrolla i varje del för att läsa allt.",
   "4bcfa3b976a421cf": "Sidochatt",
   "23be753133ae6950": "Tråd",
   "0001ae5846061bb6": "Tråd på {machine}",
@@ -3475,7 +3478,7 @@
   "12170596ff889d5b": "Bifoga igen",
   "748efc40dc99b309": "Ta bort för att skicka",
   "fd3d4318e7b094fa": "Utkast",
-  "9c421cab815b9905": "{count, plural, one {Visa {count} bildbilaga till} other {Visa {count} bildbilagor till}}",
+  "c7f5c98f1e79cc6c": "{count, plural, one {Visa {count} bildbilaga till} other {Visa {count} bildbilagor till}}",
   "ae136257600738d3": "Bifoga filer",
   "3e04fb123bbf31b4": "Utkastets bilaga kunde inte sparas lokalt och kan gå förlorad vid navigering.",
   "81709882b9996586": "Bifoga filer",
