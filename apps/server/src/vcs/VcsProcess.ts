@@ -347,10 +347,16 @@ export function canRunHostGitInWorkspaceSandbox(input: {
       readonly eligible: true;
       readonly sandboxCwd: string;
       readonly sandboxChdir: string;
+      readonly sandboxArgs: ReadonlyArray<string>;
       readonly extraRwBinds: ReadonlyArray<string>;
       readonly extraRoBinds: ReadonlyArray<string>;
     } {
-  if (!input.processSandboxEnabled || input.cwd === undefined || !NodePath.isAbsolute(input.cwd)) {
+  if (
+    !input.processSandboxEnabled ||
+    input.cwd === undefined ||
+    !NodePath.isAbsolute(input.cwd) ||
+    !NodeFS.existsSync(input.cwd)
+  ) {
     return { eligible: false };
   }
   const parsed = parseGitGlobalOptions(input.args);
@@ -360,9 +366,8 @@ export function canRunHostGitInWorkspaceSandbox(input: {
   ) {
     return { eligible: false };
   }
-  // Reject explicit location overrides (`-C`, `--git-dir`, `--work-tree`) and repo selector env vars.
+  // Reject explicit `--git-dir`/`--work-tree` and repo selector env vars.
   if (
-    parsed.locationArgs.length > 0 ||
     parsed.gitDirArg !== undefined ||
     parsed.workTreeArg !== undefined ||
     input.env.GIT_DIR?.trim() ||
@@ -371,20 +376,86 @@ export function canRunHostGitInWorkspaceSandbox(input: {
   ) {
     return { eligible: false };
   }
-  if (!NodeFS.existsSync(input.cwd)) {
-    return { eligible: false };
+
+  const realCwd = tryRealpathSync(input.cwd);
+  // Allow a single redundant leading `-C <dir>` pointing at the same canonical cwd (used by
+  // GitVcsDriver.runGit) and strip it since bwrap already `--chdir`s to `realCwd`.
+  let sandboxArgs: ReadonlyArray<string> = input.args ?? [];
+  if (parsed.locationArgs.length > 0) {
+    let redundantCDir: string | undefined;
+    let stripCount = 0;
+    if (
+      parsed.locationArgs.length === 2 &&
+      parsed.locationArgs[0] === "-C" &&
+      input.args?.[0] === "-C" &&
+      input.args[1] === parsed.locationArgs[1]
+    ) {
+      redundantCDir = parsed.locationArgs[1]!;
+      stripCount = 2;
+    } else if (
+      parsed.locationArgs.length === 1 &&
+      parsed.locationArgs[0]!.startsWith("-C") &&
+      parsed.locationArgs[0]!.length > 2 &&
+      input.args?.[0] === parsed.locationArgs[0]
+    ) {
+      redundantCDir = parsed.locationArgs[0]!.slice(2);
+      stripCount = 1;
+    }
+    if (
+      redundantCDir === undefined ||
+      !NodePath.isAbsolute(redundantCDir) ||
+      !NodeFS.existsSync(redundantCDir) ||
+      tryRealpathSync(redundantCDir) !== realCwd
+    ) {
+      return { eligible: false };
+    }
+    sandboxArgs = (input.args ?? []).slice(stripCount);
   }
 
   const enclosingRoot = findEnclosingGitRoot(input.cwd);
   const mountRoot = enclosingRoot ?? input.cwd;
   const realMountRoot = tryRealpathSync(mountRoot);
-  const realCwd = tryRealpathSync(input.cwd);
   const realStateDir =
     input.ownStateDir !== undefined ? tryRealpathSync(input.ownStateDir) : undefined;
-  if (
-    realStateDir !== undefined &&
-    (isSameOrInsideDir(realMountRoot, realStateDir) || isSameOrInsideDir(realCwd, realStateDir))
-  ) {
+  const unsafeRoots = new Set([
+    "/",
+    "/tmp",
+    "/dev",
+    "/proc",
+    "/sys",
+    "/var",
+    "/var/tmp",
+    "/home",
+    "/root",
+    "/usr",
+    "/etc",
+    "/opt",
+    "/run",
+    "/mnt",
+    "/media",
+    "/srv",
+  ]);
+  const homeRoots: Array<string> = [];
+  for (const rawHome of [input.env.HOME, HostProcess.HomeDirectory.defaultValue()]) {
+    if (rawHome !== undefined && rawHome.trim().length > 0 && NodePath.isAbsolute(rawHome)) {
+      const realHome = tryRealpathSync(rawHome);
+      if (realHome !== "/") homeRoots.push(realHome);
+    }
+  }
+  const isForbiddenSandboxTarget = (realPath: string) => {
+    if (unsafeRoots.has(realPath)) return true;
+    if (
+      realStateDir !== undefined &&
+      (isSameOrInsideDir(realPath, realStateDir) || isSameOrInsideDir(realStateDir, realPath))
+    ) {
+      return true;
+    }
+    for (const homeRoot of homeRoots) {
+      if (isSameOrInsideDir(homeRoot, realPath)) return true;
+    }
+    return false;
+  };
+  if (isForbiddenSandboxTarget(realMountRoot) || isForbiddenSandboxTarget(realCwd)) {
     return { eligible: false };
   }
   if (!isSameOrInsideDir(realCwd, realMountRoot)) {
@@ -393,12 +464,15 @@ export function canRunHostGitInWorkspaceSandbox(input: {
 
   const extraRw = new Set<string>();
   const extraRo = new Set<string>();
-  const unsafeTempRoots = new Set(["/", "/tmp", "/var", "/var/tmp"]);
   const registerDirIfSafe = (dirPath: string, targetSet: Set<string>) => {
     if (!NodePath.isAbsolute(dirPath) || !NodeFS.existsSync(dirPath)) return false;
     const real = tryRealpathSync(dirPath);
-    if (realStateDir !== undefined && isSameOrInsideDir(real, realStateDir)) return false;
-    if (unsafeTempRoots.has(real)) return false;
+    if (isForbiddenSandboxTarget(real)) return false;
+    try {
+      if (!NodeFS.statSync(real).isDirectory()) return false;
+    } catch {
+      return false;
+    }
     if (!isSameOrInsideDir(real, realMountRoot)) {
       targetSet.add(real);
     }
@@ -407,7 +481,12 @@ export function canRunHostGitInWorkspaceSandbox(input: {
   const registerFileIfSafe = (filePath: string) => {
     if (!NodePath.isAbsolute(filePath) || !NodeFS.existsSync(filePath)) return false;
     const real = tryRealpathSync(filePath);
-    if (realStateDir !== undefined && isSameOrInsideDir(real, realStateDir)) return false;
+    if (isForbiddenSandboxTarget(real)) return false;
+    try {
+      if (!NodeFS.statSync(real).isFile()) return false;
+    } catch {
+      return false;
+    }
     if (!isSameOrInsideDir(real, realMountRoot)) {
       extraRw.add(real);
     }
@@ -431,7 +510,10 @@ export function canRunHostGitInWorkspaceSandbox(input: {
   }
   const indexFile = input.env.GIT_INDEX_FILE?.trim();
   if (indexFile) {
-    if (!registerDirIfSafe(NodePath.dirname(indexFile), extraRw)) {
+    if (
+      !NodePath.isAbsolute(indexFile) ||
+      !registerDirIfSafe(NodePath.dirname(indexFile), extraRw)
+    ) {
       return { eligible: false };
     }
   }
@@ -439,14 +521,21 @@ export function canRunHostGitInWorkspaceSandbox(input: {
   if (trace2 && !registerFileIfSafe(trace2)) {
     return { eligible: false };
   }
-  // Checkpoints may also inject `lfs.storage` into a scoped temp directory via GIT_CONFIG_*.
+  // Checkpoints may also inject `lfs.storage` into a scoped temp directory via GIT_CONFIG_*
+  // (created lazily inside an existing private objects dir when git-lfs runs).
   const cfgCount = Number.parseInt(input.env.GIT_CONFIG_COUNT ?? "0", 10);
   if (Number.isFinite(cfgCount) && cfgCount > 0) {
     for (let i = 0; i < cfgCount; i += 1) {
       if (input.env[`GIT_CONFIG_KEY_${i}`]?.toLowerCase() === "lfs.storage") {
         const storageVal = input.env[`GIT_CONFIG_VALUE_${i}`]?.trim();
-        if (storageVal && !registerDirIfSafe(storageVal, extraRw)) {
-          return { eligible: false };
+        if (storageVal) {
+          if (!NodePath.isAbsolute(storageVal)) return { eligible: false };
+          const targetDir = NodeFS.existsSync(storageVal)
+            ? storageVal
+            : NodePath.dirname(storageVal);
+          if (!registerDirIfSafe(targetDir, extraRw)) {
+            return { eligible: false };
+          }
         }
       }
     }
@@ -456,6 +545,7 @@ export function canRunHostGitInWorkspaceSandbox(input: {
     eligible: true,
     sandboxCwd: realMountRoot,
     sandboxChdir: realCwd,
+    sandboxArgs,
     extraRwBinds: [...extraRw],
     extraRoBinds: [...extraRo],
   };
@@ -869,7 +959,7 @@ export const make = Effect.gen(function* () {
         const wrapped = yield* processSandbox
           .wrap({
             command: "git",
-            args: input.args,
+            args: sandboxCheck.sandboxArgs,
             cwd: sandboxCheck.sandboxCwd,
             chdir: sandboxCheck.sandboxChdir,
             env: { ...process.env, ...finalEnv },

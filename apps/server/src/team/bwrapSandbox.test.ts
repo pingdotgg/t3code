@@ -1391,6 +1391,7 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             ["stash", "push"],
             ["tag", "v1"],
             ["-C", mainRepo, "status"],
+            ["-C", wsIncludeRepo, "-C", wsSubDir, "status"],
             ["--git-dir", NodePath.join(mainRepo, ".git"), "status"],
           ]) {
             expect(
@@ -1413,12 +1414,46 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
             }).eligible,
           ).toBe(false);
 
-          // Real bwrap ProcessSandbox + VcsProcess running from a repository subdirectory mounts
-          // the enclosing repo root with `.git` locks, passes `--chdir <subDir>`, and disables
-          // ProcessRunner `extendEnv` so host `LD_PRELOAD` is never re-merged onto bwrap.
+          // Forbidden/broad mount roots (/tmp, $HOME, ancestor of ownStateDir, directory trace2)
+          // return eligible: false gracefully instead of triggering a bwrap path rejection.
+          const testFakeHome = NodePath.join(root, "git-fake-home");
+          const runnerStateDir = NodePath.join(baseDir, "userdata");
+          NodeFS.mkdirSync(testFakeHome, { recursive: true });
+          NodeFS.mkdirSync(runnerStateDir, { recursive: true });
+          for (const badCheck of [
+            { cwd: "/tmp", env: {}, ownStateDir: runnerStateDir },
+            { cwd: testFakeHome, env: { HOME: testFakeHome }, ownStateDir: runnerStateDir },
+            { cwd: baseDir, env: {}, ownStateDir: runnerStateDir },
+            {
+              cwd: wsIncludeRepo,
+              env: { GIT_TRACE2_EVENT: "/tmp" },
+              ownStateDir: runnerStateDir,
+            },
+          ]) {
+            expect(
+              VcsProcess.canRunHostGitInWorkspaceSandbox({
+                processSandboxEnabled: true,
+                cwd: badCheck.cwd,
+                args: ["rev-parse", "--is-inside-work-tree"],
+                env: badCheck.env,
+                ownStateDir: badCheck.ownStateDir,
+              }).eligible,
+            ).toBe(false);
+          }
+
+          // Verify real bwrap wrapping for repo-subdirectory status (`--chdir`, `extendEnv: false`)
+          // and checkpoint `add` (`-C <wtAlice>` stripped, uncreated `lfs.storage` parent bound RW).
           const subdirBinDir = NodePath.join(root, "subdir-bin");
           const subdirFakeBwrap = NodePath.join(subdirBinDir, "bwrap");
+          const privateObjectsDir = NodePath.join(
+            mainRepo,
+            ".git",
+            "objects",
+            "tmp_objdir-t3-checkpoint-test",
+          );
+          const uncreatedLfsDir = NodePath.join(privateObjectsDir, "lfs");
           NodeFS.mkdirSync(subdirBinDir, { recursive: true });
+          NodeFS.mkdirSync(privateObjectsDir, { recursive: true });
           NodeFS.writeFileSync(subdirFakeBwrap, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
           const realSubdirSpawns: Array<ProcessRunner.ProcessRunInput> = [];
           const mockSubdirRunner = ProcessRunner.ProcessRunner.of({
@@ -1455,6 +1490,21 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
               cwd: wsSubDir,
               env: { LD_PRELOAD: "/tmp/should-not-leak-to-bwrap.so" },
             });
+            yield* vcsProc.run({
+              operation: "GitVcsDriver.checkpoints.captureCheckpoint",
+              command: "git",
+              args: ["-C", wtAlice, "add", "--all", "--", "."],
+              cwd: wtAlice,
+              spawnCwd: root,
+              env: {
+                GIT_INDEX_FILE: NodePath.join(mainRepo, ".git", "t3-checkpoint-index-test"),
+                GIT_OBJECT_DIRECTORY: privateObjectsDir,
+                GIT_ALTERNATE_OBJECT_DIRECTORIES: NodePath.join(mainRepo, ".git", "objects"),
+                GIT_CONFIG_COUNT: "1",
+                GIT_CONFIG_KEY_0: "lfs.storage",
+                GIT_CONFIG_VALUE_0: uncreatedLfsDir,
+              },
+            });
           }).pipe(
             Effect.provide(
               Layer.effect(VcsProcess.VcsProcess, VcsProcess.make).pipe(
@@ -1465,7 +1515,7 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
               ),
             ),
           );
-          expect(realSubdirSpawns).toHaveLength(1);
+          expect(realSubdirSpawns).toHaveLength(2);
           const subdirSpawn = realSubdirSpawns[0]!;
           expect(subdirSpawn.command).toBe(subdirFakeBwrap);
           expect(subdirSpawn.extendEnv).toBe(false);
@@ -1477,6 +1527,25 @@ it.layer(NodeServices.layer)("bwrapSandbox validation, worktrees & fail-closed p
           expect(subdirBinds).toContain(NodePath.join(wsIncludeRepo, ".git"));
           const subdirChdirIdx = subdirSpawn.args.indexOf("--chdir");
           expect(subdirSpawn.args[subdirChdirIdx + 1]).toBe(wsSubDir);
+
+          const checkpointSpawn = realSubdirSpawns[1]!;
+          expect(checkpointSpawn.command).toBe(subdirFakeBwrap);
+          expect(checkpointSpawn.extendEnv).toBe(false);
+          const checkpointBinds = checkpointSpawn.args.filter(
+            (_, idx) => checkpointSpawn.args[idx - 1] === "--bind",
+          );
+          expect(checkpointBinds).toContain(wtAlice);
+          expect(checkpointBinds).toContain(privateObjectsDir);
+          const checkpointChdirIdx = checkpointSpawn.args.indexOf("--chdir");
+          expect(checkpointSpawn.args[checkpointChdirIdx + 1]).toBe(wtAlice);
+          const checkpointSepIdx = checkpointSpawn.args.indexOf("--");
+          expect(NodePath.basename(checkpointSpawn.args[checkpointSepIdx + 1] ?? "")).toBe("git");
+          expect(checkpointSpawn.args.slice(checkpointSepIdx + 2)).toEqual([
+            "add",
+            "--all",
+            "--",
+            ".",
+          ]);
 
           // When ProcessSandbox is enabled, workspace-local host git commands run inside ProcessSandbox.
           const wrappedGitCalls: Array<ReadonlyArray<string>> = [];

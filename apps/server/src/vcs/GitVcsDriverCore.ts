@@ -1114,6 +1114,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               readonly eligible: true;
               readonly sandboxCwd: string;
               readonly sandboxChdir: string;
+              readonly sandboxArgs: ReadonlyArray<string>;
               readonly extraRwBinds: ReadonlyArray<string>;
               readonly extraRoBinds: ReadonlyArray<string>;
             }
@@ -1194,7 +1195,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           const wrapped = yield* processSandbox
             .wrap({
               command: executable,
-              args: commandInput.args,
+              args: sandboxWrapConfig.sandboxArgs,
               cwd: sandboxWrapConfig.sandboxCwd,
               chdir: sandboxWrapConfig.sandboxChdir,
               env: spawnEnv,
