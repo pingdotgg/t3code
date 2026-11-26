@@ -27,11 +27,10 @@ import type { Caller } from "./threadAccess.ts";
 export const UNHELD_WAIT = Duration.seconds(45);
 
 /**
- * "cancelled": the request ended without the person's answer, as when its turn ends or is
- * interrupted, or they dismiss it. "no-turn": the thread has no turn running, so there is
- * nowhere to show a request. "waiting": the person has not answered yet and the request is
- * still theirs to answer. "unavailable": the call comes from no thread. "asked": a sessionless
- * client was sent the request as this call's answer, and calls again.
+ * "cancelled": ended without the person's answer (dismissed, or its turn ended). "no-turn": no
+ * turn is running to show a request in. "waiting": not answered yet, and still theirs to answer.
+ * "unavailable": the call comes from no thread. "asked": a sessionless client was sent the
+ * request as this call's answer, and calls again.
  */
 export type Answer =
   | McpProviderSessions.T3ApprovalAnswer
