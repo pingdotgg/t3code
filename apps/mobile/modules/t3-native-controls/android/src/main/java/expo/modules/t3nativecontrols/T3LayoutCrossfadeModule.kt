@@ -29,6 +29,9 @@ class T3LayoutCrossfadeModule : Module() {
       Prop("fadeDuration") { view: T3LayoutCrossfadeView, duration: Int ->
         view.fadeDuration = duration.toLong()
       }
+      Prop("backdropColor") { view: T3LayoutCrossfadeView, color: Int ->
+        view.backdropColor = color
+      }
     }
   }
 }
@@ -44,6 +47,8 @@ class T3LayoutCrossfadeView(
 ) : ExpoView(context, appContext) {
   private val onSnapshot by EventDispatcher()
   var fadeDuration = 260L
+  /** What shows behind the content; the snapshot is opaque so no layout shows through it. */
+  var backdropColor = 0
   private var snapshotRequest = 0
   private var fadeRequest = 0
   private var snapshot: Bitmap? = null
@@ -100,7 +105,10 @@ class T3LayoutCrossfadeView(
     }
     capturing = true
     try {
-      draw(Canvas(bitmap))
+      val canvas = Canvas(bitmap)
+      // The header color is slightly translucent; anything less than opaque lets the new layout through.
+      canvas.drawColor(backdropColor or OPAQUE)
+      draw(canvas)
     } finally {
       capturing = false
     }
@@ -134,5 +142,6 @@ class T3LayoutCrossfadeView(
 
   private companion object {
     const val ABANDON_AFTER_MS = 1_000L
+    const val OPAQUE = 0xFF000000.toInt()
   }
 }
