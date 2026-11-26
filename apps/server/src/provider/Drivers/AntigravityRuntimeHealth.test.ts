@@ -1,10 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -50,6 +51,7 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const makeHarness = Effect.fn("AntigravityRuntimeHealthTest.makeHarness")(function* (
   source: "path" | "override",
   symlink: boolean,
+  threadLauncher = false,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -68,6 +70,11 @@ const makeHarness = Effect.fn("AntigravityRuntimeHealthTest.makeHarness")(functi
         file,
         [
           "#!/bin/sh",
+          ...(threadLauncher
+            ? [
+                `if [ -n "$T3CODE_THREAD_ID" ]; then export T3_ACP_AGENT_VERSION=1.5.12; exec ${shellQuote(node)} ${shellQuote(agent)} "$@"; fi`,
+              ]
+            : []),
           `export T3_ACP_AGENT_VERSION=${version === "variable" ? `$(cat ${shellQuote(versionFile)})` : shellQuote(version)}`,
           `exec ${shellQuote(node)} ${shellQuote(agent)} "$@"`,
           "",
@@ -106,6 +113,8 @@ const makeHarness = Effect.fn("AntigravityRuntimeHealthTest.makeHarness")(functi
     writeRuntime,
     refresh: instance.refreshModels,
     check: instance.snapshot.refresh,
+    instance,
+    root,
   };
 });
 
@@ -116,7 +125,8 @@ it.layer(layerTest)("external Antigravity runtime health", (it) => {
     ["path", "compatible handshake"],
     ["path", "handshake without a version"],
   ] as const) {
-    it.effect.skipIf(windowsHost)(`clears a ${source} refusal after ${upgrade}`, () =>
+    const expectedStatus = upgrade === "handshake without a version" ? "error" : "ready";
+    it.effect.skipIf(windowsHost)(`reports ${expectedStatus} for ${source} after ${upgrade}`, () =>
       Effect.gen(function* () {
         const h = yield* makeHarness(source, upgrade === "symlink retarget");
         yield* h.refresh();
@@ -141,8 +151,61 @@ it.layer(layerTest)("external Antigravity runtime health", (it) => {
           );
           yield* h.refresh();
         }
-        expect((yield* h.check).status).toBe("ready");
+        const snapshot = yield* h.check;
+        expect(snapshot.status).toBe(expectedStatus);
+        if (upgrade === "in-place upgrade" || upgrade === "symlink retarget") {
+          expect(snapshot.version).toBeNull();
+        }
+        if (upgrade === "handshake without a version") {
+          expect(snapshot).toMatchObject({ version: "1.5.0", message: refused.detail });
+        }
       }),
     );
   }
+
+  it.effect.skipIf(windowsHost)(
+    "keeps the provider refusal after the launcher works in a thread",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness("override", false, true);
+        yield* h.refresh();
+        yield* h.fs.writeFileString(h.versionFile, "1.5.0");
+        const refused = yield* h.refresh().pipe(Effect.flip);
+
+        const threadId = ThreadId.make("antigravity-runtime-health-thread");
+        const providerSessionId = ProviderSessionId.make("antigravity-runtime-health-session");
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("antigravity-runtime-health-environment"),
+          threadId,
+          providerSessionId,
+          providerInstanceId: h.instance.instanceId,
+          endpoint: "http://127.0.0.1:43126/mcp",
+          authorizationHeader: "Bearer fixture",
+          browserToolsAvailable: false,
+        });
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: h.root,
+        });
+        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const session = yield* h.instance.orchestrationAdapter.openSession({
+              threadId,
+              providerSessionId,
+              modelSelection,
+              runtimePolicy,
+            });
+            yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+          }),
+        );
+
+        expect(yield* h.check).toMatchObject({
+          status: "error",
+          version: "1.5.0",
+          message: refused.detail,
+        });
+      }),
+  );
 });
