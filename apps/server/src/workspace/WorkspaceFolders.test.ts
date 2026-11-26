@@ -303,7 +303,10 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         yield* TestClock.adjust("2 seconds");
         assert.deepEqual(yield* Fiber.join(first), [path.join(home, "api")]);
         // Each pass would otherwise pin another thread, and four leave the server unanswered.
-        for (let pass = 0; pass < 4; pass++) assert.deepEqual(yield* discover(home), []);
+        // The stuck root keeps what it found, so its repositories do not drop out meanwhile.
+        for (let pass = 0; pass < 4; pass++) {
+          assert.deepEqual(yield* discover(home), [path.join(home, "api")]);
+        }
         assert.deepEqual(yield* discover(other), [path.join(other, "web")]);
       }),
   );

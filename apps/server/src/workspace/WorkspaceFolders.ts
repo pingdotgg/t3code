@@ -168,6 +168,10 @@ const listFolder = Effect.fnUntraced(function* (root: string, folder: string) {
   return yield* new Cause.TimeoutError(`Listing ${folder} took too long.`);
 });
 
+// A stuck listing may never return (a privacy prompt nobody can see on a service host), so while a
+// root is overdue its last discovery stands in rather than dropping its repositories everywhere.
+const lastDiscovered = new Map<string, ReadonlyArray<ProjectTrackedFolder>>();
+
 // Built once per operation: the probes share the caller's file system and path services.
 const folderProbes = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -350,7 +354,9 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
   if (ignored.some((entry) => isWithinRoot(path, root, entry))) return [];
   // Uncapped: the folders outside the project are dropped below, and must not use up the room.
   const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
-  if (Option.isNone(scan)) return [];
+  if (Option.isNone(scan)) {
+    return rootListings.get(root)?.overdue === true ? (lastDiscovered.get(root) ?? []) : [];
+  }
   const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
     scan.value.folders.filter(
@@ -368,7 +374,13 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
       ),
     { concurrency: DETECTION_CONCURRENCY },
   );
-  return inside.map((folder) => ({ path: folder.path, name: folder.name, discovered: true }));
+  const found = inside.map((folder) => ({
+    path: folder.path,
+    name: folder.name,
+    discovered: true,
+  }));
+  lastDiscovered.set(root, found);
+  return found;
 });
 
 /**
