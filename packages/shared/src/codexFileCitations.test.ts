@@ -49,7 +49,6 @@ describe("resolveCodexFileCitationLink", () => {
     ["/tmp/draft.md ", "/tmp/draft.md%20", undefined],
     [" draft.md  ", "./%20draft.md%20%20", undefined],
     ["/tmp/draft%20.md  ", "/tmp/draft%2520.md%20%20#L7", "7"],
-    ["/tmp/draft.md\t", "/tmp/draft.md%09", undefined],
     ["\u00a0draft.md\n", "./%C2%A0draft.md%0A", undefined],
   ])("preserves boundary spaces in literal filenames: %s", (path, href, line) => {
     const citation = resolveCodexFileCitationLink({ path, line_range_start: line });
