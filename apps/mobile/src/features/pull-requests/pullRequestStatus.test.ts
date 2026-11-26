@@ -102,4 +102,14 @@ describe("mobile overview check status", () => {
       pullRequestChecksSummary({ checks: [check("success"), check("cancelled")] }),
     ).toMatchObject({ title: "1 check failing", tint: "accent-danger-foreground" });
   });
+
+  it("agrees the verb with the number of checks awaiting action", () => {
+    expect(pullRequestChecksSummary({ checks: [check("action-required")] }).label).toBe(
+      "1 needs attention",
+    );
+    expect(
+      pullRequestChecksSummary({ checks: [check("action-required"), check("action-required")] })
+        .label,
+    ).toBe("2 need attention");
+  });
 });
