@@ -37,7 +37,9 @@ export function WorkspaceInspectorPane(props: {
   const inspectorVisible =
     inspectorSupported && panes.auxiliaryPaneVisible && (props.active ?? true);
   const resizeStartWidth = useRef(0);
-  const resizeDirection = useInterfaceDirection() === "rtl" ? 1 : -1;
+  const isRTL = useInterfaceDirection() === "rtl";
+  const resizeDirection = isRTL ? 1 : -1;
+  const slideInFrom = isRTL ? -24 : 24;
   const [resizing, setResizing] = useState(false);
 
   const inspectorProgress = useSharedValue(inspectorVisible ? 1 : 0);
@@ -70,10 +72,10 @@ export function WorkspaceInspectorPane(props: {
   const inspectorStyle = useAnimatedStyle(
     () => ({
       opacity: inspectorProgress.value,
-      transform: [{ translateX: (1 - inspectorProgress.value) * 24 }],
+      transform: [{ translateX: (1 - inspectorProgress.value) * slideInFrom }],
       width: renderedInspectorWidth.value,
     }),
-    [],
+    [slideInFrom],
   );
   // A hidden or resizing pane takes its width at once; a visible one eases with the column.
   const inspectorContentStyle = {

@@ -96,9 +96,9 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string, an
       opacity: isExpanded || editorWidth.value > 0 ? 1 : 0,
       height,
       top: compactBottom * (1 - progress),
-      left: compactInsets.left + (EXPANDED_EDITOR_INSET - compactInsets.left) * progress,
+      start: compactInsets.start + (EXPANDED_EDITOR_INSET - compactInsets.start) * progress,
       // Snapping the far edge keeps the line from rewrapping while the near edge moves.
-      right: isExpanded ? EXPANDED_EDITOR_INSET : compactInsets.right,
+      end: isExpanded ? EXPANDED_EDITOR_INSET : compactInsets.end,
     };
   });
   const containerStyle = useAnimatedStyle(() => ({
