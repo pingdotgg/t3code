@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { isMacPlatform } from "../lib/utils";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { installChatRouteCommands } from "./chatRouteCommands";
+import { registerCommands } from "./dispatcher";
 
 type Match = { readonly routeId: string; readonly pathname: string };
 
@@ -22,8 +23,13 @@ const CHAT: Match[] = [
   { routeId: "/_chat", pathname: "/" },
 ];
 
-function pressEscape(): KeyboardEvent {
-  const event = new KeyboardEvent("keydown", { key: "Escape", cancelable: true, bubbles: true });
+function pressEscape(init?: KeyboardEventInit): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key: "Escape",
+    cancelable: true,
+    bubbles: true,
+    ...init,
+  });
   window.dispatchEvent(event);
   return event;
 }
@@ -52,14 +58,32 @@ describe("chat route commands", () => {
     using stack = new DisposableStack();
     stack.defer(installChatRouteCommands(router));
     stack.defer(() => useThreadSelectionStore.getState().clearSelection());
+    const observed: boolean[] = [];
+    stack.defer(
+      registerCommands({}, { observe: (_event, consumed) => void observed.push(consumed) }),
+    );
 
     selectThread("env:thread-1");
+    for (const composition of [
+      { isComposing: true, keyCode: 27 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      const composing = pressEscape(composition);
+      expect(composing.defaultPrevented, JSON.stringify(composition)).toBe(false);
+      expect(
+        useThreadSelectionStore.getState().selectedThreadKeys.size,
+        JSON.stringify(composition),
+      ).toBe(1);
+      expect(observed.at(-1), JSON.stringify(composition)).toBe(true);
+    }
+
     const event = pressEscape();
 
     expect(event.defaultPrevented).toBe(true);
     expect(useThreadSelectionStore.getState().selectedThreadKeys.size).toBe(0);
     // With nothing selected, Escape is left for other handlers.
     expect(pressEscape().defaultPrevented).toBe(false);
+    expect(observed.at(-1)).toBe(false);
   });
 
   it("stays out of the way off the chat route and under modal pages", () => {
