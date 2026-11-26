@@ -1117,6 +1117,7 @@ it.effect.each([
         }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           scratchRoot: Effect.succeedNone,
+          scratchUnavailableReason: Effect.succeedSome("T3 home is inside a Git repository"),
           namedProjectsRoot: process.cwd(),
         }),
         Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
@@ -1205,6 +1206,7 @@ it.effect.each([
       );
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
+      assert.equal(snapshot.config.scratchUnavailableReason, "T3 home is inside a Git repository");
       const duringAck = yield* keybindings.upsertKeybindingRule({
         key: "mod+alt+y",
         command: "terminal.toggle",
@@ -1498,6 +1500,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         scratchRoot: Effect.succeedNone,
+        scratchUnavailableReason: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
       }),
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
@@ -1877,6 +1880,7 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       Layer.mock(DirectEndpoints.DirectEndpoints)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         scratchRoot: Effect.succeedNone,
+        scratchUnavailableReason: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
       }),
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),

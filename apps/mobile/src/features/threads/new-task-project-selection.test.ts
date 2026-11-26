@@ -10,6 +10,7 @@ import {
   newTaskFilteredProject,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  newTaskScratchEnvironmentOptions,
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 
@@ -392,6 +393,32 @@ describe("newTaskDestination", () => {
         last: { environmentId: "environment", projectId: "only" },
       }),
     ).toEqual(picker);
+  });
+});
+
+describe("newTaskScratchEnvironmentOptions", () => {
+  it("lists a connected machine that can't host the draft with its reason, and drops an offline one", () => {
+    const ready = EnvironmentId.make("ready");
+    const blocked = EnvironmentId.make("blocked");
+    const offline = EnvironmentId.make("offline");
+    const reason = "T3 home is inside a Git repository";
+    expect(
+      newTaskScratchEnvironmentOptions(
+        [
+          { environmentId: ready, environmentLabel: "Ready", connectionState: "connected" },
+          { environmentId: blocked, environmentLabel: "Blocked", connectionState: "connected" },
+          { environmentId: offline, environmentLabel: "Offline", connectionState: "offline" },
+        ],
+        new Map([
+          [ready, { scratchWorkspaceRoot: "/scratch" }],
+          [blocked, { scratchUnavailableReason: reason }],
+          [offline, { scratchUnavailableReason: reason }],
+        ]),
+      ),
+    ).toEqual([
+      { environmentId: ready, environmentLabel: "Ready" },
+      { environmentId: blocked, environmentLabel: "Blocked", unavailableReason: reason },
+    ]);
   });
 });
 
