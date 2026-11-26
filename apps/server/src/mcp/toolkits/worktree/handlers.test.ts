@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../../config.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import * as ProviderSessionManager from "../../../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
@@ -147,6 +148,7 @@ const handoffFrom = <A, E>(
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus: () => Effect.die("unused"),
         }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
         ServerSettings.layerTest({}, managedPolicy),
       ),
     ),
