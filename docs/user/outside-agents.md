@@ -31,6 +31,7 @@ The first time an outside agent connects, approve its sign-in page (via your T3 
 - **Read only**: Inspect projects, threads, providers, and models.
 - **Supervised → Full access**: Also launch, message, and stop threads up to the granted permission mode. Managing [workflow runs](./workflows.md) or using approval-skipping agent modes requires **Full access** (or your policy's maximum mode).
 - Sign-ins last **30 days**; revoke anytime in **Settings → Sharing & access**.
+- To change what a signed-in agent may do, pick a new level on its row under **Authorized clients**. It applies from the agent's next request; threads it already started keep their mode. A linked environment keeps the access it was linked with: link it again to change that.
 
 ## Available tools and limits
 

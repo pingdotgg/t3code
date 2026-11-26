@@ -399,6 +399,8 @@ export const AuthClientSession = Schema.Struct({
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtc),
   connected: Schema.Boolean,
   current: Schema.Boolean,
+  /** Set on an MCP client whose access level can be changed. */
+  mcpAccess: Schema.optionalKey(AuthMcpClientAccess),
 });
 export type AuthClientSession = typeof AuthClientSession.Type;
 
@@ -490,6 +492,12 @@ export const AuthRevokeClientSessionInput = Schema.Struct({
   sessionId: AuthSessionId,
 });
 export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.Type;
+
+export const AuthUpdateClientAccessInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  access: AuthMcpClientAccess,
+});
+export type AuthUpdateClientAccessInput = typeof AuthUpdateClientAccessInput.Type;
 
 export const AuthApproveConnectDeviceInput = Schema.Struct({
   pairingLinkId: TrimmedNonEmptyString,

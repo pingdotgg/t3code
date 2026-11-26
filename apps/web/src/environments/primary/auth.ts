@@ -4,6 +4,7 @@ import type {
   AuthClientMetadata,
   AuthConnectDeviceRequest,
   AuthEnvironmentScope,
+  AuthMcpClientAccess,
   ServerAuthSessionMethod,
   AuthSessionId,
   AuthSessionState,
@@ -133,6 +134,7 @@ export interface ServerClientSessionRecord {
   readonly lastConnectedAt: string | null;
   readonly connected: boolean;
   readonly current: boolean;
+  readonly mcpAccess?: AuthMcpClientAccess;
 }
 
 type ServerAuthGateState =
