@@ -1154,13 +1154,21 @@ function ResourceTelemetryDiagnosticsBody({
               icon={<HardDriveIcon className="size-3.5" />}
               label={gt("Read throughput")}
               value={allT3 ? formatRate(allT3.ioReadBytesPerSecond) : "..."}
-              detail={allT3 ? `${formatBytes(allT3.ioReadBytes)} observed` : undefined}
+              detail={
+                allT3
+                  ? gt("{bytes} observed", { bytes: formatBytes(allT3.ioReadBytes) })
+                  : undefined
+              }
             />
             <IconStat
               icon={<DatabaseIcon className="size-3.5" />}
               label={gt("Write throughput")}
               value={allT3 ? formatRate(allT3.ioWriteBytesPerSecond) : "..."}
-              detail={allT3 ? `${formatBytes(allT3.ioWriteBytes)} observed` : undefined}
+              detail={
+                allT3
+                  ? gt("{bytes} observed", { bytes: formatBytes(allT3.ioWriteBytes) })
+                  : undefined
+              }
               tone={
                 allT3 && allT3.ioWriteBytesPerSecond >= 10 * 1_024 * 1_024
                   ? "danger"
@@ -1330,7 +1338,10 @@ function ResourceTelemetryDiagnosticsBody({
                 />
                 <DetailRow
                   label={gt("Process scan")}
-                  value={`${snapshot.health.retainedProcessCount}/${snapshot.health.scannedProcessCount} retained`}
+                  value={gt("{retained}/{scanned} retained", {
+                    retained: snapshot.health.retainedProcessCount,
+                    scanned: snapshot.health.scannedProcessCount,
+                  })}
                 />
                 <DetailRow
                   label={gt("Inaccessible")}
