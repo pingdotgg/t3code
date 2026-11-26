@@ -1,3 +1,4 @@
+import * as Equal from "effect/Equal";
 import { msg } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -134,6 +135,7 @@ import {
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  draftFanoutSelectionsAtom,
   draftSendState,
   type MultipleModelTarget,
   resolveMultipleModelTargets,
@@ -1792,6 +1794,8 @@ export function useComposerSend(input: ComposerSendInput) {
   const onSendLatest = useStableCallback(onSend);
   const waitBeforeSend = async <T>(pending: Promise<T>) => {
     const finishWatching = watchComposerSendEdits(composerDraftTarget);
+    const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
+    const fanoutSelections = appAtomRegistry.get(fanoutSelectionsAtom);
     sendInFlightRef.current = true;
     const result = await pending
       .catch((error: unknown) => {
@@ -1801,7 +1805,12 @@ export function useComposerSend(input: ComposerSendInput) {
       .finally(() => {
         sendInFlightRef.current = false;
       });
-    const draftStatus = finishWatching();
+    const watchedStatus = finishWatching();
+    const draftStatus =
+      watchedStatus === "ready" &&
+      !Equal.equals(fanoutSelections, appAtomRegistry.get(fanoutSelectionsAtom))
+        ? "edited"
+        : watchedStatus;
     const sameRoute = currentRouteThreadKeyRef.current === routeThreadKey;
     if (draftStatus === "edited" && sameRoute && activeThread) {
       setThreadError(
