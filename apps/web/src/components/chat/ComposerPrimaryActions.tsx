@@ -38,6 +38,7 @@ interface PendingActionState {
   canAdvance: boolean;
   isResponding: boolean;
   isComplete: boolean;
+  isDictating: boolean;
 }
 
 interface ComposerPrimaryActionsProps {
@@ -319,7 +320,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
               disabled={
-                pendingAction.isResponding || voiceInputActive || pendingAction.questionIndex === 0
+                pendingAction.isResponding ||
+                pendingAction.isDictating ||
+                pendingAction.questionIndex === 0
               }
               aria-label={gt("Previous question")}
             >
@@ -331,7 +334,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               {...pointerFocusProps}
               onClick={onNextPendingQuestion}
               disabled={
-                pendingAction.isResponding || voiceInputActive || pendingAction.isLastQuestion
+                pendingAction.isResponding ||
+                pendingAction.isDictating ||
+                pendingAction.isLastQuestion
               }
               aria-label={gt("Show next question")}
             >

@@ -1334,18 +1334,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: expandedControlsHiddenBlockCount,
     iconOnlyBlockCount: expandedControlsIconOnlyBlockCount,
   } = useRestingComposerControlsLayout(null, true);
-  const pendingPrimaryAction = activePendingProgress
-    ? {
-        questionIndex: activePendingProgress.questionIndex,
-        isLastQuestion: activePendingProgress.isLastQuestion,
-        canAdvance:
-          activePendingProgress.canAdvance &&
-          !attachmentBlockReason &&
-          !(questionPreparations[attachmentTargetKey] ?? 0),
-        isResponding: activePendingIsResponding,
-        isComplete: Boolean(activePendingResolvedAnswers),
-      }
-    : null;
   const hasMessageToSend = composerSendState.hasSendableContent || messageHasPreparingImages;
   const showResumeAction =
     canResume &&
@@ -1369,7 +1357,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ? gt("Open composer to compact and send")
         : gt("Send message");
   const showMobilePendingAnswerActions =
-    isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
+    isMobileViewport && !isComposerCollapsedMobile && activePendingProgress !== null;
 
   const setPrompt = (nextPrompt: string) => {
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
@@ -2035,6 +2023,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
+  const pendingPrimaryAction = activePendingProgress
+    ? {
+        questionIndex: activePendingProgress.questionIndex,
+        isLastQuestion: activePendingProgress.isLastQuestion,
+        canAdvance:
+          activePendingProgress.canAdvance &&
+          !attachmentBlockReason &&
+          !(questionPreparations[attachmentTargetKey] ?? 0),
+        isResponding: activePendingIsResponding,
+        isComplete: Boolean(activePendingResolvedAnswers),
+        // Dictation belongs to the current question; switching questions drops the recording.
+        isDictating: voiceInputActive,
+      }
+    : null;
   // A compact footer gives the dictation capsule the whole row beside the send button.
   const dictationTakesFooter = isComposerFooterCompact && speechInput.state.phase !== "idle";
   const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
@@ -4031,7 +4033,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact
                       canOperateThread={canOperateThread}
                       pendingAction={pendingPrimaryAction}
-                      voiceInputActive={voiceInputActive}
                       isRunning={false}
                       canInterrupt={false}
                       isSendBusy={isSendBusy}

@@ -208,6 +208,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
     canAdvance: boolean;
     isResponding: boolean;
     isComplete: boolean;
+    isDictating: boolean;
   } | null;
   isRunning: boolean;
   canInterrupt: boolean;

@@ -50,6 +50,7 @@ it.each(["resume", "draft", "question"] as const)(
             canAdvance: true,
             isResponding: false,
             isComplete: true,
+            isDictating: false,
           }
         : null;
     const view = (overrides: Partial<ComponentProps<typeof ComposerPrimaryActions>> = {}) => (
@@ -201,21 +202,25 @@ it.each([true, false])(
   "pages between questions in both directions without an answer (compact: %s)",
   async (compact) => {
     const props = setup();
-    const pendingAction = (questionIndex: number, isLastQuestion: boolean) => ({
+    const pendingAction = (
+      questionIndex: number,
+      isLastQuestion: boolean,
+      isDictating: boolean,
+    ) => ({
       questionIndex,
       isLastQuestion,
       canAdvance: false,
       isResponding: false,
       isComplete: false,
+      isDictating,
     });
-    const view = (questionIndex: number, isLastQuestion: boolean, voiceInputActive = false) => (
+    const view = (questionIndex: number, isLastQuestion: boolean, isDictating = false) => (
       <ComposerPrimaryActions
         {...props}
         compact={compact}
-        voiceInputActive={voiceInputActive}
         isRunning={false}
         canInterrupt={false}
-        pendingAction={pendingAction(questionIndex, isLastQuestion)}
+        pendingAction={pendingAction(questionIndex, isLastQuestion, isDictating)}
       />
     );
     const previous = () => screen.getByRole("button", { name: "Previous question" });
