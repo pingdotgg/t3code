@@ -3046,6 +3046,114 @@ describe("CursorAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("runs the turn when the Cursor team's MCP policy blocks T3's server", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-mcp-policy-" });
+      const backend = yield* fakeCursorBackend;
+      backend.teamPolicy.disableAllMcp = true;
+      yield* scopedProcessEnv({
+        HOME: home,
+        USERPROFILE: home,
+        CURSOR_CONFIG_DIR: path.join(home, ".cursor"),
+      });
+      const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
+        Effect.provide(CursorSdk.layer),
+      );
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-mcp-policy-thread");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("cursor-mcp-policy-environment"),
+        threadId,
+        providerSessionId: "cursor-mcp-policy-session",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer synthetic-cursor-token",
+        browserToolsAvailable: false,
+      });
+      const modelSelection = { instanceId, model: "composer-2" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: home,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: home, CURSOR_API_KEY: "synthetic-cursor-api-key" },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, runner),
+        Effect.provide(TestProviderHost.layer({ cwd: home })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-mcp-policy-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const started = yield* runtime
+        .startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-mcp-policy-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-mcp-policy-attempt"),
+          rootNodeId: NodeId.make("cursor-mcp-policy-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-mcp-policy-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor MCP policy",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-mcp-policy-message"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Hello.",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.exit);
+
+      assert.isTrue(
+        Exit.isSuccess(started),
+        Exit.isFailure(started) ? Cause.pretty(started.cause) : "started",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it("maps runtime modes to the SDK sandbox and auto-review controls", () => {
     const base = {
       interactionMode: "default" as const,
@@ -4073,6 +4181,7 @@ const fakeCursorBackend = Effect.gen(function* () {
     Buffer.concat([Buffer.from([0x08, 0x01]), protoField(15, Buffer.from("ctx")), protoField(10)]),
   );
   const models = ["composer-2"];
+  const teamPolicy = { disableAllMcp: false };
   const runFrame = Buffer.alloc(5 + requestContextExec.length);
   runFrame.writeUInt32BE(requestContextExec.length, 1);
   requestContextExec.copy(runFrame, 5);
@@ -4088,6 +4197,11 @@ const fakeCursorBackend = Effect.gen(function* () {
         case "/v1/models":
           response.setHeader("content-type", "application/json");
           response.end(JSON.stringify({ items: models.map((id) => ({ id })) }));
+          return;
+        case "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam":
+          // GetTeamAdminSettingsResponse.allowed_mcp_configuration (6) { disable_all (1) }
+          response.setHeader("content-type", "application/proto");
+          response.end(teamPolicy.disableAllMcp ? protoField(6, Buffer.from([0x08, 0x01])) : "");
           return;
         case "/agent.v1.AgentService/RunSSE":
           response.writeHead(200, { "content-type": "application/connect+proto" });
@@ -4129,7 +4243,7 @@ const fakeCursorBackend = Effect.gen(function* () {
         server.close(() => resume(Effect.void));
       }),
   );
-  return { requestContext, models };
+  return { requestContext, models, teamPolicy };
 });
 
 function protoVarint(value: number): Buffer {
