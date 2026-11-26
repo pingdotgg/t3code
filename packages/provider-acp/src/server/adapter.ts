@@ -442,6 +442,8 @@ export interface AcpAdapterV2Flavor {
     readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
   }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.ContentBlock>, EffectAcpErrors.AcpError>;
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  /** Text to send once on the same session when `session/prompt` rejects with a transient error. */
+  readonly resumeAfterPromptError?: (cause: unknown) => string | undefined;
   /** The flavor's runtime refuses a version the policy rates broken when it starts. */
   readonly checksVersionAtHandshake?: boolean;
   /**
@@ -1803,8 +1805,8 @@ interface ActiveAcpTurn {
   foregroundIdle: Deferred.Deferred<void>;
   /** Counts the turn's prompts; only the latest one settles the turn. */
   promptSequence: number;
-  /** The turn already resent a prompt after a resumable outcome failure. */
-  outcomeResumed: boolean;
+  /** Tracks the turn's single automatic resume after a resumable outcome or prompt error. */
+  promptResumed: "outcome" | "error" | null;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
   promptSentAt: number | null;
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
@@ -9638,9 +9640,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     hiddenFailure !== undefined &&
                     resumeWith !== undefined &&
                     steersWithPrompt &&
-                    !context.outcomeResumed
+                    context.promptResumed === null
                   ) {
-                    context.outcomeResumed = true;
+                    context.promptResumed = "outcome";
                     yield* reportProviderRetry({
                       sessionId: context.nativeThreadId,
                       failure: hiddenFailure.failure,
@@ -9656,7 +9658,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         runRuntimeCallbackAtGeneration(
                           settle.generation,
                           Effect.gen(function* () {
-                            if (context.finalized || context.interrupted) return;
+                            if (context.finalized) return;
+                            if (context.interrupted) {
+                              yield* finalizeTurn(context, "interrupted");
+                              return;
+                            }
                             yield* Ref.set(runtimeRestartRequired, true);
                             yield* terminalizeOpenForegroundTools(context, "failed");
                             yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
@@ -9755,18 +9761,64 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
-                  // A resumed prompt stands in for an outcome failure, which always restarts.
-                  if (
-                    !interrupted &&
-                    (context.outcomeResumed ||
-                      flavor.restartRuntimeAfterPromptError?.(failure) === true)
-                  ) {
-                    yield* Ref.set(runtimeRestartRequired, true);
-                  }
+                  const providerFailure =
+                    flavor.promptFailure?.(failure) ??
+                    makeProviderFailure({
+                      cause: failure,
+                      class: "provider_error",
+                    });
                   // An agent that answered with an error may still finish tools it started,
                   // never pending ones; any other failure means its process or pipe is gone.
                   const agentAnswered =
                     Result.isSuccess(error) && error.success._tag === "AcpRequestError";
+                  const resumeWith =
+                    !interrupted &&
+                    settle.compactSession === undefined &&
+                    context.promptResumed === null &&
+                    providerFailure.retryable === true
+                      ? flavor.resumeAfterPromptError?.(failure)
+                      : undefined;
+                  if (resumeWith !== undefined) {
+                    context.promptResumed = "error";
+                    yield* reportProviderRetry({
+                      sessionId: context.nativeThreadId,
+                      failure: providerFailure,
+                    });
+                    yield* steerWithPrompt({
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                      providerThread: context.input.providerThread,
+                      providerTurnId: context.providerTurnId,
+                      message: { ...context.input.message, text: resumeWith, attachments: [] },
+                    }).pipe(
+                      Effect.catchCause(() =>
+                        runRuntimeCallbackAtGeneration(
+                          settle.generation,
+                          Effect.gen(function* () {
+                            if (context.finalized) return;
+                            if (context.interrupted) {
+                              yield* finalizeTurn(context, "interrupted");
+                              return;
+                            }
+                            yield* terminalizeOpenForegroundTools(context, "failed", {
+                              unstartedOnly: agentAnswered,
+                            });
+                            yield* finalizeTurn(context, "failed", providerFailure);
+                          }),
+                        ),
+                      ),
+                      Effect.forkIn(sessionScope),
+                    );
+                    return;
+                  }
+                  // A resumed prompt stands in for an outcome failure, which always restarts.
+                  if (
+                    !interrupted &&
+                    (context.promptResumed === "outcome" ||
+                      flavor.restartRuntimeAfterPromptError?.(failure) === true)
+                  ) {
+                    yield* Ref.set(runtimeRestartRequired, true);
+                  }
                   if (!interrupted) {
                     yield* terminalizeOpenForegroundTools(context, "failed", {
                       unstartedOnly: agentAnswered,
@@ -9775,11 +9827,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* finalizeTurn(
                     context,
                     interrupted ? "interrupted" : "failed",
-                    flavor.promptFailure?.(failure) ??
-                      makeProviderFailure({
-                        cause: failure,
-                        class: "provider_error",
-                      }),
+                    providerFailure,
                   ).pipe(
                     Effect.andThen(
                       Effect.logWarning("orchestration-v2.acp-prompt-failed", {
@@ -9993,7 +10041,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptDispatched,
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
-              outcomeResumed: false,
+              promptResumed: null,
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,

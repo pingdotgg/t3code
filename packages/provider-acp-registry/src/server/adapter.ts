@@ -8,6 +8,8 @@ import {
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
   devinAnswerablePermissionOptions,
+  devinPromptFailure,
+  devinResumeAfterPromptError,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
 import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
@@ -122,6 +124,10 @@ export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionC
 }
 
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
+  if (agentId === "devin") {
+    const devinFailure = devinPromptFailure(cause);
+    if (devinFailure !== undefined) return devinFailure;
+  }
   return makeProviderFailure({
     cause,
     ...(isAcpRequestError(cause)
@@ -327,6 +333,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
           answerablePermissionOptions: devinAnswerablePermissionOptions,
+          resumeAfterPromptError: devinResumeAfterPromptError,
         }
       : {}),
     ...(copilotRouting === undefined

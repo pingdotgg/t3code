@@ -6,6 +6,7 @@ export {
   registerMistralVibeAcpExtensions,
 } from "./server/adapter.ts";
 export {
+  devinResumeAfterPromptError,
   extractDevinSubagentUpdate,
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,

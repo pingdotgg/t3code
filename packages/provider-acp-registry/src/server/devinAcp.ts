@@ -1,6 +1,13 @@
+import type { OrchestrationV2ProviderFailure } from "@t3tools/contracts";
 import type * as AcpSchema from "effect-acp/compat";
+import * as AcpErrors from "effect-acp/errors";
+import * as Schema from "effect/Schema";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import type { AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
+
+const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+const ACP_AUTH_REQUIRED_CODE = -32000;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -60,4 +67,49 @@ export function devinAnswerablePermissionOptions(
   request: AcpSchema.RequestPermissionRequest,
 ): ReadonlyArray<AcpSchema.PermissionOption> {
   return request.options.filter((option) => option.optionId.trim() !== "plan_bypass");
+}
+
+function devinErrorMetadata(cause: unknown):
+  | {
+      readonly error: AcpErrors.AcpRequestError;
+      readonly errorKind: string | undefined;
+      readonly retryable: boolean | undefined;
+    }
+  | undefined {
+  if (!isAcpRequestError(cause)) return undefined;
+  const data = record(cause.data);
+  const rawKind = data?.["cognition.ai/errorKind"];
+  const errorKind =
+    typeof rawKind === "string" && rawKind.trim().length > 0 ? rawKind.trim() : undefined;
+  const retryable =
+    typeof data?.["cognition.ai/retryable"] === "boolean"
+      ? data["cognition.ai/retryable"]
+      : undefined;
+  return { error: cause, errorKind, retryable };
+}
+
+export function devinPromptFailure(cause: unknown): OrchestrationV2ProviderFailure | undefined {
+  const meta = devinErrorMetadata(cause);
+  if (meta === undefined) return undefined;
+  return makeProviderFailure({
+    cause: meta.error,
+    message: meta.error.errorMessage,
+    code: meta.errorKind ?? String(meta.error.code),
+    class: meta.errorKind === "unavailable" ? "transport_error" : "provider_error",
+    ...(meta.retryable === undefined ? {} : { retryable: meta.retryable }),
+  });
+}
+
+// Devin rejects `session/prompt` with `cognition.ai/retryable: true` while keeping the session intact.
+export function devinResumeAfterPromptError(cause: unknown): string | undefined {
+  const meta = devinErrorMetadata(cause);
+  if (
+    meta === undefined ||
+    meta.retryable !== true ||
+    meta.error.code === ACP_AUTH_REQUIRED_CODE ||
+    (meta.error.method !== undefined && meta.error.method !== "session/prompt")
+  ) {
+    return undefined;
+  }
+  return "continue";
 }

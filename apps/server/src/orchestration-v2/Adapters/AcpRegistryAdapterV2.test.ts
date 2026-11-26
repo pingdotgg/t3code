@@ -62,6 +62,7 @@ import {
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
   acpRegistryProbeResult,
+  devinResumeAfterPromptError,
 } from "@t3tools/provider-acp-registry/testing";
 
 const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
@@ -668,6 +669,47 @@ describe("AcpRegistryAdapterV2", () => {
     assert.include(rejected.message, "Request rejected.");
     assert.notInclude(rejected.message, "private-key");
     assert.notInclude(rejected.message, "token=secret");
+
+    const devinEmpty = new EffectAcpErrors.AcpRequestError({
+      code: -32021,
+      errorMessage: "The model ended its turn without a response. Send a message to continue.",
+      data: {
+        "cognition.ai/errorKind": "empty_response",
+        "cognition.ai/retryable": true,
+      },
+    });
+    assert.deepEqual(acpRegistryPromptFailure("devin", devinEmpty), {
+      class: "provider_error",
+      message: devinEmpty.errorMessage,
+      code: "empty_response",
+      retryable: true,
+    });
+    assert.deepEqual(acpRegistryPromptFailure("other-agent", devinEmpty), {
+      class: "provider_error",
+      message: devinEmpty.errorMessage,
+      code: "-32021",
+      retryable: null,
+    });
+    assert.equal(devinResumeAfterPromptError(devinEmpty), "continue");
+    assert.isUndefined(
+      devinResumeAfterPromptError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32000,
+          errorMessage: "Sign in required.",
+          data: { "cognition.ai/retryable": true },
+        }),
+      ),
+    );
+    assert.isUndefined(
+      devinResumeAfterPromptError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32021,
+          method: "session/load",
+          errorMessage: "Failed to load session.",
+          data: { "cognition.ai/retryable": true },
+        }),
+      ),
+    );
   });
 
   describe("the agent's own pickers", () => {
@@ -3943,5 +3985,199 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(yield* runTurn(2), "completed");
       assert.equal(spawned, restarts ? 2 : 1);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "resumes a Devin turn once on a retryable prompt error and keeps retryable metadata on failure",
+    () =>
+      Effect.gen(function* () {
+        const emptyResponseError = {
+          code: -32021,
+          message: "The model ended its turn without a response. Send a message to continue.",
+          data: {
+            "cognition.ai/errorKind": "empty_response",
+            "cognition.ai/retryable": true,
+          },
+        };
+        const unavailableError = {
+          code: -32010,
+          message: "Connection error, send a message to continue retrying",
+          data: {
+            "cognition.ai/errorKind": "unavailable",
+            "cognition.ai/retryable": true,
+          },
+        };
+        const nonRetryableError = {
+          code: -32020,
+          message: "Invalid request.",
+          data: {
+            "cognition.ai/errorKind": "invalid_request",
+            "cognition.ai/retryable": false,
+          },
+        };
+        const session = yield* openClaudeReplaySession(
+          [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/new",
+                result: { sessionId: CLAUDE_ROOT_SESSION },
+              },
+            },
+            // Turn 1: initial prompt rejects with retryable empty_response; single "continue" succeeds.
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                error: emptyResponseError,
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "request",
+                method: "session/prompt",
+                params: {
+                  sessionId: CLAUDE_ROOT_SESSION,
+                  prompt: [{ type: "text", text: "continue" }],
+                },
+              },
+            },
+            claudeFrames.update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Resumed reply" },
+            }),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            // Turn 2: both initial prompt and the single "continue" reject with retryable unavailable.
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                error: unavailableError,
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "request",
+                method: "session/prompt",
+                params: {
+                  sessionId: CLAUDE_ROOT_SESSION,
+                  prompt: [{ type: "text", text: "continue" }],
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                error: unavailableError,
+              },
+            },
+            // Turn 3: non-retryable error fails immediately without resuming.
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                error: nonRetryableError,
+              },
+            },
+          ],
+          undefined,
+          false,
+          "devin",
+        );
+
+        const retryTitles = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+          events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.retry !== undefined
+              ? [event.turnItem.title]
+              : [],
+          );
+
+        yield* session.runtime.startTurn(session.turnInput(1));
+        const turn1Events = yield* session.until((event) => event.type === "turn.terminal");
+        const turn1Terminal = turn1Events.at(-1);
+        assert.equal(
+          turn1Terminal?.type === "turn.terminal" ? turn1Terminal.status : null,
+          "completed",
+        );
+        assert.isTrue(
+          turn1Events.some(
+            (event) => event.type === "message.updated" && event.message.text === "Resumed reply",
+          ),
+        );
+        assert.deepEqual(retryTitles(turn1Events), ["Provider retry", "Provider recovered"]);
+
+        yield* session.runtime.startTurn(session.turnInput(2));
+        const turn2Events = yield* session.until((event) => event.type === "turn.terminal");
+        const turn2Terminal = turn2Events.at(-1);
+        if (turn2Terminal?.type !== "turn.terminal" || turn2Terminal.status !== "failed") {
+          return assert.fail("expected turn 2 to fail after one resume");
+        }
+        assert.deepEqual(turn2Terminal.failure, {
+          class: "transport_error",
+          message: unavailableError.message,
+          code: "unavailable",
+          retryable: true,
+        });
+        assert.deepEqual(retryTitles(turn2Events), ["Provider retry"]);
+
+        yield* session.runtime.startTurn(session.turnInput(3));
+        const turn3Events = yield* session.until((event) => event.type === "turn.terminal");
+        const turn3Terminal = turn3Events.at(-1);
+        if (turn3Terminal?.type !== "turn.terminal" || turn3Terminal.status !== "failed") {
+          return assert.fail("expected turn 3 to fail immediately");
+        }
+        assert.deepEqual(turn3Terminal.failure, {
+          class: "provider_error",
+          message: nonRetryableError.message,
+          code: "invalid_request",
+          retryable: false,
+        });
+        assert.deepEqual(retryTitles(turn3Events), []);
+      }).pipe(Effect.provide(layerTest)),
   );
 });
