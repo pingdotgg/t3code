@@ -16,11 +16,15 @@ import { icon } from "./icon.ts";
 import { gitLabReferenceAutolinks } from "./referenceAutolinks.ts";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
+// GitLab reserves `-` as its route scope separator, so no group or project segment can be `-`.
+// Both scoped (`/-/merge_requests/<iid>`) and unscoped legacy (`/merge_requests/<iid>`) routes
+// are valid on GitLab and GitLab-compatible hosts.
 const CHANGE_REQUEST_REFERENCE =
-  /^https?:\/\/[^/?#\s]+\/[^/?#\s]+(?:\/[^/?#\s]+)+\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/i;
+  /^https?:\/\/[^/?#\s]+\/(?!-(?:[/?#]|$))[^/?#\s]+(?:\/(?!-(?:[/?#]|$))[^/?#\s]+)+(?:\/-)?\/merge_requests\/(\d+)(?:[/?#].*)?$/i;
 
 // Self-managed GitLab runs on any hostname and nests projects in groups.
-const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u;
+const CHANGE_REQUEST_PATH =
+  /^\/((?!-(?:\/|$))[^/]+(?:\/(?!-(?:\/|$))[^/]+)+)(?:\/-)?\/merge_requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/commit\/([0-9a-f]+)\/?$/iu;
 // An incident is an issue that GitLab also serves at `/-/issues/incident/<iid>`. No project is
 // below `/groups/`: a work item there is the group's own, such as an epic.

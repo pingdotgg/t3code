@@ -356,6 +356,30 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("links an unscoped GitLab-style merge request URL and preserves the URL verbatim", () =>
+    Effect.gen(function* () {
+      const url = "https://code.acme.test/Team/Project/merge_requests/492";
+      const harness = yield* makeHarness({ project: makeProject(null) });
+      const result = yield* harness.call("link_pull_request", { url });
+      expect(result).toEqual({
+        host: "code.acme.test",
+        repository: "team/project",
+        number: 492,
+        url,
+        alreadyLinked: false,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        {
+          type: "thread.pull-request.link",
+          host: "code.acme.test",
+          repository: "team/project",
+          number: 492,
+          url,
+        },
+      ]);
+    }),
+  );
+
   it.effect("builds the URL in the project host's own shape", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

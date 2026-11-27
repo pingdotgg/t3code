@@ -46,6 +46,7 @@ describe("resolveLinkPullRequestInput", () => {
     ["https://bitbucket.org/acme/web/pull-requests/42", "bitbucket.org"],
     ["https://github.acme.test/acme/web/pull/42", "github.acme.test"],
     ["https://git.acme.test/acme/web/-/merge_requests/42", "git.acme.test"],
+    ["https://git.acme.test/acme/web/merge_requests/42", "git.acme.test"],
   ])("links supported host URL %s without a thread project", (url, host) => {
     expect(
       resolveLinkPullRequestInput({
@@ -168,7 +169,9 @@ describe("parsePullRequestReference", () => {
 
   it.each([
     "https://code.example.com/group/project/-/merge_requests/42",
+    "https://code.example.com/group/project/merge_requests/42",
     "http://git.internal/group/sub/project/-/merge_requests/7",
+    "http://git.internal/group/sub/project/merge_requests/7",
   ])("accepts self-hosted GitLab merge request URL %s", (url) => {
     expect(parsePullRequestReference(url)).toBe(url);
   });

@@ -16,10 +16,28 @@ describe("GitLab change request URLs", () => {
       number: 42,
       repositoryUrl: "https://gitlab.com/t3tools/platform/t3code",
     });
+    expect(parse("https://gitlab.com/t3tools/platform/t3code/merge_requests/42")).toEqual({
+      host: "gitlab.com",
+      repository: "t3tools/platform/t3code",
+      number: 42,
+      repositoryUrl: "https://gitlab.com/t3tools/platform/t3code",
+    });
     expect(parse("https://code.acme.test/team/project/-/merge_requests/9")).toMatchObject({
       host: "code.acme.test",
       repository: "team/project",
       number: 9,
+    });
+    expect(parse("https://code.acme.test/team/project/merge_requests/9")).toEqual({
+      host: "code.acme.test",
+      repository: "team/project",
+      number: 9,
+      repositoryUrl: "https://code.acme.test/team/project",
+    });
+    expect(parse("https://code.acme.test/-team/project-/merge_requests/9")).toEqual({
+      host: "code.acme.test",
+      repository: "-team/project-",
+      number: 9,
+      repositoryUrl: "https://code.acme.test/-team/project-",
     });
   });
 
@@ -27,11 +45,15 @@ describe("GitLab change request URLs", () => {
     expect(
       parse("https://gitlab.example.test/group/pull/123/repo/-/merge_requests/42")?.repositoryUrl,
     ).toBe("https://gitlab.example.test/group/pull/123/repo");
+    expect(
+      parse("https://gitlab.example.test/group/pull/123/repo/merge_requests/42")?.repositoryUrl,
+    ).toBe("https://gitlab.example.test/group/pull/123/repo");
   });
 
   it("leaves issues and single-segment paths alone", () => {
     expect(parse("https://gitlab.com/t3tools/t3code/-/issues/12")).toBeNull();
     expect(parse("https://gitlab.com/t3code/-/merge_requests/12")).toBeNull();
+    expect(parse("https://gitlab.com/t3code/merge_requests/12")).toBeNull();
   });
 
   it("recognizes only merge request URLs it can parse", () => {
@@ -40,8 +62,15 @@ describe("GitLab change request URLs", () => {
       "https://gitlab.com/g/p#/-/merge_requests/5",
       "https://gitlab.com?x=/g/p/-/merge_requests/5",
       "https://gitlab.com#/g/p/-/merge_requests/5",
+      "https://gitlab.com/g/p?x=/merge_requests/5",
+      "https://gitlab.com/g/p#/merge_requests/5",
       "https://gitlab.com/t3code/-/merge_requests/12",
+      "https://gitlab.com/t3code/merge_requests/12",
+      "https://gitlab.com/-/merge_requests/12",
+      "https://gitlab.com/g/-/p/merge_requests/12",
+      "https://gitlab.com/g/p/-/-/merge_requests/12",
       "https://gitlab.com/g//-/merge_requests/5",
+      "https://gitlab.com/g//merge_requests/5",
     ]) {
       expect(definition.isChangeRequestReference(url), url).toBe(false);
       expect(parse(url), url).toBeNull();
@@ -50,6 +79,9 @@ describe("GitLab change request URLs", () => {
       "https://code.acme.test/a/b/c/-/merge_requests/7?tab=diffs",
       "http://git.internal/a/b/c/-/merge_requests/7#note_1",
       "https://code.acme.test/a/b/c/-/merge_requests/7/diffs",
+      "https://code.acme.test/a/b/c/merge_requests/7?tab=diffs",
+      "http://git.internal/a/b/c/merge_requests/7#note_1",
+      "https://code.acme.test/a/b/c/merge_requests/7/diffs",
     ]) {
       expect(definition.isChangeRequestReference(url), url).toBe(true);
       expect(parse(url), url).toMatchObject({ repository: "a/b/c", number: 7 });

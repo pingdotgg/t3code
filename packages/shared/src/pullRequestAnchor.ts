@@ -42,7 +42,7 @@ function normalizePullRequestCommentAnchor(anchor: string): string {
 // GitHub pull request tabs and their GitLab merge request equivalents. Forgejo and Gitea spell the
 // path `/pulls/`.
 function pullRequestPathTab(pathname: string): PullRequestAnchor | null {
-  const tab = /\/(?:pulls?|-\/merge_requests)\/\d+\/([a-z]+)(?:\/(.*))?$/i.exec(pathname);
+  const tab = /\/(?:pulls?|(?:-\/)?merge_requests)\/\d+\/([a-z]+)(?:\/(.*))?$/i.exec(pathname);
   const rest = tab?.[2] ?? "";
   switch (tab?.[1]?.toLowerCase()) {
     case "files":
@@ -120,7 +120,7 @@ export function parsePullRequestAnchor(url: string | null | undefined): PullRequ
   const anchor = pullRequestUrlHash(url);
   const gitLab = gitLabDiffAnchor(
     anchor,
-    /\/-\/merge_requests\/\d+\/diffs\/?$/i.test(parsed.pathname)
+    /\/(?:-\/)?merge_requests\/\d+\/diffs\/?$/i.test(parsed.pathname)
       ? parsed.searchParams.get("file")
       : null,
   );
@@ -205,7 +205,7 @@ export function pullRequestLinkCommit(url: string | null | undefined): string | 
   if (!url) return null;
   try {
     const { pathname, searchParams } = new URL(url);
-    const commit = /\/-\/merge_requests\/\d+\/diffs\/?$/i.test(pathname)
+    const commit = /\/(?:-\/)?merge_requests\/\d+\/diffs\/?$/i.test(pathname)
       ? searchParams.get("commit_id")
       : /\/pulls?\/\d+\/commits\/([a-f0-9]{40})\/?$/i.exec(pathname)?.[1];
     return commit && /^[a-f0-9]{40}$/i.test(commit) ? commit : null;
