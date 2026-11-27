@@ -470,18 +470,38 @@ function parseFilePathLink(path: string, hash: string): FilePathPosition | null 
     : null;
 }
 
-const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
+const CODE_FENCE_PATTERN =
+  /^((?:[ \t]*(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t])))*[ \t]*)(`{3,}|~{3,})([^\n]*)/;
 
 const BACKTICK_RUN_PATTERN = /`+/g;
 
 export function extractInlineCodeSpans(text: string): string[] {
+  if (!text.includes("`")) return [];
   const spans: string[] = [];
-  const segments = text.split(FENCED_CODE_SEGMENT_PATTERN);
-  for (let index = 0; index < segments.length; index += 2) {
-    const segment = segments[index] ?? "";
-    if (!segment.includes("`")) continue;
-    for (const line of segment.split("\n")) {
-      const runs = line.includes("`") ? [...line.matchAll(BACKTICK_RUN_PATTERN)] : [];
+  let openFence: { marker: string; prefix: string } | null = null;
+  for (const line of text.split("\n")) {
+    const [, prefix = "", marker = "", rest = ""] =
+      (line.includes("```") || line.includes("~~~") ? CODE_FENCE_PATTERN.exec(line) : null) ?? [];
+    if (openFence) {
+      if (
+        marker[0] === openFence.marker[0] &&
+        marker.length >= openFence.marker.length &&
+        /^[ \t]*\r?$/.test(rest) &&
+        /^[ \t>]*$/.test(prefix) &&
+        prefix.replaceAll("\t", "    ").length <=
+          openFence.prefix.replaceAll("\t", "    ").length + 3 &&
+        prefix.split(">").length === openFence.prefix.split(">").length
+      ) {
+        openFence = null;
+      }
+      continue;
+    }
+    if (marker && (marker[0] === "~" || !rest.includes("`"))) {
+      openFence = { marker, prefix };
+      continue;
+    }
+    if (line.includes("`")) {
+      const runs = [...line.matchAll(BACKTICK_RUN_PATTERN)];
       if (runs.length < 2) continue;
       const runsByLength = new Map<number, number[]>();
       for (const [i, run] of runs.entries()) {
