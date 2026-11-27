@@ -191,3 +191,81 @@ it("formats singular and plural byte labels for SQLite BLOB cells", async () => 
     vi.unstubAllGlobals();
   }
 });
+
+it("reads GNU base-256 TAR modification dates before 1970 and rejects invalid ASCII mtime", async () => {
+  const encode = (value: string) => new TextEncoder().encode(value);
+  const buildTar = (entries: { path: string; body: string; mtime: Uint8Array }[]) => {
+    const bytes = new Uint8Array(entries.length * 1024 + 1024);
+    let offset = 0;
+    for (const entry of entries) {
+      const body = encode(entry.body);
+      bytes.set(encode(entry.path), offset);
+      bytes.set(encode(body.length.toString(8).padStart(11, "0") + "\0"), offset + 124);
+      bytes.set(entry.mtime, offset + 136);
+      bytes.fill(32, offset + 148, offset + 156);
+      bytes.set(encode("0"), offset + 156);
+      const sum = bytes.subarray(offset, offset + 512).reduce((acc, byte) => acc + byte, 0);
+      bytes.set(encode(sum.toString(8).padStart(6, "0") + "\0 "), offset + 148);
+      bytes.set(body, offset + 512);
+      offset += 1024;
+    }
+    return bytes.buffer;
+  };
+
+  const valid = buildTar([
+    { path: "entry.txt", body: "x", mtime: new Uint8Array(12).fill(0xff) },
+    {
+      path: "day-before.txt",
+      body: "y",
+      mtime: Uint8Array.of(0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xae, 0x80),
+    },
+    {
+      path: "far-future.txt",
+      body: "z",
+      mtime: Uint8Array.of(0x80, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0),
+    },
+    {
+      path: "out-of-range.txt",
+      body: "w",
+      mtime: Uint8Array.of(0x80, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0),
+    },
+  ]);
+  const invalid = buildTar([{ path: "bad.txt", body: "x", mtime: encode("not-octal\0\0\0") }]);
+
+  try {
+    const request = await startWorker();
+    expect(await request({ type: "open", kind: "archive", name: "gnu.tar", bytes: valid })).toEqual(
+      {
+        type: "archive",
+        entries: [
+          { path: "entry.txt", size: 1, directory: false, modified: "1969-12-31T23:59:59.000Z" },
+          {
+            path: "day-before.txt",
+            size: 1,
+            directory: false,
+            modified: "1969-12-31T00:00:00.000Z",
+          },
+          {
+            path: "far-future.txt",
+            size: 1,
+            directory: false,
+            modified: "2242-03-16T12:56:32.000Z",
+          },
+          { path: "out-of-range.txt", size: 1, directory: false, modified: null },
+        ],
+      },
+    );
+    const entry = await request({ type: "entry", path: "entry.txt" });
+    if (entry.type !== "entry") throw new Error("Expected entry");
+    expect(new TextDecoder().decode(entry.bytes)).toBe("x");
+    expect(
+      await request({ type: "open", kind: "archive", name: "bad.tar", bytes: invalid }),
+    ).toEqual({
+      type: "error",
+      code: "tar-numeric-format",
+      message: "tar-numeric-format",
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
