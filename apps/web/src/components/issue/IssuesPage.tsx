@@ -574,13 +574,13 @@ export function IssuesPage() {
         const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
         return (
           <section key={issueTrackerKey(group.tracker)} className="flex flex-col gap-1">
-            <h2 className="flex items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground">
-              <presentation.Icon aria-hidden className="size-3.5" />
-              {presentation.providerName}
-              {presentation.providerName.toLowerCase() !== group.tracker.host ? (
-                <span className="font-normal">· {group.tracker.host}</span>
-              ) : null}
-              <span className="font-normal">
+            <h2 className="flex min-w-0 items-center gap-1.5 whitespace-nowrap px-3 text-xs font-medium text-muted-foreground">
+              <presentation.Icon aria-hidden className="size-3.5 shrink-0" />
+              <span className="shrink-0">{presentation.providerName}</span>
+              <span className="min-w-0 truncate font-normal">
+                {presentation.providerName.toLowerCase() !== group.tracker.host
+                  ? `· ${group.tracker.host} `
+                  : null}
                 ·{" "}
                 {gt("{count, plural, one {{count} project} other {{count} projects}}", {
                   count: group.tracker.projectCount,
