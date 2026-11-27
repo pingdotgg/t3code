@@ -43,18 +43,21 @@ export function speechSentenceSpans(text: string) {
 }
 
 /**
- * Halves `text` at its last sentence end before the middle, else clause, else comma, for a model
- * that refused it as too long: the waterfall Kokoro's reference pipeline uses to stay under 510
- * phonemes. Undefined when there is no such break. Self-contained so the worker can inline it.
+ * Halves `text` that a model refused as too long, as Kokoro's reference pipeline does: at a
+ * sentence end, else clause, comma, or space, before the middle. Text with no break, such as
+ * unpunctuated Chinese, is halved between characters. Self-contained so the worker can inline it.
  */
 export function splitAtPunctuation(text: string) {
   const middle = Math.floor(text.length / 2);
-  for (const marks of [/[!.?…]\s/g, /[:;]\s/g, /[,—]\s/g, /\s/g]) {
+  for (const marks of [/[!.?…]\s|[。！？]/g, /[:;]\s|[：；]/g, /[,—]\s|[，、]/g, /\s/g]) {
     const breaks = [...text.matchAll(marks)].map((match) => match.index + match[0].length);
     const at = breaks.filter((index) => index <= middle).at(-1) ?? breaks[0];
     if (at !== undefined && at > 0 && at < text.length) return [text.slice(0, at), text.slice(at)];
   }
-  return undefined;
+  const characters = Array.from(text);
+  if (characters.length < 2) return undefined;
+  const half = Math.floor(characters.length / 2);
+  return [characters.slice(0, half).join(""), characters.slice(half).join("")];
 }
 
 // Supertonic's reference text preprocessing (supertone-inc/supertonic `py/helper.py`): its

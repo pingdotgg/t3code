@@ -98,7 +98,16 @@ it("speaks one sentence at a time and halves a refused one at its latest break b
     "First, second, ",
     "third, fourth and fifth",
   ]);
-  expect(splitAtPunctuation("word")).toBeUndefined();
+  expect(splitAtPunctuation("由于客户端只知道长度，高亮会偏移。现在服务器会报告时间。")).toEqual([
+    "由于客户端只知道长度，高亮会偏移。",
+    "现在服务器会报告时间。",
+  ]);
+  expect(splitAtPunctuation("クライアントは長さしか知らなかった")).toEqual([
+    "クライアントは長",
+    "さしか知らなかった",
+  ]);
+  expect(splitAtPunctuation("😀😀")).toEqual(["😀", "😀"]);
+  expect(splitAtPunctuation("a")).toBeUndefined();
 });
 
 it("cleans text the way Supertonic's reference implementation does before it reads it", () => {
