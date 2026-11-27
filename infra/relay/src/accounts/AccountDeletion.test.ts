@@ -18,6 +18,7 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as HookInbox from "../hooks/HookInbox.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import * as AccountDeletion from "./AccountDeletion.ts";
+import * as AccountEmails from "./AccountEmails.ts";
 
 const signingKey = new TextEncoder().encode("clerk-webhook-test-signing-key");
 const signingSecret = `whsec_${Base64.encode(signingKey)}`;
@@ -94,6 +95,12 @@ const layerAccountDeletionTest = (fakeDb: RelayDb.RelayDb["Service"], calls: Arr
   AccountDeletion.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(AccountEmails.AccountEmails, {
+          sendDeletionNotice: ({ to }) =>
+            to.startsWith("bounce")
+              ? Effect.fail(new AccountEmails.AccountEmailFailed({ cause: new Error("rejected") }))
+              : Effect.sync(() => void calls.push(`notice ${to}`)),
+        }),
         Layer.succeed(RelayDb.RelayDb, fakeDb),
         Layer.succeed(RelayDb.RelayTransactions, { withTransaction: (effect) => effect }),
         Layer.succeed(RelayConfiguration.RelayConfiguration, config),
@@ -235,6 +242,7 @@ describe("AccountDeletion", () => {
           where: () =>
             Object.assign(Effect.succeed([]), {
               orderBy: () => ({ limit: () => Effect.succeed(pending) }),
+              limit: () => Effect.succeed([]),
             }),
         }),
       }),
@@ -266,6 +274,53 @@ describe("AccountDeletion", () => {
         "complete relay_account_deletions user_settled",
         "retry relay_account_deletions user_broken",
       ]);
+    }).pipe(Effect.provide(layerAccountDeletionTest(fakeDb, calls)));
+  });
+
+  it.effect("sends each deletion notice once, and gives up on one that fails for a day", () => {
+    const calls: Array<string> = [];
+    const notices = [
+      {
+        userId: "user_done",
+        completedAt: "2026-11-24T11:30:00.000Z",
+        notifyEmail: "done@example.com",
+      },
+      {
+        userId: "user_bounce",
+        completedAt: "2026-11-24T11:30:00.000Z",
+        notifyEmail: "bounce@example.com",
+      },
+      {
+        userId: "user_old",
+        completedAt: "2026-11-22T11:00:00.000Z",
+        notifyEmail: "bounce-old@example.com",
+      },
+    ];
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () =>
+            Object.assign(Effect.succeed([]), {
+              orderBy: () => ({ limit: () => Effect.succeed([]) }),
+              limit: () => Effect.succeed(notices),
+            }),
+        }),
+      }),
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: (condition: SQL | undefined) =>
+            Effect.sync(() => {
+              if (values.notifyEmail === null) calls.push(`clear ${params(condition).join(",")}`);
+            }),
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-24T12:00:00.000Z"));
+      const accounts = yield* AccountDeletion.AccountDeletion;
+      yield* accounts.processPending;
+      expect(calls).toEqual(["notice done@example.com", "clear user_done", "clear user_old"]);
     }).pipe(Effect.provide(layerAccountDeletionTest(fakeDb, calls)));
   });
 });

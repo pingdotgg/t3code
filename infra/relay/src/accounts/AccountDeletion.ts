@@ -1,5 +1,5 @@
 import { RelayApi } from "@t3tools/contracts/relay";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +18,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as RelayConfiguration from "../Config.ts";
 import { RELAY_DPOP_ACCESS_TOKEN_TTL } from "../auth/RelayTokens.ts";
 import * as RelayDb from "../db.ts";
+import * as AccountEmails from "./AccountEmails.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import { unlinkEnvironmentRecord } from "../http/Api.ts";
@@ -68,6 +69,8 @@ const DELETION_SETTLE = Duration.sum(
   Duration.minutes(5),
 );
 const PENDING_BATCH_SIZE = 25;
+// A notice that keeps failing (for example, a dead address) stops being retried after this.
+const NOTICE_GIVE_UP = Duration.days(1);
 
 const identityKey = (identity: {
   readonly environmentId: string;
@@ -81,6 +84,7 @@ export class AccountDeletion extends Context.Service<
     /** Durably records a deletion; `processPending` carries it out. */
     readonly request: (input: {
       readonly userId: string;
+      readonly notifyEmail?: string;
     }) => Effect.Effect<void, AccountDeletionFailed>;
     readonly deleteAccount: (input: {
       readonly userId: string;
@@ -99,6 +103,7 @@ const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
   const inbox = yield* HookInbox.HookInbox;
+  const emails = yield* AccountEmails.AccountEmails;
   // unlinkEnvironmentRecord reads these from context; capture them once for the service.
   const unlinkContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof unlinkEnvironmentRecord>>>();
@@ -251,12 +256,13 @@ const make = Effect.gen(function* () {
 
   const request = Effect.fn("relay.account_deletion.request")(function* (input: {
     readonly userId: string;
+    readonly notifyEmail?: string;
   }) {
     yield* Effect.annotateCurrentSpan({ "relay.user_id": input.userId });
     const now = DateTime.formatIso(yield* DateTime.now);
     yield* db
       .insert(relayAccountDeletions)
-      .values({ userId: input.userId, requestedAt: now })
+      .values({ userId: input.userId, requestedAt: now, notifyEmail: input.notifyEmail ?? null })
       .onConflictDoNothing()
       .pipe(
         Effect.mapError(
@@ -305,10 +311,55 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
       }
     }
+
+    const giveUpBefore = DateTime.formatIso(
+      DateTime.subtractDuration(yield* DateTime.now, NOTICE_GIVE_UP),
+    );
+    const notices = yield* db
+      .select({
+        userId: relayAccountDeletions.userId,
+        completedAt: relayAccountDeletions.completedAt,
+        notifyEmail: relayAccountDeletions.notifyEmail,
+      })
+      .from(relayAccountDeletions)
+      .where(
+        and(
+          isNotNull(relayAccountDeletions.completedAt),
+          isNotNull(relayAccountDeletions.notifyEmail),
+        ),
+      )
+      .limit(PENDING_BATCH_SIZE)
+      .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
+    let noticesSent = 0;
+    for (const notice of notices) {
+      if (notice.notifyEmail === null || notice.completedAt === null) continue;
+      if (notice.completedAt > giveUpBefore) {
+        const sent = yield* Effect.exit(emails.sendDeletionNotice({ to: notice.notifyEmail }));
+        if (sent._tag === "Failure") {
+          yield* Effect.logWarning("Account deletion notice failed; retrying next sweep", {
+            "relay.user_id": notice.userId,
+            cause: sent.cause,
+          });
+          continue;
+        }
+        noticesSent += 1;
+      } else {
+        yield* Effect.logWarning("Gave up on an account deletion notice", {
+          "relay.user_id": notice.userId,
+        });
+      }
+      yield* db
+        .update(relayAccountDeletions)
+        .set({ notifyEmail: null })
+        .where(eq(relayAccountDeletions.userId, notice.userId))
+        .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
+    }
+
     yield* Effect.annotateCurrentSpan({
       "relay.account_deletion.pending": pending.length,
       "relay.account_deletion.completed": completed,
       "relay.account_deletion.failed": failed,
+      "relay.account_deletion.notices_sent": noticesSent,
     });
     return { completed, failed };
   }).pipe(Effect.withSpan("relay.account_deletion.process_pending"));
@@ -394,6 +445,8 @@ export const handleClerkWebhook = Effect.fn("relay.account_deletion.clerk_webhoo
   }
   const accounts = yield* AccountDeletion;
   // Once recorded, the deletion is ours to retry. Clerk retries only if recording fails.
+  // `user.deleted` carries no email address, so no notice is requested yet; pass `notifyEmail`
+  // here once the deletion flow can supply one.
   return yield* accounts.request({ userId: user.value.id }).pipe(
     Effect.as(HttpServerResponse.empty({ status: 200 })),
     Effect.catch((error) =>

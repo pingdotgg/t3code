@@ -31,7 +31,10 @@ import {
 import * as CloudMintSigner from "./auth/CloudMintSigner.ts";
 import * as RelayHttpApi from "./http/Api.ts";
 import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
-import { RELAY_WORKER_OBSERVABILITY } from "./deploymentConfig.ts";
+import {
+  MANAGED_ENDPOINT_ZONE_OWNER_STAGE,
+  RELAY_WORKER_OBSERVABILITY,
+} from "./deploymentConfig.ts";
 import { RelayObservability } from "./observability.ts";
 import * as Observability from "./observability.ts";
 import * as DeliveryAttempts from "./agentActivity/DeliveryAttempts.ts";
@@ -74,6 +77,7 @@ import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as ManagedTunnelBinding from "./environments/ManagedTunnelBinding.ts";
 import * as AccountDeletion from "./accounts/AccountDeletion.ts";
+import * as AccountEmails from "./accounts/AccountEmails.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
@@ -134,7 +138,7 @@ export const layer = Api.make(
     Effect.orDie,
   ),
   Effect.gen(function* () {
-    const { relayPublicOrigin, stage } = yield* RelayDeploymentConfig;
+    const { relayPublicOrigin, stage, relayApiZoneName } = yield* RelayDeploymentConfig;
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
     const fcmDeliveryQueue = yield* RelayFcmDeliveryQueue;
@@ -237,6 +241,21 @@ export const layer = Api.make(
 
     const alchemyRuntimeContext: Alchemy.BaseRuntimeContext = yield* Cloudflare.Worker;
 
+    // Every stage sends from the production subdomain; only production owns it.
+    const accountEmailSender = AccountEmails.accountEmailSender(relayApiZoneName);
+    if (stage === MANAGED_ENDPOINT_ZONE_OWNER_STAGE) {
+      yield* Cloudflare.Email.SendingSubdomain("AccountEmailDomain", {
+        zoneId: relayApiZone.zoneId,
+        name: accountEmailSender.domain,
+        previewEnabled: false,
+      });
+    }
+    const accountEmail = yield* Cloudflare.Email.Send(
+      yield* Cloudflare.Email.SendEmail("ACCOUNT_EMAIL", {
+        allowedSenderAddresses: [accountEmailSender.address],
+      }),
+    );
+
     const loadSettings = Effect.gen(function* () {
       return RelayConfiguration.RelayConfiguration.of({
         relayIssuer: relayPublicOrigin,
@@ -303,7 +322,17 @@ export const layer = Api.make(
           EnvironmentPublishSignatures.layer,
           ManagedEndpointReaper.layer,
           HeldHooks.layer,
-          AccountDeletion.layer,
+          AccountDeletion.layer.pipe(
+            Layer.provide(
+              AccountEmails.layer({
+                from: accountEmailSender.address,
+                send: (message) =>
+                  accountEmail
+                    .send(message)
+                    .pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext)),
+              }),
+            ),
+          ),
         ),
       ),
       Layer.provideMerge(
@@ -585,6 +614,7 @@ export const layer = Api.make(
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
         Layer.provideMerge(Cloudflare.Workers.RateLimitBinding),
         Layer.provideMerge(Cloudflare.R2.ReadBucketBinding),
+        Layer.provideMerge(Cloudflare.Email.SendBinding),
         Layer.provideMerge(HookInboxObject.layer),
         // Disable the duplicate runtime span; ours applies route/header/token redaction and rejects sender traceparent.
         Layer.provideMerge(

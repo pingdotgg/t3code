@@ -212,6 +212,8 @@ export const relayAccountDeletions = pgTable(
     requestedAt: varchar("requested_at", { length: 64 }).notNull(),
     attempts: integer("attempts").notNull().default(0),
     completedAt: varchar("completed_at", { length: 64 }),
+    // Where to send the deletion notice. Cleared once it is sent, or given up on.
+    notifyEmail: varchar("notify_email", { length: 320 }),
   },
   (table) => [
     index("idx_relay_account_deletions_pending")

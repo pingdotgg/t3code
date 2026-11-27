@@ -1,0 +1,1 @@
+ALTER TABLE "relay_account_deletions" ADD COLUMN "notify_email" varchar(320);
