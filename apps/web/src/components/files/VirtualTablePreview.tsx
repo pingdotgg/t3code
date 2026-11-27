@@ -282,6 +282,13 @@ function logicalScrollTop(scrollTop: number, model: ScrollModel): number {
   return logicalTop;
 }
 
+function pendingEndAt(node: HTMLElement, expectedTop: number | null): number | null {
+  if (expectedTop === null) return null;
+  // Layout can clamp the scroll offset while the bottom stays pinned.
+  if (node.scrollHeight - node.clientHeight - node.scrollTop <= 1) return node.scrollTop;
+  return Math.abs(node.scrollTop - expectedTop) > 1 ? null : expectedTop;
+}
+
 function ScaledRows(
   props: Omit<Parameters<typeof RowPage>[0], "page" | "rowHeights"> & {
     hasHorizontalOverflow: boolean;
@@ -333,6 +340,7 @@ function ScaledRows(
     scrollModel.current = { scale, maxFirst, heights };
     const node = ref.current;
     if (!node || (previous.scale === scale && previous.maxFirst === maxFirst)) return;
+    pendingEnd.current = pendingEndAt(node, pendingEnd.current);
     // Native-tail pixels cross rows of different heights before returning to the scaled track.
     const logicalTop = logicalScrollTop(node.scrollTop, previous);
     let nativeOffset = 0;
@@ -524,6 +532,17 @@ function ScaledRows(
       !props.getRows(Math.floor(pending.row / PREVIEW_PAGE_ROWS))?.[pending.row % PREVIEW_PAGE_ROWS]
     )
       return;
+    if (pending.alignStart) {
+      for (let index = first; index <= pending.row; index++) {
+        if (!props.getRows(Math.floor(index / PREVIEW_PAGE_ROWS))?.[index % PREVIEW_PAGE_ROWS])
+          return;
+        if (props.hasHorizontalOverflow) {
+          const measured = rowHeightCacheRef.current.entries.get(index);
+          if (!measured || (activeRowHeights?.get(index) ?? BASE_ROW_HEIGHT) !== measured.height)
+            return;
+        }
+      }
+    }
     const content = contentRef.current!;
     const firstRow = content.querySelector<HTMLElement>(`[data-preview-row="${first}"]`);
     if (
@@ -547,14 +566,18 @@ function ScaledRows(
       pendingReveal.current = null;
       return;
     }
+    const before = node.scrollTop;
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / Math.max(29, bounds.height));
+    if (Math.abs(node.scrollTop - before) < 1) pendingReveal.current = null;
     setTop(node.scrollTop);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Complete End-key scrolling after the final worker row has loaded and its DOM layout has settled.
   useLayoutEffect(() => {
     const node = ref.current;
     const content = contentRef.current;
-    if (pendingEnd.current === null || !nativeTail || !node || !content || !props.count) return;
+    if (!node || pendingEnd.current === null) return;
+    pendingEnd.current = pendingEndAt(node, pendingEnd.current);
+    if (pendingEnd.current === null || !nativeTail || !content || !props.count) return;
     const last = props.count - 1;
     if (!props.getRows(Math.floor(last / PREVIEW_PAGE_ROWS))?.[last % PREVIEW_PAGE_ROWS]) return;
     const row = content.querySelector<HTMLElement>(`[data-preview-row="${last}"]`);
@@ -612,8 +635,7 @@ function ScaledRows(
         pendingRestore.current = undefined;
         const atEnd = scrolled > 0 && node.scrollHeight - node.clientHeight - scrolled <= 1;
         // Native scrolling can move away from the last offset written by the End effects.
-        if (!atEnd && pendingEnd.current !== null && Math.abs(scrolled - pendingEnd.current) > 1)
-          pendingEnd.current = null;
+        pendingEnd.current = pendingEndAt(node, pendingEnd.current);
         savedRowPositions.set(
           positionKey,
           atEnd && !props.indexing
