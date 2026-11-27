@@ -762,7 +762,10 @@ export async function openEpub(archive: JSZip) {
       if (formTag && staticControls.has(tag) && node.attrs.disabled === undefined)
         props += " disabled";
       if (tag === "svg")
-        props += ' xmlns="http://www.w3.org/2000/svg"' + attr("xml:space", node.attrs["xml:space"]);
+        props +=
+          ' xmlns="http://www.w3.org/2000/svg"' +
+          (svgDepth ? ' xmlns:epub="http://www.idpf.org/2007/ops"' : "") +
+          attr("xml:space", node.attrs["xml:space"]);
       if (tag === "math") props += ' xmlns="http://www.w3.org/1998/Math/MathML"';
       if (tag === "table" && node.children.some((child) => tagName(child) === "tr"))
         props += ' data-epub-direct-rows=""';
