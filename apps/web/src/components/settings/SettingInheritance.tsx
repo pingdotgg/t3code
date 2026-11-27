@@ -342,7 +342,12 @@ export function SettingInheritance({
                       )}
                     >
                       <SharedTooltipTrigger
-                        render={<span className="max-w-32 truncate" />}
+                        render={
+                          <span
+                            tabIndex={0}
+                            className="max-w-32 truncate rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                          />
+                        }
                         label={layer.value}
                       >
                         {layer.value}
@@ -371,26 +376,26 @@ export function SettingInheritance({
                 ) : null}
                 {hasMultipleEnvironments && groups.length > 1 ? (
                   <Collapsible>
-                    <CollapsibleTrigger
+                    <SharedTooltipTrigger
                       render={
-                        <Button
-                          variant="ghost"
-                          size="sm-multiline"
-                          className="w-full justify-start text-left"
+                        <CollapsibleTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="sm-multiline"
+                              className="w-full justify-start text-left"
+                            />
+                          }
                         />
                       }
+                      label={winningLayer?.value}
+                      disabled={!winningLayer}
                     >
                       <span className="flex w-full min-w-0 flex-col">
                         <span className="flex min-w-0 items-center gap-2">
-                          <SharedTooltipTrigger
-                            render={
-                              <span className="min-w-0 flex-1 truncate text-sm text-foreground tabular-nums" />
-                            }
-                            label={winningLayer?.value}
-                            disabled={!winningLayer}
-                          >
+                          <span className="min-w-0 flex-1 truncate text-sm text-foreground tabular-nums">
                             {winningLayer?.value}
-                          </SharedTooltipTrigger>
+                          </span>
                           <span className="text-xs text-muted-foreground">
                             {winningLayer?.key === "environment"
                               ? gt("Environment")
@@ -417,7 +422,7 @@ export function SettingInheritance({
                           ))}
                         </span>
                       </span>
-                    </CollapsibleTrigger>
+                    </SharedTooltipTrigger>
                     <CollapsiblePanel>
                       <div className="pt-1.5">{chain}</div>
                     </CollapsiblePanel>
