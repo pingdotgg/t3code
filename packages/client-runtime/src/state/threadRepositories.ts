@@ -281,7 +281,7 @@ export function deriveTurnRepositoryChanges(
 }
 
 /** Totals for a file list that may be a prefix of what changed. */
-function changedFileTotals(list: ChangedFileList): OrchestrationV2CheckpointFileTotals {
+export function changedFileTotals(list: ChangedFileList): OrchestrationV2CheckpointFileTotals {
   if (list.filesTotal !== undefined) return list.filesTotal;
   let additions = 0;
   let deletions = 0;
