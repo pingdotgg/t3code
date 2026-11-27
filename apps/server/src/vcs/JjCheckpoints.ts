@@ -42,6 +42,7 @@ export const EMPTY_TREE_OID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const CHECKPOINT_REF_UNAVAILABLE_DETAIL = "Checkpoint ref is unavailable for diff operation.";
 const MISSING_REVISION_PATTERN = /Revision .* doesn't exist/i;
+const durableWrite = ["-c", "core.fsync=objects,reference", "-c", "core.fsyncMethod=fsync"];
 
 export const makeJjCheckpointOps = (deps: JjCheckpointDeps): VcsDriver.VcsCheckpointOps => {
   const resolveRefCommit = (gitDir: string, cwd: string, checkpointRef: string) =>
@@ -148,10 +149,7 @@ export const makeJjCheckpointOps = (deps: JjCheckpointDeps): VcsDriver.VcsCheckp
       }
 
       yield* colocatedGitCommand(deps.process, operation, { gitDir, cwd: input.cwd }, [
-        "-c",
-        "core.fsync=objects,reference",
-        "-c",
-        "core.fsyncMethod=fsync",
+        ...durableWrite,
         "update-ref",
         input.checkpointRef,
         change.commitId,
@@ -221,6 +219,33 @@ export const makeJjCheckpointOps = (deps: JjCheckpointDeps): VcsDriver.VcsCheckp
         input.cwd,
       );
       return (yield* resolveRefCommit(gitDir, input.cwd, input.checkpointRef)) !== null;
+    }),
+
+    copyCheckpointRef: Effect.fn("JjVcsDriver.checkpoints.copyCheckpointRef")(function* (input) {
+      const operation = "JjVcsDriver.checkpoints.copyCheckpointRef";
+      const { cwd, fromCheckpointRef, toCheckpointRef } = input;
+      const gitDir = yield* deps.ensureGitDir(operation, cwd);
+      const commit = yield* resolveRefCommit(gitDir, cwd, fromCheckpointRef);
+      if (commit === null) return false;
+      // Secondary jj workspaces share the Git store, but not a worktree index for its submodules.
+      const hasSubmodules = yield* deps.fileSystem
+        .exists(deps.path.join(cwd, ".gitmodules"))
+        .pipe(Effect.orElseSucceed(() => true));
+      if (hasSubmodules) return false;
+      return yield* colocatedGitCommand(deps.process, operation, { gitDir, cwd }, [
+        ...durableWrite,
+        "update-ref",
+        toCheckpointRef,
+        commit,
+        "",
+      ]).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          Effect.flatMap(resolveRefCommit(gitDir, cwd, toCheckpointRef), (existing) =>
+            existing === null ? Effect.fail(error) : Effect.succeed(true),
+          ),
+        ),
+      );
     }),
 
     restoreCheckpoint: Effect.fn("JjVcsDriver.checkpoints.restoreCheckpoint")(function* (input) {

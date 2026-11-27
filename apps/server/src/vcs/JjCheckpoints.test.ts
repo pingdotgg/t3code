@@ -51,6 +51,32 @@ const withRepo = <A, E>(
   );
 
 describeJj("JjCheckpoints capture", () => {
+  it.effect("copies a captured baseline without replacing a newer destination", () =>
+    withRepo(
+      Effect.fnUntraced(function* (context) {
+        const { checkpoints, root: cwd } = context;
+        const copy = () =>
+          checkpoints.copyCheckpointRef({
+            cwd,
+            fromCheckpointRef: baselineRef,
+            toCheckpointRef: firstTurnRef,
+          });
+        assert.isFalse(yield* copy());
+        yield* write(context, "a.txt", "original\n");
+        yield* checkpoints.captureCheckpoint({ cwd, checkpointRef: baselineRef });
+        const original = yield* runGit(cwd, ["rev-parse", baselineRef]);
+        assert.isTrue(yield* copy());
+        assert.equal(yield* runGit(cwd, ["rev-parse", firstTurnRef]), original);
+        yield* write(context, "a.txt", "newer\n");
+        yield* checkpoints.captureCheckpoint({ cwd, checkpointRef: firstTurnRef });
+        const newer = yield* runGit(cwd, ["rev-parse", firstTurnRef]);
+        assert.notEqual(newer, original);
+        assert.isTrue(yield* copy());
+        assert.equal(yield* runGit(cwd, ["rev-parse", firstTurnRef]), newer);
+      }),
+    ),
+  );
+
   it.effect("flushes the checkpoint ref when publishing into the colocated Git store", () =>
     withJjRepo({ prefix: "t3-jj-durable-checkpoint-", seed: true }, (context) =>
       Effect.gen(function* () {
