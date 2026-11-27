@@ -9647,7 +9647,7 @@
   "42828d2fd1f35806": "Resident memory",
   "e97f1b37426da9ff": "{bytes} combined process peaks",
   "3dd6eb5644a6ed8b": "Process count",
-  "85f0adb1de45cbc1": "{processStarts} starts · {processExits} exits",
+  "57320c95780c065c": "{processStarts, plural, one {{processStarts} start} other {{processStarts} starts}} · {processExits, plural, one {{processExits} exit} other {{processExits} exits}}",
   "0f0ae2813abd70e4": "Read throughput",
   "dc52330df5cc4586": "{bytes} observed",
   "d032b2addb6f00dc": "Write throughput",
