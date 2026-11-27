@@ -74,7 +74,7 @@ describe("ProjectCloneTracker", () => {
         Effect.gen(function* () {
           yield* (
             options?.onProgress?.({ stage: "receiving", percent: 40, detail: "1 MiB" }) ??
-              Effect.void
+            Effect.void
           );
           yield* Deferred.await(release);
           return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
@@ -180,6 +180,25 @@ describe("ProjectCloneTracker", () => {
       yield* Effect.yieldNow;
       expect((yield* tracker.get(projectId))?.phase).toBe("done");
       expect(protocols).toEqual(["ssh", "ssh"]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("clamps a long failure without splitting a surrogate pair", () => {
+    const harness = makeHarness({
+      clone: () =>
+        Effect.fail(
+          new SourceControlRepositoryError({
+            operation: "cloneRepository",
+            provider: SourceControlProviderKind.make("unknown"),
+            detail: `${"e".repeat(998)}\u{1F680}tail`,
+          }),
+        ),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.error).toBe(`${"e".repeat(998)}…`);
     }).pipe(Effect.provide(harness.layer));
   });
 

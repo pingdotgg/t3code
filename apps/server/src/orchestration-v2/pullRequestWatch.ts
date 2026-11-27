@@ -147,8 +147,8 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0 && !(unread && passedNow)) {
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
-    // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
-    const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    // Checks can start and finish between sweeps; a new name in the gate is news.
+    const gateGrew = gateNames.some((name) => !told.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
     const owed =
@@ -163,7 +163,9 @@ export function evaluatePullRequestWatch(
       checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
-      if (!checksBaseline) {
+      // CI running at the start that has since settled green is news. The start rollup can be
+      // pending only on optional checks, so a passed gate alone is not.
+      if (!checksBaseline || (watch.checksPending === true && settled)) {
         changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
       }
       owedChecks =
@@ -195,7 +197,12 @@ export function evaluatePullRequestWatch(
       }
     }
     passed = passedNow;
-    passedChecks = passedNow ? gateNames : [];
+    // Without required checks, told names add up, so a varying check list cannot wake twice.
+    passedChecks = !passedNow
+      ? []
+      : required.length > 0
+        ? gateNames
+        : [...new Set([...told, ...gateNames])];
   }
 
   // Only a head never read with checks waits for them; a legacy watch's clock starts at its next

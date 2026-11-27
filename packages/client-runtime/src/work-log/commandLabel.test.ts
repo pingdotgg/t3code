@@ -5,10 +5,17 @@ import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
 describe("commandProgramName", () => {
   it.each([
     ["/bin/bash --rcfile /tmp/config -c 'git status'", "git"],
+    ['bash -lc -- "printf ok"', "printf"],
+    ['bash -euo pipefail -c "ls -la"', "ls"],
+    ['bash +x +o history -c "ls -la"', "ls"],
+    // fish runs `--` itself as the script; "printf ok" is a positional argument
+    ['fish -c -- "printf ok"', "--"],
     ["zsh -lc 'CI=1 env -u DEBUG sudo -u root vp test run'", "vp"],
     ['"C:\\Program Files\\Git\\bin\\bash.exe" -lc "git status"', "git"],
     // regression: #9371 a multiline script whose later line re-quotes must still label its first program
     ["/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"", "git"],
+    ["bash -c $'ls\\nnpm test'", "ls"],
+    ["bash -c $'\\x6e\\160m test'", "npm"],
   ])("unwraps shell scripts without executing them: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -22,7 +29,7 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
-  it.each(["zsh -lc", "zsh -lc 'git status", "zsh -lc 'env'"])(
+  it.each(["zsh -lc", "bash -c --", "zsh -lc 'git status", "zsh -lc 'env'"])(
     "falls back for missing or malformed scripts: %s",
     (command) => {
       expect(commandProgramName(command)).toBeNull();
@@ -65,6 +72,17 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
+  // regression: #41718 a leading env-setup eval hid the real program behind "Running command"
+  it.each([
+    [
+      'cd /path/to/repo && eval "$(fnm env --shell zsh)" && fnm use 26.13.1 && git commit -m "msg"',
+      "fnm",
+    ],
+    ['eval "$(/opt/homebrew/bin/brew shellenv)" && pnpm test', "pnpm"],
+  ])("skips leading env-setup eval segments: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
   it.each([
     ["source ~/.nvm/nvm.sh && nvm use", "nvm"],
     ["unset DEBUG; node app.js", "node"],
@@ -77,9 +95,19 @@ describe("commandProgramName", () => {
     ["timeout 10s python3 script.py", "python3"],
     ["arch -arch arm64 /opt/tools/check", "check"],
     ["timeout 60 script -q /dev/null env CI=1 node app.js", "node"],
+    ["timeout -s KILL 30 npm test", "npm"],
+    ["timeout --signal=TERM -v 60 cargo test", "cargo"],
+    ["gtimeout -fk5 -- 30 node app.js", "node"],
   ])("unwraps process-launch wrappers: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
+
+  it.each(["timeout -x 30 npm test", "timeout -s 30 npm test"])(
+    "keeps the timeout label for invalid timeout options: %s",
+    (command) => {
+      expect(commandProgramName(command)).toBe("timeout");
+    },
+  );
 
   it.each([
     "command -v git",
@@ -138,6 +166,17 @@ describe("commandProgramName", () => {
   });
 });
 
+describe("commandDisplayText with shell option terminators", () => {
+  it.each([
+    ['bash -lc -- "printf ok"', "printf ok"],
+    ['bash -eo pipefail -c "printf ok"', "printf ok"],
+    ['fish -c -- "printf ok"', 'fish -c -- "printf ok"'],
+    ['bash -c -- "printf ok" arg0', 'bash -c -- "printf ok" arg0'],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
 describe("commandDisplayText with redacted Codex commands", () => {
   // Codex replaces secrets in command text before sending it
   // (codex-rs/secrets/src/sanitizer.rs). Usually the quoting survives.
@@ -169,8 +208,43 @@ describe("commandDisplayText with Windows shell wrappers", () => {
       'rg -n -F "new Date()" .',
     ],
     ['cmd.exe /c "npm test"', "npm test"],
+    ['Bash.exe -lc "git status"', "git status"],
+    ['"C:\\Program Files\\Git\\bin\\Bash.exe" -lc "rg foo"', "rg foo"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
+describe("commandDisplayText with ANSI-C and locale quoting", () => {
+  it.each([
+    ["bash -c $'npm test'", "npm test"],
+    ["bash -c $'echo \\'hi\\'; ls'", "echo 'hi'; ls"],
+    ['bash -lc $"npm test"', "npm test"],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
+describe("commandDisplayText with line continuations", () => {
+  it.each([
+    ['bash \\\n-lc "git status"', "git status"],
+    ['bash -lc "git status \\\n--short"', "git status --short"],
+  ])("removes them as bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it.each([
+    ["bash -lc 'git status \\\n--short'", "git status \\\n--short"],
+    ["bash -c $'git status \\\n--short'", "git status \\\n--short"],
+    ['bash \\\n-lc "git status \\\r\n--short"', "git status \\\r\n--short"],
+  ])("keeps them where bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it("keeps Windows shell scripts on separate lines", () => {
+    expect(commandDisplayText('cmd.exe /c "dir C:\\\necho done"')).toMatch(
+      /^dir C:\\?\necho done$/u,
+    );
   });
 });
 

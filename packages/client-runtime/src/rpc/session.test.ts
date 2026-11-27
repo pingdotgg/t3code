@@ -1079,7 +1079,8 @@ describe("RpcSessionFactory", () => {
       const error = yield* Fiber.join(readyFiber);
       expect(error).toMatchObject({
         reason: "configuration",
-        message: "Connected environment environment-2 does not match environment-1.",
+        message:
+          "This address now runs a different T3 Code install (environment-2, not environment-1). Remove this connection and add it again.",
       });
       expect((yield* Fiber.join(configFiber))._tag).toBe("RpcClientError");
       expect((yield* Fiber.join(customConfigFiber))._tag).toBe("RpcClientError");

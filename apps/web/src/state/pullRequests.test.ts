@@ -260,6 +260,16 @@ describe("pull request observations", () => {
     expect(observedPullRequestSummary(state)?.checksState).toBe("passing");
   });
 
+  it("keeps the summary object when a checks reread changes no state", () => {
+    let state = fromSummary(summary({ checksState: "pending", observedAt: 100 }), 1);
+    state = observePullRequestChecks(state, checksRead("passing", 300, 2));
+    const shown = observedPullRequestSummary(state);
+    state = observePullRequestChecks(state, checksRead("passing", 300, 3));
+    expect(observedPullRequestSummary(state)).toBe(shown);
+    state = observePullRequestChecks(state, checksRead("failing", 400, 4));
+    expect(observedPullRequestSummary(state)?.checksState).toBe("failing");
+  });
+
   it("shows nothing until some read has described the pull request", () => {
     const state = observePullRequestChecks(
       { metadata: null, checks: null },

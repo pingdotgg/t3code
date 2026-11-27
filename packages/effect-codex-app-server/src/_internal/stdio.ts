@@ -57,6 +57,8 @@ const STDERR_EXCERPT_MAX_CHARS = 512;
 // `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `error: …`, `ERROR: …`, `fatal: …`
 const ERROR_LINE_PATTERN = /^(?:[a-z]*error|fatal)(?: ?\[[^\]]+\])?:\s*\S/i;
 const EXIT_SUMMARY_PATTERN = /\b(?:exit status|exit code|exited with code)\s+\d+\.?$/i;
+// Rust panics and aborts end with `note: run with \`RUST_BACKTRACE=1\` …` after the cause.
+const TRAILING_NOTE_PATTERN = /^note:\s/i;
 
 export const appendStderrTail = (current: string, chunk: string): string => {
   const next = `${current}${chunk}`;
@@ -70,18 +72,26 @@ export const stderrExcerpt = (tail: string): string | undefined => {
     .map((line) => line.trim().replace(/\s+/g, " "))
     .filter((line) => line.length > 0);
   const errorIndex = lines.findLastIndex((candidate) => ERROR_LINE_PATTERN.test(candidate));
+  const causeIndex = lines.findLastIndex((candidate) => !TRAILING_NOTE_PATTERN.test(candidate));
+  const endsWithNote = causeIndex !== -1 && causeIndex < lines.length - 1;
   const lineIndex =
     errorIndex === -1 || EXIT_SUMMARY_PATTERN.test(lines.at(-1) ?? "")
-      ? lines.length - 1
+      ? endsWithNote
+        ? causeIndex
+        : lines.length - 1
       : errorIndex;
   const line = lines[lineIndex];
   if (line === undefined) {
     return undefined;
   }
-  // Wrappers can print the actual failure before their generic exit-status summary.
-  const excerpt = EXIT_SUMMARY_PATTERN.test(line)
-    ? lines.slice(Math.max(0, lineIndex - 2), lineIndex + 1).join(" | ")
-    : line;
+  // Wrappers can print the actual failure before their generic exit-status summary,
+  // and a Rust panic prints its location on the line before its message.
+  const contextLines = EXIT_SUMMARY_PATTERN.test(line)
+    ? 2
+    : lineIndex === causeIndex && endsWithNote
+      ? 1
+      : 0;
+  const excerpt = lines.slice(Math.max(0, lineIndex - contextLines), lineIndex + 1).join(" | ");
   if (excerpt.length <= STDERR_EXCERPT_MAX_CHARS) {
     return excerpt;
   }

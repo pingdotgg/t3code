@@ -24,6 +24,16 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
+const nativeFileDrag = vi.hoisted(() => ({ enabled: false }));
+vi.mock(import("../useNativeFileDrag"), async (original) => {
+  const actual = await original();
+  return {
+    useNativeFileDrag: (...args: Parameters<typeof actual.useNativeFileDrag>) => {
+      const drag = actual.useNativeFileDrag(...args);
+      return nativeFileDrag.enabled ? { ...drag, draggable: true } : drag;
+    },
+  };
+});
 vi.mock(import("../markdown/wordsHast"), async (original) => {
   const actual = await original();
   return {
@@ -180,6 +190,7 @@ function setup() {
   appearance.value = "light";
   parsedSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
+  nativeFileDrag.enabled = false;
   renderDiagram.mockReset();
   threadWorktrees.clear();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -304,19 +315,37 @@ it("sizes a raw HTML image by width and height written with px units", async () 
   expect({ width, height }).toEqual({ width: 14, height: 7 });
 });
 
-it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
+it("fades a streaming reply's blocks in once, not again when it remounts", async () => {
   setup();
+  const isFading = (element: Element) =>
+    element.getAnimations().some((animation) => animation instanceof CSSTransition);
   const message = (
-    <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text={"Finished block\n\nStill growing"}
+      isStreaming
+      streamingId="remounted-reply"
+    />
   );
   {
     await using first = await render(
-      <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\n"} isStreaming />,
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"Finished block\n\n"}
+        isStreaming
+        streamingId="remounted-reply"
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(isFading(first.getByText("Finished block").element())).toBe(true),
     );
     await first.rerender(message);
+    await vi.waitFor(() => expect(isFading(first.getByText("Still growing").element())).toBe(true));
   }
   await using screen = await render(message);
-  await expect.element(screen.getByText("Still growing")).toBeVisible();
+  await expect
+    .element(screen.getByText("Still growing"))
+    .toHaveStyle({ opacity: "1", transitionDuration: "0s" });
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 
@@ -823,6 +852,43 @@ describe("ChatMarkdown inline code selection", () => {
     }
     expect(selections).toEqual(lines);
   });
+
+  it("selects the whole line on triple-click beside a desktop-draggable inline-code file chip", async () => {
+    setup();
+    // Desktop on macOS and Windows makes local file chips draggable for native file drags.
+    nativeFileDrag.enabled = true;
+    filesystemMetadata.mockResolvedValue(AsyncResult.success({ entries: [{ kind: "file" }] }));
+    await using screen = await renderText(
+      "The template (`config/app.yaml.example`) and two docs still say 5 fps.",
+      {
+        threadRef: {
+          environmentId: EnvironmentId.make("workspace"),
+          threadId: ThreadId.make("thread"),
+        },
+      },
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.container.querySelector("a.chat-markdown-file-link")?.getAttribute("draggable"),
+      ).toBe("true"),
+    );
+    const paragraph = screen.container.querySelector("p")!;
+    const text = [...paragraph.childNodes].find((node) =>
+      node.textContent?.includes("and two docs"),
+    )!;
+    const range = document.createRange();
+    range.setStart(text, text.textContent!.indexOf("and"));
+    range.setEnd(text, text.textContent!.indexOf("and") + 3);
+    const wordBox = range.getBoundingClientRect();
+    const paragraphBox = paragraph.getBoundingClientRect();
+    await userEvent.tripleClick(paragraph, {
+      position: {
+        x: wordBox.left - paragraphBox.left + wordBox.width / 2,
+        y: wordBox.top - paragraphBox.top + wordBox.height / 2,
+      },
+    });
+    expect(window.getSelection()?.toString().trim()).toBe(paragraph.textContent?.trim());
+  });
 });
 
 describe("ChatMarkdown copy", () => {
@@ -1197,5 +1263,33 @@ describe("ChatMarkdown host media", () => {
       expect(screen.container.textContent).toContain(MISSING_FILE_ACCESS_MESSAGE),
     );
     expect(screen.container.textContent).not.toContain("Retry video");
+  });
+});
+
+describe("ChatMarkdown copy of line breaks", () => {
+  it.each([
+    { text: "first line\nsecond line", user: true },
+    { text: "first line  \nsecond line", user: false },
+    { text: "first line\\\nsecond line", user: false },
+  ])("copies each line break once: $text", async ({ text, user }) => {
+    setup();
+    await using screen = await renderText(
+      text,
+      user
+        ? {
+            className: "user-message-markdown",
+            lineBreaks: true,
+            parseRawHtml: false,
+            extensions: { userMessage: true, leadingWhitespace: true },
+          }
+        : undefined,
+    );
+    const range = document.createRange();
+    range.selectNodeContents(screen.container);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("first line\nsecond line");
   });
 });
