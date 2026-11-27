@@ -12239,13 +12239,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               threadId: nativeThreadId,
               cursor: null,
-              limit: 1,
+              limit: 2,
               sortDirection: "desc",
               itemsView: "summary",
             },
             {
               result: {
-                data: [{ id: "native-turn-second", items: [], status: "completed", error: null }],
+                data: [
+                  { id: "native-turn-second", items: [], status: "completed", error: null },
+                  { id: "native-turn-first", items: [], status: "completed", error: null },
+                ],
                 nextCursor: null,
               },
             },
@@ -12288,6 +12291,96 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
       assert.equal(snapshot.providerThread.nativeThreadRef?.nativeId, nativeThreadId);
       assert.deepEqual(snapshot.providerThread.nativeConversationHeadRef, firstTurn.nativeTurnRef);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not revert the kept Codex turn when a rollback is retried", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "retried-rollback-thread";
+      const exchange = (
+        id: number,
+        method: string,
+        params: unknown,
+        result: unknown,
+      ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+        { type: "expect_outbound", label: method, frame: { id, method, params } },
+        { type: "emit_inbound", label: method, frame: { id, result } },
+      ];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-retried-rollback",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "retried-rollback-turn",
+            prompt: "unused",
+          }).slice(0, 5),
+          ...exchange(
+            3,
+            "thread/read",
+            { threadId: nativeThreadId, includeTurns: false },
+            { thread: { id: nativeThreadId, historyMode: "paginated" } },
+          ),
+          ...exchange(
+            4,
+            "thread/turns/list",
+            {
+              threadId: nativeThreadId,
+              cursor: null,
+              limit: 100,
+              sortDirection: "desc",
+              itemsView: "summary",
+            },
+            {
+              data: [{ id: "native-turn-1", items: [], status: "completed", error: null }],
+              nextCursor: null,
+            },
+          ),
+          ...exchange(
+            5,
+            "thread/read",
+            { threadId: nativeThreadId, includeTurns: false },
+            codexReplayThreadResult({ nativeThreadId, forkedFromId: null }),
+          ),
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const now = yield* DateTime.now;
+      const providerTurn = (ordinal: number) =>
+        codexReplaySourceTurn({
+          id: `provider-turn-${ordinal}`,
+          ordinal,
+          nativeId: `native-turn-${ordinal}`,
+          providerThreadId: harness.providerThread.id,
+          now,
+        });
+      const keptTurn = providerTurn(1);
+      // A failed file restore retries after the first attempt already reverted every newer turn.
+      // 100 newer turns hit the page-size cap, so a count-based revert sends this same request.
+      const snapshot = yield* harness.runtime.rollbackThread({
+        providerThread: harness.providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-retried-rollback"),
+          appRunOrdinal: 1,
+          providerTurn: keptTurn,
+        },
+        providerThreadTurns: [
+          keptTurn,
+          ...Array.from({ length: 100 }, (_, index) => providerTurn(index + 2)),
+        ],
+      });
+
+      assert.deepEqual(snapshot.providerThread.nativeConversationHeadRef, keptTurn.nativeTurnRef);
     }).pipe(
       Effect.scoped,
       Effect.provide(
