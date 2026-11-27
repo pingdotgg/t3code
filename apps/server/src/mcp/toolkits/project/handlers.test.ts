@@ -214,6 +214,7 @@ it.effect(
           readonly title: string;
           readonly generateTitle?: boolean;
           readonly message?: string;
+          readonly outputSchema?: Record<string, unknown>;
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
@@ -281,6 +282,13 @@ it.effect(
         const idle = yield* launchWith("full-access", "full-access", { title: "Fix", message });
         expect(idle.launched).toHaveLength(1);
         expect(idle.launched[0]?.initialMessage).toBeUndefined();
+        const schemaWithoutAsk = yield* launchWith("full-access", "full-access", {
+          title: "Fix",
+          message,
+          outputSchema: { type: "object" },
+        });
+        expect(schemaWithoutAsk.result).toMatchObject({ code: "invalid_request" });
+        expect(schemaWithoutAsk.launched).toHaveLength(0);
       }
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
