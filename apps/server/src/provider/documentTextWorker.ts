@@ -12,7 +12,6 @@ const MAX_EXPANDED = 32 * 1024 * 1024;
 const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
-const RTF_NESTED_CELL_END = Symbol("rtf-nested-cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
 const PRESENTATIONML_NAMESPACES = new Set([
@@ -37,7 +36,6 @@ type TextPart =
   | string
   | typeof CELL_START
   | typeof CELL_END
-  | typeof RTF_NESTED_CELL_END
   | typeof LINE_START
   | typeof THEMATIC_BREAK
   | { columnGap: number }
@@ -910,7 +908,28 @@ function rtfUnicodeDestination(
   if (end !== undefined) return { body, end };
 }
 
-function* rtf(source: string): Generator<string | typeof RTF_NESTED_CELL_END, void> {
+const RTF_NESTED_CELL_END = Symbol("rtf-nested-cell-end");
+
+function* rtf(source: string): Generator<string, void> {
+  // \nestcell ends a nested cell without a delimiter; space it only from adjacent text.
+  let last = "";
+  let afterNestedCell = false;
+  for (const part of rtfParts(source)) {
+    if (part === RTF_NESTED_CELL_END) {
+      afterNestedCell = true;
+      continue;
+    }
+    const text = part.replaceAll("\0", "");
+    if (text) {
+      if (afterNestedCell && /\S/u.test(last) && /\S/u.test(text[0]!)) yield " ";
+      afterNestedCell = false;
+      last = text.at(-1)!;
+    }
+    yield part;
+  }
+}
+
+function* rtfParts(source: string): Generator<string | typeof RTF_NESTED_CELL_END, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
     skip: false,
@@ -1405,7 +1424,6 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let space = false;
   let midLine = false;
   let pendingThematicBreak: string | undefined;
-  let afterNestedRtfCell = false;
   let endsWithWord = false;
   let afterImageDescription = false;
   let truncated = false;
@@ -1417,17 +1435,6 @@ export async function extractDocumentText(path: string, extension: string): Prom
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
     for await (let part of document(path, extension)) {
-      if (part === RTF_NESTED_CELL_END) {
-        afterNestedRtfCell = true;
-        continue;
-      }
-      if (afterNestedRtfCell && typeof part === "string") {
-        const first = /[^\0]/u.exec(part)?.[0];
-        if (first) {
-          if (/\S/u.test(result.at(-1) ?? "") && /\S/u.test(first)) part = " " + part;
-          afterNestedRtfCell = false;
-        }
-      }
       if (part === CELL_START) {
         if (cellDepth++ === 0) {
           started = false;
