@@ -222,7 +222,7 @@ export function pullRequestPanelContext(
   }
   const legacy = thread.linkedPullRequest ?? thread.branchPullRequest ?? null;
   return legacy !== null &&
-    legacy.repository === surface.repository &&
+    legacy.repository.toLowerCase() === surface.repository.toLowerCase() &&
     legacy.number === surface.number
     ? "thread"
     : "page";
