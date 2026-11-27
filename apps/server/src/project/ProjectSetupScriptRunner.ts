@@ -644,11 +644,23 @@ export const make = Effect.gen(function* () {
           Effect.ignore,
         ),
       ),
-      Effect.tap(({ exitCode }) =>
-        exitCode === 0
-          ? terminalManager.closeIdle({ threadId: input.threadId, terminalId })
-          : Effect.void,
-      ),
+      Effect.tap(({ exitCode }) => {
+        if (exitCode !== 0) return Effect.void;
+        // Nothing closes a settle shell later, so a prompt hook still running (a git prompt)
+        // must not fail an idle check and leave it holding the settled worktree.
+        if (trigger === "settle") {
+          return terminalManager.close({ threadId: input.threadId, terminalId }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("failed to close settle script terminal", {
+                ...errorContext,
+                terminalId,
+                error: error.message,
+              }),
+            ),
+          );
+        }
+        return terminalManager.closeIdle({ threadId: input.threadId, terminalId });
+      }),
     );
 
     return {

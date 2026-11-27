@@ -2,8 +2,11 @@ import * as NodeStdio from "@effect/platform-node-shared/NodeStdio"
 import { assert, describe, it } from "@effect/vitest"
 import * as Effect from "effect/Effect"
 import * as Stdio from "effect/Stdio"
+import { spawn } from "node:child_process"
+import { join } from "node:path"
 
 const streams = [process.stdin, process.stdout, process.stderr] as const
+const fixture = join(__dirname, "fixtures", "node-stdio.ts")
 
 const setIsTTY = (stdin: boolean, stdout: boolean, stderr: boolean | undefined) =>
   Effect.sync(() => {
@@ -50,4 +53,27 @@ describe("NodeStdio", () => {
         assert.isFalse(yield* stdio.stderrIsTerminal)
       }).pipe(Effect.provide(NodeStdio.layer))
     ))
+
+  it.effect(
+    "exits when stdin consumers stop while the pipe stays open and supports later reads",
+    () =>
+      Effect.callback<void>((resume) => {
+        const child = spawn(process.execPath, [fixture], { stdio: ["pipe", "pipe", "inherit"] })
+        let stdout = ""
+        child.stdout.setEncoding("utf8")
+        child.stdout.on("data", (data) => {
+          stdout += data
+          if (stdout === "a") {
+            child.stdin.write("b")
+          }
+        })
+        child.on("error", (error) => resume(Effect.die(error)))
+        child.on("close", (code) => {
+          resume(Effect.sync(() => assert.deepStrictEqual({ code, stdout }, { code: 0, stdout: "ab" })))
+        })
+        child.stdin.write("a")
+        return Effect.sync(() => child.kill())
+      }),
+    { timeout: 15_000 }
+  )
 })

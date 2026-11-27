@@ -3319,108 +3319,29 @@ export const catchReason: {
 )
 
 /** @internal */
-export const catchReasons: {
-  <
-    K extends Tags<E>,
-    E,
-    Cases extends {
-      [RK in ReasonTags<ExtractTag<NoInfer<E>, K>>]+?: (
-        reason: ExtractReason<ExtractTag<NoInfer<E>, K>, RK>,
-        error: NarrowReason<ExtractTag<NoInfer<E>, K>, RK>
-      ) => Effect.Effect<any, any, any>
-    },
-    A2 = unassigned,
-    E2 = never,
-    R2 = never
-  >(
-    errorTag: K,
-    cases: Cases,
-    orElse?:
-      | ((
-        reason: ExcludeReason<ExtractTag<NoInfer<E>, K>, Extract<keyof Cases, string>>,
-        error: OmitReason<ExtractTag<NoInfer<E>, K>, Extract<keyof Cases, string>>
-      ) => Effect.Effect<A2, E2, R2>)
-      | undefined
-  ): <A, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<
-    | A
-    | Exclude<A2, unassigned>
-    | { [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect.Effect<infer A, any, any> ? A : never }[
-      keyof Cases
-    ],
-    | ExcludeTag<E, K>
-    | E2
-    | (A2 extends unassigned ? ExtractTag<E, K> : never)
-    | { [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect.Effect<any, infer E, any> ? E : never }[
-      keyof Cases
-    ],
-    | R
-    | R2
-    | { [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect.Effect<any, any, infer R> ? R : never }[
-      keyof Cases
-    ]
-  >
-  <
-    A,
-    E,
-    R,
-    K extends Tags<E>,
-    Cases extends {
-      [RK in ReasonTags<ExtractTag<E, K>>]+?: (
-        reason: ExtractReason<ExtractTag<E, K>, RK>,
-        error: NarrowReason<ExtractTag<E, K>, RK>
-      ) => Effect.Effect<any, any, any>
-    },
-    A2 = unassigned,
-    E2 = never,
-    R2 = never
-  >(
-    self: Effect.Effect<A, E, R>,
-    errorTag: K,
-    cases: Cases,
-    orElse?:
-      | ((
-        reason: ExcludeReason<ExtractTag<NoInfer<E>, K>, Extract<keyof Cases, string>>,
-        error: OmitReason<ExtractTag<NoInfer<E>, K>, Extract<keyof Cases, string>>
-      ) => Effect.Effect<A2, E2, R2>)
-      | undefined
-  ): Effect.Effect<
-    | A
-    | Exclude<A2, unassigned>
-    | { [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect.Effect<infer A, any, any> ? A : never }[
-      keyof Cases
-    ],
-    | ExcludeTag<E, K>
-    | E2
-    | (A2 extends unassigned ? ExtractTag<E, K> : never)
-    | { [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect.Effect<any, infer E, any> ? E : never }[
-      keyof Cases
-    ],
-    | R
-    | R2
-    | { [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect.Effect<any, any, infer R> ? R : never }[
-      keyof Cases
-    ]
-  >
-} = dual((args) => isEffect(args[0]), (self, errorTag, cases, orElse) => {
-  let keys: Array<string>
-  return catchIf(
-    self,
-    ((e: any) =>
-      isTagged(e, errorTag) &&
-      hasProperty(e, "reason") &&
-      hasProperty(e.reason, "_tag") &&
-      isString(e.reason._tag) &&
-      (orElse !== undefined || (keys ??= Object.keys(cases)).includes(e.reason._tag))) as any,
-    (e: any) => {
-      const reason = e.reason
-      keys ??= Object.keys(cases)
-      if (keys.includes(reason._tag)) {
-        return (cases as any)[reason._tag](reason, e)
+export const catchReasons: typeof Effect.catchReasons = dual(
+  (args) => isEffect(args[0]),
+  (self, errorTag, cases, orElse) => {
+    let keys: Array<string>
+    return catchIf(
+      self,
+      ((e: any) =>
+        isTagged(e, errorTag) &&
+        hasProperty(e, "reason") &&
+        hasProperty(e.reason, "_tag") &&
+        isString(e.reason._tag) &&
+        (orElse !== undefined || (keys ??= Object.keys(cases)).includes(e.reason._tag))) as any,
+      (e: any) => {
+        const reason = e.reason
+        keys ??= Object.keys(cases)
+        if (keys.includes(reason._tag)) {
+          return (cases as any)[reason._tag](reason, e)
+        }
+        return orElse ? orElse(reason, e) : fail(e)
       }
-      return orElse ? orElse(reason, e) : fail(e)
-    }
-  )
-})
+    )
+  }
+)
 
 /** @internal */
 export const unwrapReason: {
@@ -5645,7 +5566,15 @@ export const forkUnsafe = <FA, FE, A, E, R>(
   } else {
     // Preserve the fork context rather than the dispatcher's context.
     child._asyncContext = captureAsyncContext()
-    parentRuntime.currentDispatcher.scheduleTask(() => child.evaluate(effect as any), 0)
+    // Cancel the deferred start if an interrupt runs first.
+    let resumed = false
+    child.yieldWith(() => {
+      resumed = true
+    })
+    parentRuntime.currentDispatcher.scheduleTask(() => {
+      if (resumed) return
+      child.evaluate(effect as any)
+    }, 0)
   }
   return child
 }

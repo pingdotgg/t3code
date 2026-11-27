@@ -5326,6 +5326,17 @@ function gatewayCooldownResetAt(
 const CLAUDE_UNSUPPORTED_VERSION_ERROR =
   /^API Error: 400 Claude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\./;
 
+// Claude Code restores a resumed session's model ledger from this version on; earlier ones
+// restart it at zero per process (the claude_idle_resume recording, 2.1.111).
+const CLAUDE_RESUME_RESTORES_MODEL_LEDGER_VERSION = "2.1.280";
+
+function claudeResumeRestoresModelLedger(version: string | undefined): boolean {
+  return (
+    version !== undefined &&
+    compareSemverVersions(version, CLAUDE_RESUME_RESTORES_MODEL_LEDGER_VERSION) >= 0
+  );
+}
+
 /** The version a gateway sent in place of the session's own, when the session itself meets the requirement. */
 function claudeRewrittenVersion(
   message: SDKResultMessage,
@@ -5407,10 +5418,10 @@ function providerFailureFromResult(
           message.result.startsWith(
             "API Error: Request rejected (429) · All credentials for model ",
           )
-            ? (/^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+            ? (/^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down(?: via provider [^\s()]+)? \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
                 message.result,
               ) ??
-                /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(last error: [\s\S]*\) \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)$/.exec(
+                /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down(?: via provider [^\s()]+)? \(last error: [\s\S]*\) \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)$/.exec(
                   message.result,
                 ))
             : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(message.result),
@@ -5773,7 +5784,7 @@ interface ClaudeLiveQueryContext {
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
   // Subagents this process still ran when a replacement took over; only its exit can end them.
   handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
-  // The SDK's per-process model ledger at the last result; a new process starts at zero.
+  // The SDK's model ledger at the last result; only a fresh session starts at zero.
   modelLedger: ClaudeModelLedger | undefined;
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
@@ -6225,6 +6236,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   let modelCatalog = yield* loadModelCatalog;
   // Results report the window Claude Code compacts against; outside the catalog it is the only source.
   const reportedContextWindows = new Map<string, number>();
+  // A resumed session's result totals include its earlier turns; this anchor outlives idle release.
+  const modelLedgers = new Map<string, ClaudeModelLedger>();
   const claudeContextWindow = (modelSelection: ModelSelection): number | null =>
     resolveClaudeCatalogContextWindowTokens(modelCatalog, modelSelection) ??
     reportedContextWindows.get(
@@ -14363,7 +14376,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 (subagent) => subagent.task.status === "running",
               ),
             ),
-            modelLedger: new Map(),
+            modelLedger: shouldResume ? modelLedgers.get(nativeThreadId) : new Map(),
             taskOutputRoot: claudeTaskOutputRoot(
               adapterOptions.environment,
               path,
@@ -14407,6 +14420,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.receivedInit = true;
                     context.capabilities = new Set(message.capabilities ?? []);
                     context.claudeCodeVersion = message.claude_code_version;
+                    if (
+                      shouldResume &&
+                      !claudeResumeRestoresModelLedger(message.claude_code_version)
+                    ) {
+                      context.modelLedger = new Map();
+                    }
                   }
                   if (message.type === "system" && message.subtype === "init") {
                     for (const server of message.mcp_servers ?? []) {
@@ -14448,6 +14467,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       growth === undefined && context.modelLedger !== undefined
                         ? undefined
                         : ledger;
+                    // A stopping process's late result must not replace its successor's anchor.
+                    if (!context.stopping) {
+                      const sessionId =
+                        clearedNativeSessions.get(context.nativeThreadId) ?? context.nativeThreadId;
+                      if (context.modelLedger === undefined) modelLedgers.delete(sessionId);
+                      else modelLedgers.set(sessionId, context.modelLedger);
+                    }
                     for (const [model, window] of claudeReportedContextWindows(
                       message.modelUsage,
                     )) {
