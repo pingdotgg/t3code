@@ -184,7 +184,7 @@ function xml(source: string, extension: string): XmlNode {
       node.mathmlFirstChildSeen = false;
     if (
       extension === ".epub" &&
-      ["nav", "details", "summary"].includes(node.name) &&
+      ["nav", "main", "details", "summary"].includes(node.name) &&
       isXhtmlElement(tag.name, stack, rootTagName)
     )
       node.epubBlock = true;
