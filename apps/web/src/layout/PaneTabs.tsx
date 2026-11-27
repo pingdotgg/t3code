@@ -1259,6 +1259,14 @@ function usePaneJoinMotionMs(): number {
   return reducedMotion ? 0 : durationMs;
 }
 
+/** All tabs of the pane this header sits in, in one stable list so switching tabs keeps siblings mounted. */
+export function useLayoutPaneTabs(): readonly LayoutTab[] {
+  const { paneId } = useLayoutPane();
+  return useLayoutStore((state) =>
+    paneId === null ? EMPTY_TABS : (findLayoutPane(state.layout, paneId)?.pane.tabs ?? EMPTY_TABS),
+  );
+}
+
 /**
  * The other tabs of the pane this chat renders in, split around the active
  * one so the notch lists them in order (pen R49C1s: active tab, then the
