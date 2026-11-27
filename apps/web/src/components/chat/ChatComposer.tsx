@@ -1731,13 +1731,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cursorAdjacentToMention: boolean,
     contextIds: string[],
     textChanged: boolean,
-    fromHistory = false,
+    source?: "history" | "paste",
   ) => {
     refreshWorkspaceSnapshotOnTyping();
     const trigger = cursorAdjacentToMention
       ? null
       : detectComposerTrigger(nextPrompt, expandedCursor);
-    const updateTrigger = textChanged ? setComposerTrigger : followComposerCaret;
+    const opensTrigger = textChanged && !(source === "paste" && trigger?.kind === "skill");
+    const updateTrigger = opensTrigger ? setComposerTrigger : followComposerCaret;
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
@@ -1849,7 +1850,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
       ),
       removedQueuedAttachments: activeRemovedEditingQueuedAttachments ?? [],
-      fromHistory,
+      fromHistory: source === "history",
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
       retained: retainedContextPayloads,
