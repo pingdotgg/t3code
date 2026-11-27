@@ -41,17 +41,18 @@ function document_() {
 
 it("draws list numbers with the document's faces, and text no bundled face covers with the system's", async () => {
   const opened = await openWordDocument(await document_(), document.fonts);
-  const drawn: { text: string; font: string }[] = [];
-  using _fillText = vi
+  using fillText = vi
     .spyOn(OffscreenCanvasRenderingContext2D.prototype, "fillText")
-    .mockImplementation(function (this: OffscreenCanvasRenderingContext2D, text) {
-      drawn.push({ text, font: this.font });
-    });
+    .mockImplementation(() => {});
 
-  await opened.paint(0, 1, 1, new AbortController().signal);
+  const painted = await opened.paint(0, 1, 1, new AbortController().signal);
+  painted?.bitmap.close();
 
-  expect(drawn.map((call) => call.text)).toEqual(expect.arrayContaining(["1.", "ภาษาไทย"]));
-  expect(drawn.find((call) => call.text === "1.")?.font).toContain("Calibri");
+  const marker = opened
+    .built(0)
+    ?.primitives.find((run) => run.kind === "glyphRun" && run.text === "1.");
+  expect(marker).toMatchObject({ fallbackFont: expect.stringContaining("Calibri") });
+  expect(fillText.mock.calls.map(([text]) => text)).toEqual(["ภาษาไทย"]);
   expect([...document.fonts].map((face) => face.family.replaceAll('"', ""))).toContain("Calibri");
 });
 

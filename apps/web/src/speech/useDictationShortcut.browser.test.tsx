@@ -1,10 +1,13 @@
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { createRef, type RefObject } from "react";
+import { createRef, type RefObject, useRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../test/render";
 import { useDictationShortcut, type DictationKeyHandlers } from "./useDictationShortcut";
+import { useDictationSubmissionShortcut } from "./useDictationSubmissionShortcut";
 
-vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
+const settings = vi.hoisted(() => ({ mode: "hold" as "hold" | "auto" | "toggle" }));
+vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => settings.mode }));
 
 type ShortcutInput = Parameters<typeof useDictationShortcut>[0];
 
@@ -42,7 +45,8 @@ const press = (repeat = false) =>
     }),
   );
 
-function actions(available: boolean) {
+function actions(available: boolean, mode: typeof settings.mode = "hold") {
+  settings.mode = mode;
   return {
     available,
     state: { phase: "idle" as const, error: null, errorAction: null },
@@ -93,6 +97,28 @@ it("finishes a released hold after startup even if the chord was pressed again w
   expect(speech.start).toHaveBeenCalledOnce();
   expect(speech.stop).toHaveBeenCalledOnce();
 });
+
+it.each([
+  { mode: "hold", heldMs: 0, stops: 1 },
+  { mode: "auto", heldMs: 300, stops: 1 },
+  { mode: "auto", heldMs: 299, stops: 0 },
+] as const)(
+  "ends a $mode press held $heldMs ms when a chord modifier is released without the letter keyup",
+  async ({ mode, heldMs, stops }) => {
+    const speech = actions(true, mode);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    await using _screen = await render(<Probe speech={speech} />);
+    using clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    press();
+    clock.mockReturnValue(heldMs);
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt", code: "AltLeft" }));
+    await speech.start.mock.results[0]?.value;
+    expect(speech.stop).not.toHaveBeenCalled();
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", code: "MetaLeft" }));
+    await speech.start.mock.results[0]?.value;
+    expect(speech.stop).toHaveBeenCalledTimes(stops);
+  },
+);
 
 const escape = () =>
   new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true });
@@ -155,6 +181,32 @@ it("lets Escape in another editor of the recording editor's dialog reach that ed
   expect(speech.cancel).not.toHaveBeenCalled();
 });
 
+it("lets Escape close a modal opened over the recording before canceling it", async () => {
+  const speech = recording();
+  const closeImage = vi.fn();
+  await using screen = await render(
+    <>
+      <Probe speech={speech} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Expanded image"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") closeImage();
+        }}
+      >
+        <button type="button">Close</button>
+      </div>
+    </>,
+  );
+  const close = screen.getByRole("button", { name: "Close" }).element();
+  if (!(close instanceof HTMLElement)) throw new Error("expected the image dialog's button");
+  close.focus();
+  close.dispatchEvent(escape());
+  expect(speech.cancel).not.toHaveBeenCalled();
+  expect(closeImage).toHaveBeenCalledTimes(1);
+});
+
 it("cancels the recording on Escape outside other shown dictation editors", async () => {
   const speech = recording();
   const reviewRef = createRef<HTMLTextAreaElement>();
@@ -210,3 +262,35 @@ it.each([
     expect(preview.cancel).toHaveBeenCalledTimes(previewRecords ? 1 : 0);
   },
 );
+
+function SubmissionProbe({ onKeyDown }: { onKeyDown: (event: KeyboardEvent) => void }) {
+  const formRef = useRef<HTMLFormElement>(null);
+  useDictationSubmissionShortcut({ enabled: true, formRef, onKeyDown });
+  return (
+    <>
+      <div data-testid="timeline" tabIndex={0}>
+        <button type="button">Copy</button>
+        <input aria-label="Search" />
+      </div>
+      <form ref={formRef} />
+    </>
+  );
+}
+
+it("submits dictation on Enter while the chat timeline has focus", async () => {
+  const onKeyDown = vi.fn();
+  await using screen = await render(<SubmissionProbe onKeyDown={onKeyDown} />);
+  (screen.getByTestId("timeline").element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(onKeyDown).toHaveBeenCalledOnce();
+});
+
+it("leaves dictation Enter to a focused button or field", async () => {
+  const onKeyDown = vi.fn();
+  await using screen = await render(<SubmissionProbe onKeyDown={onKeyDown} />);
+  (screen.getByRole("button", { name: "Copy" }).element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  (screen.getByRole("textbox", { name: "Search" }).element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(onKeyDown).not.toHaveBeenCalled();
+});

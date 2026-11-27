@@ -23,10 +23,21 @@ import {
   Tracer
 } from "effect"
 import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientError from "effect/http/HttpClientError"
 import * as HttpClientRequest from "effect/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as HttpEffect from "effect/http/HttpEffect"
-import { Rpc, RpcClient, RpcGroup, RpcMessage, RpcSchema, RpcSerialization, RpcServer, RpcTest } from "effect/rpc"
+import {
+  Rpc,
+  RpcClient,
+  RpcGroup,
+  RpcMessage,
+  RpcMiddleware,
+  RpcSchema,
+  RpcSerialization,
+  RpcServer,
+  RpcTest
+} from "effect/rpc"
 import { RpcClientDefect, RpcClientError } from "effect/rpc/RpcClientError"
 import * as Socket from "effect/socket/Socket"
 import { TestClock } from "effect/testing"
@@ -74,18 +85,21 @@ const takeRequestId = (message: Parameters<RpcClient.Protocol["Service"]["send"]
 
 const makeSocketProtocol = Effect.gen(function*() {
   const frames = yield* Queue.unbounded<string>()
+  const sent = yield* Queue.unbounded<RpcMessage.FromClientEncoded>()
+  const write = (data: string | Uint8Array | Socket.CloseEvent) =>
+    typeof data === "string" ? Effect.asVoid(Queue.offer(sent, JSON.parse(data))) : Effect.void
   const socket = Socket.make({
     reader: Effect.succeed({
       pull: Queue.take(frames).pipe(Effect.map((frame) => [frame] as const)),
       upgrade: Socket.SocketUpgradeError.unsupported
     }),
-    writer: Effect.succeed({ write: () => Effect.void, writeAll: () => Effect.void })
+    writer: Effect.succeed({ write, writeAll: () => Effect.void })
   })
   const protocol = yield* RpcClient.makeProtocolSocket().pipe(
     Effect.provideService(Socket.Socket, socket),
     Effect.provideService(RpcSerialization.RpcSerialization, RpcSerialization.json)
   )
-  return { protocol, frames }
+  return { protocol, frames, sent }
 })
 
 const makeHttpClient = (body: string): HttpClient.HttpClient =>
@@ -135,7 +149,23 @@ const EchoGroup = RpcGroup.make(
   })
 )
 
-// Connects a batching HTTP client to a real RPC server, counting the HTTP
+const withCapturedSpans = <A, E, R>(f: (spans: Array<Tracer.NativeSpan>) => Effect.Effect<A, E, R>) => {
+  const spans: Array<Tracer.NativeSpan> = []
+  return f(spans).pipe(
+    Effect.provideService(
+      Tracer.Tracer,
+      Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options)
+          spans.push(span)
+          return span
+        }
+      })
+    )
+  )
+}
+
+// Connects a batching HTTP client to a real RPC server, recording the HTTP
 // requests that cross between them.
 const makeBatchingClient = Effect.fnUntraced(function*(
   serializationLayer: Layer.Layer<RpcSerialization.RpcSerialization>,
@@ -149,10 +179,10 @@ const makeBatchingClient = Effect.fnUntraced(function*(
     ))
   )
   const handler = HttpEffect.toWebHandler(httpEffect)
-  let httpRequests = 0
+  const requests: Array<HttpClientRequest.HttpClientRequest> = []
   const httpClient = HttpClient.make((request) =>
     Effect.gen(function*() {
-      httpRequests++
+      requests.push(request)
       yield* beforeRequest
       const webRequest = yield* Effect.orDie(HttpClientRequest.toWeb(request))
       const response = yield* Effect.promise(() => handler(webRequest))
@@ -167,7 +197,7 @@ const makeBatchingClient = Effect.fnUntraced(function*(
       )
     )
   )
-  return { client, httpRequests: () => httpRequests }
+  return { client, requests }
 })
 
 const assertEmptyResponseFailsRequest = Effect.fnUntraced(function*(
@@ -189,6 +219,16 @@ const assertEmptyResponseFailsRequest = Effect.fnUntraced(function*(
   assert.strictEqual(error.reason._tag, "RpcClientDefect")
   assert.strictEqual(error.reason.message, "Received empty HTTP response from RPC server")
 })
+
+class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {}) {}
+class Auth extends RpcMiddleware.Service<Auth>()("RpcClientTest/Auth", { error: Unauthorized }) {}
+
+// None of these RPCs declare `Unauthorized`; it comes from the middleware.
+const AuthGroup = RpcGroup.make(
+  Rpc.make("Get", { success: Schema.String }),
+  Rpc.make("Events", { success: Schema.String, stream: true }),
+  Rpc.make("EventsQueue", { success: Schema.String, stream: true })
+).middleware(Auth)
 
 describe("RpcClient", () => {
   it.effect("does not fail a new request started synchronously during connection defect delivery", () =>
@@ -453,6 +493,53 @@ describe("RpcClient", () => {
       const reply = { _tag: "Exit", requestId: "new", exit: { _tag: "Success", value: "ok" } } as const
       yield* Queue.offer(frames, JSON.stringify([{ _tag: "Defect", defect: "boom" }, reply]))
       assert.deepStrictEqual(yield* Queue.take(received), reply)
+    }))
+
+  it.effect("reads other socket responses while a stream chunk waits for buffer space", () =>
+    Effect.gen(function*() {
+      const { protocol, frames, sent } = yield* makeSocketProtocol
+      const client = yield* RpcClient.make(ChunkGroup).pipe(Effect.provideService(RpcClient.Protocol, protocol))
+      const resume = yield* Latch.make()
+      const received: Array<string> = []
+      const stream = yield* client.Good(undefined, { streamBufferSize: 1 }).pipe(
+        Stream.runForEach((value) => resume.whenOpen(Effect.sync(() => received.push(value)))),
+        Effect.forkChild
+      )
+      const streamId = takeRequestId(yield* Queue.take(sent))
+      yield* Queue.offerAll(frames, [
+        JSON.stringify({ _tag: "Chunk", requestId: streamId, values: ["a", "b", "c"] }),
+        JSON.stringify({ _tag: "Exit", requestId: streamId, exit: { _tag: "Success", value: null } })
+      ])
+
+      const unary = yield* client.Unary().pipe(Effect.forkChild)
+      const unaryId = takeRequestId(yield* Queue.take(sent))
+      yield* Queue.offer(
+        frames,
+        JSON.stringify({ _tag: "Exit", requestId: unaryId, exit: { _tag: "Success", value: "ok" } })
+      )
+      assert.strictEqual(yield* Fiber.join(unary), "ok")
+
+      // the stream's Exit is delivered after the waiting values
+      yield* resume.open
+      yield* Fiber.join(stream)
+      assert.deepStrictEqual(received, ["a", "b", "c"])
+    }))
+
+  it.effect("does not acknowledge a waiting socket chunk when its stream consumer is interrupted", () =>
+    Effect.gen(function*() {
+      const { protocol, frames, sent } = yield* makeSocketProtocol
+      const client = yield* RpcClient.make(ChunkGroup).pipe(Effect.provideService(RpcClient.Protocol, protocol))
+      const consuming = yield* Deferred.make<void>()
+      const reader = yield* client.Good(undefined, { streamBufferSize: 1 }).pipe(
+        Stream.runForEach(() => Deferred.succeed(consuming, void 0).pipe(Effect.andThen(Effect.never))),
+        Effect.forkChild
+      )
+      const requestId = takeRequestId(yield* Queue.take(sent))
+      yield* Queue.offer(frames, JSON.stringify({ _tag: "Chunk", requestId, values: ["a", "b", "c"] }))
+      yield* Deferred.await(consuming)
+      yield* Fiber.interrupt(reader)
+      yield* Effect.yieldNow
+      assert.deepStrictEqual(yield* Queue.takeAll(sent), [{ _tag: "Interrupt", requestId }])
     }))
 
   it.effect("completes a discarded call on its acknowledgement, not on the write", () =>
@@ -867,6 +954,26 @@ describe("RpcClient", () => {
   it.effect("fails request on empty HTTP response for framed serialization", () =>
     assertEmptyResponseFailsRequest(RpcSerialization.layerNdjson, ""))
 
+  it.effect("includes the HTTP failure in the error message", () =>
+    Effect.gen(function*() {
+      const httpClient = HttpClient.make((request) =>
+        Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request, description: "connect ECONNREFUSED" })
+          })
+        )
+      )
+      const client = yield* RpcClient.make(TestGroup).pipe(
+        Effect.provide(makeProtocolLayerWithClient(RpcSerialization.layerJson, httpClient))
+      )
+
+      const error = yield* client.Ping().pipe(Effect.flip)
+
+      assert.instanceOf(error, RpcClientError)
+      assert.strictEqual(error.reason._tag, "HttpError")
+      assert.strictEqual(error.message, "HttpError: Transport: connect ECONNREFUSED (POST http://localhost/rpc/)")
+    }))
+
   it.effect("sends a discarded call to a worker as a request and waits for its Exit", () =>
     Effect.gen(function*() {
       const sent: Array<unknown> = []
@@ -930,7 +1037,7 @@ describe("RpcClient", () => {
     ) {
       it.effect(`sends ${name} requests made within the batch window as one HTTP request`, () =>
         Effect.gen(function*() {
-          const { client, httpRequests } = yield* makeBatchingClient(serializationLayer, { window: "5 millis" })
+          const { client, requests } = yield* makeBatchingClient(serializationLayer, { window: "5 millis" })
 
           const results = yield* Effect.all(
             [client.Echo({ value: "first" }), client.Echo({ value: "second" })],
@@ -939,13 +1046,13 @@ describe("RpcClient", () => {
           yield* TestClock.adjust("5 millis")
 
           assert.deepStrictEqual(yield* Fiber.join(results), ["first", "second"])
-          assert.strictEqual(httpRequests(), 1)
+          assert.strictEqual(requests.length, 1)
         }))
     }
 
     it.effect("sends a batch as soon as it reaches maxSize", () =>
       Effect.gen(function*() {
-        const { client, httpRequests } = yield* makeBatchingClient(RpcSerialization.layerJson, {
+        const { client, requests } = yield* makeBatchingClient(RpcSerialization.layerJson, {
           window: "1 hour",
           maxSize: 2
         })
@@ -956,13 +1063,13 @@ describe("RpcClient", () => {
         )
 
         assert.deepStrictEqual(results, ["first", "second"])
-        assert.strictEqual(httpRequests(), 1)
+        assert.strictEqual(requests.length, 1)
       }))
 
     it.effect("keeps a batch in flight when one of its callers is interrupted", () =>
       Effect.gen(function*() {
         const release = yield* Deferred.make<void>()
-        const { client, httpRequests } = yield* makeBatchingClient(
+        const { client, requests } = yield* makeBatchingClient(
           RpcSerialization.layerJson,
           { window: "5 millis" },
           Deferred.await(release)
@@ -975,7 +1082,7 @@ describe("RpcClient", () => {
         yield* Deferred.succeed(release, void 0)
 
         assert.strictEqual(yield* Fiber.join(kept), "kept")
-        assert.strictEqual(httpRequests(), 1)
+        assert.strictEqual(requests.length, 1)
       }))
 
     it.effect("interrupts batches started while the client is shutting down", () =>
@@ -997,7 +1104,7 @@ describe("RpcClient", () => {
             ))
         })
         const scope = yield* Scope.make()
-        const { client, httpRequests } = yield* makeBatchingClient(
+        const { client, requests } = yield* makeBatchingClient(
           RpcSerialization.layerJson,
           { window: "5 millis" },
           beforeRequest
@@ -1019,9 +1126,109 @@ describe("RpcClient", () => {
         yield* Fiber.join(closing)
 
         // every HTTP request that started was interrupted by the shutdown
-        assert.strictEqual(interrupted.length, httpRequests())
+        assert.strictEqual(interrupted.length, requests.length)
       }))
+
+    it.effect("links a batched HTTP request to every caller RPC span in a root batch span", () =>
+      withCapturedSpans((spans) =>
+        Effect.gen(function*() {
+          const { client, requests } = yield* makeBatchingClient(RpcSerialization.layerJson, { window: "5 millis" })
+
+          const results = yield* Effect.all(
+            [
+              client.Echo({ value: "first" }).pipe(Effect.withSpan("caller-1", { root: true })),
+              client.Echo({ value: "second" }).pipe(Effect.withSpan("caller-2", { root: true })),
+              client.Echo({ value: "third" }).pipe(Effect.withSpan("caller-3", { root: true }))
+            ],
+            { concurrency: "unbounded" }
+          ).pipe(Effect.forkChild)
+          yield* TestClock.adjust("5 millis")
+
+          assert.deepStrictEqual(yield* Fiber.join(results), ["first", "second", "third"])
+          assert.strictEqual(requests.length, 1)
+
+          const rpcSpans = spans.filter((span) => span.name === "Echo" && span.kind === "client")
+          assert.strictEqual(rpcSpans.length, 3)
+
+          const batchSpan = spans.find((span) => span.name === "RpcClient.batch")
+          assert.isDefined(batchSpan)
+          assert.isTrue(Option.isNone(batchSpan.parent))
+          assert.strictEqual(batchSpan.attributes.get("batchSize"), 3)
+          assert.isFalse(rpcSpans.some((span) => span.traceId === batchSpan.traceId))
+
+          const toSpanKey = (span: Tracer.AnySpan) => ({
+            traceId: span.traceId,
+            spanId: span.spanId,
+            sampled: span.sampled
+          })
+          const bySpanId = (a: { readonly spanId: string }, b: { readonly spanId: string }) =>
+            a.spanId.localeCompare(b.spanId)
+          assert.deepStrictEqual(
+            batchSpan.links.map((link) => toSpanKey(link.span)).sort(bySpanId),
+            rpcSpans.map(toSpanKey).sort(bySpanId)
+          )
+
+          const httpSpan = spans.find((span) =>
+            span.kind === "client" && span.attributes.get("http.request.method") === "POST"
+          )
+          assert.isDefined(httpSpan)
+          assert.strictEqual(Option.getOrUndefined(httpSpan.parent)?.spanId, batchSpan.spanId)
+          assert.strictEqual(requests[0].headers.traceparent, `00-${batchSpan.traceId}-${httpSpan.spanId}-01`)
+        })
+      ))
   })
+
+  for (const failedMessage of ["Request", "Ack"] as const) {
+    it.effect(
+      `reports socket ${failedMessage} write failures as RpcClientError`,
+      () =>
+        Effect.gen(function*() {
+          const reason = new Socket.SocketWriteError({ cause: new Error("write EPIPE") })
+          const frames = yield* Queue.unbounded<string>()
+          const write: Socket.Writer["write"] = Effect.fnUntraced(function*(data) {
+            if (Socket.isCloseEvent(data)) return
+            const message = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data))
+            if (message._tag === failedMessage) {
+              return yield* Effect.fail(new Socket.SocketError({ reason }))
+            }
+            if (message._tag === "Request") {
+              yield* Queue.offer(
+                frames,
+                JSON.stringify({
+                  _tag: "Chunk",
+                  requestId: message.id,
+                  values: ["event"]
+                }) + "\n"
+              )
+            }
+          })
+          const socket = Socket.make({
+            // Keep the read side open so only the write can report the failure.
+            reader: Effect.succeed({
+              pull: Queue.take(frames).pipe(Effect.map((frame) => [frame] as const)),
+              upgrade: Socket.SocketUpgradeError.unsupported
+            }),
+            writer: Effect.succeed({
+              write,
+              writeAll: (chunks) => Effect.forEach(chunks, write, { discard: true })
+            })
+          })
+          const protocol = yield* RpcClient.makeProtocolSocket().pipe(
+            Effect.provideService(Socket.Socket, socket),
+            Effect.provide(RpcSerialization.layerNdjson)
+          )
+          const client = yield* RpcClient.make(TestGroup).pipe(
+            Effect.provideService(RpcClient.Protocol, protocol)
+          )
+          const error = yield* Effect.flip(
+            failedMessage === "Request" ? Effect.asVoid(client.Ping()) : Stream.runDrain(client.Events())
+          )
+
+          assert.instanceOf(error, RpcClientError)
+          assert.strictEqual(error.reason, reason)
+        })
+    )
+  }
 
   it.effect("reports transient socket open errors without failing in-flight streams", () =>
     Effect.gen(function*() {
@@ -1470,41 +1677,31 @@ describe("RpcClient", () => {
     const call = (
       method: "Ping" | "Events",
       options: { spanPrefix?: string; spanAttributes?: Record<string, unknown> } = {}
-    ) => {
-      const spans: Array<Tracer.NativeSpan> = []
-      return Effect.gen(function*() {
-        // oxlint-disable-next-line prefer-const
-        let client!: Effect.Success<
-          ReturnType<typeof RpcClient.makeNoSerialization<RpcGroup.Rpcs<typeof SpanGroup>, never>>
-        >
-        const server = yield* RpcServer.makeNoSerialization(SpanGroup, {
-          ...options,
-          onFromServer: (response) => client.write(response)
-        })
-        client = yield* RpcClient.makeNoSerialization(SpanGroup, {
-          ...options,
-          supportsAck: true,
-          onFromClient: ({ message }) => server.write(0, message)
-        })
-        yield* method === "Ping" ? client.client["Echo.Ping"]() : Stream.runDrain(client.client["Echo.Events"]())
-        return spans
-      }).pipe(
-        Effect.provide(SpanGroup.toLayer({
-          "Echo.Ping": () => Effect.succeed("pong"),
-          "Echo.Events": () => Stream.make("event")
-        })),
-        Effect.provideService(
-          Tracer.Tracer,
-          Tracer.make({
-            span(options) {
-              const span = new Tracer.NativeSpan(options)
-              spans.push(span)
-              return span
-            }
+    ) =>
+      withCapturedSpans((spans) =>
+        Effect.gen(function*() {
+          // oxlint-disable-next-line prefer-const
+          let client!: Effect.Success<
+            ReturnType<typeof RpcClient.makeNoSerialization<RpcGroup.Rpcs<typeof SpanGroup>, never>>
+          >
+          const server = yield* RpcServer.makeNoSerialization(SpanGroup, {
+            ...options,
+            onFromServer: (response) => client.write(response)
           })
+          client = yield* RpcClient.makeNoSerialization(SpanGroup, {
+            ...options,
+            supportsAck: true,
+            onFromClient: ({ message }) => server.write(0, message)
+          })
+          yield* method === "Ping" ? client.client["Echo.Ping"]() : Stream.runDrain(client.client["Echo.Events"]())
+          return spans
+        }).pipe(
+          Effect.provide(SpanGroup.toLayer({
+            "Echo.Ping": () => Effect.succeed("pong"),
+            "Echo.Events": () => Stream.make("event")
+          }))
         )
       )
-    }
 
     it.effect("records RPC span defaults for streaming calls", () =>
       Effect.gen(function*() {
@@ -1531,4 +1728,43 @@ describe("RpcClient", () => {
         }
       }))
   })
+
+  it.effect("handlers fail with middleware errors over the wire", () =>
+    Effect.gen(function*() {
+      const layer = AuthGroup.toLayer({
+        Get: () => Effect.fail(new Unauthorized()),
+        Events: () => Stream.make("a").pipe(Stream.concat(Stream.fail(new Unauthorized()))),
+        EventsQueue: Effect.fnUntraced(function*() {
+          const queue = yield* Queue.unbounded<string, Unauthorized | Cause.Done>()
+          yield* Queue.offer(queue, "a")
+          yield* Queue.fail(queue, new Unauthorized())
+          return queue
+        })
+      }).pipe(
+        Layer.merge(Layer.succeed(Auth, (effect) => effect)),
+        Layer.merge(RpcSerialization.layerJson)
+      )
+      const handler = HttpEffect.toWebHandler(yield* RpcServer.toHttpEffect(AuthGroup).pipe(Effect.provide(layer)))
+      const httpClient = HttpClient.make((request) =>
+        Effect.gen(function*() {
+          const webRequest = yield* Effect.orDie(HttpClientRequest.toWeb(request))
+          const response = yield* Effect.promise(() => handler(webRequest))
+          return HttpClientResponse.fromWeb(request, response)
+        })
+      )
+      const client = yield* RpcClient.make(AuthGroup).pipe(
+        Effect.provide(makeProtocolLayerWithClient(RpcSerialization.layerJson, httpClient))
+      )
+
+      assert.instanceOf(yield* Effect.flip(client.Get()), Unauthorized)
+      for (const events of [client.Events(), client.EventsQueue()]) {
+        const received: Array<string> = []
+        const error = yield* events.pipe(
+          Stream.runForEach((value) => Effect.sync(() => received.push(value))),
+          Effect.flip
+        )
+        assert.deepStrictEqual(received, ["a"])
+        assert.instanceOf(error, Unauthorized)
+      }
+    }))
 })

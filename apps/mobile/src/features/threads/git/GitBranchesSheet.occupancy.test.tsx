@@ -8,25 +8,29 @@ const checkout = vi.hoisted(() => ({
   branches: [] as Array<{ name: string; worktreePath: string | null }>,
 }));
 
-vi.mock("react-native", () => ({
-  Platform: { OS: "android" },
-  View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  ScrollView: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  Pressable: ({ children, disabled }: { children: ReactNode; disabled: boolean }) => (
-    <button disabled={disabled}>{children}</button>
-  ),
-  useWindowDimensions: () => ({ height: 800 }),
+vi.mock("@react-navigation/native", () => ({
+  useFocusEffect: () => {},
+  useNavigation: () => ({}),
 }));
-vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
-vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("../../../components/ui/SheetHeader", () => ({ SheetHeader: () => null }));
-vi.mock("../../../components/ui/ScreenContent", () => ({
-  ScreenContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+vi.mock("../../../components/ui/FitSheet", () => ({
+  FitSheet: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("../../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../../../components/ui/AppText", () => ({
-  AppText: ({ children }: { children: ReactNode }) => <span>{children}</span>,
-  AppTextInput: () => null,
+vi.mock("../../../components/ui/FormSection", () => ({
+  FormSection: () => null,
+  FormField: () => null,
+}));
+vi.mock("../../../components/ui/ListSection", () => ({
+  ListSection: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("../../../components/ui/ListChoiceRow", () => ({
+  ListChoiceRow: (props: { label: string; description: string; disabled: boolean }) => (
+    <button disabled={props.disabled}>
+      <span>{props.label}</span>
+      <span>{props.description}</span>
+    </button>
+  ),
 }));
 vi.mock("./gitSheetComponents", () => ({ SheetActionButton: () => null }));
 vi.mock("../../../state/entities", () => ({}));
@@ -43,9 +47,11 @@ vi.mock("../../../state/use-thread-detail", () => ({
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({
     selectedThreadBranches: checkout.branches,
-    selectedThreadBranchesLoading: false,
     gitOperationLabel: null,
   }),
+}));
+vi.mock("../../../state/queries", () => ({
+  usePaginatedBranches: () => ({ data: null, refs: [], isPending: false }),
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({ canChangeThreadBranch: true }),

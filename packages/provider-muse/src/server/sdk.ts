@@ -10,6 +10,7 @@ import {
   type SpawnedMspConnection,
 } from "@muse-code/sdk";
 import type { RuntimeMode } from "@t3tools/contracts";
+import { envTrampoline, supportsEnvChdir } from "@t3tools/shared/envTrampoline";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
@@ -116,7 +117,8 @@ export const museLaunch = Effect.fn("museLaunch")(function* (
   if ((yield* HostProcess.Platform) !== "win32") return { command: binaryPath, args: [] };
   const env = environment ?? (yield* HostProcess.Environment);
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const resolved = resolveExecutable(binaryPath, "win32", env) ?? binaryPath;
+  const resolved =
+    (yield* Effect.promise(async () => resolveExecutable(binaryPath, "win32", env))) ?? binaryPath;
   if (!/\.(?:cmd|bat)$/i.test(resolved)) return { command: resolved, args: [] };
   const systemRoot = windowsEnvironmentValue(env, "SystemRoot");
   return {
@@ -226,11 +228,22 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
   options: Omit<MuseSdkHostOptions, "signal">,
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
 ) {
-  const launch = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
+  const native = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
+  // The Muse SDK hands libuv the cwd and the PATH search, which freeze the server while a
+  // mount under either hangs; `env` does both in the child.
+  const throughEnv =
+    (yield* HostProcess.Platform) === "linux" && (yield* Effect.promise(supportsEnvChdir))
+      ? envTrampoline(native.command, native.args, options.cwd)
+      : undefined;
+  const { cwd: _enteredByEnv, ...withoutCwd } = options;
+  const hostOptions =
+    throughEnv === undefined
+      ? { ...options, launch: native }
+      : { ...withoutCwd, launch: throughEnv };
   let startup: Promise<MuseSdkHost> | undefined;
   return yield* Effect.tryPromise({
     try: (signal) => {
-      startup = createHost({ ...options, launch, signal });
+      startup = createHost({ ...hostOptions, signal });
       return startup;
     },
     catch: (cause) => new MuseSdkError({ operation: "start", cause }),

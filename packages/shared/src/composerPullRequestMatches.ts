@@ -1,11 +1,9 @@
-import type { ThreadPullRequestLink } from "@t3tools/contracts";
+import type { ThreadPullRequestKey, ThreadPullRequestLink } from "@t3tools/contracts";
 
 import { visibleThreadPullRequests } from "./threadPullRequests.ts";
 
-export interface ComposerPullRequestMatch {
-  readonly number: number;
+export interface ComposerPullRequestMatch extends ThreadPullRequestKey {
   readonly projectId: string;
-  readonly repository: string;
   readonly updatedAt: string;
 }
 
@@ -19,6 +17,7 @@ export function composerPullRequestsFromLinks(
       : [
           {
             projectId,
+            host: link.host,
             repository: link.repository,
             number: link.number,
             url: link.url,
@@ -43,17 +42,22 @@ export function filterComposerPullRequestMatches<
   readonly repository: string;
   readonly query: string;
   readonly limit: number;
+  readonly keyOf: (entry: Entry | Linked) => string;
 }): ReadonlyArray<Entry | Linked> {
   const repository = input.repository.trim().toLowerCase();
-  const keyOf = (entry: ComposerPullRequestMatch) =>
-    `${entry.repository.trim().toLowerCase()}#${entry.number}`;
-  const linked = (input.linked ?? []).filter((entry) => String(entry.number).includes(input.query));
+  const { keyOf } = input;
+  // Compare numerically so a zero-padded query like "0042" still finds #42.
+  const queryNumber = /^\d+$/u.test(input.query) ? Number(input.query) : Number.NaN;
+  const isExactMatch = (entry: ComposerPullRequestMatch) => entry.number === queryNumber;
+  const matchesQuery = (entry: ComposerPullRequestMatch) =>
+    isExactMatch(entry) || String(entry.number).includes(input.query);
+  const linked = (input.linked ?? []).filter(matchesQuery);
   const linkedKeys = new Set(linked.map(keyOf));
   const matchingEntries = input.entries.filter(
     (entry) =>
       entry.projectId === input.projectId &&
       entry.repository.trim().toLowerCase() === repository &&
-      String(entry.number).includes(input.query),
+      matchesQuery(entry),
   );
   const uniqueEntries = new Map<string, Entry | Linked>();
   for (const entry of [...matchingEntries, ...linked]) {
@@ -61,8 +65,7 @@ export function filterComposerPullRequestMatches<
       uniqueEntries.set(keyOf(entry), entry);
     }
   }
-  const isExactMatch = (entry: ComposerPullRequestMatch) => String(entry.number) === input.query;
-  const isLinked = (entry: ComposerPullRequestMatch) => linkedKeys.has(keyOf(entry));
+  const isLinked = (entry: Entry | Linked) => linkedKeys.has(keyOf(entry));
   const updatedAtMs = (entry: ComposerPullRequestMatch) => Date.parse(entry.updatedAt) || 0;
   // Hermes has no ES2023 array methods, so sort a fresh array.
   return [...uniqueEntries.values()]
@@ -87,9 +90,9 @@ export function withLinkedComposerPullRequestsFirst<
   readonly linked: ReadonlyArray<Linked>;
   readonly query: string;
   readonly limit: number;
+  readonly keyOf: (entry: Entry | Linked) => string;
 }): ReadonlyArray<Entry | Linked> {
-  const keyOf = (entry: ComposerPullRequestMatch) =>
-    `${entry.repository.trim().toLowerCase()}#${entry.number}`;
+  const { keyOf } = input;
   const matchesByKey = new Map(input.matches.map((entry) => [keyOf(entry), entry]));
   const words = input.query.toLowerCase().split(/\s+/u).filter(Boolean);
   const linked = input.linked.flatMap((entry): Array<Entry | Linked> => {

@@ -25,8 +25,14 @@ import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 vi.mock("node:net", { spy: true });
 
 const checkedAt = "2026-10-19T00:00:00.000Z";
-const connected = { pid: 1, readyConnections: 4, hostname: "env.example.test", protocol: "quic" };
-const notConnected = { pid: 1, readyConnections: 0, hostname: null, protocol: null };
+const connected = {
+  pid: 1,
+  readyConnections: 4,
+  hostname: "env.example.test",
+  origin: null,
+  protocol: "quic",
+};
+const notConnected = { pid: 1, readyConnections: 0, hostname: null, origin: null, protocol: null };
 const facts = (overrides: Partial<ReachabilityFacts>): ReachabilityFacts => ({
   managedTunnelConfigured: true,
   connector: connected,
@@ -41,7 +47,8 @@ describe("classifyReachability", () => {
     [{ kind: "status", status: 502 }, "origin_unreachable"],
     [{ kind: "status", status: 530 }, "no_connector"],
     [{ kind: "status", status: 530, cloudflareError: "1033" }, "no_connector"],
-    [{ kind: "status", status: 530, cloudflareError: "1016" }, "unexpected_response"],
+    [{ kind: "status", status: 530, cloudflareError: "1016" }, "dns_failed"],
+    [{ kind: "status", status: 530, cloudflareError: "1001" }, "unexpected_response"],
     [{ kind: "network_error" }, "timeout"],
   ] as const)("maps endpoint result %o to %s", (endpoint, cause) => {
     expect(classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt)).toMatchObject(
@@ -64,6 +71,7 @@ describe("classifyReachability", () => {
             pid: 1,
             readyConnections: null,
             hostname: "env.example.test",
+            origin: null,
             protocol: null,
           },
           endpoint: { kind: "status", status: 502 },
@@ -80,6 +88,7 @@ describe("classifyReachability", () => {
             pid: 1,
             readyConnections: null,
             hostname: "env.example.test",
+            origin: null,
             protocol: null,
           },
           endpoint: { kind: "dns_failed" },
@@ -201,7 +210,7 @@ describe("ConnectReachability stale connector recovery", () => {
         expect(yield* reachability.check).toMatchObject({ status: "reachable" });
         status = 530;
         body = { cloudflareError: 1016 };
-        expect(yield* reachability.check).toMatchObject({ cause: "unexpected_response" });
+        expect(yield* reachability.check).toMatchObject({ cause: "dns_failed" });
         yield* TestClock.adjust(Duration.minutes(2));
         expect(yield* Queue.size(restarts)).toBe(0);
 

@@ -7,9 +7,19 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as HostProcess from "./HostProcess.ts";
-import { isCommandAvailable, resolveCommandPath } from "./shell.ts";
+import { isCommandAvailable, resolveCommandPath, resolveCommandPaths } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
+
+// The nearest Zed folder identifies the channel, even below a user named zedpreview.
+const isPrereleaseZedPath = (filePath: string) => {
+  const install = filePath
+    .split(/[\\/]/)
+    .slice(0, -1)
+    .findLast((folder) => folder.toLowerCase().includes("zed"))
+    ?.toLowerCase();
+  return install !== undefined && (install.includes("nightly") || install.includes("preview"));
+};
 
 const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   vscode: ["Visual Studio Code"],
@@ -27,9 +37,10 @@ const isVersionedBundle = (entry: string, name: string) => {
   return /^\d[\d.]*$/.test(entry.slice(name.length + 1, -".app".length));
 };
 
-// OpenZFS's event daemon is also named zed; it rejects `--version` instead of starting.
-const isZedEditor = Effect.fn("editor.isZedEditor")(
-  function* (command: string) {
+// OpenZFS's event daemon is also named zed, and the Cursor Agent CLI installs a cursor script
+// that fails without an IDE behind it; both reject `--version` instead of starting.
+const isEditorCommand = Effect.fn("editor.isEditorCommand")(
+  function* (command: string, isZed: boolean) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const handle = yield* spawner.spawn(
       ChildProcess.make(command, ["--version"], {
@@ -42,10 +53,12 @@ const isZedEditor = Effect.fn("editor.isZedEditor")(
       [handle.stdout.pipe(Stream.decodeText(), Stream.runHead), handle.exitCode],
       { concurrency: "unbounded" },
     );
-    return exitCode === 0 && Option.getOrElse(stdout, () => "").startsWith("Zed");
+    return exitCode === 0 && (!isZed || Option.getOrElse(stdout, () => "").startsWith("Zed"));
   },
   Effect.scoped,
-  Effect.timeout("2 seconds"),
+  // A slow first start after an update must not hide a working Cursor.
+  (probe, _command, isZed) =>
+    Effect.timeoutOrElse(probe, { duration: "2 seconds", orElse: () => Effect.succeed(!isZed) }),
   Effect.catchCause(() => Effect.succeed(false)),
 );
 
@@ -59,7 +72,22 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   // Prefer Zed's macOS bundle because OpenZFS also installs a zed executable.
   const preferBundle = platform === "darwin" && editor.id === "zed";
   const preferZeditor = platform === "linux" && editor.id === "zed";
-  if (!preferBundle && !preferZeditor) {
+  const probeCursor = editor.id === "cursor" && platform !== "win32";
+  if (platform === "win32" && editor.id === "zed") {
+    const isStable = (resolved: string) => !isPrereleaseZedPath(resolved);
+    let firstCommand: string | undefined;
+    for (const command of editor.commands) {
+      const matches = yield* resolveCommandPaths(command, { env, until: isStable });
+      const stable = matches.find(isStable);
+      // Bypass PATH only when stable is behind a prerelease install.
+      if (stable !== undefined) {
+        const isFirst = firstCommand === undefined && stable === matches[0];
+        return Option.some({ command: isFirst ? command : stable, baseArgs });
+      }
+      if (firstCommand === undefined && matches.length > 0) firstCommand = command;
+    }
+    if (firstCommand !== undefined) return Option.some({ command: firstCommand, baseArgs });
+  } else if (!preferBundle && !preferZeditor && !probeCursor) {
     for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
@@ -71,7 +99,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const names = installNames[editor.id] ?? [editor.label];
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
-  const candidates: string[] = [];
+  const candidates: string[] = probeCursor ? [...editor.commands] : [];
+  let toolbox: { dir: string; suffix: string } | undefined;
 
   if (platform === "darwin") {
     const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];
@@ -97,9 +126,11 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       }
     }
     if (home && jetbrains) {
-      candidates.push(
-        path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts", command),
-      );
+      toolbox = {
+        dir: path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts"),
+        suffix: "",
+      };
+      candidates.push(path.join(toolbox.dir, command));
     }
   } else if (platform === "win32") {
     const roots = [
@@ -110,7 +141,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     ];
     if (jetbrains) {
       if (env.LOCALAPPDATA) {
-        candidates.push(path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts", `${command}.cmd`));
+        toolbox = { dir: path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts"), suffix: ".cmd" };
+        candidates.push(path.join(toolbox.dir, `${command}.cmd`));
       }
       for (const directory of roots.flatMap((root) => [root, path.join(root, "JetBrains")])) {
         const entries = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
@@ -150,9 +182,10 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       "/usr/bin",
       "/snap/bin",
     ];
-    if (jetbrains) {
-      const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
-      if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
+    const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
+    if (jetbrains && dataHome) {
+      toolbox = { dir: path.join(dataHome, "JetBrains/Toolbox/scripts"), suffix: "" };
+      dirs.push(toolbox.dir);
     }
     if (preferZeditor) {
       // Linux packages use zeditor because OpenZFS owns the zed command.
@@ -167,19 +200,44 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   }
 
   if (preferBundle) candidates.push(...editor.commands);
+  if (toolbox) {
+    // Toolbox names a launch script `idea1`, `idea2`, ... while `idea` is taken, and keeps that
+    // name after the other install is removed. Try these only after every canonical candidate.
+    const { dir, suffix } = toolbox;
+    const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
+    candidates.push(
+      ...entries
+        .filter(
+          (entry) =>
+            entry.startsWith(command) &&
+            entry.endsWith(suffix) &&
+            /^\d+$/.test(entry.slice(command.length, entry.length - suffix.length)),
+        )
+        .sort((a, b) => a.length - b.length || a.localeCompare(b))
+        .map((entry) => path.join(dir, entry)),
+    );
+  }
+  const probeZed = editor.id === "zed" && platform !== "win32";
   const rejected = new Set<string>();
   for (const candidate of candidates) {
-    const resolved = yield* resolveCommandPath(candidate, { env });
-    if (resolved === null || rejected.has(resolved)) continue;
-    if (preferZeditor && path.basename(candidate) === "zed" && !(yield* isZedEditor(resolved))) {
-      rejected.add(resolved);
-      continue;
+    // An earlier PATH entry can hold OpenZFS zed or the Cursor Agent CLI's cursor script.
+    const matches =
+      (probeZed || probeCursor) && candidate === command
+        ? yield* resolveCommandPaths(candidate, { env, until: () => false })
+        : [yield* resolveCommandPath(candidate, { env })];
+    for (const resolved of matches) {
+      if (resolved === null || rejected.has(resolved)) continue;
+      const probed = probeCursor || (probeZed && path.basename(candidate) === "zed");
+      if (probed && !(yield* isEditorCommand(resolved, probeZed))) {
+        rejected.add(resolved);
+        continue;
+      }
+      return Option.some({
+        command: resolved === matches[0] ? candidate : resolved,
+        baseArgs:
+          editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
+      });
     }
-    return Option.some({
-      command: candidate,
-      baseArgs:
-        editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
-    });
   }
   return Option.none();
 });

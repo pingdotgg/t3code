@@ -123,7 +123,7 @@ describe("McpClient", () => {
           const [resource] = yield* client.listResources()
           const contents = yield* client.readResource({ uri: resource.uri })
           assert.deepStrictEqual(contents.contents, [{ uri: "demo://guide", text: "Guide" }])
-        }).pipe(Effect.scoped))
+        }))
 
       // isError is a tool result; supplying a schema turns it into a ToolError retaining the result.
       it.effect("should fail with ToolError when a schema call reports isError", () =>
@@ -136,7 +136,7 @@ describe("McpClient", () => {
           const error = yield* client.callTool({ tool, schema: Schema.String }).pipe(Effect.flip)
           assert(error.reason._tag === "ToolError")
           assert.deepStrictEqual(error.reason.result, raw)
-        }).pipe(Effect.scoped))
+        }))
 
       // Resource not found is -32002 in 2025-11-25 and -32602 in 2026-07-28.
       it.effect("should preserve JSON-RPC error code when the server rejects a request", () =>
@@ -145,7 +145,7 @@ describe("McpClient", () => {
           const error = yield* client.readResource({ uri: "demo://missing" }).pipe(Effect.flip)
           assert(error.reason._tag === "ProtocolError")
           assert.strictEqual(error.reason.code, protocol.protocolVersion === "2025-11-25" ? -32002 : -32602)
-        }).pipe(Effect.scoped))
+        }))
 
       it.effect("should time out when a call exceeds its deadline", () =>
         Effect.gen(function*() {
@@ -154,7 +154,7 @@ describe("McpClient", () => {
           const call = yield* client.callTool({ tool }, { timeout: "1 second" }).pipe(Effect.flip, Effect.forkChild)
           yield* TestClock.adjust("1 second")
           assert.strictEqual((yield* Fiber.join(call)).reason._tag, "TimeoutError")
-        }).pipe(Effect.scoped))
+        }))
 
       it.effect("should expose remote tools to a language model through McpClient.toolkit", () =>
         Effect.gen(function*() {
@@ -168,7 +168,7 @@ describe("McpClient", () => {
             })
           )
           assert.deepStrictEqual(response.toolResults.map((part) => part.result), ["{\"total\":42}"])
-        }).pipe(Effect.scoped))
+        }))
     })
   }
 
@@ -925,7 +925,7 @@ describe("McpClient skills", () => {
           }
           const logo = yield* client.readSkillResource({ skill: refunds, uri: "skill://acme/refunds/assets/logo.png" })
           assert.deepStrictEqual("blob" in logo.contents[0] ? logo.contents[0].blob : undefined, PNG)
-        }).pipe(Effect.scoped))
+        }))
 
       it.effect("should not call the extension's methods on a server that does not declare it", () =>
         Effect.gen(function*() {
@@ -939,7 +939,7 @@ describe("McpClient skills", () => {
           ) {
             assert.strictEqual((yield* Effect.flip(effect)).reason._tag, "UnsupportedError")
           }
-        }).pipe(Effect.scoped))
+        }))
     })
   }
 
@@ -957,14 +957,27 @@ describe("McpClient skills", () => {
         )
       }
 
+      const discoveredCapabilities = (
+        sent: ReadonlyArray<{ readonly message?: McpSchema.JsonRpcMessage | undefined }>
+      ) => {
+        const discover = sent.map(({ message }) => message).find((message) => methodOf(message) === "server/discover")
+        const meta = (discover as McpSchema.JsonRpcRequest).params!._meta as Record<string, unknown>
+        return meta["io.modelcontextprotocol/clientCapabilities"]
+      }
+      const enabled = yield* scriptedHttp(
+        (message) => scriptedReply(McpProtocol.v2026_07_28, message),
+        { extensions: { skills: true } }
+      )
+      assert.deepStrictEqual(discoveredCapabilities(enabled.sent), {
+        extensions: { "io.modelcontextprotocol/skills": {} }
+      })
+
       const { client, sent } = yield* scriptedHttp((message) =>
         message.method === "server/discover"
           ? jsonRpcResult(message, skillsDiscovery(true))
           : scriptedReply(McpProtocol.v2026_07_28, message)
       )
-      const discover = sent.map(({ message }) => message).find((message) => methodOf(message) === "server/discover")
-      const meta = (discover as McpSchema.JsonRpcRequest).params!._meta as Record<string, unknown>
-      assert.deepStrictEqual(meta["io.modelcontextprotocol/clientCapabilities"], {})
+      assert.deepStrictEqual(discoveredCapabilities(sent), {})
       const skill = McpSchema.Skill.make(entry as any)
       for (
         const effect of <ReadonlyArray<Effect.Effect<unknown, McpClientError.McpClientError>>> [

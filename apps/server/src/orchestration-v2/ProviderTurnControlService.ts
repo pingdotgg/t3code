@@ -8,16 +8,19 @@ import {
   ProviderTurnId,
   RunAttemptId,
   ThreadId,
+  withMessageSenderNote,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -83,6 +86,16 @@ export interface ProviderTurnControlServiceV2Shape {
     | ProviderSessionManager.ProviderSessionManagerV2Error
     | ProviderAdapter.ProviderAdapterV2Error
   >;
+  /** Best effort: a provider thread that is no longer live picks the title up when its next turn starts. */
+  readonly applyThreadTitle: (input: {
+    readonly threadId: ThreadId;
+    readonly title: string;
+  }) => Effect.Effect<
+    void,
+    | ProjectionStore.ProjectionStoreV2Error
+    | ProviderSessionManager.ProviderSessionManagerV2Error
+    | ProviderAdapter.ProviderAdapterV2Error
+  >;
   readonly interruptAndAwaitTerminal: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -101,12 +114,17 @@ export class ProviderTurnControlServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
-  ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
+  | EventSink.EventSinkV2
+  | McpAppModelContext.McpAppModelContext
+  | ProjectionStore.ProjectionStoreV2
+  | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -199,6 +217,31 @@ export const layer: Layer.Layer<
       return { context, providerThread: interruptProviderThread, providerTurn, session };
     });
 
+    const awaitSettled = Effect.fn("ProviderTurnControlService.awaitSettled")(function* (
+      threadId: ThreadId,
+      target: ProjectionStore.ProjectionProviderControlTarget,
+    ) {
+      const isSettled = projections
+        .getProviderControlContext(threadId, target)
+        .pipe(
+          Effect.map(
+            ({ providerTurn, attempt }) =>
+              providerTurn?.status !== "running" && attempt?.status !== "running",
+          ),
+        );
+      const afterSequence = yield* eventSink.latestSequence({ threadId });
+      if (yield* isSettled) return;
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.filter(
+          ({ event }) =>
+            event.type === "provider-turn.updated" || event.type === "run-attempt.updated",
+        ),
+        Stream.mapEffect(() => isSettled),
+        Stream.takeUntil((settled) => settled),
+        Stream.runDrain,
+      );
+    });
+
     return ProviderTurnControlServiceV2.of({
       applyModelSelection: Effect.fn("ProviderTurnControlService.applyModelSelection")(
         function* (input) {
@@ -220,6 +263,18 @@ export const layer: Layer.Layer<
           });
         },
       ),
+      applyThreadTitle: Effect.fn("ProviderTurnControlService.applyThreadTitle")(function* (input) {
+        const { thread, providerThreads } = yield* projections.getThreadRecords(input.threadId, [
+          "providerThreads",
+        ]);
+        const providerThread = providerThreads.find(
+          (candidate) => candidate.id === thread.activeProviderThreadId,
+        );
+        if (!providerThread?.providerSessionId) return;
+        const session = yield* sessions.get(providerThread.providerSessionId);
+        if (Option.isNone(session) || session.value.applyThreadTitle === undefined) return;
+        yield* session.value.applyThreadTitle({ providerThread, title: input.title });
+      }),
       interrupt: Effect.fn("ProviderTurnControlService.interrupt")(
         function* (input) {
           const loaded = yield* load({ ...input, operation: "interrupt" });
@@ -275,23 +330,15 @@ export const layer: Layer.Layer<
                   ),
               }),
             );
-          // Use real time; ingestion fibers do not advance TestClock and would leave Stop blocked.
-          yield* Effect.gen(function* () {
-            const deadline = (yield* Clock.currentTimeMillis) + 2_000;
-            while (
-              loaded.providerTurn.status === "running" &&
-              (yield* Clock.currentTimeMillis) < deadline
-            ) {
-              const current = yield* projections.getProviderControlContext(input.threadId, input);
-              if (
-                current.providerTurn?.status !== "running" &&
-                current.attempt?.status !== "running"
-              ) {
-                return;
-              }
-              yield* Effect.sleep("10 millis");
-            }
-          }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
+          if (loaded.providerTurn.status === "running") {
+            // Let native terminal ingestion finalize the attempt before the Stop follow-up repairs it.
+            const { runAttemptId } = loaded.providerTurn;
+            yield* awaitSettled(input.threadId, {
+              providerThreadId: input.providerThreadId,
+              providerTurnId: input.providerTurnId,
+              ...(runAttemptId === null ? {} : { attemptId: runAttemptId }),
+            }).pipe(Effect.timeoutOption("2 seconds"));
+          }
         },
         (effect, input) =>
           effect.pipe(
@@ -401,6 +448,10 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const appContext = yield* McpAppModelContext.forProvider(
+            mcpAppModelContext,
+            input.threadId,
+          );
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -410,12 +461,16 @@ export const layer: Layer.Layer<
               ...(input.modelSelection === undefined
                 ? {}
                 : { modelSelection: input.modelSelection }),
+              ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
+                text: withMessageSenderNote(
+                  message,
+                  projectComposerContextForProvider({
+                    text: message.text,
+                    records: message.context?.records ?? [],
+                  }),
+                ),
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,

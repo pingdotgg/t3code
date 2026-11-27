@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   executeAtomQuery,
   runAtomCommand,
@@ -10,16 +11,21 @@ import type {
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { create } from "zustand";
 
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
-import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
+import { environmentProjectClonesAtom } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
 
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
+
+/** The server lists at most this many ignored files, so one pick never exceeded it. */
+export const COPIED_FILES_MAX_COUNT = 200;
 
 const DEFAULT_COPIED_FILE_NAME = /^(?:\.env(?:\..+)?|\.envrc|\.dev\.vars)$/;
 
@@ -43,7 +49,7 @@ export interface AddProjectToMachineInput {
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
 }
 
 /**
@@ -73,7 +79,12 @@ function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
 
 export type ProjectFileCopy =
   | { readonly phase: "copying" }
-  | { readonly phase: "failed"; readonly title: string; readonly failures: ReadonlyArray<string> };
+  | {
+      readonly phase: "failed";
+      /** A `msg()`, resolved where it is shown so it follows the UI language. */
+      readonly title: string;
+      readonly failures: ReadonlyArray<string>;
+    };
 
 /** Ignored-file copies still owed to a cloned project, keyed by its scoped project key. */
 const useFileCopies = create<{ copies: Readonly<Record<string, ProjectFileCopy>> }>(() => ({
@@ -99,7 +110,7 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
 /**
  * Clones onto another machine, then relays the chosen ignored files, since the
  * two servers never talk. Resolves with the cloning project once it starts; the
- * caller opens it, and its composer shows progress, so nothing toasts.
+ * caller decides whether to open it and show progress in the composer.
  */
 export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<ProjectId> {
   // Read first, so the copy reflects the files as they were when the user asked.
@@ -114,15 +125,13 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         { label: "Read file to copy", reportFailure: false, refresh: true },
       );
       if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
-      if (result.value.truncated) return { relativePath, error: "Too large to copy." };
+      if (result.value.truncated) return { relativePath, error: m(msg("Too large to copy.")) };
       return { relativePath, contents: result.value.contents };
     }),
   );
 
   const requestedRef = { environmentId: input.target.environmentId, projectId: input.projectId };
   const requestedKey = scopedProjectKey(requestedRef);
-  // Marked before the start request, since the clone list can arrive before its reply.
-  silenceProjectCloneToasts(requestedRef);
   if (reads.length > 0) setFileCopy(requestedKey, { phase: "copying" });
   const started = await runAtomCommand(
     appAtomRegistry,
@@ -148,7 +157,6 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   const targetRef = { environmentId: input.target.environmentId, projectId };
   const copyKey = scopedProjectKey(targetRef);
   if (projectId !== input.projectId) {
-    silenceProjectCloneToasts(targetRef);
     if (reads.length > 0) {
       setFileCopy(copyKey, { phase: "copying" });
       setFileCopy(requestedKey, null);
@@ -193,7 +201,10 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         ? null
         : {
             phase: "failed",
-            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            title: msg(
+              "Could not copy {count, plural, one {{count} file} other {{count} files}} to {target}",
+              { count: failed.length, target: input.target.label },
+            ),
             failures: failed,
           },
     );

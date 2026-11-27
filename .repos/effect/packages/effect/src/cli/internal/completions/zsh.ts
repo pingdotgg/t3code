@@ -79,7 +79,7 @@ const flagSpecs = (flag: Completions.FlagDescriptor): Array<string> => {
   const optional = flag.optionalValue === true && flag.type._tag !== "Boolean"
   const valueSuffix = optional ? "=-" : ""
   const action = optional ? `:${valueAction(flag.type)}` : valueAction(flag.type)
-  const excl = `(${allForms(flag).join(" ")})`
+  const excl = flag.repeatable === true ? "*" : `(${allForms(flag).join(" ")})`
 
   // Primary long name
   specs.push(`'${excl}--${flag.name}${valueSuffix}${desc}${action}'`)
@@ -132,7 +132,7 @@ const generateFunction = (
     lines.push(`  commands=(`)
     for (const sub of descriptor.subcommands) {
       const desc = sub.description ? escapeZsh(sub.description) : ""
-      lines.push(`    '${sub.name}:${desc}'`)
+      lines.push(`    '${escapeZsh(sub.name)}:${desc}'`)
     }
     lines.push(`  )`)
     lines.push(``)

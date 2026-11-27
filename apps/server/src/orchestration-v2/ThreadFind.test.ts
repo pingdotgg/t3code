@@ -17,10 +17,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -36,9 +38,11 @@ import { projectTurnItemForWire } from "./WireProjection.ts";
 
 vi.mock("@t3tools/shared/threadFindText", { spy: true });
 
-const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const layerTest = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+  ProjectStore.layer,
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const providerInstanceId = ProviderInstanceId.make("codex");
 const at = (minute: number) => DateTime.makeUnsafe(Date.UTC(2026, 8, 27, 0, minute));
@@ -204,7 +208,47 @@ const setup = Effect.gen(function* () {
   return yield* ProjectionStore.ProjectionStoreV2;
 });
 
+const tracePayloadLoads = () => {
+  let batches = 0;
+  const tracer = Tracer.make({
+    span(options) {
+      if (options.name === "ThreadFind.load") batches++;
+      return new Tracer.NativeSpan(options);
+    },
+  });
+  return { tracer, batches: () => batches };
+};
+
 describe("V2 thread find", () => {
+  it.effect.each(["rendered text", "source text"] as const)(
+    "does not retain rendered snapshots over the %s budget",
+    (limit) =>
+      Effect.gen(function* () {
+        const projection = yield* setup;
+        yield* putItems(
+          Array.from({ length: 65 }, (_, i) =>
+            item(
+              `message:${i}`,
+              i,
+              limit === "rendered text"
+                ? "needle ".repeat(2500)
+                : `needle ![image](data:image/png;base64,${"a".repeat(35000)})`,
+            ),
+          ),
+        );
+        const loads = tracePayloadLoads();
+        const first = yield* projection
+          .searchThread({ threadId, query: "needle" })
+          .pipe(Effect.withTracer(loads.tracer));
+        const initialBatches = loads.batches();
+        const second = yield* projection
+          .searchThread({ threadId, query: "need" })
+          .pipe(Effect.withTracer(loads.tracer));
+        assert.equal(second.totalMatches, first.totalMatches);
+        assert.equal(loads.batches(), initialBatches * 2);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("finishes one snapshot while later searches include newly inserted matches", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -212,6 +256,7 @@ describe("V2 thread find", () => {
         item("selected", 1, "snapshot needle"),
         item("last", 2, "snapshot last needle"),
       ]);
+      yield* projection.searchThread({ threadId, query: "snapshot" });
       const frames = yield* projection.searchThreadStream({ threadId, query: "needle" }).pipe(
         Stream.tap((frame) =>
           frame.complete === false
@@ -391,6 +436,9 @@ describe("V2 thread find", () => {
       const result = yield* projection.searchThread({ threadId, query: "empty" });
       assert.equal(result.totalMatches, 1);
       assert.equal(result.match?.entryId, "shown");
+      const changed = yield* projection.searchThread({ threadId, query: "response" });
+      assert.equal(changed.totalMatches, 1);
+      assert.equal(changed.match?.entryId, "shown");
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -415,6 +463,59 @@ describe("V2 thread find", () => {
         1,
       );
       assert.equal((yield* projection.searchThread({ ...input, query: "App" })).totalMatches, 2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("searches only the picture file chips visible in the viewer's theme", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([
+        item(
+          "picture",
+          1,
+          '<picture><source media="(prefers-color-scheme: dark)" srcset="/workspace/repo/notes.ts#L42-L64"><img src="/workspace/repo/screenshot.png" alt="notes"></picture>',
+        ),
+        item(
+          "fallback",
+          2,
+          '<picture><source media="(prefers-color-scheme: dark)" srcset="/workspace/repo/dark.png"><img src="/workspace/repo/fallback.ts#L42-L64" alt="notes"></picture>',
+        ),
+      ]);
+      const dark = { threadId, query: "L42–64", theme: "dark" } as const;
+      const light = { ...dark, theme: "light" } as const;
+      const darkResult = yield* projection.searchThread(dark);
+      assert.equal(darkResult.totalMatches, 1);
+      assert.equal(darkResult.match?.entryId, "picture");
+      assert.equal(
+        (yield* projection.searchThread({ ...light, query: "notes.ts" })).totalMatches,
+        0,
+      );
+      const lightResult = yield* projection.searchThread(light);
+      assert.equal(lightResult.totalMatches, 1);
+      assert.equal(lightResult.match?.entryId, "fallback");
+      assert.equal((yield* projection.searchThread(dark)).match?.entryId, "picture");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refreshes file labels when the project cwd changes without a thread event", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      const sql = yield* SqlClient.SqlClient;
+      yield* putItems([item("paths", 1, "[local](src/main.ts) [other](/elsewhere/src/main.ts)")]);
+      assert.equal(
+        (yield* projection.searchThread({ threadId, query: "project:find/src" })).totalMatches,
+        1,
+      );
+      yield* sql`UPDATE projection_projects SET workspace_root = '/elsewhere'
+        WHERE project_id = ${projectId}`;
+      assert.equal(
+        (yield* projection.searchThread({ threadId, query: "project:find" })).totalMatches,
+        0,
+      );
+      assert.equal(
+        (yield* projection.searchThread({ threadId, query: "main.ts" })).totalMatches,
+        2,
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -479,7 +580,17 @@ describe("V2 thread find", () => {
         item(`message:${i}`, i + 1, i === 8 || i === 510 ? "sentinel" : "other message"),
       );
       yield* putItems(items);
-      const first = yield* projection.searchThread({ threadId, query: "sentinel" });
+      const loads = tracePayloadLoads();
+      const first = yield* projection
+        .searchThread({ threadId, query: "sentinel" })
+        .pipe(Effect.withTracer(loads.tracer));
+      assert.equal(loads.batches(), 5);
+      const changed = yield* projection
+        .searchThread({ threadId, query: "other message" })
+        .pipe(Effect.withTracer(loads.tracer));
+      assert.equal(changed.totalMatches, 518);
+      assert.equal(changed.match?.entryId, "message:0");
+      assert.equal(loads.batches(), 5);
       const last = yield* projection.searchThread({ threadId, query: "sentinel", index: 1 });
       assert.equal(first.totalMatches, 2);
       assert.equal(first.match?.entryId, "message:8");
@@ -530,6 +641,7 @@ describe("V2 thread find", () => {
       if (original.type !== "assistant_message") return;
       yield* putItems([{ ...original, text: "needle needle", streaming: true }], "streaming");
       assert.equal((yield* projection.searchThread({ threadId, query: "needle" })).totalMatches, 2);
+      assert.equal((yield* projection.searchThread({ threadId, query: "need" })).totalMatches, 2);
       const updated = run(threadId, runId, 1, "rolled_back");
       yield* commit([{ ...updated, type: "run.updated" }]);
       assert.equal((yield* projection.searchThread({ threadId, query: "needle" })).totalMatches, 0);
@@ -542,7 +654,8 @@ describe("V2 thread find", () => {
       Effect.gen(function* () {
         const projection = yield* setup;
         const queuedRunId = RunId.make("queued:cancelled");
-        yield* commit([run(threadId, queuedRunId, 2, "cancelled")]);
+        const cancelled = run(threadId, queuedRunId, 2, "cancelled");
+        yield* commit([{ ...cancelled, payload: { ...cancelled.payload, startedAt: null } }]);
         const queued = item("cancelled", 1, "needle", "user_message");
         if (queued.type !== "user_message") return;
         const answer = item("async-answer:question", 2, "needle", "user_message");
@@ -582,6 +695,9 @@ describe("V2 thread find", () => {
         const result = yield* projection.searchThread({ threadId, query: "needle" });
         assert.equal(result.totalMatches, 0);
         assert.isNull(result.match);
+        assert.equal((yield* projection.searchThread({ threadId, query: "need" })).totalMatches, 0);
+        yield* putItems([{ ...question, questionAnswer: undefined }], "unfolded");
+        assert.equal((yield* projection.searchThread({ threadId, query: "need" })).totalMatches, 1);
       }).pipe(Effect.provide(layerTest)),
   );
 
@@ -667,6 +783,7 @@ describe("V2 thread find", () => {
           (yield* projection.searchThread({ threadId, query: "needle", index: 1 })).match?.entryId,
           "local",
         );
+        assert.equal((yield* projection.searchThread({ threadId, query: "need" })).totalMatches, 2);
         const snapshot = yield* projection.getThreadSnapshot(threadId);
         const history = yield* projection.getThreadHistoryPage(
           threadId,

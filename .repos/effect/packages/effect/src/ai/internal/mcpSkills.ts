@@ -1,8 +1,6 @@
 /**
- * The Skills extension (SEP-2640): its wire vocabulary, the catalog behind a
- * static skill, and the handlers shared by the sessionful adapters.
- *
- * @internal
+ * The Skills extension (SEP-2640): wire schemas, the catalog behind a static
+ * skill, and the handlers shared by the sessionful adapters.
  */
 import * as Cause from "../../Cause.ts"
 import * as Digest from "../../crypto/Digest.ts"
@@ -50,7 +48,7 @@ export const declareExtension = <A>(
 
 const Skill = Schema.Struct({
   uri: Schema.String,
-  frontmatter: Legacy.UnknownObject,
+  frontmatter: Stateless.UnknownObject,
   resources: Schema.Union([
     Schema.Array(Schema.Struct(PublicMcpSchema.SkillResource.fields)),
     Schema.Literal("dynamic")
@@ -168,12 +166,6 @@ const methodNotFound = (method: string) =>
     message: `Method not found: ${method}`
   })
 
-// Every skill fits on one page, so the server never issues a cursor.
-const unknownCursor = new McpProtocol.ProtocolError({
-  code: PublicMcpSchema.INVALID_PARAMS_ERROR_CODE,
-  message: "Unknown cursor"
-})
-
 /**
  * Fails with `Method not found` while no skill is registered, as a server
  * that does not declare the extension.
@@ -187,12 +179,6 @@ export const requireSkills = (core: McpCore.McpCore, method: string) =>
   )
 
 /**
- * @internal
- */
-export const rejectCursor = (cursor: string | undefined) =>
-  cursor === undefined ? Effect.void : Effect.fail(unknownCursor)
-
-/**
  * Handlers for {@link LegacyRpcs}, for the sessionful adapters.
  *
  * @internal
@@ -200,8 +186,7 @@ export const rejectCursor = (cursor: string | undefined) =>
 export const legacyHandlers = (core: McpCore.McpCore) => ({
   "skills/list": Effect.fnUntraced(function*(request: typeof LegacyListSkills.payloadSchema.Type) {
     yield* requireSkills(core, "skills/list")
-    yield* rejectCursor(request?.cursor)
-    const skills = yield* McpProtocol.listForClient(core.skills.list)
+    const skills = yield* McpProtocol.listForClient(core.skills.list, request?.cursor)
     return { skills }
   }),
   "skills/get": Effect.fnUntraced(function*(request: typeof LegacyGetSkill.payloadSchema.Type) {
@@ -216,7 +201,7 @@ export const legacyHandlers = (core: McpCore.McpCore) => ({
     request: typeof LegacyReadResourceDirectory.payloadSchema.Type
   ) {
     yield* requireSkills(core, "resources/directory/read")
-    yield* rejectCursor(request.cursor)
+    yield* McpProtocol.rejectCursor(request.cursor)
     const client = yield* PublicMcpSchema.McpServerClient
     const resources = yield* core.skills.readDirectory(request.uri, McpProtocol.invocationFromClient(client)).pipe(
       Effect.mapError(McpProtocol.ProtocolError.fromFeature)

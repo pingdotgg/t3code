@@ -20,6 +20,9 @@
 "@effect/experimental/EventLog#layerIdentityKvs":
   replacement: none
   note: Compose KeyValueStore.toSchemaStore, EventLog.IdentitySchema, EventLog.makeIdentity, and Layer.effect manually.
+"@effect/experimental/EventLog#Registry":
+  replacement: effect/eventlog/EventLog#Registry
+  note: Import Registry from the v4 EventLog module. add(handlers) became registerHandlerUnsafe({ event, handler }), handlers is a ReadonlyMap instead of an Effect of a record, and the static Registry.layer became EventLog.layerRegistry.
 "@effect/experimental/EventLog#schema":
   replacement: effect/eventlog/EventLog#schema
   note: Import schema from the v4 EventLog module.

@@ -18,6 +18,7 @@ export interface NativeMarkdownTextStyle {
   readonly fontFamily: string;
   readonly headingFontFamily: string;
   readonly boldFontFamily: string;
+  readonly monoFontFamily: string;
   readonly headingFontSizes?: ReadonlyArray<number>;
 }
 
@@ -77,6 +78,7 @@ export interface SelectableMarkdownTextProps {
   readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
+  readonly onCiteText?: (text: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
