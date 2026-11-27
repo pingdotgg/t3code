@@ -9837,8 +9837,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               return;
             }
-            // A completed status implies end_turn. Deferred finalization reports hidden failures
-            // directly rather than re-running followPrompt's resumeWith retry loop.
             const hiddenFailure = yield* Effect.suspend(() =>
               checkPromptOutcome({ stopReason: "end_turn" }),
             ).pipe(

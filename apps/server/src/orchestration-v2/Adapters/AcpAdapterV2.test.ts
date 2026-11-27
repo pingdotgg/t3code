@@ -2020,7 +2020,6 @@ describe("AcpAdapterV2", () => {
         const workRaceSettled = yield* Deferred.make<void>();
         nextDeferredFinalized = workRaceSettled;
         nextOutcome = () => Effect.undefined;
-        // The first check times out while the second subagent still holds the turn open.
         yield* TestClock.adjust("5 seconds");
         yield* Deferred.await(workRaceSettled);
         assert.deepEqual(yield* Queue.clear(terminals), []);
