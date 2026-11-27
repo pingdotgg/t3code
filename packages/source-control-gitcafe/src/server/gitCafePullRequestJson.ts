@@ -24,7 +24,7 @@ import type {
   ProviderDiffSlice,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 
-const Actor = Schema.Union([
+export const Actor = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("local"),
     actorId: Schema.String,
@@ -308,7 +308,7 @@ interface RepositoryOnHost {
   readonly host: string;
 }
 
-function toActor(actor: Actor, host: string): PullRequestActor | null {
+export function toActor(actor: Actor, host: string): PullRequestActor | null {
   if (actor.kind === "unavailable") return null;
   return {
     login: actor.kind === "local" ? actor.handle : actor.login,

@@ -13,6 +13,7 @@ import {
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   parseCommitPath,
+  parseIssuePath,
   projectChangeRequestHost,
   repositoryUrlFromPagePath,
 } from "@t3tools/source-control-core/shared/definition";
@@ -23,6 +24,7 @@ const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
 
 /** GitCafe serves pull requests at `/pull/<n>` and redirects the older `/pulls/<n>` there. */
 const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pulls?\/(\d+)(?:\/|$)/u;
+const ISSUE_PATH = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
 const REPOSITORY_PAGE_PATH = /^\/([^/]+\/[^/]+)\/(?:tree|blob)\/[^/]/u;
 
@@ -71,6 +73,8 @@ export const definition = defineSourceControl({
   // `/pull/` and `/pulls/` are GitHub's and Forgejo's shapes too, so only GitCafe's own hosts
   // claim them.
   parseChangeRequestUrl,
+  parseIssueUrl: (url) =>
+    GITCAFE_HOSTS.has(url.hostname.toLowerCase()) ? parseIssuePath(url, ISSUE_PATH) : null,
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) =>
     GITCAFE_HOSTS.has(url.hostname.toLowerCase()) ? parseCommitPath(url, COMMIT_PATH) : null,

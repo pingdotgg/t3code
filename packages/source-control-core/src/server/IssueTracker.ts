@@ -91,6 +91,8 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly comments: ReadonlyArray<IssueComment>;
   /** Where older comments carry on; null once the conversation is whole. */
   readonly commentsCursor: string | null;
+  /** The issue was read but its comments were not, so `comments` is not the conversation. */
+  readonly commentsUnavailable?: boolean;
   readonly events: ReadonlyArray<IssueEvent>;
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
 }
