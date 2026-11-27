@@ -386,6 +386,33 @@ it.effect("a long run title is cut without leaving half an emoji", () =>
   ),
 );
 
+it.effect("a long reference title is cut without leaving half an emoji", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const issue = { kind: "issue", address: { scope: "me/app", key: "1" } };
+      const split = { ...issue, key: "split", title: `${"a".repeat(299)}\u{1F680}tail` };
+      yield* store.referenceNoted("r1", "read", split);
+      yield* store.referenceNoted("r1", "read", {
+        ...issue,
+        key: "whole",
+        title: `${"a".repeat(298)}\u{1F680}tail`,
+      });
+      assert.deepStrictEqual(
+        (yield* store.references("r1")).map((reference) => reference.title),
+        ["a".repeat(299), `${"a".repeat(298)}\u{1F680}`],
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          yield* store.referenceNoted("r1", "read", split);
+          assert.equal(yield* PubSub.remaining(told), 0);
+        }),
+      );
+    }),
+  ),
+);
+
 it.effect("one buffered signal goes to one wait, and a claimed wait keeps what woke it", () =>
   withStore(
     Effect.gen(function* () {
@@ -493,6 +520,14 @@ it.effect.each([999, 1000])("buffered mail with a 1s TTL claimed after %i ms", (
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
       const address = { workflow: "gate", channel: "ready" };
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: address.workflow,
+        version: 1,
+        engineTag: `${address.workflow}@1`,
+        idempotencyKey: "r1",
+        input: {},
+      });
       yield* store.waitOpened({
         runId: "r1",
         name: "go",
@@ -601,6 +636,9 @@ it.effect("tells the milestone hub of each run and question transition once", ()
       });
       yield* store.runEnded("r1", "cancelled", "stopped by a person", null);
       yield* store.runEnded("r1", "completed", null, null);
+      // An ended run opens no wait: it would claim channel mail meant for a live run.
+      yield* ask("too late", { title: "Still there?" });
+      assert.isUndefined(yield* store.waitAt({ runId: "r1", wait: "too late" }));
 
       assert.notInclude(
         (yield* hub.recent()).events.map((event) => event.workflowRunId),

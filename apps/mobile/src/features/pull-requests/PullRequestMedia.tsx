@@ -1,3 +1,4 @@
+import { mediaReferenceFileName } from "@t3tools/client-runtime/media-reference";
 import { useGT } from "gt-react-native";
 import { createContext, useContext, useState } from "react";
 import {
@@ -54,7 +55,8 @@ export function PullRequestMedia(props: {
   const withGallery = useFilePreviewGallery();
   const [image, setImage] = useState<FilePreviewSource | null>(null);
   const [video, setVideo] = useState<VideoPreviewSource | null>(null);
-  const name = props.caption || new URL(props.url).pathname.split("/").pop() || gt("Attachment");
+  const name =
+    props.caption || mediaReferenceFileName({ kind: "url", url: props.url }) || gt("Attachment");
   if (props.kind === "image")
     return (
       <>

@@ -1712,6 +1712,13 @@ export function settingsForThisPlatform(
   );
 }
 
+function titleMatchRank(title: string, query: string, queryTokens: ReadonlyArray<string>): number {
+  if (title === query) return 5;
+  if (title.startsWith(query)) return 4;
+  if (title.includes(query)) return 3;
+  return queryTokens.every((token) => title.includes(token)) ? 2 : 0;
+}
+
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
@@ -1724,30 +1731,23 @@ export function searchSettings(
   return settingsForThisPlatform(items)
     .flatMap((item, index) => {
       const title = normalizeSearchText(decodeMsg(item.title));
+      // The title as displayed, so search also works in the active language.
+      const displayedTitle = normalizeSearchText(translate(item.title));
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
-        // The labels as displayed, so search also works in the active language.
-        normalizeSearchText(translate(item.title)),
+        displayedTitle,
         normalizeSearchText(translate(SETTINGS_SECTION_LABELS[item.to])),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
         ...(item.searchTerms ?? []).map((term) => normalizeSearchText(translate(term))),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];
 
-      const exactPhraseField = fields.findIndex((field) => field.includes(normalizedQuery));
-      const rank =
-        title === normalizedQuery
-          ? 5
-          : title.startsWith(normalizedQuery)
-            ? 4
-            : title.includes(normalizedQuery)
-              ? 3
-              : queryTokens.every((token) => title.includes(token))
-                ? 2
-                : exactPhraseField >= 0
-                  ? 1
-                  : 0;
+      const rank = Math.max(
+        titleMatchRank(title, normalizedQuery, queryTokens),
+        titleMatchRank(displayedTitle, normalizedQuery, queryTokens),
+        fields.some((field) => field.includes(normalizedQuery)) ? 1 : 0,
+      );
       return [{ item, index, rank }];
     })
     .toSorted(

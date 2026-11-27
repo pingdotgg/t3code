@@ -183,6 +183,23 @@ export function selectedPullRequestAuthor(
   );
 }
 
+/** The labels a filter names, as choices: a search that hides one keeps its color and count. */
+export function selectedPullRequestLabels(
+  facets: ReadonlyArray<PullRequestLabelFacet>,
+  hosted: ReadonlyArray<PullRequestLabel>,
+  values: ReadonlyArray<string>,
+): ReadonlyArray<PullRequestLabelFacet> {
+  return values.map((name) => {
+    const key = normalize(name);
+    return (
+      facets.find((facet) => normalize(facet.name) === key) ?? {
+        ...(hosted.find((label) => normalize(label.name) === key) ?? { name, color: null }),
+        count: 0,
+      }
+    );
+  });
+}
+
 export function pullRequestLabelChoices(
   facets: ReadonlyArray<PullRequestLabelFacet>,
   hosted: ReadonlyArray<PullRequestLabel>,
@@ -500,6 +517,7 @@ export function mergePullRequestDiffStats(
   stats: ReadonlyArray<{
     readonly environmentId: string;
     readonly projectId: string;
+    readonly repository: string;
     readonly number: number;
     readonly additions: number;
     readonly deletions: number;
@@ -519,8 +537,9 @@ export function mergePullRequestDiffStats(
 export const pullRequestDiffStatKey = (row: {
   readonly environmentId: string;
   readonly projectId: string;
+  readonly repository: string;
   readonly number: number;
-}) => `${row.environmentId} ${row.projectId} ${row.number}`;
+}) => `${row.environmentId} ${row.projectId} ${row.repository.toLowerCase()} ${row.number}`;
 
 export interface MergedPullRequestList {
   readonly viewers: PullRequestViewers;
