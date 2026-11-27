@@ -1,7 +1,14 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as TestConsole from "effect/testing/TestConsole";
+import { Command } from "effect/cli";
 
-import { formatTraceSummary, makeTraceSpanSummary } from "./trace.ts";
+import { formatTraceSummary, makeTraceSpanSummary, traceCommand } from "./trace.ts";
 
 const MINUTE_MS = 60_000;
 
@@ -31,6 +38,55 @@ function browserSpan(
     attributes,
   });
 }
+
+const traceSummaryFixture = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const baseDir = yield* fs.makeTempDirectoryScoped();
+  const traceFilePath = path.join(baseDir, "trace.ndjson");
+  const rotatedPath = `${traceFilePath}.1`;
+  yield* fs.makeDirectory(rotatedPath);
+
+  const run = Command.runWith(traceCommand, { version: "0.0.0" })([
+    "summary",
+    "--base-dir",
+    baseDir,
+  ]).pipe(
+    Effect.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnv({
+          env: { T3CODE_TRACE_FILE: traceFilePath, T3CODE_TRACE_MAX_FILES: "2" },
+        }),
+      ),
+    ),
+  );
+  return { fs, traceFilePath, rotatedPath, run };
+});
+
+it.effect("summarizes the current trace when a rotated file cannot be read", () =>
+  Effect.gen(function* () {
+    const { fs, traceFilePath, rotatedPath, run } = yield* traceSummaryFixture;
+    yield* fs.writeFileString(traceFilePath, `${span("sample.span", 5, MINUTE_MS)}\n`);
+
+    yield* run;
+
+    assert.include((yield* TestConsole.logLines).join("\n"), "sample.span");
+    assert.deepStrictEqual(yield* TestConsole.errorLines, [
+      `Failed to read local trace file '${rotatedPath}'.`,
+    ]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reports a read error when no trace files can be read", () =>
+  Effect.gen(function* () {
+    const { rotatedPath, run } = yield* traceSummaryFixture;
+
+    const error = yield* Effect.flip(run);
+
+    assert.propertyVal(error, "message", `Failed to read local trace file '${rotatedPath}'.`);
+    assert.isEmpty(yield* TestConsole.logLines);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it("drops spans that ended before the window and counts unreadable lines", () => {
   const nowMs = Date.UTC(2026, 10, 24);

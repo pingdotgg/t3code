@@ -109,6 +109,30 @@ describe("makeRunOutcomeRecorder", () => {
     }),
   );
 
+  it.effect("labels a run on Antigravity's default model with the default's family", () =>
+    Effect.gen(function* () {
+      const record = commitWith(makeRunOutcomeRecorder(() => Effect.succeed(false)));
+      // `antigravity-default` is what a thread stores when it stays on Antigravity's default, Gemini 4 Neon.
+      yield* record([
+        runUpdated(1, "antigravity", {
+          id: RunId.make("run:metrics:antigravity-default"),
+          status: "completed",
+          startedAt: at("2026-10-19T12:00:30.000Z"),
+          completedAt: at("2026-10-19T12:01:30.000Z"),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("antigravity"),
+            model: "antigravity-default",
+          },
+        }),
+      ]);
+
+      const counter = (yield* runSnapshots("antigravity")).find(
+        (snapshot) => snapshot.id === "t3_runs_total",
+      );
+      assert.strictEqual(counter?.attributes?.["modelFamily"], "gemini");
+    }),
+  );
+
   it.effect("does not count a rollback of a run that already finished", () =>
     Effect.gen(function* () {
       // A fresh recorder stands in for a restart, which forgets the runs already counted.

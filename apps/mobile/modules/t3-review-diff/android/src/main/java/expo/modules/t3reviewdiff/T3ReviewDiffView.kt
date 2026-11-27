@@ -664,7 +664,10 @@ internal data class DiffStyle(
   val fileHeaderMetaFontSizePx: Float,
   val fileHeaderMetaFontWeight: String,
   val fileHeaderSubtextFontSizePx: Float,
-  val fileHeaderSubtextFontWeight: String
+  val fileHeaderSubtextFontWeight: String,
+  val codeFontFamily: String,
+  val uiFontFamily: String,
+  val uiBoldFontFamily: String
 ) {
   companion object {
     fun defaults(density: Float): DiffStyle = DiffStyle(
@@ -687,6 +690,9 @@ internal data class DiffStyle(
       fileHeaderMetaFontWeight = "semibold",
       fileHeaderSubtextFontSizePx = 11f * density,
       fileHeaderSubtextFontWeight = "medium",
+      codeFontFamily = "monospace",
+      uiFontFamily = "sans-serif",
+      uiBoldFontFamily = "sans-serif",
     )
 
     fun fromJson(value: String, fallback: DiffStyle, density: Float): DiffStyle = try {
@@ -743,6 +749,9 @@ internal data class DiffStyle(
           "fileHeaderSubtextFontWeight",
           fallback.fileHeaderSubtextFontWeight,
         ),
+        codeFontFamily = json.optString("codeFontFamily", fallback.codeFontFamily),
+        uiFontFamily = json.optString("uiFontFamily", fallback.uiFontFamily),
+        uiBoldFontFamily = json.optString("uiBoldFontFamily", fallback.uiBoldFontFamily),
       )
     } catch (_: Exception) {
       fallback
@@ -854,6 +863,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   var style: DiffStyle = DiffStyle.defaults(density)
     set(value) {
       field = value
+      drawing.applyFonts(value)
       rebuildOffsets()
     }
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null

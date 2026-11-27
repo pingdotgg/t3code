@@ -34,6 +34,10 @@ class T3TerminalModule : Module() {
         view.fontSize = fontSize.toFloat()
       }
 
+      Prop("fontFamily") { view: T3TerminalView, fontFamily: String ->
+        view.fontFamily = fontFamily
+      }
+
       Prop("focusRequest") { view: T3TerminalView, focusRequest: Double ->
         view.focusRequest = focusRequest
       }
