@@ -2246,9 +2246,19 @@ function buildAcpStandardToolTurnItem(input: {
         };
       }
       const pathIsQuery = resolvedPathInfo(toolCall)?.fromQuery === true;
-      const searchOutput = textFromUnknown(rawOutput);
+      const outputRecord = unknownRecord(rawOutput);
+      const stdout = textFromUnknown(outputRecord?.stdout);
+      const stderr = textFromUnknown(outputRecord?.stderr);
+      const searchOutput =
+        stdout ?? (stderr === undefined ? textFromUnknown(rawOutput) : undefined);
+      const diagnosticOutput = stderr
+        ? [searchOutput, stderr].filter(Boolean).join("\n")
+        : searchOutput;
       const grepResults =
-        path === undefined || searchOutput === undefined
+        status === "failed" ||
+        status === "interrupted" ||
+        path === undefined ||
+        searchOutput === undefined
           ? undefined
           : parseGrepOutput(searchOutput, path);
       const pattern = searchToolLabelParts({ input: rawInputRecord }).query ?? path;
@@ -2262,15 +2272,15 @@ function buildAcpStandardToolTurnItem(input: {
           }) ?? title,
         type: "file_search",
         ...(pattern === undefined ? {} : { pattern }),
-        ...(path === undefined || (pathIsQuery && searchOutput === undefined)
+        ...(path === undefined || (pathIsQuery && diagnosticOutput === undefined)
           ? {}
           : {
               results: grepResults
-                ? [...grepResults]
+                ? [...grepResults, ...(stderr ? [{ fileName: path, preview: stderr }] : [])]
                 : [
                     {
                       fileName: path,
-                      ...(searchOutput === undefined ? {} : { preview: searchOutput }),
+                      ...(diagnosticOutput === undefined ? {} : { preview: diagnosticOutput }),
                     },
                   ],
             }),

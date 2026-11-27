@@ -1406,7 +1406,19 @@ const program = Effect.gen(function* () {
             kind: "search",
             status: "completed",
             rawInput: { pattern: "needle", path: "src" },
-            rawOutput: "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();",
+            rawOutput: {
+              stdout: "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();",
+              stderr: "  Permission denied\n2: additional detail",
+            },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-grep-failure",
+            title: "Grep",
+            kind: "search",
+            status: "failed",
+            rawInput: { pattern: "needle", path: "src" },
+            rawOutput: "  Invalid regular expression\n2: unexpected token",
           },
           {
             sessionUpdate: "tool_call_update",

@@ -92,7 +92,32 @@ describe("openCodeToolTurnItem", () => {
     expect(item).toMatchObject({ type: "file_change", fileName: "src/index.ts", ...expected });
   });
 
-  it("splits grep output into one result per matched line", () => {
+  it.each([
+    {
+      status: "completed",
+      // Captured from OpenCode 2.4.1.
+      output:
+        'Found 2 matches\n/repo/src/one.ts:\n  Line 1: export const heading = "intro";\n\n\n/repo/src/two.ts:\n  Line 1: export const second = 2;',
+      results: [
+        { fileName: "/repo/src/one.ts", line: 1, preview: 'export const heading = "intro";' },
+        { fileName: "/repo/src/two.ts", line: 1, preview: "export const second = 2;" },
+      ],
+    },
+    {
+      status: "failed",
+      output: "  Invalid regular expression\n2: unexpected token",
+      results: [
+        { fileName: "/repo/src", preview: "  Invalid regular expression\n2: unexpected token" },
+      ],
+    },
+    {
+      status: "interrupted",
+      output: "  Invalid regular expression\n2: unexpected token",
+      results: [
+        { fileName: "/repo/src", preview: "  Invalid regular expression\n2: unexpected token" },
+      ],
+    },
+  ] as const)("projects $status grep output", ({ status, output, results }) => {
     const item = openCodeToolTurnItem(
       {
         id: TurnItemId.make("grep-item"),
@@ -104,7 +129,7 @@ describe("openCodeToolTurnItem", () => {
         nativeItemRef: null,
         parentItemId: null,
         ordinal: 0,
-        status: "completed",
+        status,
         title: "grep",
         startedAt: null,
         completedAt: null,
@@ -113,19 +138,14 @@ describe("openCodeToolTurnItem", () => {
       {
         name: "grep",
         input: { pattern: "export const \\w+", path: "/repo/src" },
-        // Captured from OpenCode 2.4.1.
-        output:
-          'Found 2 matches\n/repo/src/one.ts:\n  Line 1: export const heading = "intro";\n\n\n/repo/src/two.ts:\n  Line 1: export const second = 2;',
+        output,
         completedMetadata: undefined,
       },
     );
     expect(item).toMatchObject({
       type: "file_search",
       pattern: "export const \\w+",
-      results: [
-        { fileName: "/repo/src/one.ts", line: 1, preview: 'export const heading = "intro";' },
-        { fileName: "/repo/src/two.ts", line: 1, preview: "export const second = 2;" },
-      ],
+      results,
     });
   });
 });

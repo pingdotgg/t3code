@@ -5401,6 +5401,13 @@ describe("AcpAdapterV2", () => {
         results: [
           { fileName: "src/a.ts", line: 3, preview: "const needle = 1;" },
           { fileName: "src/b.ts", line: 9, preview: "needle();" },
+          { fileName: "src", preview: "  Permission denied\n2: additional detail" },
+        ],
+      });
+      assert.deepEqual(fileSearch("structured-search-grep-failure"), {
+        pattern: "needle",
+        results: [
+          { fileName: "src", preview: "  Invalid regular expression\n2: unexpected token" },
         ],
       });
       assert.deepEqual(fileSearch("structured-search-query-no-output"), {
