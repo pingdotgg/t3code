@@ -77,6 +77,13 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(
     retained?.excluded ?? new Set(),
   );
+  const [previousRetained, setPreviousRetained] = useState(retained);
+  if (previousRetained !== retained) {
+    setPreviousRetained(retained);
+    if (retained === undefined && previousRetained?.excluded === excludedFiles) {
+      setExcludedFiles(new Set());
+    }
+  }
   const [selectionBranch, setSelectionBranch] = useState(
     retained !== undefined ? retained.refName : (gitStatus.data?.refName ?? null),
   );

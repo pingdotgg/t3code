@@ -237,3 +237,24 @@ it.each([
     ...(scenario.includedAfterFailure ? {} : { filePaths: ["include.ts"] }),
   });
 });
+
+it("clears inherited exclusions on success with stale branch status", async () => {
+  state.cwd = "/repo/pending/success";
+  state.refName = "main";
+  state.result = { commit: { status: "created" } };
+  state.createdBranch = undefined;
+  const success = Promise.withResolvers<void>();
+  state.waitBeforeProgress = success.promise;
+
+  const first = openSheet();
+  first.toggle("later.ts");
+  await first.commit("Commit on a new branch");
+
+  const reopened = openSheet();
+  expect(reopened.isIncluded("later.ts")).toBe(false);
+  await act(async () => success.resolve());
+  state.waitBeforeProgress = null;
+
+  expect(reopened.isIncluded("later.ts")).toBe(true);
+  reopened.close();
+});
