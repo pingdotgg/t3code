@@ -1324,6 +1324,7 @@
   "42a2622893a6bced": "Could not read limits.",
   "4897e228d3185c96": "No limits reported.",
   "e27d2cb964df5dd5": "{source}: No accounts reported.",
+  "161135f0aea4d1ca": "{source}: No Codex, Claude, or Grok accounts. Skipped {providers}.",
   "1b503134018285f4": "{days}d {hours}h",
   "164c674cf062933a": "{label} · {count} left · expires in {expires}",
   "9c82c39589c23938": "{label} · {count} left",
@@ -3789,6 +3790,7 @@
   "6c71d251d9917587": "Copy as Markdown",
   "d510b122f84051a0": "Copy as CSV",
   "66c4ee40252d9dec": "Copy as HTML",
+  "7b8a7cd89a22d822": "Copy as PNG",
   "2912e4ac3697686b": "Read the thread on {label}",
   "ced684880c2e1961": "Allow {server} to run {tool}?",
   "b66fa23b5647b62d": "Send this message from {server}?",
@@ -7551,9 +7553,8 @@
     },
     "."
   ],
-  "432e85a50e2e7964": [
-    "Show the quota of every account the hub pools, next to the providers on",
-    " ",
+  "28988b067c83383c": [
+    "Show the quota of every Codex, Claude, and Grok account the hub pools, next to the providers on ",
     {
       "i": 1,
       "k": "_gt_value_1",
@@ -9648,6 +9649,7 @@
   "3dd6eb5644a6ed8b": "Process count",
   "85f0adb1de45cbc1": "{processStarts} starts · {processExits} exits",
   "0f0ae2813abd70e4": "Read throughput",
+  "dc52330df5cc4586": "{bytes} observed",
   "d032b2addb6f00dc": "Write throughput",
   "910a0c5f01321f81": "CPU speed limit",
   "0360d3113c5a74f7": "{thermalState} thermal state",
@@ -9671,6 +9673,7 @@
   "7b2e770a310d3271": "Electron main process",
   "953cb034cd2e65ae": "Collection time",
   "75f59f3b8b292536": "Process scan",
+  "cb9f65e224af203d": "{retained}/{scanned} retained",
   "30d77fc0bc57f102": "Inaccessible",
   "69c367f8a75a477d": "Sidecar",
   "543ff5a7f825adc3": "Restarts",
@@ -10069,6 +10072,7 @@
   "7f11b5e6dfa0bc56": "Custom",
   "aea25315995268e1": "Inherits",
   "c8d6af8aaa94a464": "Default",
+  "652e3aad21933d17": "{summary} · {count, plural, one {{count} project override} other {{count} project overrides}}",
   "0a39976ec0fb3e49": "{overrideSummary}. Show where this value comes from",
   "99af2d06aa2b6d12": "Reset it",
   "7e9fca5fb426044a": "Reset all",

@@ -1324,6 +1324,7 @@
   "42a2622893a6bced": "Kunde inte läsa gränser.",
   "4897e228d3185c96": "Inga gränser rapporterades.",
   "e27d2cb964df5dd5": "{source}: inga konton rapporterades.",
+  "161135f0aea4d1ca": "{source}: inga Codex-, Claude- eller Grok-konton. Hoppade över {providers}.",
   "1b503134018285f4": "{days} d {hours} h",
   "164c674cf062933a": "{label} · {count} kvar · går ut om {expires}",
   "9c82c39589c23938": "{label} · {count} kvar",
@@ -3789,6 +3790,7 @@
   "6c71d251d9917587": "Kopiera som Markdown",
   "d510b122f84051a0": "Kopiera som CSV",
   "66c4ee40252d9dec": "Kopiera som HTML",
+  "7b8a7cd89a22d822": "Kopiera som PNG",
   "2912e4ac3697686b": "Läs tråden på {label}",
   "ced684880c2e1961": "Tillåta {server} att köra {tool}?",
   "b66fa23b5647b62d": "Skicka det här meddelandet från {server}?",
@@ -7550,8 +7552,8 @@
     },
     "."
   ],
-  "432e85a50e2e7964": [
-    "Visa kvoten för alla konton som hubben samlar, bredvid leverantörerna på",
+  "28988b067c83383c": [
+    "Visa kvoten för alla Codex-, Claude- och Grok-konton som hubben samlar, bredvid leverantörerna på",
     " ",
     {
       "i": 1,
@@ -9646,6 +9648,7 @@
   "3dd6eb5644a6ed8b": "Antal processer",
   "85f0adb1de45cbc1": "{processStarts} starter · {processExits} avslut",
   "0f0ae2813abd70e4": "Läsgenomströmning",
+  "dc52330df5cc4586": "{bytes} observerade",
   "d032b2addb6f00dc": "Skrivgenomströmning",
   "910a0c5f01321f81": "CPU-hastighetsgräns",
   "0360d3113c5a74f7": "Termiskt tillstånd: {thermalState}",
@@ -9669,6 +9672,7 @@
   "7b2e770a310d3271": "Electrons huvudprocess",
   "953cb034cd2e65ae": "Insamlingstid",
   "75f59f3b8b292536": "Processgenomsökning",
+  "cb9f65e224af203d": "{retained}/{scanned} sparade",
   "30d77fc0bc57f102": "Ej åtkomlig",
   "69c367f8a75a477d": "Sidecar",
   "543ff5a7f825adc3": "Omstarter",
@@ -10067,6 +10071,7 @@
   "7f11b5e6dfa0bc56": "Anpassad",
   "aea25315995268e1": "Ärver",
   "c8d6af8aaa94a464": "Standard",
+  "652e3aad21933d17": "{summary} · {count, plural, one {{count} projektåsidosättning} other {{count} projektåsidosättningar}}",
   "0a39976ec0fb3e49": "{overrideSummary}. Visa var värdet kommer ifrån",
   "99af2d06aa2b6d12": "Återställ",
   "7e9fca5fb426044a": "Återställ alla",
