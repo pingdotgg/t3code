@@ -29,7 +29,13 @@ import {
   type Transaction,
 } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
-import type { NodeType, ResolvedPos } from "@tiptap/pm/model";
+import {
+  Fragment,
+  Slice,
+  type Node as ProseMirrorNode,
+  type NodeType,
+  type ResolvedPos,
+} from "@tiptap/pm/model";
 import type {
   AssistantCitation,
   ComposerContextClipboardFragment,
@@ -71,7 +77,7 @@ import {
   collapseShownMarkdownSource,
   ComposerMarkdownSourceExtension,
 } from "~/composer-markdown-source";
-import { MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
+import { inlineMarkdownUnitMarks, MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
@@ -779,6 +785,34 @@ function isInCodeBlock(view: EditorView): boolean {
   return view.state.selection.$from.parent.type.spec.code === true;
 }
 
+/** Pasted links stay literal in code, including inline code shown as its Markdown source. */
+function isInCode(view: EditorView): boolean {
+  if (isInCodeBlock(view)) return true;
+  const {
+    selection: { $from },
+    schema,
+  } = view.state;
+  if (schema.marks.code?.isInSet($from.marks())) return true;
+  const sourceType = schema.marks[MARKDOWN_SOURCE_MARK];
+  if (!sourceType) return false;
+  const regions: { from: number; to: number }[] = [];
+  $from.parent.forEach((child, offset) => {
+    if (!sourceType.isInSet(child.marks)) return;
+    const last = regions.at(-1);
+    if (last?.to === offset) last.to += child.nodeSize;
+    else regions.push({ from: offset, to: offset + child.nodeSize });
+  });
+  const caret = $from.parentOffset;
+  const region = regions.find(({ from, to }) => from <= caret && caret <= to);
+  if (!region) return false;
+  // Shown source keeps its delimiters as text, so parse it to see whether the caret sits in a code span.
+  const units = inlineMarkdownUnitMarks(
+    $from.parent.textBetween(region.from, region.to, undefined, "￼"),
+  );
+  const at = caret - region.from;
+  return Boolean(units[at - 1]?.includes("code") || units[at]?.includes("code"));
+}
+
 const ChipSelectionPluginKey = new PluginKey<DecorationSet>("composer-chip-range-selection");
 
 /** Highlights chips inside a text selection; their node views draw no native highlight. */
@@ -1281,7 +1315,20 @@ function ComposerPromptEditorTiptapInner(
             })
             // Pasted chips and lines would split shown Markdown, so parse it first.
             .command(collapseShownMarkdownSource)
-            .insertContent(content)
+            .command(({ tr, commands }) => {
+              const nodes = Array.isArray(content)
+                ? content.map((json) => tr.doc.type.schema.nodeFromJSON(json))
+                : [];
+              if (nodes.length < 2 || !nodes.every((node) => node.isBlock)) {
+                return commands.insertContent(content);
+              }
+              // Open paragraph edges join the caret's line and the text after it, as typed lines do.
+              const open = (node: ProseMirrorNode) => (node.type.name === "paragraph" ? 1 : 0);
+              tr.replaceSelection(
+                new Slice(Fragment.from(nodes), open(nodes[0]!), open(nodes.at(-1)!)),
+              );
+              return true;
+            })
             .command(({ tr }) => {
               // Move after a pasted rule so the next keystroke cannot replace it; add a trailing line
               // if needed.
@@ -1601,8 +1648,7 @@ function ComposerPromptEditorTiptapInner(
           const captured = capturedPastes.current.get(event);
           capturedPastes.current.delete(event);
           const paste =
-            captured ??
-            readPastedComposerClipboard(clipboardData, literalText || isInCodeBlock(view));
+            captured ?? readPastedComposerClipboard(clipboardData, literalText || isInCode(view));
           if (!captured && clipboardData.files.length > 0 && !paste.context?.records.length)
             return false;
           if (!insertClipboardText(view, paste)) return false;
@@ -1638,7 +1684,7 @@ function ComposerPromptEditorTiptapInner(
           view.focus();
           return insertClipboardText(
             view,
-            readPastedComposerClipboard(data, literalText || isInCodeBlock(view)),
+            readPastedComposerClipboard(data, literalText || isInCode(view)),
           );
         },
       },
@@ -1668,7 +1714,7 @@ function ComposerPromptEditorTiptapInner(
     onPaste(event, (plainTextOnly) => {
       const paste = readPastedComposerClipboard(
         event.clipboardData,
-        plainTextOnly || literalText || (editor !== null && isInCodeBlock(editor.view)),
+        plainTextOnly || literalText || (editor !== null && isInCode(editor.view)),
       );
       capturedPastes.current.set(event.nativeEvent, paste);
       return paste;

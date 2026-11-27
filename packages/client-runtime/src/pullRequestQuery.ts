@@ -58,7 +58,8 @@ export function parsePullRequestQuery(raw: string): {
     const qualifier = /^(-?)([A-Za-z][A-Za-z0-9_-]*):(.*)$/.exec(token);
     const value = qualifier === null ? "" : qualifierValue(qualifier[3] ?? "");
     const negated = qualifier?.[1] === "-";
-    switch (value.length === 0 ? "" : (qualifier?.[2]?.toLowerCase() ?? "")) {
+    const qualifierKey = value.length === 0 ? "" : (qualifier?.[2]?.toLowerCase() ?? "");
+    switch (qualifierKey) {
       case "label": {
         const names = boundedNames(splitQualifierList(qualifier?.[3] ?? ""));
         if (names.length === 0) break;
@@ -106,11 +107,16 @@ export function parsePullRequestQuery(raw: string): {
       case "":
         break;
       default:
+        // GitHub also scopes PR searches with `type:pr`; keep other `type:*` tokens as labels.
+        if (!negated && qualifierKey === "type" && value.toLowerCase() === "pr") continue;
         if (!value.startsWith("/")) {
+          const namespace = `${qualifier?.[2] ?? ""}:`;
           const names = boundedNames(
-            splitQualifierList(qualifier?.[3] ?? "").map((name) =>
-              name.includes(":") ? name : `${qualifier?.[2] ?? ""}:${name}`,
-            ),
+            splitQualifierList(`${namespace}${qualifier?.[3] ?? ""}`)
+              .map((name, index) =>
+                index === 0 || name.includes(":") ? name : `${namespace}${name}`,
+              )
+              .filter((name, index) => index > 0 || name !== namespace),
           );
           if (names.length === 0) break;
           if (negated) excludedLabels.push(...names);

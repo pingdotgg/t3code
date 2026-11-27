@@ -22,6 +22,7 @@ import {
 } from "@t3tools/provider-acp/server/runtimeModel";
 import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
 import { acpChangedPathsOfToolCall } from "@t3tools/provider-acp/server/clientPolicy";
+import { MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH, toolOutputImages } from "@t3tools/shared/toolOutput";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -673,6 +674,40 @@ describe("Antigravity tool results", () => {
     expect(normalizeAntigravityToolCall(parseToolUpdate(normalized).toolCall).data.imagePath).toBe(
       "/workspace/brain/result image.png",
     );
+  });
+
+  it("keeps bounded screenshot bytes from T3 MCP tool results", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+    const tooLarge = "A".repeat(MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH + 4);
+    const notification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "shot-1",
+        status: "completed",
+        rawOutput: {
+          content: [
+            { type: "image", mimeType: "image/png", data: png },
+            { type: "image", mimeType: "image/png", data: tooLarge },
+            { type: "text", text: JSON.stringify({ url: "https://example.test/" }) },
+          ],
+        },
+        content: [
+          { type: "content", content: { type: "image", mimeType: "image/png", data: png } },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+    const normalized = normalizeAntigravitySessionUpdate(notification);
+    expect(isSessionNotification(normalized)).toBe(true);
+    const update = parseToolUpdate(normalized).toolCall.data;
+    expect(toolOutputImages(update.rawOutput)).toEqual([
+      { mimeType: "image/png", data: png },
+      { mimeType: "image/png" },
+    ]);
+    expect(normalized.update).toMatchObject({
+      content: [{ type: "content", content: { type: "image", mimeType: "image/png", data: png } }],
+    });
   });
 
   const changesBeyondSizeLimits: ReadonlyArray<{

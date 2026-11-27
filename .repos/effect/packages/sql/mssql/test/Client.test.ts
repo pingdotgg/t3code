@@ -12,6 +12,7 @@ import type * as Tedious from "tedious"
 import { vi } from "vitest"
 
 interface MockConnection extends EventEmitter {
+  config: Tedious.ConnectionConfiguration
   closed: boolean
   closedSignal: Deferred.Deferred<void>
   cancellations: number
@@ -56,7 +57,7 @@ vi.mock("tedious", async (importOriginal) => {
     cancellations = 0
     readonly queries: Array<string> = []
 
-    constructor() {
+    constructor(readonly config: Tedious.ConnectionConfiguration) {
       super()
       state.connections.push(this)
     }
@@ -384,6 +385,22 @@ const makeClient = MssqlClient.make({
 const bounded = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.timeout("2 seconds"))
 
 describe("MssqlClient connection lifecycle", { concurrent: false }, () => {
+  it.effect("passes requestTimeout to Tedious", () =>
+    Effect.gen(function*() {
+      reset()
+      for (
+        const [config, expected] of [
+          [{}, undefined],
+          [{ requestTimeout: "30 seconds" }, 30_000],
+          [{ requestTimeout: 0 }, 0],
+          [{ requestTimeout: "Infinity" }, 0]
+        ] as const
+      ) {
+        yield* MssqlClient.make({ server: "localhost", ...config })
+        assert.strictEqual(state.connections.at(-1)!.config.options?.requestTimeout, expected)
+      }
+    }).pipe(Effect.scoped, Effect.provide(Reactivity.layer)))
+
   for (const operation of ["withoutTransforms", "call"] as const) {
     it.live(`${operation} reuses the transaction connection with a single-connection pool`, () =>
       Effect.gen(function*() {

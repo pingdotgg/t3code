@@ -23,6 +23,7 @@ export const escape = (value: string) =>
 
 const namespacePrefixes: Record<string, string> = {
   "urn:oasis:names:tc:opendocument:xmlns:office:1.0": "office",
+  "urn:oasis:names:tc:opendocument:xmlns:style:1.0": "style",
   "urn:oasis:names:tc:opendocument:xmlns:table:1.0": "table",
   "urn:oasis:names:tc:opendocument:xmlns:text:1.0": "text",
   "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0": "draw",
@@ -34,6 +35,9 @@ const namespacePrefixes: Record<string, string> = {
   "http://www.daisy.org/z3986/2005/ncx/": "",
   "http://www.w3.org/2000/svg": "svg",
   "http://www.w3.org/1998/Math/MathML": "math",
+  "http://www.w3.org/ns/SMIL": "smil",
+  "http://www.w3.org/ns/ttml": "ttml",
+  "http://www.w3.org/2006/04/ttaf1": "ttml",
   "http://www.idpf.org/2007/ops": "epub",
   "http://www.w3.org/XML/1998/namespace": "xml",
   "urn:oasis:names:tc:opendocument:xmlns:container": "",

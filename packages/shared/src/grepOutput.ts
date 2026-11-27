@@ -18,6 +18,7 @@ const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
 const COLON_HEADING = /^(\S.*):$/;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
+const RIPGREP_NUMBERED_LINE = /^\d+:/;
 
 /**
  * Grep tool text as one result per matched line, from ripgrep's `path:line:text` and `--heading`
@@ -67,9 +68,12 @@ export function parseGrepOutput(
       notes.push(trimmed);
       continue;
     }
-    // ripgrep --heading prints the bare path above its numbered lines.
-    if (!/\s/.test(line.trimEnd())) {
-      file = line.trimEnd();
+    // A bare path with spaces needs a following ripgrep line to distinguish it from prose.
+    if (
+      !/\s/.test(line.trimEnd()) ||
+      (/^\S/.test(line) && RIPGREP_NUMBERED_LINE.test(lines[index + 1] ?? ""))
+    ) {
+      file = line;
       continue;
     }
     return undefined;

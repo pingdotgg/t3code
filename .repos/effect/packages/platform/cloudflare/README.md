@@ -289,6 +289,21 @@ are internal transport: they trust the same-Worker namespace bindings and must
 not be exposed on a public route. HTTP or RPC authentication and authorization
 are user code on the Worker.
 
+## Data location
+
+To keep cluster Durable Objects inside a
+[jurisdiction](https://developers.cloudflare.com/durable-objects/reference/data-location/),
+pass jurisdiction subnamespaces (for example `env.CLUSTER_ENTITY.jurisdiction("eu")`)
+for all four bindings to `CloudflareCluster.layer`, or pass `jurisdiction: "eu"`
+to `AlchemyCloudflareCluster.make`. Under local `wrangler dev`, calling
+`.jurisdiction(...)` throws in `workerd` before `CloudflareCluster.layer` receives
+the binding, so pass the four unscoped bindings for local development; only
+`AlchemyCloudflareCluster.make` falls back automatically to unrestricted bindings
+for `workerd`'s unsupported-jurisdiction error (and rethrows other failures).
+Internal peer lookups through `ctx.exports` automatically stay in the calling
+object's `ctx.id.jurisdiction`. Opting into a jurisdiction does not migrate
+existing objects or remove unrestricted twins with the same name.
+
 ## Long waits and delivery
 
 - A long ask pins the caller. A delayed ask made directly by a Worker also

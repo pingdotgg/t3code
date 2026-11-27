@@ -234,6 +234,31 @@ describe("extractInlineCodeSpans", () => {
   ])("matches complete backtick delimiter runs in %s", (markdown, spans) => {
     expect(extractInlineCodeSpans(markdown)).toEqual(spans);
   });
+
+  it.each([
+    [
+      "Use `` ``` `` to open a fence, then edit `./a/shared.ts` and `./b/shared.ts`",
+      ["```", "./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["```x``` then `./a/shared.ts`", ["x", "./a/shared.ts"]],
+    ["~~~\n`./a/shared.ts`\n~~~\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["````md\n```ts\n`./a/shared.ts`\n```\n````\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["```\n    ```\n`./a/shared.ts`\n```\n`./b/shared.ts`", ["./b/shared.ts"]],
+    [
+      "```diff\n- ```\n```\nEdit `./a/shared.ts` and `./b/shared.ts`",
+      ["./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["> ```\n> `./a/shared.ts`\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
+    [
+      "- ~~~\n  example\n\nEdit `./a/shared.ts` and `./b/shared.ts`",
+      ["./a/shared.ts", "./b/shared.ts"],
+    ],
+    ["Step\n2. ~~~\n   `./a/shared.ts`", ["./a/shared.ts"]],
+    ["1. Step\n    ```\r\n    `./a/shared.ts`\r\n    ```\r\n`./b/shared.ts`", ["./b/shared.ts"]],
+    ["    ```\n    `./a/shared.ts`\n    ```\n\n`./b/shared.ts`", ["./b/shared.ts"]],
+  ])("skips only fenced code in %j", (markdown, spans) => {
+    expect(extractInlineCodeSpans(markdown)).toEqual(spans);
+  });
 });
 
 describe("extractMarkdownLinkHrefs", () => {
