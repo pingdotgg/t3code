@@ -1290,6 +1290,38 @@ export function ProviderInstanceCard({
           {restartNotice}
         </p>
       ) : null}
+      {versionAdvisory && onRunVersionAction ? (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            className="w-fit"
+            disabled={isUpdating}
+            onClick={onRunVersionAction}
+          >
+            {isUpdating ? <Spinner /> : <DownloadIcon />}
+            {isUpdating
+              ? gt("Updating")
+              : versionAdvisory.targetVersion
+                ? gt("Install {version}", {
+                    version: getProviderVersionLabel(versionAdvisory.targetVersion),
+                  })
+                : gt("Update now")}
+          </Button>
+          {updateProgress || updateProblem ? (
+            <p
+              aria-live="polite"
+              className={cn(
+                "text-xs leading-snug [overflow-wrap:anywhere]",
+                updateProblem ? "text-warning" : "text-muted-foreground",
+              )}
+            >
+              {updateProgress ?? updateProblem}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {urlAuthAction && onAcceptUrlAuth ? (
         <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
           <p>{urlAuthAction.message}</p>
