@@ -93,26 +93,26 @@ export function originRepositoryPath(repository: string): string {
 
 const ORIGIN_WEB_REPOSITORY_PATH = /^\/codebase\/([^/]+\/[^/]+?)(?:\/(?:tree|blob)\/.+)?\/?$/u;
 
+const INVALID_REPOSITORY_SEGMENT = /[\s:@?#\\]/u;
+
 function normalizeOriginRepositoryPath(path: string): string | null {
   const segments = path
     .replace(/\/+$/u, "")
     .replace(/\.git$/iu, "")
     .split("/");
-  if (segments.length !== 2) return null;
-  const [owner, name] = segments;
   if (
-    !owner ||
-    !name ||
-    owner === "." ||
-    owner === ".." ||
-    name === "." ||
-    name === ".." ||
-    /[\s:@?#\\]/u.test(owner) ||
-    /[\s:@?#\\]/u.test(name)
+    segments.length !== 2 ||
+    segments.some(
+      (segment) =>
+        segment === "" ||
+        segment === "." ||
+        segment === ".." ||
+        INVALID_REPOSITORY_SEGMENT.test(segment),
+    )
   ) {
     return null;
   }
-  return `${owner}/${name}`;
+  return segments.join("/");
 }
 
 /** Parses `owner/name` or a Cursor Origin git/web URL into `owner/name`. */
