@@ -207,10 +207,16 @@ function mapFileSearchResult(
   hostIsWindows: boolean,
   imageOnly = false,
 ): ProjectSearchEntriesResult {
-  const entries = result.items.flatMap((item) => {
+  const entries: ProjectEntry[] = [];
+  for (const item of result.items) {
     const entry = toFileEntry(item, hostIsWindows);
-    return entry && (!imageOnly || isProjectFaviconPath(entry.path)) ? [entry] : [];
-  });
+    if (entry && (!imageOnly || isProjectFaviconPath(entry.path))) {
+      entries.push(entry);
+    }
+    if (entries.length > limit) {
+      break;
+    }
+  }
   return {
     entries: entries.slice(0, limit),
     truncated: entries.length > limit || result.totalMatched > result.items.length,
@@ -222,10 +228,16 @@ function mapDirectorySearchResult(
   limit: number,
   hostIsWindows: boolean,
 ): ProjectSearchEntriesResult {
-  const entries = result.items.flatMap((item) => {
+  const entries: ProjectEntry[] = [];
+  for (const item of result.items) {
     const entry = toDirectoryEntry(item, hostIsWindows);
-    return entry ? [entry] : [];
-  });
+    if (entry) {
+      entries.push(entry);
+    }
+    if (entries.length > limit) {
+      break;
+    }
+  }
   const rootDirectoryCount = result.items.some((item) => item.relativePath.length === 0) ? 1 : 0;
   return {
     entries: entries.slice(0, limit),
