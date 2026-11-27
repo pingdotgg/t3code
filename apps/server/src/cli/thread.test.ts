@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/cli";
+import { CliError, Command } from "effect/cli";
 import { vi } from "vite-plus/test";
 
 import * as McpBridge from "../mcp/AcpMcpStdioBridge.ts";
@@ -671,6 +671,45 @@ it.effect("show returns a --messages count larger than one call can spread", () 
       latest(200_000),
     );
   }),
+);
+
+it.effect("show rejects a negative --messages before reaching the server", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-show-messages-" });
+    const show = (messages: string) =>
+      Command.runWith(threadCommand, { version: "0.0.0" })([
+        "show",
+        threadId,
+        "--messages",
+        messages,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+
+    const error = yield* show("-1");
+    if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
+      assert.fail(`Expected ShowHelp, got ${String(error)}`);
+    }
+    const flagError = error.errors[0];
+    if (flagError?._tag !== "InvalidValue") {
+      assert.fail(`Expected InvalidValue, got ${String(flagError?._tag)}`);
+    }
+    assert.strictEqual(flagError.option, "messages");
+    assert.strictEqual(flagError.value, "-1");
+    // Zero is valid: it shows the thread's state with no messages.
+    assert.strictEqual((yield* show("0"))._tag, "ThreadServerNotRunningError");
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+      ),
+    ),
+  ),
 );
 
 it.effect("show gives the latest run's last error only when that run did not complete", () =>

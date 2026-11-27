@@ -3687,6 +3687,53 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
+  const parseClaudeUserTurns = (userTurns: ReadonlyArray<string>) =>
+    AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        ...userTurns.map((content) => ({ type: "user", message: { role: "user", content } })),
+        { type: "assistant", message: { role: "assistant", content: "Here is what happened." } },
+      ]
+        .map((record) => encodeTranscriptRecord(record))
+        .join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "62c057bb-b316-4b29-be2c-140090d71254",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+  it.each([
+    "<local-command-stdout>Enabled plan mode</local-command-stdout>",
+    "<command-name>/review</command-name>\n<command-message>review</command-message>",
+  ])("keeps a Claude question after quoted %s and names the thread after it", (quote) => {
+    const prompt = `${quote}\nWhy did this change?`;
+
+    expect(parseClaudeUserTurns([prompt])).toMatchObject({
+      title: "Why did this change?",
+      messages: [{ role: "user", text: prompt }, { role: "assistant" }],
+    });
+  });
+
+  it("keeps a Claude question after quoted output full of shell closing tags", () => {
+    const prompt = `<bash-stdout>${"</bash-stdout><bash-stderr>".repeat(16_000)}</bash-stdout><bash-stderr></bash-stderr>\nWhy did this change?`;
+
+    expect(parseClaudeUserTurns([prompt])).toMatchObject({
+      title: "Why did this change?",
+      messages: [{ role: "user", text: prompt }, { role: "assistant" }],
+    });
+  });
+
+  it.each([
+    "<bash-stdout></bash-stdout>\nfinished\n</bash-stdout><bash-stderr></bash-stderr>",
+    "<bash-stderr></bash-stderr>\nfinished\n</bash-stderr>",
+    "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>\n<tools-used-before-summary>Bash, Read</tools-used-before-summary>",
+  ])("hides Claude output with trailing markup of its own (%s)", (output) => {
+    expect(
+      parseClaudeUserTurns([output, "What happened?"])
+        ?.messages.filter((message) => message.role === "user")
+        .map((message) => message.text),
+    ).toEqual(["What happened?"]);
+  });
+
   it.each([
     { customTitles: ["Refactor auth module"], expected: "Refactor auth module" },
     // Claude writes an empty customTitle when the user clears a rename.

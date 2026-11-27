@@ -22,6 +22,12 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import {
+  TEAM_PROFILE_MARKER_FILENAME,
+  TEAM_PROVIDER_PROFILE_ENV_VARS,
+  getTeamHarnessProfile,
+  isAllowedBwrapShadowProfileLeaf,
+} from "./harnessProfiles.ts";
 
 const DEFAULT_BWRAP_RO_SYSTEM_BINDS: ReadonlyArray<string> = ["/usr"];
 
@@ -48,14 +54,7 @@ const DEFAULT_FORBIDDEN_USERDATA_ROOTS: ReadonlyArray<string> = [
   "/var/lib/t3hub/userdata",
 ];
 
-const PROVIDER_PROFILE_ENV_VARS: ReadonlyArray<string> = [
-  "GEMINI_HOME",
-  "CODEX_HOME",
-  "CLAUDE_CONFIG_DIR",
-  "OPENCODE_CONFIG_DIR",
-  "PI_CODING_AGENT_DIR",
-  "T3_TEAM_PROFILE_DIR",
-];
+const PROVIDER_PROFILE_ENV_VARS: ReadonlyArray<string> = TEAM_PROVIDER_PROFILE_ENV_VARS;
 
 const TURN_HELPER_RO_ENV_VARS: ReadonlyArray<string> = [
   "GIT_ASKPASS",
@@ -222,6 +221,8 @@ export interface BwrapSandboxPlan {
   readonly roSystemBinds?: ReadonlyArray<string> | undefined;
   readonly roTrySystemBinds?: ReadonlyArray<string> | undefined;
   readonly providerProfileDirs: ReadonlyArray<string>;
+  readonly providerProfileRwPinSubpaths?: ReadonlyArray<string> | undefined;
+  readonly providerProfileRoSubpaths?: ReadonlyArray<string> | undefined;
   readonly toolCacheDirs: ReadonlyArray<string>;
   readonly extraRwBinds: ReadonlyArray<string>;
   readonly extraRoBinds: ReadonlyArray<string>;
@@ -310,14 +311,15 @@ function isAllowedOwnStateProfileDir(candidate: string, ownStateDir: string): bo
       isSafePathSegment(profileId)
     );
   }
-  // Managed Codex shadow home layout: <stateDir>/providers/codex/<safeInstanceDir>/shadow
+  // Managed harness shadow home layout: <stateDir>/providers/<driver>/<safeInstanceDir>/<shadowLeaf>
   if (segments.length === 4) {
     const [bucket, driver, instanceDir, leaf] = segments;
     return (
       bucket === "providers" &&
-      driver === "codex" &&
+      driver !== undefined &&
       isSafePathSegment(instanceDir) &&
-      leaf === "shadow"
+      leaf !== undefined &&
+      isAllowedBwrapShadowProfileLeaf(driver, leaf)
     );
   }
   return false;
@@ -1466,6 +1468,26 @@ function buildBwrapPrefixArgs(
   for (const profileDir of plan.providerProfileDirs) {
     pushRw(profileDir);
   }
+  // Pin child RW subdirectories (such as `antigravity-acp`) as mountpoints so sandboxed processes
+  // get `EBUSY` if they attempt to rename or swap the directory with a symlink.
+  const profileRwPinAdded = new Set<string>();
+  for (const rwPinSubpath of plan.providerProfileRwPinSubpaths ?? []) {
+    const normalized = normalizePosixPath(rwPinSubpath);
+    if (profileRwPinAdded.has(normalized)) continue;
+    profileRwPinAdded.add(normalized);
+    mountedRw.add(normalized);
+    args.push("--bind", normalized, normalized);
+  }
+  // Emit profile RO overlays unconditionally (bypassing `pushRo`'s system-prefix skip) so
+  // profiles hosted under `/opt/...` still lock `config` and `.t3-team-profile.json` read-only.
+  const profileRoAdded = new Set<string>();
+  for (const roSubpath of plan.providerProfileRoSubpaths ?? []) {
+    const normalized = normalizePosixPath(roSubpath);
+    if (profileRoAdded.has(normalized)) continue;
+    profileRoAdded.add(normalized);
+    mountedRo.add(normalized);
+    args.push("--ro-bind", normalized, normalized);
+  }
   for (const cacheDir of plan.toolCacheDirs) {
     pushRw(cacheDir);
   }
@@ -1495,6 +1517,213 @@ function buildBwrapPrefixArgs(
 
 export function buildBwrapArgs(plan: BwrapSandboxPlan): ReadonlyArray<string> {
   return [...buildBwrapPrefixArgs(plan), plan.command, ...plan.args];
+}
+
+const SENSITIVE_PLUGIN_TARGET_FILENAMES = [
+  "antigravity-oauth-token",
+  "acp_token.json",
+  ".credentials.json",
+  "statev2.sqlite",
+] as const;
+
+const decodeTeamProfileMarkerDriver = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      driver: Schema.optionalKey(Schema.String),
+    }),
+  ),
+);
+
+const decodePersonalAntigravityPluginPrefs = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      plugins: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+      ),
+    }),
+  ),
+);
+
+/**
+ * Locks `.t3-team-profile.json` RO for any team profile, pins `antigravity-acp` RW and locks
+ * `config` RO for trusted `GEMINI_HOME` profiles, and binds enabled `~/.gemini/config/plugins/*` RO.
+ */
+async function collectTeamProfileRoLocksAndPlugins(input: {
+  readonly profileDir: string;
+  readonly isGeminiHomeProfile: boolean;
+  readonly ownStateRoots: ReadonlyArray<string>;
+  readonly foreignForbiddenRoots: ReadonlyArray<string>;
+  readonly homeRoots: ReadonlyArray<string>;
+}): Promise<{
+  readonly profileRoSubpaths: ReadonlyArray<string>;
+  readonly profileRwPinSubpaths: ReadonlyArray<string>;
+  readonly pluginRoTargets: ReadonlyArray<string>;
+}> {
+  const profileRoSubpaths: Array<string> = [];
+  const profileRwPinSubpaths: Array<string> = [];
+
+  const markerPath = NodePath.posix.join(input.profileDir, TEAM_PROFILE_MARKER_FILENAME);
+  const markerRaw = await readRegularFileNoFollow(markerPath, 16_384).catch(() => undefined);
+  if (markerRaw !== undefined) {
+    profileRoSubpaths.push(markerPath);
+  }
+
+  if (!input.isGeminiHomeProfile) {
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
+  }
+
+  // Pin `<profileDir>/antigravity-acp` as a mountpoint so sandboxed turns get EBUSY on rename/swap.
+  const profileAcpDir = NodePath.posix.join(input.profileDir, "antigravity-acp");
+  const profileAcpStat = await NodeFSP.lstat(profileAcpDir).catch(() => undefined);
+  if (
+    profileAcpStat !== undefined &&
+    !profileAcpStat.isSymbolicLink() &&
+    profileAcpStat.isDirectory()
+  ) {
+    profileRwPinSubpaths.push(profileAcpDir);
+  }
+
+  // Always lock `<profileDir>/config` RO for trusted `GEMINI_HOME` profiles regardless of marker
+  // contents so a sandboxed turn can never bypass the RO lock by mutating or deleting the marker.
+  const profileConfigDir = NodePath.posix.join(input.profileDir, "config");
+  const profileConfigStat = await NodeFSP.lstat(profileConfigDir).catch(() => undefined);
+  if (
+    profileConfigStat === undefined ||
+    profileConfigStat.isSymbolicLink() ||
+    !profileConfigStat.isDirectory()
+  ) {
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
+  }
+  profileRoSubpaths.push(profileConfigDir);
+
+  if (markerRaw === undefined) {
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
+  }
+  const markerOpt = decodeTeamProfileMarkerDriver(markerRaw);
+  if (markerOpt._tag !== "Some" || markerOpt.value.driver !== "antigravity") {
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
+  }
+
+  const layout = getTeamHarnessProfile("antigravity").personalSkillLayout;
+  if (layout.kind !== "antigravity-config-and-plugins") {
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
+  }
+
+  const profilePluginsDir = NodePath.posix.join(profileConfigDir, "plugins");
+  const profilePluginsStat = await NodeFSP.lstat(profilePluginsDir).catch(() => undefined);
+  if (
+    profilePluginsStat === undefined ||
+    profilePluginsStat.isSymbolicLink() ||
+    !profilePluginsStat.isDirectory()
+  ) {
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
+  }
+
+  const allowedPersonalPluginsDirs = new Set<string>();
+  const disabledPlugins = new Set<string>();
+  for (const homeRoot of input.homeRoots) {
+    const candidate = normalizePosixPath(
+      NodePath.posix.join(homeRoot, ...layout.personalPluginsRelativeDir),
+    );
+    allowedPersonalPluginsDirs.add(candidate);
+    const resolved = await tryRealpath(candidate);
+    if (resolved !== undefined) {
+      allowedPersonalPluginsDirs.add(resolved);
+    }
+
+    const personalConfigPath = normalizePosixPath(
+      NodePath.posix.join(homeRoot, ...layout.personalConfigRelativePath),
+    );
+    const personalConfigRaw = await NodeFSP.readFile(personalConfigPath, "utf8").catch(
+      () => undefined,
+    );
+    if (personalConfigRaw !== undefined) {
+      const prefs = decodePersonalAntigravityPluginPrefs(personalConfigRaw);
+      if (prefs._tag === "Some" && prefs.value.plugins !== undefined) {
+        for (const [name, pref] of Object.entries(prefs.value.plugins)) {
+          if (pref.enabled === false) {
+            disabledPlugins.add(name);
+          }
+        }
+      }
+    }
+  }
+
+  const pluginRoTargets = new Set<string>();
+  const entries = await NodeFSP.readdir(profilePluginsDir).catch(() => [] as string[]);
+  for (const entry of entries) {
+    if (!isSafePathSegment(entry) || entry.startsWith(".") || disabledPlugins.has(entry)) continue;
+    const entryPath = NodePath.posix.join(profilePluginsDir, entry);
+    const linkStat = await NodeFSP.lstat(entryPath).catch(() => undefined);
+    if (linkStat === undefined || !linkStat.isSymbolicLink()) continue;
+    const rawLink = await NodeFSP.readlink(entryPath).catch(() => undefined);
+    if (rawLink === undefined || rawLink.length === 0 || rawLink.includes("\0")) continue;
+    const lexicalTarget = normalizePosixPath(
+      NodePath.posix.isAbsolute(rawLink)
+        ? rawLink
+        : NodePath.posix.resolve(profilePluginsDir, rawLink),
+    );
+    const canonicalTarget = await tryRealpath(entryPath);
+    if (canonicalTarget === undefined) continue;
+    const targetStat = await NodeFSP.stat(canonicalTarget).catch(() => undefined);
+    if (targetStat === undefined || !targetStat.isDirectory()) continue;
+
+    // Require canonical target to be a direct enabled child of `<homeRoot>/.gemini/config/plugins`.
+    const canonicalParent = NodePath.posix.dirname(canonicalTarget);
+    const canonicalName = NodePath.posix.basename(canonicalTarget);
+    if (
+      !allowedPersonalPluginsDirs.has(canonicalParent) ||
+      !isSafePathSegment(canonicalName) ||
+      disabledPlugins.has(canonicalName)
+    ) {
+      continue;
+    }
+    if (
+      assertLexicalPathNotForbidden({
+        candidate: canonicalTarget,
+        role: "extra_ro",
+        ownStateRoots: input.ownStateRoots,
+        foreignForbiddenRoots: input.foreignForbiddenRoots,
+        homeRoots: input.homeRoots,
+        isDirectory: true,
+      }) !== undefined
+    ) {
+      continue;
+    }
+
+    let containsSensitiveFile = false;
+    for (const secretName of SENSITIVE_PLUGIN_TARGET_FILENAMES) {
+      if (await pathExists(NodePath.posix.join(canonicalTarget, secretName))) {
+        containsSensitiveFile = true;
+        break;
+      }
+    }
+    if (containsSensitiveFile) continue;
+
+    pluginRoTargets.add(canonicalTarget);
+    if (
+      lexicalTarget !== canonicalTarget &&
+      allowedPersonalPluginsDirs.has(NodePath.posix.dirname(lexicalTarget)) &&
+      isSafePathSegment(NodePath.posix.basename(lexicalTarget)) &&
+      !disabledPlugins.has(NodePath.posix.basename(lexicalTarget)) &&
+      assertLexicalPathNotForbidden({
+        candidate: lexicalTarget,
+        role: "extra_ro",
+        ownStateRoots: input.ownStateRoots,
+        foreignForbiddenRoots: input.foreignForbiddenRoots,
+        homeRoots: input.homeRoots,
+        isDirectory: true,
+      }) === undefined
+    ) {
+      pluginRoTargets.add(lexicalTarget);
+    }
+  }
+
+  return {
+    profileRoSubpaths,
+    profileRwPinSubpaths,
+    pluginRoTargets: [...pluginRoTargets],
+  };
 }
 
 export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(function* (
@@ -1572,7 +1801,17 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
 
   const extracted = extractSandboxBindsFromEnv(input.env);
 
+  const antigravityProfileEnvVar = getTeamHarnessProfile("antigravity").profileEnvVar;
+  const rawGeminiHome = input.env?.[antigravityProfileEnvVar]?.trim();
+  const canonicalGeminiHome =
+    rawGeminiHome !== undefined && rawGeminiHome.length > 0
+      ? yield* Effect.promise(() => tryRealpath(rawGeminiHome))
+      : undefined;
+
   const providerProfileDirs: Array<string> = [];
+  const providerProfileRwPinSubpaths: Array<string> = [];
+  const providerProfileRoSubpaths: Array<string> = [];
+  const discoveredPluginRoBinds: Array<string> = [];
   for (const raw of [...extracted.providerProfileDirs, ...(input.providerProfileDirs ?? [])]) {
     const validated = yield* canonicalizeAndValidateBindPath({
       rawPath: raw,
@@ -1583,6 +1822,18 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       expectedType: "directory",
     });
     providerProfileDirs.push(validated);
+    const pluginBinds = yield* Effect.promise(() =>
+      collectTeamProfileRoLocksAndPlugins({
+        profileDir: validated,
+        isGeminiHomeProfile: canonicalGeminiHome !== undefined && validated === canonicalGeminiHome,
+        ownStateRoots,
+        foreignForbiddenRoots,
+        homeRoots,
+      }),
+    );
+    providerProfileRwPinSubpaths.push(...pluginBinds.profileRwPinSubpaths);
+    providerProfileRoSubpaths.push(...pluginBinds.profileRoSubpaths);
+    discoveredPluginRoBinds.push(...pluginBinds.pluginRoTargets);
   }
 
   const toolCacheDirs: Array<string> = [];
@@ -1610,7 +1861,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     extraRwBinds.push(validated);
   }
 
-  const extraRoBinds: Array<string> = [];
+  const extraRoBinds: Array<string> = [...discoveredPluginRoBinds];
   for (const raw of input.extraRoBinds ?? []) {
     const validated = yield* canonicalizeAndValidateBindPath({
       rawPath: raw,
@@ -1805,6 +2056,8 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     ...(gitRepo === undefined ? {} : { gitRepo }),
     ...(emptyRoFile === undefined ? {} : { emptyRoFile }),
     providerProfileDirs,
+    ...(providerProfileRwPinSubpaths.length === 0 ? {} : { providerProfileRwPinSubpaths }),
+    ...(providerProfileRoSubpaths.length === 0 ? {} : { providerProfileRoSubpaths }),
     toolCacheDirs,
     extraRwBinds,
     extraRoBinds,

@@ -12,6 +12,7 @@ import { makeAcpClientTerminals } from "@t3tools/provider-acp/server/clientTermi
 import {
   AgentScope,
   ProcessSandbox,
+  type ProcessSandboxShape,
   sanitizeHostEnvForSandboxLaunch,
 } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -24,6 +25,12 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  TeamId,
+  makeTeamProviderInstanceId,
+} from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import { resolveClaudeSandboxExtraRoBinds } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -31,6 +38,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { materializeTeamProfileAssets } from "./TeamProfileMaterializer.ts";
 import {
   buildBwrapArgs,
   buildBwrapProbeArgs,
@@ -1840,6 +1848,413 @@ it.effect(
             () => new Promise<void>((resolve) => socketServer!.close(() => resolve())),
           );
         }
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+);
+
+it.effect(
+  "mounts mirrored Antigravity personal plugins read-only in bwrap without exposing ~/.gemini auth tokens or rogue symlink targets",
+  () =>
+    Effect.gen(function* () {
+      const root = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bwrap-agy-plugins-")),
+      );
+      try {
+        const ownStateDir = NodePath.join(root, "state");
+        const fakeHome = NodePath.join(root, "home");
+        const wtDir = NodePath.join(root, "worktree");
+        const personalGeminiDir = NodePath.join(fakeHome, ".gemini");
+        const personalPluginsDir = NodePath.join(personalGeminiDir, "config", "plugins");
+        const personalAcpDir = NodePath.join(personalGeminiDir, "antigravity-acp");
+        const enabledPluginDir = NodePath.join(personalPluginsDir, "safe-plugin");
+        const disabledPluginDir = NodePath.join(personalPluginsDir, "disabled-plugin");
+
+        NodeFS.mkdirSync(wtDir, { recursive: true });
+        NodeFS.mkdirSync(NodePath.join(enabledPluginDir, "skills", "my-skill"), {
+          recursive: true,
+        });
+        NodeFS.mkdirSync(NodePath.join(disabledPluginDir, "skills", "hidden-skill"), {
+          recursive: true,
+        });
+        NodeFS.mkdirSync(personalAcpDir, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(personalGeminiDir, "config", "config.json"),
+          JSON.stringify({ plugins: { "disabled-plugin": { enabled: false } } }),
+          "utf8",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(enabledPluginDir, "plugin.json"),
+          JSON.stringify({ name: "safe-plugin" }),
+          "utf8",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(disabledPluginDir, "plugin.json"),
+          JSON.stringify({ name: "disabled-plugin" }),
+          "utf8",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(personalAcpDir, "antigravity-oauth-token"),
+          JSON.stringify({ token: { access_token: "PERSONAL_SECRET_TOKEN" } }),
+          "utf8",
+        );
+
+        const teamId = TeamId.make("team-bwrap");
+        const virtualId = makeTeamProviderInstanceId(teamId, ProviderInstanceId.make("team-agy"));
+        const paths = yield* materializeTeamProfileAssets({
+          stateDir: ownStateDir,
+          teamId,
+          virtualInstanceId: virtualId,
+          driver: ProviderDriverKind.make("antigravity"),
+          skills: [],
+          preprompts: [],
+          revision: 1,
+          userHome: fakeHome,
+        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+        // Plant rogue symlinks attempting to escape to personal ~/.gemini/antigravity-acp and disabled-plugin.
+        const profileConfigDir = NodePath.join(paths.profileDir, "config");
+        const profilePluginsDir = NodePath.join(profileConfigDir, "plugins");
+        NodeFS.symlinkSync(personalAcpDir, NodePath.join(profilePluginsDir, "rogue-acp"), "dir");
+        NodeFS.symlinkSync(
+          disabledPluginDir,
+          NodePath.join(profilePluginsDir, "disabled-plugin"),
+          "dir",
+        );
+
+        const wrapped = yield* wrapCommandWithBwrap({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          command: "/bin/sh",
+          args: ["-c", "true"],
+          cwd: wtDir,
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: fakeHome,
+            GEMINI_HOME: paths.profileDir,
+          },
+          ownStateDir,
+        });
+
+        const rwBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--bind");
+        const roBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--ro-bind");
+
+        const markerPath = NodePath.join(paths.profileDir, ".t3-team-profile.json");
+        const profileAcpDir = NodePath.join(paths.profileDir, "antigravity-acp");
+        expect(rwBinds).toContain(paths.profileDir);
+        expect(rwBinds).toContain(profileAcpDir);
+        expect(roBinds).toContain(markerPath);
+        expect(roBinds).toContain(profileConfigDir);
+        expect(roBinds).toContain(enabledPluginDir);
+        // `antigravity-acp` RW pin and `.t3-team-profile.json`/`config` RO overlays MUST come after `<teamProfile>` RW bind.
+        expect(wrapped.args.indexOf(profileAcpDir)).toBeGreaterThan(
+          wrapped.args.indexOf(paths.profileDir),
+        );
+        expect(wrapped.args.indexOf(markerPath)).toBeGreaterThan(
+          wrapped.args.indexOf(paths.profileDir),
+        );
+        expect(wrapped.args.indexOf(profileConfigDir)).toBeGreaterThan(
+          wrapped.args.indexOf(paths.profileDir),
+        );
+        // Even if the marker were somehow tampered or removed, trusted `GEMINI_HOME` STILL locks `config` RO!
+        const originalMarkerText = NodeFS.readFileSync(markerPath, "utf8");
+        NodeFS.writeFileSync(markerPath, JSON.stringify({ driver: "other" }), "utf8");
+        const tamperedWrapped = yield* wrapCommandWithBwrap({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          command: "/bin/sh",
+          args: ["-c", "true"],
+          cwd: wtDir,
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: fakeHome,
+            GEMINI_HOME: paths.profileDir,
+          },
+          ownStateDir,
+        });
+        const tamperedRoBinds = tamperedWrapped.args.filter(
+          (_, idx, arr) => arr[idx - 1] === "--ro-bind",
+        );
+        expect(tamperedRoBinds).toContain(profileConfigDir);
+        expect(tamperedRoBinds).not.toContain(enabledPluginDir);
+        NodeFS.writeFileSync(markerPath, originalMarkerText, "utf8");
+
+        // `buildBwrapArgs` must NOT skip `providerProfileRoSubpaths` or `providerProfileRwPinSubpaths` under `/opt`.
+        const optArgs = buildBwrapArgs({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          cwd: "/workspace/repo",
+          chdir: "/workspace/repo",
+          providerProfileDirs: ["/opt/t3runner/providers/antigravity/abc"],
+          providerProfileRwPinSubpaths: ["/opt/t3runner/providers/antigravity/abc/antigravity-acp"],
+          providerProfileRoSubpaths: [
+            "/opt/t3runner/providers/antigravity/abc/.t3-team-profile.json",
+            "/opt/t3runner/providers/antigravity/abc/config",
+          ],
+          toolCacheDirs: [],
+          extraRwBinds: [],
+          extraRoBinds: [],
+          socketPaths: [],
+          helperPaths: [],
+          command: "/bin/sh",
+          args: ["-c", "true"],
+        });
+        const optRwBinds = optArgs.filter((_, idx, arr) => arr[idx - 1] === "--bind");
+        const optRoBinds = optArgs.filter((_, idx, arr) => arr[idx - 1] === "--ro-bind");
+        expect(optRwBinds).toContain("/opt/t3runner/providers/antigravity/abc/antigravity-acp");
+        expect(optRoBinds).toContain("/opt/t3runner/providers/antigravity/abc/config");
+        expect(optRoBinds).toContain(
+          "/opt/t3runner/providers/antigravity/abc/.t3-team-profile.json",
+        );
+        // Personal ~/.gemini, personal auth tokens, disabled plugins, and rogue symlinks MUST NOT be bound!
+        expect(roBinds).not.toContain(personalGeminiDir);
+        expect(roBinds).not.toContain(personalAcpDir);
+        expect(roBinds).not.toContain(disabledPluginDir);
+        expect(roBinds).not.toContain(NodePath.join(personalGeminiDir, "config"));
+        expect(rwBinds).not.toContain(personalGeminiDir);
+        expect(rwBinds).not.toContain(enabledPluginDir);
+
+        // Non-Antigravity team profiles (e.g. Codex) must NEVER mount personal Antigravity plugins
+        // even if a sandboxed turn planted a `config/plugins/<name>` symlink inside `CODEX_HOME`.
+        const codexVirtualId = makeTeamProviderInstanceId(
+          teamId,
+          ProviderInstanceId.make("team-codex"),
+        );
+        const codexPaths = yield* materializeTeamProfileAssets({
+          stateDir: ownStateDir,
+          teamId,
+          virtualInstanceId: codexVirtualId,
+          driver: ProviderDriverKind.make("codex"),
+          skills: [],
+          preprompts: [],
+          revision: 1,
+          userHome: fakeHome,
+        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+        const codexPlantedPluginsDir = NodePath.join(codexPaths.profileDir, "config", "plugins");
+        NodeFS.mkdirSync(codexPlantedPluginsDir, { recursive: true });
+        NodeFS.symlinkSync(
+          enabledPluginDir,
+          NodePath.join(codexPlantedPluginsDir, "safe-plugin"),
+          "dir",
+        );
+
+        const codexWrapped = yield* wrapCommandWithBwrap({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          command: "/bin/sh",
+          args: ["-c", "true"],
+          cwd: wtDir,
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: fakeHome,
+            CODEX_HOME: codexPaths.profileDir,
+          },
+          ownStateDir,
+        });
+        const codexRoBinds = codexWrapped.args.filter(
+          (_, idx, arr) => arr[idx - 1] === "--ro-bind",
+        );
+        expect(codexRoBinds).not.toContain(enabledPluginDir);
+
+        // Even when zero personal plugins are installed, Antigravity `<teamProfile>/config` is STILL locked RO!
+        const emptyHome = NodePath.join(root, "empty-home");
+        NodeFS.mkdirSync(emptyHome, { recursive: true });
+        const emptyVirtualId = makeTeamProviderInstanceId(
+          teamId,
+          ProviderInstanceId.make("team-agy-empty"),
+        );
+        const emptyPaths = yield* materializeTeamProfileAssets({
+          stateDir: ownStateDir,
+          teamId,
+          virtualInstanceId: emptyVirtualId,
+          driver: ProviderDriverKind.make("antigravity"),
+          skills: [],
+          preprompts: [],
+          revision: 1,
+          userHome: emptyHome,
+        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+        const emptyWrapped = yield* wrapCommandWithBwrap({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          command: "/bin/sh",
+          args: ["-c", "true"],
+          cwd: wtDir,
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: emptyHome,
+            GEMINI_HOME: emptyPaths.profileDir,
+          },
+          ownStateDir,
+        });
+        const emptyRwBinds = emptyWrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--bind");
+        const emptyRoBinds = emptyWrapped.args.filter(
+          (_, idx, arr) => arr[idx - 1] === "--ro-bind",
+        );
+        expect(emptyRwBinds).toContain(NodePath.join(emptyPaths.profileDir, "antigravity-acp"));
+        expect(emptyRoBinds).toContain(NodePath.join(emptyPaths.profileDir, "config"));
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+);
+
+it.effect(
+  "discovers real pushHooks, neutralizes Git 2.54+ configured hooks, and allows sandboxed GitVcsDriver reads on include.path repos under teamBwrapSandbox",
+  () =>
+    Effect.gen(function* () {
+      const root = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bwrap-hooks-")),
+      );
+      try {
+        const baseDir = NodePath.join(root, "state");
+        const repoDir = NodePath.join(root, "repo");
+        NodeFS.mkdirSync(repoDir, { recursive: true });
+        NodeChildProcess.execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
+        NodeChildProcess.execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir });
+        NodeChildProcess.execFileSync("git", ["config", "user.email", "test@example.com"], {
+          cwd: repoDir,
+        });
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n", "utf8");
+        NodeChildProcess.execFileSync("git", ["add", "README.md"], { cwd: repoDir });
+        NodeChildProcess.execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir });
+
+        // 1. Install a real executable `.git/hooks/pre-push` hook.
+        const prePushHook = NodePath.join(repoDir, ".git", "hooks", "pre-push");
+        NodeFS.mkdirSync(NodePath.dirname(prePushHook), { recursive: true });
+        NodeFS.writeFileSync(prePushHook, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+        // 2. Configure a Git 2.54+ `hook.lint.*` entry in local config.
+        NodeChildProcess.execFileSync("git", ["config", "hook.lint.event", "pre-push"], {
+          cwd: repoDir,
+        });
+        NodeChildProcess.execFileSync("git", ["config", "hook.lint.command", "echo lint"], {
+          cwd: repoDir,
+        });
+
+        const noopSandbox: ProcessSandboxShape = {
+          enabled: true,
+          wrap: (input) =>
+            Effect.succeed({
+              command: input.command,
+              args: [...input.args],
+              prefixArgs: [],
+              hostEnv: input.env,
+            }),
+        };
+
+        const sandboxConfigLayer = Layer.effect(
+          ServerConfig.ServerConfig,
+          Effect.gen(function* () {
+            const cfg = yield* ServerConfig.ServerConfig;
+            return { ...cfg, teamBwrapSandbox: true };
+          }),
+        ).pipe(Layer.provide(ServerConfig.layerTest(repoDir, baseDir)));
+
+        const driverLayer = GitVcsDriver.layer.pipe(
+          Layer.provide(sandboxConfigLayer),
+          Layer.provide(Layer.succeed(ProcessSandbox, noopSandbox)),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        );
+
+        // Under teamBwrapSandbox, `pushHooks` MUST still discover BOTH file hooks and configured hooks!
+        const discovered = yield* Effect.gen(function* () {
+          const vcs = yield* GitVcsDriver.GitVcsDriver;
+          return yield* vcs.pushHooks(repoDir);
+        }).pipe(Effect.provide(driverLayer));
+        expect(discovered).not.toBeNull();
+        expect(discovered!.files).toEqual([prePushHook]);
+        expect(discovered!.commands).toEqual([{ name: "lint", command: "echo lint" }]);
+
+        // `resolveSandboxSafeGitConfigEnv` MUST neutralize `hook.lint.enabled=false` by default,
+        // and preserve hooks config when `preserveHooksConfig: true`.
+        const runLocalProbe = ({
+          args,
+          cwd,
+          env,
+        }: {
+          readonly args: ReadonlyArray<string>;
+          readonly cwd: string | undefined;
+          readonly env: NodeJS.ProcessEnv;
+        }) =>
+          Effect.sync(() => {
+            const res = NodeChildProcess.spawnSync("git", [...args], {
+              cwd,
+              env,
+              encoding: "utf8",
+            });
+            return {
+              exitCode: res.status,
+              stdout: res.stdout ?? "",
+              timedOut: false,
+              stdoutTruncated: false,
+            };
+          });
+        const hostPlatform = yield* HostProcess.Platform;
+        const hostEnv = yield* HostProcess.Environment;
+        const defaultSafeEnv = yield* VcsProcess.resolveSandboxSafeGitConfigEnv({
+          cwd: repoDir,
+          env: hostEnv,
+          platform: hostPlatform,
+          allowWorkspaceIncludes: false,
+          runProbe: runLocalProbe,
+        });
+        const defaultPairs = new Map<string, string>();
+        const defaultCount = Number(defaultSafeEnv.GIT_CONFIG_COUNT ?? "0");
+        for (let i = 0; i < defaultCount; i += 1) {
+          defaultPairs.set(
+            defaultSafeEnv[`GIT_CONFIG_KEY_${i}`]!,
+            defaultSafeEnv[`GIT_CONFIG_VALUE_${i}`]!,
+          );
+        }
+        expect(defaultPairs.get("core.hooksPath")).toBe("/dev/null");
+        expect(defaultPairs.get("hook.lint.enabled")).toBe("false");
+
+        const preservedSafeEnv = yield* VcsProcess.resolveSandboxSafeGitConfigEnv({
+          cwd: repoDir,
+          env: hostEnv,
+          platform: hostPlatform,
+          allowWorkspaceIncludes: false,
+          preserveHooksConfig: true,
+          runProbe: runLocalProbe,
+        });
+        const preservedPairs = new Map<string, string>();
+        const preservedCount = Number(preservedSafeEnv.GIT_CONFIG_COUNT ?? "0");
+        for (let i = 0; i < preservedCount; i += 1) {
+          preservedPairs.set(
+            preservedSafeEnv[`GIT_CONFIG_KEY_${i}`]!,
+            preservedSafeEnv[`GIT_CONFIG_VALUE_${i}`]!,
+          );
+        }
+        expect(preservedPairs.has("core.hooksPath")).toBe(false);
+        expect(preservedPairs.has("hook.lint.enabled")).toBe(false);
+        expect(preservedPairs.get("core.fsmonitor")).toBe("false");
+
+        // 3. Add a local `include.path` and verify both `GitVcsDriver.pushHooks` AND sandboxable
+        // `GitVcsDriver.status` succeed under `teamBwrapSandbox: true`, discovering included hooks.
+        const extraCfg = NodePath.join(repoDir, ".extra-gitconfig");
+        NodeFS.writeFileSync(
+          extraCfg,
+          '[hook "included"]\n\tevent = pre-push\n\tcommand = echo pwn\n',
+          "utf8",
+        );
+        NodeChildProcess.execFileSync("git", ["config", "include.path", extraCfg], {
+          cwd: repoDir,
+        });
+
+        const discoveredWithInclude = yield* Effect.gen(function* () {
+          const vcs = yield* GitVcsDriver.GitVcsDriver;
+          return yield* vcs.pushHooks(repoDir);
+        }).pipe(Effect.provide(driverLayer));
+        expect(discoveredWithInclude).not.toBeNull();
+        expect(discoveredWithInclude!.files).toEqual([prePushHook]);
+        expect(discoveredWithInclude!.commands).toEqual(
+          expect.arrayContaining([
+            { name: "lint", command: "echo lint" },
+            { name: "included", command: "echo pwn" },
+          ]),
+        );
+
+        const statusRes = yield* Effect.gen(function* () {
+          const vcs = yield* GitVcsDriver.GitVcsDriver;
+          return yield* vcs.status({ cwd: repoDir });
+        }).pipe(Effect.provide(driverLayer));
+        expect(statusRes.refName).toBe("main");
+      } finally {
         NodeFS.rmSync(root, { recursive: true, force: true });
       }
     }),

@@ -42,6 +42,8 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "cli";
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
+  /** Another program shares the executable's name; one that rejects `versionArgs` is not this CLI. */
+  readonly rejectedVersionMeansMissing?: boolean;
   readonly authArgs: ReadonlyArray<string>;
   /** Asked in order while the answer is signed out; one counts only when it finds a sign-in. */
   readonly authRetryArgs?: (environment: NodeJS.ProcessEnv) => ReadonlyArray<ReadonlyArray<string>>;
@@ -394,13 +396,16 @@ export const failedProbeHint = Effect.fn("discovery.failedProbeHint")(function* 
   probe: {
     readonly executable: string;
     readonly versionArgs: ReadonlyArray<string>;
+    readonly rejectedVersionMeansMissing?: boolean;
     readonly installHint: string;
   },
   cause: unknown,
 ) {
   const hint = yield* unavailableInstallHint(probe.executable, probe.installHint, cause);
   // A wrong-CPU hint or an absent executable keeps its advice; other failures need repair.
-  return hint !== probe.installHint || isMissingExecutable(cause)
+  return hint !== probe.installHint ||
+    isMissingExecutable(cause) ||
+    (probe.rejectedVersionMeansMissing === true && isVcsProcessExitError(cause))
     ? hint
     : probeFailureHint(probe, cause);
 });

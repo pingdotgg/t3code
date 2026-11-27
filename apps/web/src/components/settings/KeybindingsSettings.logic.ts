@@ -71,6 +71,7 @@ const CORE_WHEN_VARIABLES = [
   "terminalFocus",
   "terminalOpen",
   "previewOpen",
+  "composerEmpty",
   "isWeb",
   "isDesktop",
   "true",
@@ -218,7 +219,9 @@ function keybindingRowId(command: KeybindingCommand, key: string, when: string):
 
 function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
   if (leftWhen === "false" || rightWhen === "false") return false;
-  return leftWhen.length === 0 || rightWhen.length === 0 || leftWhen === rightWhen;
+  // An empty condition and "true" are both always active.
+  const always = (when: string) => when.length === 0 || when === "true";
+  return always(leftWhen) || always(rightWhen) || leftWhen === rightWhen;
 }
 
 export function keybindingConflictLabels(
@@ -468,6 +471,8 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "terminal.splitVertical": msg("Terminal: Split Vertical"),
   "terminal.new": msg("Terminal: New"),
   "terminal.close": msg("Terminal: Close"),
+  "terminal.previous": msg("Terminal: Previous"),
+  "terminal.next": msg("Terminal: Next"),
   "rightPanel.toggle": msg("Right Panel: Toggle"),
   "rightPanel.new": msg("Right Panel: New"),
   "threadPanel.toggle": msg("Thread Panel: Toggle"),

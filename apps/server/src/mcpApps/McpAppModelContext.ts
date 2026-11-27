@@ -19,6 +19,8 @@ export interface McpAppModelContextEntry {
   readonly server: string;
   readonly tool: string;
   readonly text: string;
+  /** ISO time the app last set the note. */
+  readonly updatedAt: string;
 }
 
 export class McpAppModelContext extends Context.Service<
@@ -58,6 +60,7 @@ export const forProvider = Effect.fn("McpAppModelContext.forProvider")(function*
     // the context in.
     key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
     text: entry.text,
+    updatedAt: entry.updatedAt,
   }));
 });
 
@@ -118,7 +121,8 @@ export const layer = Layer.effect(
               LIMIT 1
             ) IS NULL
         )
-        SELECT context.item_id AS "itemId", context.server, context.tool, context.text
+        SELECT context.item_id AS "itemId", context.server, context.tool, context.text,
+          context.updated_at AS "updatedAt"
         FROM mcp_app_model_context AS context
         CROSS JOIN boundary
         JOIN orchestration_v2_projection_turn_items AS item

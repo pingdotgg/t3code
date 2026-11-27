@@ -305,6 +305,12 @@ export function readProjects(): ReadonlyArray<EnvironmentProject> {
   return appAtomRegistry.get(environmentProjects.projectsAtom);
 }
 
+export function subscribeProjects(
+  listener: (projects: ReadonlyArray<EnvironmentProject>) => void,
+): () => void {
+  return appAtomRegistry.subscribe(environmentProjects.projectsAtom, listener);
+}
+
 export function waitForProject(
   ref: ScopedProjectRef,
   timeoutMs = 10_000,

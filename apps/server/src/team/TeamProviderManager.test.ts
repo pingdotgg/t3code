@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderSetupError,
   ProviderThreadId,
   RunId,
   TeamId,
@@ -29,6 +30,7 @@ import {
   type TeamProvider,
   type TeamSkill,
 } from "@t3tools/contracts";
+import * as AcpErrors from "effect-acp/errors";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -557,6 +559,111 @@ describe("TeamProviderManager", () => {
         } finally {
           yield* Effect.promise(
             () => new Promise<void>((resolve) => oauthServer.close(() => resolve())),
+          );
+        }
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "never triggers token-lease refresh or >1h auto-resume on v0.1.13 Antigravity version refusal AcpTransportError(ProviderSetupError)",
+    () =>
+      Effect.gen(function* () {
+        let leaseCount = 0;
+        const teamId = TeamId.make("team-version-refusal");
+        const mockTeamServer = NodeHttp.createServer((req, res) => {
+          if (req.url?.startsWith("/api/team/assets")) {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify({
+                teamId,
+                revision: 1,
+                fullSync: true,
+                skills: [],
+                preprompts: [],
+                deletedSkillIds: [],
+                deletedPrepromptIds: [],
+              }),
+            );
+            return;
+          }
+          if (req.method === "POST" && req.url?.startsWith("/api/team/provider-lease/")) {
+            leaseCount += 1;
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify({
+                providerInstanceId: "team-agy",
+                driver: "antigravity",
+                accessToken: `leased-token-${leaseCount}`,
+                tokenType: "Bearer",
+                expiresAt: "2099-01-01T00:00:00.000Z",
+                expiresInSeconds: 3600,
+              }),
+            );
+            return;
+          }
+          res.writeHead(404);
+          res.end();
+        });
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve) => mockTeamServer.listen(0, "127.0.0.1", () => resolve())),
+        );
+        const port = (mockTeamServer.address() as { port: number }).port;
+
+        try {
+          const manager = yield* TeamProviderManager.TeamProviderManager;
+          const agyVirtualId = makeTeamProviderInstanceId(
+            teamId,
+            ProviderInstanceId.make("team-agy"),
+          );
+          yield* manager.syncLocalTeamBinding({
+            teamId,
+            teamName: "Acme",
+            teamServerUrl: `http://127.0.0.1:${port}`,
+            memberToken: "bob-token",
+            providers: [makeTeamProvider("team-agy", "antigravity", "token-lease")],
+            projects: [],
+            assetsRevision: NonNegativeInt.make(1),
+          });
+
+          const setupError = new ProviderSetupError({
+            instanceId: agyVirtualId,
+            operation: "runtime",
+            detail:
+              "Antigravity 1.5.0 only serves allowlisted editors, not T3 Code. Update it in Antigravity setup to 1.5.1 or newer, then retry.",
+          });
+          const versionRefusalError = new AcpErrors.AcpTransportError({
+            detail: setupError.detail,
+            cause: setupError,
+          });
+
+          let recycledCount = 0;
+          const continuations: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+          const result = yield* manager.handleActiveTurnAuthFailure({
+            virtualInstanceId: agyVirtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            threadId: ThreadId.make("thread-version-refusal"),
+            providerThreadId: ProviderThreadId.make("pt-version-refusal"),
+            runId: RunId.make("run-version-refusal"),
+            error: versionRefusalError,
+            recycleSession: () =>
+              Effect.sync(() => {
+                recycledCount += 1;
+              }),
+            requestContinuation: (req) =>
+              Effect.sync(() => {
+                continuations.push(req);
+              }),
+          });
+
+          expect(result.handled).toBe(false);
+          expect(result.revoked).toBe(false);
+          expect(leaseCount).toBe(0);
+          expect(recycledCount).toBe(0);
+          expect(continuations).toHaveLength(0);
+        } finally {
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => mockTeamServer.close(() => resolve())),
           );
         }
       }).pipe(Effect.provide(makeTestLayer())),

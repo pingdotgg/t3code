@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Uses lstat/symlink/chmod for isolated team profile skill precedence and 0600 ephemeral tokens.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -30,18 +31,33 @@ const encodeJsonUnknown = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown
 const decodeProfileMarker = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
+      teamId: Schema.optionalKey(Schema.String),
+      virtualInstanceId: Schema.optionalKey(Schema.String),
+      driver: Schema.optionalKey(Schema.String),
       assetsHash: Schema.optionalKey(Schema.String),
+    }),
+  ),
+);
+const decodeAntigravityPluginPreferences = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      plugins: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+      ),
     }),
   ),
 );
 
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
+import {
+  TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
+  TEAM_PROFILE_MARKER_FILENAME,
+  getTeamHarnessProfile,
+  type HarnessPersonalSkillLayout,
+} from "./harnessProfiles.ts";
 import { validateTeamSkillPayload } from "./TeamSkillValidation.ts";
 
-const TEAM_PROFILE_MARKER_FILENAME = ".t3-team-profile.json";
-const TEAM_ANTIGRAVITY_SKILLS_DIRNAME = "team-skills";
-export const TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME = "antigravity-oauth-token";
-const TEAM_ANTIGRAVITY_ACP_DIRNAME = "antigravity-acp";
+export { TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME };
 
 const profileMaterializeLocks = new Map<string, Semaphore.Semaphore>();
 function getProfileMaterializeLock(profileDir: string): Semaphore.Semaphore {
@@ -74,55 +90,31 @@ export const resolveTeamProfilePaths = Effect.fn("TeamProfileMaterializer.resolv
     readonly driver: ProviderDriverKind;
   }): Effect.fn.Return<TeamProfilePaths, never, Digest.Digest | Path.Path> {
     const path = yield* Path.Path;
-    if (input.driver === "antigravity") {
-      const dirs = yield* resolveAntigravityInstanceDirectories(
-        input.stateDir,
-        input.virtualInstanceId,
-      );
-      return {
-        profileDir: dirs.profile,
-        skillsDir: path.join(dirs.profile, TEAM_ANTIGRAVITY_SKILLS_DIRNAME),
-        instructionFile: path.join(dirs.profile, "GEMINI.md"),
-        ephemeralTokenFiles: [
-          path.join(
-            dirs.profile,
-            TEAM_ANTIGRAVITY_ACP_DIRNAME,
-            TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
-          ),
-          path.join(dirs.profile, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME),
-          path.join(dirs.profile, TEAM_ANTIGRAVITY_ACP_DIRNAME, "acp_token.json"),
-        ],
-      };
-    }
+    const spec = getTeamHarnessProfile(input.driver);
+    const profileDir =
+      spec.profileStorage === "antigravity-native"
+        ? (yield* resolveAntigravityInstanceDirectories(input.stateDir, input.virtualInstanceId))
+            .profile
+        : path.join(
+            input.stateDir,
+            "team-profiles",
+            input.driver,
+            NodeCrypto.createHash("sha256")
+              .update(`${input.teamId}:${input.virtualInstanceId}`, "utf8")
+              .digest("hex")
+              .slice(0, 24),
+          );
 
-    const hash = NodeCrypto.createHash("sha256")
-      .update(`${input.teamId}:${input.virtualInstanceId}`, "utf8")
-      .digest("hex")
-      .slice(0, 24);
-    const profileDir = path.join(input.stateDir, "team-profiles", input.driver, hash);
-
-    if (input.driver === "codex") {
-      return {
-        profileDir,
-        skillsDir: path.join(profileDir, "skills"),
-        instructionFile: path.join(profileDir, "AGENTS.md"),
-        // Codex uses in-memory CodexManagedTokenBroker; zero token file on disk.
-        ephemeralTokenFiles: [],
-      };
-    }
-    if (input.driver === "claudeAgent") {
-      return {
-        profileDir,
-        skillsDir: path.join(profileDir, "skills"),
-        instructionFile: path.join(profileDir, "CLAUDE.md"),
-        ephemeralTokenFiles: [path.join(profileDir, ".credentials.json")],
-      };
-    }
     return {
       profileDir,
-      skillsDir: path.join(profileDir, TEAM_ANTIGRAVITY_SKILLS_DIRNAME),
-      instructionFile: null,
-      ephemeralTokenFiles: [],
+      skillsDir: path.join(profileDir, spec.skillsSubdir),
+      instructionFile:
+        spec.threadInstructionFilename === null
+          ? null
+          : path.join(profileDir, spec.threadInstructionFilename),
+      ephemeralTokenFiles: spec.ephemeralTokenRelativePaths.map((segments) =>
+        path.join(profileDir, ...segments),
+      ),
     };
   },
 );
@@ -175,25 +167,208 @@ export function renderTeamPrepromptsMarkdown(preprompts: ReadonlyArray<TeamPrepr
   return preprompts.map((item) => `## ${item.name}\n\n${item.content.trim()}`).join("\n\n");
 }
 
-async function writeSecureTokenFile(
-  filePath: string,
-  contents: string,
-  platform: NodeJS.Platform,
-): Promise<void> {
-  await NodeFSP.mkdir(NodePath.dirname(filePath), { recursive: true, mode: 0o700 });
-  const tempPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
+interface PinnedParentDirectory {
+  readonly dirBase: string;
+  readonly close: () => Promise<void>;
+}
+
+function isSafeRelativeSegment(segment: string): boolean {
+  return (
+    segment.length > 0 &&
+    segment !== "." &&
+    segment !== ".." &&
+    !segment.includes("/") &&
+    !segment.includes("\\") &&
+    !segment.includes("\0")
+  );
+}
+
+function getErrnoCode(error: unknown): string | undefined {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+/**
+ * Pins the parent directory of a relative path via `O_DIRECTORY | O_NOFOLLOW` FDs on Linux
+ * (`/proc/self/fd/<fd>`) so subsequent leaf ops cannot be redirected by concurrent parent swaps.
+ */
+async function openPinnedRelativeParentDirectory(input: {
+  readonly rootDir: string;
+  readonly parentSegments: ReadonlyArray<string>;
+  readonly create: boolean;
+  readonly platform: NodeJS.Platform;
+}): Promise<PinnedParentDirectory | undefined> {
+  for (const segment of input.parentSegments) {
+    if (!isSafeRelativeSegment(segment)) {
+      throw new Error(`Refusing unsafe relative segment inside team profile: ${segment}`);
+    }
+  }
+  if (input.create) {
+    await NodeFSP.mkdir(input.rootDir, { recursive: true, mode: 0o700 });
+  }
+  const realRootDir = await NodeFSP.realpath(input.rootDir).catch(() => undefined);
+  if (realRootDir === undefined) {
+    if (input.create) {
+      throw new Error(`Missing team profile directory: ${input.rootDir}`);
+    }
+    return undefined;
+  }
+
+  if (input.platform === "linux") {
+    const dirOpenFlags =
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_DIRECTORY | NodeFS.constants.O_NOFOLLOW;
+    let curFh = await NodeFSP.open(realRootDir, dirOpenFlags);
+    try {
+      for (const segment of input.parentSegments) {
+        const segPath = `/proc/self/fd/${curFh.fd}/${segment}`;
+        let nextFh: NodeFSP.FileHandle;
+        try {
+          nextFh = await NodeFSP.open(segPath, dirOpenFlags);
+        } catch (error) {
+          const code = getErrnoCode(error);
+          if (!input.create) {
+            await curFh.close().catch(() => undefined);
+            return undefined;
+          }
+          if (code === "ENOENT") {
+            await NodeFSP.mkdir(segPath, { mode: 0o700 }).catch((mkdirErr) => {
+              if (getErrnoCode(mkdirErr) !== "EEXIST") throw mkdirErr;
+            });
+            nextFh = await NodeFSP.open(segPath, dirOpenFlags);
+          } else if (code === "ELOOP" || code === "ENOTDIR") {
+            await NodeFSP.unlink(segPath);
+            await NodeFSP.mkdir(segPath, { mode: 0o700 }).catch((mkdirErr) => {
+              if (getErrnoCode(mkdirErr) !== "EEXIST") throw mkdirErr;
+            });
+            nextFh = await NodeFSP.open(segPath, dirOpenFlags);
+          } else {
+            throw error;
+          }
+        }
+        await curFh.close();
+        curFh = nextFh;
+      }
+      const pinnedFh = curFh;
+      return {
+        dirBase: `/proc/self/fd/${pinnedFh.fd}`,
+        close: () => pinnedFh.close().catch(() => undefined),
+      };
+    } catch (error) {
+      await curFh.close().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  let cursor = realRootDir;
+  for (const segment of input.parentSegments) {
+    const nextPath = NodePath.join(cursor, segment);
+    if (input.create) {
+      cursor = await ensureContainedRealDirectory(cursor, nextPath);
+    } else {
+      assertPathContainedWithin(realRootDir, nextPath);
+      const stat = await NodeFSP.lstat(nextPath).catch(() => undefined);
+      if (stat === undefined || stat.isSymbolicLink() || !stat.isDirectory()) {
+        return undefined;
+      }
+      cursor = nextPath;
+    }
+  }
+  return { dirBase: cursor, close: async () => {} };
+}
+
+export async function writePinnedRelativeTokenFile(input: {
+  readonly rootDir: string;
+  readonly relativeSegments: ReadonlyArray<string>;
+  readonly contents: string;
+  readonly platform: NodeJS.Platform;
+  readonly beforeLeafOp?: () => Promise<void>;
+}): Promise<void> {
+  const leafName = input.relativeSegments.at(-1);
+  if (leafName === undefined || !isSafeRelativeSegment(leafName)) {
+    throw new Error(`Refusing unsafe token filename inside team profile: ${String(leafName)}`);
+  }
+  const pinned = await openPinnedRelativeParentDirectory({
+    rootDir: input.rootDir,
+    parentSegments: input.relativeSegments.slice(0, -1),
+    create: true,
+    platform: input.platform,
+  });
+  if (pinned === undefined) {
+    throw new Error(`Unable to pin token parent directory inside: ${input.rootDir}`);
+  }
   try {
-    await NodeFSP.writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
-    if (platform !== "win32") {
-      await NodeFSP.chmod(tempPath, 0o600);
+    if (input.beforeLeafOp !== undefined) {
+      await input.beforeLeafOp();
     }
-    await NodeFSP.rename(tempPath, filePath);
-    if (platform !== "win32") {
-      await NodeFSP.chmod(filePath, 0o600);
+    const joinLeaf = (name: string) =>
+      input.platform === "linux"
+        ? `${pinned.dirBase}/${name}`
+        : NodePath.join(pinned.dirBase, name);
+    const leafPath = joinLeaf(leafName);
+    const tempPath = joinLeaf(`${leafName}.tmp-${NodeCrypto.randomUUID()}`);
+    const existing = await NodeFSP.lstat(leafPath).catch(() => undefined);
+    if (existing !== undefined && !existing.isSymbolicLink() && existing.isDirectory()) {
+      throw new Error(`Refusing directory collision at team profile token path: ${leafName}`);
     }
-  } catch (error) {
-    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
-    throw error;
+    const openFlags =
+      NodeFS.constants.O_WRONLY |
+      NodeFS.constants.O_CREAT |
+      NodeFS.constants.O_EXCL |
+      (input.platform !== "win32" ? NodeFS.constants.O_NOFOLLOW : 0);
+    let tmpFh: NodeFSP.FileHandle | undefined;
+    try {
+      tmpFh = await NodeFSP.open(tempPath, openFlags, 0o600);
+      await tmpFh.writeFile(input.contents, "utf8");
+      if (input.platform !== "win32") {
+        await tmpFh.chmod(0o600);
+      }
+      await tmpFh.close();
+      tmpFh = undefined;
+      await NodeFSP.rename(tempPath, leafPath);
+    } catch (error) {
+      if (tmpFh !== undefined) {
+        await tmpFh.close().catch(() => undefined);
+      }
+      await NodeFSP.unlink(tempPath).catch(() => undefined);
+      throw error;
+    }
+  } finally {
+    await pinned.close();
+  }
+}
+
+export async function purgePinnedRelativeTokenFile(input: {
+  readonly rootDir: string;
+  readonly relativeSegments: ReadonlyArray<string>;
+  readonly platform: NodeJS.Platform;
+  readonly beforeLeafOp?: () => Promise<void>;
+}): Promise<void> {
+  const leafName = input.relativeSegments.at(-1);
+  if (leafName === undefined || !isSafeRelativeSegment(leafName)) {
+    return;
+  }
+  const pinned = await openPinnedRelativeParentDirectory({
+    rootDir: input.rootDir,
+    parentSegments: input.relativeSegments.slice(0, -1),
+    create: false,
+    platform: input.platform,
+  });
+  if (pinned === undefined) return;
+  try {
+    if (input.beforeLeafOp !== undefined) {
+      await input.beforeLeafOp();
+    }
+    const leafPath =
+      input.platform === "linux"
+        ? `${pinned.dirBase}/${leafName}`
+        : NodePath.join(pinned.dirBase, leafName);
+    await NodeFSP.unlink(leafPath).catch(() => undefined);
+  } finally {
+    await pinned.close();
   }
 }
 
@@ -215,6 +390,183 @@ async function syncDirectoryPersonalSkillLinks(input: {
     if (input.teamSlugsLower.has(entry.toLowerCase())) continue;
     const sourcePath = NodePath.join(input.personalSkillsDir, entry);
     const linkPath = NodePath.join(input.targetSkillsDir, entry);
+    const existing = await NodeFSP.lstat(linkPath).catch(() => undefined);
+    if (existing !== undefined) continue;
+    await NodeFSP.symlink(sourcePath, linkPath, linkType).catch(() => undefined);
+  }
+}
+
+async function writeContainedAtomicFile(
+  rootRealDir: string,
+  filePath: string,
+  contents: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  assertPathContainedWithin(rootRealDir, filePath);
+  const existing = await NodeFSP.lstat(filePath).catch(() => undefined);
+  if (existing !== undefined) {
+    if (existing.isSymbolicLink()) {
+      await NodeFSP.unlink(filePath);
+    } else if (existing.isDirectory()) {
+      throw new Error(`Refusing directory collision at team profile file path: ${filePath}`);
+    } else if (!existing.isFile()) {
+      await NodeFSP.unlink(filePath);
+    }
+  }
+  const tempPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
+  assertPathContainedWithin(rootRealDir, tempPath);
+  const openFlags =
+    NodeFS.constants.O_WRONLY |
+    NodeFS.constants.O_CREAT |
+    NodeFS.constants.O_EXCL |
+    (platform !== "win32" ? NodeFS.constants.O_NOFOLLOW : 0);
+  let tmpFh: NodeFSP.FileHandle | undefined;
+  try {
+    tmpFh = await NodeFSP.open(tempPath, openFlags, 0o600);
+    await tmpFh.writeFile(contents, "utf8");
+    if (platform !== "win32") {
+      await tmpFh.chmod(0o600);
+    }
+    await tmpFh.close();
+    tmpFh = undefined;
+    await NodeFSP.rename(tempPath, filePath);
+  } catch (error) {
+    if (tmpFh !== undefined) {
+      await tmpFh.close().catch(() => undefined);
+    }
+    await NodeFSP.unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function ensureContainedRealDirectory(rootRealDir: string, dirPath: string): Promise<string> {
+  assertPathContainedWithin(rootRealDir, dirPath);
+  const existing = await NodeFSP.lstat(dirPath).catch(() => undefined);
+  if (existing !== undefined && (existing.isSymbolicLink() || !existing.isDirectory())) {
+    await NodeFSP.unlink(dirPath);
+  }
+  await NodeFSP.mkdir(dirPath, { recursive: true, mode: 0o700 });
+  const postStat = await NodeFSP.lstat(dirPath);
+  if (postStat.isSymbolicLink() || !postStat.isDirectory()) {
+    throw new Error(`Refusing non-directory or symlink parent inside team profile: ${dirPath}`);
+  }
+  const realDir = await NodeFSP.realpath(dirPath);
+  assertPathContainedWithin(rootRealDir, realDir);
+  return realDir;
+}
+
+async function syncAntigravityPersonalConfigAndPlugins(input: {
+  readonly profileDir: string;
+  readonly skillsDir: string;
+  readonly userHome: string;
+  readonly layout: Extract<
+    HarnessPersonalSkillLayout,
+    { readonly kind: "antigravity-config-and-plugins" }
+  >;
+  readonly platform: NodeJS.Platform;
+}): Promise<void> {
+  // Validate every parent directory inside `<teamProfile>` against symlinks before any host-side
+  // writes so a sandboxed agent can never redirect writes outside the isolated profile.
+  const realProfileDir = await NodeFSP.realpath(input.profileDir);
+  const configDir = await ensureContainedRealDirectory(
+    realProfileDir,
+    NodePath.join(realProfileDir, "config"),
+  );
+
+  // Register `<teamProfile>/team-skills` FIRST in `<teamProfile>/config/skills.json`,
+  // followed by the user's personal `~/.gemini` skill directories (read-only).
+  const entries: Array<{ readonly path: string }> = [{ path: input.skillsDir }];
+  for (const segments of input.layout.personalSkillRelativeDirs) {
+    const candidate = NodePath.join(input.userHome, ...segments);
+    const stat = await NodeFSP.stat(candidate).catch(() => undefined);
+    if (stat?.isDirectory()) {
+      entries.push({ path: candidate });
+    }
+  }
+  const skillsConfigPath = NodePath.join(configDir, "skills.json");
+  assertPathContainedWithin(configDir, skillsConfigPath);
+  const existingSkillsConfig = await NodeFSP.lstat(skillsConfigPath).catch(() => undefined);
+  const nextSkillsConfig = `${encodeJsonUnknown({ entries })}\n`;
+  const currentSkillsConfig =
+    existingSkillsConfig !== undefined &&
+    !existingSkillsConfig.isSymbolicLink() &&
+    existingSkillsConfig.isFile()
+      ? await NodeFSP.readFile(skillsConfigPath, "utf8").catch(() => undefined)
+      : undefined;
+  if (currentSkillsConfig !== nextSkillsConfig) {
+    await writeContainedAtomicFile(configDir, skillsConfigPath, nextSkillsConfig, input.platform);
+  }
+
+  // Mirror enabled personal plugins from `~/.gemini/config/plugins/*` into `<teamProfile>/config/plugins/*`
+  // via symlinks/junctions without ever modifying `~/.gemini`. Team skills still win via first-wins scan order.
+  const personalConfigPath = NodePath.join(
+    input.userHome,
+    ...input.layout.personalConfigRelativePath,
+  );
+  const personalConfigRaw = await NodeFSP.readFile(personalConfigPath, "utf8").catch(
+    () => undefined,
+  );
+  const parsedPrefs =
+    personalConfigRaw === undefined
+      ? undefined
+      : decodeAntigravityPluginPreferences(personalConfigRaw);
+  const disabledPlugins = new Set(
+    Object.entries(
+      (parsedPrefs?._tag === "Some" ? parsedPrefs.value.plugins : undefined) ?? {},
+    ).flatMap(([name, pref]) => (pref.enabled === false ? [name] : [])),
+  );
+
+  const personalPluginsDir = NodePath.join(
+    input.userHome,
+    ...input.layout.personalPluginsRelativeDir,
+  );
+  const desiredPlugins = new Map<string, string>();
+  const personalPluginsStat = await NodeFSP.stat(personalPluginsDir).catch(() => undefined);
+  if (personalPluginsStat?.isDirectory()) {
+    const pluginEntries = await NodeFSP.readdir(personalPluginsDir).catch(() => [] as string[]);
+    for (const entry of pluginEntries) {
+      if (entry.startsWith(".") || disabledPlugins.has(entry)) continue;
+      const sourcePath = NodePath.join(personalPluginsDir, entry);
+      const entryStat = await NodeFSP.stat(sourcePath).catch(() => undefined);
+      if (!entryStat?.isDirectory()) continue;
+      desiredPlugins.set(entry, sourcePath);
+    }
+  }
+
+  // Always create `<teamProfile>/config/plugins` as a real contained directory (even when empty)
+  // so bwrap can lock `<teamProfile>/config` read-only and stale/shadowing entries are purged.
+  const targetPluginsDir = await ensureContainedRealDirectory(
+    configDir,
+    NodePath.join(configDir, "plugins"),
+  );
+  const existingEntries = await NodeFSP.readdir(targetPluginsDir).catch(() => [] as string[]);
+  const linkType = input.platform === "win32" ? "junction" : "dir";
+  for (const existing of existingEntries) {
+    const entryPath = NodePath.join(targetPluginsDir, existing);
+    assertPathContainedWithin(targetPluginsDir, entryPath);
+    const stat = await NodeFSP.lstat(entryPath).catch(() => undefined);
+    if (stat === undefined) continue;
+    if (!stat.isSymbolicLink()) {
+      await NodeFSP.rm(entryPath, { recursive: true, force: true }).catch(() => undefined);
+      continue;
+    }
+    const expectedTarget = desiredPlugins.get(existing);
+    if (expectedTarget === undefined) {
+      await NodeFSP.unlink(entryPath).catch(() => undefined);
+      continue;
+    }
+    const currentTarget = await NodeFSP.readlink(entryPath).catch(() => undefined);
+    if (
+      currentTarget === undefined ||
+      NodePath.resolve(targetPluginsDir, currentTarget) !== NodePath.resolve(expectedTarget)
+    ) {
+      await NodeFSP.unlink(entryPath).catch(() => undefined);
+    }
+  }
+
+  for (const [pluginName, sourcePath] of desiredPlugins) {
+    const linkPath = NodePath.join(targetPluginsDir, pluginName);
+    assertPathContainedWithin(targetPluginsDir, linkPath);
     const existing = await NodeFSP.lstat(linkPath).catch(() => undefined);
     if (existing !== undefined) continue;
     await NodeFSP.symlink(sourcePath, linkPath, linkType).catch(() => undefined);
@@ -252,6 +604,7 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
     const path = yield* Path.Path;
     const platform = yield* HostProcess.Platform;
     const userHome = input.userHome ?? (yield* HostProcess.HomeDirectory);
+    const spec = getTeamHarnessProfile(input.driver);
     const paths = yield* resolveTeamProfilePaths({
       stateDir: input.stateDir,
       teamId: input.teamId,
@@ -316,22 +669,38 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
       Effect.gen(function* () {
         const alreadyUpToDate = yield* Effect.tryPromise({
           try: async () => {
-            const markerRaw = await NodeFSP.readFile(
-              NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
-              "utf8",
-            );
-            const markerOpt = decodeProfileMarker(markerRaw);
-            if (markerOpt._tag !== "Some" || markerOpt.value.assetsHash !== assetsHash) {
+            const markerPath = NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME);
+            const markerStat = await NodeFSP.lstat(markerPath);
+            if (markerStat.isSymbolicLink() || !markerStat.isFile()) {
               return false;
             }
-            const skillsStat = await NodeFSP.stat(paths.skillsDir);
-            if (!skillsStat.isDirectory()) return false;
+            const markerRaw = await NodeFSP.readFile(markerPath, "utf8");
+            const markerOpt = decodeProfileMarker(markerRaw);
+            if (
+              markerOpt._tag !== "Some" ||
+              markerOpt.value.assetsHash !== assetsHash ||
+              markerOpt.value.driver !== input.driver ||
+              markerOpt.value.teamId !== input.teamId ||
+              markerOpt.value.virtualInstanceId !== input.virtualInstanceId
+            ) {
+              return false;
+            }
+            const skillsStat = await NodeFSP.lstat(paths.skillsDir);
+            if (skillsStat.isSymbolicLink() || !skillsStat.isDirectory()) return false;
             if (paths.instructionFile !== null) {
               const expectsInstruction = threadPreprompts.length > 0;
-              const hasInstruction = await NodeFSP.stat(paths.instructionFile)
-                .then((s) => s.isFile())
+              const hasInstruction = await NodeFSP.lstat(paths.instructionFile)
+                .then((s) => !s.isSymbolicLink() && s.isFile())
                 .catch(() => false);
               if (expectsInstruction !== hasInstruction) return false;
+            }
+            for (const segments of spec.ephemeralTokenRelativePaths) {
+              let cursor = paths.profileDir;
+              for (const segment of segments.slice(0, -1)) {
+                cursor = NodePath.join(cursor, segment);
+                const parentStat = await NodeFSP.lstat(cursor);
+                if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) return false;
+              }
             }
             return true;
           },
@@ -339,6 +708,31 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
         }).pipe(Effect.orElseSucceed(() => false));
 
         if (alreadyUpToDate) {
+          // Keep personal plugin/skill links fresh even when team assetsHash has not changed.
+          if (spec.personalSkillLayout.kind === "antigravity-config-and-plugins") {
+            const layout = spec.personalSkillLayout;
+            yield* Effect.tryPromise({
+              try: () =>
+                syncAntigravityPersonalConfigAndPlugins({
+                  profileDir: paths.profileDir,
+                  skillsDir: paths.skillsDir,
+                  userHome,
+                  layout,
+                  platform,
+                }),
+              catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning(
+                  "TeamProfileMaterializer.syncAntigravityPersonalConfigAndPlugins failed",
+                  {
+                    virtualInstanceId: input.virtualInstanceId,
+                    cause,
+                  },
+                ),
+              ),
+            );
+          }
           return paths;
         }
 
@@ -371,17 +765,13 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
                 }
               }
 
-              if (input.driver === "codex") {
+              if (spec.personalSkillLayout.kind === "directory-symlinks") {
                 await syncDirectoryPersonalSkillLinks({
                   targetSkillsDir: stagingSkillsDir,
-                  personalSkillsDir: NodePath.join(userHome, ".codex", "skills"),
-                  teamSlugsLower,
-                  platform,
-                });
-              } else if (input.driver === "claudeAgent") {
-                await syncDirectoryPersonalSkillLinks({
-                  targetSkillsDir: stagingSkillsDir,
-                  personalSkillsDir: NodePath.join(userHome, ".claude", "skills"),
+                  personalSkillsDir: NodePath.join(
+                    userHome,
+                    ...spec.personalSkillLayout.personalRelativeDir,
+                  ),
                   teamSlugsLower,
                   platform,
                 });
@@ -413,37 +803,26 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
               throw stageError;
             }
 
-            if (input.driver === "antigravity") {
-              // Register `<teamProfile>/team-skills` FIRST in `<teamProfile>/config/skills.json`,
-              // followed by the user's personal `~/.gemini` skill directories (read-only).
-              const configDir = NodePath.join(paths.profileDir, "config");
-              await NodeFSP.mkdir(configDir, { recursive: true, mode: 0o700 });
-              const personalConfigSkills = NodePath.join(userHome, ".gemini", "config", "skills");
-              const personalCliSkills = NodePath.join(
+            if (spec.personalSkillLayout.kind === "antigravity-config-and-plugins") {
+              await syncAntigravityPersonalConfigAndPlugins({
+                profileDir: paths.profileDir,
+                skillsDir: paths.skillsDir,
                 userHome,
-                ".gemini",
-                "antigravity-cli",
-                "skills",
-              );
-              const entries: Array<{ readonly path: string }> = [{ path: paths.skillsDir }];
-              for (const candidate of [personalConfigSkills, personalCliSkills]) {
-                const stat = await NodeFSP.stat(candidate).catch(() => undefined);
-                if (stat?.isDirectory()) {
-                  entries.push({ path: candidate });
-                }
+                layout: spec.personalSkillLayout,
+                platform,
+              });
+            }
+            // Pre-create ephemeral token parent directories (e.g. `antigravity-acp`) so bwrap can
+            // pin them as mountpoints before the first turn starts.
+            const realProfileDir = await NodeFSP.realpath(paths.profileDir);
+            for (const segments of spec.ephemeralTokenRelativePaths) {
+              let parentCursor = realProfileDir;
+              for (const segment of segments.slice(0, -1)) {
+                parentCursor = await ensureContainedRealDirectory(
+                  parentCursor,
+                  NodePath.join(parentCursor, segment),
+                );
               }
-              const skillsConfigPath = NodePath.join(configDir, "skills.json");
-              const existingSkillsConfig = await NodeFSP.lstat(skillsConfigPath).catch(
-                () => undefined,
-              );
-              if (existingSkillsConfig?.isSymbolicLink()) {
-                await NodeFSP.unlink(skillsConfigPath);
-              }
-              await NodeFSP.writeFile(
-                skillsConfigPath,
-                `${encodeJsonUnknown({ entries })}\n`,
-                "utf8",
-              );
             }
           },
           catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
@@ -506,9 +885,11 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
         // transient disk errors are automatically repaired on the next materialization pass.
         if (skillsMaterialized && instructionsMaterialized) {
           yield* Effect.tryPromise({
-            try: () =>
-              NodeFSP.writeFile(
-                NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
+            try: async () => {
+              const realProfileDir = await NodeFSP.realpath(paths.profileDir);
+              await writeContainedAtomicFile(
+                realProfileDir,
+                NodePath.join(realProfileDir, TEAM_PROFILE_MARKER_FILENAME),
                 `${encodeJsonUnknown({
                   teamId: input.teamId,
                   virtualInstanceId: input.virtualInstanceId,
@@ -516,8 +897,9 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
                   revision: input.revision,
                   assetsHash,
                 })}\n`,
-                "utf8",
-              ),
+                platform,
+              );
+            },
             catch: () => undefined,
           }).pipe(Effect.ignore);
         }
@@ -541,10 +923,12 @@ export const materializeEphemeralLeaseToken = Effect.fn(
   readonly driver: ProviderDriverKind;
   readonly lease: TeamProviderLeaseResponse;
 }): Effect.fn.Return<void, never, Digest.Digest | Path.Path> {
-  if (input.driver === "codex") {
-    // Codex receives its leased access token strictly in memory via CodexManagedTokenBroker.
+  const spec = getTeamHarnessProfile(input.driver);
+  if (spec.ephemeralTokenFormat === "in-memory" || spec.ephemeralTokenFormat === "none") {
     return;
   }
+  const primarySegments = spec.ephemeralTokenRelativePaths[0];
+  if (primarySegments === undefined) return;
   const platform = yield* HostProcess.Platform;
   const paths = yield* resolveTeamProfilePaths({
     stateDir: input.stateDir,
@@ -553,12 +937,7 @@ export const materializeEphemeralLeaseToken = Effect.fn(
     driver: input.driver,
   });
 
-  if (input.driver === "antigravity") {
-    const tokenPath = NodePath.join(
-      paths.profileDir,
-      TEAM_ANTIGRAVITY_ACP_DIRNAME,
-      TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
-    );
+  if (spec.ephemeralTokenFormat === "antigravity-oauth-json") {
     // Explicitly omit `refresh_token` so refresh credentials never touch a teammate's disk.
     const payload = {
       token: {
@@ -571,7 +950,13 @@ export const materializeEphemeralLeaseToken = Effect.fn(
       ...(input.lease.email ? { id_token_email: input.lease.email } : {}),
     };
     yield* Effect.tryPromise({
-      try: () => writeSecureTokenFile(tokenPath, `${encodeJsonUnknown(payload)}\n`, platform),
+      try: () =>
+        writePinnedRelativeTokenFile({
+          rootDir: paths.profileDir,
+          relativeSegments: primarySegments,
+          contents: `${encodeJsonUnknown(payload)}\n`,
+          platform,
+        }),
       catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
     }).pipe(
       Effect.catch((cause) =>
@@ -584,8 +969,7 @@ export const materializeEphemeralLeaseToken = Effect.fn(
     return;
   }
 
-  if (input.driver === "claudeAgent") {
-    const credentialsPath = NodePath.join(paths.profileDir, ".credentials.json");
+  if (spec.ephemeralTokenFormat === "claude-credentials-json") {
     const expiresAtMs = Date.parse(input.lease.expiresAt);
     const nowMs = yield* Clock.currentTimeMillis;
     // Explicitly omit `refreshToken`.
@@ -596,7 +980,13 @@ export const materializeEphemeralLeaseToken = Effect.fn(
       },
     };
     yield* Effect.tryPromise({
-      try: () => writeSecureTokenFile(credentialsPath, `${encodeJsonUnknown(payload)}\n`, platform),
+      try: () =>
+        writePinnedRelativeTokenFile({
+          rootDir: paths.profileDir,
+          relativeSegments: primarySegments,
+          contents: `${encodeJsonUnknown(payload)}\n`,
+          platform,
+        }),
       catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
     }).pipe(
       Effect.catch((cause) =>
@@ -618,11 +1008,17 @@ export const purgeEphemeralLeaseTokens = Effect.fn(
   readonly virtualInstanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
 }): Effect.fn.Return<void, never, Digest.Digest | Path.Path> {
+  const spec = getTeamHarnessProfile(input.driver);
+  const platform = yield* HostProcess.Platform;
   const paths = yield* resolveTeamProfilePaths(input);
   yield* Effect.tryPromise({
     try: async () => {
-      for (const tokenPath of paths.ephemeralTokenFiles) {
-        await NodeFSP.rm(tokenPath, { force: true }).catch(() => undefined);
+      for (const segments of spec.ephemeralTokenRelativePaths) {
+        await purgePinnedRelativeTokenFile({
+          rootDir: paths.profileDir,
+          relativeSegments: segments,
+          platform,
+        }).catch(() => undefined);
       }
     },
     catch: () => undefined,

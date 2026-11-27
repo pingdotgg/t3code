@@ -153,12 +153,12 @@ export class Device {
     return parsed.data ?? {};
   }
 
-  /** The shared-cache dev client for this checkout; the worker downloads it itself. */
-  async install() {
+  /** The shared-cache dev client for a checkout (this one by default); the worker downloads it itself. */
+  async install(checkout = this.pool.repoRoot) {
     await run(
       NodeProcess.execPath,
       [
-        NodePath.join(this.pool.repoRoot, "scripts/mobile-native-client.ts"),
+        NodePath.join(checkout, "scripts/mobile-native-client.ts"),
         "ensure",
         this.pose.platform,
         "--session",
