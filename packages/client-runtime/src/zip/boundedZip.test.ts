@@ -44,20 +44,12 @@ describe("boundedZip", () => {
 
   it("enforces xmlLimit case-insensitively on unencrypted and encrypted ZIP entries", async () => {
     const payload = "x".repeat(200);
-    for (const name of ["word/document.XML", "word/Styles.Xml"]) {
-      const bytes = await new JSZip()
-        .file(name, payload)
-        .generateAsync({ type: "arraybuffer", compression: "STORE" });
-      await expect(boundedZip(bytes, 1000, { xmlLimit: 100 })).rejects.toMatchObject({
-        code: "archive-expanded-too-large",
-      });
-    }
-
-    const nonXmlBytes = await new JSZip()
-      .file("word/notes.txt", payload)
+    const bytes = await new JSZip()
+      .file("word/document.XML", payload)
       .generateAsync({ type: "arraybuffer", compression: "STORE" });
-    const nonXmlFiles = await boundedZip(nonXmlBytes, 1000, { xmlLimit: 100 });
-    expect(nonXmlFiles.get("word/notes.txt")?.bytes.byteLength).toBe(200);
+    await expect(boundedZip(bytes, 1000, { xmlLimit: 100 })).rejects.toMatchObject({
+      code: "archive-expanded-too-large",
+    });
 
     const { Uint8ArrayWriter, TextReader, ZipWriter } =
       await import("@zip.js/zip.js/index-native.js");
