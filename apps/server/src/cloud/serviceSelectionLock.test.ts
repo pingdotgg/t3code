@@ -27,4 +27,42 @@ it.layer(NodeServices.layer)("service selection lock", (it) => {
       assert.isFalse(yield* fs.exists(lock));
     }),
   );
+
+  it.effect("waits on a contended live lease until the first holder releases it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-selection-lock-" });
+      const selectionPath = path.join(root, "service-state.json");
+      const lock = `${selectionPath}.selection-lock`;
+
+      const releaseFirst = yield* Effect.promise(() => acquireServiceSelectionLock(selectionPath));
+      let signalRetryStarted!: () => void;
+      const retryStarted = new Promise<void>((resolve) => {
+        signalRetryStarted = resolve;
+      });
+      let releaseRetryGate!: () => void;
+      const retryGate = new Promise<void>((resolve) => {
+        releaseRetryGate = resolve;
+      });
+      let secondAcquired = false;
+      const second = acquireServiceSelectionLock(selectionPath, {
+        waitForRetry: () => {
+          signalRetryStarted();
+          return retryGate;
+        },
+      }).then((release) => {
+        secondAcquired = true;
+        return release;
+      });
+      yield* Effect.promise(() => retryStarted);
+      assert.isFalse(secondAcquired);
+      releaseFirst();
+      releaseRetryGate();
+      const releaseSecond = yield* Effect.promise(() => second);
+      assert.isTrue(secondAcquired);
+      releaseSecond();
+      assert.isFalse(yield* fs.exists(lock));
+    }),
+  );
 });

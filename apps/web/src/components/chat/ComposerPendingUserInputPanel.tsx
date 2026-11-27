@@ -14,6 +14,7 @@ import { CheckIcon, MessageCircleQuestionMarkIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
+import { isEditableFocused } from "~/lib/editableFocus";
 import { isInSideChatPane } from "~/lib/sideChatPane";
 import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { ComposerBanner } from "./ComposerBanner";
@@ -230,14 +231,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       if (!paneFocusedRef.current) return;
       const target = event.target;
-      if (isInSideChatPane(target)) return;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
-      }
+      if (isInSideChatPane(target) || isEditableFocused(target)) return;
       if (
         target instanceof HTMLElement &&
         target.closest(
-          'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
+          '[role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
         )
       ) {
         return;

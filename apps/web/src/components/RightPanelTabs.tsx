@@ -33,7 +33,12 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
-import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
+import {
+  horizontalListSortingStrategy,
+  SortableContext,
+  type SortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
   ChevronLeft,
@@ -50,6 +55,9 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type Ref,
+  type RefObject,
+  useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -61,7 +69,6 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -90,6 +97,7 @@ import { previewBridge } from "./preview/previewBridge";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { preventThumbButtonFocus, takeThumbButtonNavigation } from "./preview/thumbButtons";
 import { observeResize } from "~/lib/observeResize";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import {
   previewFaviconOf,
   SurfaceIcon,
@@ -111,7 +119,12 @@ export {
   surfaceShortcutTargetsTypingContext,
 } from "./SurfaceLauncher";
 
+export interface RightPanelTabsHandle {
+  closeSelectedTabs: () => boolean;
+}
+
 export interface RightPanelTabsProps {
+  ref?: Ref<RightPanelTabsHandle>;
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
@@ -127,6 +140,7 @@ export interface RightPanelTabsProps {
   holdsPaneTabs?: boolean;
   inlineSize?: PreviewPanelInlineSize;
   layoutControls?: ReactNode;
+  selectionScope?: string | null;
   surfaces: readonly RightPanelSurface[];
   environmentId: EnvironmentId | null;
   activeSurfaceId: string | null;
@@ -139,6 +153,7 @@ export interface RightPanelTabsProps {
   onActivate: (surface: RightPanelSurface) => void;
   onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
+  onCloseSelectedSurfaces: (surfaces: readonly RightPanelSurface[]) => void;
   /** Moves a subagent, side chat or linked thread tab to the main screen. */
   onOpenInMainView?: (
     surface: Extract<RightPanelSurface, { kind: "thread" | "linked-thread" }>,
@@ -146,7 +161,7 @@ export interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
-  onMoveSurface?: (surfaceId: string, toIndex: number) => void;
+  onMoveSurfaces?: (surfaceIds: readonly string[], targetId: string) => void;
   onCopyFilePath: (relativePath: string) => void;
   /** Escape on the empty pane's chooser closes the pane; the sheet closes itself. */
   onClose?: () => void;
@@ -200,6 +215,7 @@ type TabContextMenuAction =
   | "duplicate"
   | "toggle-mute"
   | "close"
+  | "close-selected"
   | "close-others"
   | "close-to-right"
   | "close-all";
@@ -234,11 +250,13 @@ function PanelTabStrip({
   notched,
   noDrag,
   ref,
+  onKeyDown,
   children,
 }: {
   notched: boolean;
   noDrag: boolean;
   ref: Ref<HTMLDivElement>;
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   children: ReactNode;
 }) {
   if (notched) {
@@ -247,6 +265,7 @@ function PanelTabStrip({
         ref={ref}
         className="flex shrink-0 items-center gap-1 max-md:min-w-0 max-md:shrink"
         data-right-panel-tab-list
+        onKeyDown={onKeyDown}
       >
         {children}
       </div>
@@ -260,8 +279,11 @@ function PanelTabStrip({
       scrollFade
       className={cn("min-w-0 flex-1", noDrag && "[-webkit-app-region:no-drag]")}
       data-right-panel-tab-list
+      onKeyDown={onKeyDown}
     >
-      <div className="flex h-full w-max min-w-full items-center gap-1">{children}</div>
+      <div className="flex h-full w-max min-w-full items-center gap-1 in-data-dragging-selection:overflow-x-clip">
+        {children}
+      </div>
     </ScrollArea>
   );
 }
@@ -426,27 +448,60 @@ function RightPanelEmptyState(props: {
   );
 }
 
+function tabSortingStrategy(selectionStart: number, selectionLength: number): SortingStrategy {
+  if (selectionLength < 2) return horizontalListSortingStrategy;
+  const selectionEnd = selectionStart + selectionLength - 1;
+  return (input) => {
+    const { activeIndex, overIndex, index, rects } = input;
+    if (activeIndex < selectionStart || activeIndex > selectionEnd) {
+      return horizontalListSortingStrategy(input);
+    }
+    const first = rects[selectionStart];
+    const last = rects[selectionEnd];
+    const second = rects[selectionStart + 1];
+    if (!first || !last || !second) return null;
+    const stride = last.right - first.left + (second.left - first.right);
+    if (index > selectionEnd && index <= overIndex) {
+      return { x: -stride, y: 0, scaleX: 1, scaleY: 1 };
+    }
+    if (index < selectionStart && index >= overIndex) {
+      return { x: stride, y: 0, scaleX: 1, scaleY: 1 };
+    }
+    return null;
+  };
+}
 function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
-  onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
+  selectedIds: readonly string[];
+  onClearSelection: () => void;
+  onMove: RightPanelTabsProps["onMoveSurfaces"];
   children: ReactNode;
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
-  const { onMove, surfaces } = props;
+  const { onMove, selectedIds } = props;
+  const strategy = tabSortingStrategy(
+    surfaceIds.findIndex((id) => id === selectedIds[0]),
+    selectedIds.length,
+  );
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return;
-    const toIndex = surfaces.findIndex((surface) => surface.id === over.id);
-    if (toIndex >= 0) onMove?.(String(active.id), toIndex);
+    if (!over) return;
+    const activeId = String(active.id);
+    const targetId = String(over.id);
+    const movingIds = selectedIds.includes(activeId) ? selectedIds : [activeId];
+    if (!movingIds.includes(targetId)) onMove?.(movingIds, targetId);
   };
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={TAB_DRAG_MODIFIERS}
+      onDragStart={({ active }) => {
+        if (!selectedIds.includes(String(active.id))) props.onClearSelection();
+      }}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
+      <SortableContext items={surfaceIds} strategy={strategy}>
         {props.children}
       </SortableContext>
     </DndContext>
@@ -454,7 +509,7 @@ function SortableTabList(props: {
 }
 
 interface RightPanelTabHandlers {
-  onActivate: (surface: RightPanelSurface) => void;
+  onActivate: (surface: RightPanelSurface, extendSelection: boolean) => void;
   onClose: (surface: RightPanelSurface) => void;
   onAuxClick: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
   onContextMenu: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
@@ -479,6 +534,8 @@ function RightPanelTab(
     surface: RightPanelSurface;
     dragDisabled: boolean;
     active: boolean;
+    selected: boolean;
+    tabListRef: RefObject<HTMLDivElement | null>;
     pending: boolean;
     title: string;
     audio: TabAudioState;
@@ -526,6 +583,21 @@ function RightPanelTab(
     id: surface.id,
     disabled: dragDisabled,
   });
+  const translation = CSS.Translate.toString(transform);
+  const { tabListRef } = props;
+  const groupTranslation = props.selected && isDragging ? translation : undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- shares the applied drag transform with selected peers before paint, including during autoscroll
+  useLayoutEffect(() => {
+    if (groupTranslation === undefined) return;
+    const strip = tabListRef.current;
+    if (!strip) return;
+    strip.setAttribute("data-dragging-selection", "");
+    strip.style.setProperty("--selected-tab-drag-transform", groupTranslation);
+    return () => {
+      strip.removeAttribute("data-dragging-selection");
+      strip.style.removeProperty("--selected-tab-drag-transform");
+    };
+  }, [groupTranslation, tabListRef]);
   const sideChatShell = useQuietThreadShell(
     surface.kind === "thread" && props.environmentId !== null
       ? scopeThreadRef(props.environmentId, surface.threadId)
@@ -552,13 +624,17 @@ function RightPanelTab(
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      style={{ transform: translation, transition }}
       data-active-tab={active}
+      data-selected-tab={props.selected || undefined}
       data-tab-key={surface.id}
       data-layout-pane-tab={layoutTabId ?? undefined}
       onPointerDown={
         layoutTabId !== null ? (event) => beginLayoutTabDrag(event, layoutTabId) : undefined
       }
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onActivate(surface, event.shiftKey);
+      }}
       onMouseDown={preventTabMiddleButtonDefault}
       onMouseUp={preventTabMiddleButtonDefault}
       onAuxClick={(event) => onAuxClick(event, surface)}
@@ -567,6 +643,9 @@ function RightPanelTab(
       className={cn(
         "cursor-pointer group/tab flex shrink-0 items-center",
         notched && "max-md:min-w-0 max-md:shrink",
+        props.selected &&
+          !isDragging &&
+          "in-data-dragging-selection:relative in-data-dragging-selection:z-10 in-data-dragging-selection:transform-(--selected-tab-drag-transform)! in-data-dragging-selection:transition-none!",
         isDragging && "relative z-10",
         // In the notch a tab is the chat's 28px notch tab (pen JiaZk).
         notched
@@ -575,9 +654,12 @@ function RightPanelTab(
         // The active tab title caps below.
         !active && !notched && "max-w-36",
         ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
-        active
-          ? cn("text-strong-foreground", !notched && "font-medium")
-          : "text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
+        active && !notched && "font-medium",
+        props.selected
+          ? "surface-tint [--surface-tint:var(--primary)] text-strong-foreground"
+          : active
+            ? "text-strong-foreground"
+            : "text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
       )}
     >
       <>
@@ -606,34 +688,32 @@ function RightPanelTab(
           ) : null}
         </PanelTabCloseButton>
         {audio === "none" || !audioRuntimeTabId ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-kbd hover:surface-ghost-hover"
-                  aria-label={
-                    audio === "muted"
-                      ? gt("Unmute {title}", { title })
-                      : gt("Mute {title}", { title })
-                  }
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void previewBridge
-                      ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
-                      .catch(() => undefined);
-                  }}
-                >
-                  {audio === "muted" ? (
-                    <VolumeOffIcon className="size-3" />
-                  ) : (
-                    <Volume2Icon className="size-3" />
-                  )}
-                </button>
-              }
-            />
-            <TooltipPopup>{audio === "muted" ? gt("Unmute tab") : gt("Mute tab")}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <button
+                type="button"
+                className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-kbd hover:surface-ghost-hover"
+                aria-label={
+                  audio === "muted"
+                    ? gt("Unmute {title}", { title })
+                    : gt("Mute {title}", { title })
+                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void previewBridge
+                    ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
+                    .catch(() => undefined);
+                }}
+              >
+                {audio === "muted" ? (
+                  <VolumeOffIcon className="size-3" />
+                ) : (
+                  <Volume2Icon className="size-3" />
+                )}
+              </button>
+            }
+            label={audio === "muted" ? gt("Unmute tab") : gt("Mute tab")}
+          />
         )}
         {renaming ? (
           <input
@@ -656,41 +736,43 @@ function RightPanelTab(
             }}
           />
         ) : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onDoubleClick={() => {
-                    if (surface.kind === "device" && canRename) onStartRename(surface.id);
-                  }}
-                  className={cn(
-                    "cursor-pointer flex min-w-0 items-center outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
-                    active && surface.kind === "diff" && "shrink-0",
-                  )}
-                  aria-label={
-                    surface.kind === "terminal" && threadTitle
-                      ? `${title}, ${threadTitle}`
-                      : undefined
+          <SharedTooltipTrigger
+            render={
+              <button
+                type="button"
+                onDoubleClick={(event) => {
+                  if (!event.shiftKey && surface.kind === "device" && canRename) {
+                    onStartRename(surface.id);
                   }
-                  onClick={() => onActivate(surface)}
+                }}
+                className={cn(
+                  "cursor-pointer flex min-w-0 items-center outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
+                  active && surface.kind === "diff" && "shrink-0",
+                )}
+                aria-pressed={active || props.selected}
+                aria-label={
+                  surface.kind === "terminal" && threadTitle
+                    ? `${title}, ${threadTitle}`
+                    : undefined
+                }
+                onClick={(event) => onActivate(surface, event.shiftKey)}
+              >
+                <span
+                  className={
+                    notched
+                      ? active
+                        ? PANE_TAB_TITLE_CLASS
+                        : PANE_INACTIVE_TAB_TITLE_CLASS
+                      : cn("truncate", active && "max-w-60")
+                  }
                 >
-                  <span
-                    className={
-                      notched
-                        ? active
-                          ? PANE_TAB_TITLE_CLASS
-                          : PANE_INACTIVE_TAB_TITLE_CLASS
-                        : cn("truncate", active && "max-w-60")
-                    }
-                  >
-                    {title}
-                  </span>
-                </button>
-              }
-            />
-            <TooltipPopup className="whitespace-pre-line">
-              {surface.kind === "device" ? (
+                  {title}
+                </span>
+              </button>
+            }
+            className="whitespace-pre-line"
+            label={
+              surface.kind === "device" ? (
                 <>
                   {threadTitle ? (
                     <>
@@ -702,9 +784,9 @@ function RightPanelTab(
                 </>
               ) : (
                 tooltip
-              )}
-            </TooltipPopup>
-          </Tooltip>
+              )
+            }
+          />
         )}
       </>
     </div>
@@ -718,7 +800,7 @@ const PANE_BODY_SURFACE_CLASS: Partial<Record<RightPanelSurface["kind"], string>
   terminal: "bg-(--terminal-background)",
 };
 
-export function RightPanelTabs(props: RightPanelTabsProps) {
+export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
   const gt = useGT();
   const messages = useMessages();
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
@@ -746,6 +828,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const renameRequested = useLayoutTabRenameRequested(layoutTabId);
   const renamingDeviceId = renamingDevice ?? (renameRequested ? props.activeSurfaceId : null);
+  const [selection, setSelection] = useState<{
+    scope: RightPanelTabsProps["selectionScope"];
+    anchorId: string;
+    endId: string;
+  } | null>(null);
   const [mobileBreadcrumbSlot, setMobileBreadcrumbSlot] = useState<HTMLSpanElement | null>(null);
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const { hasActions, registerActions } = usePanelTabActionsHost();
@@ -763,8 +850,32 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     canScrollLeft: false,
     canScrollRight: false,
   });
-
-  if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
+  const anchorIndex = selection
+    ? props.surfaces.findIndex((surface) => surface.id === selection.anchorId)
+    : -1;
+  const endIndex = selection
+    ? props.surfaces.findIndex((surface) => surface.id === selection.endId)
+    : -1;
+  const hasSelection =
+    selection !== null &&
+    props.open !== false &&
+    selection.scope === props.selectionScope &&
+    selection.anchorId === props.activeSurfaceId &&
+    anchorIndex >= 0 &&
+    endIndex >= 0;
+  if (selection !== null && !hasSelection) setSelection(null);
+  const selectedSurfaces = hasSelection
+    ? props.surfaces.slice(Math.min(anchorIndex, endIndex), Math.max(anchorIndex, endIndex) + 1)
+    : [];
+  const selectedIds = selectedSurfaces.map((surface) => surface.id);
+  const clearSelection = useStableCallback(() => setSelection(null));
+  useImperativeHandle(ref, () => ({
+    closeSelectedTabs: () => {
+      if (!hasSelection) return false;
+      props.onCloseSelectedSurfaces(selectedSurfaces);
+      return true;
+    },
+  }));
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
@@ -845,6 +956,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         : {}),
     },
   });
+  const canAddSurface = addSurfaceActions.some((action) => action.available);
+
+  if ((props.open === false || !canAddSurface) && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
@@ -906,7 +1020,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       });
     }
     items.push(
-      { id: "close", label: gt("Close") },
+      selectedIds.includes(surface.id)
+        ? { id: "close-selected", label: gt("Close selected tabs") }
+        : { id: "close", label: gt("Close") },
       {
         id: "close-others",
         label: gt("Close others"),
@@ -959,6 +1075,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       case "close":
         props.onCloseSurface(surface);
         break;
+      case "close-selected":
+        props.onCloseSelectedSurfaces(selectedSurfaces);
+        break;
       case "close-others":
         props.onCloseOtherSurfaces(surface);
         break;
@@ -978,7 +1097,20 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     event.stopPropagation();
     props.onCloseSurface(surface);
   };
-  const onActivateTab = useStableCallback(props.onActivate);
+  const onActivateTab = useStableCallback(
+    (surface: RightPanelSurface, extendSelection: boolean) => {
+      if (extendSelection && focusedSurface) {
+        setSelection(
+          surface.id === focusedSurface.id
+            ? null
+            : { scope: props.selectionScope, anchorId: focusedSurface.id, endId: surface.id },
+        );
+        return;
+      }
+      setSelection(null);
+      props.onActivate(surface);
+    },
+  );
   const onCloseTab = useStableCallback(props.onCloseSurface);
   const onTabAuxClick = useStableCallback(handleTabAuxClick);
   const onTabContextMenu = useStableCallback(
@@ -1042,7 +1174,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     paneTabsId !== null ? (
       <LayoutNewTabButton tabId={paneTabsId} />
     ) : // A notch keeps it while empty too: an empty notch reads as a broken corner.
-    props.open !== false || props.surfaces.length > 0 || notched ? (
+    canAddSurface && (props.open !== false || props.surfaces.length > 0 || notched) ? (
       <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
         <MenuTrigger
           render={
@@ -1079,8 +1211,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       // A scrolling strip in the title bar leaves the drag region, so trackpad scrolls reach it.
       noDrag={ownsDesktopTitleBar && tabScrollState.hasOverflow}
       ref={attachTabList}
+      onKeyDown={(event) => {
+        if (!hasSelection || event.key !== "Escape" || event.defaultPrevented) return;
+        event.preventDefault();
+        event.stopPropagation();
+        clearSelection();
+      }}
     >
-      <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
+      <SortableTabList
+        surfaces={props.surfaces}
+        selectedIds={selectedIds}
+        onClearSelection={clearSelection}
+        onMove={props.onMoveSurfaces}
+      >
         {props.surfaces.map((surface) => {
           const previewTabId = previewTabIdOf(surface, props.previewSessions);
           const favicon = previewFaviconOf(surface, props.previewSessions, props.desktopByTabId);
@@ -1090,9 +1233,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               surface={surface}
               // A layout tab's strip drags the whole tab instead.
               dragDisabled={
-                !props.onMoveSurface || renamingDeviceId === surface.id || layoutTabId !== null
+                !props.onMoveSurfaces || renamingDeviceId === surface.id || layoutTabId !== null
               }
               active={surface.id === props.activeSurfaceId}
+              selected={selectedIds.includes(surface.id)}
+              tabListRef={tabListRef}
               pending={props.pendingSurfaceIds.has(surface.id)}
               title={surfaceTitle(
                 surface,
@@ -1235,46 +1380,46 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             role="group"
             aria-label={gt("Scroll panel tabs")}
           >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex">
-                    <Button
-                      aria-label={gt("Scroll tabs left")}
-                      disabled={!tabScrollState.canScrollLeft}
-                      onClick={() => scrollTabs(-1)}
-                      size="icon-xs"
-                      variant="ghost"
-                    >
-                      <ChevronLeft />
-                    </Button>
-                  </span>
-                }
-              />
-              <TooltipPopup>
-                <T>Scroll tabs left</T>
-              </TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex">
-                    <Button
-                      aria-label={gt("Scroll tabs right")}
-                      disabled={!tabScrollState.canScrollRight}
-                      onClick={() => scrollTabs(1)}
-                      size="icon-xs"
-                      variant="ghost"
-                    >
-                      <ChevronRight />
-                    </Button>
-                  </span>
-                }
-              />
-              <TooltipPopup>
-                <T>Scroll tabs right</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <span className="inline-flex">
+                  <Button
+                    aria-label={gt("Scroll tabs left")}
+                    disabled={!tabScrollState.canScrollLeft}
+                    onClick={() => scrollTabs(-1)}
+                    size="icon-xs"
+                    variant="ghost"
+                  >
+                    <ChevronLeft />
+                  </Button>
+                </span>
+              }
+              label={
+                <>
+                  <T>Scroll tabs left</T>
+                </>
+              }
+            />
+            <SharedTooltipTrigger
+              render={
+                <span className="inline-flex">
+                  <Button
+                    aria-label={gt("Scroll tabs right")}
+                    disabled={!tabScrollState.canScrollRight}
+                    onClick={() => scrollTabs(1)}
+                    size="icon-xs"
+                    variant="ghost"
+                  >
+                    <ChevronRight />
+                  </Button>
+                </span>
+              }
+              label={
+                <>
+                  <T>Scroll tabs right</T>
+                </>
+              }
+            />
           </div>
         ) : null}
         <PanelActionsNotch

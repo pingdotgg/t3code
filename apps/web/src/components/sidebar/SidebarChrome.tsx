@@ -14,7 +14,6 @@ import {
   SidebarStageBackdrop,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
-import { TooltipProvider } from "../ui/tooltip";
 import { Badge } from "../ui/badge";
 import { T3Wordmark } from "../T3Wordmark";
 import {
@@ -227,64 +226,60 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
 
   return (
-    <TooltipProvider>
-      <SidebarMenu className="flex-row items-center">
-        {isOnUtilityPage ? (
-          <SidebarMenuItem className="min-w-0 flex-1">
-            <SidebarMenuButton size="control" onClick={handleBackClick}>
-              <ArrowLeftIcon />
-              <span>
-                <T>Back</T>
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : (
-          // Keep the utilities in the design's compact, icon-only row.
-          <SidebarMenuItem className="shrink-0">
-            <div className="flex gap-1">
+    <SidebarMenu className="flex-row items-center">
+      {isOnUtilityPage ? (
+        <SidebarMenuItem className="min-w-0 flex-1">
+          <SidebarMenuButton size="control" onClick={handleBackClick}>
+            <ArrowLeftIcon />
+            <span>
+              <T>Back</T>
+            </span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ) : (
+        // Keep the utilities in the design's compact, icon-only row.
+        <SidebarMenuItem className="shrink-0">
+          <div className="flex gap-1">
+            <SidebarUtilityItem
+              icon={<SettingsIcon className="size-4" />}
+              label={gt("Settings")}
+              onClick={handleSettingsClick}
+            />
+            {pullRequestsSupported ? (
               <SidebarUtilityItem
-                icon={<SettingsIcon className="size-4" />}
-                label={gt("Settings")}
-                onClick={handleSettingsClick}
+                icon={<PullRequestGlyph.pullRequest className="size-4" />}
+                label={gt("Pull requests")}
+                onClick={handlePullRequestsClick}
+                onPointerDown={(event) => beginLayoutContentDrag(event, { kind: "pull-requests" })}
               />
-              {pullRequestsSupported ? (
-                <SidebarUtilityItem
-                  icon={<PullRequestGlyph.pullRequest className="size-4" />}
-                  label={gt("Pull requests")}
-                  onClick={handlePullRequestsClick}
-                  onPointerDown={(event) =>
-                    beginLayoutContentDrag(event, { kind: "pull-requests" })
-                  }
-                />
-              ) : null}
-              {issuesSupported ? (
-                <SidebarUtilityItem
-                  icon={<IssueGlyph.issue className="size-4" />}
-                  label={gt("Issues", { $context: "sidebar link to the list of issues" })}
-                  onClick={handleIssuesClick}
-                  onPointerDown={(event) => beginLayoutContentDrag(event, { kind: "issues" })}
-                />
-              ) : null}
-              {workflowsReachable ? (
-                <SidebarUtilityItem
-                  icon={<WorkflowIcon className="size-4" />}
-                  label={gt("Workflows")}
-                  onClick={handleWorkflowsClick}
-                  onPointerDown={(event) => beginLayoutContentDrag(event, { kind: "workflows" })}
-                />
-              ) : null}
+            ) : null}
+            {issuesSupported ? (
               <SidebarUtilityItem
-                icon={<ChartNoAxesColumnIcon className="size-4" />}
-                label={gt("Usage")}
-                onClick={handleUsageClick}
+                icon={<IssueGlyph.issue className="size-4" />}
+                label={gt("Issues", { $context: "sidebar link to the list of issues" })}
+                onClick={handleIssuesClick}
+                onPointerDown={(event) => beginLayoutContentDrag(event, { kind: "issues" })}
               />
-            </div>
-          </SidebarMenuItem>
-        )}
-        <SidebarThreadUndoNotice />
-        <SidebarUpdatePill />
-      </SidebarMenu>
-    </TooltipProvider>
+            ) : null}
+            {workflowsReachable ? (
+              <SidebarUtilityItem
+                icon={<WorkflowIcon className="size-4" />}
+                label={gt("Workflows")}
+                onClick={handleWorkflowsClick}
+                onPointerDown={(event) => beginLayoutContentDrag(event, { kind: "workflows" })}
+              />
+            ) : null}
+            <SidebarUtilityItem
+              icon={<ChartNoAxesColumnIcon className="size-4" />}
+              label={gt("Usage")}
+              onClick={handleUsageClick}
+            />
+          </div>
+        </SidebarMenuItem>
+      )}
+      <SidebarThreadUndoNotice />
+      <SidebarUpdatePill />
+    </SidebarMenu>
   );
 });
 

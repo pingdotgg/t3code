@@ -15,7 +15,7 @@ import {
 } from "react";
 import { cn } from "~/lib/utils";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
-import { Button, type ButtonVariant } from "~/components/ui/button";
+import { Button, type ButtonSize, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_APP_POPUP_CLASS,
   DIALOG_APP_PANEL_POPUP_CLASS,
@@ -130,6 +130,7 @@ function DialogPopup({
   className,
   children,
   showCloseButton = true,
+  closeButtonSize = "icon",
   bottomStickOnMobile = true,
   variant = "default",
   mediaControlsPlacement = "outside",
@@ -139,6 +140,7 @@ function DialogPopup({
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
+  closeButtonSize?: ButtonSize;
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media" | "app" | "app-panel";
   mediaControlsPlacement?: "inside" | "outside";
@@ -186,7 +188,7 @@ function DialogPopup({
           <DialogPrimitive.Close
             aria-label={gt("Close", { $context: "button, closes the dialog" })}
             className="absolute end-2 top-2"
-            render={<Button size="icon" variant="ghost" />}
+            render={<Button size={closeButtonSize} variant="ghost" />}
           >
             <XIcon />
           </DialogPrimitive.Close>

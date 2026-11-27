@@ -75,6 +75,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { fileManagerActionForPath } from "~/components/chat/OpenInPicker.logic";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import {
@@ -695,6 +696,8 @@ interface FileRevealState {
   scrollContainer: HTMLElement | null;
   detachScrollListener: (() => void) | null;
   restoreFrameId: number | null;
+  /** Where CodeView settled on the revealed line, while the view is still there. */
+  revealedScrollTop: number | null;
 }
 
 // A file pane tab unmounts while another tab of its pane shows, so its offset outlives the panel.
@@ -749,7 +752,10 @@ function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
-): { onPostRender: FilePostRender; snapshotScroll: () => void } {
+): {
+  onPostRenderFor: (scroller: "virtualizer" | "codeView") => FilePostRender;
+  snapshotScroll: () => void;
+} {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
 
   const snapshotScroll = () => {
@@ -760,219 +766,247 @@ function useFileLineReveal(
     }
   };
 
-  const onPostRender: FilePostRender = (fileContainer, instance, phase) => {
-    if (relativePath === null) return;
+  const onPostRenderFor =
+    (scroller: "virtualizer" | "codeView"): FilePostRender =>
+    (fileContainer, instance, phase) => {
+      if (relativePath === null) return;
 
-    const scrollKey = `${scrollScope}\u0000${relativePath}`;
-    const existingState = revealStatesByPath.get(relativePath);
-    const state: FileRevealState = existingState ?? {
-      frameId: null,
-      cancelGuard: null,
-      handledRequestId: null,
-      latestRequestId: null,
-      scrollTop: savedFileScrollTops.get(scrollKey) ?? 0,
-      scrollContainer: null,
-      detachScrollListener: null,
-      restoreFrameId: null,
-    };
-    if (!existingState) revealStatesByPath.set(relativePath, state);
+      const scrollKey = `${scrollScope}\u0000${relativePath}`;
+      const existingState = revealStatesByPath.get(relativePath);
+      const state: FileRevealState = existingState ?? {
+        frameId: null,
+        cancelGuard: null,
+        handledRequestId: null,
+        latestRequestId: null,
+        scrollTop: savedFileScrollTops.get(scrollKey) ?? 0,
+        scrollContainer: null,
+        detachScrollListener: null,
+        restoreFrameId: null,
+        revealedScrollTop: null,
+      };
+      if (!existingState) revealStatesByPath.set(relativePath, state);
 
-    const cancelPendingReveal = () => {
-      if (state.frameId !== null) {
-        cancelAnimationFrame(state.frameId);
-        state.frameId = null;
-      }
-      state.cancelGuard?.();
-      if (state.restoreFrameId !== null) {
-        cancelAnimationFrame(state.restoreFrameId);
-        state.restoreFrameId = null;
-      }
-    };
-
-    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
-
-    if (phase === "unmount") {
-      cancelPendingReveal();
-      state.detachScrollListener?.();
-      state.detachScrollListener = null;
-      saveFileScrollTop(scrollKey, state.scrollTop);
-      state.scrollContainer = null;
-      return;
-    }
-
-    const contents = instance.file?.contents;
-    const targetLine =
-      revealLine === null || contents === undefined ? null : clampFileLine(contents, revealLine);
-    updateFileLinkReveal(fileContainer, targetLine);
-
-    if (!(instance instanceof VirtualizedFile)) return;
-
-    if (state.latestRequestId !== revealRequestId) {
-      cancelPendingReveal();
-      state.latestRequestId = revealRequestId;
-      state.handledRequestId = null;
-    }
-
-    if (scrollContainer && state.scrollContainer !== scrollContainer) {
-      state.detachScrollListener?.();
-      state.scrollContainer = scrollContainer;
-      ensureFileScrollStoreSubscriptions();
-      const syncScrollTop = () => {
-        if (state.restoreFrameId === null && scrollContainer.isConnected) {
-          state.scrollTop = scrollContainer.scrollTop;
+      const cancelPendingReveal = () => {
+        if (state.frameId !== null) {
+          cancelAnimationFrame(state.frameId);
+          state.frameId = null;
+        }
+        state.cancelGuard?.();
+        if (state.restoreFrameId !== null) {
+          cancelAnimationFrame(state.restoreFrameId);
+          state.restoreFrameId = null;
         }
       };
-      scrollContainer.addEventListener("scroll", syncScrollTop, { passive: true });
-      activeFileScrollSnapshots.add(syncScrollTop);
-      state.detachScrollListener = () => {
-        scrollContainer.removeEventListener("scroll", syncScrollTop);
-        activeFileScrollSnapshots.delete(syncScrollTop);
-      };
-      const savedScrollTop = state.scrollTop;
-      // A pending line reveal owns the scroll position.
-      if (
-        savedScrollTop > 0 &&
-        (revealLine === null || state.handledRequestId === revealRequestId)
-      ) {
-        const restoreScroll = (attempt: number) => {
-          state.restoreFrameId = requestAnimationFrame(() => {
-            state.restoreFrameId = null;
-            if (!scrollContainer.isConnected) return;
-            if (scrollContainer.scrollTop !== 0) {
-              state.scrollTop = scrollContainer.scrollTop;
-              return;
-            }
-            // Wait for the virtualizer to size the file so the offset is not clamped.
-            const fits =
-              scrollContainer.scrollHeight - scrollContainer.clientHeight >= savedScrollTop;
-            if (fits || attempt >= REVEAL_MAX_ATTEMPTS) {
-              scrollContainer.scrollTop = savedScrollTop;
-              return;
-            }
-            restoreScroll(attempt + 1);
-          });
+
+      const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
+
+      if (phase === "unmount") {
+        cancelPendingReveal();
+        state.detachScrollListener?.();
+        state.detachScrollListener = null;
+        saveFileScrollTop(scrollKey, state.scrollTop);
+        // A rebuilt CodeView estimates its line heights again, so a saved offset no longer points at
+        // the line. Starting the worker pool rebuilds the viewer right after its first render.
+        if (state.revealedScrollTop !== null && state.revealedScrollTop === state.scrollTop) {
+          state.handledRequestId = null;
+        }
+        state.revealedScrollTop = null;
+        state.scrollContainer = null;
+        return;
+      }
+
+      const contents = instance.file?.contents;
+      const targetLine =
+        revealLine === null || contents === undefined ? null : clampFileLine(contents, revealLine);
+      updateFileLinkReveal(fileContainer, targetLine);
+
+      if (!(instance instanceof VirtualizedFile)) return;
+
+      if (state.latestRequestId !== revealRequestId) {
+        cancelPendingReveal();
+        state.latestRequestId = revealRequestId;
+        state.handledRequestId = null;
+      }
+
+      if (scrollContainer && state.scrollContainer !== scrollContainer) {
+        state.detachScrollListener?.();
+        state.scrollContainer = scrollContainer;
+        ensureFileScrollStoreSubscriptions();
+        const syncScrollTop = () => {
+          if (state.restoreFrameId === null && scrollContainer.isConnected) {
+            state.scrollTop = scrollContainer.scrollTop;
+          }
         };
-        restoreScroll(0);
-      }
-    }
-
-    if (revealLine === null) {
-      fileContainer.style.minHeight = "";
-      return;
-    }
-
-    if (!scrollContainer) return;
-    fileContainer.style.minHeight = `${Math.ceil(
-      Math.max(instance.height, scrollContainer.clientHeight),
-    )}px`;
-
-    if (state.handledRequestId === revealRequestId || state.frameId !== null) {
-      return;
-    }
-
-    const resolveScrollTarget = (line: number): number | null => {
-      const linePosition = instance.getLinePosition(line);
-      if (!linePosition) return null;
-
-      const scrollContainerRect = scrollContainer.getBoundingClientRect();
-      const fileTop =
-        scrollContainer.scrollTop +
-        fileContainer.getBoundingClientRect().top -
-        scrollContainerRect.top;
-      const root = fileContainer.shadowRoot ?? fileContainer;
-      const renderedLineElement = root.querySelector<HTMLElement>(`[data-line="${line}"]`);
-      const renderedLineRect = renderedLineElement?.getBoundingClientRect();
-
-      return resolveCenteredFileLineScrollTop({
-        scrollTop: scrollContainer.scrollTop,
-        scrollHeight: scrollContainer.scrollHeight,
-        viewportTop: scrollContainerRect.top,
-        viewportHeight: scrollContainer.clientHeight,
-        fileTop,
-        estimatedLine: linePosition,
-        ...(renderedLineRect && renderedLineRect.height > 0
-          ? {
-              renderedLine: {
-                top: renderedLineRect.top,
-                height: renderedLineRect.height,
-              },
-            }
-          : {}),
-      });
-    };
-
-    const guardScrollTarget = (line: number) => {
-      let framesLeft = REVEAL_GUARD_FRAMES;
-      let guardFrameId: number | null = null;
-      const cancelGuard = () => {
-        if (guardFrameId !== null) {
-          cancelAnimationFrame(guardFrameId);
-          guardFrameId = null;
-        }
-        scrollContainer.removeEventListener("wheel", cancelGuard);
-        scrollContainer.removeEventListener("touchstart", cancelGuard);
-        scrollContainer.removeEventListener("pointerdown", cancelGuard, true);
-        window.removeEventListener("keydown", cancelGuard, true);
-        if (state.cancelGuard === cancelGuard) state.cancelGuard = null;
-      };
-      scrollContainer.addEventListener("wheel", cancelGuard, { passive: true });
-      scrollContainer.addEventListener("touchstart", cancelGuard, { passive: true });
-      // Capture gutter pointer events before Pierre stops propagation so comments can cancel the reveal
-      // guard.
-      scrollContainer.addEventListener("pointerdown", cancelGuard, {
-        passive: true,
-        capture: true,
-      });
-      window.addEventListener("keydown", cancelGuard, true);
-      const holdTarget = () => {
-        guardFrameId = null;
-        framesLeft -= 1;
-        if (framesLeft <= 0 || !scrollContainer.isConnected) {
-          cancelGuard();
-          return;
-        }
-        const targetTop = resolveScrollTarget(line);
+        scrollContainer.addEventListener("scroll", syncScrollTop, { passive: true });
+        activeFileScrollSnapshots.add(syncScrollTop);
+        state.detachScrollListener = () => {
+          scrollContainer.removeEventListener("scroll", syncScrollTop);
+          activeFileScrollSnapshots.delete(syncScrollTop);
+        };
+        const savedScrollTop = state.scrollTop;
+        // A pending line reveal owns the scroll position.
         if (
-          targetTop !== null &&
-          Math.abs(scrollContainer.scrollTop - targetTop) > REVEAL_GUARD_TOLERANCE_PX
+          savedScrollTop > 0 &&
+          (revealLine === null || state.handledRequestId === revealRequestId)
         ) {
-          scrollContainer.scrollTop = targetTop;
+          const restoreScroll = (attempt: number) => {
+            state.restoreFrameId = requestAnimationFrame(() => {
+              state.restoreFrameId = null;
+              if (!scrollContainer.isConnected) return;
+              if (scrollContainer.scrollTop !== 0) {
+                state.scrollTop = scrollContainer.scrollTop;
+                return;
+              }
+              // Wait for the virtualizer to size the file so the offset is not clamped.
+              const fits =
+                scrollContainer.scrollHeight - scrollContainer.clientHeight >= savedScrollTop;
+              if (fits || attempt >= REVEAL_MAX_ATTEMPTS) {
+                scrollContainer.scrollTop = savedScrollTop;
+                return;
+              }
+              restoreScroll(attempt + 1);
+            });
+          };
+          restoreScroll(0);
         }
-        guardFrameId = requestAnimationFrame(holdTarget);
+      }
+
+      if (revealLine === null) {
+        fileContainer.style.minHeight = "";
+        return;
+      }
+
+      if (!scrollContainer) return;
+      // CodeView's file element is the mounted window of rows, which the viewer sizes and places.
+      if (scroller === "virtualizer") {
+        fileContainer.style.minHeight = `${Math.ceil(
+          Math.max(instance.height, scrollContainer.clientHeight),
+        )}px`;
+      }
+
+      if (state.handledRequestId === revealRequestId || state.frameId !== null) {
+        return;
+      }
+
+      const resolveScrollTarget = (line: number): number | null => {
+        const linePosition = instance.getLinePosition(line);
+        if (!linePosition) return null;
+
+        const scrollContainerRect = scrollContainer.getBoundingClientRect();
+        const fileTop =
+          scrollContainer.scrollTop +
+          fileContainer.getBoundingClientRect().top -
+          scrollContainerRect.top;
+        const root = fileContainer.shadowRoot ?? fileContainer;
+        const renderedLineElement = root.querySelector<HTMLElement>(`[data-line="${line}"]`);
+        const renderedLineRect = renderedLineElement?.getBoundingClientRect();
+
+        return resolveCenteredFileLineScrollTop({
+          scrollTop: scrollContainer.scrollTop,
+          scrollHeight: scrollContainer.scrollHeight,
+          viewportTop: scrollContainerRect.top,
+          viewportHeight: scrollContainer.clientHeight,
+          fileTop,
+          estimatedLine: linePosition,
+          ...(renderedLineRect && renderedLineRect.height > 0
+            ? {
+                renderedLine: {
+                  top: renderedLineRect.top,
+                  height: renderedLineRect.height,
+                },
+              }
+            : {}),
+        });
       };
-      guardFrameId = requestAnimationFrame(holdTarget);
-      state.cancelGuard = cancelGuard;
+
+      const guardScrollTarget = (line: number) => {
+        let framesLeft = REVEAL_GUARD_FRAMES;
+        let guardFrameId: number | null = null;
+        const cancelGuard = () => {
+          if (guardFrameId !== null) {
+            cancelAnimationFrame(guardFrameId);
+            guardFrameId = null;
+          }
+          scrollContainer.removeEventListener("wheel", cancelGuard);
+          scrollContainer.removeEventListener("touchstart", cancelGuard);
+          scrollContainer.removeEventListener("pointerdown", cancelGuard, true);
+          window.removeEventListener("keydown", cancelGuard, true);
+          if (state.cancelGuard === cancelGuard) state.cancelGuard = null;
+        };
+        scrollContainer.addEventListener("wheel", cancelGuard, { passive: true });
+        scrollContainer.addEventListener("touchstart", cancelGuard, { passive: true });
+        // Capture gutter pointer events before Pierre stops propagation so comments can cancel the reveal
+        // guard.
+        scrollContainer.addEventListener("pointerdown", cancelGuard, {
+          passive: true,
+          capture: true,
+        });
+        window.addEventListener("keydown", cancelGuard, true);
+        const holdTarget = () => {
+          guardFrameId = null;
+          framesLeft -= 1;
+          if (framesLeft <= 0 || !scrollContainer.isConnected) {
+            cancelGuard();
+            return;
+          }
+          // CodeView's file element holds only its mounted rows, so only a mounted row places the line.
+          const targetTop =
+            scroller === "codeView" &&
+            !(fileContainer.shadowRoot ?? fileContainer).querySelector(`[data-line="${line}"]`)
+              ? null
+              : resolveScrollTarget(line);
+          if (
+            targetTop !== null &&
+            Math.abs(scrollContainer.scrollTop - targetTop) > REVEAL_GUARD_TOLERANCE_PX
+          ) {
+            scrollContainer.scrollTop = targetTop;
+          }
+          if (scroller === "codeView") state.revealedScrollTop = scrollContainer.scrollTop;
+          guardFrameId = requestAnimationFrame(holdTarget);
+        };
+        guardFrameId = requestAnimationFrame(holdTarget);
+        state.cancelGuard = cancelGuard;
+      };
+
+      const scheduleReveal = (attempt: number) => {
+        state.frameId = requestAnimationFrame(() => {
+          state.frameId = null;
+          if (state.latestRequestId !== revealRequestId || !fileContainer.isConnected) {
+            return;
+          }
+
+          // Wait for contents and metrics; missing data would clamp fresh-mount reveals to line 1 and mark them
+          // handled.
+          const currentContents = instance.file?.contents;
+          const line =
+            currentContents === undefined ? null : clampFileLine(currentContents, revealLine);
+          const targetTop = line === null ? null : resolveScrollTarget(line);
+          if (line === null || targetTop === null) {
+            if (attempt < REVEAL_MAX_ATTEMPTS) scheduleReveal(attempt + 1);
+            return;
+          }
+          updateFileLinkReveal(fileContainer, line);
+
+          state.handledRequestId = revealRequestId;
+          if (scroller === "codeView") {
+            // That window's geometry cannot place the line, so the viewer scrolls to it.
+            // It centers its estimate of the line, and rows it mounts on arrival can still move it.
+            instance.scrollToLine(line, "center", (result) => {
+              if (result !== "settled") return;
+              state.revealedScrollTop = scrollContainer.scrollTop;
+              guardScrollTarget(line);
+            });
+            return;
+          }
+          scrollContainer.scrollTop = targetTop;
+          guardScrollTarget(line);
+        });
+      };
+
+      scheduleReveal(0);
     };
 
-    const scheduleReveal = (attempt: number) => {
-      state.frameId = requestAnimationFrame(() => {
-        state.frameId = null;
-        if (state.latestRequestId !== revealRequestId || !fileContainer.isConnected) {
-          return;
-        }
-
-        // Wait for contents and metrics; missing data would clamp fresh-mount reveals to line 1 and mark them
-        // handled.
-        const currentContents = instance.file?.contents;
-        const line =
-          currentContents === undefined ? null : clampFileLine(currentContents, revealLine);
-        const targetTop = line === null ? null : resolveScrollTarget(line);
-        if (line === null || targetTop === null) {
-          if (attempt < REVEAL_MAX_ATTEMPTS) scheduleReveal(attempt + 1);
-          return;
-        }
-        updateFileLinkReveal(fileContainer, line);
-
-        scrollContainer.scrollTop = targetTop;
-        state.handledRequestId = revealRequestId;
-        guardScrollTarget(line);
-      });
-    };
-
-    scheduleReveal(0);
-  };
-
-  return { onPostRender, snapshotScroll };
+  return { onPostRenderFor, snapshotScroll };
 }
 
 const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
@@ -1123,7 +1157,6 @@ function EditableFileSurface({
     const entry = lineAnnotations
       .flatMap((annotation) => annotation.metadata.entries)
       .find((candidate) => candidate.id === entryId);
-    // oxlint-disable-next-line react/purity -- Submission timestamps are read in this event handler (oxc#27309).
     const createdAt = new Date().toISOString();
     if (entry && composerDraftTarget) {
       addReviewComment(composerDraftTarget, {
@@ -1463,12 +1496,12 @@ export default function FilePreviewPanel({
     attachment === undefined &&
     (file.isNotFile || (folderTrail !== undefined && file.data === null && file.error === null));
   const hostFolderPath = isFolder && isHostFile ? relativePath : null;
-  // A chat-linked folder reads as a file until its read settles, and revealing a
-  // folder selects it in its parent instead of opening it, so reveal waits.
-  const revealsInFileManager =
-    !isFolder &&
-    (file.data !== null || file.error !== null) &&
-    serverConfig?.shellRevealInFileManager === true;
+  // A chat-linked folder reads as a file until its read settles, and a trail only implies a folder.
+  const fileManagerAction = fileManagerActionForPath({
+    isFolder: relativePath === null || file.isNotFile,
+    isSettled: file.data !== null || file.error !== null,
+    canReveal: serverConfig?.shellRevealInFileManager === true,
+  });
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isFolder ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
@@ -1680,7 +1713,7 @@ export default function FilePreviewPanel({
   // Mentions resolve against the workspace, so only workspace files can be added.
   const canAddToChat =
     previewPath !== null && relativePath !== null && !isHostFile && composerRef !== null;
-  const { onPostRender: onFilePostRender, snapshotScroll: snapshotFileScroll } = useFileLineReveal(
+  const { onPostRenderFor: fileLineReveal, snapshotScroll: snapshotFileScroll } = useFileLineReveal(
     `${environmentId}\u0000${cwd}`,
     relativePath,
     revealLine,
@@ -1872,7 +1905,7 @@ export default function FilePreviewPanel({
                   availableEditors={availableEditors}
                   openInCwd={absolutePath}
                   openInCwdIsFile={file.isFile}
-                  revealFileManager={revealsInFileManager}
+                  fileManagerAction={fileManagerAction}
                   compact
                 />
               ) : null}
@@ -2068,7 +2101,7 @@ export default function FilePreviewPanel({
               copyContents={copyLargeText}
               preview={file.data?.contents ?? ""}
               sizeBytes={file.data?.byteLength ?? 0}
-              onPostRender={onFilePostRender}
+              onPostRender={fileLineReveal("codeView")}
               workspaceMutationId={workspaceMutationId}
               revealLine={revealLine}
               revealRequestId={revealRequestId}
@@ -2150,7 +2183,7 @@ export default function FilePreviewPanel({
                 name={relativePath}
                 text={file.data.contents}
                 cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
-                onPostRender={onFilePostRender}
+                onPostRender={fileLineReveal("codeView")}
                 wordWrap={wordWrap}
               />
             ) : (
@@ -2166,7 +2199,7 @@ export default function FilePreviewPanel({
                   resolvedTheme={resolvedTheme}
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}
-                  onPostRender={onFilePostRender}
+                  onPostRender={fileLineReveal("virtualizer")}
                   onPendingChange={onPendingChange}
                   onEditorChange={handleEditorChangeStable}
                 />

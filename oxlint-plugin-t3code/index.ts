@@ -24,6 +24,7 @@ import noUntranslatedCopy from "./rules/no-untranslated-copy.ts";
 import requireRegisteredListScroll from "./rules/require-registered-list-scroll.ts";
 import noOutsetStateIndicators from "./rules/no-outset-state-indicators.ts";
 import noPollingLoopInTests from "./rules/no-polling-loop-in-tests.ts";
+import noLayoutCommandApprovalWrites from "./rules/no-layout-command-approval-writes.ts";
 import noRawMcpRegistration from "./rules/no-raw-mcp-registration.ts";
 import noRawResizeObserver from "./rules/no-raw-resize-observer.ts";
 import noRawSurface from "./rules/no-raw-surface.ts";
@@ -71,6 +72,7 @@ export default definePlugin({
     "require-registered-list-scroll": requireRegisteredListScroll,
     "no-outset-state-indicators": noOutsetStateIndicators,
     "no-polling-loop-in-tests": noPollingLoopInTests,
+    "no-layout-command-approval-writes": noLayoutCommandApprovalWrites,
     "no-raw-mcp-registration": noRawMcpRegistration,
     "no-raw-resize-observer": noRawResizeObserver,
     "no-raw-surface": noRawSurface,

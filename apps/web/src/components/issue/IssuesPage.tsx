@@ -36,7 +36,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
@@ -70,7 +70,7 @@ import { ISSUE_SAVED_VIEWS } from "./issueSavedViews";
 import { SavedViewsMenu } from "~/components/SavedViewsMenu";
 import { PullRequestCompactFilterMenu } from "../pullRequest/PullRequestCompactFilterMenu";
 import { RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
-import { RightPanelTabs } from "~/components/RightPanelTabs";
+import { RightPanelTabs, type RightPanelTabsHandle } from "~/components/RightPanelTabs";
 import { WorkItemListColumn } from "../workItem/WorkItemListColumn";
 import { WorkItemWindowedList, type WorkItemListItem } from "../workItem/WorkItemWindowedList";
 import { Button } from "~/components/ui/button";
@@ -498,9 +498,12 @@ export function IssuesPage() {
     if (rightPanelState.isOpen) setMaximized((value) => !value);
   };
 
-  const closeSurface = (surface: RightPanelSurface) => {
+  const closeSurfaces = (surfaces: readonly RightPanelSurface[]) => {
     if (rightPanelRef === null) return;
-    useRightPanelStore.getState().closeSurface(rightPanelRef, surface.id);
+    useRightPanelStore.getState().closeSurfaces(
+      rightPanelRef,
+      surfaces.map((surface) => surface.id),
+    );
     selectSurfaceInUrl(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, rightPanelRef),
     );
@@ -517,11 +520,14 @@ export function IssuesPage() {
     selectSurfaceInUrl(panelSurface);
   };
 
+  const rightPanelTabsRef = useRef<RightPanelTabsHandle>(null);
   const closeActiveSurfaceFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (activeSurface === null) return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) closeSurface(activeSurface);
+    if (!event.repeat) {
+      if (!rightPanelTabsRef.current?.closeSelectedTabs()) closeSurfaces([activeSurface]);
+    }
   });
   const toggleRightPanelFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (panelSurface === null) return;
@@ -535,27 +541,27 @@ export function IssuesPage() {
     event.stopPropagation();
     if (!event.repeat) toggleRightPanelMaximized();
   });
+  const onDocumentKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      !focusedRef.current ||
+      event.defaultPrevented ||
+      isCommandPaletteOpen() ||
+      isModalDialogOpen()
+    )
+      return;
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: { ...getShortcutContext(), rightPanelOpen: rightPanelState.isOpen },
+    });
+    if (command === "rightPanel.close" || command === "tab.close")
+      closeActiveSurfaceFromShortcut(event);
+    if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
+    if (command === "rightPanel.toggleMaximized") toggleRightPanelMaximizedFromShortcut(event);
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document keydown listener for the right panel shortcuts
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        !focusedRef.current ||
-        event.defaultPrevented ||
-        isCommandPaletteOpen() ||
-        isModalDialogOpen()
-      )
-        return;
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: getShortcutContext(),
-      });
-      if (command === "rightPanel.close" || command === "tab.close")
-        closeActiveSurfaceFromShortcut(event);
-      if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
-      if (command === "rightPanel.toggleMaximized") toggleRightPanelMaximizedFromShortcut(event);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [focusedRef, keybindings]);
+    document.addEventListener("keydown", onDocumentKeyDown);
+    return () => document.removeEventListener("keydown", onDocumentKeyDown);
+  }, []);
 
   const listFiltered =
     search.status !== "open" ||
@@ -624,11 +630,11 @@ export function IssuesPage() {
               label={presentation.providerName}
               // The host sits with the count, in the quieter ink, after the tracker's name.
               count={
-                <span className="inline-flex gap-2">
+                <span className="inline-flex min-w-0 items-center gap-2 whitespace-nowrap">
                   {presentation.providerName.toLowerCase() !== group.tracker.host ? (
-                    <span>{group.tracker.host}</span>
+                    <span className="truncate">{group.tracker.host}</span>
                   ) : null}
-                  <span>
+                  <span className="shrink-0">
                     {gt("{count, plural, one {{count} project} other {{count} projects}}", {
                       count: group.tracker.projectCount,
                     })}
@@ -916,6 +922,7 @@ export function IssuesPage() {
 
         {splitPanes ? (
           <RightPanelTabs
+            ref={rightPanelTabsRef}
             mode="inline"
             pane
             open={rightPanelState.isOpen}
@@ -937,7 +944,8 @@ export function IssuesPage() {
               useRightPanelStore.getState().activateSurface(rightPanelRef, surface.id);
               selectSurfaceInUrl(surface);
             }}
-            onCloseSurface={closeSurface}
+            onCloseSurface={(surface) => closeSurfaces([surface])}
+            onCloseSelectedSurfaces={closeSurfaces}
             onCloseOtherSurfaces={(surface) => {
               useRightPanelStore.getState().closeOtherSurfaces(rightPanelRef, surface.id);
               selectSurfaceInUrl(surface);
@@ -955,8 +963,8 @@ export function IssuesPage() {
               useRightPanelStore.getState().closeAllSurfaces(rightPanelRef);
               selectSurfaceInUrl(null);
             }}
-            onMoveSurface={(surfaceId, toIndex) =>
-              useRightPanelStore.getState().moveSurface(rightPanelRef, surfaceId, toIndex)
+            onMoveSurfaces={(surfaceIds, targetId) =>
+              useRightPanelStore.getState().moveSurfaces(rightPanelRef, surfaceIds, targetId)
             }
             onCopyFilePath={() => undefined}
             onAddBrowser={() => undefined}

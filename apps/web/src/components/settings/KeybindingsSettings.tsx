@@ -15,7 +15,15 @@ import {
 import { useScrollingWorkspacesEnabled } from "../../hooks/useSettings";
 import { isScrollingWorkspaceCommand } from "../../layout/layoutBehavior";
 import { useLayoutPageLocation } from "../../layout/pageNavigation";
-import { type KeyboardEvent, type ReactNode, useEffect, useReducer, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useDeferredValue,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
@@ -38,12 +46,13 @@ import {
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
-import { formatShortcutLabel } from "../../keybindings";
+import { formatShortcutKeyParts, formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useClientSettings } from "../../hooks/useSettings";
 import { Badge } from "../ui/badge";
+import { Skeleton } from "../ui/skeleton";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -80,7 +89,6 @@ import {
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
-  shortcutToKeybindingParts,
   type KeybindingCommandOption,
   type KeybindingRow,
   type WhenVariableOption,
@@ -99,6 +107,7 @@ import {
 } from "./settingsLayout";
 import { keybindingSearchAnchorId, useSearchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 function KeybindingPill({
@@ -108,33 +117,12 @@ function KeybindingPill({
   shortcut: KeybindingShortcut;
   title?: string | undefined;
 }) {
-  const isMac = navigator.platform.toLowerCase().includes("mac");
-  const parts = shortcutToKeybindingParts(shortcut);
-  const modifierParts = parts.slice(0, -1);
-  const keyPart = parts.at(-1);
-
+  const parts = formatShortcutKeyParts(shortcut);
   return (
     <KbdGroup title={title}>
-      {modifierParts.map((part) => (
-        <Kbd key={part}>
-          {part === "mod"
-            ? isMac
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? isMac
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part}
-        </Kbd>
+      {parts.map((part, index) => (
+        <Kbd key={index === parts.length - 1 ? "key" : part}>{part}</Kbd>
       ))}
-      {keyPart !== undefined ? (
-        <Kbd key="key">{keyPart.length === 1 ? keyPart.toUpperCase() : keyPart}</Kbd>
-      ) : null}
     </KbdGroup>
   );
 }
@@ -214,23 +202,21 @@ function WarningTooltipIcon({
   children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={focusable ? 0 : undefined}
-            aria-label={label}
-            className={cn(
-              "inline-flex size-5 shrink-0 items-center justify-center rounded-kbd text-warning-foreground outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-warning/25",
-              className,
-            )}
-          />
-        }
-      >
-        <TriangleAlertIcon className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{children}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span
+          tabIndex={focusable ? 0 : undefined}
+          aria-label={label}
+          className={cn(
+            "inline-flex size-5 shrink-0 items-center justify-center rounded-kbd text-warning-foreground outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-warning/25",
+            className,
+          )}
+        />
+      }
+      label={children}
+    >
+      <TriangleAlertIcon className="size-3.5" />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -721,6 +707,13 @@ function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
   };
 }
 
+// Esc with a modifier is not a cancel.
+function isBareEscape(event: KeyboardEvent<HTMLInputElement>) {
+  return (
+    event.key === "Escape" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+  );
+}
+
 function useKeybindingRowEditor({
   row,
   allRows,
@@ -774,9 +767,9 @@ function useKeybindingRowEditor({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       const field = event.currentTarget;
       flushSync(() =>
         setDraft({
@@ -1012,13 +1005,13 @@ function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) 
 function KeybindingRowTitle({ row }: { row: KeybindingRow }) {
   const m = useMessages();
   return (
-    <TooltipTrigger
-      payload={row.command}
+    <SharedTooltipTrigger
       render={<span className="flex min-w-0 items-center gap-2 text-body text-foreground" />}
+      label={row.command}
     >
       <span className="truncate">{commandLabel(row.command, m)}</span>
       <KeybindingSourceBadge source={row.source} />
-    </TooltipTrigger>
+    </SharedTooltipTrigger>
   );
 }
 
@@ -1293,9 +1286,9 @@ function useNewKeybindingDraft({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       if (!isSaving) onCancel();
       return;
     }
@@ -1512,25 +1505,25 @@ function NewKeybindingCancelIcon({
 }) {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost-muted"
-            size="icon-sm"
-            disabled={isSaving}
-            aria-label={gt("Cancel new keybinding")}
-            onClick={onCancel}
-          />
-        }
-      >
-        <XIcon className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        <T>Cancel</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          type="button"
+          variant="ghost-muted"
+          size="icon-sm"
+          disabled={isSaving}
+          aria-label={gt("Cancel new keybinding")}
+          onClick={onCancel}
+        />
+      }
+      label={
+        <>
+          <T>Cancel</T>
+        </>
+      }
+    >
+      <XIcon className="size-3.5" />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -1619,6 +1612,15 @@ function useActiveKeybindingRows(rows: ReadonlyArray<KeybindingRow>) {
   return { tableRef, activeRows };
 }
 
+function KeybindingsListSkeleton() {
+  return (
+    <div aria-hidden className="space-y-3 p-4">
+      <Skeleton shape="pill" className="h-3 w-24" />
+      <Skeleton shape="card" className="h-96" />
+    </div>
+  );
+}
+
 /** The add-binding row, one settings row per binding, and the empty state. */
 function KeybindingsList(props: KeybindingsListProps) {
   const {
@@ -1644,46 +1646,37 @@ function KeybindingsList(props: KeybindingsListProps) {
   const { tableRef, activeRows } = useActiveKeybindingRows(rows);
   const gt = useGT();
   return (
-    <Tooltip<KeybindingCommand>>
-      {({ payload }) => (
-        <>
-          <div
-            ref={tableRef}
-            role="table"
-            aria-label={gt("Shortcuts", { $context: "keyboard shortcuts section title" })}
-            className={cn(
-              KEYBINDING_TABLE_GRID,
-              "*:not-first:border-t *:not-first:border-divider dark:*:not-first:border-divider/60",
-            )}
-          >
-            <KeybindingTableHead />
-            {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
-            {rows.map((row, index) => (
-              <KeybindingSettingsRow
-                key={row.id}
-                row={row}
-                activate={
-                  index < 16 || activeRows.has(row.id) || anchorIds.get(row.id) === targetId
-                }
-                anchorId={anchorIds.get(row.id)}
-                isSaving={savingCommand === row.command}
-                {...rowActions}
-              />
-            ))}
-            {rows.length === 0 && !isAddingBinding ? (
-              <div className="col-span-full">
-                <SettingsNoMatches onClear={onClearQuery}>
-                  <T>
-                    No keybindings match “<Var>{query.trim()}</Var>”.
-                  </T>
-                </SettingsNoMatches>
-              </div>
-            ) : null}
-          </div>
-          <TooltipPopup side="top">{payload}</TooltipPopup>
-        </>
+    <div
+      ref={tableRef}
+      role="table"
+      aria-label={gt("Shortcuts", { $context: "keyboard shortcuts section title" })}
+      className={cn(
+        KEYBINDING_TABLE_GRID,
+        "*:not-first:border-t *:not-first:border-divider dark:*:not-first:border-divider/60",
       )}
-    </Tooltip>
+    >
+      <KeybindingTableHead />
+      {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
+      {rows.map((row, index) => (
+        <KeybindingSettingsRow
+          key={row.id}
+          row={row}
+          activate={index < 16 || activeRows.has(row.id) || anchorIds.get(row.id) === targetId}
+          anchorId={anchorIds.get(row.id)}
+          isSaving={savingCommand === row.command}
+          {...rowActions}
+        />
+      ))}
+      {rows.length === 0 && !isAddingBinding ? (
+        <div className="col-span-full">
+          <SettingsNoMatches onClear={onClearQuery}>
+            <T>
+              No keybindings match “<Var>{query.trim()}</Var>”.
+            </T>
+          </SettingsNoMatches>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1759,6 +1752,9 @@ export function KeybindingsSettingsPanel() {
   const whenVariables = buildWhenVariableOptions();
   const { commandOptions, allRows } = useKeybindingCatalog();
   const rows = filterKeybindingRows(allRows, query, m);
+  // Building every row takes a long frame, so the page opens at once and the list fills in
+  // without blocking input. A search the user types renders the same way.
+  const shownRows = useDeferredValue(rows, null);
 
   const openKeybindingsFile = () => {
     if (
@@ -1952,7 +1948,11 @@ export function KeybindingsSettingsPanel() {
           </p>
         ) : null}
         <div inert={!canWriteSettings} className="@container/keybindings">
-          <KeybindingsList {...listProps} />
+          {shownRows === null ? (
+            <KeybindingsListSkeleton />
+          ) : (
+            <KeybindingsList {...listProps} rows={shownRows} />
+          )}
         </div>
       </SettingsSection>
     </SettingsPageContainer>

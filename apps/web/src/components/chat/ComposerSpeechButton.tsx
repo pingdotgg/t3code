@@ -1,5 +1,6 @@
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { useNavigate } from "@tanstack/react-router";
+import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { msg, useGT, useMessages } from "gt-react";
 import { CircleAlertIcon, MicIcon } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
@@ -16,7 +17,7 @@ import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 type DownloadProgress = { downloaded: number; total: number } | null;
 
@@ -38,7 +39,10 @@ export function resolveSpeechPresentation(
         status: progress
           ? resolve(
               msg("Downloading model {percent}%", {
-                percent: Math.round((progress.downloaded / Math.max(1, progress.total)) * 100),
+                percent: speechModelDownloadPercent(
+                  progress.downloaded,
+                  Math.max(1, progress.total),
+                ),
               }),
             )
           : resolve(msg("Starting…")),
@@ -216,61 +220,61 @@ export function ComposerSpeechButton(props: {
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            inPill ? (
-              <button
-                type="button"
-                {...accessibilityProps}
-                aria-pressed={isActive}
-                data-voice-phase={phase}
-                disabled={disabled}
-                onPointerDown={keepFocus}
-                onClick={onClick}
-                onContextMenu={(event) => void onContextMenu(event)}
-                onKeyDown={onKeyDown}
-                className={
-                  unavailable
-                    ? COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME
-                    : isActive
-                      ? COMPOSER_PILL_SLOT_BUTTON_ACTIVE_CLASS_NAME
-                      : COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME
-                }
-              />
-            ) : (
-              <Button
-                type="button"
-                size={props.size === "compact" ? "icon-xs" : "icon-sm"}
-                variant={isActive ? "secondary" : "ghost"}
-                {...accessibilityProps}
-                aria-pressed={isActive}
-                data-voice-phase={phase}
-                disabled={disabled}
-                onPointerDown={keepFocus}
-                onClick={onClick}
-                onContextMenu={(event) => void onContextMenu(event)}
-                onKeyDown={onKeyDown}
-                className="shrink-0"
-              />
-            )
-          }
-        >
-          {glyph}
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          {isError ? <div>{errorMessage}</div> : null}
-          <div>
-            {unavailable ?? label}
-            {showsShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
-          </div>
-          {phase !== "idle" ? (
+      <SharedTooltipTrigger
+        render={
+          inPill ? (
+            <button
+              type="button"
+              {...accessibilityProps}
+              aria-pressed={isActive}
+              data-voice-phase={phase}
+              disabled={disabled}
+              onPointerDown={keepFocus}
+              onClick={onClick}
+              onContextMenu={(event) => void onContextMenu(event)}
+              onKeyDown={onKeyDown}
+              className={
+                unavailable
+                  ? COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME
+                  : isActive
+                    ? COMPOSER_PILL_SLOT_BUTTON_ACTIVE_CLASS_NAME
+                    : COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME
+              }
+            />
+          ) : (
+            <Button
+              type="button"
+              size={props.size === "compact" ? "icon-xs" : "icon-sm"}
+              variant={isActive ? "secondary" : "ghost"}
+              {...accessibilityProps}
+              aria-pressed={isActive}
+              data-voice-phase={phase}
+              disabled={disabled}
+              onPointerDown={keepFocus}
+              onClick={onClick}
+              onContextMenu={(event) => void onContextMenu(event)}
+              onKeyDown={onKeyDown}
+              className="shrink-0"
+            />
+          )
+        }
+        label={
+          <>
+            {isError ? <div>{errorMessage}</div> : null}
             <div>
-              {isError ? gt("Dismiss ({shortcut})", { shortcut: "Esc" }) : `${cancelLabel} (Esc)`}
+              {unavailable ?? label}
+              {showsShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
             </div>
-          ) : null}
-        </TooltipPopup>
-      </Tooltip>
+            {phase !== "idle" ? (
+              <div>
+                {isError ? gt("Dismiss ({shortcut})", { shortcut: "Esc" }) : `${cancelLabel} (Esc)`}
+              </div>
+            ) : null}
+          </>
+        }
+      >
+        {glyph}
+      </SharedTooltipTrigger>
       {/* The button's name says what a click does; this says what is happening. */}
       <span role="status" className="sr-only">
         {isError

@@ -1,5 +1,5 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
-import { Outlet, createFileRoute, redirect, useMatches, useNavigate } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -17,6 +17,7 @@ import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/settingsScopeAxis";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
+import { useRenderedSettingsPathname } from "../components/settings/useRenderedSettingsPathname";
 import {
   retainSettingsScope,
   validateSettingsRouteSearch,
@@ -33,7 +34,9 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   const { environments } = useEnvironments();
   const gt = useGT();
   const m = useMessages();
-  const { hash } = useLayoutPageLocation();
+  // A pending navigation's hash targets the page still loading, not the one on screen.
+  const location = useLayoutPageLocation();
+  const hash = location.pathname === pathname ? location.hash : "";
   const searchTarget = getSettingsSearchTargetScope(hash);
   const agentFeedbackAvailability = searchTarget?.agentFeedbackOnly
     ? {
@@ -127,7 +130,8 @@ function SettingsContentLayout({ children }: { children: ReactNode }) {
   const gt = useGT();
   const isMobile = useMediaQuery("max-md");
   const contentArea = workspaceAreaProps("settings", 1, gt("Settings content"));
-  const pathname = useMatches({ select: (matches) => matches.at(-1)!.pathname });
+  const navPathname = useLayoutPageLocation().pathname;
+  const pathname = useRenderedSettingsPathname();
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
     pathname === "/settings/diagnostics" || pathname === "/settings/providers"
@@ -137,7 +141,7 @@ function SettingsContentLayout({ children }: { children: ReactNode }) {
   return (
     <AppRouteModal label={gt("Settings")} variant="app-panel">
       <div className="relative flex min-h-0 flex-1">
-        <SettingsSidebarNav pathname={pathname} />
+        <SettingsSidebarNav pathname={navPathname} />
         <div
           {...contentArea}
           data-app-modal-pane=""
@@ -158,7 +162,6 @@ function SettingsContentLayout({ children }: { children: ReactNode }) {
               <AppRouteModalClose />
             </div>
           </header>
-
           <div
             key={`${contentScopeKey}:${restoreSignal}`}
             className="min-h-0 flex flex-1 flex-col max-md:overflow-hidden"
@@ -176,7 +179,8 @@ function SettingsPage({ children }: { children?: ReactNode }) {
   const location = useLayoutPageLocation();
   const rawSearch = validateSettingsRouteSearch(location.search);
   const navigate = useNavigate({ from: "/settings" });
-  const pathname = location.pathname;
+  const router = useRouter();
+  const pathname = useRenderedSettingsPathname();
   const page = (
     <SettingsScopeProvider
       search={rawSearch}
@@ -185,7 +189,9 @@ function SettingsPage({ children }: { children?: ReactNode }) {
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({
-          to: pathname,
+          // Read at call time: subscribing would hand every scope consumer a new context value on
+          // each click. A pending navigation's target wins over the page still on screen.
+          to: router.state.location.pathname,
           search: () => ({
             pane: rawSearch.pane,
             project: next.project,

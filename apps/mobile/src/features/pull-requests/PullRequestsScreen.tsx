@@ -2,8 +2,9 @@ import { pullRequestProjectFilterQueries } from "@t3tools/client-runtime/pull-re
 import { usePaneRole } from "../../components/ui/Pane";
 import { Button } from "../../components/ui/Button";
 import {
-  applyPullRequestDraftFilterChange,
+  applyPullRequestFilterChange,
   parsePullRequestQuery,
+  pullRequestMenuFilters,
 } from "@t3tools/client-runtime/pull-request-query";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
@@ -38,6 +39,7 @@ import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
+  distinctIgnoringCase,
   filterPullRequestList,
   pullRequestListFacets,
   pullRequestListInput,
@@ -126,7 +128,6 @@ export function PullRequestsScreen(
   const debouncedQuery = useDebouncedValue(tab.query.trim(), 180);
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
   const typedQuery = tab.searchMode === "resting" ? "" : tab.query;
-  const typedDraft = parsePullRequestQuery(typedQuery).filters.draft;
   const listControls = usePullRequestListControls();
   const selectedEnvironmentId = listControls.environmentId;
   const environmentId = environments.some((item) => item.environmentId === selectedEnvironmentId)
@@ -222,18 +223,14 @@ export function PullRequestsScreen(
     setKnownFacets((previous) => ({
       source: facets,
       environmentId,
-      authors: [
-        ...new Set([
-          ...(previous.environmentId === environmentId ? previous.authors : []),
-          ...facets.authors,
-        ]),
-      ].sort(),
-      labels: [
-        ...new Set([
-          ...(previous.environmentId === environmentId ? previous.labels : []),
-          ...facets.labels,
-        ]),
-      ].sort(),
+      authors: distinctIgnoringCase([
+        ...(previous.environmentId === environmentId ? previous.authors : []),
+        ...facets.authors,
+      ]).sort(),
+      labels: distinctIgnoringCase([
+        ...(previous.environmentId === environmentId ? previous.labels : []),
+        ...facets.labels,
+      ]).sort(),
       labelColors: {
         ...facets.labelColors,
         ...(previous.environmentId === environmentId ? previous.labelColors : {}),
@@ -249,11 +246,12 @@ export function PullRequestsScreen(
     })),
     environmentId,
     onEnvironmentChange: listControls.setEnvironmentId,
-    value: typedDraft
-      ? { ...controls, filters: { ...controls.filters, draft: typedDraft } }
-      : controls,
+    value: {
+      ...controls,
+      filters: pullRequestMenuFilters(parsePullRequestQuery(typedQuery).filters, controls.filters),
+    },
     onChange: (next) => {
-      const update = applyPullRequestDraftFilterChange(typedQuery, controls.filters, next.filters);
+      const update = applyPullRequestFilterChange(typedQuery, controls.filters, next.filters);
       listControls.setControls(environmentId, { ...next, filters: update.filters });
       if (update.query !== typedQuery)
         workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });

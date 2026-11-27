@@ -227,6 +227,13 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
     props.isLoading &&
     props.triggerKind === "pull-request" &&
     !groups.some((group) => group.key === "pull-requests");
+  const highlightScrollTopRef = useRef<number | null>(null);
+  const [descriptionDismissed, setDescriptionDismissed] = useState(false);
+  const [highlightedItemId, setHighlightedItemId] = useState(props.activeItemId);
+  if (highlightedItemId !== props.activeItemId) {
+    setHighlightedItemId(props.activeItemId);
+    setDescriptionDismissed(false);
+  }
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
   useLayoutEffect(() => {
@@ -235,6 +242,8 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
       `[data-composer-item-id="${CSS.escape(props.activeItemId)}"]`,
     );
     el?.scrollIntoView({ block: "nearest" });
+    highlightScrollTopRef.current =
+      el?.closest('[data-slot="scroll-area-viewport"]')?.scrollTop ?? null;
   }, [props.activeItemId]);
 
   return (
@@ -253,6 +262,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         // Keep focus in the editor so a click anywhere in the menu leaves it open.
         onMouseDown={(event) => {
           event.preventDefault();
+        }}
+        onScrollCapture={(event) => {
+          // Keeping the highlighted row in view must not close the tooltip it just opened.
+          if (
+            event.target instanceof HTMLElement &&
+            event.target.scrollTop === highlightScrollTopRef.current
+          ) {
+            return;
+          }
+          setDescriptionDismissed(true);
         }}
       >
         {props.items.length > 0 ? (
@@ -286,6 +305,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                     triggerKind={props.triggerKind}
                     resolvedTheme={props.resolvedTheme}
                     isActive={props.activeItemId === item.id}
+                    descriptionDismissed={props.activeItemId === item.id && descriptionDismissed}
                     onHighlight={props.onHighlightedItemChange}
                     onSelect={props.onSelect}
                   />
@@ -459,6 +479,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   triggerKind: ComposerTriggerKind | null;
   resolvedTheme: "light" | "dark";
   isActive: boolean;
+  descriptionDismissed: boolean;
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
@@ -515,7 +536,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             props.item.label
           )}
         </span>
-        <Tooltip open={descriptionTruncated}>
+        <Tooltip open={descriptionTruncated && !props.descriptionDismissed}>
           <TooltipTrigger
             tabIndex={-1}
             render={

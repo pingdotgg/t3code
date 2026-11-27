@@ -10,8 +10,8 @@ import {
   ComboboxPopup,
   ComboboxTrigger,
 } from "../ui/combobox";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestPeopleGhost } from "./PullRequestGhosts";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function PullRequestCandidatePicker<T>({
   icon,
@@ -88,12 +88,7 @@ export function PullRequestCandidatePicker<T>({
     );
 
   if (!allowed) {
-    return (
-      <Tooltip>
-        <TooltipTrigger render={trigger(true)} />
-        <TooltipPopup side="bottom">{disabledReason}</TooltipPopup>
-      </Tooltip>
-    );
+    return <SharedTooltipTrigger render={trigger(true)} label={disabledReason} side="bottom" />;
   }
 
   const keys = candidates.map(candidateKey);
@@ -131,7 +126,7 @@ export function PullRequestCandidatePicker<T>({
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
         />
-        <ComboboxList className="max-h-72">
+        <ComboboxList scrollAreaClassName="max-h-72">
           {isPending ? (
             <PullRequestPeopleGhost rows={4} />
           ) : error !== null ? (

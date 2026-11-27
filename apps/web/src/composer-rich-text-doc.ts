@@ -16,7 +16,7 @@ import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
 import { Heading } from "@tiptap/extension-heading";
 import { HorizontalRule } from "@tiptap/extension-horizontal-rule";
-import { Italic, starInputRegex, starPasteRegex } from "@tiptap/extension-italic";
+import { Italic, starInputRegex } from "@tiptap/extension-italic";
 import {
   combineTransactionSteps,
   getChangedRanges,
@@ -24,7 +24,6 @@ import {
   type Editor,
   InputRule,
   markInputRule,
-  markPasteRule,
   mergeAttributes,
 } from "@tiptap/core";
 import { isHistoryTransaction } from "@tiptap/pm/history";
@@ -351,9 +350,6 @@ export function surroundSelectionWithMark(
 export const ComposerItalicExtension = Italic.extend({
   addInputRules() {
     return [markInputRuleOutsideCode(starInputRegex, this.type)];
-  },
-  addPasteRules() {
-    return [markPasteRule({ find: starPasteRegex, type: this.type })];
   },
 });
 
@@ -1489,21 +1485,38 @@ function renumberFollowingItems(
   });
 }
 
+// Only `- [ ]` items become task nodes; `* [ ]`, `+ [ ]` and `1. [ ]` keep the checkbox as text.
+function leadingCheckboxLength(paragraph: ProseMirrorNode): number {
+  const first = paragraph.firstChild;
+  if (!first?.isText) return 0;
+  return /^\[[ xX]\](?:[ \t]+|$)/.exec(first.text ?? "")?.[0].length ?? 0;
+}
+
 /** `prepare` runs first in the same transaction, which the split then reads. */
 export function splitOrLiftListItem(editor: Editor, prepare: Command): boolean {
   const $from = editor.state.selection.$from;
   const itemType = listItemTypeAt($from);
   if (!itemType) return false;
-  const empty = $from.parent.content.size === 0;
+  const emptyItem = $from.parent.content.size === 0;
   const move: Command = ({ commands, tr }) => {
+    const $pos = tr.selection.$from;
+    const checkbox = itemType === "listItem" ? leadingCheckboxLength($pos.parent) : 0;
+    const task = checkbox > 0 && $pos.parentOffset >= checkbox;
+    const emptyTask = task && checkbox === $pos.parent.content.size;
+    const empty = emptyItem || emptyTask;
+    // Lift before clearing the checkbox: liftListItem reads positions through tr.mapping.
     const moved =
-      commands.splitListItem(
-        itemType,
-        itemType === "taskItem" ? { checked: false } : { space: " " },
-      ) ||
+      (!emptyTask &&
+        commands.splitListItem(
+          itemType,
+          itemType === "taskItem" ? { checked: false } : { space: " " },
+        )) ||
       (empty && commands.liftListItem(itemType));
-    if (moved) alignListItemWithSiblings(tr, itemType);
-    return moved;
+    if (!moved) return false;
+    if (emptyTask) tr.delete(tr.selection.$from.start(), tr.selection.$from.end());
+    alignListItemWithSiblings(tr, itemType);
+    if (task && !empty) tr.insertText("[ ] ", tr.selection.from);
+    return true;
   };
   return editor.can().command(move) && editor.chain().command(prepare).command(move).run();
 }

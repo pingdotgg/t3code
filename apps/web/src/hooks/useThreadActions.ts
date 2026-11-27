@@ -64,7 +64,7 @@ import { forgetThreadSettledByUser, markThreadSettledByUser } from "../layout/se
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 import { discardThreadSurfaces } from "../components/ThreadSurfaceTab";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { threadTriagePermitted, useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { closeLayoutThread } from "../layout/layoutActions";
 import { findLayoutChatForThread } from "../layout/layoutModel";
@@ -316,12 +316,16 @@ export function useThreadActions() {
   const deleteThreadMutation = useOrchestrationCommand(threadEnvironment.delete, {
     reportFailure: false,
   });
-  const settleThreadMutation = useOrchestrationCommand(threadEnvironment.settle, {
-    reportFailure: false,
-  });
-  const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
-    reportFailure: false,
-  });
+  const settleThreadMutation = useOrchestrationCommand(
+    threadEnvironment.settle,
+    { reportFailure: false },
+    threadTriagePermitted,
+  );
+  const unsettleThreadMutation = useOrchestrationCommand(
+    threadEnvironment.unsettle,
+    { reportFailure: false },
+    threadTriagePermitted,
+  );
   const pinThreadMutation = useOrchestrationCommand(threadEnvironment.pin, {
     reportFailure: false,
   });
@@ -337,12 +341,16 @@ export function useThreadActions() {
   const reorderActiveThreadMutation = useOrchestrationCommand(threadEnvironment.reorderActive, {
     reportFailure: false,
   });
-  const snoozeThreadMutation = useOrchestrationCommand(threadEnvironment.snooze, {
-    reportFailure: false,
-  });
-  const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
-    reportFailure: false,
-  });
+  const snoozeThreadMutation = useOrchestrationCommand(
+    threadEnvironment.snooze,
+    { reportFailure: false },
+    threadTriagePermitted,
+  );
+  const unsnoozeThreadMutation = useOrchestrationCommand(
+    threadEnvironment.unsnooze,
+    { reportFailure: false },
+    threadTriagePermitted,
+  );
   const markThreadUnread = useMarkThreadUnread();
   const createProjectFromThread = useAtomCommand(projectEnvironment.createFromThread, {
     reportFailure: false,
@@ -870,7 +878,6 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     const nowIso = new Date().toISOString();
     const wokeAt = resolved ? threadWokeAt(resolved.thread, { now: nowIso }) : null;
     const undoPlan = ThreadUndo.planThreadUndo("settle", resolved?.thread);
@@ -985,7 +992,6 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     if (resolved && !canSnooze(resolved.thread, { now: new Date().toISOString() })) {
       return AsyncResult.failure(
         Cause.fail(
@@ -1015,13 +1021,24 @@ export function useThreadActions() {
     return result;
   };
 
-  const runUndoPlan = (target: ScopedThreadRef, plan: ThreadUndo.ThreadUndoPlan) =>
-    ThreadUndo.executeThreadUndo(
+  const runUndoPlan = (target: ScopedThreadRef, plan: ThreadUndo.ThreadUndoPlan) => {
+    let cancelledOnDevice = false;
+    return ThreadUndo.executeThreadUndo(
       plan,
       async (step) => {
+        if (
+          cancelledOnDevice &&
+          !ThreadUndo.restoresAfterDeviceCancel(step, readThreadShell(target))
+        ) {
+          return AsyncResult.success(undefined);
+        }
         switch (step.action) {
-          case "unsettle":
-            return unsettleThread(target, step.restoreUnsettledAt);
+          case "unsettle": {
+            const result = await unsettleThread(target, step.restoreUnsettledAt);
+            cancelledOnDevice =
+              result._tag === "Success" && ThreadUndo.cancelledOnDevice(result.value);
+            return result;
+          }
           case "unsnooze":
             return unsnoozeThread(target);
           case "pin":
@@ -1037,6 +1054,7 @@ export function useThreadActions() {
       },
       (result) => result._tag === "Success",
     );
+  };
 
   const confirmAndDeleteThread = async (target: ScopedThreadRef, knownTitle?: string) => {
     const permissionFailure = threadOperationFailure(target);

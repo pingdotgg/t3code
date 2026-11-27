@@ -1,6 +1,6 @@
 import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import { useMessages } from "gt-react";
+import { T, useMessages, Var } from "gt-react";
 import { parsePullRequestAnchor, pullRequestLinkCommit } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, PullRequestActor, PullRequestRef } from "@t3tools/contracts";
 import {
@@ -128,6 +128,7 @@ export function PullRequestLinkPreview({
     card === null
       ? null
       : resolvePullRequestState({ state: card.state, isDraft: card.isDraft ?? false }, messages);
+  const createdAt = preview === null ? null : <RelativeTime timestamp={preview.createdAt} />;
 
   return (
     <PreviewCard open={open} onOpenChange={setOpen} actionsRef={previewActionsRef}>
@@ -171,9 +172,11 @@ export function PullRequestLinkPreview({
                   <WorkItemPreviewCardAuthor
                     actor={card.author}
                     opened={
-                      preview !== null ? (
+                      createdAt !== null ? (
                         <span className="block">
-                          opened <RelativeTime timestamp={preview.createdAt} />
+                          <T>
+                            opened <Var>{createdAt}</Var>
+                          </T>
                         </span>
                       ) : previewQuery.error === null ? (
                         <SkeletonLine>
@@ -328,17 +331,24 @@ function LinkedComment({
   subject: Extract<ReturnType<typeof pullRequestLinkSubject>, { kind: "comment" }>;
 }) {
   const outcome = pullRequestReviewOutcome(subject.reviewState);
+  const author = (
+    <span className="min-w-0 truncate text-label text-foreground">
+      {actorLabel(subject.author)}
+    </span>
+  );
   return (
     <div className="mt-2 min-w-0">
       <div className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
         <PullRequestActorAvatar actor={subject.author} className="size-4" />
-        <span className="min-w-0 truncate text-label text-foreground">
-          {actorLabel(subject.author)}
-        </span>
         {outcome === null ? (
-          <span className="shrink-0">commented</span>
+          <T>
+            <Var>{author}</Var> <span className="shrink-0">commented</span>
+          </T>
         ) : (
-          <PullRequestReviewOutcomeBadge outcome={outcome} className="shrink-0" />
+          <>
+            {author}
+            <PullRequestReviewOutcomeBadge outcome={outcome} className="shrink-0" />
+          </>
         )}
         <span className="shrink-0">
           <RelativeTime timestamp={subject.createdAt} />

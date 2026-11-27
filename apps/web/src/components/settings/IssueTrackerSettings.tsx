@@ -5,6 +5,7 @@ import {
   issueTrackerBindInput,
   issueTrackerBindingFor,
   issueTrackerBindings,
+  issueTrackerConnectFailure,
   issueTrackerScopeOptions,
   issueTrackerSummary,
 } from "@t3tools/client-runtime/state/issue-trackers";
@@ -17,7 +18,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useState, type ElementType } from "react";
+import { useState, type ElementType, type ReactNode } from "react";
 import type {
   EnvironmentId,
   IssueTrackerConnection,
@@ -30,12 +31,13 @@ import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { LinearIcon } from "../Icons";
+import { JiraIcon, LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
 import { CheckboxMark } from "../ui/checkbox";
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
+import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
@@ -48,6 +50,7 @@ type TrackerIcon = ElementType<{ className?: string }>;
 
 /** Web art per tracker kind; the server supplies everything else about a tracker. */
 const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
+  jira: JiraIcon,
   linear: LinearIcon,
 };
 
@@ -202,18 +205,36 @@ function TrackerRow({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const fields = tracker.credential.fields ?? [];
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
 
   const submit = async (token: string | null) => {
+    const missing = fields.find((field) => !drafts[field.key]?.trim());
+    if (token !== null && missing !== undefined) {
+      setFailure(gt("Enter the {field} first.", { field: missing.label.toLowerCase() }));
+      return false;
+    }
     setBusy(true);
     setFailure(null);
     const result = await connect({
       environmentId,
-      input: { tracker: tracker.tracker, accountId: tracker.accountId, token },
+      input: {
+        tracker: tracker.tracker,
+        accountId: tracker.accountId,
+        token,
+        ...(token === null || fields.length === 0
+          ? {}
+          : {
+              fields: Object.fromEntries(
+                fields.map((field) => [field.key, drafts[field.key]!.trim()]),
+              ),
+            }),
+      },
     });
     setBusy(false);
     if (result._tag === "Success") return true;
     const error = squashAtomCommandFailure(result);
-    setFailure(error instanceof Error ? error.message : gt("The request failed."));
+    setFailure(issueTrackerConnectFailure(error) ?? gt("The request failed."));
     return false;
   };
 
@@ -274,6 +295,13 @@ function TrackerRow({
           {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
           <fieldset disabled={!canEdit || busy} className="contents">
             <div className="mb-3 ms-4 me-3 border-s border-divider ps-3 sm:me-4 sm:ps-4 *:not-first:border-t *:not-first:border-divider">
+              <CredentialFieldRows
+                tracker={tracker}
+                inputId={inputId}
+                values={drafts}
+                onChange={setDrafts}
+                nested
+              />
               <SettingsRow
                 className="rounded-none px-0 py-2.5 sm:px-0"
                 title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
@@ -468,6 +496,45 @@ function ProjectBindings({
   );
 }
 
+/** What a tracker needs beside its secret, such as a Jira site and email. */
+function CredentialFieldRows({
+  tracker,
+  inputId,
+  values,
+  onChange,
+  nested = false,
+  leading,
+}: {
+  readonly tracker: IssueTrackerConnection;
+  readonly inputId: string;
+  readonly values: Readonly<Record<string, string>>;
+  readonly onChange: (values: Readonly<Record<string, string>>) => void;
+  readonly nested?: boolean;
+  readonly leading?: ReactNode;
+}) {
+  return (tracker.credential.fields ?? []).map((field, index) => (
+    <SettingsRow
+      key={field.key}
+      className={nested ? "rounded-none px-0 py-2.5 sm:px-0" : undefined}
+      leading={!nested && index === 0 ? leading : undefined}
+      title={<label htmlFor={`${inputId}-${field.key}`}>{field.label}</label>}
+      control={
+        <div className="w-full min-w-0 @min-[32rem]/settings-row:w-64">
+          <Input
+            id={`${inputId}-${field.key}`}
+            size="sm"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={field.placeholder ?? undefined}
+            value={values[field.key] ?? ""}
+            onChange={(event) => onChange({ ...values, [field.key]: event.target.value })}
+          />
+        </div>
+      }
+    />
+  ));
+}
+
 /** A credential for another account of the tracker, added from the section header. */
 function AddAccountRow({
   environmentId,
@@ -486,14 +553,32 @@ function AddAccountRow({
   });
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const fields = tracker.credential.fields ?? [];
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const inputId = `issue-tracker-${tracker.tracker}-add-account-${environmentId}`;
 
   const submit = async (token: string) => {
+    const missing = fields.find((field) => !values[field.key]?.trim());
+    if (missing !== undefined) {
+      setFailure(gt("Enter the {field} first.", { field: missing.label.toLowerCase() }));
+      return;
+    }
     setBusy(true);
     setFailure(null);
     const result = await connect({
       environmentId,
-      input: { tracker: tracker.tracker, token, addAccount: true },
+      input: {
+        tracker: tracker.tracker,
+        token,
+        addAccount: true,
+        ...(fields.length === 0
+          ? {}
+          : {
+              fields: Object.fromEntries(
+                fields.map((field) => [field.key, values[field.key]!.trim()]),
+              ),
+            }),
+      },
     });
     setBusy(false);
     if (result._tag === "Success") {
@@ -501,69 +586,78 @@ function AddAccountRow({
       return;
     }
     const error = squashAtomCommandFailure(result);
-    setFailure(error instanceof Error ? error.message : gt("The request failed."));
+    setFailure(issueTrackerConnectFailure(error) ?? gt("The request failed."));
   };
 
   return (
     <fieldset disabled={!canEdit || busy} className="contents">
-      <SettingsRow
-        leading={Icon ? <Icon /> : null}
-        title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
-        description={
-          <>
-            {gt("For the new {tracker} account.", { tracker: tracker.displayName })}
-            {tracker.credential.helpUrl ? (
-              <>
-                {" "}
-                <InlineButton
-                  render={
-                    <a
-                      href={tracker.credential.helpUrl}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                    />
-                  }
-                >
-                  <T>Create one</T>
-                  <ExternalLinkIcon aria-hidden className="size-3" />
-                </InlineButton>
-              </>
-            ) : null}
-            {failure ? <span className="block text-destructive">{failure}</span> : null}
-          </>
-        }
-        control={
-          <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-64">
-            <SecretInput
-              id={inputId}
-              size="sm"
-              className="min-w-0 flex-1"
-              value=""
-              onCommit={(next) => {
-                if (next.trim()) void submit(next.trim());
-              }}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    onClick={onClose}
-                    aria-label={gt("Cancel")}
+      <div className="*:not-first:border-t *:not-first:border-divider">
+        <CredentialFieldRows
+          tracker={tracker}
+          inputId={inputId}
+          values={values}
+          onChange={setValues}
+          leading={Icon ? <Icon /> : null}
+        />
+        <SettingsRow
+          leading={fields.length === 0 && Icon ? <Icon /> : null}
+          title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+          description={
+            <>
+              {gt("For the new {tracker} account.", { tracker: tracker.displayName })}
+              {tracker.credential.helpUrl ? (
+                <>
+                  {" "}
+                  <InlineButton
+                    render={
+                      <a
+                        href={tracker.credential.helpUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                      />
+                    }
                   >
-                    <XIcon className="size-3.5" />
-                  </Button>
-                }
+                    <T>Create one</T>
+                    <ExternalLinkIcon aria-hidden className="size-3" />
+                  </InlineButton>
+                </>
+              ) : null}
+              {failure ? <span className="block text-destructive">{failure}</span> : null}
+            </>
+          }
+          control={
+            <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-64">
+              <SecretInput
+                id={inputId}
+                size="sm"
+                className="min-w-0 flex-1"
+                value=""
+                onCommit={(next) => {
+                  if (next.trim()) void submit(next.trim());
+                }}
               />
-              <TooltipPopup side="top">
-                <T>Cancel</T>
-              </TooltipPopup>
-            </Tooltip>
-          </div>
-        }
-      />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={onClose}
+                      aria-label={gt("Cancel")}
+                    >
+                      <XIcon className="size-3.5" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">
+                  <T>Cancel</T>
+                </TooltipPopup>
+              </Tooltip>
+            </div>
+          }
+        />
+      </div>
     </fieldset>
   );
 }

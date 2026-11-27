@@ -21,14 +21,14 @@ import {
 import { Branch, T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "~/localApi";
 import { useRelativeTimeState } from "~/hooks/useRelativeTimeState";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   buildPullRequestRail,
   isPullRequestVerdictStale,
@@ -48,6 +48,11 @@ import {
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { changeRequestTermKind } from "./changeRequestTerm";
+
+type OpenOnHost = (
+  url: string,
+  event: { readonly metaKey: boolean; readonly ctrlKey: boolean; readonly button?: number },
+) => void;
 
 function TimelineRelativeTime({ timestamp }: { timestamp: string }) {
   const relative = useRelativeTimeState(timestamp);
@@ -95,14 +100,12 @@ function RailRow({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
           {children}
         </div>
-        <Tooltip>
-          <TooltipTrigger
-            render={<time dateTime={at} className="shrink-0 text-meta text-muted-foreground" />}
-          >
-            <TimelineRelativeTime timestamp={at} />
-          </TooltipTrigger>
-          <TooltipPopup>{new Date(at).toLocaleString()}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={<time dateTime={at} className="shrink-0 text-meta text-muted-foreground" />}
+          label={new Date(at).toLocaleString()}
+        >
+          <TimelineRelativeTime timestamp={at} />
+        </SharedTooltipTrigger>
       </div>
       {body}
     </li>
@@ -218,6 +221,7 @@ function RailEntry({
   newestCommitAt,
   onOpenCommit,
   onOpenCode,
+  onOpenHost,
   onAddToChat,
   defaultOpen,
   open,
@@ -230,6 +234,7 @@ function RailEntry({
   newestCommitAt: string | null;
   onOpenCommit: (oid: string) => void;
   onOpenCode?: ((path: string) => void) | undefined;
+  onOpenHost: OpenOnHost;
   /** Absent where there is no composer beside the panel to add a remark to. */
   onAddToChat?: ((subject: PullRequestChatSubject) => void) | undefined;
   defaultOpen: boolean;
@@ -386,43 +391,42 @@ function RailEntry({
           <div className="flex min-h-6 min-w-0 items-center gap-2 text-body">
             <h2 className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
               <Actor actor={entry.comment.author} />
-              <Tooltip disabled={!stale}>
-                <TooltipTrigger render={<span className="text-muted-foreground" />}>
-                  {verb}
-                  {stale ? (
-                    <span className="sr-only">{gt(", before the latest commits")}</span>
-                  ) : null}
-                </TooltipTrigger>
-                <TooltipPopup>
-                  {pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)}
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                disabled={!stale}
+                render={<span className="text-muted-foreground" />}
+                label={pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)}
+              >
+                {verb}
+                {stale ? (
+                  <span className="sr-only">{gt(", before the latest commits")}</span>
+                ) : null}
+              </SharedTooltipTrigger>
             </h2>
             {body && onAddToChat ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
-                      aria-label={gt("Add to chat")}
-                      onClick={() => onAddToChat({ kind: "comment", comment: entry.comment })}
-                    />
-                  }
-                >
-                  <MessageSquarePlusIcon className="size-3" />
-                </TooltipTrigger>
-                <TooltipPopup>
-                  <T>Add to chat</T>
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label={gt("Add to chat")}
+                    onClick={() => onAddToChat({ kind: "comment", comment: entry.comment })}
+                  />
+                }
+                label={
+                  <>
+                    <T>Add to chat</T>
+                  </>
+                }
+              >
+                <MessageSquarePlusIcon className="size-3" />
+              </SharedTooltipTrigger>
             ) : null}
             {reviewUrl ? (
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
                 aria-label={gt("Open review on host")}
-                onClick={() => void readLocalApi()?.shell.openExternal(reviewUrl)}
+                onClick={(event) => onOpenHost(reviewUrl, event)}
               >
                 <ExternalLinkIcon className="size-3" />
               </Button>
@@ -588,6 +592,10 @@ export function PullRequestTimelineTab({
       : order === "newest"
         ? ordered.findIndex((entry) => !isNew(entry))
         : ordered.findIndex(isNew);
+  const openLink = useOpenLink(threadRef);
+  const openOnHost: OpenOnHost = (url, event) => {
+    void openLink(url, { event }).catch(console.error);
+  };
 
   return (
     <LegendList<PullRequestRailEntry>
@@ -631,6 +639,7 @@ export function PullRequestTimelineTab({
               newestCommitAt={newestCommitAt}
               onOpenCommit={onOpenCommit}
               onOpenCode={onOpenCode}
+              onOpenHost={openOnHost}
               onAddToChat={onAddToChat}
               defaultOpen={defaultOpen}
               open={rows[`${entry.kind}:${entry.id}`]}

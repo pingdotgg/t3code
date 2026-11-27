@@ -25,7 +25,7 @@ import {
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Separator } from "../ui/separator";
 import { Toggle } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 // The row widths below which the controls fold into the overflow menu.
 const FOLD_CLASSES = {
@@ -95,158 +95,130 @@ export function DiffViewControls({
     <>
       <div className={fold.row}>
         {refresh && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={refresh.refreshing ? gt("Refreshing diff") : gt("Refresh diff")}
-                  onClick={refresh.onRefresh}
-                />
-              }
-            >
-              <RefreshIcon size="sm" refreshing={refresh.refreshing} />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {refresh.refreshing ? gt("Refreshing diff…") : gt("Refresh diff")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label={refresh.refreshing ? gt("Refreshing diff") : gt("Refresh diff")}
+                onClick={refresh.onRefresh}
+              />
+            }
+            label={refresh.refreshing ? gt("Refreshing diff…") : gt("Refresh diff")}
+          >
+            <RefreshIcon size="sm" refreshing={refresh.refreshing} />
+          </SharedTooltipTrigger>
         )}
         {hasFiles && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
-                  onClick={onToggleAllFiles}
-                />
-              }
-            >
-              {allFilesCollapsed ? (
-                <ChevronsUpDownIcon className="size-3.5" />
-              ) : (
-                <ChevronsDownUpIcon className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label={allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
+                onClick={onToggleAllFiles}
+              />
+            }
+            label={allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
+          >
+            {allFilesCollapsed ? (
+              <ChevronsUpDownIcon className="size-3.5" />
+            ) : (
+              <ChevronsDownUpIcon className="size-3.5" />
+            )}
+          </SharedTooltipTrigger>
         )}
       </div>
       <div className="hidden @2xs/diff-toolbar:flex">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={
-                  diffLayout === "split" ? gt("Stacked diff view") : gt("Split diff view")
-                }
-                variant="ghost"
-                size="sm"
-                pressed={diffLayout === "split"}
-                onPressedChange={(pressed) => setDiffLayout(pressed ? "split" : "stacked")}
-              />
-            }
-          >
-            <Columns2Icon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {diffLayout === "split" ? gt("Stacked view") : gt("Split view")}
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <Toggle
+              aria-label={diffLayout === "split" ? gt("Stacked diff view") : gt("Split diff view")}
+              variant="ghost"
+              size="sm"
+              pressed={diffLayout === "split"}
+              onPressedChange={(pressed) => setDiffLayout(pressed ? "split" : "stacked")}
+            />
+          }
+          label={diffLayout === "split" ? gt("Stacked view") : gt("Split view")}
+        >
+          <Columns2Icon className="size-3.5" />
+        </SharedTooltipTrigger>
       </div>
       <div className={fold.row}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={
-                  wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")
-                }
-                variant="ghost"
-                size="sm"
-                pressed={wordWrap}
-                onPressedChange={(pressed) => onWordWrapChange(Boolean(pressed))}
-              />
-            }
-          >
-            <TextWrapIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {wordWrap ? gt("Disable line wrapping") : gt("Enable line wrapping")}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={
-                  ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")
-                }
-                variant="ghost"
-                size="sm"
-                pressed={ignoreWhitespace}
-                onPressedChange={(pressed) => onIgnoreWhitespaceChange(Boolean(pressed))}
-              />
-            }
-          >
-            <PilcrowIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")}
-          </TooltipPopup>
-        </Tooltip>
-        {testFileCount > 0 && onHideTestFilesChange && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  aria-label={gt("Hide test files")}
-                  variant="ghost"
-                  size="sm"
-                  pressed={hideTestFiles}
-                  onPressedChange={(pressed) => onHideTestFilesChange(Boolean(pressed))}
-                />
+        <SharedTooltipTrigger
+          render={
+            <Toggle
+              aria-label={
+                wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")
               }
-            >
-              <FlaskConicalOffIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {hideTestFiles
+              variant="ghost"
+              size="sm"
+              pressed={wordWrap}
+              onPressedChange={(pressed) => onWordWrapChange(Boolean(pressed))}
+            />
+          }
+          label={wordWrap ? gt("Disable line wrapping") : gt("Enable line wrapping")}
+        >
+          <TextWrapIcon className="size-3.5" />
+        </SharedTooltipTrigger>
+        <SharedTooltipTrigger
+          render={
+            <Toggle
+              aria-label={
+                ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")
+              }
+              variant="ghost"
+              size="sm"
+              pressed={ignoreWhitespace}
+              onPressedChange={(pressed) => onIgnoreWhitespaceChange(Boolean(pressed))}
+            />
+          }
+          label={ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")}
+        >
+          <PilcrowIcon className="size-3.5" />
+        </SharedTooltipTrigger>
+        {testFileCount > 0 && onHideTestFilesChange && (
+          <SharedTooltipTrigger
+            render={
+              <Toggle
+                aria-label={gt("Hide test files")}
+                variant="ghost"
+                size="sm"
+                pressed={hideTestFiles}
+                onPressedChange={(pressed) => onHideTestFilesChange(Boolean(pressed))}
+              />
+            }
+            label={
+              hideTestFiles
                 ? gt(
                     "{count, plural, one {Show {count} hidden test file} other {Show {count} hidden test files}}",
                     { count: testFileCount },
                   )
-                : gt("Hide test files")}
-            </TooltipPopup>
-          </Tooltip>
+                : gt("Hide test files")
+            }
+          >
+            <FlaskConicalOffIcon className="size-3.5" />
+          </SharedTooltipTrigger>
         )}
         {hasFiles && <Separator orientation="vertical" className="mx-0.5 h-3.5" />}
         {hasFiles && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  aria-label={fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
-                  variant="ghost"
-                  size="sm"
-                  pressed={fileTreeOpen}
-                  onPressedChange={(pressed) => onFileTreeOpenChange(Boolean(pressed))}
-                />
-              }
-            >
-              <FolderTreeIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Toggle
+                aria-label={fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
+                variant="ghost"
+                size="sm"
+                pressed={fileTreeOpen}
+                onPressedChange={(pressed) => onFileTreeOpenChange(Boolean(pressed))}
+              />
+            }
+            label={fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
+          >
+            <FolderTreeIcon className="size-3.5" />
+          </SharedTooltipTrigger>
         )}
       </div>
       <div className={fold.menu}>

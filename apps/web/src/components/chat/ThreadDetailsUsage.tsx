@@ -44,6 +44,7 @@ import {
   nextPoolReset,
   poolSources,
   resolveThreadDetailsLimits,
+  resolveThreadHttpQuotas,
 } from "./ThreadDetailsUsage.logic";
 
 const PACE_LABEL: Record<LimitPace, string> = {
@@ -73,6 +74,7 @@ export function ThreadDetailsUsage({
   const now = Date.parse(`${nowMinute}:00Z`);
   // The hub a model routes to pools the accounts it spends, when the instance reads none of its own.
   const resolved = resolveThreadDetailsLimits(providerInstanceId, model, providers, sources, now);
+  const quotas = resolveThreadHttpQuotas(providerInstanceId, sources);
   const limits = resolved?.kind === "instance" ? resolved.limits : undefined;
   const ownNotice =
     resolved === null
@@ -88,7 +90,7 @@ export function ThreadDetailsUsage({
     true,
     Schema.Boolean,
   );
-  const rows = pool
+  const baseRows = pool
     ? pool.map((pooled) => {
         const from = poolSources(pooled);
         const window = pooledWindow(pooled, now);
@@ -98,22 +100,40 @@ export function ThreadDetailsUsage({
           (pooled.members.length === 1 || pace === "ahead") &&
           projectRunOut(window, now) !== null;
         return {
+          key: window.id,
           driver: pooled.members[0]?.account.driver ?? driver,
           window,
           pace,
+          paceTimeLeft: pooled.paceRemainingPercent ?? paceRemainingPercent(window, now),
           runsOutBeforeReset,
           accounts: pooled.members.length,
           sources: [...from.hubs, ...(from.signedIn ? [gt("Signed-in accounts")] : [])],
+          accountLabel: undefined as string | undefined,
         };
       })
     : (limits?.windows ?? []).map((window) => ({
+        key: window.id,
         driver,
         window,
         pace: paceOf(window, now),
+        paceTimeLeft: paceRemainingPercent(window, now),
         runsOutBeforeReset: remainingPercent(window) > 0 && projectRunOut(window, now) !== null,
         accounts: 1,
-        sources: [],
+        sources: [] as ReadonlyArray<string>,
+        accountLabel: undefined as string | undefined,
       }));
+  const quotaRows = quotas.map(({ key, accountLabel, window }) => ({
+    key,
+    driver,
+    window,
+    pace: paceOf(window, now),
+    paceTimeLeft: paceRemainingPercent(window, now),
+    runsOutBeforeReset: remainingPercent(window) > 0 && projectRunOut(window, now) !== null,
+    accounts: 1,
+    sources: [] as ReadonlyArray<string>,
+    accountLabel,
+  }));
+  const rows = [...baseRows, ...quotaRows];
   const fold = foldLimitRows(rows, model);
   const shown = folded ? fold.shown : rows;
   const groups = groupLimitRows(shown);
@@ -121,7 +141,7 @@ export function ThreadDetailsUsage({
     providerInstanceId !== null && ownNotice !== null && !pool
       ? limitPoolNotice(providerInstanceId, providers, sources)
       : null;
-  const notice = pool ? null : (poolNotice ?? ownNotice);
+  const notice = pool || quotaRows.length > 0 ? null : (poolNotice ?? ownNotice);
   return (
     <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
       {notice || !rows.length ? (
@@ -177,18 +197,31 @@ export function ThreadDetailsUsage({
                   ) : null}
                 </div>
                 <div className="grid grid-cols-2 gap-x-3.5 gap-y-0.5 ps-1 -me-0.5">
-                  {group.rows.map(({ window, pace, runsOutBeforeReset, accounts, sources }) => (
-                    <LimitTile
-                      key={window.id}
-                      window={window}
-                      pace={pace}
-                      runsOutBeforeReset={runsOutBeforeReset}
-                      now={now}
-                      pooledAccounts={accounts}
-                      sources={sources}
-                      fullWidth={group.rows.length === 1}
-                    />
-                  ))}
+                  {group.rows.map(
+                    ({
+                      key,
+                      window,
+                      pace,
+                      paceTimeLeft,
+                      runsOutBeforeReset,
+                      accounts,
+                      sources,
+                      accountLabel,
+                    }) => (
+                      <LimitTile
+                        key={key}
+                        window={window}
+                        pace={pace}
+                        paceTimeLeft={paceTimeLeft}
+                        runsOutBeforeReset={runsOutBeforeReset}
+                        now={now}
+                        pooledAccounts={accounts}
+                        sources={sources}
+                        accountLabel={accountLabel}
+                        fullWidth={group.rows.length === 1}
+                      />
+                    ),
+                  )}
                 </div>
               </div>
             );
@@ -374,25 +407,29 @@ function isWeeklyWindow(window: ServerProviderUsageWindow): boolean {
 function LimitTile({
   window,
   pace,
+  paceTimeLeft,
   runsOutBeforeReset,
   now,
   pooledAccounts,
   sources,
+  accountLabel,
   fullWidth,
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly pace: LimitPace | null;
+  readonly paceTimeLeft?: number | null | undefined;
   readonly runsOutBeforeReset: boolean;
   readonly now: number;
   readonly pooledAccounts: number;
   readonly sources: ReadonlyArray<string>;
+  readonly accountLabel?: string | undefined;
   readonly fullWidth: boolean;
 }) {
   const gt = useGT();
   const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
-  const timeLeft = paceRemainingPercent(window, now);
+  const timeLeft = paceTimeLeft !== undefined ? paceTimeLeft : paceRemainingPercent(window, now);
   const runsOutText = runsOutBeforeReset ? formatRunsOutIn(window, now, m) : null;
   const tone = limitTone(left, runsOutBeforeReset);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
@@ -412,6 +449,7 @@ function LimitTile({
   const wide = fullWidth || isWideLimitLabel(displayLabel);
   const ariaLabel = [
     gt("{label}: {left}% left", { label: window.label, left }),
+    accountLabel,
     runsOutText,
     !runsOutText && pace ? m(PACE_LABEL[pace]) : null,
     resetText,
@@ -461,6 +499,7 @@ function LimitTile({
             <span className="text-foreground">
               {gt("{label}: {left}% left", { label: window.label, left })}
             </span>
+            {accountLabel ? <span>{accountLabel}</span> : null}
             {runsOutText ? (
               <span
                 className={cn(

@@ -24,6 +24,7 @@ import {
 import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
+  samePullRequestReadExceptStamps,
 } from "./pullRequestDetail.logic";
 
 // Query atoms key on JSON order, so the panel and the row prefetch must build the ref here.
@@ -39,6 +40,29 @@ export function pullRequestPanelReference(target: {
     number: target.number,
     ...(target.host ? { host: target.host } : {}),
   };
+}
+
+const internedReferences = new Map<string, PullRequestRef>();
+
+/**
+ * One object per pull request reference. Parents rebuild the reference on unrelated updates, and
+ * every comment's reaction bar, form and resolve button closes over it.
+ */
+export function internPullRequestReference(reference: PullRequestRef): PullRequestRef {
+  const key = JSON.stringify([
+    reference.projectId,
+    reference.host ?? null,
+    reference.repository,
+    reference.number,
+    reference.expectedAccountId ?? null,
+    reference.allowStale ?? null,
+  ]);
+  const interned = internedReferences.get(key);
+  if (interned !== undefined) return interned;
+  // Losing old entries only costs those pull requests one extra render.
+  if (internedReferences.size >= 500) internedReferences.clear();
+  internedReferences.set(key, reference);
+  return reference;
 }
 
 export function pullRequestRefKey(reference: PullRequestRef) {
@@ -201,6 +225,14 @@ export function usePullRequestDetail(
             ? {}
             : { reviewRequests: activity.reviewRequests }),
         };
+  // Keep the shown detail through refreshes that only restamp it, so the panel's tree can skip
+  // re-rendering. Code that orders local edits against observations reads `observedAt` instead.
+  const [shownDetail, setShownDetail] = useState(detail);
+  const stableDetail =
+    detail !== shownDetail && samePullRequestReadExceptStamps(shownDetail, detail)
+      ? shownDetail
+      : detail;
+  if (stableDetail !== shownDetail) setShownDetail(stableDetail);
   return {
     canWriteSourceControl,
     detailQuery,
@@ -208,6 +240,7 @@ export function usePullRequestDetail(
     activity,
     sharedSummary,
     coreDetail,
-    detail,
+    detail: stableDetail,
+    observedAt: detail?.observedAt,
   };
 }

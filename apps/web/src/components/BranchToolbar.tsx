@@ -100,6 +100,7 @@ import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 
 import { observeResize } from "~/lib/observeResize";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 const isClipboardApiUnavailableError = Schema.is(ClipboardApiUnavailableError);
 const isClipboardWriteError = Schema.is(ClipboardWriteError);
@@ -251,22 +252,20 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
 
   if (envModeLocked && !branch) {
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              // The chips' 12px medium label at every size: caption on phones, meta above.
-              className="inline-flex h-7 min-w-0 shrink-0 items-center gap-1.25 border border-transparent px-2 text-caption text-muted-foreground sm:h-5.5 sm:text-meta"
-              data-composer-context-control
-              aria-label={workspaceLabel}
-            />
-          }
-        >
-          {icon}
-          <ComposerContextLabel>{workspaceLabel}</ComposerContextLabel>
-        </TooltipTrigger>
-        <TooltipPopup>{workspaceLabel}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <span
+            // The chips' 12px medium label at every size: caption on phones, meta above.
+            className="inline-flex h-7 min-w-0 shrink-0 items-center gap-1.25 border border-transparent px-2 text-caption text-muted-foreground sm:h-5.5 sm:text-meta"
+            data-composer-context-control
+            aria-label={workspaceLabel}
+          />
+        }
+        label={workspaceLabel}
+      >
+        {icon}
+        <ComposerContextLabel>{workspaceLabel}</ComposerContextLabel>
+      </SharedTooltipTrigger>
     );
   }
 
@@ -287,49 +286,47 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
       }}
       modal={false}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={<ComposerControl size="xs" />}
-              data-pressed={open ? "" : undefined}
-              className={branch ? "min-w-0 max-w-full" : envModeLocked ? "ps-2 pe-0.5" : "ps-2"}
-              aria-label={
-                branch
-                  ? gt("Branch and workspace: {branch}", { branch: branch.label })
-                  : gt("Workspace: {workspace}", { workspace: workspaceLabel })
-              }
-              onContextMenu={branch?.onContextMenu}
-              data-composer-context-control
-              data-composer-shortcut={envModeLocked ? undefined : "composer.workspace"}
-            />
-          }
-        >
-          {icon}
-          {envModeLocked && !branch ? null : (
-            <>
-              <ComposerContextLabel compact={branch ? "truncate" : "hide"}>
-                {branch ? (
-                  <MiddleTruncate value={branch.label} variant="cap-aligned" className="w-full" />
-                ) : (
-                  workspaceLabel
-                )}
-              </ComposerContextLabel>
-              <ChevronDownIcon
-                aria-hidden
-                data-composer-chevron
-                className="size-2.5 shrink-0 text-muted-foreground"
-              />
-            </>
-          )}
-        </TooltipTrigger>
-        <TooltipPopup>
+      <SharedTooltipTrigger
+        render={
+          <MenuTrigger
+            render={<ComposerControl size="xs" />}
+            data-pressed={open ? "" : undefined}
+            className={branch ? "min-w-0 max-w-full" : envModeLocked ? "ps-2 pe-0.5" : "ps-2"}
+            aria-label={
+              branch
+                ? gt("Branch and workspace: {branch}", { branch: branch.label })
+                : gt("Workspace: {workspace}", { workspace: workspaceLabel })
+            }
+            onContextMenu={branch?.onContextMenu}
+            data-composer-context-control
+            data-composer-shortcut={envModeLocked ? undefined : "composer.workspace"}
+          />
+        }
+        label={
           <span className="flex flex-col gap-0.5">
             {branch ? <span>{branch.label}</span> : null}
             <span>{workspaceLabel}</span>
           </span>
-        </TooltipPopup>
-      </Tooltip>
+        }
+      >
+        {icon}
+        {envModeLocked && !branch ? null : (
+          <>
+            <ComposerContextLabel compact={branch ? "truncate" : "hide"}>
+              {branch ? (
+                <MiddleTruncate value={branch.label} variant="cap-aligned" className="w-full" />
+              ) : (
+                workspaceLabel
+              )}
+            </ComposerContextLabel>
+            <ChevronDownIcon
+              aria-hidden
+              data-composer-chevron
+              className="size-2.5 shrink-0 text-muted-foreground"
+            />
+          </>
+        )}
+      </SharedTooltipTrigger>
       <MenuPopup
         ref={popupRef}
         spacing="relaxed"
@@ -452,34 +449,28 @@ const MachineMenu = memo(function MachineMenu({
       className="size-3 shrink-0"
     />
   );
-  const tooltip = (
-    <TooltipPopup>
-      {environmentUnavailable
-        ? gt("{environment} (offline)", { environment: environmentLabel })
-        : environmentLabel}
-    </TooltipPopup>
-  );
+  const tooltipLabel = environmentUnavailable
+    ? gt("{environment} (offline)", { environment: environmentLabel })
+    : environmentLabel;
 
   if (!canPickEnvironment) {
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              className={cn(
-                "inline-flex h-7 max-w-[48%] shrink-0 items-center justify-start gap-1.5 rounded-md border border-transparent ps-2 pe-1.75 text-meta text-dim-foreground sm:h-6",
-                environmentUnavailable && "text-warning-foreground",
-              )}
-              aria-label={gt("Run on: {environment}", { environment: environmentLabel })}
-              data-composer-context-control
-            />
-          }
-        >
-          {icon}
-          <ComposerContextLabel>{environmentLabel}</ComposerContextLabel>
-        </TooltipTrigger>
-        {tooltip}
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <span
+            className={cn(
+              "inline-flex h-7 max-w-[48%] shrink-0 items-center justify-start gap-1.5 rounded-md border border-transparent ps-2 pe-1.75 text-meta text-dim-foreground sm:h-6",
+              environmentUnavailable && "text-warning-foreground",
+            )}
+            aria-label={gt("Run on: {environment}", { environment: environmentLabel })}
+            data-composer-context-control
+          />
+        }
+        label={tooltipLabel}
+      >
+        {icon}
+        <ComposerContextLabel>{environmentLabel}</ComposerContextLabel>
+      </SharedTooltipTrigger>
     );
   }
 
@@ -492,31 +483,29 @@ const MachineMenu = memo(function MachineMenu({
       }}
       modal={false}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={<ComposerControl size="xs" />}
-              className={cn(
-                "max-w-full shrink-0",
-                environmentUnavailable && "text-warning-foreground",
-              )}
-              aria-label={gt("Run on: {environment}", { environment: environmentLabel })}
-              data-composer-context-control
-              data-composer-shortcut="composer.host"
-            />
-          }
-        >
-          {icon}
-          <ComposerContextLabel>{environmentLabel}</ComposerContextLabel>
-          <ChevronDownIcon
-            aria-hidden
-            data-composer-chevron
-            className="size-2.5 shrink-0 text-muted-foreground"
+      <SharedTooltipTrigger
+        render={
+          <MenuTrigger
+            render={<ComposerControl size="xs" />}
+            className={cn(
+              "max-w-full shrink-0",
+              environmentUnavailable && "text-warning-foreground",
+            )}
+            aria-label={gt("Run on: {environment}", { environment: environmentLabel })}
+            data-composer-context-control
+            data-composer-shortcut="composer.host"
           />
-        </TooltipTrigger>
-        {tooltip}
-      </Tooltip>
+        }
+        label={tooltipLabel}
+      >
+        {icon}
+        <ComposerContextLabel>{environmentLabel}</ComposerContextLabel>
+        <ChevronDownIcon
+          aria-hidden
+          data-composer-chevron
+          className="size-2.5 shrink-0 text-muted-foreground"
+        />
+      </SharedTooltipTrigger>
       <MenuPopup
         ref={popupRef}
         spacing="relaxed"
@@ -766,41 +755,39 @@ const RunContextSelector = memo(function RunContextSelector({
     }
   };
   const workspaceIcon = (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <WorkspaceIcon className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"} />
-      </TooltipTrigger>
-      <TooltipPopup>
-        {isPanel
+    <SharedTooltipTrigger
+      render={<span className="inline-flex shrink-0" />}
+      label={
+        isPanel
           ? forceNewWorktree && !noProject
             ? gt("Each model starts in its own worktree.")
             : (workspacePath ?? workspaceLabel)
-          : workspaceLabel}
-      </TooltipPopup>
-    </Tooltip>
+          : workspaceLabel
+      }
+    >
+      <WorkspaceIcon className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"} />
+    </SharedTooltipTrigger>
   );
   const environmentIcon = (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        {autoEnvironmentLabel ? (
-          <ScaleIcon
-            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
-            aria-hidden="true"
-          />
-        ) : (
-          <EnvironmentMachineIcon
-            kind={activeEnvironment?.machine ?? "server"}
-            // Wide machine glyphs need a little more box to match the square row icons.
-            className={
-              isPanel ? cn(THREAD_DETAILS_PANEL_ICON_CLASS, "-mx-px size-4.5") : "size-3 shrink-0"
-            }
-          />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup>
-        {autoEnvironmentLabel ?? activeEnvironment?.label ?? gt("Run on")}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<span className="inline-flex shrink-0" />}
+      label={autoEnvironmentLabel ?? activeEnvironment?.label ?? gt("Run on")}
+    >
+      {autoEnvironmentLabel ? (
+        <ScaleIcon
+          className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
+          aria-hidden="true"
+        />
+      ) : (
+        <EnvironmentMachineIcon
+          kind={activeEnvironment?.machine ?? "server"}
+          // Wide machine glyphs need a little more box to match the square row icons.
+          className={
+            isPanel ? cn(THREAD_DETAILS_PANEL_ICON_CLASS, "-mx-px size-4.5") : "size-3 shrink-0"
+          }
+        />
+      )}
+    </SharedTooltipTrigger>
   );
   const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
   const triggerContent = (

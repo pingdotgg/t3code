@@ -2,7 +2,7 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 import { FileDiffIcon, GitBranchIcon, GitBranchPlusIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { type SetStateAction, useId, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { DialogSubmitKbd, isDialogSubmitShortcut } from "./DialogSubmitShortcut";
@@ -122,6 +122,8 @@ export function GitCommitDialog({
   onSubmit,
   onOpenFile,
   retainedMessage = "",
+  excludedFiles: controlledExcludedFiles,
+  onExcludedFilesChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -137,21 +139,28 @@ export function GitCommitDialog({
   onOpenFile: (path: string) => void;
   /** A message a failed commit left behind, offered again when the dialog reopens. */
   retainedMessage?: string;
+  /** Controlled exclusion set when the caller retains it across failed commits. */
+  excludedFiles?: ReadonlySet<string>;
+  onExcludedFilesChange?: (next: SetStateAction<ReadonlySet<string>>) => void;
 }) {
   const gt = useGT();
   const branchFieldId = useId();
   const messageFieldId = useId();
   const [commitMessage, setCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const [uncontrolledExcludedFiles, setUncontrolledExcludedFiles] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const excludedFiles = controlledExcludedFiles ?? uncontrolledExcludedFiles;
+  const setExcludedFiles = onExcludedFilesChange ?? setUncontrolledExcludedFiles;
   const [branchTarget, setBranchTarget] = useState<CommitBranchTarget>("current");
 
-  // Every opening starts from the whole working tree on the current branch.
+  // Every opening starts from the current branch and any retained failed message.
   const [openSeen, setOpenSeen] = useState(open);
   if (openSeen !== open) {
     setOpenSeen(open);
     if (open) {
       setCommitMessage(retainedMessage);
-      setExcludedFiles(new Set());
+      if (controlledExcludedFiles === undefined) setUncontrolledExcludedFiles(new Set());
       setBranchTarget("current");
     }
   }

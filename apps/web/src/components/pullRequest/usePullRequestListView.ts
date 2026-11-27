@@ -1,6 +1,7 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import {
   type EnvironmentId,
   type ProjectId,
@@ -359,6 +360,10 @@ export function usePullRequestDisplayGroups({
 
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
 
+function sliceSearchText(value: string) {
+  return value.slice(0, splitsSurrogatePair(value, 200) ? 199 : 200);
+}
+
 function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
   const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
     0,
@@ -368,7 +373,7 @@ function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
   const seen = new Set<string>();
   for (const rawValue of values) {
     if (typeof rawValue !== "string") continue;
-    const value = rawValue.trim().slice(0, 200);
+    const value = sliceSearchText(rawValue.trim());
     const key = value.toLowerCase();
     if (value.length === 0 || seen.has(key)) continue;
     labels.push(value);
@@ -416,7 +421,7 @@ export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRe
     // Keep every query as text and always own the free-text keys so an unvalidated parent value cannot leak.
     q:
       raw.q !== undefined && raw.q !== null && raw.q !== ""
-        ? (typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q)).slice(0, 200)
+        ? sliceSearchText(typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q))
         : undefined,
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
     ...(raw.review === "approved" ||
@@ -427,9 +432,7 @@ export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRe
       : {}),
     ...(raw.checks === "passing" || raw.checks === "failing" ? { checks: raw.checks } : {}),
     author:
-      typeof raw.author === "string" && raw.author.trim()
-        ? raw.author.trim().slice(0, 200)
-        : undefined,
+      typeof raw.author === "string" ? sliceSearchText(raw.author.trim()) || undefined : undefined,
     labels: pullRequestSearchLabels(raw.labels),
   };
 }

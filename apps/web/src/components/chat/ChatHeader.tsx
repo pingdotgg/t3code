@@ -68,6 +68,7 @@ import {
 } from "../../layout/PaneTabs";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { useLayoutStore } from "../../layout/layoutStore";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -382,46 +383,44 @@ export const ChatHeader = memo(function ChatHeader({
             </div>
           ) : (
             <span className={LAYOUT_TAB_SLOT_CLASS}>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    isServerThread ? (
-                      <PaneTabButton
-                        data-layout-pane-tab={layoutTabId ?? undefined}
-                        type="button"
-                        aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
-                        aria-haspopup="menu"
-                        onClick={openMenuFromTitle}
-                        onAuxClick={handleTabAuxClick}
-                        onPointerDown={handleTabPointerDown}
-                        onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
-                      />
-                    ) : (
-                      <div
-                        className={PANE_TAB_CLASS}
-                        data-layout-pane-tab={layoutTabId ?? undefined}
-                        onAuxClick={handleTabAuxClick}
-                        onPointerDown={handleTabPointerDown}
-                      />
-                    )
-                  }
+              <SharedTooltipTrigger
+                render={
+                  isServerThread ? (
+                    <PaneTabButton
+                      data-layout-pane-tab={layoutTabId ?? undefined}
+                      type="button"
+                      aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
+                      aria-haspopup="menu"
+                      onClick={openMenuFromTitle}
+                      onAuxClick={handleTabAuxClick}
+                      onPointerDown={handleTabPointerDown}
+                      onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
+                    />
+                  ) : (
+                    <div
+                      className={PANE_TAB_CLASS}
+                      data-layout-pane-tab={layoutTabId ?? undefined}
+                      onAuxClick={handleTabAuxClick}
+                      onPointerDown={handleTabPointerDown}
+                    />
+                  )
+                }
+                label={tabTooltip}
+                side="bottom"
+                className="whitespace-pre-line"
+              >
+                <span className={LAYOUT_TAB_ICON_CLASS}>{tabIcon}</span>
+                <h2
+                  className={cn(
+                    "min-w-0",
+                    PANE_TAB_TITLE_CLASS,
+                    ghostShown && PANE_GHOST_TAB_TITLE_CLASS,
+                  )}
+                  dir={textDirection(activeThreadTitle)}
                 >
-                  <span className={LAYOUT_TAB_ICON_CLASS}>{tabIcon}</span>
-                  <h2
-                    className={cn(
-                      "min-w-0",
-                      PANE_TAB_TITLE_CLASS,
-                      ghostShown && PANE_GHOST_TAB_TITLE_CLASS,
-                    )}
-                    dir={textDirection(activeThreadTitle)}
-                  >
-                    {activeThreadTitle}
-                  </h2>
-                </TooltipTrigger>
-                <TooltipPopup side="bottom" className="whitespace-pre-line">
-                  {tabTooltip}
-                </TooltipPopup>
-              </Tooltip>
+                  {activeThreadTitle}
+                </h2>
+              </SharedTooltipTrigger>
               {layoutTabId !== null ? (
                 <LayoutTabCloseButton tabId={layoutTabId} title={activeThreadTitle} />
               ) : null}
@@ -433,68 +432,71 @@ export const ChatHeader = memo(function ChatHeader({
           {hiddenTerminal ? (
             // The hidden terminal keeps a tab like any other pane tab.
             <span className={LAYOUT_TAB_SLOT_CLASS}>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      data-hidden-terminal-chip=""
-                      className={cn(
-                        PANE_TAB_CLASS,
-                        "cursor-pointer text-left text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
-                      )}
-                      onClick={hiddenTerminal.onShow}
-                      onPointerDown={(event) =>
-                        beginLayoutContentDrag(event, {
-                          kind: "surface",
-                          threadRef: scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
-                          surface: { id: THREAD_TERMINAL_SURFACE_ID, kind: "thread-terminal" },
-                        })
-                      }
-                    />
-                  }
-                >
-                  <SquareTerminal
-                    aria-hidden
+              <SharedTooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    data-hidden-terminal-chip=""
                     className={cn(
-                      "size-3.5 shrink-0",
-                      hiddenTerminal.running && "text-success-foreground",
+                      PANE_TAB_CLASS,
+                      "cursor-pointer text-left text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
                     )}
-                  />
-                  <span className="min-w-0 truncate">
-                    <T>Terminal</T>
-                  </span>
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">
-                  {hiddenTerminal.shortcutLabel
-                    ? gt("Show the terminal ({shortcut})", {
-                        shortcut: hiddenTerminal.shortcutLabel,
+                    onClick={hiddenTerminal.onShow}
+                    onPointerDown={(event) =>
+                      beginLayoutContentDrag(event, {
+                        kind: "surface",
+                        threadRef: scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
+                        surface: { id: THREAD_TERMINAL_SURFACE_ID, kind: "thread-terminal" },
                       })
-                    : gt("Show the terminal")}
-                  <br />
-                  {activeThreadTitle}
-                  <br />
-                  {hiddenTerminal.running ? gt("Process running") : gt("Idle")}
-                </TooltipPopup>
-              </Tooltip>
+                    }
+                  />
+                }
+                label={
+                  <>
+                    {hiddenTerminal.shortcutLabel
+                      ? gt("Show the terminal ({shortcut})", {
+                          shortcut: hiddenTerminal.shortcutLabel,
+                        })
+                      : gt("Show the terminal")}
+                    <br />
+                    {activeThreadTitle}
+                    <br />
+                    {hiddenTerminal.running ? gt("Process running") : gt("Idle")}
+                  </>
+                }
+                side="bottom"
+              >
+                <SquareTerminal
+                  aria-hidden
+                  className={cn(
+                    "size-3.5 shrink-0",
+                    hiddenTerminal.running && "text-success-foreground",
+                  )}
+                />
+                <span className="min-w-0 truncate">
+                  <T>Terminal</T>
+                </span>
+              </SharedTooltipTrigger>
             </span>
           ) : null}
         </LayoutPaneTabStrip>
         {layoutTabId !== null ? <LayoutNewTabButton tabId={layoutTabId} /> : null}
         {renamingTitle === null && activeThreadLinkOrigin ? (
-          <Tooltip>
-            <TooltipTrigger render={<Badge variant="info" size="sm" />}>
-              <T>
-                From <Var>{activeThreadLinkOrigin}</Var>
-              </T>
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              <T>
-                Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
-                environment.
-              </T>
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={<Badge variant="info" size="sm" />}
+            label={
+              <>
+                <T>
+                  Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
+                  environment.
+                </T>
+              </>
+            }
+          >
+            <T>
+              From <Var>{activeThreadLinkOrigin}</Var>
+            </T>
+          </SharedTooltipTrigger>
         ) : null}
       </PaneNotch>
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}

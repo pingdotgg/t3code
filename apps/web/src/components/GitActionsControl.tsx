@@ -101,6 +101,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import {
   useGitStackedAction,
@@ -332,17 +333,12 @@ function GitActionProgressButtonContent({
       role="status"
     >
       <Spinner aria-hidden="true" className="row-start-1 -mx-0.5 shrink-0" />
-      <p
-        className={cn(
-          "row-start-1 min-w-0 self-baseline truncate text-left",
-          THREAD_DETAILS_PANEL_LABEL_CLASS,
-        )}
-      >
+      <p className={cn("row-start-1 min-w-0 truncate text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
         {progress.status}
       </p>
       <GitActionElapsedTime
         startedAtMs={progress.startedAtMs}
-        className="col-start-3 row-start-1 self-baseline text-caption tabular-nums text-dim-foreground"
+        className="col-start-3 row-start-1 text-caption tabular-nums text-dim-foreground"
       />
       <div
         className={cn(
@@ -351,18 +347,14 @@ function GitActionProgressButtonContent({
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <p className="truncate pt-0.5 text-left text-caption text-muted-foreground" />
-              }
-            >
-              {progress.output}
-            </TooltipTrigger>
-            <TooltipPopup side="bottom" className="max-w-96 break-words">
-              {progress.output}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={<p className="truncate pt-0.5 text-left text-caption text-muted-foreground" />}
+            label={progress.output}
+            side="bottom"
+            className="max-w-96 break-words"
+          >
+            {progress.output}
+          </SharedTooltipTrigger>
         </div>
       </div>
     </div>
@@ -389,18 +381,14 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <p className="truncate pt-0.5 text-left text-caption text-muted-foreground" />
-              }
-            >
-              {success.description}
-            </TooltipTrigger>
-            <TooltipPopup side="bottom" className="max-w-96 break-words">
-              {success.description}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={<p className="truncate pt-0.5 text-left text-caption text-muted-foreground" />}
+            label={success.description}
+            side="bottom"
+            className="max-w-96 break-words"
+          >
+            {success.description}
+          </SharedTooltipTrigger>
         </div>
       </div>
     </div>
@@ -468,6 +456,10 @@ function CheckoutGitActionsControl({
   const canCreateFeatureBranch = canWriteSourceControl && (branchFollower?.canFollow() ?? true);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [failedCommitMessage, setFailedCommitMessage] = useState("");
+  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const [featureCommitSelection, setFeatureCommitSelection] = useState<{
+    readonly createdBranch: string | null;
+  } | null>(null);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
@@ -550,6 +542,19 @@ function CheckoutGitActionsControl({
       : gt("vs {ref}", { ref: resolvedChangesTotals.baseRef })
     : null;
 
+  const [selectionBranch, setSelectionBranch] = useState(gitStatusForActions?.refName ?? null);
+  // Status can announce the checkout before the commit action reports its outcome.
+  if (
+    gitStatusForActions &&
+    selectionBranch !== gitStatusForActions.refName &&
+    featureCommitSelection?.createdBranch !== null
+  ) {
+    setSelectionBranch(gitStatusForActions.refName);
+    setFeatureCommitSelection(null);
+    if (featureCommitSelection?.createdBranch !== gitStatusForActions.refName) {
+      setExcludedFiles(new Set());
+    }
+  }
   // Changed-file paths resolve against the worktree root from this status snapshot.
   const workingTreeRoot = gitStatusForActions?.workingTree.rootPath ?? null;
   const initAction = useVcsInitAction(sourceControlScope);
@@ -678,6 +683,10 @@ function CheckoutGitActionsControl({
 
     const scopedToastData = threadToastData ? { ...threadToastData } : undefined;
     const actionId = randomUUID();
+    const submittedSelection =
+      action === "commit" && featureBranch && filePaths ? { createdBranch: null } : null;
+    let createdBranch: string | undefined;
+    if (submittedSelection) setFeatureCommitSelection(submittedSelection);
 
     const result = await runImmediateGitAction.run({
       actionId,
@@ -687,7 +696,20 @@ function CheckoutGitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       ...(owner?.threadId ? { threadId: owner.threadId } : {}),
       ...(owner?.projectId ? { projectId: owner.projectId } : {}),
+      onProgress: (event) => {
+        if (event.kind === "action_failed") createdBranch = event.createdBranch;
+      },
     });
+
+    if (submittedSelection) {
+      setFeatureCommitSelection((current) =>
+        current === submittedSelection
+          ? createdBranch === undefined
+            ? null
+            : { createdBranch }
+          : current,
+      );
+    }
 
     if (result._tag === "Failure") {
       if (isAtomCommandInterrupted(result)) {
@@ -711,6 +733,9 @@ function CheckoutGitActionsControl({
     }
 
     const actionResult = result.value;
+    if (actionResult.commit.status === "created") {
+      setExcludedFiles((current) => (current === excludedFiles ? new Set() : current));
+    }
     const branchUpdate = resolveThreadBranchUpdate(actionResult);
     if (branchUpdate) branchFollower?.follow(branchUpdate.branch);
     if (isPanel && !fromShortcut) {
@@ -935,7 +960,6 @@ function CheckoutGitActionsControl({
       setFailedCommitMessage((current) => current || commitMessage);
     });
   };
-
   const openChangedFileInEditor = (filePath: string) => {
     if (workingTreeRoot === null) {
       toastManager.add({
@@ -1412,14 +1436,13 @@ function CheckoutGitActionsControl({
                   <T>Changes</T>
                 </span>
                 {changesBaseLabel ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="min-w-0 truncate text-muted-foreground" />}
-                    >
-                      {changesBaseLabel}
-                    </TooltipTrigger>
-                    <TooltipPopup side="top">{changesBaseLabel}</TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={<span className="min-w-0 truncate text-muted-foreground" />}
+                    label={changesBaseLabel}
+                    className="max-w-96 break-words"
+                  >
+                    {changesBaseLabel}
+                  </SharedTooltipTrigger>
                 ) : null}
                 <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
                   <span
@@ -1457,7 +1480,10 @@ function CheckoutGitActionsControl({
 
       <GitCommitDialog
         open={isCommitDialogOpen}
-        onOpenChange={setIsCommitDialogOpen}
+        onOpenChange={(open) => {
+          setIsCommitDialogOpen(open);
+          if (!open) setExcludedFiles(new Set());
+        }}
         gitStatus={gitStatusForActions}
         isDefaultRef={isDefaultRef}
         canWriteSourceControl={canWriteSourceControl}
@@ -1467,6 +1493,8 @@ function CheckoutGitActionsControl({
         onOpenFile={openChangedFileInEditor}
         onSubmit={runCommitDialog}
         retainedMessage={failedCommitMessage}
+        excludedFiles={excludedFiles}
+        onExcludedFilesChange={setExcludedFiles}
       />
 
       {showActions ? (

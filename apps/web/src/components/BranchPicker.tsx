@@ -21,7 +21,7 @@ import {
   ComboboxPopup,
   ComboboxStatus,
 } from "./ui/combobox";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 function BranchPickerSeparator() {
   return <div className="h-px" />;
@@ -169,37 +169,36 @@ export function BranchPicker({
           </ComboboxListVirtualized>
         </div>
         {originControl ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <label
-                  htmlFor={startFromOriginSwitchId}
-                  className="mx-1 mb-1 flex cursor-pointer items-center gap-2 border-t border-divider px-2 pt-2 pb-1 text-meta"
-                >
-                  <Switch
-                    id={startFromOriginSwitchId}
-                    checked={originControl.checked}
-                    size="sm"
-                    aria-label={gt("Start worktree from remote")}
-                    onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
-                  />
-                  <span className="min-w-0 flex-1 truncate">
-                    <T>Start from remote</T>
-                  </span>
-                  <span className="text-caption text-dim-foreground">
-                    <T>fetches first</T>
-                  </span>
-                </label>
-              }
-            />
-            <TooltipPopup side="top" className="max-w-72 whitespace-normal">
+          <SharedTooltipTrigger
+            render={
+              <label
+                htmlFor={startFromOriginSwitchId}
+                className="mx-1 mb-1 flex cursor-pointer items-center gap-2 border-t border-divider px-2 pt-2 pb-1 text-meta"
+              >
+                <Switch
+                  id={startFromOriginSwitchId}
+                  checked={originControl.checked}
+                  size="sm"
+                  aria-label={gt("Start worktree from remote")}
+                  onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  <T>Start from remote</T>
+                </span>
+                <span className="text-caption text-dim-foreground">
+                  <T>fetches first</T>
+                </span>
+              </label>
+            }
+            label={
               <T>
                 Uses the latest commit of the base branch’s tracked remote branch, even if its name
                 differs. Otherwise uses the same-named branch on origin. Uses your local branch if
                 that remote branch is missing.
               </T>
-            </TooltipPopup>
-          </Tooltip>
+            }
+            className="max-w-72 whitespace-normal"
+          />
         ) : null}
         {notice ? <ComboboxStatus>{notice}</ComboboxStatus> : null}
         {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}

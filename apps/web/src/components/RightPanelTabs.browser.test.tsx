@@ -2,7 +2,7 @@ import "~/index.css";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import type { RightPanelSurface } from "~/rightPanelStore";
@@ -93,6 +93,7 @@ describe("RightPanelTabs", () => {
             terminalLabelsById={new Map(surfaces.map((surface) => [surface.id, "Terminal"]))}
             onActivate={noop}
             onCloseSurface={noop}
+            onCloseSelectedSurfaces={noop}
             onCloseOtherSurfaces={noop}
             onCloseSurfacesToRight={noop}
             onCloseAllSurfaces={noop}
@@ -166,6 +167,7 @@ function panel(activeSurface: RightPanelSurface) {
     terminalLabelsById: new Map(),
     onActivate: noop,
     onCloseSurface: noop,
+    onCloseSelectedSurfaces: noop,
     onCloseOtherSurfaces: noop,
     onCloseSurfacesToRight: noop,
     onCloseAllSurfaces: noop,
@@ -198,6 +200,56 @@ function panel(activeSurface: RightPanelSurface) {
   };
   return <RightPanelTabs {...props} />;
 }
+
+it("drags a Shift-clicked range and closes it from a selected tab's menu", async () => {
+  const files: RightPanelSurface = { id: "files", kind: "files" };
+  const linkedItems: RightPanelSurface = { id: "pull-requests", kind: "pull-requests" };
+  const onMoveSurfaces = vi.fn();
+  const onCloseSelectedSurfaces = vi.fn();
+  await using screen = await render(
+    <RightPanelTabs
+      {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
+      surfaces={[DIFF_SURFACE, files, linkedItems]}
+      onMoveSurfaces={onMoveSurfaces}
+      onCloseSelectedSurfaces={onCloseSelectedSurfaces}
+    >
+      {null}
+    </RightPanelTabs>,
+  );
+  const diffTab = screen.getByRole("button", { name: "Diff", exact: true });
+  const filesTab = screen.getByRole("button", { name: "Files", exact: true });
+  const linkedItemsTab = screen.getByRole("button", { name: "Linked items", exact: true });
+
+  await userEvent.click(linkedItemsTab, { modifiers: ["Shift"] });
+  await expect.element(filesTab).toHaveAttribute("aria-pressed", "true");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(filesTab).toHaveAttribute("aria-pressed", "false");
+
+  await userEvent.click(filesTab, { modifiers: ["Shift"] });
+  await expect.element(diffTab).toHaveAttribute("aria-pressed", "true");
+  await expect.element(filesTab).toHaveAttribute("aria-pressed", "true");
+  await expect.element(linkedItemsTab).toHaveAttribute("aria-pressed", "false");
+
+  await userEvent.hover(filesTab);
+  await commands.pointerDown();
+  try {
+    await userEvent.hover(filesTab, { position: { x: 1, y: 5 } });
+    await userEvent.hover(linkedItemsTab, { force: true });
+    await vi.waitFor(() => {
+      const dragged = getComputedStyle(filesTab.element().closest("[data-selected-tab]")!);
+      const peer = getComputedStyle(diffTab.element().closest("[data-selected-tab]")!);
+      expect(dragged.transform).not.toBe("none");
+      expect(peer.transform).toBe(dragged.transform);
+    });
+  } finally {
+    await commands.pointerUp();
+  }
+  expect(onMoveSurfaces).toHaveBeenCalledExactlyOnceWith(["diff", "files"], "pull-requests");
+
+  await userEvent.click(diffTab, { button: "right" });
+  await userEvent.click(page.getByRole("menuitem", { name: "Close selected tabs" }));
+  expect(onCloseSelectedSurfaces).toHaveBeenCalledExactlyOnceWith([DIFF_SURFACE, files]);
+});
 
 // Chromium focuses on an uncancelled mousedown and runs history back/forward on an
 // uncancelled button 3/4 mouseup.
@@ -284,5 +336,37 @@ describe("device tab rename", () => {
     await userEvent.fill(input, "日本語");
     await userEvent.keyboard("{Enter}");
     expect(onRenameDevice).toHaveBeenCalledExactlyOnceWith(DEVICE_SURFACE.id, "日本語");
+  });
+});
+
+describe("add surface launcher", () => {
+  it("hides the button and closes the open menu once no surface can be added", async () => {
+    const tabs = (sideChatAvailable: boolean) => (
+      <RightPanelTabs
+        {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
+        open
+        browserAvailable={false}
+        terminalAvailable={false}
+        diffAvailable={false}
+        filesAvailable={false}
+        pullRequestAvailable={false}
+        pullRequestsAvailable={false}
+        deviceAvailable={false}
+        onAddSideChat={() => {}}
+        sideChatAvailable={sideChatAvailable}
+      >
+        {null}
+      </RightPanelTabs>
+    );
+    await using screen = await render(tabs(true));
+    const addButton = screen.getByRole("button", { name: "Add panel surface" });
+
+    await expect.element(addButton).toBeInTheDocument();
+    await userEvent.click(addButton);
+    await expect.element(page.getByRole("menu")).toBeVisible();
+
+    await screen.rerender(tabs(false));
+    expect(addButton.query()).toBeNull();
+    expect(page.getByRole("menu").query()).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -18,7 +18,12 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { releaseComposerDraftUploads } from "../../lib/composerDraftUploads";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { readLocalApi } from "../../localApi";
-import { hostRightPanel, type ThreadSurface, useRightPanelStore } from "../../rightPanelStore";
+import {
+  hostRightPanel,
+  rightPanelHostRef,
+  type ThreadSurface,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentShellStatus } from "../../state/shell";
@@ -33,8 +38,9 @@ import ChatView from "../ChatView";
 import { PanelTabActions, useInPanelTabBar } from "../PanelTabBreadcrumb";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { closeThreadFindIn } from "./threadFindStore";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /**
  * A side chat or a subagent as a tab: the thread's own chat, which decides its bottom, the
@@ -53,11 +59,18 @@ export default function SideThreadPane(props: {
   const gt = useGT();
   const inPanelTabBar = useInPanelTabBar();
   const threadRef = scopeThreadRef(parentRef.environmentId, threadId);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the parent panel as host in the panel store
-  useEffect(
-    () => hostRightPanel(scopeThreadRef(parentRef.environmentId, threadId), parentRef),
-    [parentRef, threadId],
-  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the parent panel as host in the panel store, and closes this side chat's find with its pane
+  useEffect(() => {
+    const ref = scopeThreadRef(parentRef.environmentId, threadId);
+    const unhost = hostRightPanel(ref, parentRef);
+    return () => {
+      unhost();
+      // Crossing the sheet breakpoint remounts the pane in the same commit, which re-hosts it.
+      queueMicrotask(() => {
+        if (rightPanelHostRef(ref) === ref) closeThreadFindIn(scopedThreadKey(ref));
+      });
+    };
+  }, [parentRef, threadId]);
   const shell = useQuietThreadShell(threadRef);
   const bootstrapComplete = isThreadRouteSnapshotAuthoritative(
     useEnvironmentShellStatus(parentRef.environmentId),
@@ -142,63 +155,60 @@ export default function SideThreadPane(props: {
 
   const actions = isSideChat ? (
     <div className="flex shrink-0 items-center gap-1.5">
-      <Tooltip>
-        <TooltipTrigger
+      <SharedTooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={gt("Add to chat")}
+            aria-disabled={!canAddToChat || undefined}
+            onClick={addToChat}
+          >
+            <MessageSquarePlusIcon className="size-3.5" />
+          </Button>
+        }
+        label={
+          <>
+            <T>Add to chat</T>
+            <span className="block">
+              {canAddToChat
+                ? gt("Adds this side chat to the main thread's next message.")
+                : gt("Available after the first message.")}
+            </span>
+          </>
+        }
+        side="bottom"
+      />
+      <SharedTooltipTrigger
+        render={<span className="flex shrink-0" />}
+        label={<T>Delete side chat</T>}
+        side="bottom"
+      >
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={gt("Delete side chat")}
+          disabled={!canOperate || shell === null || deleting}
+          onClick={() => void deleteSideChat()}
+        >
+          <Trash2Icon className="size-3.5" />
+        </Button>
+      </SharedTooltipTrigger>
+      {inPanelTabBar ? null : (
+        <SharedTooltipTrigger
           render={
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label={gt("Add to chat")}
-              aria-disabled={!canAddToChat || undefined}
-              onClick={addToChat}
-            >
-              <MessageSquarePlusIcon className="size-3.5" />
-            </Button>
+              aria-label={gt("Close side chat")}
+              onClick={props.onClose}
+            />
           }
-        />
-        <TooltipPopup side="bottom">
-          <T>Add to chat</T>
-          <span className="block">
-            {canAddToChat
-              ? gt("Adds this side chat to the main thread's next message.")
-              : gt("Available after the first message.")}
-          </span>
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger render={<span className="flex shrink-0" />}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={gt("Delete side chat")}
-            disabled={!canOperate || shell === null || deleting}
-            onClick={() => void deleteSideChat()}
-          >
-            <Trash2Icon className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">
-          <T>Delete side chat</T>
-        </TooltipPopup>
-      </Tooltip>
-      {inPanelTabBar ? null : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={gt("Close side chat")}
-                onClick={props.onClose}
-              />
-            }
-          >
-            <XIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            <T>Close side chat</T>
-          </TooltipPopup>
-        </Tooltip>
+          label={<T>Close side chat</T>}
+          side="bottom"
+        >
+          <XIcon className="size-3.5" />
+        </SharedTooltipTrigger>
       )}
     </div>
   ) : null;

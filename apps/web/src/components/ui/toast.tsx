@@ -33,8 +33,8 @@ import {
   shouldHideCollapsedToastContent,
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
 import { useThreadRouteTarget } from "~/hooks/useThreadRouteTarget";
+import { SharedTooltipTrigger } from "./shared-tooltip";
 
 export type ThreadToastData = {
   threadRef?: ScopedThreadRef | null;
@@ -156,22 +156,20 @@ function CopyErrorButton({ text }: { text: string }) {
   const label = isCopied ? gt("Copied error") : gt("Copy error");
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-micro"
-            variant="ghost-muted"
-            aria-label={label}
-            className="[--control-icon-color:currentColor] rounded-md text-muted-foreground/80 hover:bg-transparent hover:text-muted-foreground"
-            onClick={() => copyToClipboard(text)}
-          />
-        }
-      >
-        {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-label={label}
+          className="[--control-icon-color:currentColor] rounded-md text-muted-foreground/80 hover:bg-transparent hover:text-muted-foreground"
+          onClick={() => copyToClipboard(text)}
+        />
+      }
+      label={label}
+    >
+      {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+    </SharedTooltipTrigger>
   );
 }
 
@@ -263,52 +261,48 @@ function ToastDescriptionAndExpandable({
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <div
-              aria-label={open ? collapseLabel : expandLabel}
-              aria-expanded={open}
-              className={cn(
-                "group flex min-w-0 w-full cursor-pointer select-none items-start gap-1.5 rounded-sm text-left outline-none",
-                "transition-colors hover:bg-muted/40",
-                "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
-              )}
-              onClick={toggle}
-              onKeyDown={onKeyDown}
-              role="button"
-              tabIndex={0}
-            />
-          }
-        >
-          <div className="min-w-0 flex-1">
-            <Toast.Description
-              className={cn(
-                "min-w-0 select-none wrap-break-word text-muted-foreground",
-                errorDescriptionClampClass(toastType, toastDescription),
-                "underline-offset-2 decoration-muted-foreground/60 group-hover:underline",
-              )}
-              data-slot="toast-description"
-            />
-          </div>
-          {open ? (
-            <ChevronUpIcon
-              aria-hidden
-              className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
-
-              strokeWidth={2}
-            />
-          ) : (
-            <ChevronDownIcon
-              aria-hidden
-              className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
-
-              strokeWidth={2}
-            />
-          )}
-        </TooltipTrigger>
-        <TooltipPopup side="top">{open ? collapseLabel : expandLabel}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <div
+            aria-label={open ? collapseLabel : expandLabel}
+            aria-expanded={open}
+            className={cn(
+              "group flex min-w-0 w-full cursor-pointer select-none items-start gap-1.5 rounded-sm text-left outline-none",
+              "transition-colors hover:bg-muted/40",
+              "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
+            )}
+            onClick={toggle}
+            onKeyDown={onKeyDown}
+            role="button"
+            tabIndex={0}
+          />
+        }
+        label={open ? collapseLabel : expandLabel}
+      >
+        <div className="min-w-0 flex-1">
+          <Toast.Description
+            className={cn(
+              "min-w-0 select-none wrap-break-word text-muted-foreground",
+              errorDescriptionClampClass(toastType, toastDescription),
+              "underline-offset-2 decoration-muted-foreground/60 group-hover:underline",
+            )}
+            data-slot="toast-description"
+          />
+        </div>
+        {open ? (
+          <ChevronUpIcon
+            aria-hidden
+            className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
+            strokeWidth={2}
+          />
+        ) : (
+          <ChevronDownIcon
+            aria-hidden
+            className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
+            strokeWidth={2}
+          />
+        )}
+      </SharedTooltipTrigger>
       {open ? <div className={toastExpandablePanelClassName}>{expandableContent}</div> : null}
     </>
   );

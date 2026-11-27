@@ -59,7 +59,7 @@ function fixture(nativePdfViewer = false) {
 describe("PDF document navigation", () => {
   it("escapes filenames in the browser document", async () => {
     const test = fixture();
-    await installPdfDocumentNavigation(test.cdp);
+    await installPdfDocumentNavigation(test.cdp, { handleAuthRequests: false });
     const result = await test.navigate(
       "https://environment.test/api/assets/token/%3Cscript%3E.pdf",
     );
@@ -70,7 +70,7 @@ describe("PDF document navigation", () => {
 
   it("resumes navigation when committing the document fails", async () => {
     const test = fixture();
-    await installPdfDocumentNavigation(test.cdp);
+    await installPdfDocumentNavigation(test.cdp, { handleAuthRequests: false });
     test.send.mockRejectedValueOnce(new Error("Tab closed"));
     expect(await test.navigate()).toEqual({
       method: "Fetch.continueRequest",

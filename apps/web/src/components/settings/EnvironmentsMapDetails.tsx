@@ -163,6 +163,13 @@ export function FleetDetails(props: FleetDetailsProps) {
       role="group"
       aria-label={gt("Details")}
       className="text-meta outline-none"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || selection === null || event.target !== panel.current) return;
+        // Base UI's dialog closes on a document Esc listener.
+        event.stopPropagation();
+        event.preventDefault();
+        onSelect(null);
+      }}
     >
       {connectProblem ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 not-last:border-b not-last:border-divider sm:px-4">
@@ -415,13 +422,25 @@ function StackDetails({
       {members.length > MEMBER_LIST_ROWS ? (
         <div className="mb-1.5 flex items-center gap-3">
           <div className="w-56">
+            {/* Native search inputs clear on Escape even during IME composition. */}
             <Input
               size="compact"
-              type="search"
+              type="text"
+              role="searchbox"
               value={query}
               aria-label={gt("Filter these machines by name")}
               placeholder={gt("Filter by name")}
               onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" || event.defaultPrevented) return;
+                if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+                const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+                if (!composing && !query && !event.repeat) return;
+                event.stopPropagation();
+                if (composing) return;
+                event.preventDefault();
+                setQuery("");
+              }}
             />
           </div>
           {needle === "" ? null : (

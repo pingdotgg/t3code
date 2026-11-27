@@ -1,4 +1,4 @@
-import type { PullRequestActor } from "@t3tools/contracts";
+import type { PullRequestActor, ScopedThreadRef } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
 import {
   ChevronDownIcon,
@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { useOpenLink } from "~/browser/useOpenLink";
 import { RelativeTime } from "~/components/RelativeTime";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
@@ -26,11 +27,14 @@ import {
 export function PullRequestCommentTime({
   createdAt,
   url,
+  threadRef = null,
 }: {
   createdAt: string;
   url: string | null;
+  threadRef?: ScopedThreadRef | null;
 }) {
   const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   return (
     <Tooltip>
@@ -40,6 +44,10 @@ export function PullRequestCommentTime({
             <InlineButton
               tone="muted"
               render={<a href={url} target="_blank" rel="noopener noreferrer" />}
+              onClick={(event) => {
+                event.preventDefault();
+                void openLink(url, { event }).catch(console.error);
+              }}
             />
           ) : (
             <span className="text-muted-foreground" />
@@ -69,6 +77,7 @@ export function PullRequestReviewEntry({
   profileUrl,
   createdAt,
   url,
+  threadRef = null,
   outcome,
   stateLabel,
   preview,
@@ -82,6 +91,7 @@ export function PullRequestReviewEntry({
   profileUrl: string | null;
   createdAt: string;
   url: string | null;
+  threadRef?: ScopedThreadRef | null;
   outcome: PullRequestReviewOutcome | null;
   /** The host's own word for a review that is neither an approval nor a change request. */
   stateLabel: ReactNode;
@@ -102,6 +112,7 @@ export function PullRequestReviewEntry({
         <PullRequestActorLabel
           actor={actor}
           profileUrl={profileUrl}
+          threadRef={threadRef}
           className="max-w-[55%] shrink-0"
         />
         <span className="inline-flex min-w-0 items-center gap-1">
@@ -131,7 +142,7 @@ export function PullRequestReviewEntry({
         )}
         {action}
         <span className="shrink-0">
-          <PullRequestCommentTime createdAt={createdAt} url={url} />
+          <PullRequestCommentTime createdAt={createdAt} url={url} threadRef={threadRef} />
         </span>
       </div>
       {expandable ? (

@@ -100,6 +100,8 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "terminal.splitVertical",
   "terminal.new",
   "terminal.close",
+  "terminal.previous",
+  "terminal.next",
   "rightPanel.toggle",
   "threadPanel.toggle",
   "rightPanel.toggleMaximized",

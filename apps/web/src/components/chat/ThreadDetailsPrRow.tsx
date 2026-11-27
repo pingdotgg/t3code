@@ -78,6 +78,7 @@ import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
@@ -171,14 +172,19 @@ export function ThreadDetailsPrRow({
     checks: detail?.checks ?? [],
   });
 
+  const [armedMergeHead, setArmedMergeHead] = useState<string>();
   const { actionPending, pendingAction, perform } = usePullRequestActionRunner({
     environmentId,
     reference,
+    // The row shows no diff, so a merge lands the head it had when the confirmation opened.
+    headSha: armedMergeHead ?? detail?.headSha,
     terminology,
     onSuccess: () => {
       checksQuery.refresh();
       onActed?.();
     },
+    // A refused merge usually means the row is stale, so show what the host has now.
+    onFailure: () => detailQuery.refresh(),
   });
   const { handoff, startHandoff } = usePullRequestHandoffs({ environmentId, detail });
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
@@ -458,7 +464,10 @@ export function ThreadDetailsPrRow({
                     method: mergeMethodKey,
                   },
                 ),
-                onClick: () => setConfirmingMerge(true),
+                onClick: () => {
+                  setArmedMergeHead(detail?.headSha);
+                  setConfirmingMerge(true);
+                },
               }
             : null;
 
@@ -466,36 +475,34 @@ export function ThreadDetailsPrRow({
     onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
   const watchControl = (compact: boolean) =>
     watching ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ThreadDetailsControl
-              type="button"
-              variant="ghost"
-              size="sm"
-              part="icon"
-              className="group/watch"
-              aria-label={gt("Stop watching #{number}", { number })}
-              onClick={onStopWatching}
-            />
-          }
-        >
-          <EyeIcon
-            aria-hidden
-            className={cn(compact ? "size-3.5" : "size-4", "group-hover/watch:hidden")}
+      <SharedTooltipTrigger
+        render={
+          <ThreadDetailsControl
+            type="button"
+            variant="ghost"
+            size="sm"
+            part="icon"
+            className="group/watch"
+            aria-label={gt("Stop watching #{number}", { number })}
+            onClick={onStopWatching}
           />
-          <EyeOffIcon
-            aria-hidden
-            className={cn(compact ? "size-3.5" : "size-4", "hidden group-hover/watch:block")}
-          />
-        </TooltipTrigger>
-        <TooltipPopup side="top">
+        }
+        label={
           <T>
             Watching: the agent wakes when checks finish, someone comments, or the branch conflicts.
             Click to stop.
           </T>
-        </TooltipPopup>
-      </Tooltip>
+        }
+      >
+        <EyeIcon
+          aria-hidden
+          className={cn(compact ? "size-3.5" : "size-4", "group-hover/watch:hidden")}
+        />
+        <EyeOffIcon
+          aria-hidden
+          className={cn(compact ? "size-3.5" : "size-4", "hidden group-hover/watch:block")}
+        />
+      </SharedTooltipTrigger>
     ) : null;
 
   const openRow = (text: string, grow = false) => (
@@ -570,22 +577,20 @@ export function ThreadDetailsPrRow({
           </div>
           {watchControl(true)}
           {trailingAction ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    part="meta"
-                    tone={trailingAction.destructive ? "destructive" : "primary"}
-                    disabled={actionPending || handoff !== null}
-                    onClick={trailingAction.onClick}
-                  />
-                }
-              >
-                {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
-                {trailingAction.suffix}
-              </TooltipTrigger>
-              <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <ThreadDetailsControl
+                  part="meta"
+                  tone={trailingAction.destructive ? "destructive" : "primary"}
+                  disabled={actionPending || handoff !== null}
+                  onClick={trailingAction.onClick}
+                />
+              }
+              label={trailingAction.tooltip}
+            >
+              {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
+              {trailingAction.suffix}
+            </SharedTooltipTrigger>
           ) : null}
         </div>
       ) : watching ? (

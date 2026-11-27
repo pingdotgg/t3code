@@ -19,6 +19,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../../previewMiniPlayerStore";
 import {
+  previewNavStatus,
   previewStateAtom,
   previewThreadRefsAtom,
   type ThreadPreviewState,
@@ -223,6 +224,35 @@ export function floatDeviceSurface(
 ): void {
   if (state !== null && !hasLiveSession(state, threadRef.threadId, source)) return;
   usePreviewMiniPlayerStore.getState().open(threadRef, source);
+}
+
+/** Floats a browser panel tab over chat, unless it never navigated. */
+export function floatBrowserSurface(
+  threadRef: ScopedThreadRef,
+  tabId: string,
+  state: ThreadPreviewState,
+): void {
+  const snapshot = state.sessions[tabId] ?? null;
+  if (previewNavStatus(snapshot, state.desktopByTabId[tabId] ?? null)._tag === "Idle") return;
+  usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
+}
+
+/** Floats a panel's browser or device as the panel closes, when Auto-show floating preview is on. */
+export function floatPanelSurfaceOnClose(
+  threadRef: ScopedThreadRef,
+  source: PreviewMiniPlayerSource,
+  options: {
+    readonly autoShowFloatingPreview: boolean;
+    readonly previewState: ThreadPreviewState;
+    readonly deviceState: DeviceServiceState | null;
+  },
+): void {
+  if (!options.autoShowFloatingPreview) return;
+  if (source.kind === "browser") {
+    floatBrowserSurface(threadRef, source.tabId, options.previewState);
+  } else {
+    floatDeviceSurface(threadRef, source, options.deviceState);
+  }
 }
 
 export function resetDeviceSessionBaselinesForTests(): void {

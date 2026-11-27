@@ -15,7 +15,7 @@ import { isPreviewSupportedInRuntime } from "../../previewStateStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ThreadPreviewState } from "../../previewStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { type ScopedThreadRef, type RunId, type PreviewSessionSnapshot } from "@t3tools/contracts";
+import { type ScopedThreadRef, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -34,8 +34,9 @@ import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../../lib/w
 import { isBrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
 import { subscribePreviewAction } from "../preview/previewActionBus";
-import { floatDeviceSurface } from "../preview/agentOpenedPreviews";
-import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
+import { floatPanelSurfaceOnClose } from "../preview/agentOpenedPreviews";
+import { getClientSettings } from "../../hooks/useSettings";
+import { browserMiniPlayerSource } from "../../previewMiniPlayerStore";
 import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
 import type { useDeviceState } from "../../state/device";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -103,7 +104,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   );
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const onToggleDiff = () => {
-    if (!isServerThread || !activeThreadRef) return;
+    if (!activeThreadRef) return;
     toggleThreadSurfaceTab(activeThreadRef, "diff", () => {
       const isDiffOpen =
         diffOpen ||
@@ -147,7 +148,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const duplicateBrowserSurfaceStable = useStableCallback(duplicateBrowserSurface);
   const addDiffSurface = () => {
-    if (!activeThreadRef || !isServerThread || !diffAvailable) return;
+    if (!activeThreadRef || !diffAvailable) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
@@ -177,16 +178,18 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       const surface =
         activeRightPanelSurface ??
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, activeThreadRef);
-      if (surface?.kind === "preview" && surface.resourceId) {
-        usePreviewMiniPlayerStore
-          .getState()
-          .open(activeThreadRef, browserMiniPlayerSource(surface.resourceId));
-      } else if (surface?.kind === "device" && surface.target) {
-        floatDeviceSurface(
-          activeThreadRef,
-          { kind: "device", ...surface.target },
-          deviceStateLoaded ? deviceState : null,
-        );
+      const source =
+        surface?.kind === "preview" && surface.resourceId
+          ? browserMiniPlayerSource(surface.resourceId)
+          : surface?.kind === "device" && surface.target
+            ? ({ kind: "device", ...surface.target } as const)
+            : null;
+      if (source) {
+        floatPanelSurfaceOnClose(activeThreadRef, source, {
+          autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
+          previewState: activePreviewState,
+          deviceState: deviceStateLoaded ? deviceState : null,
+        });
       }
       useRightPanelStore.getState().close(activeThreadRef);
     }
@@ -237,7 +240,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const openSidePaneDefault = (): boolean => {
     if (!activeThreadRef) return false;
     const opensOn = getLayoutBehavior().sidePaneOpensOn;
-    if ((opensOn === "diff" || opensOn === "last-used") && isServerThread && diffAvailable)
+    if ((opensOn === "diff" || opensOn === "last-used") && diffAvailable)
       return (addDiffSurface(), true);
     if ((opensOn === "files" || opensOn === "last-used") && activeProject)
       return (addFilesSurface(), true);
@@ -255,7 +258,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   // "Open beside…" (palette, new tab page) reaches the focused chat's side
   // pane and terminal through this registration.
   const browserBesideAvailable = canOperatePreview && browserAvailable;
-  const diffBesideAvailable = isServerThread && diffAvailable;
+  const diffBesideAvailable = diffAvailable;
   const projectBesideAvailable = activeProject !== null;
   const besideAvailable = (() => {
     const available = new Set<LayoutBesideKind>();
@@ -297,19 +300,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     return registerLayoutOpenBesideAction({ available: besideAvailable, open: openBesideStable });
   }, [besideAvailable, ownsThread, openBesideStable]);
 
-  const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
-    if (!isServerThread || !activeThreadRef) return;
-    useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
-    useRightPanelStore.getState().open(activeThreadRef, "diff");
-    onDiffPanelOpen?.();
-  };
   const onOpenToolDiffStable = useStableCallback((target: ToolCallDiffTarget) => {
     if (!isServerThread || !activeThreadRef) return;
     useDiffPanelStore.getState().selectToolCall(activeThreadRef, target);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   });
-  const onOpenTurnDiffStable = useStableCallback(onOpenTurnDiff);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the preview action bus to toggle the preview panel
   useEffect(
     () =>
@@ -334,7 +330,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     shortcuts,
     duplicateBrowserSurfaceStable,
     onOpenToolDiffStable,
-    onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
     toggleThreadPanelStable,
   };

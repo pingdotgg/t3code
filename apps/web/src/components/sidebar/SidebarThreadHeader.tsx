@@ -12,7 +12,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SidebarMenuButton } from "../ui/sidebar";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface SidebarThreadHeaderProps {
   /** Without projects there is nothing to scope, so the scope picker stays out. */
@@ -137,26 +137,24 @@ export function SidebarHeaderIconButton({
   "children" | "className" | "tooltip" | "isActive" | "aria-label" | "size"
 >) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <SidebarMenuButton
-            size="icon"
-            type="button"
-            aria-label={label}
-            data-sidebar-header-control={size === "header" ? "" : undefined}
-            {...rest}
-            className={cn("relative shrink-0", size === "footer" ? "size-8" : "size-7", className)}
-          />
-        }
-      >
-        {children}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+    <SharedTooltipTrigger
+      render={
+        <SidebarMenuButton
+          size="icon"
+          type="button"
+          aria-label={label}
+          data-sidebar-header-control={size === "header" ? "" : undefined}
+          {...rest}
+          className={cn("relative shrink-0", size === "footer" ? "size-8" : "size-7", className)}
         />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
-    </Tooltip>
+      }
+      label={tooltip}
+    >
+      {children}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+      />
+    </SharedTooltipTrigger>
   );
 }

@@ -1,3 +1,5 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { T, useGT } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
@@ -21,9 +23,14 @@ export function PullRequestsUnavailableState({
   error: string;
   onRetry?: () => void;
   refreshing?: boolean;
-  host?: { readonly url: string; readonly openLabel: string };
+  host?: {
+    readonly url: string;
+    readonly openLabel: string;
+    readonly threadRef: ScopedThreadRef | null;
+  };
 }) {
   const gt = useGT();
+  const openLink = useOpenLink(host?.threadRef);
   return (
     <Empty className="scrollbar-gutter-both min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
@@ -52,6 +59,10 @@ export function PullRequestsUnavailableState({
               size="sm"
               variant="secondary"
               render={<a href={host.url} target="_blank" rel="noopener noreferrer" />}
+              onClick={(event) => {
+                event.preventDefault();
+                void openLink(host.url, { event }).catch(console.error);
+              }}
             >
               <ExternalLinkIcon aria-hidden className="size-3.5" />
               {host.openLabel}

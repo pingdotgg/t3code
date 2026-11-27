@@ -16,7 +16,7 @@ const buttonVariants = cva(
       size: {
         chip: "h-5 [--button-gap:--spacing(1)] rounded-md px-[6px] text-meta before:rounded-md [&_svg:not([class*='size-'])]:size-3",
         compact:
-          "h-7 [--button-gap:--spacing(1)] rounded-md px-[calc(--spacing(2)-1px)] text-meta before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
+          "h-7 [--button-gap:--spacing(1.5)] rounded-md px-[calc(--spacing(2)-1px)] text-meta before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
         action: "h-8 [--button-gap:--spacing(1.5)] px-[calc(--spacing(2.5)-1px)]",
         standard: "h-7 [--button-gap:--spacing(1.5)] px-[calc(--spacing(3)-1px)] text-[0.8125rem]",
@@ -31,14 +31,14 @@ const buttonVariants = cva(
         "icon-xs":
           "size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5",
         micro:
-          "h-5 [--button-gap:--spacing(1)] rounded-sm px-[calc(--spacing(1.5)-1px)] text-caption before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3 sm:[&_svg:not([class*='size-'])]:size-3",
+          "h-5 [--button-gap:--spacing(1.5)] rounded-sm px-[calc(--spacing(1.5)-1px)] text-caption before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3 sm:[&_svg:not([class*='size-'])]:size-3",
         multiline:
           "min-h-9 px-[calc(--spacing(3)-1px)] py-[calc(--spacing(1.5)-1px)] whitespace-normal sm:min-h-8",
         sm: "h-8 [--button-gap:--spacing(1.5)] px-[calc(--spacing(2.5)-1px)] sm:h-7 [&_svg:not([class*='size-'])]:[scale:calc(14/18)] sm:[&_svg:not([class*='size-'])]:[scale:calc(14/16)]",
         "sm-pill": "h-8 [--button-gap:--spacing(1.5)] rounded-full px-2.5 sm:h-7",
         "sm-multiline":
           "min-h-8 [--button-gap:--spacing(1.5)] px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] whitespace-normal sm:min-h-7",
-        xs: "h-7 [--button-gap:--spacing(1)] px-[calc(--spacing(2)-1px)] text-meta sm:h-6 [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
+        xs: "h-7 [--button-gap:--spacing(1.5)] px-[calc(--spacing(2)-1px)] text-meta sm:h-6 [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
         "xs-pill":
           "h-5.5 [--button-gap:--spacing(1)] rounded-full px-[6px] text-meta before:rounded-full [&_svg:not([class*='size-'])]:size-3.5",
         "icon-xs-pill":

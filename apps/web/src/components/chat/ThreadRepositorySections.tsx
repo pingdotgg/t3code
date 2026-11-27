@@ -70,6 +70,7 @@ const RepositorySection = memo(function RepositorySection(props: {
   name: string;
   cwd: string;
   removable: boolean;
+  overflow: boolean;
   owner: { readonly threadId?: ThreadId; readonly projectId?: ProjectId };
   showActions: boolean;
   onRemove: (key: string) => void;
@@ -115,6 +116,7 @@ const RepositorySection = memo(function RepositorySection(props: {
     <div
       role="group"
       aria-label={gt("Repository {name}", { name: props.name })}
+      data-thread-details-repository-overflow={props.overflow || undefined}
       className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center"
     >
       <Tooltip>
@@ -349,7 +351,7 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
       rowRefs.current.delete(key);
     }
   };
-  const renderSection = (section: ThreadRepositorySection) => (
+  const renderSection = (section: ThreadRepositorySection, index: number) => (
     <RepositorySection
       key={section.key}
       threadRef={threadRef}
@@ -357,6 +359,7 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
       name={section.name}
       cwd={section.cwd}
       removable={section.origin === "pinned"}
+      overflow={index >= THREAD_REPOSITORY_SECTIONS_VISIBLE}
       owner={owner}
       showActions={props.showActions}
       onRemove={remove}

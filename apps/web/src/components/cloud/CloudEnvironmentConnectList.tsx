@@ -44,6 +44,7 @@ import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
 
 const EMPTY_DISCOVERY_REFRESH_INTERVAL_MS = 5_000;
@@ -514,14 +515,14 @@ export function CloudEnvironmentConnectRows({
             </p>
           </div>
           {unsupported && !savedEnvironment ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
-                <Button size="sm" disabled>
-                  <T context="verb, adds an environment">Add</T>
-                </Button>
-              </TooltipTrigger>
-              <TooltipPopup>{unsupportedDetail ?? gt("Client not supported")}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<span className="inline-flex" tabIndex={0} />}
+              label={unsupportedDetail ?? gt("Client not supported")}
+            >
+              <Button size="sm" disabled>
+                <T context="verb, adds an environment">Add</T>
+              </Button>
+            </SharedTooltipTrigger>
           ) : savedConnection ? (
             <Button size="sm" variant="secondary" disabled>
               {savedConnection.buttonLabel}

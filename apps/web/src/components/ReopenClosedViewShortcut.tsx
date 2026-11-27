@@ -22,8 +22,9 @@ import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import {
-  planNextReopen,
   closedChatTarget,
+  issuesSearchForRestore,
+  planNextReopen,
   pullRequestsSearchForRestore,
   reopenClosedView,
 } from "../reopenClosedView";
@@ -55,6 +56,7 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 import { readIssueListPreferences } from "./issue/issueListPreferences";
+import { readPullRequestListPreferences } from "./pullRequest/pullRequestListPreferences";
 import { findLayoutTabByContent, isLayoutPageContent } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { layoutPageHref } from "../layout/pageNavigation";
@@ -194,17 +196,20 @@ export function ReopenClosedViewShortcut() {
               to: "/$environmentId/$threadId",
               params: buildThreadRouteParams(target.threadRef),
             });
-    } else if (globalPullRequests) {
+    } else if (globalPullRequests || globalIssues) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,
         ref,
       );
-      destination = linkOptions({
-        to: "/pull-requests",
-        search: (previous) => pullRequestsSearchForRestore(previous, selected),
-      });
-    } else if (globalIssues) {
-      destination = linkOptions({ to: "/issues", search: readIssueListPreferences() });
+      destination = globalPullRequests
+        ? linkOptions({
+            to: "/pull-requests",
+            search: pullRequestsSearchForRestore(readPullRequestListPreferences(), selected),
+          })
+        : linkOptions({
+            to: "/issues",
+            search: issuesSearchForRestore(readIssueListPreferences(), selected),
+          });
     } else if (isThreadlessSurfacesRef(ref)) {
       // A threadless surface has no route; its tab shows it.
       return;

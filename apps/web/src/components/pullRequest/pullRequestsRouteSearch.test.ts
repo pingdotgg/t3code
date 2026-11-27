@@ -52,4 +52,14 @@ describe("pull requests route search", () => {
     expect(matchedSearch("/pull-requests?author=4089")?.author).toBeUndefined();
     expect(matchedSearch("/pull-requests?labels=4089")?.labels).toBeUndefined();
   });
+
+  it("cuts a long author and label before an emoji the limit would split", () => {
+    const author = "a".repeat(199);
+    const label = "b".repeat(199);
+    expect(
+      matchedSearch(
+        `/pull-requests?${new URLSearchParams({ author: `${author}😀`, labels: `${label}🐛` })}`,
+      ),
+    ).toMatchObject({ author, labels: [label] });
+  });
 });

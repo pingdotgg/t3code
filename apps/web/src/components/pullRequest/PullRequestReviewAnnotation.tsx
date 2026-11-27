@@ -8,6 +8,7 @@ import type {
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   CheckIcon,
@@ -46,12 +47,14 @@ import {
 } from "./pullRequestPresentation";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
+import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
 import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /** Inset under the code like the thread diff's comments, on the same raised card. */
 const CARD_CLASS = `mx-2.5 mt-1.5 mb-2 p-2.5 text-sm ${COMMENT_CARD_CLASS}`;
@@ -64,8 +67,14 @@ function submitKeys(input: {
   readonly onCancel?: (() => void) | undefined;
 }) {
   return (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Unclaimed, an IME Escape would reach the pull requests page and leave it.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) {
+      event.stopPropagation();
+      return;
+    }
     if (event.key === "Escape" && input.onCancel) {
       event.preventDefault();
+      event.stopPropagation();
       input.onCancel();
     }
     if (isCommentSubmitShortcut(event, input.value, input.pending, input.allowEmpty)) {
@@ -219,34 +228,29 @@ export function InlineReviewThreads({
   return (
     <>
       {resolved.length > 0 ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                data-resolved-threads
-                aria-label={label}
-                aria-expanded={expanded}
-                // Sits on the commented line, which is the row above this annotation.
-                className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                contentEditable={false}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() =>
-                  setShown(new Set((expanded ? open : threads).map((thread) => thread.id)))
-                }
-              />
-            }
-          >
-            {[...authors].slice(0, 3).map(([login, author]) => (
-              <PullRequestActorAvatar
-                key={login}
-                actor={author}
-                className="ring-1 ring-background"
-              />
-            ))}
-          </TooltipTrigger>
-          <TooltipPopup side="left">{label}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <button
+              type="button"
+              data-resolved-threads
+              aria-label={label}
+              aria-expanded={expanded}
+              // Sits on the commented line, which is the row above this annotation.
+              className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              contentEditable={false}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() =>
+                setShown(new Set((expanded ? open : threads).map((thread) => thread.id)))
+              }
+            />
+          }
+          label={label}
+          side="left"
+        >
+          {[...authors].slice(0, 3).map(([login, author]) => (
+            <PullRequestActorAvatar key={login} actor={author} className="ring-1 ring-background" />
+          ))}
+        </SharedTooltipTrigger>
       ) : null}
       {threads.map((thread) => renderThread(thread, thread.isResolved && !shown.has(thread.id)))}
     </>
@@ -262,6 +266,7 @@ export function ReviewThreadCard({
   canResolve,
   canReact,
   environmentId,
+  threadRef = null,
   reference,
   completionScope,
   pending,
@@ -289,6 +294,7 @@ export function ReviewThreadCard({
   canResolve: boolean;
   canReact: boolean;
   environmentId: EnvironmentId;
+  threadRef?: ScopedThreadRef | null;
   reference: PullRequestRef;
   completionScope: PullRequestCompletionScope | null;
   pending: boolean;
@@ -497,6 +503,15 @@ export function ReviewThreadCard({
           >
             {loadingMore ? gt("Loading...") : gt("Load more comments")}
           </Button>
+        ) : commentCount > comments.length ? (
+          <div className="mt-2">
+            <PullRequestMoreReplies
+              moreReplies={commentCount - comments.length}
+              hasMoreReplies
+              url={comments.find((comment) => comment.url !== null)?.url ?? null}
+              threadRef={threadRef}
+            />
+          </div>
         ) : null}
         {canReply || canResolve || onFix ? (
           <div className="mt-3 flex min-w-0 items-start gap-2">
@@ -577,7 +592,11 @@ export function ReviewThreadCard({
             count: commentCount,
           })}
         </InlineButton>
-        {thread.isOutdated ? <span>outdated</span> : null}
+        {thread.isOutdated ? (
+          <span>
+            <T context="review thread state">Outdated</T>
+          </span>
+        ) : null}
         {onFix ? (
           <Button
             size="compact"

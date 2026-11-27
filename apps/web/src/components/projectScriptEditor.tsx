@@ -119,6 +119,7 @@ function KeybindingField(props: {
     <div className="relative flex h-8.5 min-w-0 items-center gap-1 rounded-control surface-well kbd-in-control ps-2 pe-1 text-base has-focus-visible:surface-focus sm:h-7.5 sm:text-sm">
       <input
         id={props.id}
+        data-keybinding-capture=""
         readOnly
         disabled={props.disabled}
         value={props.value}
@@ -398,8 +399,20 @@ function ProjectScriptEditorForm({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (!readEnvironmentScope(environmentId, editScope)) return;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "Tab") return;
+    // Leave bare Escape unhandled so it keeps dismissing the dialog.
+    if (
+      event.key === "Escape" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
+      return;
+    }
     event.preventDefault();
+    event.stopPropagation();
     if (event.key === "Backspace" || event.key === "Delete") {
       setKeybinding("");
       return;
@@ -582,6 +595,7 @@ function ProjectScriptEditorForm({
               </Label>
               <Textarea
                 id="script-command"
+                data-script-command-input
                 // oxlint-disable-next-line t3code/no-untranslated-copy -- example shell command
                 placeholder="bun test"
                 value={command}

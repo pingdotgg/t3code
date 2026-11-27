@@ -85,6 +85,7 @@ import {
   isHostedAppPairingUrl,
   endpointShareHint,
 } from "./ConnectionsSettings.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 function AccessScopeSummary({
   scopes,
@@ -297,12 +298,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             <h3 className="text-label text-strong-foreground">{primaryLabel}</h3>
           </div>
           <p className="grid justify-items-start gap-1 text-meta text-muted-foreground">
-            <Tooltip>
-              <TooltipTrigger render={<span />}>
-                {formatExpiresInLabel(pairingLink.expiresAt, nowMs, m)}
-              </TooltipTrigger>
-              <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger render={<span />} label={expiresAbsolute}>
+              {formatExpiresInLabel(pairingLink.expiresAt, nowMs, m)}
+            </SharedTooltipTrigger>
             <AccessScopeSummary scopes={pairingLink.scopes} label={gt("Pairing link scopes")} />
           </p>
           {!credential ? (
@@ -466,16 +464,14 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               </div>
             ) : null}
             <div className="flex items-center gap-2 rounded-control surface-well px-2.5 py-1.5">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <code className="min-w-0 flex-1 truncate font-mono text-caption text-muted-foreground">
-                      {qrPairingUrl}
-                    </code>
-                  }
-                />
-                <TooltipPopup side="top">{qrPairingUrl}</TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <code className="min-w-0 flex-1 truncate font-mono text-caption text-muted-foreground">
+                    {qrPairingUrl}
+                  </code>
+                }
+                label={qrPairingUrl}
+              />
               <Button
                 size="xs"
                 variant="ghost"
@@ -1021,16 +1017,14 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
         <div className="flex min-h-7 min-w-0 flex-1 items-center gap-3">
           <h3 className="shrink-0 text-label leading-5 text-strong-foreground">{endpoint.label}</h3>
           {shouldShowEndpointUrl ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <p className="min-w-0 truncate text-meta leading-5 text-muted-foreground">
-                    {endpoint.httpBaseUrl}
-                  </p>
-                }
-              />
-              <TooltipPopup side="top">{endpoint.httpBaseUrl}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <p className="min-w-0 truncate text-meta leading-5 text-muted-foreground">
+                  {endpoint.httpBaseUrl}
+                </p>
+              }
+              label={endpoint.httpBaseUrl}
+            />
           ) : null}
           {!isAvailable ? (
             <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-border px-1.5 text-micro text-muted-foreground">

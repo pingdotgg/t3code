@@ -1,5 +1,6 @@
 import {
   CHATGPT_USAGE_URL,
+  collectHttpQuotaSources,
   collectLimitAccounts,
   collectLimitPools,
   displayLimitWindows,
@@ -11,7 +12,7 @@ import {
   remainingPercent,
   type ResetCreditChoice,
 } from "@t3tools/shared/usageLimits";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { T, Var, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
@@ -614,9 +615,8 @@ function PoolWindowCard({
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
 }) {
-  const gt = useGT();
   const m = useMessages();
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const nextRefill = pool.resets.find((reset) => reset.at > now && reset.restoresPercent > 0);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-card border border-transparent surface-card-settings p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
@@ -634,16 +634,15 @@ function PoolWindowCard({
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
-        {nextRefill ? (
+        {nextRefill && pool.columns.length > 1 ? (
           <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
             <RotateCwIcon className="size-3 text-foreground" aria-hidden />
-            <span className="font-semibold text-foreground">+{nextRefill.restoresPercent}%</span>
-            {nextRefill.at <= now
-              ? gt("now", { $context: "a usage refill happens now" })
-              : gt("in {duration}", {
-                  duration: formatDuration(nextRefill.at - now, m),
-                  $context: "time until a usage window resets",
-                })}
+            <T context="usage limit refill">
+              <span className="font-semibold text-foreground">
+                +<Var>{nextRefill.restoresPercent}</Var>%
+              </span>{" "}
+              in <Var>{formatDuration(nextRefill.at - now, m)}</Var>
+            </T>
           </span>
         ) : null}
       </div>
@@ -712,11 +711,15 @@ export function UsageLimitsPooled({
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const quotaSources = collectHttpQuotaSources(presentations);
   const notices = collectLimitNotices(presentations, m);
   const externalLinks = collectExternalUsageLinks(presentations, m);
   return (
     <div className="flex flex-col gap-7">
-      {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (
+      {pools.length === 0 &&
+      notices.length === 0 &&
+      externalLinks.length === 0 &&
+      quotaSources.length === 0 ? (
         <Empty size="compact">
           <GaugeIcon aria-hidden className="size-5.5 text-dim-foreground" />
           <EmptyHeader>
@@ -749,6 +752,36 @@ export function UsageLimitsPooled({
           ) : null
         }
       </Popover>
+      {quotaSources.map((source) => (
+        <section
+          key={source.key}
+          className="space-y-3 rounded-card border border-transparent surface-card-settings p-4"
+        >
+          <h2 className="text-label text-foreground">{source.label}</h2>
+          {source.quotaAccounts?.map((account) => (
+            <div key={account.id} className="space-y-1">
+              <h3 className="text-label text-foreground">{account.label}</h3>
+              {account.windows.map((window) => {
+                const reset = formatResetsIn(window, now, m);
+                return (
+                  <div
+                    key={window.id}
+                    className="flex justify-between gap-3 text-body text-muted-foreground"
+                  >
+                    <span>{window.label}</span>
+                    <span className="inline-flex items-baseline gap-2">
+                      <span>
+                        {gt("{remaining}% left", { remaining: remainingPercent(window) })}
+                      </span>
+                      {reset ? <span>{reset}</span> : null}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </section>
+      ))}
       {externalLinks.map((link) => (
         <section
           key={link.url}

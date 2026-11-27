@@ -5,8 +5,8 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { PanelFrame } from "~/components/ui/panel-frame";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 function columnClass(kind: DelimitedColumnKind | undefined) {
   return kind === "number" ? "text-right font-mono" : kind === "date" ? "font-mono" : "text-left";
@@ -174,24 +174,23 @@ export default function VirtualTablePreview(props: {
               />
               <div style={{ width: offset(firstColumn), flexShrink: 0 }} />
               {columns.map((column) => (
-                <Tooltip key={column}>
-                  <TooltipTrigger
-                    render={
-                      <div
-                        role="columnheader"
-                        aria-colindex={column + 1}
-                        className={cn(
-                          "shrink-0 overflow-hidden px-2 py-1.5 text-ellipsis whitespace-pre last:rounded-tr-row",
-                          columnClass(props.columnKinds?.[column]),
-                        )}
-                        style={{ width: sizes[column] }}
-                      >
-                        {props.header?.[column] ?? columnLabel(column)}
-                      </div>
-                    }
-                  />
-                  <TooltipPopup>{props.header?.[column] ?? columnLabel(column)}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  key={column}
+                  render={
+                    <div
+                      role="columnheader"
+                      aria-colindex={column + 1}
+                      className={cn(
+                        "shrink-0 overflow-hidden px-2 py-1.5 text-ellipsis whitespace-pre last:rounded-tr-row",
+                        columnClass(props.columnKinds?.[column]),
+                      )}
+                      style={{ width: sizes[column] }}
+                    >
+                      {props.header?.[column] ?? columnLabel(column)}
+                    </div>
+                  }
+                  label={props.header?.[column] ?? columnLabel(column)}
+                />
               ))}
             </PanelFrame.Toolbar>
           ) : null}

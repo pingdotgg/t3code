@@ -15,8 +15,7 @@ import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
 import { Badge } from "../ui/badge";
-import { TooltipPopup } from "../ui/tooltip";
-import { RowTooltip, RowTooltipsContext } from "../workItem/WorkItemRowTooltip";
+import { RowTooltipsContext } from "../workItem/WorkItemRowTooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import { pullRequestPanelReference } from "./usePullRequestDetail";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
@@ -32,6 +31,7 @@ import { observeResize } from "~/lib/observeResize";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { PullRequestLabelChip } from "./pullRequestPresentation";
 import { PullRequestPrivateMark } from "./PullRequestDetailLayout";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /** The most label chips a row lays out; the rest only ever count toward its "+N". */
 const MAX_ROW_LABELS = 3;
@@ -382,14 +382,14 @@ function PullRequestRowImpl({
             meta={
               <>
                 {matchedElsewhere ? (
-                  <RowTooltip
+                  <SharedTooltipTrigger
                     render={
                       <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-micro" />
                     }
-                    popup={
-                      <TooltipPopup side="top">
+                    label={
+                      <>
                         <T>Matched in the description</T>
-                      </TooltipPopup>
+                      </>
                     }
                   >
                     <span className="sr-only">
@@ -399,15 +399,15 @@ function PullRequestRowImpl({
                     <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
                       <T>matched in the description</T>
                     </span>
-                  </RowTooltip>
+                  </SharedTooltipTrigger>
                 ) : null}
                 {showProvider ? (
-                  <RowTooltip
+                  <SharedTooltipTrigger
                     render={<span className="inline-flex shrink-0" />}
-                    popup={<TooltipPopup>{providerName}</TooltipPopup>}
+                    label={providerName}
                   >
                     <Icon aria-label={providerName} className="size-3" />
-                  </RowTooltip>
+                  </SharedTooltipTrigger>
                 ) : null}
                 {/* A narrow row (the list beside an open review, or a narrow window) keeps the branch, which tells
                 rows apart, over the repository, which the scope above already names, and over the
@@ -418,21 +418,19 @@ function PullRequestRowImpl({
                   labelClassName="sr-only @3xl/pr-row-meta:not-sr-only @3xl/pr-row-meta:truncate"
                 />
 
-                <RowTooltip
+                <SharedTooltipTrigger
                   render={
                     <span className="min-w-12 truncate font-mono text-caption text-dim-foreground @max-md/pr-list:flex-1" />
                   }
-                  popup={
-                    <TooltipPopup>
-                      <span className="flex flex-col gap-0.5">
-                        {showProjectTitle ? <span>{entry.repository}</span> : null}
-                        <span>{entry.headBranch}</span>
-                      </span>
-                    </TooltipPopup>
+                  label={
+                    <span className="flex flex-col gap-0.5">
+                      {showProjectTitle ? <span>{entry.repository}</span> : null}
+                      <span>{entry.headBranch}</span>
+                    </span>
                   }
                 >
                   {entry.headBranch}
-                </RowTooltip>
+                </SharedTooltipTrigger>
                 {environmentLabel ? (
                   <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
                 ) : null}

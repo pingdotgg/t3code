@@ -425,7 +425,7 @@ interface PendingPiPrompt {
  * picks the select's last "Type something." line and answers the input dialog that follows.
  */
 interface PiCustomAnswerRoute {
-  readonly lines: ReadonlyArray<unknown>;
+  readonly optionLines: ReadonlyArray<unknown>;
   readonly sentinel: string;
   readonly followUpTitlePrefix: string;
 }
@@ -780,6 +780,28 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             providerSession: sessionEntity,
           });
         });
+
+      const reportStartupPhase = Effect.fn("PiAdapterV2.reportStartupPhase")(function* (
+        phase: string | undefined,
+      ) {
+        if (sessionEntity.startupPhase === phase) return;
+        const { startupPhase: _reported, ...current } = sessionEntity;
+        sessionEntity = {
+          ...current,
+          ...(phase === undefined ? {} : { startupPhase: phase }),
+          updatedAt: yield* DateTime.now,
+        };
+        yield* emit({
+          type: "provider_session.updated",
+          driver: PI_PROVIDER,
+          providerSession: sessionEntity,
+        });
+      });
+      const reportingResume = <A, E, R>(resume: Effect.Effect<A, E, R>) =>
+        reportStartupPhase("resume").pipe(
+          Effect.andThen(resume),
+          Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
+        );
 
       // Frequent notifications share the event pump's tracing boundary and outlive individual turns.
       const updateExtensionStatus = Effect.fnUntraced(function* (event: PiRpcRecord) {
@@ -1302,7 +1324,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             Effect.andThen(
               Effect.suspend(() => {
                 item.flushScheduled = false;
-                return item.completed ? Effect.void : emitStreamItem(turn, item, true);
+                // Gemini sends an empty text part on tool-use steps; publishing it would leave an empty message.
+                return item.completed || item.text.length === 0
+                  ? Effect.void
+                  : emitStreamItem(turn, item, true);
               }),
             ),
             Effect.forkIn(scope),
@@ -1468,9 +1493,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
         }
         const output = piToolOutput(resultRecord, toolName);
+        // Pi strips @ only at the start of the raw argument, before preview trimming.
         const readPath =
           toolName === "read"
-            ? (recordString(args, "path") ?? recordString(args, "file_path"))?.trim()
+            ? (recordString(args, "path") ?? recordString(args, "file_path"))
+                ?.replace(/^@/, "")
+                .trim()
             : undefined;
         const viewedImagePath =
           readPath &&
@@ -2164,6 +2192,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             failureItemOrdinal: itemOrdinal(turn, failureItemId),
             status: "failed",
             failure,
+            ...(!closed && [...piAsyncRuns.values()].some((run) => run.turn === turn)
+              ? { childTurnsContinue: true }
+              : {}),
             ...(turn.activeProviderRetry === null
               ? {}
               : {
@@ -2861,6 +2892,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             Effect.gen(function* () {
               runtimeRetired = true;
               const state = threadState;
+              // Pi ending while nothing is in flight is an idle exit, not a failure.
+              const idle =
+                state !== null &&
+                state.activeTurn === null &&
+                pendingWake === null &&
+                piAsyncRuns.size === 0 &&
+                pendingPrompts.size === 0 &&
+                !nativeCompacting &&
+                !registrationInProgress &&
+                rollbackBarrier === null &&
+                extensionStatusReset === null &&
+                pendingPromptResponsesDrained === null;
               closed = true;
               if (pendingPromptResponsesDrained !== null)
                 yield* Deferred.fail(
@@ -2894,7 +2937,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (unsolicitedActivityDetected) {
                 yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
                 yield* Queue.end(events);
-              } else if (stopRequested) {
+              } else if (stopRequested || idle) {
                 yield* updateProviderSession("stopped", null);
                 yield* Queue.end(events);
               } else {
@@ -2984,6 +3027,39 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       });
 
+      const readSessionFile = Effect.fnUntraced(function* (file: string) {
+        const entries = new Map<string, PiSessionEntry>();
+        let leafId: string | null = null;
+        const readable = yield* fileSystem.stream(file).pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            Effect.sync(() => {
+              const entry = readPiSessionEntry(Option.getOrUndefined(decodeSessionLine(line)));
+              if (entry === null) return;
+              const [id, value] = entry;
+              entries.set(id, value);
+              leafId = id;
+            }),
+          ),
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+        return readable ? { entries, leafId } : null;
+      });
+
+      const historicalSessionFiles = Effect.fnUntraced(function* (sessionFile: string) {
+        const dir = path.dirname(sessionFile);
+        const siblings = yield* fileSystem
+          .readDirectoryEntries(dir)
+          .pipe(Effect.orElseSucceed(() => []));
+        return siblings
+          .filter((entry) => entry.type === "File" && entry.name.endsWith(".jsonl"))
+          .map((entry) => path.join(dir, entry.name))
+          .sort()
+          .reverse();
+      });
+
       // Old records hold entry IDs without a session file. Recover only when both
       // timestamped user entries are on the same branch in a sibling session.
       const findHistoricalForkSession = Effect.fnUntraced(function* (
@@ -3005,45 +3081,55 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const from = DateTime.toEpochMillis(startedAt);
         const between = DateTime.toEpochMillis(completedAt);
         const to = DateTime.toEpochMillis(boundaryEnd);
-        const dir = path.dirname(currentFile);
-        const siblings = yield* fileSystem
-          .readDirectoryEntries(dir)
-          .pipe(Effect.orElseSucceed(() => []));
-        const files = siblings
-          .filter((entry) => entry.type === "File" && entry.name.endsWith(".jsonl"))
-          .map((entry) => path.join(dir, entry.name))
-          .sort()
-          .reverse();
+        const files = yield* historicalSessionFiles(currentFile);
         for (const file of files) {
           if (file === currentFile) continue;
-          const entries = new Map<string, PiSessionEntry>();
-          let leafId: string | null = null;
-          const readable = yield* fileSystem.stream(file).pipe(
-            Stream.decodeText(),
-            Stream.splitLines,
-            Stream.runForEach((line) =>
-              Effect.sync(() => {
-                const entry = readPiSessionEntry(Option.getOrUndefined(decodeSessionLine(line)));
-                if (entry === null) return;
-                const [id, value] = entry;
-                entries.set(id, value);
-                leafId = id;
-              }),
-            ),
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
+          const listing = yield* readSessionFile(file);
           if (
-            readable &&
-            piUserEntryInWindow(entries.get(targetId), from, between) &&
-            piUserEntryInWindow(entries.get(boundary.entryId), between, to) &&
-            walkPiBranch(entries, leafId, boundary.entryId)?.reachedStop === true &&
-            walkPiBranch(entries, boundary.entryId, targetId)?.reachedStop === true
+            listing !== null &&
+            piUserEntryInWindow(listing.entries.get(targetId), from, between) &&
+            piUserEntryInWindow(listing.entries.get(boundary.entryId), between, to) &&
+            walkPiBranch(listing.entries, listing.leafId, boundary.entryId)?.reachedStop === true &&
+            walkPiBranch(listing.entries, boundary.entryId, targetId)?.reachedStop === true
           ) {
             return file;
           }
         }
         return undefined;
+      });
+
+      const findHistoricalCheckpointSession = Effect.fnUntraced(function* (
+        boundaryFile: string,
+        targetId: string,
+        earliestPromptAt: DateTime.Utc,
+        completedAt: DateTime.Utc,
+      ) {
+        const from = DateTime.toEpochMillis(earliestPromptAt);
+        const to = DateTime.toEpochMillis(completedAt);
+        let match: PiHistoricalCheckpoint | undefined;
+        for (const file of yield* historicalSessionFiles(boundaryFile)) {
+          if (file === boundaryFile) continue;
+          const listing = yield* readSessionFile(file);
+          if (listing === null || !piUserEntryInWindow(listing.entries.get(targetId), from, to))
+            continue;
+          const retained = piRetainedCheckpoint(listing, targetId, to);
+          if (retained === undefined) continue;
+          if (
+            match !== undefined &&
+            !piSameHistory(listing, retained.headId, match.listing, match.retained.headId)
+          ) {
+            return yield* protocolError(
+              "Pi rollback found conflicting histories for the checkpoint",
+            );
+          }
+          if (
+            match === undefined ||
+            (match.retained.forkEntryId !== undefined && retained.forkEntryId === undefined)
+          ) {
+            match = { file, listing, retained };
+          }
+        }
+        return match;
       });
 
       const sessionFileInCwd = Effect.fnUntraced(function* (
@@ -3110,14 +3196,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             baselineModel = null;
             baselineThinking = null;
             contextWindow = null;
-            const result = yield* lifecycleRequest(
+            const result =
               resumeId != null && existing !== undefined
-                ? {
-                    type: "switch_session",
-                    sessionPath: yield* sessionFileInCwd(resumeId, existing.createdAt),
-                  }
-                : { type: "new_session" },
-            );
+                ? yield* reportingResume(
+                    lifecycleRequest({
+                      type: "switch_session",
+                      sessionPath: yield* sessionFileInCwd(resumeId, existing.createdAt),
+                    }),
+                  )
+                : yield* lifecycleRequest({ type: "new_session" });
             if (recordField(result, "cancelled") === true) {
               return yield* protocolError("A Pi extension cancelled the session switch");
             }
@@ -3354,10 +3441,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         },
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
-        hasPendingBackgroundWorkForThread: (providerThread) =>
+        // An async pi-subagents run dies with the Pi process, so the session stays loaded for it.
+        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null || piAsyncRuns.size > 0),
+        hasPendingBackgroundWorkForThread: (providerThread, probe) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              (probe?.includeSubagents === true &&
+                [...piAsyncRuns.values()].some(
+                  (run) => run.turn.turnInput.providerThread.id === providerThread.id,
+                )),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
@@ -3751,7 +3844,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               route !== undefined &&
               typeof response["value"] === "string" &&
               response["value"].trim().length > 0 &&
-              !route.lines.includes(response["value"])
+              !route.optionLines.includes(response["value"])
             ) {
               customAnswerFollowUps.set(route.followUpTitlePrefix, [
                 ...(customAnswerFollowUps.get(route.followUpTitlePrefix) ?? []),
@@ -3909,15 +4002,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pendingWake !== null) {
               return yield* protocolError("Cannot roll back while native Pi work awaits a turn");
             }
-            const boundary = piForkBoundary(rollbackInput);
-            if (boundary.type === "nothing") {
-              return piThreadSnapshot(state.providerThread);
-            }
-            const forkEntryId = yield* piForkEntry(
-              boundary,
-              rollbackInput.providerThread.createdAt,
-              request({ type: "get_entries" }),
-            );
+            const target =
+              rollbackInput.target.type === "provider_turn"
+                ? rollbackInput.target.providerTurn
+                : null;
+            const targetFile = target?.nativeThreadRef?.nativeId ?? undefined;
+            const firstBoundary = piForkBoundary(rollbackInput);
             return yield* Effect.acquireUseRelease(
               sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
@@ -3941,11 +4031,253 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   return barrier;
                 }),
               ),
-              (barrier) =>
-                Effect.gen(function* () {
-                  const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
-                  if (recordField(forkData, "cancelled") === true)
-                    return yield* protocolError("A Pi extension cancelled the session fork");
+              (barrier) => {
+                let switchedSession = false;
+                return Effect.gen(function* () {
+                  const currentFile = state.providerThread.nativeThreadRef?.nativeId;
+                  const isCurrentFile = (file: string) =>
+                    currentFile != null &&
+                    path.resolve(cwd, file) === path.resolve(cwd, currentFile);
+                  const targetPath =
+                    targetFile === undefined ? undefined : path.resolve(cwd, targetFile);
+                  const isTargetFile = (file: string | null | undefined) =>
+                    file != null && path.resolve(cwd, file) === targetPath;
+                  const boundaryFile =
+                    firstBoundary.type === "nothing"
+                      ? undefined
+                      : firstBoundary.turn.nativeThreadRef?.nativeId;
+                  let boundary = firstBoundary;
+                  let sourceFile = targetFile ?? boundaryFile;
+                  let recoveredLegacySource: PiHistoricalCheckpoint | undefined;
+                  const readEntries = request({ type: "get_entries" });
+                  const readCurrentEntries = yield* Effect.cached(readEntries);
+                  const targetId = piTurnEntryId(target);
+                  if (
+                    targetFile !== undefined &&
+                    boundaryFile != null &&
+                    !isTargetFile(boundaryFile)
+                  ) {
+                    // A previous fork can carry the checkpoint into the session with the discard boundary.
+                    const listing =
+                      targetId === undefined
+                        ? null
+                        : isCurrentFile(boundaryFile)
+                          ? piSessionListing(yield* request({ type: "get_entries" }))
+                          : yield* readSessionFile(path.resolve(cwd, boundaryFile));
+                    const boundaryId =
+                      firstBoundary.type === "entry" ? firstBoundary.entryId : null;
+                    if (
+                      targetId !== undefined &&
+                      listing !== null &&
+                      listing.entries.has(targetId) &&
+                      (boundaryId === null ||
+                        (listing.entries.has(boundaryId) &&
+                          walkPiBranch(listing.entries, listing.leafId, boundaryId)?.reachedStop ===
+                            true)) &&
+                      walkPiBranch(listing.entries, boundaryId ?? listing.leafId, targetId)
+                        ?.reachedStop === true
+                    ) {
+                      sourceFile = boundaryFile;
+                    } else {
+                      boundary = piForkBoundary({ ...rollbackInput, sessionFile: targetFile });
+                    }
+                  }
+                  if (
+                    sourceFile == null &&
+                    currentFile != null &&
+                    boundary.type === "entry" &&
+                    piTurnEntryId(boundary.target) !== undefined &&
+                    boundary.target?.startedAt != null &&
+                    boundary.target.completedAt !== null &&
+                    boundary.turn.completedAt !== null
+                  ) {
+                    // The persisted file avoids sending the whole tree over RPC before forking.
+                    const live = yield* readSessionFile(path.resolve(cwd, currentFile));
+                    if (live !== null && !live.entries.has(boundary.entryId)) {
+                      sourceFile = yield* findHistoricalForkSession(currentFile, boundary);
+                    }
+                  }
+                  const candidateFile = sourceFile ?? currentFile;
+                  if (
+                    targetFile === undefined &&
+                    candidateFile != null &&
+                    targetId !== undefined &&
+                    target?.startedAt != null &&
+                    target.completedAt !== null
+                  ) {
+                    const resolvedCandidate = path.resolve(cwd, candidateFile);
+                    const listing = isCurrentFile(candidateFile)
+                      ? piSessionListing(yield* readCurrentEntries)
+                      : yield* readSessionFile(resolvedCandidate);
+                    if (listing === null)
+                      return yield* protocolError(
+                        "Pi rollback could not verify the retained session head",
+                      );
+                    const boundaryId = boundary.type === "entry" ? boundary.entryId : undefined;
+                    if (
+                      !listing.entries.has(targetId) ||
+                      (boundaryId === undefined
+                        ? walkPiBranch(listing.entries, listing.leafId, targetId)?.reachedStop !==
+                          true
+                        : !listing.entries.has(boundaryId))
+                    ) {
+                      const previousTurn = rollbackInput.providerThreadTurns
+                        .filter((turn) => turn.ordinal < target.ordinal)
+                        .sort((a, b) => b.ordinal - a.ordinal)[0];
+                      const earliestPromptAt =
+                        previousTurn?.completedAt ?? rollbackInput.providerThread.createdAt;
+                      recoveredLegacySource = yield* findHistoricalCheckpointSession(
+                        resolvedCandidate,
+                        targetId,
+                        DateTime.min(earliestPromptAt, target.startedAt),
+                        target.completedAt,
+                      );
+                      if (recoveredLegacySource === undefined)
+                        return yield* protocolError("Pi rollback entry was not found in a session");
+                      sourceFile = recoveredLegacySource.file;
+                      boundary = { type: "nothing" };
+                    } else if (
+                      boundaryId !== undefined &&
+                      (boundaryId === targetId ||
+                        walkPiBranch(listing.entries, boundaryId, targetId)?.reachedStop !== true)
+                    ) {
+                      return yield* protocolError(
+                        "Pi rollback could not verify the retained session head",
+                      );
+                    }
+                  }
+                  let switchedTo: string | undefined;
+                  if (sourceFile != null && !isCurrentFile(sourceFile)) {
+                    switchedTo = yield* sessionFileInCwd(
+                      sourceFile,
+                      rollbackInput.providerThread.createdAt,
+                    );
+                    // Pi can change files before its switch response arrives.
+                    switchedSession = true;
+                    const switched = yield* lifecycleRequest({
+                      type: "switch_session",
+                      sessionPath: switchedTo,
+                    });
+                    if (recordField(switched, "cancelled") === true) {
+                      switchedSession = false;
+                      return yield* protocolError("A Pi extension cancelled the session switch");
+                    }
+                    const attached = recordString(
+                      yield* request({ type: "get_state" }),
+                      "sessionFile",
+                    );
+                    if (
+                      attached === undefined ||
+                      path.resolve(cwd, attached) !== path.resolve(cwd, switchedTo)
+                    ) {
+                      return yield* protocolError(
+                        "Pi rollback did not attach the source session file",
+                      );
+                    }
+                  }
+                  const leftTargetFile =
+                    target !== null &&
+                    isTargetFile(sourceFile) &&
+                    rollbackInput.providerThreadTurns.some((turn) => {
+                      const file = turn.nativeThreadRef?.nativeId;
+                      return turn.ordinal > target.ordinal && file != null && !isTargetFile(file);
+                    });
+                  const verifySource =
+                    leftTargetFile || (boundary.type === "nothing" && switchedTo !== undefined);
+                  if (
+                    boundary.type === "nothing" &&
+                    !verifySource &&
+                    recoveredLegacySource === undefined
+                  ) {
+                    return piThreadSnapshot(state.providerThread);
+                  }
+                  let forkEntryId: string | undefined;
+                  let sourceEntries = switchedTo === undefined ? readCurrentEntries : readEntries;
+                  if (recoveredLegacySource !== undefined) {
+                    const listing = piSessionListing(yield* sourceEntries);
+                    const completedAt = target?.completedAt;
+                    const retained =
+                      listing !== null && targetId !== undefined
+                        ? piRetainedCheckpoint(
+                            listing,
+                            targetId,
+                            completedAt == null ? undefined : DateTime.toEpochMillis(completedAt),
+                          )
+                        : undefined;
+                    if (
+                      listing === null ||
+                      retained === undefined ||
+                      !piSameHistory(
+                        listing,
+                        retained.headId,
+                        recoveredLegacySource.listing,
+                        recoveredLegacySource.retained.headId,
+                      )
+                    )
+                      return yield* protocolError(
+                        "Pi rollback could not verify the retained session head",
+                      );
+                    forkEntryId = retained.forkEntryId;
+                  } else if (verifySource) {
+                    const data = yield* sourceEntries;
+                    sourceEntries = Effect.succeed(data);
+                    const listing = piSessionListing(data);
+                    // Without a captured checkpoint prompt, verify back to an earlier retained
+                    // prompt in the same file or to the root if none was captured.
+                    const anchorId =
+                      targetId ??
+                      piTurnEntryId(
+                        rollbackInput.providerThreadTurns
+                          .filter(
+                            (turn) =>
+                              target !== null &&
+                              turn.ordinal < target.ordinal &&
+                              isTargetFile(turn.nativeThreadRef?.nativeId) &&
+                              piTurnEntryId(turn) !== undefined,
+                          )
+                          .sort((a, b) => b.ordinal - a.ordinal)[0],
+                      ) ??
+                      null;
+                    const walk =
+                      listing !== null && (anchorId === null || listing.entries.has(anchorId))
+                        ? walkPiBranch(listing.entries, listing.leafId, anchorId)
+                        : null;
+                    if (listing === null || walk?.reachedStop !== true)
+                      return yield* protocolError(
+                        "Pi rollback could not verify the retained session head",
+                      );
+                    // A handoff can leave a prompt before the next recorded turn in this file.
+                    for (const id of [...walk.userEntryIds].reverse()) {
+                      if (boundary.type === "entry" && id === boundary.entryId) {
+                        forkEntryId = id;
+                        break;
+                      }
+                      const timestamp = listing.entries.get(id)?.timestamp;
+                      if (timestamp == null || target?.completedAt == null)
+                        return yield* protocolError(
+                          "Pi rollback could not verify the retained session head",
+                        );
+                      if (timestamp >= DateTime.toEpochMillis(target.completedAt)) {
+                        forkEntryId = id;
+                        break;
+                      }
+                    }
+                  }
+                  if (forkEntryId === undefined && boundary.type !== "nothing") {
+                    forkEntryId = yield* piForkEntry(
+                      boundary,
+                      rollbackInput.providerThread.createdAt,
+                      sourceEntries,
+                    );
+                  }
+                  if (forkEntryId !== undefined) {
+                    const forkData = yield* lifecycleRequest({
+                      type: "fork",
+                      entryId: forkEntryId,
+                    });
+                    if (recordField(forkData, "cancelled") === true)
+                      return yield* protocolError("A Pi extension cancelled the session fork");
+                  }
                   const forkState = yield* request({ type: "get_state" }).pipe(
                     Effect.onError(() =>
                       Effect.sync(() => {
@@ -3962,6 +4294,23 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     Effect.orElseSucceed(() => undefined),
                   );
                   const leafId = recordString(entriesData, "leafId") ?? null;
+                  if (recoveredLegacySource !== undefined) {
+                    const listing = piSessionListing(entriesData);
+                    if (
+                      listing === null ||
+                      !piSameHistory(
+                        listing,
+                        leafId,
+                        recoveredLegacySource.listing,
+                        recoveredLegacySource.retained.headId,
+                      )
+                    ) {
+                      threadState = null;
+                      return yield* protocolError(
+                        "Pi rollback could not verify the retained session head",
+                      );
+                    }
+                  }
                   // RPC responses bypass the pump; drain prior native events before replacing their binding.
                   const queued = yield* Queue.offer(connection.events, {
                     type: "t3.rollback_barrier",
@@ -4000,7 +4349,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       return piThreadSnapshot(state.providerThread);
                     }),
                   );
-                }).pipe(Effect.onInterrupt(() => connection.terminate)),
+                }).pipe(
+                  Effect.onError(() => (switchedSession ? connection.terminate : Effect.void)),
+                  Effect.onInterrupt(() => connection.terminate),
+                );
+              },
               (barrier) =>
                 Effect.sync(() => {
                   if (rollbackBarrier === barrier) rollbackBarrier = null;
@@ -4127,6 +4480,7 @@ const decodeSessionLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schem
 interface PiSessionEntry {
   readonly parentId: string | null;
   readonly isUserMessage: boolean;
+  readonly isLabel: boolean;
   /** Pi's `timestamp` as epoch milliseconds; null when missing or unparsable. */
   readonly timestamp: number | null;
 }
@@ -4167,6 +4521,7 @@ function readPiSessionEntry(entry: unknown): [string, PiSessionEntry] | null {
       isUserMessage:
         recordField(entry, "type") === "message" &&
         recordString(recordField(entry, "message"), "role") === "user",
+      isLabel: recordField(entry, "type") === "label",
       timestamp:
         timestamp === undefined
           ? null
@@ -4210,6 +4565,65 @@ function walkPiBranch(
     current = entry.parentId;
   }
   return { entryCount: visited.size, userEntryIds, reachedStop: current === stopAt };
+}
+
+interface PiRetainedCheckpoint {
+  readonly headId: string;
+  readonly forkEntryId?: string;
+}
+
+interface PiHistoricalCheckpoint {
+  readonly file: string;
+  readonly listing: PiSessionListing;
+  readonly retained: PiRetainedCheckpoint;
+}
+
+function piRetainedCheckpoint(
+  listing: PiSessionListing,
+  targetId: string,
+  completedAt: number | undefined,
+): PiRetainedCheckpoint | undefined {
+  const walk = walkPiBranch(listing.entries, listing.leafId, targetId);
+  if (listing.leafId === null || walk?.reachedStop !== true || !listing.entries.has(targetId))
+    return undefined;
+  // An extension can leave later prompts in the source. Keep steers within the retained turn.
+  for (const id of [...walk.userEntryIds].reverse()) {
+    const entry = listing.entries.get(id);
+    if (entry?.timestamp == null || completedAt === undefined) return undefined;
+    if (entry.timestamp >= completedAt)
+      return entry.parentId === null ? undefined : { headId: entry.parentId, forkEntryId: id };
+  }
+  return { headId: listing.leafId };
+}
+
+// Pi's fork drops label entries from the copied path and re-adds them with new ids at the leaf.
+function piSameHistory(
+  a: PiSessionListing,
+  aHead: string | null,
+  b: PiSessionListing,
+  bHead: string | null,
+): boolean {
+  const aPath = piContentPath(a, aHead);
+  const bPath = piContentPath(b, bHead);
+  return (
+    aPath !== null &&
+    bPath !== null &&
+    aPath.length === bPath.length &&
+    aPath.every((id, index) => id === bPath[index])
+  );
+}
+
+function piContentPath(listing: PiSessionListing, headId: string | null): Array<string> | null {
+  const path: Array<string> = [];
+  const visited = new Set<string>();
+  for (let id = headId; id !== null;) {
+    const entry = listing.entries.get(id);
+    if (entry === undefined || visited.has(id)) return null;
+    visited.add(id);
+    if (!entry.isLabel) path.push(id);
+    id = entry.parentId;
+  }
+  return path;
 }
 
 type PiForkBoundary =
@@ -4477,6 +4891,7 @@ function piAskUserSingleSelectQuestion(
       if (!options.every((option, index) => lines[index] === rpivOptionLine(option, index))) {
         continue;
       }
+      const optionLines = lines.slice(0, -1);
       return {
         question: {
           id: questionId,
@@ -4493,9 +4908,9 @@ function piAskUserSingleSelectQuestion(
         },
         // The follow-up repeats the option lines; only its trailing instruction is localized.
         customAnswerRoute: {
-          lines,
+          optionLines,
           sentinel,
-          followUpTitlePrefix: `${prefix}${text}\n\n${lines.slice(0, -1).join("\n")}\n\n`,
+          followUpTitlePrefix: `${prefix}${text}\n\n${optionLines.join("\n")}\n\n`,
         },
       };
     }

@@ -35,6 +35,8 @@ export async function addBrowserSurface<E>(input: {
           ...(source.navStatus._tag === "Idle" ? {} : { url: source.navStatus.url }),
           ...(source.profileId === undefined ? {} : { profileId: source.profileId }),
           ...(source.viewport === undefined ? {} : { viewport: source.viewport }),
+          ...(source.zoomFactor === undefined ? {} : { zoomFactor: source.zoomFactor }),
+          ...(source.colorScheme === undefined ? {} : { colorScheme: source.colorScheme }),
           runtime: source.runtime ?? "desktop",
         }),
   });

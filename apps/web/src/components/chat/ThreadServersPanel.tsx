@@ -43,6 +43,7 @@ import { Spinner } from "../ui/spinner";
 import { StatusDot } from "../ui/status-dot";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./threadDetailsPanelStyles";
@@ -249,72 +250,68 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                   )}
                 >
                   {canForward ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <ThreadDetailsControl
-                            size="icon-xs"
-                            variant="ghost"
-                            part="icon"
-                            aria-pressed={forward !== undefined}
-                            aria-label={
-                              forward
-                                ? gt("Stop forwarding localhost:{port}", { port: server.port })
-                                : gt("Forward localhost:{port} to this machine", {
-                                    port: server.port,
-                                  })
-                            }
-                            disabled={forwardingPort !== null}
-                            onClick={() => void toggleForward(server, forward !== undefined)}
-                          />
-                        }
-                      >
-                        {forwardingPort === server.port ? (
-                          <Spinner aria-hidden size="xs" />
-                        ) : (
-                          <CableIcon
-                            aria-hidden
-                            className={cn("size-3.5", forward && "text-primary")}
-                          />
-                        )}
-                      </TooltipTrigger>
-                      <TooltipPopup side="left">
-                        {forward ? (
+                    <SharedTooltipTrigger
+                      render={
+                        <ThreadDetailsControl
+                          size="icon-xs"
+                          variant="ghost"
+                          part="icon"
+                          aria-pressed={forward !== undefined}
+                          aria-label={
+                            forward
+                              ? gt("Stop forwarding localhost:{port}", { port: server.port })
+                              : gt("Forward localhost:{port} to this machine", {
+                                  port: server.port,
+                                })
+                          }
+                          disabled={forwardingPort !== null}
+                          onClick={() => void toggleForward(server, forward !== undefined)}
+                        />
+                      }
+                      label={
+                        forward ? (
                           <T>
                             Forwarded to localhost:<Var>{forward.localPort}</Var> on this machine.
                             Click to stop.
                           </T>
                         ) : (
                           <T>Forward to this machine, for any app here</T>
-                        )}
-                      </TooltipPopup>
-                    </Tooltip>
+                        )
+                      }
+                      side="left"
+                    >
+                      {forwardingPort === server.port ? (
+                        <Spinner aria-hidden size="xs" />
+                      ) : (
+                        <CableIcon
+                          aria-hidden
+                          className={cn("size-3.5", forward && "text-primary")}
+                        />
+                      )}
+                    </SharedTooltipTrigger>
                   ) : null}
                   {stoppable ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <ThreadDetailsControl
-                            size="icon-xs"
-                            variant="ghost"
-                            part="icon"
-                            tone="destructive"
-                            aria-label={gt("Stop localhost:{port}", { port: server.port })}
-                            disabled={stoppingKey !== null}
-                            onClick={() => void stop(server)}
-                          />
-                        }
-                      >
-                        {stoppingKey === key ? (
-                          <Spinner aria-hidden size="xs" />
-                        ) : (
-                          <SquareIcon aria-hidden className="size-3.5" />
-                        )}
-                      </TooltipTrigger>
-                      <TooltipPopup side="left">
-                        <T>Stop server</T>
-                      </TooltipPopup>
-                    </Tooltip>
+                    <SharedTooltipTrigger
+                      render={
+                        <ThreadDetailsControl
+                          size="icon-xs"
+                          variant="ghost"
+                          part="icon"
+                          tone="destructive"
+                          aria-label={gt("Stop localhost:{port}", { port: server.port })}
+                          disabled={stoppingKey !== null}
+                          onClick={() => void stop(server)}
+                        />
+                      }
+                      label={<T>Stop server</T>}
+                      side="left"
+                    >
+                      {stoppingKey === key ? (
+                        <Spinner aria-hidden size="xs" />
+                      ) : (
+                        <SquareIcon aria-hidden className="size-3.5" />
+                      )}
+                    </SharedTooltipTrigger>
                   ) : null}
                 </div>
               ) : null}

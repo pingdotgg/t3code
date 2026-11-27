@@ -6,7 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
@@ -18,15 +18,16 @@ import { useEnvironmentQuery } from "~/state/query";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Button, InlineButton } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { groupPullRequestChecks } from "./pullRequestDetail.logic";
 import {
   PullRequestCheckStatusIcon,
+  pullRequestChecksCountLabel,
   pullRequestCheckStatusLabel,
   pullRequestChecksStatePresentation,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 // Fetch only on open to avoid per-row requests.
 function LazyChecksBody({
@@ -96,10 +97,10 @@ function ChecksBody({
                 className="col-span-full grid grid-cols-subgrid items-center text-meta"
               >
                 <PullRequestCheckStatusIcon status={check.status} />
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 truncate">{check.name}</span>} />
-                  <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={<span className="min-w-0 truncate">{check.name}</span>}
+                  label={check.description ?? check.name}
+                />
                 <span className="justify-self-end whitespace-nowrap text-muted-foreground">
                   {pullRequestCheckStatusLabel(check, resolve)}
                 </span>
@@ -166,12 +167,7 @@ export function PullRequestChecksPopover({
   const gt = useGT();
   const resolve = useMessages();
   const presentation = pullRequestChecksStatePresentation(checksState, resolve);
-  const incompleteCount =
-    checks?.filter((check) => check.status === "pending" || check.status === "action-required")
-      .length ?? 0;
-  const failedCount =
-    checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
-    0;
+  const countLabel = checks === undefined ? null : pullRequestChecksCountLabel(checks, resolve);
   const summary =
     checks === undefined || stale ? null : summarizePullRequestChecks(checks, resolve);
   return (
@@ -209,26 +205,8 @@ export function PullRequestChecksPopover({
           )}
         />
         {label !== undefined && variant === "icon" ? label : null}
-        {variant === "count" ? (
-          <>
-            {checks !== undefined && incompleteCount > 0 ? (
-              // Clip the second line so "checks" disappears whole when the count must shrink.
-              <span className="h-lh min-w-0 overflow-hidden text-left whitespace-normal tabular-nums">
-                <T>
-                  <span className="whitespace-nowrap">
-                    <Var>{checks.length - incompleteCount}</Var>/<Var>{checks.length}</Var>
-                  </span>{" "}
-                  checks
-                </T>
-              </span>
-            ) : failedCount > 0 ? (
-              <span className="min-w-0 truncate tabular-nums">
-                {gt("{count, plural, one {{count} failed} other {{count} failed}}", {
-                  count: failedCount,
-                })}
-              </span>
-            ) : null}
-          </>
+        {variant === "count" && countLabel !== null ? (
+          <span className="min-w-0 truncate tabular-nums">{countLabel}</span>
         ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" width="md" side="bottom">

@@ -18,6 +18,7 @@ import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
+  ExternalLinkIcon,
   ChevronRightIcon,
   BotIcon,
   CheckIcon,
@@ -40,10 +41,11 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { useQuietThreadShell } from "../../state/entities";
-import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
+import { useEnvironmentProviders } from "../../state/environments";
 import { type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentSessionId } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import ChatMarkdown from "../ChatMarkdown";
@@ -57,6 +59,7 @@ import {
   buildWorkflowTimeline,
   readWorkflowQuestion,
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
   workflowChip,
   workflowFlowFocus,
@@ -64,18 +67,21 @@ import {
   workflowResultLines,
   workflowRunNow,
   workflowRunState,
+  workflowWithdrawal,
   workflowSaidStart,
   workflowStepReferences,
   workflowStepTime,
   workflowOneLine,
   type WorkflowBeat,
   type WorkflowFeedRow,
+  type WorkflowQuestionChoice,
   type WorkflowQuickSteps,
   type WorkflowRunNode,
   type WorkflowRunTone,
 } from "@t3tools/client-runtime/workflows";
 import type { WorkflowPaneTab } from "./workflowPane.logic";
 import { WorkflowReferenceChip } from "./WorkflowReferences";
+import { useWorkflowThreadOpen } from "./useWorkflowThreadOpen";
 
 /** An agent's thread, as a step names it: the linked environment it is in, or null for this one. */
 export interface WorkflowThreadTarget {
@@ -185,10 +191,20 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
 
 const nthTry = (count: number, resolve: MessageResolver) =>
   resolve(
-    msg("{count, plural, =1 {1st try} =2 {2nd try} =3 {3rd try} other {{count}th try}}", {
-      count,
-    }),
+    msg(
+      "{count, selectordinal, one {{count}st try} two {{count}nd try} few {{count}rd try} other {{count}th try}}",
+      { count },
+    ),
   );
+
+const queuedText = (beat: WorkflowBeat, resolve: MessageResolver) =>
+  beat.ahead === undefined || beat.ahead === 0
+    ? resolve(msg("queued, next in line", { $context: "a workflow step waits for a free place" }))
+    : resolve(
+        msg("{count, plural, one {queued, {count} ahead} other {queued, {count} ahead}}", {
+          count: beat.ahead,
+        }),
+      );
 
 // The loading view and the timeline each draw a question's card, so a reason typed while the
 // steps load is kept here rather than in the card that is about to be replaced.
@@ -426,7 +442,8 @@ export function WorkflowRunFeed({
           beat.status !== "running" &&
           beat.kind !== "ask" &&
           beat.kind !== "sleep" &&
-          beat.kind !== "wait",
+          beat.kind !== "wait" &&
+          beat.kind !== "queue",
       ) ??
       null)
     : null;
@@ -1022,7 +1039,11 @@ function WorkflowTimeline({
       const running = row.beats.filter((beat) => beat.status === "running").length;
       // Steps that only sleep or wait are under way without working.
       const working = row.beats.some(
-        (beat) => beat.status === "running" && beat.kind !== "sleep" && beat.kind !== "wait",
+        (beat) =>
+          beat.status === "running" &&
+          beat.kind !== "sleep" &&
+          beat.kind !== "wait" &&
+          beat.kind !== "queue",
       );
       const failed = row.beats.some((beat) => beat.status === "failed");
       const asks = row.beats.some(
@@ -1236,6 +1257,7 @@ function WorkflowBeatRow({
   const failed = beat.status === "failed";
   const said = workflowAgentSummary(beat).said;
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
+  const sessionId = useEnvironmentSessionId(environmentId);
   const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
   // An agent's own approval or question needs a person as much as the workflow's does.
   const agentAsks =
@@ -1269,6 +1291,8 @@ function WorkflowBeatRow({
           : gt("about to wake");
       case "wait":
         return gt("waiting");
+      case "queue":
+        return queuedText(beat, m);
       case "run":
         return child === null ? gt("running") : workflowRunNow(child, m);
       case "step":
@@ -1282,11 +1306,17 @@ function WorkflowBeatRow({
       case "agent":
         return said === null ? null : workflowOneLine(said);
       case "ask":
-        return answer === null
+        if (answer !== null)
+          return answer.answeredBy === null || isOwnWorkflowAnswer(answer, sessionId)
+            ? gt("You said {choice}", { choice: answer.choice })
+            : gt("{who} said {choice}", { who: answer.answeredBy, choice: answer.choice });
+        const withdrawal = workflowWithdrawal(beat.result);
+        return withdrawal === null
           ? gt("nobody answered")
-          : gt("You said {choice}", { choice: answer.choice });
+          : gt("withdrawn by {by}", { by: withdrawal.by });
       case "sleep":
       case "wait":
+      case "queue":
         return null;
       case "run":
         return child === null ? null : workflowRunNow(child, m);
@@ -1309,7 +1339,7 @@ function WorkflowBeatRow({
           : needsYou
             ? "input"
             : under
-              ? beat.kind === "sleep" || beat.kind === "wait"
+              ? beat.kind === "sleep" || beat.kind === "wait" || beat.kind === "queue"
                 ? "quiet"
                 : "working"
               : "done"
@@ -1332,7 +1362,11 @@ function WorkflowBeatRow({
       note={beat.kind === "agent" && (under || said === null) ? model : null}
       verb={verb}
       verbTone={
-        needsYou ? "input" : beat.kind === "sleep" || beat.kind === "wait" ? "quiet" : "working"
+        needsYou
+          ? "input"
+          : beat.kind === "sleep" || beat.kind === "wait" || beat.kind === "queue"
+            ? "quiet"
+            : "working"
       }
       aside={aside}
       {...(failed ? { asideTone: "failed" as const } : {})}
@@ -1499,6 +1533,7 @@ function WorkflowBeatCard({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const sessionId = useEnvironmentSessionId(environmentId);
   const under = beat.status === "running";
   const length = formatDuration(elapsedOf(beat));
   const tries = beat.attempts > 1 ? <span>{nthTry(beat.attempts, m)}</span> : null;
@@ -1514,6 +1549,26 @@ function WorkflowBeatCard({
       );
     case "ask": {
       const answer = workflowAnswer(beat.result);
+      const withdrawal = answer === null ? workflowWithdrawal(beat.result) : null;
+      if (withdrawal !== null)
+        return (
+          <Note
+            label={beat.name}
+            detail={
+              <p className="mt-3 text-body">
+                {withdrawal.reason === null
+                  ? gt("Withdrawn by {by}.", { by: withdrawal.by })
+                  : gt("Withdrawn by {by}: {reason}", {
+                      by: withdrawal.by,
+                      reason: withdrawal.reason,
+                    })}
+              </p>
+            }
+          >
+            <span>{gt("withdrawn")}</span>
+            <span>{length}</span>
+          </Note>
+        );
       if (answer === null)
         return (
           <Note label={beat.name}>
@@ -1521,11 +1576,29 @@ function WorkflowBeatCard({
             <span>{length}</span>
           </Note>
         );
+      // This client's own answer reads "You"; anyone else's, another device of yours too, its name.
+      const who = isOwnWorkflowAnswer(answer, sessionId) ? null : answer.answeredBy;
       return (
         <FeedCard label={beat.name}>
           <CardHead mark={null} name={beat.name} sub={length} />
           <p className="mt-3 text-body">
-            {answer.reason === null ? (
+            {who !== null && answer.reason === null ? (
+              <T>
+                <Var>{who}</Var> said{" "}
+                <span className="text-label">
+                  <Var>{answer.choice}</Var>
+                </span>
+                .
+              </T>
+            ) : who !== null ? (
+              <T>
+                <Var>{who}</Var> said{" "}
+                <span className="text-label">
+                  <Var>{answer.choice}</Var>
+                </span>
+                : <Var>{answer.reason}</Var>
+              </T>
+            ) : answer.reason === null ? (
               <T>
                 You said{" "}
                 <span className="text-label">
@@ -1543,6 +1616,16 @@ function WorkflowBeatCard({
               </T>
             )}
           </p>
+          {answer.answeredAt === null ? null : (
+            <p className="mt-1 text-meta text-muted-foreground">
+              <T>
+                answered{" "}
+                <Var>
+                  <RelativeLabel value={answer.answeredAt} />
+                </Var>
+              </T>
+            </p>
+          )}
         </FeedCard>
       );
     }
@@ -1585,6 +1668,28 @@ function WorkflowBeatCard({
             mark={<HourglassIcon className="size-3.5 text-muted-foreground" />}
             name={beat.name}
             sub={gt("{duration} so far", { duration: length })}
+          />
+        </FeedCard>
+      );
+    case "queue":
+      if (!under)
+        return (
+          <Note label={beat.name}>
+            <span>{gt("queued")}</span>
+            <span>{length}</span>
+          </Note>
+        );
+      return (
+        <FeedCard tone="quiet" label={beat.name}>
+          <CardHead
+            mark={<HourglassIcon className="size-3.5 text-muted-foreground" />}
+            name={beat.name}
+            sub={
+              <>
+                <span>{queuedText(beat, m)}</span>
+                <span>{length}</span>
+              </>
+            }
           />
         </FeedCard>
       );
@@ -1672,8 +1777,7 @@ function WorkflowAgentCard({
     beat.thread?.environmentId == null
       ? environmentId
       : EnvironmentId.make(beat.thread.environmentId);
-  // This client can only show a thread on an environment it is itself connected to.
-  const threadEnvironment = useEnvironment(threadEnvironmentId);
+  const threadOpen = useWorkflowThreadOpen(environmentId, threadEnvironmentId);
   const shell = useQuietThreadShell(
     beat.thread === null
       ? null
@@ -1701,7 +1805,7 @@ function WorkflowAgentCard({
     length,
     beat.attempts > 1 ? nthTry(beat.attempts, m) : null,
     elsewhere
-      ? gt("on {environment}", { environment: threadEnvironment?.label ?? threadEnvironmentId })
+      ? gt("on {environment}", { environment: threadOpen.label ?? threadEnvironmentId })
       : null,
   ].filter((part): part is string => part !== null);
   return (
@@ -1727,7 +1831,7 @@ function WorkflowAgentCard({
           <span key={part}>{part}</span>
         ))}
         action={
-          beat.thread === null ? null : threadEnvironment === null ? (
+          beat.thread === null ? null : threadOpen.open === "unavailable" ? (
             <span className="text-meta text-muted-foreground">
               <T>
                 Thread on <Var>{threadEnvironmentId}</Var>
@@ -1872,17 +1976,25 @@ function WorkflowQuestionCard({
     question.thread?.environmentId == null
       ? environmentId
       : EnvironmentId.make(question.thread.environmentId);
-  const reachable = useEnvironment(threadEnvironmentId) !== null;
-  const choose = async (choice: string) => {
+  const reachable =
+    useWorkflowThreadOpen(environmentId, threadEnvironmentId).open !== "unavailable";
+  const [reasonFor, setReasonFor] = useState<string | null>(null);
+  const choose = async (choice: WorkflowQuestionChoice) => {
     if (busy) return;
-    setBusy(true);
     const given = reason?.trim() ?? "";
+    // The server refuses it without a reason, so the field opens and says so instead.
+    if (choice.requireReason && given === "") {
+      setReasonFor(choice.value);
+      if (reason === null) setReason("");
+      return;
+    }
+    setBusy(true);
     const result = await answer({
       environmentId,
       input: {
         runId: question.runId,
         name: question.name,
-        choice,
+        choice: choice.value,
         ...(given === "" ? {} : { reason: given }),
       },
     });
@@ -1913,17 +2025,36 @@ function WorkflowQuestionCard({
       {view.body ? (
         <ChatMarkdown text={view.body} cwd={undefined} className="mt-1 text-body" />
       ) : null}
-      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+      {view.links.length === 0 ? null : (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {view.links.map((link) => (
+            <Button
+              key={`${link.label}:${link.url}`}
+              size="sm"
+              variant="secondary"
+              render={<a href={link.url} target="_blank" rel="noreferrer" />}
+            >
+              {link.label}
+              <ExternalLinkIcon aria-hidden />
+            </Button>
+          ))}
+        </div>
+      )}
+      <div className="mt-2.5 flex flex-wrap items-start gap-2">
         {view.choices.map((choice, index) => (
-          <Button
-            key={choice}
-            size="sm"
-            variant={index === 0 ? "default" : "secondary"}
-            disabled={busy || !canAnswer}
-            onClick={() => void choose(choice)}
-          >
-            {choice}
-          </Button>
+          <div key={choice.value} className="flex flex-col items-start gap-1">
+            <Button
+              size="sm"
+              variant={index === 0 ? "default" : "secondary"}
+              disabled={busy || !canAnswer}
+              onClick={() => void choose(choice)}
+            >
+              {choice.value}
+            </Button>
+            {choice.description === null ? null : (
+              <span className="max-w-60 text-meta text-muted-foreground">{choice.description}</span>
+            )}
+          </div>
         ))}
       </div>
       {reason === null || (question.thread !== null && reachable) ? (
@@ -1954,6 +2085,13 @@ function WorkflowQuestionCard({
             placeholder={gt("Why, in a sentence. It goes with whichever answer you pick.")}
             onChange={(event) => setReason(event.currentTarget.value)}
           />
+          {reasonFor === null || (reason?.trim() ?? "") !== "" ? null : (
+            <p className="mt-1 text-meta text-muted-foreground">
+              <T>
+                <Var>{reasonFor}</Var> needs a reason.
+              </T>
+            </p>
+          )}
         </div>
       )}
     </FeedCard>

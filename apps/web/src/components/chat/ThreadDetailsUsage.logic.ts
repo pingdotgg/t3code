@@ -7,7 +7,6 @@ import {
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  antigravityWindowLimitsModel,
   collectLimitAccounts,
   collectLimitPools,
   collectProviderUsageLimits,
@@ -48,6 +47,26 @@ export function resolveThreadDetailsLimits(
   return hubPool(provider.driver, model, providers, hubs, now) ?? { kind: "instance", limits: own };
 }
 
+export function resolveThreadHttpQuotas(
+  providerInstanceId: ProviderInstanceId | null,
+  sources: UsageLimitSourceSnapshots,
+) {
+  if (providerInstanceId === null) return [];
+  return sources.flatMap((source) =>
+    source.kind === "http"
+      ? (source.quotaAccounts ?? []).flatMap((account) =>
+          account.providerInstanceId === providerInstanceId
+            ? account.windows.map((window) => ({
+                key: JSON.stringify([source.id, account.id, window.id]),
+                accountLabel: account.label,
+                window,
+              }))
+            : [],
+        )
+      : [],
+  );
+}
+
 export function nextPoolReset(window: LimitPoolWindow, now: number) {
   const pooled = window.members.length > 1;
   return (
@@ -65,19 +84,7 @@ function hubPool(
   const routes = hubRoutes(sources, driver, model);
   const routed = sources.map((source) => ({
     ...source,
-    accounts: source.accounts.filter(routes).map((account) =>
-      account.driver === "antigravity"
-        ? {
-            ...account,
-            usageLimits: {
-              ...account.usageLimits,
-              windows: account.usageLimits.windows.filter((window) =>
-                antigravityWindowLimitsModel(window, model),
-              ),
-            },
-          }
-        : account,
-    ),
+    accounts: source.accounts.filter(routes),
   }));
   const readable = routed
     .flatMap((source) => source.accounts)
@@ -134,10 +141,6 @@ function windowMetersModel(
   model: string | null,
 ): boolean | null {
   if (model === null) return null;
-  if (driver === "antigravity") {
-    const base = model.slice(model.lastIndexOf("/") + 1);
-    return /^(gemini|claude|gpt)/.test(base) ? antigravityWindowLimitsModel(window, model) : null;
-  }
   if (driver === "claudeAgent" && window.id.startsWith("seven_day_")) {
     const scope = window.id.slice("seven_day_".length);
     return `_${model.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_`.includes(`_${scope}_`);

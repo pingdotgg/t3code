@@ -15,6 +15,7 @@ import {
   limitTone,
   poolSources,
   resolveThreadDetailsLimits,
+  resolveThreadHttpQuotas,
 } from "./ThreadDetailsUsage.logic";
 
 const now = Date.parse("2026-10-30T12:00:00.000Z");
@@ -154,34 +155,35 @@ describe("resolveThreadDetailsLimits", () => {
 });
 
 describe("foldLimitRows", () => {
-  const antigravity = ProviderDriverKind.make("antigravity");
   const row = (
     id: string,
     kind: "session" | "weekly",
     usedPercent: number,
-    driver: ProviderDriverKind = antigravity,
+    driver: ProviderDriverKind = claude,
   ) => ({ driver, window: { id, kind, label: id, usedPercent } });
   const ids = (rows: ReadonlyArray<{ readonly window: { readonly id: string } }>) =>
     rows.map((entry) => entry.window.id);
 
-  it("shows the rows of the thread's model, else the nearest per period, and never hides a low one", () => {
+  it("shows the nearest per period when no model is selected, and never hides a low one", () => {
     const rows = [
-      row("3p-5h", "session", 0),
-      row("gemini-5h", "session", 17),
-      row("3p-weekly", "weekly", 0),
-      row("gemini-weekly", "weekly", 6),
+      row("five_hour_a", "session", 0),
+      row("five_hour_b", "session", 17),
+      row("seven_day_a", "weekly", 0),
+      row("seven_day_b", "weekly", 6),
     ];
-    expect(ids(foldLimitRows(rows, "gemini-4-neon").shown)).toEqual(["gemini-5h", "gemini-weekly"]);
-    expect(ids(foldLimitRows(rows, "claude-opus-5-5").hidden)).toEqual([
-      "gemini-5h",
-      "gemini-weekly",
-    ]);
-    expect(ids(foldLimitRows(rows, null).shown)).toEqual(["gemini-5h", "gemini-weekly"]);
-    const spent = [...rows.slice(0, 3), row("gemini-weekly", "weekly", 100)];
-    expect(ids(foldLimitRows(spent, "claude-opus-5-5").shown)).toEqual([
-      "3p-5h",
-      "3p-weekly",
-      "gemini-weekly",
+    expect(ids(foldLimitRows(rows, null).shown)).toEqual(["five_hour_b", "seven_day_b"]);
+    const spent = [...rows.slice(0, 3), row("seven_day_b", "weekly", 100)];
+    expect(ids(foldLimitRows(spent, null).shown)).toEqual(["five_hour_b", "seven_day_b"]);
+    const lowExtra = [
+      row("five_hour_a", "session", 100),
+      row("five_hour_b", "session", 90),
+      row("seven_day_a", "weekly", 0),
+      row("seven_day_b", "weekly", 6),
+    ];
+    expect(ids(foldLimitRows(lowExtra, null).shown)).toEqual([
+      "five_hour_a",
+      "five_hour_b",
+      "seven_day_b",
     ]);
   });
 
@@ -262,5 +264,32 @@ describe("isWideLimitLabel", () => {
     expect(isWideLimitLabel("Opus")).toBe(false);
     expect(isWideLimitLabel("Claude & GPT (shared) · 5-hour")).toBe(true);
     expect(isWideLimitLabel("Cursor Models")).toBe(true);
+  });
+});
+
+describe("resolveThreadHttpQuotas", () => {
+  it("shows only the quota accounts bound to the thread's provider instance", () => {
+    const window = { id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 35 } as const;
+    const source: UsageLimitSourceSnapshot = {
+      id: UsageLimitSourceId.make("quota"),
+      kind: "http",
+      label: "Quota server",
+      checkedAt,
+      accounts: [],
+      quotaAccounts: [
+        { id: "bound", label: "Work plan", providerInstanceId: instanceId, windows: [window] },
+        { id: "unbound", label: "Unbound", windows: [window] },
+        {
+          id: "other",
+          label: "Other plan",
+          providerInstanceId: ProviderInstanceId.make("other"),
+          windows: [window],
+        },
+      ],
+    };
+    expect(
+      resolveThreadHttpQuotas(instanceId, [source]).map((quota) => quota.accountLabel),
+    ).toEqual(["Work plan"]);
+    expect(resolveThreadHttpQuotas(null, [source])).toEqual([]);
   });
 });

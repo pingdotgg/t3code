@@ -1,6 +1,7 @@
 import { DayPicker } from "@daypicker/react";
 import { ChevronLeftIcon, ChevronRightIcon, ChevronsUpDownIcon } from "lucide-react";
 import type * as React from "react";
+import { useFormattingLocale } from "~/i18n/I18nProvider";
 import { cn } from "~/lib/utils";
 
 const buttonClassNames =
@@ -39,14 +40,39 @@ const defaultComponents = {
   },
 };
 
+// DayPicker otherwise formats and labels with date-fns enUS, whatever the app language.
+function localizedFormatters(locale: string | undefined, timeZone: string | undefined) {
+  // DayPicker's grid is always Gregorian, so the month names must be too (fa-IR defaults to Persian).
+  const calendar = "gregory";
+  const caption = new Intl.DateTimeFormat(locale, {
+    month: "long",
+    year: "numeric",
+    calendar,
+    timeZone,
+  });
+  const monthDropdown = new Intl.DateTimeFormat(locale, { month: "short", calendar, timeZone });
+  const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone });
+  const formatters = {
+    formatCaption: (month: Date) => caption.format(month),
+    formatMonthDropdown: (month: Date) => monthDropdown.format(month),
+  };
+  // Intl has no two-letter weekday, so English keeps DayPicker's own "Mo".
+  if (weekday.resolvedOptions().locale.startsWith("en")) return formatters;
+  return { ...formatters, formatWeekdayName: (day: Date) => weekday.format(day) };
+}
+
 export function Calendar({
   className,
   classNames,
   showOutsideDays = true,
   components: userComponents,
+  formatters: userFormatters,
+  labels: userLabels,
   mode = "single",
+  timeZone,
   ...props
 }: React.ComponentProps<typeof DayPicker>): React.ReactElement {
+  const localized = localizedFormatters(useFormattingLocale(), timeZone);
   const defaultClassNames = {
     button_next: buttonClassNames,
     button_previous: buttonClassNames,
@@ -97,11 +123,11 @@ export function Calendar({
     classNames: mergedClassNames,
     components: mergedComponents,
     "data-slot": "calendar",
-    formatters: {
-      formatMonthDropdown: (date: Date) => date.toLocaleString("default", { month: "short" }),
-    } as React.ComponentProps<typeof DayPicker>["formatters"],
+    formatters: { ...localized, ...userFormatters },
+    labels: { labelGrid: localized.formatCaption, ...userLabels },
     mode,
     showOutsideDays,
+    timeZone,
     ...props,
   };
 

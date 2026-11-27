@@ -9,6 +9,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   defaultInstanceIdForDriver,
+  NonNegativeInt,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
   type RuntimeMode,
@@ -24,6 +25,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -266,6 +268,16 @@ export function grokLaunchRuntimeMode(
 
 /** The capability id the composer stores Grok's reasoning effort under. */
 const GROK_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+const decodeGrokContextMetadata = Schema.decodeUnknownOption(
+  Schema.Struct({ totalTokens: NonNegativeInt }),
+);
+
+function extractGrokContextUsage(
+  notification: EffectAcpSchema.SessionNotification,
+): ThreadTokenUsageSnapshot | undefined {
+  const metadata = Option.getOrUndefined(decodeGrokContextMetadata(notification._meta));
+  return metadata === undefined ? undefined : { usedTokens: metadata.totalTokens };
+}
 
 // Protocol 1 sends the effort as `session/set_model` metadata on every call: that response
 // carries no config options, so there is no live effort to compare against. Newer protocols
@@ -406,6 +418,7 @@ export function makeGrokAcpAdapterFlavor(
     supportsImagePrompts: true,
     supportsCompaction: true,
     steering: grokSteering,
+    extractContextUsage: extractGrokContextUsage,
     // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
     // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
     rewriteUserText: (text, turnInput) => {

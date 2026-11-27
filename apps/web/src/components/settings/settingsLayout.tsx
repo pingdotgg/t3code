@@ -43,6 +43,7 @@ import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import {
   isProjectScopedSettingKey,
@@ -558,24 +559,22 @@ export function SettingsRow({
       resetAction
     );
   const inertControl = (message: string) => (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={0}
-            className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[26rem]/settings-row:w-auto"
-          />
-        }
+    <SharedTooltipTrigger
+      render={
+        <span
+          tabIndex={0}
+          className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[26rem]/settings-row:w-auto"
+        />
+      }
+      label={message}
+    >
+      <div
+        inert
+        className="flex w-full items-center gap-2 opacity-64 @min-[26rem]/settings-row:w-auto"
       >
-        <div
-          inert
-          className="flex w-full items-center gap-2 opacity-64 @min-[26rem]/settings-row:w-auto"
-        >
-          {control}
-        </div>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{message}</TooltipPopup>
-    </Tooltip>
+        {control}
+      </div>
+    </SharedTooltipTrigger>
   );
   const lackingPermissionMessage = () => {
     const environments = context
@@ -929,15 +928,27 @@ export function SettingsSearchField({
       <InputGroupAddon>
         <SearchIcon aria-hidden />
       </InputGroupAddon>
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
+        enterKeyHint="search"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (
+            event.key !== "Escape" ||
+            event.shiftKey ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.nativeEvent.isComposing ||
+            event.keyCode === 229
+          )
+            return;
           event.preventDefault();
-          if (value.length > 0) {
+          if (value.length > 0 || event.repeat) {
             event.stopPropagation();
             onChange("");
           } else event.currentTarget.blur();

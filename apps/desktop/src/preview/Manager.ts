@@ -481,7 +481,7 @@ const IN_PLACE_DENIED_PROTOCOLS = new Set([
   "view-source:",
 ]);
 
-/** Popups bypass will-attach-webview hardening and would inherit the picker's contextIsolation:false. */
+/** Popups bypass will-attach-webview hardening, so they are isolated and sandboxed here. */
 const POPUP_WINDOW_OPTIONS = {
   webPreferences: {
     contextIsolation: true,
@@ -1744,9 +1744,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             );
             return { action: "deny" };
           }
+          const { postBody } = details;
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
-              wc.loadURL(details.url),
+              postBody
+                ? wc.loadURL(details.url, {
+                    postData: postBody.data,
+                    extraHeaders: postBody.boundary
+                      ? `content-type: ${postBody.contentType}; boundary=${postBody.boundary}`
+                      : `content-type: ${postBody.contentType}`,
+                  })
+                : wc.loadURL(details.url),
             ).pipe(Effect.ignore),
           );
           return { action: "deny" };
@@ -2627,6 +2635,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           webContents: wc,
           debugger: control.debugger,
           cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
+          annotating: () => Ref.getUnsafe(pickSessionsRef).has(tabId),
         });
         // CDP cannot recover a failure that happened before it attached.
         const { navStatus } = afterAttach;

@@ -3,7 +3,7 @@ import type { LucideIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { InlineButton } from "~/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import { WorkLogRow, WorkLogTarget, WorkLogVerb } from "./WorkLog";
 
 /**
@@ -119,20 +119,18 @@ function SystemRowAction(props: {
   readonly children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={props.actionLabel}
-            onClick={props.onAction}
-            className="min-w-0 cursor-pointer rounded-control px-1.5 py-0.5 transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-          />
-        }
-      >
-        {props.children}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.actionLabel}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <button
+          type="button"
+          aria-label={props.actionLabel}
+          onClick={props.onAction}
+          className="min-w-0 cursor-pointer rounded-control px-1.5 py-0.5 transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        />
+      }
+      label={props.actionLabel}
+    >
+      {props.children}
+    </SharedTooltipTrigger>
   );
 }

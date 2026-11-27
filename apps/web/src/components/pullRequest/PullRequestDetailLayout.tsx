@@ -5,16 +5,15 @@ import type { ComponentProps } from "react";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
-import { TooltipPopup } from "../ui/tooltip";
-import { RowTooltip } from "../workItem/WorkItemRowTooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function PullRequestPrivateMark({ className }: { className?: string }) {
   const gt = useGT();
   const label = gt("Private");
   return (
-    <RowTooltip
+    <SharedTooltipTrigger
       render={<LockIcon role="img" aria-label={label} className={cn("shrink-0", className)} />}
-      popup={<TooltipPopup side="top">{label}</TooltipPopup>}
+      label={label}
     />
   );
 }

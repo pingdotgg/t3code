@@ -618,6 +618,7 @@ function ThreadSurfacePane({
         }
       }}
       onCloseSurface={close}
+      onCloseSelectedSurfaces={noop}
       onOpenInMainView={openInMainView}
       onRenameDevice={(id, title) =>
         useRightPanelStore.getState().renameDevice(threadRef, id, title)

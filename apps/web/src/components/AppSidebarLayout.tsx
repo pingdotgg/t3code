@@ -88,6 +88,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Button } from "./ui/button";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
@@ -458,25 +459,24 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
             ...(overviewShown && { opacity: 0 }),
           }}
         >
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <SidebarTrigger
-                  variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-                  className={cn(
-                    "pointer-events-auto",
-                    isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-                  )}
-                  aria-label={gt("Toggle main sidebar")}
-                />
-              }
-            />
-            <TooltipPopup side="bottom">
-              {shortcutLabel
+          <SharedTooltipTrigger
+            render={
+              <SidebarTrigger
+                variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+                className={cn(
+                  "pointer-events-auto",
+                  isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                )}
+                aria-label={gt("Toggle main sidebar")}
+              />
+            }
+            label={
+              shortcutLabel
                 ? gt("Toggle main sidebar ({shortcut})", { shortcut: shortcutLabel })
-                : gt("Toggle main sidebar")}
-            </TooltipPopup>
-          </Tooltip>
+                : gt("Toggle main sidebar")
+            }
+            side="bottom"
+          />
         </div>
       ) : null}
       {showSidebar ? (
@@ -712,6 +712,7 @@ export function AppSidebarLayout({
                 // Light, black chrome paints the sidebar with the dark tokens (index.css).
                 data-chrome-scope=""
                 resizable={{
+                  collapseOnResize: true,
                   maxWidth: sidebarMaximumWidth,
                   minWidth: sidebarMinimumWidth,
                   shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>

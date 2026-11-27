@@ -9,13 +9,12 @@ import { cn } from "~/lib/utils";
 import { RelativeTime } from "~/components/RelativeTime";
 
 import { MiddleTruncate } from "../ui/middle-truncate";
-import { TooltipPopup } from "../ui/tooltip";
-import { RowTooltip } from "../workItem/WorkItemRowTooltip";
 import {
   PullRequestActorAvatar,
   PullRequestConflictGlyph,
   PullRequestStateGlyph,
 } from "./pullRequestPresentation";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export const PULL_REQUEST_ROW_CLASS =
   "group/pr-row flex w-full items-center gap-2 rounded-row py-1 pr-1 text-left";
@@ -149,17 +148,13 @@ export function PullRequestRowAuthor({
 }) {
   const login = actor?.login ?? "ghost";
   return (
-    <RowTooltip
+    <SharedTooltipTrigger
       render={<span className={cn("inline-flex min-w-0 items-center gap-1", className)} />}
-      popup={
-        <TooltipPopup side="top">
-          {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
-        </TooltipPopup>
-      }
+      label={actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
     >
       <PullRequestActorAvatar actor={actor} className="size-3.5" />
       <span className={cn("truncate", labelClassName)}>{login}</span>
-    </RowTooltip>
+    </SharedTooltipTrigger>
   );
 }
 

@@ -1345,6 +1345,60 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("excludes sandboxes recorded by their real path when the base dir is a symlink", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const realBaseDir = yield* fileSystem.realPath(yield* makeTempDir("t3code-scanner-base-"));
+        const linkParent = yield* makeTempDir("t3code-scanner-links-");
+        const configBaseDir = path.join(linkParent, "t3-home");
+        yield* fileSystem.symlink(realBaseDir, configBaseDir);
+
+        const worktreeCwd = path.join(realBaseDir, "worktrees", "t3code", "wt-4");
+        yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+          contents: claudeSessionLine(worktreeCwd),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+
+        expect(result.candidates).toEqual([]);
+      }),
+    );
+
+    it.effect("offers an outside project reached through a link inside a symlinked base dir", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const projectDir = yield* fileSystem.realPath(
+          yield* makeTempDir("t3code-scanner-project-"),
+        );
+        const realBaseDir = yield* fileSystem.realPath(yield* makeTempDir("t3code-scanner-base-"));
+        const linkParent = yield* makeTempDir("t3code-scanner-links-");
+        const configBaseDir = path.join(linkParent, "t3-home");
+        yield* fileSystem.symlink(realBaseDir, configBaseDir);
+        const projectLink = path.join(realBaseDir, "project-link");
+        yield* fileSystem.symlink(projectDir, projectLink);
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+          contents: claudeSessionLine(projectLink),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+
+        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: projectLink, threadCount: 1 },
+        ]);
+      }),
+    );
+
     it.effect("finds the cwd on a later line when the first records carry none", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1415,6 +1469,55 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           expect(recovered.truncated).not.toBe(true);
           expect(recovered.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
         }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+      }),
+    );
+
+    it.effect("attributes a Pi session only to its complete header workspace", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const piAgentDir = yield* makeTempDir("t3code-pi-agent-");
+        const projects = yield* makeTempDir("t3code-projects-");
+        const workspace = path.join(projects, "session-workspace");
+        const otherWorkspace = path.join(projects, "other-workspace");
+        yield* fileSystem.makeDirectory(workspace);
+        yield* fileSystem.makeDirectory(otherWorkspace);
+        const header = { type: "session", version: 3, id: "pi-session" };
+
+        yield* writeTranscript({
+          filePath: path.join(piAgentDir, "sessions", "--workspace--", "pi-session.jsonl"),
+          contents: [
+            encodeTranscriptRecord({ ...header, cwd: otherWorkspace }).slice(0, -1),
+            encodeTranscriptRecord({
+              type: "message",
+              id: "prompt",
+              parentId: null,
+              cwd: otherWorkspace,
+              timestamp: "2026-01-01T00:00:00.000Z",
+              message: { role: "user", content: "Review this project" },
+            }),
+            // An invalid timestamp fails record decoding but must not hide the workspace.
+            encodeTranscriptRecord({ ...header, cwd: workspace, timestamp: null }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, piAgentDir });
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          piAgentDir,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          result.candidates.map((candidate) => path.relative(projects, candidate.path)),
+        ).toEqual(["session-workspace"]);
+        expect(threads).toMatchObject([{ providerSessionId: "pi-session" }]);
       }),
     );
 
@@ -1765,6 +1868,63 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports older history behind 100 unreadable sessions", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const sessions = path.join(claudeHomePath, "pi-agent", "sessions", "--workspace--");
+        // Nesting past the JSON reader's depth limit makes a transcript unreadable.
+        const tooDeep = "[".repeat(130) + "]".repeat(130);
+        for (let index = 0; index < 100; index++) {
+          const header = encodeTranscriptRecord({
+            type: "session",
+            version: 3,
+            id: `unreadable-${index}`,
+            cwd: workspace,
+          });
+          yield* writeTranscript({
+            filePath: path.join(sessions, `unreadable-${index}.jsonl`),
+            contents: `${header}\n${tooDeep}\n`,
+            mtimeMs: nowMs - (index + 1) * 1_000,
+          });
+        }
+        yield* writeTranscript({
+          filePath: path.join(sessions, "older.jsonl"),
+          contents:
+            [
+              { type: "session", version: 3, id: "older", cwd: workspace },
+              {
+                type: "message",
+                id: "a1",
+                parentId: null,
+                message: { role: "user", content: "Review this change" },
+              },
+              {
+                type: "message",
+                id: "a2",
+                parentId: "a1",
+                message: { role: "assistant", content: [{ type: "text", text: "Looks good" }] },
+              },
+            ]
+              .map((record) => encodeTranscriptRecord(record))
+              .join("\n") + "\n",
+          mtimeMs: nowMs - 200_000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual(["older"]);
+      }),
+    );
+
     it.effect("keeps the provider instance that owns a custom session home", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1988,6 +2148,129 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           { path: otherDir, threadCount: 1 },
         ]);
       }),
+    );
+
+    it.effect.each([{ layout: "plain" }, { layout: "symlinked into Downloads" }] as const)(
+      "does not file T3 sandbox chats under the Codex project they were moved into ($layout base dir)",
+      ({ layout }) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-11-08T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const homeDir = yield* makeTempDir("t3code-home-");
+          let configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+          let realBaseDir = configBaseDir;
+          if (layout === "symlinked into Downloads") {
+            // A Downloads folder is scratch, so only the base's real spelling tells the sandbox apart.
+            realBaseDir = path.join(homeDir, "Downloads", "t3-data");
+            yield* fileSystem.makeDirectory(realBaseDir, { recursive: true });
+            configBaseDir = path.join(homeDir, "t3-link");
+            yield* fileSystem.symlink(realBaseDir, configBaseDir);
+          }
+          const projectDir = path.join(homeDir, "code", "my-project");
+          const sandboxDir = path.join(realBaseDir, "worktrees", "my-project", "wt-1");
+          yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+          yield* fileSystem.makeDirectory(sandboxDir, { recursive: true });
+
+          const projectId = "019a5f00-0000-7000-8000-000000000101";
+          const chats = [
+            {
+              id: "019a5f00-0000-7000-8000-00000000010a",
+              cwd: projectDir,
+              message: "Started in the project",
+            },
+            {
+              id: "019a5f00-0000-7000-8000-00000000010b",
+              cwd: sandboxDir,
+              message: "Started in a T3 worktree",
+            },
+          ];
+          const rolloutPaths: Array<string> = [];
+          for (const [index, chat] of chats.entries()) {
+            const filePath = path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "11",
+              "08",
+              `rollout-2026-11-08T08-0${index}-00-${chat.id}.jsonl`,
+            );
+            rolloutPaths.push(filePath);
+            yield* writeTranscript({
+              filePath,
+              contents: [
+                encodeTranscriptRecord({
+                  type: "session_meta",
+                  payload: { id: chat.id, cwd: chat.cwd },
+                }),
+                encodeTranscriptRecord({ type: "turn_context", payload: { cwd: chat.cwd } }),
+                encodeTranscriptRecord({
+                  type: "event_msg",
+                  payload: { type: "user_message", message: chat.message },
+                }),
+              ].join("\n"),
+              mtimeMs: nowMs - 60_000 + index,
+            });
+          }
+          yield* Effect.sync(() => {
+            const db = new NodeSqlite.DatabaseSync(path.join(codexHomePath, "state_5.sqlite"));
+            try {
+              db.exec(`
+              CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                position INTEGER NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+              );
+              CREATE TABLE project_roots (
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                PRIMARY KEY (project_id, position)
+              );
+              CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL
+              );
+            `);
+              db.prepare("INSERT INTO projects VALUES (?, ?, '{}', 0, ?, ?)").run(
+                projectId,
+                "my-project",
+                nowMs,
+                nowMs,
+              );
+              db.prepare("INSERT INTO project_roots VALUES (?, 0, ?)").run(projectId, projectDir);
+              const insertThread = db.prepare("INSERT INTO threads VALUES (?, ?, ?, ?)");
+              for (const [index, chat] of chats.entries()) {
+                insertThread.run(chat.id, rolloutPaths[index]!, chat.cwd, projectId);
+              }
+            } finally {
+              db.close();
+            }
+          });
+
+          const threads = yield* runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            configBaseDir,
+            workspaceRoot: projectDir,
+          }).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
+          expect(threads.map((thread) => thread.title)).toEqual(["Started in the project"]);
+
+          const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir }).pipe(
+            Effect.provideService(HostProcess.HomeDirectory, homeDir),
+          );
+          expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual(
+            [{ path: projectDir, threadCount: 1 }],
+          );
+        }),
     );
 
     it.effect("imports a rewound Codex thread with the history its new rollout inherits", () =>
@@ -3455,6 +3738,53 @@ describe("parseAgentSessionTranscript", () => {
         { role: "assistant", text: "The provider request failed" },
       ],
     });
+  });
+
+  const parseClaudeUserTurns = (userTurns: ReadonlyArray<string>) =>
+    AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        ...userTurns.map((content) => ({ type: "user", message: { role: "user", content } })),
+        { type: "assistant", message: { role: "assistant", content: "Here is what happened." } },
+      ]
+        .map((record) => encodeTranscriptRecord(record))
+        .join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "62c057bb-b316-4b29-be2c-140090d71254",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+  it.each([
+    "<local-command-stdout>Enabled plan mode</local-command-stdout>",
+    "<command-name>/review</command-name>\n<command-message>review</command-message>",
+  ])("keeps a Claude question after quoted %s and names the thread after it", (quote) => {
+    const prompt = `${quote}\nWhy did this change?`;
+
+    expect(parseClaudeUserTurns([prompt])).toMatchObject({
+      title: "Why did this change?",
+      messages: [{ role: "user", text: prompt }, { role: "assistant" }],
+    });
+  });
+
+  it("keeps a Claude question after quoted output full of shell closing tags", () => {
+    const prompt = `<bash-stdout>${"</bash-stdout><bash-stderr>".repeat(16_000)}</bash-stdout><bash-stderr></bash-stderr>\nWhy did this change?`;
+
+    expect(parseClaudeUserTurns([prompt])).toMatchObject({
+      title: "Why did this change?",
+      messages: [{ role: "user", text: prompt }, { role: "assistant" }],
+    });
+  });
+
+  it.each([
+    "<bash-stdout></bash-stdout>\nfinished\n</bash-stdout><bash-stderr></bash-stderr>",
+    "<bash-stderr></bash-stderr>\nfinished\n</bash-stderr>",
+    "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>\n<tools-used-before-summary>Bash, Read</tools-used-before-summary>",
+  ])("hides Claude output with trailing markup of its own (%s)", (output) => {
+    expect(
+      parseClaudeUserTurns([output, "What happened?"])
+        ?.messages.filter((message) => message.role === "user")
+        .map((message) => message.text),
+    ).toEqual(["What happened?"]);
   });
 
   it.each([

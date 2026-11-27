@@ -1,3 +1,4 @@
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { readWorkflowPane, type WorkflowPaneState } from "./workflowPane.logic";
 
 export interface WorkflowsSearch extends WorkflowPaneState {
@@ -8,12 +9,14 @@ export interface WorkflowsSearch extends WorkflowPaneState {
   readonly file?: string;
 }
 
+const sliceParam = (value: string) => value.slice(0, splitsSurrogatePair(value, 200) ? 199 : 200);
+
 export function workflowsSearchFromUrl(raw: Record<string, unknown>): WorkflowsSearch {
   return {
-    ...(typeof raw.env === "string" && raw.env ? { env: raw.env.slice(0, 200) } : {}),
-    ...(typeof raw.run === "string" && raw.run ? { run: raw.run.slice(0, 200) } : {}),
+    ...(typeof raw.env === "string" && raw.env ? { env: sliceParam(raw.env) } : {}),
+    ...(typeof raw.run === "string" && raw.run ? { run: sliceParam(raw.run) } : {}),
     ...readWorkflowPane(raw.pane, raw.tab),
     ...(raw.definitions === true || raw.definitions === "true" ? { definitions: true } : {}),
-    ...(typeof raw.file === "string" && raw.file ? { file: raw.file.slice(0, 200) } : {}),
+    ...(typeof raw.file === "string" && raw.file ? { file: sliceParam(raw.file) } : {}),
   };
 }

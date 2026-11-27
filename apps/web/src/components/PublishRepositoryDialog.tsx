@@ -46,7 +46,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Spinner } from "./ui/spinner";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 /** Tile order and the short names narrow tiles use; hosts not listed follow in registry order. */
 const TILE_ORDER: ReadonlyArray<string> = [
@@ -168,13 +168,12 @@ function PublishProviderTile(props: {
   );
   if (readiness.ready) return tile;
   return (
-    <Tooltip>
-      <TooltipTrigger render={tile} />
-      <TooltipPopup side="top">
-        {readiness.hint ??
-          gt("Open Settings -> Source control & issues to configure this provider.")}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={tile}
+      label={
+        readiness.hint ?? gt("Open Settings -> Source control & issues to configure this provider.")
+      }
+    />
   );
 }
 
