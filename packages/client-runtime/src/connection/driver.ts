@@ -96,6 +96,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
+  let tunnelDisabled: ConnectionAttemptError | undefined;
   const refusedRouteIds: Array<string> = [];
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
@@ -107,6 +108,9 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     );
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
+      // A publish-only relay cannot explain why a direct route failed.
+      else if (result.failure.failureCause === "tunnel_not_enabled")
+        tunnelDisabled ??= result.failure;
       else blocked ??= result.failure;
       if (isHostCredentialRefusal(result.failure))
         refusedRouteIds.push(connectionRouteId(route.target));
@@ -151,6 +155,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   return yield* (
     transient ??
     blocked ??
+    tunnelDisabled ??
     new ConnectionTransientError({
       reason: "endpoint-unavailable",
       ...translatableDetail(
