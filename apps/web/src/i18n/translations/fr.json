@@ -4236,6 +4236,7 @@
   "ac242b57dbfa5259": "Gérer les tâches planifiées",
   "d93c0db04f4c8e46": "Modifier l’automatisation",
   "3fe420ed9b5bdb75": "Exécuter maintenant",
+  "fdf273ca647a967f": "Supprimer",
   "0c433351a8606e50": [
     "Impossible de charger les automatisations : ",
     {
@@ -13043,5 +13044,7 @@
   "95435f0b59cb2193": "Aperçu audio",
   "4a12506938295127": "Saisissez d’abord {field}.",
   "5807c08e225c6b3d": "Télécharger",
-  "0d50b5bfe7151ece": "Impossible de télécharger le fichier"
+  "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
+  "eb1fd384ad5919dd": "Note interne",
+  "b45f0b467e9406d0": "Répondre au client"
 }

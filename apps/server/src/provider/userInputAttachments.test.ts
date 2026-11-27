@@ -340,6 +340,19 @@ describe("question answer paths", () => {
       "A\tB\t\nC",
     ],
     [
+      "nested table cell boundaries",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\cellx5000
+\pard\intbl\itap2 One\nestcell
+\pard\intbl\itap2 Two\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}
+\pard\intbl\itap1 Tail\cell
+\pard\intbl\itap2 Three\nestcell
+\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1000\cellx2000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1 Peer\cell\row}`,
+      "One Two Tail\tThree Four\nPeer",
+    ],
+    [
       "hidden text",
       String.raw`{\rtf1\ansi A {\v B{\v0 C}D} E\v F\v0  G\v1 H\plain  I}`,
       "A C E G I",
@@ -1450,6 +1463,20 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+              '<t:p>The shipment left.<t:note t:id="ftn0" t:note-class="footnote"><t:note-citation>1</t:note-citation><t:note-body><t:p>Inspect the seals before departure.</t:p></t:note-body></t:note> Finance booked revenue.</t:p>' +
+              '<t:p>The ledger lists Tokyo<t:note t:id="ftn1" t:note-class="footnote"><t:note-citation>2</t:note-citation><t:note-body><t:p>Includes freight.</t:p><t:p>Duties excluded.</t:p></t:note-body></t:note> and Osaka.</t:p>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: [
+            "The shipment left.[1: Inspect the seals before departure.] Finance booked revenue.\nThe ledger lists Tokyo[2: Includes freight.\nDuties excluded.] and Osaka.",
+          ],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
               '<document><text><p>Fee <office:annotation><dc:creator>Reviewer</dc:creator><dc:date>2026-01-01T00:00:00</dc:date><initials>JR</initials><p>Check</p></office:annotation>$700</p><table><table-row><table-cell office:value-type="float" office:value="150"><office:annotation><p>was 120</p></office:annotation></table-cell></table-row></table><p>Formula <math:math><math:semantics><math:mrow>x+y</math:mrow><math:annotation encoding="application/x-tex">x+y</math:annotation></math:semantics></math:math></p></text></document>',
           },
           expected: ["Fee $700\n150\nFormula x+yx+y"],
@@ -1971,7 +1998,18 @@ describe("question answer paths", () => {
               '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><p>Map: <img src="map.png" alt="North &amp; south piers"/> open<img src="blank.png" alt=""/><img src="missing.png"/>.</p><div><img src="cover.png" alt="Cover art"/></div><img hidden="" src="draft.png" alt="Hidden image text"/><img src="none.png" alt="Display none image" style="width: 1em; DISPLAY: none"/><img src="invisible.png" alt="Invisible image" style="visibility:hidden !important"/><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table><dl><dt>Port</dt><dd>443</dd><dt>Timeout</dt><dd>30 seconds</dd></dl><p hidden="">Draft note</p><div hidden="hidden">Hidden block<p>Hidden nested</p></div><p hidden="UNTIL-FOUND">Findable note</p><p aria-hidden="true">Decorative note</p><p x:hidden="true">Prefixed note</p><ol><li>Before boarding<ul><li>Check passports<ol><li>Compare names</li></ol></li><li>Confirm gate</li></ul></li><li>Board promptly</li><li><p>Before landing</p><ul><li>Collect bags</li></ul></li></ol>' +
               "<ol><li>Indented\n  <ul><li>Alpha</li></ul></li></ol>" +
               '<div>Board<template><h2>Sample berth</h2><img alt="Sample map"/></template> now.</div>' +
-              "<p>Keep <template>Example sailing at dawn.</template>reading.</p></body></html>",
+              "<p>Keep <template>Example sailing at dawn.</template>reading.</p>" +
+              "<style>.published{display:block!important}</style>" +
+              '<p style="display:none!important; display:block!important">Service charge: $700.</p>' +
+              '<div style="DISPLAY: /* draft */ none ! important; display:block"><p>Cancelled surcharge: $500.</p><img alt="Hidden invoice illustration"/></div>' +
+              '<p>Review <span style="display:none!important">the retired version of </span>this invoice.</p>' +
+              '<p style="display:block !important; display:none">Total due: $700.</p>' +
+              '<p class="published" style="display:none">Bank transfer accepted.</p>' +
+              '<p style="--label: &quot;example;display:none!important;&quot;">Payment due tomorrow.</p>' +
+              '<p style="--options: {label: draft; display:none!important;};">Payment instructions.</p>' +
+              '<p style="--options:[);display:none!important">Accounts contact.</p>' +
+              '<p style="display:none!important;--label:&quot;draft&#10;;display:block!important">Visible total: $700.</p>' +
+              '<img alt="Hidden old payment instructions" style="--label:old\\ payment;display:none"/></body></html>',
             "OEBPS/c.xhtml": '<html hidden=""><body><p>Root hidden</p></body></html>',
             "OEBPS/d.xhtml":
               '<xh:html xmlns:xh="http://www.w3.org/1999/xhtml"><xh:body><xh:p>Start <template>Visible excerpt</template>' +
@@ -1996,6 +2034,8 @@ describe("question answer paths", () => {
             "Before landing\nCollect bags",
             "Indented\n  Alpha",
             "Board now.\nKeep reading.",
+            "Service charge: $700.\nReview this invoice.\nTotal due: $700.",
+            "Bank transfer accepted.\nPayment due tomorrow.\nPayment instructions.\nAccounts contact.\nVisible total: $700.",
             "## Chapter 2",
             "Last chapter",
             "Totals\nTable 1: Revenue\nQ1\tQ2\n100\t200",
@@ -2018,6 +2058,9 @@ describe("question answer paths", () => {
             "Sample berth",
             "Sample map",
             "Example sailing at dawn.",
+            "Cancelled surcharge",
+            "Hidden invoice illustration",
+            "Hidden old payment instructions",
             "Hidden excerpt",
           ],
         },

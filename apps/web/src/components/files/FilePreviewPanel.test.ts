@@ -177,6 +177,11 @@ describe("document preview contents", () => {
       String.raw`{\rtf1 A{\deleted\uc1\u945\deleted0 old}B}`,
       "AB",
     ],
+    [
+      "nested table cells",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
+      "Inner A\tInner B\t\t",
+    ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
@@ -489,6 +494,16 @@ Third}`;
     for (const name of ["", "Питон"]) {
       const blank = { nbformat: 4, metadata: { language_info: { name } }, cells: [] };
       expect(openNotebook(bytes(JSON.stringify(blank)))).toMatchObject({ language: "text" });
+    }
+    const kernelspec = { name: "python3", display_name: "Python 3", language: "python" };
+    for (const [metadata, language] of [
+      [{ kernelspec }, "python"],
+      [{ language_info: { name: "" }, kernelspec }, "python"],
+      [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+    ] as const) {
+      expect(
+        openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
+      ).toMatchObject({ language });
     }
     // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
     const failed = openNotebook(
@@ -826,7 +841,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -840,6 +855,9 @@ Third}`;
     const second = await book.page(1);
     expect([first.title, second.title]).toEqual(["Second", "a".repeat(119)]);
     expect(first.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
+    expect(first.html).toContain(
+      '<p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p>',
+    );
     expect(first.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(first.html).toContain(
       "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",

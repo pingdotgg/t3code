@@ -4235,6 +4235,7 @@
   "ac242b57dbfa5259": "Gestionar tareas programadas",
   "d93c0db04f4c8e46": "Editar automatización",
   "3fe420ed9b5bdb75": "Ejecutar ahora",
+  "fdf273ca647a967f": "Eliminar",
   "0c433351a8606e50": [
     "No se pudieron cargar las automatizaciones: ",
     {
@@ -13038,5 +13039,7 @@
   "95435f0b59cb2193": "Vista previa de audio",
   "4a12506938295127": "Introduce primero {field}.",
   "5807c08e225c6b3d": "Descargar",
-  "0d50b5bfe7151ece": "No se pudo descargar el archivo"
+  "0d50b5bfe7151ece": "No se pudo descargar el archivo",
+  "eb1fd384ad5919dd": "Nota interna",
+  "b45f0b467e9406d0": "Responder al cliente"
 }

@@ -2,7 +2,7 @@ import { type Generated, OpenAiClient, OpenAiLanguageModel, OpenAiSchema, OpenAi
 import { assert, describe, it } from "@effect/vitest"
 import { assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Array, Context, Effect, Layer, Redacted, Ref, Schema, SchemaGetter, Stream } from "effect"
-import { AiError, LanguageModel, Prompt, Response as AiResponse, Tool, Toolkit } from "effect/ai"
+import { AiError, Chat, LanguageModel, Prompt, Response as AiResponse, Tool, Toolkit } from "effect/ai"
 import { HttpClient, type HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
 
 const webSearchFailures = [
@@ -820,6 +820,32 @@ describe("OpenAiLanguageModel", () => {
             Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini", { store: true })),
             Effect.provide(makeTestLayer({ body: { output: [makeWebSearchCall(), makeTextOutput("Answer")] } }))
           ))
+
+        it.effect.each([false, true])(
+          "replays Chat after image generation with store=%s",
+          (store) =>
+            Effect.gen(function*() {
+              const chat = yield* Chat.empty
+              const toolkit = Toolkit.make(OpenAiTool.ImageGeneration({}))
+
+              yield* chat.generateText({ prompt: "Draw a cat", toolkit })
+              yield* chat.generateText({ prompt: "Thanks", toolkit })
+
+              const body = yield* getRequestBody((yield* MockHttpClient.requests)[1])
+              deepStrictEqual(body.input, [
+                { role: "user", content: [{ type: "input_text", text: "Draw a cat" }] },
+                ...(store ? [{ type: "item_reference", id: "ig_123" }] : []),
+                { role: "user", content: [{ type: "input_text", text: "Thanks" }] }
+              ])
+            }).pipe(
+              Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini", { store })),
+              Effect.provide(makeTestLayer({
+                body: {
+                  output: [{ type: "image_generation_call", id: "ig_123", status: "completed", result: "aW1hZ2U=" }]
+                }
+              }))
+            )
+        )
 
         it.effect("references stored provider-executed items by their stored item ID", () =>
           Effect.gen(function*() {
