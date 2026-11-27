@@ -39,6 +39,7 @@ import {
   ANNOTATION_VOICE_STATE_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
+  EXTERNAL_LINK_PRESS_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   POINTER_DOWN_HOST_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
@@ -219,6 +220,18 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+
+// Main cannot tell a click on an app link from a page retrying the same link, so the press is reported.
+const reportExternalLinkPress = (event: PointerEvent | KeyboardEvent): void => {
+  if (!event.isTrusted || (event instanceof KeyboardEvent && event.key !== "Enter")) return;
+  const link = event.target instanceof Element ? event.target.closest("a[href], area[href]") : null;
+  if (!(link instanceof HTMLAnchorElement || link instanceof HTMLAreaElement)) return;
+  if (link.protocol === "http:" || link.protocol === "https:") return;
+  ipcRenderer.send(EXTERNAL_LINK_PRESS_CHANNEL, link.href);
+};
+
+window.addEventListener("pointerdown", reportExternalLinkPress, true);
+window.addEventListener("keydown", reportExternalLinkPress, true);
 
 // Capture runs before a page can stop the event; the task delay lets every page
 // listener call preventDefault before the host is told the key went unhandled.

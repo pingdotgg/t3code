@@ -2,6 +2,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Certificate, Session, WebContents } from "electron";
 import { BrowserWindow, session, systemPreferences } from "electron";
 import { msg } from "gt-i18n";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Digest from "effect/crypto/Digest";
@@ -19,6 +20,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import { m } from "../i18n/messages.ts";
+import { EXTERNAL_LINK_PRESS_CHANNEL } from "./GuestProtocol.ts";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 /** Ephemeral partitions omit persist: but retain a product prefix so the webview gate recognizes them. */
@@ -52,6 +54,9 @@ const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
   "javascript:",
   "view-source:",
 ]);
+
+// How long after the user presses an app link its request still counts as that press.
+const EXTERNAL_LINK_PRESS_WINDOW_MS = 1_000;
 
 const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null => {
   if (!rawUrl) return null;
@@ -350,6 +355,7 @@ const previewHostWindow = (guest: WebContents | null): BrowserWindow | undefined
 
 /** @public */
 export const make = Effect.gen(function* BrowserSessionMake() {
+  const clock = yield* Clock.Clock;
   const crypto = yield* Digest.Digest;
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -408,17 +414,39 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     );
   };
   // A page that retries an app handoff must not re-prompt after Cancel; the next document may ask again.
-  const cancelledExternalLinks = new WeakMap<WebContents, Set<string>>();
+  interface CancelledExternalLinks {
+    readonly links: Set<string>;
+    press: { readonly url: string; readonly at: number } | null;
+  }
+  const cancelledExternalLinks = new WeakMap<WebContents, CancelledExternalLinks>();
   const rememberCancelledExternalLink = (requester: WebContents, url: string): void => {
     let cancelled = cancelledExternalLinks.get(requester);
     if (cancelled === undefined) {
-      const links = new Set<string>();
-      cancelled = links;
-      cancelledExternalLinks.set(requester, links);
+      const state: CancelledExternalLinks = { links: new Set<string>(), press: null };
+      cancelled = state;
+      cancelledExternalLinks.set(requester, state);
       // A protocol handoff starts a navigation that never commits, so only a committed document resets.
-      requester.on("did-navigate", () => links.clear());
+      requester.on("did-navigate", () => state.links.clear());
+      // The preload reports a trusted press on an app link; a click on that link may ask again.
+      requester.ipc.on(EXTERNAL_LINK_PRESS_CHANNEL, (_event, href: unknown) => {
+        const pressed = typeof href === "string" ? externalProtocolPromptUrl(href) : null;
+        if (pressed !== null) state.press = { url: pressed, at: clock.currentTimeMillisUnsafe() };
+      });
     }
-    cancelled.add(url);
+    cancelled.links.add(url);
+  };
+  const isCancelledExternalLink = (requester: WebContents | null, url: string): boolean => {
+    const cancelled = requester === null ? undefined : cancelledExternalLinks.get(requester);
+    if (cancelled === undefined || !cancelled.links.has(url)) return false;
+    const press = cancelled.press;
+    if (
+      press?.url === url &&
+      clock.currentTimeMillisUnsafe() - press.at <= EXTERNAL_LINK_PRESS_WINDOW_MS
+    ) {
+      cancelled.press = null;
+      return false;
+    }
+    return true;
   };
   /** Electron launches external protocols after granting openExternal; untrusted pages require confirmation. */
   const confirmOpenExternal = (
@@ -427,7 +455,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     callback: (granted: boolean) => void,
   ): void => {
     const url = externalProtocolPromptUrl(rawUrl);
-    if (url === null || (requester !== null && cancelledExternalLinks.get(requester)?.has(url))) {
+    if (url === null || isCancelledExternalLink(requester, url)) {
       callback(false);
       return;
     }

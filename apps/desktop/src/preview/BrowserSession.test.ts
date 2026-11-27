@@ -434,6 +434,7 @@ describe("BrowserSession", () => {
         hostWebContents: null,
         isDestroyed: () => false,
         getURL: () => "https://www.douyin.com/",
+        ipc: new NodeEvents.EventEmitter(),
       });
 
       const request = () =>
@@ -464,6 +465,16 @@ describe("BrowserSession", () => {
       guest.emit("did-navigate", {}, "https://www.douyin.com/next");
       assert.isFalse(yield* request());
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
+
+      // Only a press on the cancelled link itself asks again, and only for that one request.
+      guest.ipc.emit("preview:external-link-press", {}, "bytedance://other/");
+      assert.isFalse(yield* request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+      guest.ipc.emit("preview:external-link-press", {}, "bytedance://dispatch_message/");
+      assert.isFalse(yield* request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 3);
+      assert.isFalse(yield* request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 3);
     }).pipe(Effect.provide(layer)),
   );
 
