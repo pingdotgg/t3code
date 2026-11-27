@@ -39,7 +39,7 @@ import type { Sharding } from "../Sharding.ts"
 import { ShardingConfig } from "../ShardingConfig.ts"
 import * as Snowflake from "../Snowflake.ts"
 import * as ClusterAbandon from "./clusterAbandon.ts"
-import { CurrentActivationScope } from "./entityActivation.ts"
+import { CurrentActivationScope, CurrentRetirementLatch } from "./entityActivation.ts"
 import { EntityReaper } from "./entityReaper.ts"
 import { acquireEntity, releaseEntity } from "./interruptors.ts"
 import { ResourceMap } from "./resourceMap.ts"
@@ -124,7 +124,7 @@ export type EntityState = {
   lastActiveCheck: number
   write: RpcServer.RpcServer<any>["write"]
   readonly keepAliveLatch: Latch.Latch
-  keepAliveEnabled: boolean
+  keepAliveRequestId: Snowflake.Snowflake | undefined
 }
 
 /**
@@ -343,6 +343,7 @@ export const make = Effect.fnUntraced(function*<
           Context.add(CurrentRunnerAddress, options.runnerAddress),
           Context.add(KeepAliveLatch, keepAliveLatch),
           Context.add(CurrentActivationScope, scope),
+          Context.add(CurrentRetirementLatch, retired),
           Context.add(Scope.Scope, handlerScope),
           Context.add(CurrentLogAnnotations, {})
         )
@@ -424,13 +425,20 @@ export const make = Effect.fnUntraced(function*<
                     return Effect.fail(new EntityNotAssignedToRunner({ address }))
                   }
                 )
-                // Leave the request for the shard's owner: release the claim
-                // so its next poll sees it, and let local callers re-route.
-                const abandonFenced = Effect.suspend(() => {
+                // Leave the request for the shard's owner and let local callers re-route.
+                // Release the claim after this fiber exits, since RpcServer drops any
+                // redelivery arriving while the request id is still tracked.
+                const abandonFenced = Effect.withFiber((fiber) => {
+                  const requestId = request.message.envelope.requestId
                   removeActiveRequest(Snowflake.Snowflake(response.requestId))
                   return Effect.logDebug("Abandoning a request whose shard this runner no longer owns").pipe(
-                    Effect.andThen(options.storage.unregisterReplyHandler(request.message.envelope.requestId)),
-                    Effect.andThen(Effect.ignore(options.storage.resetRequests([request.message.envelope.requestId])))
+                    Effect.andThen(options.storage.unregisterReplyHandler(requestId)),
+                    Effect.andThen(
+                      Fiber.await(fiber).pipe(
+                        Effect.andThen(Effect.ignore(options.storage.resetRequests([requestId]))),
+                        Effect.forkIn(managerScope)
+                      )
+                    )
                   )
                 })
                 const complete = Effect.sync(() => {
@@ -625,7 +633,7 @@ export const make = Effect.fnUntraced(function*<
       activeRequests,
       lastActiveCheck: clock.currentTimeMillisUnsafe(),
       keepAliveLatch,
-      keepAliveEnabled: false
+      keepAliveRequestId: undefined
     }
 
     // During shutdown, signal that no more messages will be processed
@@ -636,9 +644,9 @@ export const make = Effect.fnUntraced(function*<
       scope,
       Effect.suspend(() => {
         activeServers.delete(address.entityId)
-        retired.openUnsafe()
         closeLatches.closing = true
         acquireEntity(address)
+        retired.openUnsafe()
         drainingServers.set(address.entityId, state)
         return Effect.raceFirst(
           Effect.gen(function*() {
@@ -790,12 +798,17 @@ export const make = Effect.fnUntraced(function*<
                   ))
                 )
 
-                if (server.keepAliveEnabled) return reply
-                server.keepAliveEnabled = true
-                return server.keepAliveLatch.whenOpen(Effect.suspend(() => {
-                  server.keepAliveEnabled = false
+                // Redelivery must not acknowledge the request held until the latch opens.
+                if (server.keepAliveRequestId === message.envelope.requestId) return Effect.void
+                if (server.keepAliveRequestId !== undefined) return reply
+                server.keepAliveRequestId = message.envelope.requestId
+                // Re-check: the latch may close again before this fiber runs.
+                const release: Effect.Effect<void> = server.keepAliveLatch.whenOpen(Effect.suspend(() => {
+                  if (!server.keepAliveLatch.isOpen()) return release
+                  server.keepAliveRequestId = undefined
                   return reply
-                })).pipe(
+                }))
+                return release.pipe(
                   Effect.forkIn(server.scope, { startImmediately: true }),
                   Effect.asVoid
                 )

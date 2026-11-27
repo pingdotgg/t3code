@@ -52,6 +52,7 @@ describe("Arbitrary.configureGlobal", { concurrent: false }, () => {
       const discarded = Arbitrary.filter(arbitrary, () => false)
       assert.deepStrictEqual(yield* Arbitrary.checkEffect(discarded, () => true, { runs: 1 }), {
         _tag: "Exhausted",
+        diagnostics: [],
         runs: 0,
         discards: 1,
         seed: "global"
@@ -112,7 +113,7 @@ describe("Arbitrary.configureGlobal", { concurrent: false }, () => {
       const exit = yield* Arbitrary.sampleEffect(Arbitrary.filter(Arbitrary.Constant(true), () => false)).pipe(
         Effect.flip
       )
-      assert.deepStrictEqual(exit, { _tag: "SampleError", generated: 0, discards: 1, seed: 0 })
+      assert.deepStrictEqual(exit, { _tag: "SampleError", diagnostics: [], generated: 0, discards: 1, seed: 0 })
     }))
 
   it.effect("applies checking defaults without changing replay", () =>

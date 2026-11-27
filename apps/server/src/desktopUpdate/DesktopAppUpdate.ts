@@ -137,9 +137,18 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
         `The T3 Code desktop app on this machine is already up to date on ${report.state.currentVersion}.`,
       );
     }
-    return yield* failWith(
-      report.reason ?? report.state.message ?? "The desktop app update failed.",
-    );
+    const reason = report.reason ?? report.state.message ?? "The desktop app update failed.";
+    const mismatch = report.state.trackMismatch;
+    if (mismatch !== undefined && reason === report.state.message) {
+      return yield* new ServerSelfUpdateError({
+        reason,
+        trackMismatch: {
+          buildChannel: mismatch.buildChannel,
+          savedChannel: report.state.channel,
+        },
+      });
+    }
+    return yield* failWith(reason);
   });
 
   const run: DesktopAppUpdate["Service"]["run"] = Effect.fn("desktopUpdate.desktopAppUpdate.run")(

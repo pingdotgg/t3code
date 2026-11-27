@@ -75,6 +75,7 @@ describe("draft deep links", () => {
   it.each([
     ["environment", "NewTaskEnvironment"],
     ["branch", "NewTaskBranch"],
+    ["repositories", "NewTaskRepositories"],
     ["files", "NewTaskFiles"],
     ["files/src/index.ts", "NewTaskFile"],
     ["attachments/attachment-1", "NewTaskAttachment"],
@@ -87,6 +88,16 @@ describe("draft deep links", () => {
     ).toEqual({
       index: 2,
       routes: [{ name: "Home" }, { name: "Thread", params: { draft: params } }, target],
+    });
+  });
+
+  it.each(["/new/draft", "/new/draft/branch"])("drops the checkout a %s link names", (path) => {
+    const project = { environmentId: "env-1", projectId: "project-1" };
+    const linked = { ...project, branch: "other", worktreePath: "/elsewhere" };
+    const name = path === "/new/draft" ? "Thread" : "NewTaskBranch";
+    expect(restoreDraftLinkState({ routes: [{ name, params: linked }] }, path)?.routes[0]).toEqual({
+      name: "Thread",
+      params: { draft: project },
     });
   });
 

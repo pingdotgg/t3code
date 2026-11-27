@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -37,9 +38,11 @@ import { projectTurnItemForWire } from "./WireProjection.ts";
 
 vi.mock("@t3tools/shared/threadFindText", { spy: true });
 
-const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const layerTest = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+  ProjectStore.layer,
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const providerInstanceId = ProviderInstanceId.make("codex");
 const at = (minute: number) => DateTime.makeUnsafe(Date.UTC(2026, 8, 27, 0, minute));
@@ -463,6 +466,37 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("searches only the picture file chips visible in the viewer's theme", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([
+        item(
+          "picture",
+          1,
+          '<picture><source media="(prefers-color-scheme: dark)" srcset="/workspace/repo/notes.ts#L42-L64"><img src="/workspace/repo/screenshot.png" alt="notes"></picture>',
+        ),
+        item(
+          "fallback",
+          2,
+          '<picture><source media="(prefers-color-scheme: dark)" srcset="/workspace/repo/dark.png"><img src="/workspace/repo/fallback.ts#L42-L64" alt="notes"></picture>',
+        ),
+      ]);
+      const dark = { threadId, query: "L42–64", theme: "dark" } as const;
+      const light = { ...dark, theme: "light" } as const;
+      const darkResult = yield* projection.searchThread(dark);
+      assert.equal(darkResult.totalMatches, 1);
+      assert.equal(darkResult.match?.entryId, "picture");
+      assert.equal(
+        (yield* projection.searchThread({ ...light, query: "notes.ts" })).totalMatches,
+        0,
+      );
+      const lightResult = yield* projection.searchThread(light);
+      assert.equal(lightResult.totalMatches, 1);
+      assert.equal(lightResult.match?.entryId, "fallback");
+      assert.equal((yield* projection.searchThread(dark)).match?.entryId, "picture");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("refreshes file labels when the project cwd changes without a thread event", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -620,7 +654,8 @@ describe("V2 thread find", () => {
       Effect.gen(function* () {
         const projection = yield* setup;
         const queuedRunId = RunId.make("queued:cancelled");
-        yield* commit([run(threadId, queuedRunId, 2, "cancelled")]);
+        const cancelled = run(threadId, queuedRunId, 2, "cancelled");
+        yield* commit([{ ...cancelled, payload: { ...cancelled.payload, startedAt: null } }]);
         const queued = item("cancelled", 1, "needle", "user_message");
         if (queued.type !== "user_message") return;
         const answer = item("async-answer:question", 2, "needle", "user_message");

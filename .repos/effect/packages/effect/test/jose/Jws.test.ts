@@ -230,33 +230,45 @@ it.effect("resolves the verification key from the Jwks service by algorithm and 
     )
   }).pipe(Effect.provide(layer)))
 
-it.effect("never exposes crypto backend diagnostics", () =>
+it.effect("maps crypto backend failures without exposing diagnostics", () =>
   Effect.gen(function*() {
     const marker = "backend-secret-marker"
-    const failure = Effect.fail(
-      new CryptoError.CryptoError({
-        module: "Mac",
-        method: "verify",
-        reason: new CryptoError.InvalidArgument({ description: marker, cause: new Error(marker) })
-      })
-    )
-    const failing = Layer.succeed(
-      Mac.Mac,
-      Mac.Mac.of({
-        generateKey: () => failure,
-        sign: () => failure,
-        verify: () => failure
-      })
-    )
+    const makeMac = (reason: CryptoError.CryptoErrorReason) => {
+      const fail = (method: string) => () => Effect.fail(new CryptoError.CryptoError({ module: "Mac", method, reason }))
+      return Layer.succeed(
+        Mac.Mac,
+        Mac.Mac.of({ generateKey: fail("generateKey"), sign: fail("sign"), verify: fail("verify") })
+      )
+    }
     const key = yield* Jwk.importSecret(Redacted.make(rfc7515.hs256.jwk), "HS256")
-
-    const operations: Array<Effect.Effect<unknown, JoseError.JoseError, Jws.Requirements>> = [
-      Jws.verify(rfc7515.hs256.token, key),
-      Jws.sign(utf8("payload"), key)
+    const operations: ReadonlyArray<{
+      readonly effect: Effect.Effect<unknown, JoseError.JoseError, Mac.Mac>
+      readonly method: string
+      readonly description: string
+    }> = [
+      { effect: Jws.sign(utf8("payload"), key), method: "sign", description: "Could not sign with the key" },
+      { effect: Jws.verify(rfc7515.hs256.token, key), method: "verify", description: "Could not verify with the key" }
     ]
-    for (const operation of operations) {
-      const error = yield* operation.pipe(Effect.provide(failing), Effect.flip)
-      assert.isTrue(JoseError.isJoseError(error))
+
+    const unsupported = makeMac(new CryptoError.Unsupported({ description: marker, cause: new Error(marker) }))
+    for (const { description, effect, method } of operations) {
+      const error = yield* effect.pipe(Effect.provide(unsupported), Effect.flip)
+      assertReason(error, "CryptoFailed")
+      assert.isTrue(JoseError.isJoseErrorReason(error.reason))
+      assert.strictEqual(error.reason.description, description)
+      assert.strictEqual(error.reason.module, "Mac")
+      assert.strictEqual(error.reason.method, method)
+      assert.strictEqual(error.reason.reason, "Unsupported")
+      assert.strictEqual(error.message, `${description} (Mac.${method}: Unsupported)`)
+      assert.isUndefined(error.cause)
       assert.notInclude(NodeUtil.inspect(error, { depth: Infinity }), marker)
     }
+
+    const invalidKey = makeMac(new CryptoError.InvalidKey({ description: marker, cause: new Error(marker) }))
+    const error = yield* Jws.sign(utf8("payload"), key).pipe(Effect.provide(invalidKey), Effect.flip)
+    assertReason(error, "InvalidKey")
+    assert.strictEqual(error.reason.description, "Could not sign with the key")
+    assert.strictEqual(error.message, "Could not sign with the key")
+    assert.isUndefined(error.cause)
+    assert.notInclude(NodeUtil.inspect(error, { depth: Infinity }), marker)
   }).pipe(Effect.provide(layer)))

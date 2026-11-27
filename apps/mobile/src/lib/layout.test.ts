@@ -67,6 +67,7 @@ describe("native workspace sizing", () => {
       };
       const layout = deriveLayout({ ...size, nativeMetrics, nativeWorkspace });
       expect(layout.variant === "medium").toBe(overlay);
+      expect(layout.listPaneWidth).toBe(overlay ? 350 : size.width === 951 ? 304 : 280);
       for (const primarySidebarPreferredVisible of [true, false]) {
         expect(
           deriveWorkspacePaneLayout({
@@ -183,6 +184,26 @@ describe("deriveWorkspacePaneLayout", () => {
       expect(viewportWidth - horizontalSafeArea - width).toBeGreaterThanOrEqual(320);
     },
   );
+
+  it("sizes the Android inspector against the workspace and steps the sidebar aside for it", () => {
+    const width = 1_210;
+    const layout = deriveLayout({ width, height: 800 });
+    const panes = (auxiliaryPanePreferredWidth?: number) =>
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: width,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPanePreferredWidth,
+      });
+
+    expect(panes()).toMatchObject({ auxiliaryPaneWidth: 484, primarySidebarVisible: true });
+    expect(panes(10_000)).toMatchObject({
+      auxiliaryPaneWidth: width * 0.6,
+      primarySidebarVisible: false,
+      primarySidebarSuppressedByAuxiliary: true,
+    });
+  });
 
   it("keeps an explicitly hidden thread sidebar hidden when the file inspector is visible", () => {
     const layout = deriveLayout({ width: 1_024, height: 1_366 });

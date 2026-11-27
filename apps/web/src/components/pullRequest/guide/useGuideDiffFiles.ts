@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { RegistryContext } from "@effect/atom-react";
@@ -46,10 +47,10 @@ export function useGuideDiffFiles({
   const pageAtom = (cursor: string | null) =>
     pullRequestEnvironment.diff({
       environmentId,
-      input: { ...reference, ...(cursor === null ? {} : { cursor }) },
+      input: { ...reference, cacheHeadSha: headSha, ...(cursor === null ? {} : { cursor }) },
     });
   const loading = isMissing(current) && !current.done;
-  const query = useEnvironmentQuery(loading ? pageAtom(current.cursor) : null);
+  const query = useEnvironmentQuery(loading ? pageAtom(current.cursor) : null, useMessages());
 
   // One update for every settled page: an update per page trips React's re-render limit.
   let next = current;

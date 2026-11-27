@@ -7,6 +7,9 @@
 "@effect/platform/HttpApiError#Issue":
   replacement: "effect/SchemaIssue#Issue"
   note: "Structured failures now live at HttpApiSchemaError.cause.issue; format them explicitly when a flat external list is needed."
+"@effect/platform/HttpApiError#NotFound":
+  replacement: "effect/http-api/HttpApiError#NotFoundNoContent"
+  note: "Use NotFoundNoContent to preserve the empty 404 wire schema; NotFound now has a JSON-tagged body."
 "@effect/platform/HttpApiError#TypeId":
   replacement: "effect/http-api/HttpApiError#HttpApiSchemaErrorTypeId"
   note: "The old module symbol is gone; prefer HttpApiSchemaError.is for runtime narrowing."

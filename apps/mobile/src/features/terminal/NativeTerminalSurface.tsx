@@ -3,6 +3,7 @@ import {
   type TerminalGrid,
   type TerminalOutputState,
 } from "@t3tools/client-runtime/state/terminal";
+import { useGT } from "gt-react-native";
 import { memo, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   Pressable,
@@ -88,14 +89,15 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
   ...props
 }: ReadyTerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
+  const gt = useGT();
   const inputRef = useRef<TextInputInstance>(null);
-  const { themeAppearance, themeId } = useAppearancePreferences();
+  const { themeAppearance, themeId, monoFontFamily } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const statusLabel = props.readOnly
-    ? "Viewing terminal output."
+    ? gt("Viewing terminal output.")
     : props.isRunning
-      ? "Native terminal unavailable. Using text fallback."
-      : "Open terminal to start a shell.";
+      ? gt("Native terminal unavailable. Using text fallback.")
+      : gt("Open terminal to start a shell.");
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -143,7 +145,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
             selectable
             style={{
               color: theme.foreground,
-              fontFamily: "Menlo",
+              fontFamily: monoFontFamily,
               fontSize,
               lineHeight: Math.round(fontSize * 1.35),
             }}
@@ -164,14 +166,14 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
           autoCorrect={false}
           blurOnSubmit={false}
           editable={props.isRunning && !props.readOnly}
-          placeholder="type and press return"
+          placeholder={gt("type and press return")}
           placeholderTextColor={theme.mutedForeground}
           returnKeyType="send"
           className="text-sm"
           style={{
             color: theme.foreground,
             flex: 1,
-            fontFamily: "Menlo",
+            fontFamily: monoFontFamily,
             padding: 0,
           }}
           onSubmitEditing={(event) => {
@@ -218,7 +220,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
   ...props
 }: ReadyTerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
-  const { themeAppearance, themeId } = useAppearancePreferences();
+  const { themeAppearance, themeId, monoFontFamily } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
@@ -281,7 +283,6 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
   if (NativeTerminalSurfaceView) {
     return (
       <View style={props.style}>
-        {/* oxlint-disable-next-line react/static-components -- The resolver returns a cached native component with stable identity. */}
         <NativeTerminalSurfaceView
           ref={nativeRef}
           appearanceScheme={themeAppearance}
@@ -294,6 +295,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
           terminalKey={props.terminalKey}
           initialBuffer={streaming ? "" : props.buffer}
           fontSize={fontSize}
+          fontFamily={monoFontFamily}
           sharedGrid={sharedGrid}
           style={{ flex: 1 }}
           themeConfig={buildGhosttyThemeConfig(theme)}

@@ -31,6 +31,8 @@ import {
 } from "~/rightPanelStore";
 
 import { resolveBrowserDefaults } from "./browserDefaults";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
@@ -45,7 +47,7 @@ export class BrowserSettingsReadError extends Schema.TaggedError<BrowserSettings
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Saved browser settings could not be loaded.";
+    return m(msg("Saved browser settings could not be loaded."));
   }
 }
 
@@ -129,7 +131,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     return AsyncResult.failure(
       Cause.fail(
         new BrowserPreviewUnavailableError({
-          message: "The integrated browser is unavailable in this runtime.",
+          message: m(msg("The integrated browser is unavailable in this runtime.")),
         }),
       ),
     );
