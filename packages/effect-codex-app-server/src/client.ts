@@ -89,6 +89,7 @@ type ServerNotificationHandler = (
 /** The generated `turn/start` schema omits these fields; this is what the wire accepts. */
 export const V2TurnStartParams = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
+    parentTurnId: Schema.optionalKey(Schema.String),
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),

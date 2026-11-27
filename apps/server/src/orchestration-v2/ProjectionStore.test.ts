@@ -7640,7 +7640,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* message("message:turn-start-commands:assistant", "assistant", "/compact", 6);
 
         const otherThreadId = ThreadId.make("thread:other");
-        const transfer = (id: string, type: "fork" | "merge_back") =>
+        const transfer = (
+          id: string,
+          type: "fork" | "merge_back" | "subagent_spawn",
+          targetRunId: RunId | null = null,
+        ) =>
           projectionStore.apply({
             id: EventId.make(`event:${id}`),
             type: "context-transfer.created",
@@ -7655,18 +7659,24 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               basePoint: null,
               sourceProviderInstanceId: providerInstanceId,
               targetProviderInstanceId: providerInstanceId,
-              targetRunId: null,
-              status: "pending",
+              targetRunId,
+              status: type === "subagent_spawn" ? "consumed" : "pending",
               resolution: null,
               createdBy: "user",
               error: null,
               createdAt: created,
               updatedAt: created,
-              consumedAt: null,
+              consumedAt: type === "subagent_spawn" ? created : null,
             },
           });
         yield* transfer("transfer:turn-start-commands:fork", "fork");
         yield* transfer("transfer:turn-start-commands:referenced", "merge_back");
+        yield* transfer("transfer:turn-start-commands:spawn", "subagent_spawn", runId);
+        yield* transfer(
+          "transfer:turn-start-commands:earlier-spawn",
+          "subagent_spawn",
+          RunId.make("another-run"),
+        );
         yield* projectionStore.apply({
           id: EventId.make("event:turn-start-commands:handoff"),
           type: "context-handoff.updated",
@@ -7762,7 +7772,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         assert.deepEqual(
           context.contextTransfers.map((item) => item.id),
-          ["transfer:turn-start-commands:fork", "transfer:turn-start-commands:referenced"],
+          [
+            "transfer:turn-start-commands:fork",
+            "transfer:turn-start-commands:referenced",
+            "transfer:turn-start-commands:spawn",
+          ],
         );
 
         const planOf = Effect.fn("planOf")(function* (table: string) {

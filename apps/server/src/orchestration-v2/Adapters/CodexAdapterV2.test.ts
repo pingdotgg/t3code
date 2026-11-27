@@ -720,6 +720,7 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
+  readonly parentTurnId?: string;
   readonly effort?: string;
   readonly interactionMode?: "plan" | "default";
   readonly turnPolicy?: Pick<
@@ -817,6 +818,7 @@ function codexReplayPreamble(input: {
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
+          ...(input.parentTurnId === undefined ? {} : { parentTurnId: input.parentTurnId }),
           input: [{ type: "text", text: input.sentPrompt ?? input.prompt }],
           cwd: "/workspace",
           model: "gpt-5.4",
@@ -3072,7 +3074,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   // regression: #36520 MCP servers can tell a delegate_task child from a user thread
-  it.effect("starts delegate_task children with the subagent thread source", () =>
+  it.effect("sends the source and parent turn for delegated children", () =>
     Effect.gen(function* () {
       const scenario = "delegated-thread-source";
       const preamble = codexReplayPreamble({
@@ -3080,11 +3082,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         nativeTurnId: "unused",
         prompt: "unused",
       }).slice(0, 5);
-      const childStart = codexReplayPreamble({
+      const parentTurnId = "00000000-0000-7000-8000-000000000001";
+      const child = codexReplayPreamble({
         nativeThreadId: "delegated-child-thread",
-        nativeTurnId: "unused",
-        prompt: "unused",
-      })
+        nativeTurnId: "delegated-child-turn",
+        prompt: "inspect",
+        parentTurnId,
+      });
+      const childStart = child
         .slice(3, 5)
         .map((entry) => withReplayRequestId(entry, 3))
         .map((entry) =>
@@ -3102,7 +3107,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
       const threadSources: Array<unknown> = [];
       const harness = yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({ scenario, entries: [...preamble, ...childStart] }),
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...preamble,
+            ...childStart,
+            ...child.slice(5, 7).map((entry) => withReplayRequestId(entry, 4)),
+          ],
+        }),
         () => Effect.void,
         (method, params) =>
           Effect.sync(() => {
@@ -3114,10 +3126,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const childThreadId = (yield* IdAllocator.IdAllocatorV2).derive.delegatedTaskThread({
         commandId: CommandId.make(`mcp:${scenario}:delegate-task:child`),
       });
-      yield* harness.runtime.ensureThread({
+      const providerThread = yield* harness.runtime.ensureThread({
         threadId: childThreadId,
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* harness.runtime.startTurn({
+        ...makeCodexTestTurnInput({
+          threadId: childThreadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("child-attempt"),
+          text: "inspect",
+        }),
+        nativeParentTurnId: parentTurnId,
       });
       assert.deepEqual(threadSources, [undefined, "subagent"]);
     }).pipe(

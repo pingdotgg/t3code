@@ -5589,10 +5589,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT payload_json FROM orchestration_v2_projection_context_handoffs
               WHERE thread_id = ${threadId} ORDER BY rowid ASC
             `.pipe(Effect.flatMap(decodeRows(decodeContextHandoffPayload, threadId)));
-            // The fork into this thread and the transfers its handoffs came from, not the thousands of delegated results.
+            // Read the incoming fork, this run's spawn, and the transfers referenced by handoffs.
             const contextTransfers = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_context_transfers
               WHERE (target_thread_id = ${threadId} AND type = 'fork')
+                OR (target_run_id = ${runId} AND type = 'subagent_spawn' AND target_thread_id = ${threadId})
                 OR context_transfer_id IN (
                   SELECT json_extract(payload_json, '$.transferId')
                   FROM orchestration_v2_projection_context_handoffs WHERE thread_id = ${threadId}

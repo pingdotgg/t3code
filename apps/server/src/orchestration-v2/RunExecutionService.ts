@@ -651,6 +651,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly baseline?: Effect.Effect<void>;
   readonly providerTurnOrdinal: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly nativeParentTurnId?: string;
   readonly resume?: boolean;
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
@@ -2343,7 +2344,12 @@ export const layer: Layer.Layer<
                     }),
                   }),
                 ))
-              : input.session.startTurn(turnInput);
+              : input.session.startTurn({
+                  ...turnInput,
+                  ...(input.nativeParentTurnId === undefined
+                    ? {}
+                    : { nativeParentTurnId: input.nativeParentTurnId }),
+                });
         yield* Effect.andThen(shouldStart, startTurn).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.

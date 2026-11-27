@@ -2483,11 +2483,31 @@ export const layer: Layer.Layer<
       const deliverySession = carriesPendingContext
         ? makeDeliverySession(session, startWithHandoffs)
         : session;
+      // The spawn records the parent turn at dispatch, even if the parent has since moved on.
+      const parentTurnRef =
+        session.driver === "codex" &&
+        message.createdBy === "agent" &&
+        projection.thread.lineage.relationshipToParent === "subagent"
+          ? projection.contextTransfers.find(
+              (transfer) =>
+                transfer.type === "subagent_spawn" &&
+                transfer.targetRunId === run.id &&
+                transfer.targetThreadId === run.threadId &&
+                transfer.sourceThreadId === projection.thread.lineage.parentThreadId &&
+                transfer.sourceProviderInstanceId === run.providerInstanceId &&
+                transfer.targetProviderInstanceId === run.providerInstanceId,
+            )?.sourcePoint.providerTurnRef
+          : undefined;
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
         providerSessionId,
         session: deliverySession,
+        ...(parentTurnRef?.driver === "codex" &&
+        parentTurnRef.strength === "strong" &&
+        parentTurnRef.nativeId
+          ? { nativeParentTurnId: parentTurnRef.nativeId }
+          : {}),
         run: runningRun,
         rootNode: runningRootNode,
         checkpointScope,

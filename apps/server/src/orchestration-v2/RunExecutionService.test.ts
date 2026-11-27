@@ -954,6 +954,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
       attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
       attemptId,
       providerTurnOrdinal: 1,
+      nativeParentTurnId: "dispatching-turn",
       message: {
         messageId: MessageId.make("message:run-execution-app-context"),
         text: "What is on my list?",
@@ -966,6 +967,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
     });
 
     const input = yield* Deferred.await(started);
+    assert.equal(input.nativeParentTurnId, "dispatching-turn");
     assert.deepEqual(input.appContext, [
       {
         key: "mcp_app_turn-item_provider_codex_native-item_call-1",

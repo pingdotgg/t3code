@@ -2915,6 +2915,78 @@ effectIt.effect.each([
   }),
 );
 
+effectIt.effect.each([
+  "delegated",
+  "other run",
+  "other parent",
+  "other provider instance",
+  "wrong driver",
+  "weak ref",
+  "missing ref",
+  "user",
+] as const)("forwards the dispatching Codex turn only for its delegated child: %s", (scenario) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Inspect the release",
+      sideChat: { contextRun: "current" },
+      ...(scenario === "user" ? {} : { createdBy: "agent" }),
+    });
+    const child = harness.projection();
+    const run = child.runs[0]!;
+    const parentId = ThreadId.make("dispatching-parent");
+    const ref = {
+      driver: ProviderDriverKind.make(scenario === "wrong driver" ? "other" : "codex"),
+      nativeId: "00000000-0000-7000-8000-000000000001",
+      strength: scenario === "weak ref" ? ("weak" as const) : ("strong" as const),
+    };
+    harness.setProjection({
+      ...child,
+      thread: {
+        ...child.thread,
+        lineage: {
+          relationshipToParent: "subagent",
+          parentThreadId: parentId,
+          rootThreadId: parentId,
+        },
+      },
+      runs: [{ ...run, ordinal: 1 }],
+      contextHandoffs: [],
+      contextTransfers: [
+        {
+          id: ContextTransferId.make("spawn"),
+          type: "subagent_spawn",
+          sourceThreadId: scenario === "other parent" ? ThreadId.make("other") : parentId,
+          targetThreadId: child.thread.id,
+          targetRunId: scenario === "other run" ? RunId.make("initial-run") : run.id,
+          sourceProviderInstanceId:
+            scenario === "other provider instance"
+              ? ProviderInstanceId.make("other")
+              : run.providerInstanceId,
+          targetProviderInstanceId: run.providerInstanceId,
+          sourcePoint: {
+            threadId: parentId,
+            ...(scenario === "missing ref" ? {} : { providerTurnRef: ref }),
+          },
+          basePoint: null,
+          status: "consumed",
+          resolution: null,
+          createdBy: "agent",
+          error: null,
+          createdAt: child.updatedAt,
+          updatedAt: child.updatedAt,
+          consumedAt: child.updatedAt,
+        },
+      ],
+    });
+
+    yield* harness.start;
+    expect(harness.startTurn).toHaveBeenCalledOnce();
+    expect(harness.startTurn.mock.calls[0]![0].nativeParentTurnId).toBe(
+      scenario === "delegated" ? ref.nativeId : undefined,
+    );
+  }),
+);
+
 effectIt.effect("leaves delegated children to their own runs when the parent starts a turn", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
