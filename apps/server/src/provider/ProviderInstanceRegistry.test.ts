@@ -14,6 +14,7 @@ import {
   type CodexSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
+  ProviderInstanceEnvironmentVariableName,
   type ResolvedProviderInstanceEnvironment,
   ProviderInstanceId,
   SecretProviderId,
@@ -380,6 +381,62 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(yield* registry.getInstance(instanceId)).toBe(instance);
         yield* PubSub.take(changes);
         expect(yield* instance!.snapshot.getSnapshot).toMatchObject(presentation);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "keeps the live instance when an environment secret only gains storage valueRedacted metadata",
+    () =>
+      Effect.gen(function* () {
+        let closed = 0;
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: (input) =>
+            Effect.gen(function* () {
+              const instance = yield* CodexDriver.create(input);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed++));
+              return instance;
+            }),
+        };
+        const instanceId = ProviderInstanceId.make("cursor-like");
+        const envName = ProviderInstanceEnvironmentVariableName.make("CURSOR_API_KEY");
+        const baseEntry = {
+          driver: CodexDriver.driverKind,
+          enabled: true,
+          displayName: "Cursor",
+          config: makeCodexConfig({}),
+          environment: [{ name: envName, value: "secret-key", sensitive: true }],
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: baseEntry },
+        });
+        const instance = yield* registry.getInstance(instanceId);
+
+        yield* mutator.reconcile({
+          [instanceId]: {
+            ...baseEntry,
+            environment: [
+              { name: envName, value: "secret-key", sensitive: true, valueRedacted: true },
+            ],
+          },
+        });
+        expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+
+        yield* mutator.reloadSecrets();
+        expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+
+        yield* mutator.reconcile({
+          [instanceId]: {
+            ...baseEntry,
+            environment: [
+              { name: envName, value: "rotated-key", sensitive: true, valueRedacted: true },
+            ],
+          },
+        });
+        expect(closed).toBe(1);
       }).pipe(Effect.provide(layerTest)),
   );
 
