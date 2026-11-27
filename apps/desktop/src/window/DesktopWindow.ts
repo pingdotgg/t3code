@@ -2,6 +2,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -12,13 +13,14 @@ import * as Semaphore from "effect/Semaphore";
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 
-import {
-  type DatabaseMigrationProgress,
-  type DesktopSnapShotEvent,
-  DEFAULT_CLIENT_SETTINGS,
-} from "@t3tools/contracts";
+import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
+import {
+  buildStartupSplashDataUrl,
+  loadStartupArtwork,
+  startupSplashBackground,
+} from "./DesktopStartupSplash.ts";
 import * as DesktopClerk from "../app/DesktopClerk.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
@@ -111,6 +113,7 @@ type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopState.DesktopState
   | DesktopAssets.DesktopAssets
+  | FileSystem.FileSystem
   | DesktopAppSettings.DesktopAppSettings
   | DesktopClientSettings.DesktopClientSettings
   | ElectronApp.ElectronApp
@@ -267,21 +270,6 @@ export function resolveInitialMainWindowBounds(
     return persistedBounds;
   }
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
-}
-
-function buildConnectingSplashDataUrl(
-  shouldUseDarkColors: boolean,
-  progress: DatabaseMigrationProgress | null,
-): string {
-  const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
-  const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
-  const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
-  const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
-  const message = progress
-    ? `Upgrading database (${progress.current} of ${progress.total})`
-    : "Connecting to WSL…";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">${message}</div></body></html>`;
-  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
 export function isSameOriginRendererNavigation(input: {
@@ -1037,21 +1025,31 @@ export const make = Effect.gen(function* () {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
     let rendererReady = false;
-    let firstRevealComplete = false;
-    const revealWhenReady = Effect.gen(function* () {
-      if (
-        !rendererReady ||
-        firstRevealComplete ||
-        window.isDestroyed() ||
-        (yield* Ref.get(desktopState.quitting))
-      )
-        return;
-      firstRevealComplete = true;
+    let firstRevealScheduled = false;
+    const revealFirst = Effect.gen(function* () {
+      if (window.isDestroyed() || (yield* Ref.get(desktopState.quitting))) return;
       pendingMainReveals.delete(window);
       window.webContents.setBackgroundThrottling(true);
       if (persistedSettings.mainWindowMaximized) window.maximize();
       yield* electronWindow.reveal(window);
       yield* dismissConnectingSplash;
+    });
+    const revealWhenReady = Effect.gen(function* () {
+      if (
+        !rendererReady ||
+        firstRevealScheduled ||
+        window.isDestroyed() ||
+        (yield* Ref.get(desktopState.quitting))
+      )
+        return;
+      const splash = yield* Ref.get(splashWindowRef);
+      if (Option.isSome(splash) && (yield* waitingForBackend)) return;
+      firstRevealScheduled = true;
+      if (Option.isSome(splash) && !splash.value.isDestroyed() && splash.value.isVisible()) {
+        runFork(Effect.sleep("1200 millis").pipe(Effect.andThen(revealFirst)));
+      } else {
+        yield* revealFirst;
+      }
     });
     pendingMainReveals.set(window, revealWhenReady);
     bindFirstRevealTrigger(revealSubscribers, () => {
@@ -1141,11 +1139,10 @@ export const make = Effect.gen(function* () {
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) return;
 
-    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     if (yield* Ref.get(desktopState.quitting)) return;
     const splash = yield* electronWindow.create({
-      width: 360,
-      height: 220,
+      width: 560,
+      height: 292,
       resizable: false,
       minimizable: false,
       maximizable: false,
@@ -1154,7 +1151,7 @@ export const make = Effect.gen(function* () {
       center: true,
       show: false,
       skipTaskbar: false,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: startupSplashBackground,
       title: environment.displayName,
       webPreferences: {
         contextIsolation: true,
@@ -1168,21 +1165,32 @@ export const make = Effect.gen(function* () {
     }
     yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
-    let renderedUrl: string | undefined;
+    let renderedProgress: string | undefined;
+    const showSplash = () => {
+      if (!splash.isDestroyed() && !splash.isVisible()) splash.show();
+    };
+    splash.once("ready-to-show", showSplash);
+    if (environment.platform === "linux") {
+      splash.webContents.once("did-finish-load", showSplash);
+    }
     const progressFiber = runFork(
       Effect.gen(function* () {
-        if (splash.isDestroyed() || (yield* Ref.get(desktopState.quitting))) return;
-        const progress = yield* Ref.get(desktopState.databaseMigrationProgress);
-        const url = buildConnectingSplashDataUrl(shouldUseDarkColors, progress);
-        if (url === renderedUrl) return;
-        const loaded = yield* Effect.promise(() =>
-          splash.loadURL(url).then(
-            () => true,
-            () => false,
-          ),
-        );
-        if (loaded) renderedUrl = url;
-      }).pipe(Effect.repeat(Schedule.spaced("1 second"))),
+        const art = yield* loadStartupArtwork(assets.resolveResourcePath);
+        yield* Effect.gen(function* () {
+          if (splash.isDestroyed() || (yield* Ref.get(desktopState.quitting))) return;
+          const progress = yield* Ref.get(desktopState.databaseMigrationProgress);
+          const key = progress ? `${progress.current}/${progress.total}` : "";
+          if (key === renderedProgress) return;
+          const url = buildStartupSplashDataUrl(art, progress, renderedProgress === undefined);
+          const loaded = yield* Effect.promise(() =>
+            splash.loadURL(url).then(
+              () => true,
+              () => false,
+            ),
+          );
+          if (loaded) renderedProgress = key;
+        }).pipe(Effect.repeat(Schedule.spaced("1 second")));
+      }),
     );
     splash.once("closed", () => {
       runFork(
@@ -1190,11 +1198,6 @@ export const make = Effect.gen(function* () {
           Effect.andThen(Ref.set(splashWindowRef, Option.none())),
         ),
       );
-    });
-    splash.once("ready-to-show", () => {
-      if (!splash.isDestroyed()) {
-        splash.show();
-      }
     });
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
@@ -1267,7 +1270,11 @@ export const make = Effect.gen(function* () {
       backendHasStarted = true;
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
-      if (!mainClosedDuringStartup) yield* createMainIfBackendReady;
+      if (!mainClosedDuringStartup) {
+        yield* createMainIfBackendReady;
+        const main = yield* electronWindow.main;
+        if (Option.isSome(main)) yield* pendingMainReveals.get(main.value) ?? Effect.void;
+      }
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),

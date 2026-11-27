@@ -1094,6 +1094,7 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
+  { from: "apps/desktop/resources/startup", to: "startup" },
   {
     from: "apps/desktop/prod-resources/cursor-sdk",
     to: "node_modules/@cursor",

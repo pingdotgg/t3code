@@ -1,0 +1,1 @@
+node .vite-hooks/policy.mjs message "$1"

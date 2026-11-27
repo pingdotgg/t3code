@@ -204,6 +204,7 @@ const startLocalBackend = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.showConnectingSplash;
   yield* logBootstrapInfo("bootstrap start");
 
   const settings = yield* desktopSettings.get;
@@ -289,9 +290,6 @@ const startLocalBackend = Effect.gen(function* () {
 
   if (yield* Ref.get(state.quitting)) {
     return false;
-  }
-  if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
-    yield* desktopWindow.showConnectingSplash;
   }
   yield* primaryBackend.start;
   yield* logBootstrapInfo("bootstrap backend start requested");

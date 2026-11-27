@@ -1,1 +1,1 @@
-vp staged
+node .vite-hooks/policy.mjs staged && vp staged && node .vite-hooks/policy.mjs staged

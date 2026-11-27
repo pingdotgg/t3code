@@ -335,6 +335,7 @@ function layerTest(input: {
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodeServices.layer,
         layerDesktopAssets,
         Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
           register: () => Effect.void,
@@ -460,6 +461,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
     const layer = DesktopWindow.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          NodeServices.layer,
           layerDesktopAssets,
           Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
             register: () => Effect.void,
@@ -1746,7 +1748,7 @@ describe("DesktopWindow", () => {
           yield* desktopWindow.showConnectingSplash;
           assert.equal(yield* Ref.get(scenario.createCalls), 1);
           yield* TestClock.adjust("1 second");
-          assert.include(splashHtml(), "Connecting to WSL…");
+          assert.include(splashHtml(), "Hyakki is starting");
           const initialLoads = splash.loadURL.mock.calls.length;
           yield* TestClock.adjust("1 second");
           assert.equal(splash.loadURL.mock.calls.length, initialLoads);
@@ -1767,7 +1769,7 @@ describe("DesktopWindow", () => {
           assert.include(splashHtml(), "Upgrading database (3 of 7)");
           yield* Ref.set(state.databaseMigrationProgress, null);
           yield* TestClock.adjust("1 second");
-          assert.include(splashHtml(), "Connecting to WSL…");
+          assert.include(splashHtml(), "Hyakki is starting");
           assert.notInclude(splashHtml(), "Upgrading database");
 
           yield* desktopWindow.activate;

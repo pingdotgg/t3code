@@ -170,6 +170,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           quitting,
         } as DesktopState.DesktopState["Service"]),
         Effect.provideService(DesktopWindow.DesktopWindow, {
+          showConnectingSplash: stub.record("splash"),
           ensureMain: stub
             .record("window")
             .pipe(Effect.andThen(Deferred.succeed(stub.windowStarted, undefined))),
@@ -309,7 +310,7 @@ it.effect.each([false, true])(
       // The backend spawns before menus, and its token is minted without waiting for the renderer.
       assert.deepEqual(
         events.filter((event) => event !== "token"),
-        ["identity", "ready", "identity", "backend", "menu", "window"],
+        ["identity", "ready", "identity", "splash", "backend", "menu", "window"],
       );
       assert.isAbove(events.indexOf("token"), events.indexOf("backend"));
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
