@@ -3884,10 +3884,18 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
       : runtimePolicy.approvalPolicy !== "never");
 
   if (permissionMode === "plan") {
+    const baseMode = permissionModeForClaudeRuntimePolicy({
+      ...runtimePolicy,
+      interactionMode: "default",
+    });
     return {
       permissionMode,
       ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
+      // Lets a process that must outlive background work leave Plan for Full access live.
+      ...(baseMode === "bypassPermissions" && !availability.bypassDisabled
+        ? { allowDangerouslySkipPermissions: true as const }
+        : {}),
       // Claude routes Plan-mode writes to the callback even in Auto or Full access.
       installPermissionCallback: true,
     };
@@ -5743,12 +5751,13 @@ interface ActiveClaudeSubagent {
 }
 
 interface ClaudeLiveQueryContext {
-  readonly queryPolicy: ClaudeRuntimeQueryPolicy;
+  // Both change when a permission mode switch is applied to the running process.
+  queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
   readonly settingsCwd: string | null;
   readonly launchArgSettings: ClaudeSdkSettings | undefined;
   readonly query: ClaudeAgentSdkQuerySession;
-  readonly queryPolicyKey: string;
+  queryPolicyKey: string;
   selection: CompiledClaudeModelSelection;
   readonly program: string | undefined;
   readonly startedWithApiModelId: string;
@@ -14185,6 +14194,43 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             (yield* liveProcessRunsBackgroundWork(existing))
           ) {
+            // A change of permission mode alone (such as leaving Plan) applies to the running process.
+            if (
+              !startsUpdatedProgram &&
+              !turnInput.resume &&
+              !replaceStaleProcess &&
+              existing.nativeThreadId === nativeThreadId &&
+              existing.selection.queryIdentity === compiledSelection.queryIdentity &&
+              claudeEffectiveQueryPolicyKey(
+                {
+                  ...queryPolicy,
+                  permissionMode: existing.queryPolicy.permissionMode,
+                  installPermissionCallback: existing.queryPolicy.installPermissionCallback,
+                },
+                mcpOverrides,
+                turnInput.runtimePolicy.workspace,
+              ) === existing.queryPolicyKey
+            ) {
+              if (existing.permissionMode !== queryPolicy.permissionMode) {
+                existing.permissionMode = yield* existing.query
+                  .setPermissionMode(queryPolicy.permissionMode)
+                  .pipe(
+                    Effect.as(queryPolicy.permissionMode),
+                    Effect.catchTags({
+                      ClaudeAgentSdkQueryRunnerError: (error) =>
+                        queryPolicy.permissionMode === "bypassPermissions"
+                          ? existing.query
+                              .setPermissionMode("default")
+                              .pipe(Effect.as("default" as const))
+                          : Effect.fail(error),
+                    }),
+                  );
+              }
+              existing.queryPolicy = queryPolicy;
+              existing.queryPolicyKey = queryPolicyKey;
+              existing.openedPermissionMode = existing.permissionMode;
+              return existing;
+            }
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
 
