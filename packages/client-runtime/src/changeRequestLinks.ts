@@ -131,13 +131,15 @@ export function resolvePullRequestPreviewTarget({
   };
 }
 
-function webUrlRepositoryPath(identity: RepositoryIdentity): string | null {
-  if (identity.provider !== "forgejo" || identity.webUrl === undefined) return null;
+function trimmedRepositoryPath(path: string): string {
+  return canonicalRepositoryPath(path.replace(/^\/+|\/+$/g, ""));
+}
+
+function webUrlRepositoryPath(webUrl: string | undefined): string | null {
+  if (webUrl === undefined) return null;
   try {
-    const url = new URL(identity.webUrl);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    const path = url.pathname.replace(/^\/+|\/+$/g, "");
-    return path === "" ? null : canonicalRepositoryPath(path);
+    const path = trimmedRepositoryPath(new URL(webUrl).pathname);
+    return path === "" ? null : path;
   } catch {
     return null;
   }
@@ -153,13 +155,11 @@ export function projectChangeRequestUrl(
   const [host, ...path] = identity.canonicalKey.split("/");
   if (!host) return null;
   // The RPC selector can be shorter than the browser path (Azure's `web` for
-  // `org/project/_git/web`), so the project's own repository uses its full key. A mounted
-  // Forgejo clicked ref also keeps the mount prefix its SSH-derived selector lacks; only
-  // the webUrl path knows it.
+  // `org/project/_git/web`), so the project's own repository uses its full key. A host
+  // mounted under a path prefix names it with that prefix, which only its webUrl carries.
   const ownRepository =
     sourceControlClients.repositorySelector(identity) === repository ||
-    webUrlRepositoryPath(identity) ===
-      canonicalRepositoryPath(repository.replace(/^\/+|\/+$/g, ""));
+    webUrlRepositoryPath(identity.webUrl) === trimmedRepositoryPath(repository);
   return sourceControlClients.get(identity.provider).changeRequestUrl({
     host,
     repository: ownRepository ? path.join("/") : repository,

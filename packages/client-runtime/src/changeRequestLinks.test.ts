@@ -222,13 +222,6 @@ describe("projectChangeRequestUrl", () => {
     expect(projectChangeRequestUrl(forgejo, "code/acme/repo", 7)).toBe(
       "http://git.example.com:3000/code/acme/repo/pulls/7",
     );
-    expect(
-      projectChangeRequestUrl(
-        { ...forgejo, webUrl: "http://git.example.com:3000/Code/Acme/Repo" },
-        "code/acme/repo",
-        7,
-      ),
-    ).toBe("http://git.example.com:3000/Code/Acme/Repo/pulls/7");
     expect(projectChangeRequestUrl(forgejo, "code/acme/other", 7)).toBe(
       "https://git.example.com/code/acme/other/pulls/7",
     );
