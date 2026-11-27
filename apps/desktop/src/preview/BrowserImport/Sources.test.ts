@@ -26,8 +26,8 @@ import {
   discoveredLinuxSecretApplications,
   firefoxSymlinkLockIsHeld,
   isWithinRoot,
+  resolveChromiumLocalState,
   resolveCookieDatabase,
-  resolveWindowsLocalState,
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
@@ -1271,10 +1271,43 @@ describe("Ardia, Dia, and discoverBrowserImportSources", () => {
               "User Data",
               "Local State",
             );
-            assert.isDefined(yield* resolveWindowsLocalState(thorium, win));
+            assert.isDefined(yield* resolveChromiumLocalState(thorium, win));
             yield* fileSystem.remove(thoriumLocalState);
             yield* fileSystem.symlink(path.join(outsideRoot, "Local State"), thoriumLocalState);
-            assert.isUndefined(yield* resolveWindowsLocalState(thorium, win));
+            assert.isUndefined(yield* resolveChromiumLocalState(thorium, win));
+            yield* fileSystem.remove(thoriumLocalState);
+            yield* fileSystem.writeFileString(
+              thoriumLocalState,
+              JSON.stringify({ os_crypt: { encrypted_key: dpapiKey }, ...defaultState }),
+            );
+          }
+          // On case-sensitive filesystems, case-distinct Windows roots keep distinct IDs across rescans.
+          const lowerThoriumRoot = path.join(localAppData, "thorium", "User Data");
+          const caseSensitiveTempDir = !(yield* fileSystem.exists(lowerThoriumRoot));
+          if (caseSensitiveTempDir) {
+            yield* seedChromium(lowerThoriumRoot, {
+              os_crypt: { encrypted_key: dpapiKey },
+              ...defaultState,
+            });
+            const both = (yield* discoverBrowserImportSources(win)).filter(
+              (source) => source.name === "Thorium",
+            );
+            assert.equal(both.length, 2);
+            const upper = both.find((source) =>
+              source.userDataDirectory(win)?.includes(`${path.sep}Thorium${path.sep}`),
+            )!;
+            const lower = both.find((source) =>
+              source.userDataDirectory(win)?.includes(`${path.sep}thorium${path.sep}`),
+            )!;
+            assert.notEqual(upper.id, lower.id);
+            yield* fileSystem.remove(path.join(localAppData, "Thorium"), { recursive: true });
+            const remaining = (yield* discoverBrowserImportSources(win)).filter(
+              (source) => source.name === "Thorium",
+            );
+            assert.deepEqual(
+              remaining.map((source) => source.id),
+              [lower.id],
+            );
           }
         }),
       ),

@@ -33,8 +33,8 @@ import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./
 import {
   BROWSER_IMPORT_SOURCES,
   discoverBrowserImportSources,
+  resolveChromiumLocalState,
   resolveCookieDatabase,
-  resolveWindowsLocalState,
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
@@ -314,7 +314,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
 
     const windowsLocalStatePath =
       platform === "win32" && definition.engine === "chromium"
-        ? yield* resolveWindowsLocalState(definition, pathContext).pipe(
+        ? yield* resolveChromiumLocalState(definition, pathContext).pipe(
             Effect.provide(platformServices),
           )
         : undefined;

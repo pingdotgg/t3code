@@ -297,7 +297,7 @@ const isPinnedRootUnchanged = Effect.fnUntraced(function* (root: string) {
   );
 });
 
-export const resolveWindowsLocalState = Effect.fnUntraced(function* (
+export const resolveChromiumLocalState = Effect.fnUntraced(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
 ) {
@@ -584,7 +584,7 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
     );
   }
 
-  const localStatePath = yield* resolveWindowsLocalState(definition, context);
+  const localStatePath = yield* resolveChromiumLocalState(definition, context);
   const declared =
     localStatePath === undefined
       ? ([] as ReadonlyArray<BrowserImportSourceProfile>)
@@ -1024,12 +1024,15 @@ export function discoveredLinuxSecretApplications(
   return [...seen];
 }
 
-const normalizeRootKey = (context: BrowserImportPathContext, directory: string): string => {
-  const resolved = context.path.resolve(directory);
-  return context.platform === "darwin" || context.platform === "win32"
-    ? resolved.toLowerCase()
-    : resolved;
-};
+const canonicalRootKey = Effect.fnUntraced(function* (
+  context: BrowserImportPathContext,
+  directory: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem
+    .realPath(directory)
+    .pipe(Effect.orElseSucceed(() => context.path.resolve(directory)));
+});
 
 const isNonSymlinkDirectory = Effect.fnUntraced(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1189,7 +1192,7 @@ const scanBaseDirectory = Effect.fnUntraced(function* (
     root: string,
     segments: ReadonlyArray<string>,
   ): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
-    const key = normalizeRootKey(context, root);
+    const key = yield* canonicalRootKey(context, root);
     if (knownRoots.has(key) || seenRoots.has(key)) return true;
     const detected = yield* detectBrowserEngineAtRoot(root, context);
     if (detected === undefined) return false;
@@ -1236,10 +1239,10 @@ export const discoverBrowserImportSources = Effect.fn(
   const knownRoots = new Set<string>();
   for (const source of BROWSER_IMPORT_SOURCES) {
     const root = source.userDataDirectory(context);
-    if (root !== undefined) knownRoots.add(normalizeRootKey(context, root));
+    if (root !== undefined) knownRoots.add(yield* canonicalRootKey(context, root));
     if (context.platform === "linux" && source.alternateLinuxRoots) {
       for (const alt of source.alternateLinuxRoots(context)) {
-        knownRoots.add(normalizeRootKey(context, alt));
+        knownRoots.add(yield* canonicalRootKey(context, alt));
       }
     }
   }
@@ -1251,7 +1254,9 @@ export const discoverBrowserImportSources = Effect.fn(
     ardiaSource !== undefined &&
     (yield* isSourceInstalled(ardiaSource, context))
   ) {
-    knownRoots.add(normalizeRootKey(context, macApplicationSupport(context, "Ardia", "Chromium")));
+    knownRoots.add(
+      yield* canonicalRootKey(context, macApplicationSupport(context, "Ardia", "Chromium")),
+    );
   }
 
   const seenRoots = new Set<string>();
@@ -1316,12 +1321,7 @@ export const discoverBrowserImportSources = Effect.fn(
       .pipe(Effect.orElseSucceed(() => undefined));
     if (canonicalRoot === undefined) continue;
     const hashed = yield* crypto
-      .digest(
-        Digest.sha256,
-        new TextEncoder().encode(
-          `${candidate.engine}\0${normalizeRootKey(context, canonicalRoot)}`,
-        ),
-      )
+      .digest(Digest.sha256, new TextEncoder().encode(`${candidate.engine}\0${canonicalRoot}`))
       .pipe(Effect.orElseSucceed(() => undefined));
     if (hashed === undefined) continue;
     const id: BrowserImportSourceId = `discovered:${candidate.engine}:${Hex.encode(hashed).slice(0, 16)}`;

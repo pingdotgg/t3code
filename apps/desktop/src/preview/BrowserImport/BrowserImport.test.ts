@@ -379,7 +379,7 @@ describe("BrowserImport.importCookies", () => {
       const canonicalLibrewolfRoot = yield* fileSystem.realPath(librewolfRoot);
       const librewolfHash = yield* digest.digest(
         Digest.sha256,
-        new TextEncoder().encode(`firefox\0${canonicalLibrewolfRoot.toLowerCase()}`),
+        new TextEncoder().encode(`firefox\0${canonicalLibrewolfRoot}`),
       );
       const librewolfRealId =
         `discovered:firefox:${Hex.encode(librewolfHash).slice(0, 16)}` as const;
