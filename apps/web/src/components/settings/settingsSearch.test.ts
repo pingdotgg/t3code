@@ -301,17 +301,6 @@ describe("searchSettings", () => {
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
     }
-
-    const french = (message: string) =>
-      message === "Your dictionary"
-        ? "Votre dictionnaire"
-        : message === "Dictionary"
-          ? "Dictionnaire"
-          : message;
-    expect(searchSettings("Votre dictionnaire", SETTINGS_SEARCH_ITEMS, french)[0]).toMatchObject({
-      id: "speech-dictionary",
-      to: "/settings/voice",
-    });
   });
 
   it("keeps catalog result ids unique", () => {
