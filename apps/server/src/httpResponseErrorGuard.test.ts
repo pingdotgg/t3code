@@ -30,7 +30,12 @@ function fetchResponse(
   port: number,
   path: string,
   upgrade = false,
-): Promise<NodeHttp.IncomingMessage> {
+  accept?: string,
+): Promise<{
+  statusCode: number | undefined;
+  headers: NodeHttp.IncomingHttpHeaders;
+  body: string;
+}> {
   return new Promise((resolve, reject) => {
     const request = NodeHttp.get(
       {
@@ -38,26 +43,35 @@ function fetchResponse(
         port,
         path,
         agent: false,
-        headers: upgrade
-          ? {
-              connection: "Upgrade",
-              upgrade: "websocket",
-              "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
-              "sec-websocket-version": "13",
-            }
-          : {},
+        headers: {
+          ...(accept ? { accept } : {}),
+          ...(upgrade
+            ? {
+                connection: "Upgrade",
+                upgrade: "websocket",
+                "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+                "sec-websocket-version": "13",
+              }
+            : {}),
+        },
       },
       (response) => {
         response.on("error", reject);
-        response.on("end", () => resolve(response));
-        response.resume();
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        response.on("end", () =>
+          resolve({ statusCode: response.statusCode, headers: response.headers, body }),
+        );
       },
     );
     requests.push(request);
     request.on("error", reject);
     request.on("upgrade", (response, socket) => {
       socket.destroy();
-      resolve(response);
+      resolve({ statusCode: response.statusCode, headers: response.headers, body: "" });
     });
   });
 }
@@ -208,14 +222,36 @@ describe("keepIdleConnections", () => {
 describe("rejectRequestsUntilServing", () => {
   it("rejects early HTTP and upgrades, then hands each off to its serving handler", async () => {
     const writeErrors: unknown[] = [];
+    let progress: { current: number; total: number } | null = { current: 2, total: 7 };
     const server = HttpResponseErrorGuard.rejectRequestsUntilServing(
       guardHttpResponseWriteErrors(NodeHttp.createServer(), (error) => writeErrors.push(error)),
+      () => progress,
     );
     const port = await listen(server);
 
     const earlyHttp = await fetchResponse(port, "/");
     expect(earlyHttp.statusCode).toBe(503);
     expect(earlyHttp.headers["retry-after"]).toBe("1");
+
+    const startup = await fetchResponse(
+      port,
+      "/?name=<script>alert(1)</script>",
+      false,
+      "text/html",
+    );
+    const startupHtml = startup.body;
+    expect(startupHtml).toContain("Upgrading database (2 of 7)");
+    expect(startupHtml).not.toContain("<script>");
+    expect(startup.headers["cache-control"]).toBe("no-store");
+    expect(startup.headers["content-security-policy"]).toContain("default-src 'none'");
+    progress = { current: 3, total: 7 };
+    const step = await fetchResponse(port, "/.well-known/t3/environment");
+    expect(JSON.parse(step.body)).toEqual({ status: "starting", migration: progress });
+    progress = null;
+    const finished = await fetchResponse(port, "/.well-known/t3/environment");
+    expect(JSON.parse(finished.body)).toEqual({ status: "starting", migration: null });
+    const finishingPage = await fetchResponse(port, "/", false, "text/html");
+    expect(finishingPage.body).not.toContain("Upgrading database");
 
     const earlyUpgrade = await fetchResponse(port, "/rpc", true);
     expect(earlyUpgrade.statusCode).toBe(503);

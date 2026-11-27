@@ -200,7 +200,14 @@ function PullRequestBodySegmentView(props: {
     );
   }
   if (segment.kind === "attachment") {
-    return <PullRequestMedia url={segment.url} kind={segment.media} />;
+    return (
+      <PullRequestMedia
+        key={segment.url}
+        url={segment.url}
+        kind={segment.media}
+        {...(segment.label ? { caption: segment.label } : {})}
+      />
+    );
   }
   return (
     <View style={{ gap: 12 }}>

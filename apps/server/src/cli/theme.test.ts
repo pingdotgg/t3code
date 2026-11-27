@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
+import { lock } from "proper-lockfile";
 import { vi } from "vite-plus/test";
 
 import { cli } from "../binCli.ts";
@@ -129,22 +130,33 @@ describe("t3 theme", () => {
     }),
   );
 
-  it.effect("publishes a theme file under its filename and sets it", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const themeFile = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+  it.effect.each([
+    { extension: "json", relativePath: null },
+    { extension: "JSON", relativePath: "nightfall.JSON" },
+  ])(
+    "publishes a .$extension theme file under its filename and sets it",
+    ({ extension, relativePath }) =>
+      Effect.gen(function* () {
+        const baseDir = makeBaseDir();
+        const themeFile = NodePath.join(baseDir, `nightfall.${extension}`);
+        NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
-      yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
+        yield* runCliIn(baseDir, [
+          "theme",
+          "set",
+          relativePath ?? themeFile,
+          "--base-dir",
+          baseDir,
+        ]);
 
-      const published = NodePath.join(baseDir, "userdata", "themes", "nightfall.json");
-      assert.equal(NodeFS.existsSync(published), true);
-      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
-      const residue = NodeFS.readdirSync(NodePath.dirname(published)).filter(
-        (entry) => !entry.endsWith(".json"),
-      );
-      assert.deepEqual(residue, []);
-    }),
+        const published = NodePath.join(baseDir, "userdata", "themes", "nightfall.json");
+        assert.equal(NodeFS.readFileSync(published, "utf8"), NIGHTFALL_THEME_JSON);
+        assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+        const residue = NodeFS.readdirSync(NodePath.dirname(published)).filter(
+          (entry) => !entry.endsWith(".json"),
+        );
+        assert.deepEqual(residue, []);
+      }),
   );
 
   it.effect("publishes the file named with a leading space, not its trimmed sibling", () =>
@@ -284,6 +296,66 @@ describe("t3 theme", () => {
         "nightfall.json",
         NodePath.basename(staleBackup),
       ]);
+    }),
+  );
+
+  it.effect.each(["aa-first", "zz-last"])(
+    "refuses to publish %s into a full theme catalog",
+    (themeId) =>
+      Effect.gen(function* () {
+        const baseDir = makeBaseDir();
+        const themesDir = NodePath.join(baseDir, "userdata", "themes");
+        const existingThemes = Array.from(
+          { length: 32 },
+          (_, index) => `theme-${String(index).padStart(2, "0")}.json`,
+        );
+        const previousSettings = {
+          defaultTheme: "theme-31",
+          defaultThemeSetAt: "2026-01-01T00:00:00Z",
+        };
+        writeSettings(baseDir, previousSettings);
+        NodeFS.mkdirSync(themesDir);
+        for (const filename of existingThemes) {
+          NodeFS.writeFileSync(NodePath.join(themesDir, filename), NIGHTFALL_THEME_JSON);
+        }
+        const themeFile = NodePath.join(baseDir, `${themeId}.json`);
+        NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+
+        const outcome = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
+          Effect.match({ onFailure: String, onSuccess: () => "theme set succeeded" }),
+        );
+
+        assert.include(outcome, `Theme "${themeId}" could not be published.`);
+        assert.deepEqual(NodeFS.readdirSync(themesDir).sort(), existingThemes);
+        assert.deepEqual(readSettings(baseDir), previousSettings);
+      }),
+  );
+
+  it.effect("keeps the theme catalog and settings when another publisher holds the lock", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const themesDir = NodePath.join(baseDir, "userdata", "themes");
+      const previousSettings = { defaultTheme: "original" };
+      writeSettings(baseDir, previousSettings);
+      NodeFS.mkdirSync(themesDir);
+      NodeFS.writeFileSync(NodePath.join(themesDir, "original.json"), NIGHTFALL_THEME_JSON);
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+
+      const outcome = yield* Effect.acquireUseRelease(
+        Effect.promise(() =>
+          lock(themesDir, { lockfilePath: NodePath.join(themesDir, ".t3-theme-publish.lock") }),
+        ),
+        () =>
+          runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
+            Effect.match({ onFailure: String, onSuccess: () => "theme set succeeded" }),
+          ),
+        (release) => Effect.promise(() => release()),
+      );
+
+      assert.include(outcome, "is busy");
+      assert.deepEqual(NodeFS.readdirSync(themesDir), ["original.json"]);
+      assert.deepEqual(readSettings(baseDir), previousSettings);
     }),
   );
 
