@@ -9,6 +9,7 @@ import type {
   IssueCandidates,
   IssueCapabilities,
   IssueComment,
+  IssueCommentAudience,
   IssueCommentsPage,
   IssueCreateResult,
   IssueEvent,
@@ -26,6 +27,7 @@ import type {
   StandaloneIssueTrackerDescriptor,
 } from "@t3tools/contracts";
 import { IssueTrackerKind as IssueTrackerKindSchema } from "@t3tools/contracts";
+import type { IssueLink } from "../shared/definition.ts";
 
 /**
  * The one failure shape every tracker reports, so the service can decide what a failure means
@@ -72,6 +74,7 @@ export interface IssueTarget extends IssueScopeTarget {
 
 /** An issue as the tracker sees it, before the service attaches project context. */
 export type TrackerIssueSummary = Omit<IssueSummary, "tracker" | "host" | "scope">;
+export type TrackerIssueLink = Pick<TrackerIssueSummary, "title" | "url" | "displayKey">;
 
 export interface TrackerIssuePage {
   readonly items: ReadonlyArray<TrackerIssueSummary>;
@@ -87,11 +90,20 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly states: ReadonlyArray<IssueState>;
   readonly reactions?: ReadonlyArray<IssueReaction>;
   readonly comments: ReadonlyArray<IssueComment>;
+  readonly commentAudiences?: boolean | undefined;
   /** Where older comments carry on; null once the conversation is whole. */
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
 }
+
+/**
+ * Whose issues a listing keeps. Only a narrowed listing names the signed-in account it compares
+ * against, so an `all` listing never has to read it.
+ */
+export type IssueInvolvementFilter =
+  | { readonly involvement: "all" }
+  | { readonly involvement: Exclude<IssueInvolvement, "all">; readonly viewer: string };
 
 export interface IssueTrackerApi {
   readonly kind: IssueTrackerKind;
@@ -104,25 +116,31 @@ export interface IssueTrackerApi {
   }) => Effect.Effect<string, IssueTrackerError>;
 
   readonly listIssues: (
-    input: IssueScopeTarget & {
-      readonly state: IssueListState;
-      readonly involvement: IssueInvolvement;
-      readonly viewer: string;
-      readonly limit: number;
-      /** Free text as the tracker understands it; ignored by a tracker without `search`. */
-      readonly query?: string | undefined;
-      /** Label names an issue must carry, every one of them. */
-      readonly labels?: ReadonlyArray<string> | undefined;
-      /** The `login` of an assignee, as this tracker's own issues name them. */
-      readonly assignee?: string | undefined;
-      readonly sort: IssueListSort;
-      /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
-      readonly cursor?: string | undefined;
-    },
+    input: IssueScopeTarget &
+      IssueInvolvementFilter & {
+        readonly state: IssueListState;
+        readonly limit: number;
+        /** Free text as the tracker understands it; ignored by a tracker without `search`. */
+        readonly query?: string | undefined;
+        /** Label names an issue must carry, every one of them. */
+        readonly labels?: ReadonlyArray<string> | undefined;
+        /** The `login` of an assignee, as this tracker's own issues name them. */
+        readonly assignee?: string | undefined;
+        readonly sort: IssueListSort;
+        /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
+        readonly cursor?: string | undefined;
+        /** Whether to re-read tracker metadata for a first page. */
+        readonly refresh?: boolean | undefined;
+      },
   ) => Effect.Effect<TrackerIssuePage, IssueTrackerError>;
 
   /** The issue with its first page of conversation, in one read where the tracker allows. */
   readonly getIssue: (input: IssueTarget) => Effect.Effect<TrackerIssueDetail, IssueTrackerError>;
+
+  /** Confirms an issue exists and names it for a thread link. */
+  readonly getIssueLink?: (
+    input: IssueTarget,
+  ) => Effect.Effect<TrackerIssueLink, IssueTrackerError>;
 
   /** One page of older comments past a cursor `getIssue` or a previous page handed over. */
   readonly getComments: (
@@ -139,9 +157,12 @@ export interface IssueTrackerApi {
     },
   ) => Effect.Effect<IssueCreateResult, IssueTrackerError>;
 
-  /** Only called when `capabilities.comment` is true. */
+  /** Only called when `capabilities.comment` is true; an internal audience only with `internalComments`. */
   readonly comment?: (
-    input: IssueTarget & { readonly body: string },
+    input: IssueTarget & {
+      readonly body: string;
+      readonly audience?: IssueCommentAudience | undefined;
+    },
   ) => Effect.Effect<void, IssueTrackerError>;
 
   /**
@@ -184,8 +205,14 @@ export interface IssueTrackerApi {
 
   /** Only called when `capabilities.labels` or `capabilities.assignees` is true. */
   readonly listCandidates?: (
-    input: IssueScopeTarget,
+    input: IssueScopeTarget & { readonly query?: string | undefined },
   ) => Effect.Effect<IssueCandidates, IssueTrackerError>;
+}
+
+/** What a user saved to reach a standalone tracker: the secret, and the descriptor's fields. */
+export interface IssueTrackerCredential {
+  readonly token: string;
+  readonly fields: Readonly<Record<string, string>>;
 }
 
 /**
@@ -196,14 +223,19 @@ export interface IssueTrackerApi {
  */
 export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
   readonly standalone: StandaloneIssueTrackerDescriptor;
+  /** Retains the workspace identity so canonical URLs can disambiguate repeated scope keys. */
+  readonly parseIssueUrl: (url: URL) => (IssueLink & { readonly workspace: string }) | null;
   /**
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.
    */
-  readonly probeCredential: (
-    token: string,
-  ) => Effect.Effect<
-    { readonly account: string; readonly scopes: ReadonlyArray<IssueTrackerScope> },
+  readonly probeCredential: (credential: IssueTrackerCredential) => Effect.Effect<
+    {
+      readonly account: string;
+      /** What the tracker's issue URLs name the credential's workspace by, where they name one. */
+      readonly workspace?: string | undefined;
+      readonly scopes: ReadonlyArray<IssueTrackerScope>;
+    },
     IssueTrackerError
   >;
 }

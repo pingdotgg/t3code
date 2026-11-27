@@ -1,4 +1,7 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, ContextMenuSource } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "./i18n/messages";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -242,6 +245,7 @@ export function dismissContextMenu(restoreFocus = true): void {
 export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
+  source?: ContextMenuSource,
 ): Promise<T | null> {
   dismissContextMenu();
   return new Promise<T | null>((resolve) => {
@@ -395,7 +399,7 @@ export function showContextMenuFallback<T extends string>(
       menu.dataset.level = String(level);
       menu.dataset.contextMenu = "true";
       menu.setAttribute("role", "menu");
-      menu.setAttribute("aria-label", parentTrigger?.textContent ?? "Context menu");
+      menu.setAttribute("aria-label", parentTrigger?.textContent ?? m(msg("Context menu")));
       menu.tabIndex = -1;
 
       const inner = document.createElement("div");
@@ -465,6 +469,12 @@ export function showContextMenuFallback<T extends string>(
             spacer.setAttribute("aria-hidden", "true");
             button.appendChild(spacer);
           }
+        } else if (typeof item.iconImage === "string") {
+          const image = document.createElement("img");
+          image.src = item.iconImage;
+          image.alt = "";
+          image.className = "size-4.5 shrink-0 sm:size-4";
+          button.appendChild(image);
         } else if (typeof item.icon === "string") {
           const icon = createIconElement(item.icon, isLeafDestructive ? "destructive" : "neutral");
           if (icon) {
@@ -616,12 +626,15 @@ export function showContextMenuFallback<T extends string>(
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
     activeContextMenuDismiss = dismiss;
     // A keyboard-opened menu starts on its first action, a pointer-opened one on the menu itself.
+    // Without a source, guess from :focus-visible, which screen reader browse mode does not set.
     // Text fields always match :focus-visible, so they say nothing about how the menu opened.
-    const firstAction =
-      previouslyFocusedElement?.matches(":focus-visible") &&
-      !previouslyFocusedElement.matches('input, textarea, select, [contenteditable="true"]')
-        ? menuStack[0]?.querySelector<HTMLButtonElement>("button:not(:disabled)")
-        : null;
+    const openedFromKeyboard =
+      source === "keyboard" ||
+      (previouslyFocusedElement?.matches(":focus-visible") &&
+        !previouslyFocusedElement.matches('input, textarea, select, [contenteditable="true"]'));
+    const firstAction = openedFromKeyboard
+      ? menuStack[0]?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      : null;
     (firstAction ?? menuStack[0])?.focus({ preventScroll: true });
     document.addEventListener("focusin", onFocusIn);
     window.addEventListener("blur", onWindowBlur);

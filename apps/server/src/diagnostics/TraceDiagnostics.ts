@@ -248,7 +248,7 @@ export function makeTraceDiagnosticsAggregator(
     const isInterrupted =
       exitTag === "Interrupted" ||
       attributes["effect.fiber.interrupted"] === true ||
-      status.message === "Interrupted";
+      (status.code === "1" && status.message === "Interrupted");
     if (isFailure) failureCount += 1;
     if (isInterrupted) interruptionCount += 1;
 

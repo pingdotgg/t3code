@@ -7,19 +7,20 @@
  * definitions for the document, and receive source text containing exported
  * TypeScript aliases plus Effect Schema runtime values. The generator first
  * normalizes OpenAPI-specific schema shapes into Effect's JSON Schema model,
- * then delegates recursive analysis and runtime expression construction to
- * `SchemaRepresentation`.
+ * then registers schema declarations in a shared `Codegen` module.
  *
  * The renderer keeps the emitted module usable for both human maintainers and
- * automated code-generation consumers by grouping recursive declarations,
- * reusable references, and locally registered schemas. It also contains the
+ * automated code-generation consumers by emitting reusable references in
+ * construction order before locally registered schemas. It also contains the
  * HttpApi-specific multipart file substitutions that map generated schemas to
  * Effect's multipart runtime types.
  *
  * @since 4.0.0
  */
 import * as Arr from "effect/Array"
+import * as Codegen from "effect/Codegen"
 import * as JsonSchema from "effect/JsonSchema"
+import * as Option from "effect/Option"
 import * as Rec from "effect/Record"
 import * as Schema from "effect/Schema"
 import * as SchemaRepresentation from "effect/SchemaRepresentation"
@@ -28,7 +29,14 @@ type Source = "openapi-3.0" | "openapi-3.1"
 interface GenerateOptions {
   readonly onEnter?: ((js: JsonSchema.JsonSchema) => JsonSchema.JsonSchema) | undefined
   readonly multipartSchemaRefs?: MultipartSchemaRefs | undefined
+  readonly binarySchemas?: ReadonlySet<string> | undefined
   readonly includeSchemas?: ReadonlyArray<string> | undefined
+  /**
+   * Closes objects with declared properties when every contributing object schema omits `additionalProperties`.
+   *
+   * @stability experimental
+   */
+  readonly closeObjects?: boolean | undefined
 }
 
 interface HttpApiMultipartSchemaRefs {
@@ -52,10 +60,6 @@ type MultipartSchemaRefs = HttpApiMultipartSchemaRefs | { readonly kind: "client
  * @since 4.0.0
  */
 export function make() {
-  return makeWithRepresentation()
-}
-
-function makeWithRepresentation() {
   const store = Object.create(null) as Record<string, JsonSchema.JsonSchema>
 
   function addSchema(name: string, schema: JsonSchema.JsonSchema): string {
@@ -72,60 +76,18 @@ function makeWithRepresentation() {
     typeOnly: boolean,
     options?: GenerateOptions
   ) {
-    const generated = makeCodeDocument(source, components, options)
-    if (generated === undefined) {
-      return ""
-    }
-
-    const nonRecursiveReferences = generated.codeDocument.references.nonRecursives
-    const recursiveReferences = Object.entries(generated.codeDocument.references.recursives)
-
-    const nonRecursives = nonRecursiveReferences.map(({ $ref, code }) =>
-      renderSchemaTypeAndRuntime($ref, code, typeOnly, options)
-    )
-
-    const recursiveDeclarations: Array<string> = []
-    const recursives: Array<string> = []
-
-    if (typeOnly) {
-      for (const [$ref, code] of recursiveReferences) {
-        recursives.push(renderSchemaTypeAndRuntime($ref, code, true, options))
-      }
-    } else {
-      const recursivelyForwardReferenced = collectForwardReferencedRecursives(
-        nonRecursiveReferences,
-        recursiveReferences
-      )
-      const recursiveInternalNames = makeRecursiveInternalNameMap(
-        recursivelyForwardReferenced,
-        [
-          ...nonRecursiveReferences.map(({ $ref }) => $ref),
-          ...recursiveReferences.map(([$ref]) => $ref),
-          ...generated.nameMap
-        ]
-      )
-
-      for (const [$ref, code] of recursiveReferences) {
-        if (recursivelyForwardReferenced.has($ref)) {
-          const internalName = recursiveInternalNames.get($ref)!
-          recursiveDeclarations.push(renderRecursiveReferenceDeclaration($ref, code, internalName))
-          recursives.push(`const ${internalName} = ${code.runtime}`)
-          continue
-        }
-
-        recursives.push(renderSchemaTypeAndRuntime($ref, code, false, options))
-      }
-    }
-
-    const codes = generated.nameMap.map((name, i) =>
-      renderSchemaTypeAndRuntime(name, generated.codeDocument.codes[i], typeOnly, options)
-    )
-
-    return renderImportArtifacts(generated.codeDocument, !typeOnly) +
-      render("recursive declarations", recursiveDeclarations) +
-      render("non-recursive definitions", nonRecursives) +
-      render("recursive definitions", recursives) +
-      render("schemas", codes)
+    const module = new Codegen.Module()
+    module.provideImport({
+      module: "effect/Schema",
+      kind: "Namespace",
+      imported: "*",
+      local: "Schema",
+      typeOnly: false,
+      attributes: ""
+    })
+    compile(module, store, source, components, typeOnly, options)
+    const output = module.finalize()
+    return render([...output.imports, ...output.declarations.flatMap((declaration) => declaration.fragments)])
   }
 
   function generateHttpApi(
@@ -133,137 +95,7 @@ function makeWithRepresentation() {
     components: JsonSchema.Definitions,
     options?: GenerateOptions
   ) {
-    const generated = makeCodeDocument(source, components, options)
-    if (generated === undefined) {
-      return ""
-    }
-
-    const nonRecursiveReferences = generated.codeDocument.references.nonRecursives
-    const recursiveReferences = Object.entries(generated.codeDocument.references.recursives)
-
-    const nonRecursives = nonRecursiveReferences.map(({ $ref, code }) =>
-      renderSchemaTypeAndRuntime($ref, code, false, options)
-    )
-
-    const recursivelyForwardReferenced = collectForwardReferencedRecursives(nonRecursiveReferences, recursiveReferences)
-    const recursiveInternalNames = makeRecursiveInternalNameMap(
-      recursivelyForwardReferenced,
-      [
-        ...nonRecursiveReferences.map(({ $ref }) => $ref),
-        ...recursiveReferences.map(([$ref]) => $ref),
-        ...generated.nameMap
-      ]
-    )
-
-    const recursiveDeclarations: Array<string> = []
-    const recursives: Array<string> = []
-
-    for (const [$ref, code] of recursiveReferences) {
-      if (recursivelyForwardReferenced.has($ref)) {
-        const internalName = recursiveInternalNames.get($ref)!
-        recursiveDeclarations.push(renderRecursiveReferenceDeclaration($ref, code, internalName))
-        recursives.push(`const ${internalName} = ${code.runtime}`)
-        continue
-      }
-
-      recursives.push(renderSchemaTypeAndRuntime($ref, code, false, options))
-    }
-
-    const codes = generated.nameMap.map((name, i) =>
-      renderSchemaTypeAndRuntime(name, generated.codeDocument.codes[i], false, options)
-    )
-
-    return renderImportArtifacts(generated.codeDocument, true) +
-      render("recursive declarations", recursiveDeclarations) +
-      render("non-recursive definitions", nonRecursives) +
-      render("recursive definitions", recursives) +
-      render("schemas", codes)
-  }
-
-  function makeCodeDocument(
-    source: Source,
-    components: JsonSchema.Definitions,
-    options?: GenerateOptions
-  ): {
-    readonly nameMap: Array<string>
-    readonly codeDocument: SchemaRepresentation.CodeDocument
-  } | undefined {
-    const nameMap: Array<string> = []
-    const schemas: Array<JsonSchema.JsonSchema> = []
-
-    const definitions: JsonSchema.Definitions = Rec.map(
-      components,
-      (js) => fromSchemaOpenApi(source, js).schema
-    )
-
-    for (const [name, js] of Object.entries(store)) {
-      nameMap.push(name)
-      schemas.push(fromSchemaOpenApi(source, js).schema)
-    }
-    // Unnamed roots, so included components are emitted as definitions without an alias
-    for (const name of options?.includeSchemas ?? []) {
-      if (!Object.hasOwn(components, name)) {
-        throw new Error(`Included schema ${name} is not a component`)
-      }
-      schemas.push(fromSchemaOpenApi(source, { $ref: `#/components/schemas/${name}` }).schema)
-    }
-
-    if (!Arr.isArrayNonEmpty(schemas)) {
-      return
-    }
-
-    const document = {
-      dialect: "draft-2020-12" as const,
-      schemas,
-      definitions
-    }
-    const schemasWithExamples: Array<JsonSchema.JsonSchema> = []
-    const preparedSchemas = new WeakMap<JsonSchema.JsonSchema, JsonSchema.JsonSchema>()
-    const preparedOutputs = new WeakSet<JsonSchema.JsonSchema>()
-    const importerOptions: SchemaRepresentation.FromJsonSchemaOptions = {
-      patterns: "apply",
-      onEnter(js: JsonSchema.JsonSchema) {
-        if (preparedOutputs.has(js)) return js
-        const cached = preparedSchemas.get(js)
-        if (cached !== undefined) return cached
-
-        const out = { ...js }
-        const transformed = { ...(options?.onEnter === undefined ? out : options.onEnter(out)) }
-        preparedSchemas.set(js, transformed)
-        preparedOutputs.add(transformed)
-        if (Array.isArray(transformed.examples)) {
-          schemasWithExamples.push(transformed)
-        }
-        return transformed
-      }
-    }
-    let rootSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(document, importerOptions)
-    if (Arr.isArrayNonEmpty(schemasWithExamples)) {
-      const exampleSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(
-        { ...document, schemas: schemasWithExamples },
-        importerOptions
-      )
-      for (let i = 0; i < schemasWithExamples.length; i++) {
-        const node = schemasWithExamples[i]
-        const examples = node.examples as ReadonlyArray<unknown>
-        const validExamples = examples.filter(Schema.is(exampleSchemas[i]))
-        if (validExamples.length === examples.length) continue
-        if (validExamples.length === 0) {
-          delete node.examples
-        } else {
-          node.examples = validExamples
-        }
-      }
-      rootSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(document, importerOptions)
-    }
-    const codeDocument = SchemaRepresentation.toCodeDocument(
-      SchemaRepresentation.toRepresentations(Arr.map(rootSchemas, (schema) => schema.ast))
-    )
-
-    return {
-      nameMap,
-      codeDocument
-    }
+    return generate(source, components, false, options)
   }
 
   return {
@@ -272,6 +104,117 @@ function makeWithRepresentation() {
     generateHttpApi,
     schemas: store as Readonly<Record<string, JsonSchema.JsonSchema>>
   } as const
+}
+
+/** @internal */
+export function compile(
+  module: Codegen.Module,
+  schemas: Readonly<Record<string, JsonSchema.JsonSchema>>,
+  source: Source,
+  components: JsonSchema.Definitions,
+  typeOnly: boolean,
+  options?: GenerateOptions
+): ReadonlyMap<string, Codegen.Binding> {
+  const prepared = prepareSchemas(schemas, source, components, options)
+  if (prepared === undefined) return new Map()
+  return module.addSchemas(prepared.schemas, {
+    references: prepared.references,
+    typeOnly
+  })
+}
+
+function prepareSchemas(
+  store: Readonly<Record<string, JsonSchema.JsonSchema>>,
+  source: Source,
+  components: JsonSchema.Definitions,
+  options?: GenerateOptions
+): {
+  readonly schemas: Readonly<Record<string, SchemaRepresentation.Representation>>
+  readonly references: SchemaRepresentation.References
+} | undefined {
+  const names: Array<string> = []
+  const schemas: Array<JsonSchema.JsonSchema> = []
+
+  const definitions: JsonSchema.Definitions = Rec.map(
+    components,
+    (js) => fromSchemaOpenApi(source, js).schema
+  )
+
+  for (const [name, js] of Object.entries(store)) {
+    names.push(name)
+    schemas.push(fromSchemaOpenApi(source, js).schema)
+  }
+  // Unnamed roots, so included components are emitted as definitions without an alias
+  for (const name of options?.includeSchemas ?? []) {
+    if (!Object.hasOwn(components, name)) {
+      throw new Error(`Included schema ${name} is not a component`)
+    }
+    schemas.push(fromSchemaOpenApi(source, { $ref: `#/components/schemas/${name}` }).schema)
+  }
+
+  if (!Arr.isArrayNonEmpty(schemas)) {
+    return
+  }
+
+  const document = {
+    dialect: "draft-2020-12" as const,
+    schemas,
+    definitions
+  }
+  const schemasWithExamples: Array<JsonSchema.JsonSchema> = []
+  const preparedSchemas = new WeakMap<JsonSchema.JsonSchema, JsonSchema.JsonSchema>()
+  const preparedOutputs = new WeakSet<JsonSchema.JsonSchema>()
+  const importerOptions: SchemaRepresentation.FromJsonSchemaOptions = {
+    patterns: "apply",
+    closeObjects: options?.closeObjects,
+    onEnter(js: JsonSchema.JsonSchema) {
+      if (preparedOutputs.has(js)) return js
+      const cached = preparedSchemas.get(js)
+      if (cached !== undefined) return cached
+
+      const out = { ...js }
+      const transformed = { ...(options?.onEnter === undefined ? out : options.onEnter(out)) }
+      preparedSchemas.set(js, transformed)
+      preparedOutputs.add(transformed)
+      if (Array.isArray(transformed.examples)) {
+        schemasWithExamples.push(transformed)
+      }
+      return transformed
+    }
+  }
+  let rootSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(document, importerOptions)
+  if (Arr.isArrayNonEmpty(schemasWithExamples)) {
+    const exampleSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(
+      { ...document, schemas: schemasWithExamples },
+      importerOptions
+    )
+    for (let i = 0; i < schemasWithExamples.length; i++) {
+      const node = schemasWithExamples[i]
+      const examples = node.examples as ReadonlyArray<unknown>
+      const decode = Schema.decodeUnknownOption(Schema.toType(exampleSchemas[i]), { onExcessProperty: "error" })
+      const validExamples = examples.filter((example) => Option.isSome(decode(example)))
+      if (validExamples.length === examples.length) continue
+      if (validExamples.length === 0) {
+        delete node.examples
+      } else {
+        node.examples = validExamples
+      }
+    }
+    rootSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(document, importerOptions)
+  }
+  // Binary transport bodies encode bytes, independently of their JSON Schema representation.
+  // Only replace operation-local roots; shared components may also be used by JSON bodies.
+  const representation = SchemaRepresentation.toRepresentations(Arr.map(
+    rootSchemas,
+    (schema, index) => options?.binarySchemas?.has(names[index]) ? Schema.Uint8Array.ast : schema.ast
+  ))
+  const multipart = multipartRepresentation(representation.references, options?.multipartSchemaRefs)
+  return {
+    schemas: Object.fromEntries(
+      names.map((name, index) => [name, multipart(representation.representations[index], name)])
+    ),
+    references: Rec.map(representation.references, multipart)
+  }
 }
 
 function fromSchemaOpenApi(source: Source, jsonSchema: JsonSchema.JsonSchema) {
@@ -283,27 +226,86 @@ function fromSchemaOpenApi(source: Source, jsonSchema: JsonSchema.JsonSchema) {
   }
 }
 
-function renderSchemaTypeAndRuntime(
-  $ref: string,
-  code: SchemaRepresentation.Code,
-  typeOnly: boolean,
-  options?: GenerateOptions
-) {
-  code = multipartCode($ref, options?.multipartSchemaRefs) ?? code
-  const strings = [`export type ${$ref} = ${code.Type}`]
-  if (!typeOnly) {
-    strings.push(`export const ${$ref} = ${code.runtime}`)
+// Renders the multipart file schemas as their runtime types. Effect index signatures also check declared
+// properties, so every open object is widened to admit its own files.
+function multipartRepresentation(
+  references: SchemaRepresentation.References,
+  refs: MultipartSchemaRefs | undefined
+): (schema: SchemaRepresentation.Representation, name: string) => SchemaRepresentation.Representation {
+  if (refs === undefined) return (schema) => schema
+  const hasFile = (schema: SchemaRepresentation.Representation, seen: Set<string>): boolean => {
+    switch (schema._tag) {
+      case "Reference": {
+        if (multipartCode(schema.$ref, refs) !== undefined) return true
+        if (seen.has(schema.$ref) || !Object.hasOwn(references, schema.$ref)) return false
+        seen.add(schema.$ref)
+        return hasFile(references[schema.$ref], seen)
+      }
+      case "Suspend":
+        return hasFile(schema.thunk, seen)
+      case "Union":
+        return schema.types.some((member) => hasFile(member, seen))
+      case "Arrays":
+        return schema.rest.some((member) => hasFile(member, seen)) ||
+          schema.elements.some((element) => hasFile(element.type, seen))
+      default:
+        return false
+    }
   }
-  return strings.join("\n")
+  const admitFiles = (schema: SchemaRepresentation.Representation): SchemaRepresentation.Representation => {
+    switch (schema._tag) {
+      case "Suspend":
+        return { ...schema, thunk: admitFiles(schema.thunk) }
+      case "Union":
+        return { ...schema, types: schema.types.map(admitFiles) }
+      case "Arrays":
+        return {
+          ...schema,
+          elements: schema.elements.map((element) => ({ ...element, type: admitFiles(element.type) })),
+          rest: schema.rest.map(admitFiles)
+        }
+      case "Objects": {
+        const propertySignatures = schema.propertySignatures.map((property) => ({
+          ...property,
+          type: admitFiles(property.type)
+        }))
+        const files = Arr.dedupe(
+          propertySignatures.map((property) => property.type).filter((type) => hasFile(type, new Set()))
+        )
+        return {
+          ...schema,
+          propertySignatures,
+          indexSignatures: schema.indexSignatures.map((index) => {
+            const type = admitFiles(index.type)
+            return {
+              ...index,
+              type: files.length === 0 ? type : { _tag: "Union", types: [type, ...files], checks: [] }
+            }
+          })
+        }
+      }
+      default:
+        return schema
+    }
+  }
+  return (schema, name) => {
+    const code = multipartCode(name, refs)
+    if (code === undefined) return admitFiles(schema)
+    return {
+      _tag: "Declaration",
+      typeParameters: [],
+      checks: [],
+      annotations: {
+        toCode: () => ({
+          ...code,
+          importDeclarations: refs.kind === "httpapi" ? ["import { Multipart } from \"effect/http\""] : []
+        })
+      }
+    }
+  }
 }
 
-function multipartCode(
-  $ref: string,
-  refs: MultipartSchemaRefs | undefined
-): SchemaRepresentation.Code | undefined {
-  if (refs === undefined) {
-    return undefined
-  }
+function multipartCode($ref: string, refs: MultipartSchemaRefs): SchemaRepresentation.Code | undefined {
   if ($ref === refs.singleFile) {
     return refs.kind === "httpapi"
       ? { Type: "Multipart.PersistedFile", runtime: "Multipart.SingleFileSchema" }
@@ -318,81 +320,7 @@ function multipartCode(
   return undefined
 }
 
-function renderRecursiveReferenceDeclaration(
-  $ref: string,
-  code: SchemaRepresentation.Code,
-  internalName: string
-): string {
-  return [
-    `export type ${$ref} = ${code.Type}`,
-    `export const ${$ref} = Schema.suspend((): Schema.Codec<${$ref}> => ${internalName})`
-  ].join("\n")
-}
-
-function render(title: string, as: ReadonlyArray<string>) {
+function render(as: ReadonlyArray<string>) {
   if (as.length === 0) return ""
-  return "// " + title + "\n" + as.join("\n") + "\n"
-}
-
-function renderImportArtifacts(codeDocument: SchemaRepresentation.CodeDocument, enabled: boolean): string {
-  if (!enabled) return ""
-  const imports = codeDocument.artifacts.flatMap((artifact) =>
-    artifact._tag === "Import" ? [artifact.importDeclaration] : []
-  )
-  return imports.length === 0 ? "" : imports.join("\n") + "\n"
-}
-
-const tokenPattern = /[A-Za-z_$][A-Za-z0-9_$]*/g
-
-function collectForwardReferencedRecursives(
-  nonRecursives: ReadonlyArray<{
-    readonly $ref: string
-    readonly code: SchemaRepresentation.Code
-  }>,
-  recursives: ReadonlyArray<readonly [string, SchemaRepresentation.Code]>
-): Set<string> {
-  const recursiveNames = new Set(recursives.map(([name]) => name))
-  const recursiveIndexes = new Map(recursives.map(([name], index) => [name, index]))
-  const referenced = new Set<string>()
-
-  for (const { code } of nonRecursives) {
-    for (const token of code.runtime.matchAll(tokenPattern)) {
-      const identifier = token[0]
-      if (recursiveNames.has(identifier)) {
-        referenced.add(identifier)
-      }
-    }
-  }
-
-  for (let index = 0; index < recursives.length; index++) {
-    const [, code] = recursives[index]
-    for (const token of code.runtime.matchAll(tokenPattern)) {
-      const identifier = token[0]
-      const referencedIndex = recursiveIndexes.get(identifier)
-      if (referencedIndex !== undefined && referencedIndex > index) {
-        referenced.add(identifier)
-      }
-    }
-  }
-
-  return referenced
-}
-
-function makeRecursiveInternalNameMap(
-  recursiveNames: ReadonlySet<string>,
-  existingNames: ReadonlyArray<string>
-): Map<string, string> {
-  const usedNames = new Set(existingNames)
-  const internalNames = new Map<string, string>()
-
-  for (const name of recursiveNames) {
-    let candidate = `__recursive_${name}`
-    while (usedNames.has(candidate)) {
-      candidate = `_${candidate}`
-    }
-    usedNames.add(candidate)
-    internalNames.set(name, candidate)
-  }
-
-  return internalNames
+  return as.join("\n") + "\n"
 }

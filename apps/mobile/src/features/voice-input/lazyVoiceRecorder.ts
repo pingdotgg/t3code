@@ -1,3 +1,6 @@
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 import {
   throwIfVoiceTranscriptionAborted,
   type VoiceRecorder,
@@ -120,7 +123,7 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
       );
     },
     record(options) {
-      if (!recorder) throw new Error("The voice recorder isn’t ready. Try again.");
+      if (!recorder) throw new Error(m(msg("The voice recorder isn’t ready. Try again.")));
       recorder.record(options);
     },
     stop() {

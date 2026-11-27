@@ -148,7 +148,21 @@ export const discovery = {
   // glab lists every host and rejects --all. --all waits on every host, so ask it only after
   // the current host reports signed out.
   authArgs: ["auth", "status"],
-  authRetryArgs: ["auth", "status", "--all"],
+  // A probe that names no host covers every host glab has a login for, so it runs without the
+  // environment token; the default host is asked with it last, by name.
+  authRetryArgs: (environment) => [
+    ["auth", "status", "--all"],
+    ...(GitLabCli.hasEnvironmentToken(environment)
+      ? [["auth", "status", "--hostname", GitLabCli.defaultHost(environment)]]
+      : []),
+  ],
+  probeEnv: (args, environment) => {
+    const named = args.indexOf("--hostname");
+    return named !== -1 &&
+      GitLabCli.hostOf(args[named + 1] ?? "") === GitLabCli.defaultHost(environment)
+      ? {}
+      : GitLabCli.WITHOUT_ENVIRONMENT_TOKEN;
+  },
   // glab host matching requires the remote's exact spelling.
   remoteRefinementArgs: ({ provider, remoteUrl }) => {
     const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
@@ -177,6 +191,7 @@ export const make = Effect.gen(function* () {
     const result = yield* gitlab
       .execute({
         cwd: input.cwd,
+        callerNamedHost: input.url.host,
         args: ["api", "--hostname", input.url.host, endpoint],
         timeoutMs: 3_000,
         maxOutputBytes: 32_000,
@@ -210,11 +225,17 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("gitlab"),
-    // GitLab lists fork merge requests by source branch with no owner filter, so read a full page.
-    headBranchProbe: ({ headSelectors }) => ({
-      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
-      limit: 100,
-    }),
+    // GitLab lists fork merge requests by source branch with no owner filter, so read a full page
+    // once per branch. The first selector wins: GitManager puts `owner:branch` first for a fork
+    // head, which tells the list to name fork source projects.
+    headBranchProbe: ({ headSelectors }) => {
+      const byBranch = new Map<string, string>();
+      for (const selector of headSelectors) {
+        const branch = SourceControlProvider.sourceBranch({ headSelector: selector });
+        if (!byBranch.has(branch)) byBranch.set(branch, selector);
+      }
+      return { headSelectors: [...byBranch.values()], limit: 100 };
+    },
     readChangeRequestTemplate: Effect.fn("GitLabSourceControlProvider.readChangeRequestTemplate")(
       function ({ cwd, treeish }) {
         return GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute);
@@ -282,6 +303,7 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+    createsDraftChangeRequests: true,
     createChangeRequest: Effect.fn("GitLabSourceControlProvider.createChangeRequest")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -294,6 +316,7 @@ export const make = Effect.gen(function* () {
             ...(input.target ? { target: input.target } : {}),
             title: input.title,
             bodyFile: input.bodyFile,
+            ...(input.draft === true ? { draft: true } : {}),
           })
           .pipe(
             Effect.mapError(

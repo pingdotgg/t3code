@@ -46,6 +46,196 @@ query IssueSearch($q: String!, $cursor: String, $rows: Int!) {
   }
 }
 
+fragment IssueDetailFields on Issue {
+  ...IssueRow
+  assignees(first: 100) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      login
+      name
+      avatarUrl
+    }
+  }
+  labels(first: 100) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      name
+      color
+    }
+  }
+  body
+  viewerCanUpdate
+  viewerCanClose
+  viewerCanReopen
+  ...Reactions
+  comments(last: 100) {
+    totalCount
+    pageInfo {
+      hasPreviousPage
+      startCursor
+    }
+    nodes {
+      id
+      author {
+        login
+        avatarUrl
+      }
+      body
+      createdAt
+      url
+      ...Reactions
+    }
+  }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      number
+      title
+      url
+      state
+      isDraft
+      repository {
+        nameWithOwner
+      }
+    }
+  }
+  timelineItems(
+    last: 100
+    itemTypes: [
+      CLOSED_EVENT
+      REOPENED_EVENT
+      LABELED_EVENT
+      UNLABELED_EVENT
+      ASSIGNED_EVENT
+      UNASSIGNED_EVENT
+      RENAMED_TITLE_EVENT
+      CROSS_REFERENCED_EVENT
+    ]
+  ) {
+    nodes {
+      __typename
+      ... on ClosedEvent {
+        id
+        createdAt
+        actor {
+          login
+          avatarUrl
+        }
+      }
+      ... on ReopenedEvent {
+        id
+        createdAt
+        actor {
+          login
+          avatarUrl
+        }
+      }
+      ... on LabeledEvent {
+        id
+        createdAt
+        actor {
+          login
+          avatarUrl
+        }
+        label {
+          name
+        }
+      }
+      ... on UnlabeledEvent {
+        id
+        createdAt
+        actor {
+          login
+          avatarUrl
+        }
+        label {
+          name
+        }
+      }
+      ... on AssignedEvent {
+        id
+        createdAt
+        actor {
+          login
+          avatarUrl
+        }
+        assignee {
+          ... on User {
+            login
+            name
+          }
+          ... on Bot {
+            login
+          }
+        }
+      }
+      ... on UnassignedEvent {
+        id
+        createdAt
+        actor {
+          login
+          avatarUrl
+        }
+        assignee {
+          ... on User {
+            login
+            name
+          }
+          ... on Bot {
+            login
+          }
+        }
+      }
+      ... on RenamedTitleEvent {
+        id
+        createdAt
+        actor {
+          login
+          avatarUrl
+        }
+        currentTitle
+      }
+      ... on CrossReferencedEvent {
+        id
+        createdAt
+        actor {
+          login
+          avatarUrl
+        }
+        source {
+          __typename
+          ... on PullRequest {
+            number
+            title
+            url
+            state
+            isDraft
+            repository {
+              nameWithOwner
+            }
+          }
+          ... on Issue {
+            number
+            url
+            repository {
+              nameWithOwner
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 query IssueDetail($owner: String!, $name: String!, $number: Int!) {
   viewer {
     login
@@ -53,188 +243,7 @@ query IssueDetail($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     viewerPermission
     issue(number: $number) {
-      ...IssueRow
-      assignees(first: 100) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-        nodes {
-          login
-          name
-          avatarUrl
-        }
-      }
-      labels(first: 100) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-        nodes {
-          name
-          color
-        }
-      }
-      body
-      viewerCanUpdate
-      viewerCanClose
-      viewerCanReopen
-      ...Reactions
-      comments(last: 100) {
-        totalCount
-        pageInfo {
-          hasPreviousPage
-          startCursor
-        }
-        nodes {
-          id
-          author {
-            login
-            avatarUrl
-          }
-          body
-          createdAt
-          url
-          ...Reactions
-        }
-      }
-      closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
-        nodes {
-          number
-          title
-          url
-          state
-          isDraft
-          repository {
-            nameWithOwner
-          }
-        }
-      }
-      timelineItems(
-        last: 100
-        itemTypes: [
-          CLOSED_EVENT
-          REOPENED_EVENT
-          LABELED_EVENT
-          UNLABELED_EVENT
-          ASSIGNED_EVENT
-          UNASSIGNED_EVENT
-          RENAMED_TITLE_EVENT
-          CROSS_REFERENCED_EVENT
-        ]
-      ) {
-        nodes {
-          __typename
-          ... on ClosedEvent {
-            id
-            createdAt
-            actor {
-              login
-              avatarUrl
-            }
-          }
-          ... on ReopenedEvent {
-            id
-            createdAt
-            actor {
-              login
-              avatarUrl
-            }
-          }
-          ... on LabeledEvent {
-            id
-            createdAt
-            actor {
-              login
-              avatarUrl
-            }
-            label {
-              name
-            }
-          }
-          ... on UnlabeledEvent {
-            id
-            createdAt
-            actor {
-              login
-              avatarUrl
-            }
-            label {
-              name
-            }
-          }
-          ... on AssignedEvent {
-            id
-            createdAt
-            actor {
-              login
-              avatarUrl
-            }
-            assignee {
-              ... on User {
-                login
-                name
-              }
-              ... on Bot {
-                login
-              }
-            }
-          }
-          ... on UnassignedEvent {
-            id
-            createdAt
-            actor {
-              login
-              avatarUrl
-            }
-            assignee {
-              ... on User {
-                login
-                name
-              }
-              ... on Bot {
-                login
-              }
-            }
-          }
-          ... on RenamedTitleEvent {
-            id
-            createdAt
-            actor {
-              login
-              avatarUrl
-            }
-            currentTitle
-          }
-          ... on CrossReferencedEvent {
-            id
-            createdAt
-            actor {
-              login
-              avatarUrl
-            }
-            source {
-              __typename
-              ... on PullRequest {
-                number
-                title
-                url
-                state
-                isDraft
-                repository {
-                  nameWithOwner
-                }
-              }
-              ... on Issue {
-                number
-                repository {
-                  nameWithOwner
-                }
-              }
-            }
-          }
-        }
-      }
+      ...IssueDetailFields
     }
   }
 }
@@ -262,6 +271,16 @@ query IssueComments($owner: String!, $name: String!, $number: Int!, $cursor: Str
           ...Reactions
         }
       }
+    }
+  }
+}
+
+query IssueLinkMetadata($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      number
+      title
+      url
     }
   }
 }
@@ -363,10 +382,14 @@ query IssueCollections(
   $number: Int!
   $labelsCursor: String
   $assigneesCursor: String
+  $closingPullRequestsCursor: String
+  $withLabels: Boolean!
+  $withAssignees: Boolean!
+  $withClosingPullRequests: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      labels(first: 100, after: $labelsCursor) {
+      labels(first: 100, after: $labelsCursor) @include(if: $withLabels) {
         pageInfo {
           hasNextPage
           endCursor
@@ -376,7 +399,7 @@ query IssueCollections(
           color
         }
       }
-      assignees(first: 100, after: $assigneesCursor) {
+      assignees(first: 100, after: $assigneesCursor) @include(if: $withAssignees) {
         pageInfo {
           hasNextPage
           endCursor
@@ -387,6 +410,115 @@ query IssueCollections(
           avatarUrl
         }
       }
+      closedByPullRequestsReferences(
+        first: 100
+        after: $closingPullRequestsCursor
+        includeClosedPrs: true
+      ) @include(if: $withClosingPullRequests) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          number
+          title
+          url
+          state
+          isDraft
+          repository {
+            nameWithOwner
+          }
+        }
+      }
     }
+  }
+}
+
+# Issue statuses are a github.com preview. They live in their own documents because a server
+# without them rejects any document that names them, whatever `@include` says.
+fragment PlanningStatusFields on PlanningStatus {
+  id
+  name
+  category {
+    key
+    state
+    stateReason
+  }
+}
+
+query IssueSearchWithStatus($q: String!, $cursor: String, $rows: Int!) {
+  search(query: $q, type: ISSUE, first: $rows, after: $cursor) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ... on Issue {
+        ...IssueRow
+        status {
+          ...PlanningStatusFields
+        }
+        assignees(first: 20) {
+          nodes {
+            login
+            name
+            avatarUrl
+          }
+        }
+        labels(first: 20) {
+          nodes {
+            name
+            color
+          }
+        }
+        comments {
+          totalCount
+        }
+      }
+    }
+  }
+}
+
+# One document so an issue read costs a single query against the viewer's GraphQL allowance.
+query IssueDetailWithStatus($owner: String!, $name: String!, $number: Int!) {
+  viewer {
+    login
+  }
+  repository(owner: $owner, name: $name) {
+    viewerPermission
+    planningStatuses(first: 50) {
+      nodes {
+        ...PlanningStatusFields
+      }
+    }
+    issue(number: $number) {
+      ...IssueDetailFields
+      viewerCanSetStatus
+      status {
+        ...PlanningStatusFields
+      }
+    }
+  }
+}
+
+query IssueStatuses($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    planningStatuses(first: 50) {
+      nodes {
+        ...PlanningStatusFields
+      }
+    }
+    issue(number: $number) {
+      viewerCanSetStatus
+      status {
+        ...PlanningStatusFields
+      }
+    }
+  }
+}
+
+mutation SetIssueStatus($issueId: ID!, $statusId: ID!) {
+  setIssueStatus(input: { issueId: $issueId, statusId: $statusId }) {
+    clientMutationId
   }
 }

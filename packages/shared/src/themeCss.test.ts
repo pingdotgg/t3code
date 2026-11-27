@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { themeCssLoadsRemoteFiles, themeCssValueFetches } from "./themeCss.ts";
+import {
+  themeCssLoadsRemoteFiles,
+  themeCssValueFetches,
+  themeCssWithoutDeclarations,
+} from "./themeCss.ts";
 
 // %23 decodes to # inside the SVG, so url(%23g) names its own gradient.
 const SVG_WITH_OWN_GRADIENT =
@@ -21,6 +25,10 @@ describe("themeCssValueFetches", () => {
     ["background-image", `url("${SVG_WITH_OWN_GRADIENT}")`, false],
     // The url( sits inside a string, so the address after that string is a real remote url().
     ["content", `"url('data:" url("https://evil.example/a") "'"`, true],
+    ["--leak", '/* " */ url(https://evil.example/a) /* " */', true],
+    ["content", String.raw`"Theme preview: \"ready\""`, false],
+    ["--label", String.raw`'It\'s ready'`, false],
+    ["content", String.raw`url("#icon") / "The \"ready\" icon"`, false],
     ["filter", 'url("#blur")', false],
     ["background-image", "var(--pattern)", false],
     ["color", "red", false],
@@ -30,9 +38,69 @@ describe("themeCssValueFetches", () => {
 });
 
 describe("themeCssLoadsRemoteFiles", () => {
+  it.each([
+    ['[data-chat-header]::after { content: "@import"; }', false],
+    ['.a::after { content: "say \\"@import\\""; }', false],
+    ['.a::after { content: "a\\\r\n@import"; }', false],
+    ['.a::after { content: "\\22\r\n@import"; }', false],
+    ['.a::after { content: "/*"; } /* note */ .b::after { content: "@import"; }', false],
+    ['/* @import "x.css"; */ .a::after { content: "*/"; }', false],
+    [
+      ".a { background-image: url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3C!--/*@import*/--%3E%3C/svg%3E); }",
+      false,
+    ],
+    ['@import "x.css";', true],
+    ['.a\\" {} @import "x.css"; .b\\" {}', true],
+    ['.a::after { content: "\\\\"; } @import "x.css";', true],
+    [".a { background: url(https://example.invalid/x.png); }", true],
+  ])("%s", (css, loads) => {
+    expect(themeCssLoadsRemoteFiles(css)).toBe(loads);
+  });
+
   it("allows a url() inside a data: address", () => {
     expect(
       themeCssLoadsRemoteFiles(`.repro { background-image: url('${SVG_WITH_OWN_GRADIENT}'); }`),
     ).toBe(false);
+  });
+});
+
+describe("themeCssWithoutDeclarations", () => {
+  it.each([
+    // A harmless var() shorthand and an escape elsewhere name no shorthand that fetches.
+    ["a { border: var(--edge); border-left-width: 0; } .b { c\\6flor: red; }", [" c\\6flor: red"]],
+    [
+      "a { mask: var(--none, url(https://e.com/k)); mask-size: auto; }",
+      [" mask: var(--none, url(https://e.com/k))"],
+    ],
+    ["a { background: var(--none, url(data:image/png;base64,AA)); color: red }", []],
+    // Brackets, strings, comments and url() addresses do not end a declaration.
+    [
+      'a { background: var(--none, { ; } "}" /* } */ [;] url(https://e.com/;}) url(x)); b: c }',
+      [' background: var(--none, { ; } "}" /* } */ [;] url(https://e.com/;}) url(x))'],
+    ],
+    // An unquoted url() ends at its first unescaped ")", so the quote after this one opens a string.
+    [
+      'a { color: u\\72l(a"b) c" ); background: var(--none, url(https://e.com/k)); d: "" }',
+      [' color: u\\72l(a"b) c" ); background: var(--none, url(https://e.com/k)); d: "" '],
+    ],
+    [
+      "a { color: url(a\\)b;c); background: v\\61r(--none, url(x)) }",
+      [" color: url(a\\)b;c)", " background: v\\61r(--none, url(x)) "],
+    ],
+    // A closing bracket of another kind closes nothing, so the declaration stays whole.
+    ["a { background: var(--none, ( ] ; url(x))); }", [" background: var(--none, ( ] ; url(x)))"]],
+  ])("%s", (css, candidates) => {
+    const asked: string[] = [];
+    expect(themeCssWithoutDeclarations(css, (candidate) => asked.push(candidate) < 0)).toBe(css);
+    expect(asked).toEqual(candidates);
+  });
+
+  it("removes only the declarations that are refused", () => {
+    expect(
+      themeCssWithoutDeclarations(
+        "a { mask: var(--none, url(https://e.com/k)); mask-size: auto } b { cursor: url(x) }",
+        (candidate) => candidate.includes("mask"),
+      ),
+    ).toBe("a {; mask-size: auto } b { cursor: url(x) }");
   });
 });

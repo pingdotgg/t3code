@@ -27,7 +27,7 @@ import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
-import { toWslDrivePath } from "./wslDrivePath.ts";
+import { toHostDrivePath } from "./hostDrivePath.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -167,7 +167,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const toHostPath = (requestedPath: string) =>
-    toWslDrivePath(requestedPath).pipe(
+    toHostDrivePath(requestedPath).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
@@ -251,10 +251,10 @@ export const make = Effect.gen(function* () {
   };
 
   /**
-   * Workspace-relative paths must stay inside the root, symlinks included. An
-   * absolute or `~/` path reads a host file in place, such as a report an agent
-   * wrote to a temp directory; it gets no root check. A network path does, since
-   * Windows signs in to its host with the user's NTLM credentials.
+   * `filesystem:read` covers the whole OS account, so a workspace-relative path
+   * may follow a link out of the root, and an absolute or `~/` path reads a host
+   * file in place. A network path must stay inside the root, since Windows signs
+   * in to its host with the user's NTLM credentials.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
@@ -296,7 +296,7 @@ export const make = Effect.gen(function* () {
           () => Effect.succeed(null),
         ),
       );
-      return { relativePath: requestedPath, realTargetPath };
+      return { relativePath: requestedPath, realTargetPath, outsideRoot: false };
     }
 
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
@@ -324,7 +324,7 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (realWorkspaceRoot === null) {
-      return { relativePath: target.relativePath, realTargetPath: null };
+      return { relativePath: target.relativePath, realTargetPath: null, outsideRoot: false };
     }
     const resolved = yield* Effect.tryPromise({
       try: async () => {
@@ -366,7 +366,9 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    if (!isInsideRealRoot(realWorkspaceRoot, resolved.realTargetPath)) {
+    // A link out of the workspace reads like an absolute path would; writes still refuse it.
+    const outsideRoot = !isInsideRealRoot(realWorkspaceRoot, resolved.realTargetPath);
+    if (outsideRoot && isNetworkPath(resolved.realTargetPath)) {
       return yield* new WorkspaceFilePathEscapeError({
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
@@ -377,6 +379,7 @@ export const make = Effect.gen(function* () {
     return {
       relativePath: target.relativePath,
       realTargetPath: resolved.exists ? resolved.realTargetPath : null,
+      outsideRoot,
     };
   });
 
@@ -482,7 +485,13 @@ export const make = Effect.gen(function* () {
               new TextDecoder("utf-8", { fatal: true }).decode(fileBytes, { stream: truncated }),
             catch: binaryFileError,
           });
-          return { relativePath: target.relativePath, contents, byteLength: stat.size, truncated };
+          return {
+            relativePath: target.relativePath,
+            contents,
+            byteLength: stat.size,
+            truncated,
+            ...(target.outsideRoot ? { readOnly: true } : {}),
+          };
         }),
       (handle) =>
         handle === null

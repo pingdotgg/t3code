@@ -355,6 +355,11 @@ export const of = <A>(a: A): NonEmptyChunk<A> => makeChunk({ _tag: "ISingleton",
 /**
  * Creates a new `Chunk` from an iterable collection of values.
  *
+ * **Details**
+ *
+ * Array inputs are copied, so later changes to the array do not affect the
+ * chunk. Use {@link fromArrayUnsafe} to wrap an array without copying.
+ *
  * **Example** (Creating chunks from iterables)
  *
  * ```ts import.meta.vitest
@@ -367,8 +372,7 @@ export const of = <A>(a: A): NonEmptyChunk<A> => makeChunk({ _tag: "ISingleton",
  * @category constructors
  * @since 2.0.0
  */
-export const fromIterable = <A>(self: Iterable<A>): Chunk<A> =>
-  isChunk(self) ? self : fromArrayUnsafe(RA.fromIterable(self))
+export const fromIterable = <A>(self: Iterable<A>): Chunk<A> => isChunk(self) ? self : fromArrayUnsafe(Array.from(self))
 
 const copyToArray = <A>(self: Chunk<A>, array: Array<any>, initial: number): void => {
   switch (self.backing._tag) {
@@ -2522,7 +2526,7 @@ export const replace: {
 export const makeBy: {
   <A>(f: (i: number) => A): (n: number) => NonEmptyChunk<A>
   <A>(n: number, f: (i: number) => A): NonEmptyChunk<A>
-} = dual(2, (n, f) => fromIterable(RA.makeBy(n, f)))
+} = dual(2, (n, f) => fromNonEmptyArrayUnsafe(RA.makeBy(n, f)))
 
 /**
  * Creates a non-empty `Chunk` of consecutive integers from `start` through

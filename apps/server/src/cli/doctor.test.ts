@@ -1,16 +1,22 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { Command } from "effect/cli";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as TestConsole from "effect/testing/TestConsole";
 
 import * as BootService from "../cloud/bootService.ts";
-import { runDoctor } from "./doctor.ts";
+import { doctorCommand, runDoctor } from "./doctor.ts";
 import { DatabaseMaintenance } from "../persistence/DatabaseMaintenance.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { acquireServerOwnership } from "../serverOwnership.ts";
@@ -27,6 +33,50 @@ const layerHost = Layer.mergeAll(
   ),
   Layer.succeed(HostProcess.Environment, {}),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+it.effect("doctor --dry-run leaves the data directory and uploads alone", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-doctor-dry-run-" });
+    const stateDir = path.join(baseDir, "userdata");
+    const attachmentsDir = path.join(stateDir, "attachments");
+    const upload = path.join(attachmentsDir, "upload.part");
+    yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+    yield* fs.writeFileString(upload, "partial upload");
+    yield* fs.utimes(upload, 0, 0);
+    yield* TestClock.setTime(2 * 60 * 60 * 1_000);
+    yield* SqlClient.SqlClient.pipe(
+      Effect.flatMap((sql) => sql`CREATE TABLE fixture (id INTEGER)`),
+      Effect.provide(NodeSqliteClient.layer({ filename: path.join(stateDir, "statev2.sqlite") })),
+    );
+
+    yield* Command.runWith(doctorCommand, { version: "0.0.0" })([
+      "--base-dir",
+      baseDir,
+      "--fix",
+      "--dry-run",
+    ]).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              T3CODE_PORT: "3773",
+              T3CODE_TRACE_FILE: path.join(baseDir, "trace", "trace.ndjson"),
+            },
+          }),
+        ),
+      ),
+    );
+
+    assert.isTrue(yield* fs.exists(upload));
+    assert.deepEqual(yield* fs.readDirectory(baseDir), ["userdata"]);
+    assert.deepEqual((yield* fs.readDirectory(stateDir)).toSorted(), [
+      "attachments",
+      "statev2.sqlite",
+    ]);
+  }).pipe(Effect.provide(Layer.mergeAll(layerHost, NetService.layer))),
+);
 
 it.effect(
   "--fix locks the home while the service is paused, names a server that holds it, keeps the V1 database, and --dry-run changes nothing",
@@ -68,6 +118,7 @@ it.effect(
                     reclaimableBytes: 1000,
                     incrementalVacuumEnabled: false,
                     legacyDatabaseBytes: 4000,
+                    legacyOnlyRecords: { projects: 0, threads: 0 },
                   }),
                 compact: () =>
                   startServer.pipe(
@@ -117,6 +168,33 @@ it.effect(
     }).pipe(Effect.provide(layerHost)),
 );
 
+it.effect("reports sizes just under the next unit in that unit", () =>
+  Effect.gen(function* () {
+    yield* runDoctor(
+      { dbPath: "/test/statev2.sqlite", serverRuntimeStatePath: "/test/server-runtime.json" },
+      { fix: false, dryRun: true },
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(BootService.BootService)({}),
+          Layer.mock(DatabaseMaintenance)({
+            inspect: () =>
+              Effect.succeed({
+                databaseBytes: 1024 ** 3 - 4096,
+                reclaimableBytes: 1024 ** 2 - 512,
+                incrementalVacuumEnabled: true,
+                legacyDatabaseBytes: null,
+                legacyOnlyRecords: null,
+              }),
+          }),
+        ),
+      ),
+    );
+    const [summary] = yield* TestConsole.logLines;
+    assert.strictEqual(summary, "Database: 1.00 GiB, 1.0 MiB reclaimable.");
+  }).pipe(Effect.provide(Layer.merge(layerHost, TestConsole.layer))),
+);
+
 it.effect("warns how long reclaiming can take and reports each step with its elapsed time", () =>
   Effect.gen(function* () {
     const output: string[] = [];
@@ -151,6 +229,7 @@ it.effect("warns how long reclaiming can take and reports each step with its ela
                 reclaimableBytes: 0,
                 incrementalVacuumEnabled: false,
                 legacyDatabaseBytes: null,
+                legacyOnlyRecords: null,
               }),
             compact: (_databasePath, onStep) =>
               Effect.gen(function* () {

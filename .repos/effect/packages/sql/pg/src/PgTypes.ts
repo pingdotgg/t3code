@@ -30,6 +30,11 @@
  * and signed bigint microseconds independently. No units are normalized.
  * Convert microseconds explicitly before JSON serialization.
  *
+ * Built-in ranges (`int4range`, `int8range`, `numrange`, `daterange`, `tsrange`,
+ * `tstzrange`) decode to `Range<A>` using their subtype codec, and multiranges
+ * decode to `ReadonlyArray<Range<A>>`. User-defined ranges take the
+ * unregistered UTF-8 fallback.
+ *
  * @stability unstable
  * @since 4.0.0
  */
@@ -66,7 +71,7 @@ const result = <A>(evaluate: () => A): Result.Result<A, CodecError> => {
 }
 
 const textEncoder = new TextEncoder()
-const textDecoder = new TextDecoder("utf-8", { fatal: true })
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 
 const writeInt16 = (bytes: Uint8Array, offset: number, value: number): void => {
   bytes[offset] = value >>> 8
@@ -237,6 +242,50 @@ const decodeUtf8 = (bytes: Uint8Array, offset: number, size: number): string => 
   }
 }
 
+/**
+ * The UTF-8 fallback for an OID with no codec. PostgreSQL's text output never
+ * contains a NUL byte, while binary layouts almost always do, so a NUL marks
+ * the value as binary data rather than text. The context is only built when
+ * the value is rejected.
+ */
+const decodeUnregistered = (
+  bytes: Uint8Array,
+  offset: number,
+  size: number,
+  oid: number,
+  column: Column | undefined,
+  index: number
+): string => {
+  let text: string
+  try {
+    text = decodeUtf8(bytes, offset, size)
+  } catch {
+    return failUnregistered("is not valid UTF-8", oid, column, index)
+  }
+  if (text.indexOf("\u0000") !== -1) {
+    return failUnregistered("contains a NUL byte, so it is binary data rather than text", oid, column, index)
+  }
+  return text
+}
+
+const failUnregistered = (reason: string, oid: number, column: Column | undefined, index: number): never => {
+  let subject: string
+  if (column === undefined) {
+    subject = `a value of type OID ${oid}`
+  } else {
+    const name = column.name === undefined ? `${index}` : JSON.stringify(column.name)
+    const table = column.tableOid === undefined || column.tableOid === 0
+      ? ""
+      : `, table OID ${column.tableOid}, attribute number ${column.columnAttributeNumber}`
+    subject = `column ${name} (type OID ${oid}${table})`
+  }
+  return fail(
+    `Cannot decode ${subject}: no codec is registered for the type, so it is read as UTF-8 text, ` +
+      `but the value ${reason}. Register a codec with PgTypes.makeRegistry().register and pass the registry ` +
+      `as the client's types option, or cast the value to text in the query.`
+  )
+}
+
 const requireSize = (size: number, expected: number, name: string): void => {
   if (size !== expected) {
     fail(`Expected ${expected} byte(s) for ${name}, received ${size}`)
@@ -322,8 +371,21 @@ export const OID = {
   timetz: 1266,
   numeric: 1700,
   regclass: 2205,
+  record: 2249,
   uuid: 2950,
   jsonb: 3802,
+  int4range: 3904,
+  numrange: 3906,
+  tsrange: 3908,
+  tstzrange: 3910,
+  daterange: 3912,
+  int8range: 3926,
+  int4multirange: 4451,
+  nummultirange: 4532,
+  tsmultirange: 4533,
+  tstzmultirange: 4534,
+  datemultirange: 4535,
+  int8multirange: 4536,
   boolArray: 1000,
   byteaArray: 1001,
   nameArray: 1003,
@@ -347,8 +409,21 @@ export const OID = {
   timetzArray: 1270,
   numericArray: 1231,
   regclassArray: 2210,
+  recordArray: 2287,
   uuidArray: 2951,
-  jsonbArray: 3807
+  jsonbArray: 3807,
+  int4rangeArray: 3905,
+  numrangeArray: 3907,
+  tsrangeArray: 3909,
+  tstzrangeArray: 3911,
+  daterangeArray: 3913,
+  int8rangeArray: 3927,
+  int4multirangeArray: 6150,
+  nummultirangeArray: 6151,
+  tsmultirangeArray: 6152,
+  tstzmultirangeArray: 6153,
+  datemultirangeArray: 6155,
+  int8multirangeArray: 6157
 } as const
 
 const arrayToElement = new Map<number, number>([
@@ -375,8 +450,21 @@ const arrayToElement = new Map<number, number>([
   [OID.timetzArray, OID.timetz],
   [OID.numericArray, OID.numeric],
   [OID.regclassArray, OID.regclass],
+  [OID.recordArray, OID.record],
   [OID.uuidArray, OID.uuid],
-  [OID.jsonbArray, OID.jsonb]
+  [OID.jsonbArray, OID.jsonb],
+  [OID.int4rangeArray, OID.int4range],
+  [OID.numrangeArray, OID.numrange],
+  [OID.tsrangeArray, OID.tsrange],
+  [OID.tstzrangeArray, OID.tstzrange],
+  [OID.daterangeArray, OID.daterange],
+  [OID.int8rangeArray, OID.int8range],
+  [OID.int4multirangeArray, OID.int4multirange],
+  [OID.nummultirangeArray, OID.nummultirange],
+  [OID.tsmultirangeArray, OID.tsmultirange],
+  [OID.tstzmultirangeArray, OID.tstzmultirange],
+  [OID.datemultirangeArray, OID.datemultirange],
+  [OID.int8multirangeArray, OID.int8multirange]
 ])
 
 const elementToArray = new Map<number, number>(
@@ -928,6 +1016,9 @@ interface UnsafeCodec<A> {
 
 type Lookup = (oid: number) => UnsafeCodec<any> | undefined
 
+const requireCodec = (oid: number, lookup: Lookup): UnsafeCodec<any> =>
+  lookup(oid) ?? fail(`No codec registered for OID ${oid}`)
+
 const toUnsafeCodec = <A>(codec: Codec<A>): UnsafeCodec<A> => ({
   encode(value) {
     const encoded = codec.encode(value)
@@ -1208,6 +1299,22 @@ export interface Interval {
   readonly microseconds: bigint
 }
 
+/**
+ * A PostgreSQL range. `null` represents an unbounded side; an empty range has
+ * `empty: true` with `null` bounds and `false` inclusivity flags.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.0.0
+ */
+export interface Range<A> {
+  readonly lower: A | null
+  readonly upper: A | null
+  readonly lowerInclusive: boolean
+  readonly upperInclusive: boolean
+  readonly empty: boolean
+}
+
 const intervalValue = (value: unknown): Interval => {
   if (typeof value !== "object" || value === null) return fail("Expected an object for interval")
   const interval = value as Interval
@@ -1387,6 +1494,15 @@ const builtinScalars = new Map<number, UnsafeCodec<any>>([
   [OID.interval, intervalCodec]
 ])
 
+const rangeTypes: ReadonlyArray<readonly [range: number, subtype: number, multirange: number]> = [
+  [OID.int4range, OID.int4, OID.int4multirange],
+  [OID.numrange, OID.numeric, OID.nummultirange],
+  [OID.tsrange, OID.timestamp, OID.tsmultirange],
+  [OID.tstzrange, OID.timestamptz, OID.tstzmultirange],
+  [OID.daterange, OID.date, OID.datemultirange],
+  [OID.int8range, OID.int8, OID.int8multirange]
+]
+
 const makeArrayCodec = (elementOid: number, lookup: Lookup): UnsafeCodec<ReadonlyArray<unknown>> =>
   codecOf(
     (bytes, offset, size) => decodeArray(bytes, offset, size, elementOid, lookup),
@@ -1394,18 +1510,52 @@ const makeArrayCodec = (elementOid: number, lookup: Lookup): UnsafeCodec<Readonl
     (sink, value) => writeArray(sink, value, elementOid, lookup)
   )
 
-const builtins = new Map<number, UnsafeCodec<any>>(builtinScalars)
+const makeRangeCodec = (subtypeOid: number, lookup: Lookup): UnsafeCodec<Range<unknown>> =>
+  codecOf(
+    (bytes, offset, size) => decodeRange(bytes, offset, size, subtypeOid, lookup),
+    (value) => encodeRange(value, subtypeOid, lookup),
+    (sink, value) => writeRange(sink, value, subtypeOid, lookup)
+  )
+
+const makeMultirangeCodec = (rangeOid: number, lookup: Lookup): UnsafeCodec<ReadonlyArray<Range<unknown>>> =>
+  codecOf(
+    (bytes, offset, size) => decodeMultirange(bytes, offset, size, rangeOid, lookup),
+    (value) => encodeMultirange(value, rangeOid, lookup),
+    (sink, value) => writeMultirange(sink, value, rangeOid, lookup)
+  )
 
 /**
- * Built-ins with registered codecs layered over them, so `encode` and `decode`
- * resolve an OID with a single lookup.
+ * Anonymous `record` values (`ROW(...)`, `(a, b)`) decode as an array of their
+ * fields. The binary form names each field's type, so fields use the same
+ * lookup as columns. PostgreSQL does not accept anonymous records as input,
+ * so there is nothing to encode.
  */
-const codecs = new Map<number, UnsafeCodec<any>>(builtins)
+const makeRecordCodec = (lookup: Lookup): UnsafeCodec<ReadonlyArray<unknown>> =>
+  codecOf(
+    (bytes, offset, size) => decodeRecord(bytes, offset, size, lookup),
+    () => fail("Encoding an anonymous record is not supported; bind its fields as separate parameters")
+  )
 
 /**
- * Every built-in OID is below this, and PostgreSQL hands user-defined types
- * OIDs from 16384 up, so a direct table covers the common case and the map
- * covers registered ones.
+ * The built-ins for one registry. Arrays, ranges, multiranges, and records
+ * decode their contents through the lookup, so each registry builds its own.
+ */
+const makeBuiltins = (lookup: Lookup): Map<number, UnsafeCodec<any>> => {
+  const codecs = new Map<number, UnsafeCodec<any>>(builtinScalars)
+  for (const [rangeOid, subtypeOid, multirangeOid] of rangeTypes) {
+    codecs.set(rangeOid, makeRangeCodec(subtypeOid, lookup))
+    codecs.set(multirangeOid, makeMultirangeCodec(rangeOid, lookup))
+  }
+  for (const [arrayOid, elementOid] of arrayToElement) {
+    codecs.set(arrayOid, makeArrayCodec(elementOid, lookup))
+  }
+  codecs.set(OID.record, makeRecordCodec(lookup))
+  return codecs
+}
+
+/**
+ * Direct lookup table limit. Multirange OIDs and user-defined types (16384+)
+ * sit above this and resolve through the map.
  */
 const tableSize = 4096
 
@@ -1413,12 +1563,17 @@ const table = new Array<UnsafeCodec<any> | undefined>(tableSize)
 
 const lookup = (oid: number): UnsafeCodec<any> | undefined => oid >= 0 && oid < tableSize ? table[oid] : codecs.get(oid)
 
-for (const [arrayOid, elementOid] of arrayToElement) {
-  const codec = makeArrayCodec(elementOid, lookup)
-  builtins.set(arrayOid, codec)
-  codecs.set(arrayOid, codec)
+const builtins = makeBuiltins(lookup)
+
+/**
+ * Built-ins with registered codecs layered over them, so `encode` and `decode`
+ * resolve an OID with a single lookup.
+ */
+const codecs = new Map<number, UnsafeCodec<any>>(builtins)
+
+for (const [oid, codec] of codecs) {
+  if (oid < tableSize) table[oid] = codec
 }
-for (const [oid, codec] of codecs) table[oid] = codec
 
 interface RegistryState {
   readonly codecs: Map<number, UnsafeCodec<any>>
@@ -1455,15 +1610,9 @@ const registerInState = <A>(
  * @since 4.0.0
  */
 export const makeRegistry = (): Registry => {
-  const codecs = new Map<number, UnsafeCodec<any>>(builtinScalars)
-  const state: RegistryState = {
-    codecs,
-    elementToArray: new Map(elementToArray),
-    lookup: (oid) => codecs.get(oid)
-  }
-  for (const [arrayOid, elementOid] of arrayToElement) {
-    codecs.set(arrayOid, makeArrayCodec(elementOid, state.lookup))
-  }
+  const lookup: Lookup = (oid) => codecs.get(oid)
+  const codecs = makeBuiltins(lookup)
+  const state: RegistryState = { codecs, elementToArray: new Map(elementToArray), lookup }
   const registry: Registry = {
     register: (oid, codec, options) => registerInState(state, oid, codec, options)
   }
@@ -1481,9 +1630,10 @@ const lookupFor = (registry: Registry | undefined): Lookup =>
  * **Details**
  *
  * Unregistered OIDs decode as UTF-8 text. Register binary user-defined types
- * to avoid garbled output or codec errors, which close the connection when
- * reading rows. For arrays, use `makeRegistry().register` with
- * `RegisterOptions.arrayOid` and pass the registry as the client's `types` option.
+ * to avoid codec errors, which fail the query that read the row, or garbled
+ * output from a binary layout without NUL bytes. For arrays, use
+ * `makeRegistry().register` with `RegisterOptions.arrayOid` and pass the
+ * registry as the client's `types` option.
  *
  * @stability unstable
  * @category registry
@@ -1517,8 +1667,7 @@ const encodeArray = (value: unknown, elementOid: number, lookup: Lookup): Uint8A
   if (!Array.isArray(value)) {
     return fail("Expected an array")
   }
-  const codec = lookup(elementOid)
-  if (codec === undefined) return fail(`No codec registered for OID ${elementOid}`)
+  const codec = requireCodec(elementOid, lookup)
   const count = value.length
   const elements: Array<Uint8Array | null> = new Array(count)
   let hasNull = false
@@ -1659,6 +1808,204 @@ const decodeArray = (
   return values
 }
 
+/**
+ * PostgreSQL record_send: an int32 field count, then for each field its type
+ * OID, an int32 length (-1 for NULL) and its bytes.
+ */
+const decodeRecord = (bytes: Uint8Array, start: number, size: number, lookup: Lookup): ReadonlyArray<unknown> => {
+  if (size < 4) return fail("Truncated record value")
+  const count = readInt32(bytes, start)
+  if (count < 0) return fail(`Invalid record field count: ${count}`)
+  const values: Array<unknown> = new Array(count)
+  const limit = start + size
+  let offset = start + 4
+  for (let i = 0; i < count; i++) {
+    if (offset + 8 > limit) return fail("Truncated record field")
+    const oid = readUint32(bytes, offset)
+    const fieldSize = readInt32(bytes, offset + 4)
+    offset += 8
+    if (fieldSize < -1) return fail(`Invalid record field length: ${fieldSize}`)
+    if (fieldSize === -1) {
+      values[i] = null
+      continue
+    }
+    if (offset + fieldSize > limit) return fail("Truncated record field")
+    const codec = lookup(oid)
+    values[i] = codec === undefined
+      ? decodeUnregistered(bytes, offset, fieldSize, oid, undefined, 0)
+      : codec.read !== undefined
+      ? codec.read(bytes, offset, fieldSize)
+      : codec.decode(region(bytes, offset, fieldSize))
+    offset += fieldSize
+  }
+  if (offset !== limit) return fail("Record value has trailing bytes")
+  return values
+}
+
+// -----------------------------------------------------------------------------
+// ranges and multiranges
+// -----------------------------------------------------------------------------
+
+const RANGE_EMPTY = 0x01
+const RANGE_LB_INC = 0x02
+const RANGE_UB_INC = 0x04
+const RANGE_LB_INF = 0x08
+const RANGE_UB_INF = 0x10
+
+/** The int32 length of the value framed at `offset`, which has to end by `limit`. */
+const frameSize = (bytes: Uint8Array, offset: number, limit: number, name: string): number => {
+  if (offset + 4 > limit) return fail(`Truncated ${name}`)
+  const size = readInt32(bytes, offset)
+  if (size < 0) return fail(`Invalid ${name} length: ${size}`)
+  if (offset + 4 + size > limit) return fail(`Truncated ${name}`)
+  return size
+}
+
+const readWith = (codec: UnsafeCodec<any>, bytes: Uint8Array, offset: number, size: number): unknown =>
+  codec.read !== undefined ? codec.read(bytes, offset, size) : codec.decode(region(bytes, offset, size))
+
+/** `headerSize` bytes for the caller to fill, then each part behind its int32 length. */
+const framed = (headerSize: number, parts: ReadonlyArray<Uint8Array>): Uint8Array => {
+  let size = headerSize
+  for (const part of parts) size += 4 + part.length
+  const bytes = new Uint8Array(size)
+  let offset = headerSize
+  for (const part of parts) {
+    writeInt32(bytes, offset, part.length)
+    bytes.set(part, offset + 4)
+    offset += 4 + part.length
+  }
+  return bytes
+}
+
+const writeFramed = (sink: ValueSink, value: unknown, oid: number, lookup: Lookup): void => {
+  const token = sink.beginLength()
+  writeValue(sink, value, oid, lookup)
+  sink.endLength(token)
+}
+
+const rangeValue = (value: unknown): Range<unknown> => {
+  if (typeof value !== "object" || value === null) return fail("Expected an object for range")
+  const range = value as Range<unknown>
+  if (typeof range.empty !== "boolean") return fail("Expected a boolean for range empty")
+  if (typeof range.lowerInclusive !== "boolean") return fail("Expected a boolean for range lowerInclusive")
+  if (typeof range.upperInclusive !== "boolean") return fail("Expected a boolean for range upperInclusive")
+  return range
+}
+
+const rangeFlags = (range: Range<unknown>): number => {
+  let flags = 0
+  if (range.lower === null) flags |= RANGE_LB_INF
+  else if (range.lowerInclusive) flags |= RANGE_LB_INC
+  if (range.upper === null) flags |= RANGE_UB_INF
+  else if (range.upperInclusive) flags |= RANGE_UB_INC
+  return flags
+}
+
+/**
+ * PostgreSQL range_send: a flags byte, then an int32 length and subtype bytes
+ * for each finite bound when the range is not empty.
+ */
+const encodeRange = (value: unknown, subtypeOid: number, lookup: Lookup): Uint8Array => {
+  const range = rangeValue(value)
+  if (range.empty) return new Uint8Array([RANGE_EMPTY])
+  const codec = requireCodec(subtypeOid, lookup)
+  const bounds: Array<Uint8Array> = []
+  if (range.lower !== null) bounds.push(codec.encode(range.lower))
+  if (range.upper !== null) bounds.push(codec.encode(range.upper))
+  const bytes = framed(1, bounds)
+  bytes[0] = rangeFlags(range)
+  return bytes
+}
+
+const writeRange = (sink: ValueSink, value: unknown, subtypeOid: number, lookup: Lookup): void => {
+  const range = rangeValue(value)
+  if (range.empty) return sink.uint8(RANGE_EMPTY)
+  sink.uint8(rangeFlags(range))
+  if (range.lower !== null) writeFramed(sink, range.lower, subtypeOid, lookup)
+  if (range.upper !== null) writeFramed(sink, range.upper, subtypeOid, lookup)
+}
+
+const decodeRange = (
+  bytes: Uint8Array,
+  start: number,
+  size: number,
+  subtypeOid: number,
+  lookup: Lookup
+): Range<unknown> => {
+  if (size < 1) return fail("Truncated range value")
+  const flags = bytes[start]
+  // An empty range has no bounds, whatever its other flags say.
+  const hasLower = (flags & (RANGE_EMPTY | RANGE_LB_INF)) === 0
+  const hasUpper = (flags & (RANGE_EMPTY | RANGE_UB_INF)) === 0
+  const codec = requireCodec(subtypeOid, lookup)
+  const limit = start + size
+  let offset = start + 1
+  let lower: unknown = null
+  let upper: unknown = null
+  if (hasLower) {
+    const boundSize = frameSize(bytes, offset, limit, "range bound")
+    lower = readWith(codec, bytes, offset + 4, boundSize)
+    offset += 4 + boundSize
+  }
+  if (hasUpper) {
+    const boundSize = frameSize(bytes, offset, limit, "range bound")
+    upper = readWith(codec, bytes, offset + 4, boundSize)
+    offset += 4 + boundSize
+  }
+  if (offset !== limit) return fail("Range value has trailing bytes")
+  return {
+    lower,
+    upper,
+    lowerInclusive: hasLower && (flags & RANGE_LB_INC) !== 0,
+    upperInclusive: hasUpper && (flags & RANGE_UB_INC) !== 0,
+    empty: (flags & RANGE_EMPTY) !== 0
+  }
+}
+
+/**
+ * PostgreSQL multirange_send: an int32 count, then an int32 length and range
+ * bytes for each range.
+ */
+const encodeMultirange = (value: unknown, rangeOid: number, lookup: Lookup): Uint8Array => {
+  if (!Array.isArray(value)) return fail("Expected an array for multirange")
+  const codec = requireCodec(rangeOid, lookup)
+  const bytes = framed(4, Array.from(value, (range) => codec.encode(range)))
+  writeInt32(bytes, 0, value.length)
+  return bytes
+}
+
+const writeMultirange = (sink: ValueSink, value: unknown, rangeOid: number, lookup: Lookup): void => {
+  if (!Array.isArray(value)) return fail("Expected an array for multirange")
+  sink.int32(value.length)
+  for (let i = 0; i < value.length; i++) writeFramed(sink, value[i], rangeOid, lookup)
+}
+
+const decodeMultirange = (
+  bytes: Uint8Array,
+  start: number,
+  size: number,
+  rangeOid: number,
+  lookup: Lookup
+): ReadonlyArray<Range<unknown>> => {
+  if (size < 4) return fail("Truncated multirange value")
+  const count = readInt32(bytes, start)
+  if (count < 0) return fail(`Invalid multirange length: ${count}`)
+  // Each range has at least its length, so a larger count cannot be real.
+  if (count * 4 > size - 4) return fail("Truncated multirange value")
+  const codec = requireCodec(rangeOid, lookup)
+  const values: Array<Range<unknown>> = new Array(count)
+  const limit = start + size
+  let offset = start + 4
+  for (let i = 0; i < count; i++) {
+    const rangeSize = frameSize(bytes, offset, limit, "multirange element")
+    values[i] = readWith(codec, bytes, offset + 4, rangeSize) as Range<unknown>
+    offset += 4 + rangeSize
+  }
+  if (offset !== limit) return fail("Multirange value has trailing bytes")
+  return values
+}
+
 // -----------------------------------------------------------------------------
 // entry points
 // -----------------------------------------------------------------------------
@@ -1673,6 +2020,12 @@ const decodeArray = (
 export interface Column {
   readonly dataTypeOid: number
   readonly format: number
+  /** Names the column in decoding errors. */
+  readonly name?: string | undefined
+  /** The source table, or `0` when the column is not a table column. */
+  readonly tableOid?: number | undefined
+  /** The column's attribute number within `tableOid`. */
+  readonly columnAttributeNumber?: number | undefined
 }
 
 /**
@@ -1681,8 +2034,11 @@ export interface Column {
  * **Details**
  *
  * Codecs are resolved once per column. SQL `NULL` becomes `null`.
- * Unregistered OIDs decode as UTF-8 text. Invalid UTF-8 and text-format
- * columns fail with `CodecError`.
+ * Unregistered OIDs decode as UTF-8 text. Text-format columns fail with
+ * `CodecError`, as do unregistered values that are invalid UTF-8 or contain a
+ * NUL byte, which no PostgreSQL text value does. Those errors name the column
+ * and its type OID. A binary layout with no NUL bytes still decodes as
+ * garbled text, so register a codec for binary user-defined types.
  *
  * **Example** (Updating the reader after `RowDescription`)
  *
@@ -1714,7 +2070,9 @@ export const makeFieldReader = (
     return (bytes: Uint8Array, offset: number, size: number, column: number): unknown => {
       if (size < 0) return null
       const codec = codecs[column]
-      if (codec === undefined) return decodeUtf8(bytes, offset, size)
+      if (codec === undefined) {
+        return decodeUnregistered(bytes, offset, size, columns[column].dataTypeOid, columns[column], column)
+      }
       const read = codec.read
       return read === undefined ? codec.decode(bytes.subarray(offset, offset + size)) : read(bytes, offset, size)
     }
@@ -1733,11 +2091,7 @@ export const makeFieldReader = (
  * @since 4.0.0
  */
 export const encode = (value: unknown, oid: number, registry?: Registry): Result.Result<Uint8Array, CodecError> =>
-  result(() => {
-    const codec = lookupFor(registry)(oid)
-    if (codec === undefined) return fail(`No codec registered for OID ${oid}`)
-    return codec.encode(value)
-  })
+  result(() => requireCodec(oid, lookupFor(registry)).encode(value))
 
 /**
  * Decodes the binary representation of the given OID.
@@ -1745,8 +2099,9 @@ export const encode = (value: unknown, oid: number, registry?: Registry): Result
  * **Details**
  *
  * Only binary format (`1`) is supported. Unregistered OIDs decode as UTF-8
- * text; invalid UTF-8 fails with `CodecError`. See `register` for binary
- * user-defined types, including arrays.
+ * text; a value that is invalid UTF-8 or contains a NUL byte fails with
+ * `CodecError`. See `register` for binary user-defined types, including
+ * arrays.
  *
  * @stability unstable
  * @category decoding
@@ -1763,7 +2118,7 @@ export const decode = (
       return fail(`Only the binary format is supported, received format ${format}`)
     }
     const codec = lookupFor(registry)(oid)
-    return codec === undefined ? decodeUtf8(bytes, 0, bytes.length) : codec.decode(bytes)
+    return codec === undefined ? decodeUnregistered(bytes, 0, bytes.length, oid, undefined, 0) : codec.decode(bytes)
   })
 
 // -----------------------------------------------------------------------------
@@ -1825,8 +2180,7 @@ export const encodeParameter = (
   parameter.value === null ? Result.succeed(null) : encode(parameter.value, parameter.oid, registry)
 
 const writeValue = (sink: ValueSink, value: unknown, oid: number, lookup: Lookup): void => {
-  const codec = lookup(oid)
-  if (codec === undefined) return fail(`No codec registered for OID ${oid}`)
+  const codec = requireCodec(oid, lookup)
   if (codec.write === undefined) sink.raw(codec.encode(value))
   else codec.write(sink, value)
 }
@@ -2109,6 +2463,118 @@ export const timestamptz: (value: Date | number | null) => Parameter = parameter
  * @since 4.0.0
  */
 export const interval: (value: Interval | null) => Parameter = parameter(OID.interval)
+
+/**
+ * An `int4range` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const int4range: (value: Range<number> | null) => Parameter = parameter(OID.int4range)
+
+/**
+ * An `int8range` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const int8range: (value: Range<bigint> | null) => Parameter = parameter(OID.int8range)
+
+/**
+ * A `numrange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const numrange: (value: Range<string> | null) => Parameter = parameter(OID.numrange)
+
+/**
+ * A `daterange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const daterange: (value: Range<string> | null) => Parameter = parameter(OID.daterange)
+
+/**
+ * A `tsrange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const tsrange: (value: Range<Date | number> | null) => Parameter = parameter(OID.tsrange)
+
+/**
+ * A `tstzrange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const tstzrange: (value: Range<Date | number> | null) => Parameter = parameter(OID.tstzrange)
+
+/**
+ * An `int4multirange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const int4multirange: (value: ReadonlyArray<Range<number>> | null) => Parameter = parameter(OID.int4multirange)
+
+/**
+ * An `int8multirange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const int8multirange: (value: ReadonlyArray<Range<bigint>> | null) => Parameter = parameter(OID.int8multirange)
+
+/**
+ * A `nummultirange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const nummultirange: (value: ReadonlyArray<Range<string>> | null) => Parameter = parameter(OID.nummultirange)
+
+/**
+ * A `datemultirange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const datemultirange: (value: ReadonlyArray<Range<string>> | null) => Parameter = parameter(OID.datemultirange)
+
+/**
+ * A `tsmultirange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const tsmultirange: (value: ReadonlyArray<Range<Date | number>> | null) => Parameter = parameter(
+  OID.tsmultirange
+)
+
+/**
+ * A `tstzmultirange` parameter.
+ *
+ * @stability unstable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const tstzmultirange: (value: ReadonlyArray<Range<Date | number>> | null) => Parameter = parameter(
+  OID.tstzmultirange
+)
 
 /**
  * A one-dimensional array parameter whose elements have the given OID.

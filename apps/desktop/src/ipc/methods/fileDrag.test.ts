@@ -15,7 +15,7 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import { startFileDrag } from "./fileDrag.ts";
 
-it.effect("only drags existing absolute paths from the Mac host environment and app window", () =>
+it.effect("only drags existing absolute paths from the host environment and app window", () =>
   Effect.gen(function* () {
     startDrag.mockClear();
     getFileIcon.mockClear();
@@ -43,9 +43,13 @@ it.effect("only drags existing absolute paths from the Mac host environment and 
     assert.isFalse(yield* run("host", filePath, "darwin", 2));
     assert.strictEqual(startDrag.mock.calls.length, 0);
     assert.isTrue(yield* run("host", filePath));
-    assert.deepEqual(startDrag.mock.calls, [[{ file: filePath, icon: "file-icon" }]]);
+    assert.isTrue(yield* run("host", filePath, "win32"));
+    assert.deepEqual(startDrag.mock.calls, [
+      [{ file: filePath, icon: "file-icon" }],
+      [{ file: filePath, icon: "file-icon" }],
+    ]);
     yield* fs.remove(path.join(stateDir, "environment-id"));
     assert.isFalse(yield* run("host", filePath));
-    assert.strictEqual(startDrag.mock.calls.length, 1);
+    assert.strictEqual(startDrag.mock.calls.length, 2);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

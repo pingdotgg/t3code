@@ -14,6 +14,7 @@ import type {
   PullRequestReactionContent,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { T, useGT, useLocale, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -39,6 +40,9 @@ export function ReactionPills(props: {
   readonly onChanged?: () => void;
 }) {
   // Keyed by what the host last reported, so a refresh that lands the change drops the overlay.
+  const gt = useGT();
+  const messages = useMessages();
+  const locale = useLocale();
   const [pending, setPending] = useState({ signature: "", values: EMPTY_PENDING });
   const signature = pullRequestReactionsSignature(props.reactions);
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
@@ -53,7 +57,7 @@ export function ReactionPills(props: {
         next.delete(content);
         return { signature: current.signature, values: next };
       });
-      Dialog.alert("Couldn't save the reaction", "Try again in a moment.");
+      Dialog.alert(gt("Couldn't save the reaction"), gt("Try again in a moment."));
       return;
     }
     props.onChanged?.();
@@ -64,7 +68,7 @@ export function ReactionPills(props: {
         <Pressable
           key={reaction.content}
           accessibilityRole="button"
-          accessibilityLabel={pullRequestReactionTooltip(reaction)}
+          accessibilityLabel={pullRequestReactionTooltip(reaction, messages, locale)}
           accessibilityState={{ selected: reaction.viewerHasReacted, disabled: !props.canReact }}
           disabled={!props.canReact}
           onPress={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
@@ -81,10 +85,10 @@ export function ReactionPills(props: {
       ))}
       {props.canReact ? (
         <Menu
-          accessibilityLabel="Add a reaction"
+          accessibilityLabel={gt("Add a reaction")}
           actions={PULL_REQUEST_REACTION_ORDER.map((content) => ({
             id: content,
-            title: `${pullRequestReactionEmoji(content)}  ${pullRequestReactionName(content)}`,
+            title: `${pullRequestReactionEmoji(content)}  ${pullRequestReactionName(content, messages)}`,
             state: shown.some(
               (reaction) => reaction.content === content && reaction.viewerHasReacted,
             )
@@ -161,6 +165,7 @@ export function PullRequestCommentFooter(props: {
   readonly onEdit?: () => void;
 }) {
   const navigation = useNavigation();
+  const gt = useGT();
   const { comment } = props;
   const reactions = comment.reactions ?? [];
   const editableKind = comment.kind === "review" ? null : comment.kind;
@@ -179,7 +184,7 @@ export function PullRequestCommentFooter(props: {
       {canEdit && editableKind !== null ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Edit comment"
+          accessibilityLabel={gt("Edit comment")}
           onPress={() => {
             props.onEdit?.();
             navigation.navigate("PullRequestEdit", {
@@ -197,7 +202,9 @@ export function PullRequestCommentFooter(props: {
           className={cn(PILL, "ml-auto border-transparent")}
         >
           <SymbolView name="pencil" size={13} tintColorClassName="accent-icon-muted" />
-          <Text className="text-xs font-t3-medium text-foreground-muted">Edit</Text>
+          <Text className="text-xs font-t3-medium text-foreground-muted">
+            <T context="verb, edit a comment">Edit</T>
+          </Text>
         </Pressable>
       ) : null}
     </View>

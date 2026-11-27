@@ -1,0 +1,29 @@
+name: Alchemy Canary
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+# Typechecks the @effect/platform-cloudflare Alchemy integration (module,
+# example, and typetests) against the latest alchemy@beta instead of the
+# pinned devDependency. Credential-free; run it manually when an alchemy
+# release may have moved the surface the integration depends on.
+jobs:
+  canary:
+    name: Canary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install dependencies
+        uses: ./.github/actions/setup
+      - name: Install latest alchemy@beta
+        run: |
+          pnpm --dir packages/platform/cloudflare add --save-dev --config.minimumReleaseAge=0 alchemy@beta @alchemy.run/cloudflare@beta
+          pnpm ls --dir packages/platform/cloudflare alchemy @alchemy.run/cloudflare
+      - name: Typecheck module, example, and typetests
+        run: pnpm exec tsc -b packages/platform/cloudflare/tsconfig.alchemy.json
+      - name: Run typetests
+        run: pnpm test-types --target '>=5.9' AlchemyCloudflareCluster

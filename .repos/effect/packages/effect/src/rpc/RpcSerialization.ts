@@ -60,7 +60,13 @@ const decodeText = (bytes: Uint8Array): string => (sharedTextDecoder ??= new Tex
  * @since 4.0.0
  */
 export class RpcSerialization extends Context.Service<RpcSerialization, {
-  makeUnsafe(): Parser
+  makeUnsafe(options?: {
+    /**
+     * Receives each malformed NDJSON frame instead of `decode` throwing, so the
+     * frames around it still decode. Other decoding failures still throw.
+     */
+    readonly onDecodeError?: ((error: unknown) => void) | undefined
+  }): Parser
   readonly contentType: string
   readonly includesFraming: boolean
   readonly codecFor: CodecFor
@@ -165,12 +171,14 @@ export const makeNdjson = (options?: StreamOptions): RpcSerialization["Service"]
     contentType: "application/x-ndjson",
     includesFraming: true,
     codecFor: codecForJson,
-    makeUnsafe: () => {
+    makeUnsafe: (options) => {
+      const onDecodeError = options?.onDecodeError
       // lazily created: string transports never need byte decoding
       let decoder: TextDecoder | undefined
       let buffer = ""
       const failMaxBufferSize = (maxBufferSize: number): never => {
         buffer = ""
+        decoder = undefined
         throw new MaxBufferSizeExceeded({ maxBufferSize })
       }
       return ({
@@ -189,8 +197,13 @@ export const makeNdjson = (options?: StreamOptions): RpcSerialization["Service"]
               try {
                 items.push(JSON.parse(line))
               } catch (cause) {
-                buffer = ""
-                throw new NdjsonDecodeError({ cause })
+                const error = new NdjsonDecodeError({ cause })
+                if (onDecodeError === undefined) {
+                  buffer = ""
+                  decoder = undefined
+                  throw error
+                }
+                onDecodeError(error)
               }
             }
             nlIndex = buffer.indexOf("\n", position)
@@ -290,8 +303,8 @@ export const ndJsonRpc = (options?: {
     contentType: options?.contentType ?? "application/json-rpc",
     includesFraming: true,
     codecFor: codecForJson,
-    makeUnsafe: () => {
-      const parser = makeNdjson({ maxBufferSize: options?.maxBufferSize }).makeUnsafe()
+    makeUnsafe: (parserOptions) => {
+      const parser = makeNdjson({ maxBufferSize: options?.maxBufferSize }).makeUnsafe(parserOptions)
       const controlMessages = options?.controlMessages ?? true
       const batches = new Map<string, {
         readonly size: number
@@ -539,6 +552,13 @@ function encodeJsonRpcMessage(response: RpcMessage.FromServerEncoded | RpcMessag
       } as any
     }
     case "Defect":
+      if (hasProperty(response.defect, "name") && response.defect.name === "NdjsonDecodeError") {
+        return {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: "Parse error" }
+        }
+      }
       return {
         jsonrpc: "2.0",
         id: jsonRpcInternalError,

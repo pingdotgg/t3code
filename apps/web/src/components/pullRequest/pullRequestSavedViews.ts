@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import { SavedViewIdentity } from "@t3tools/client-runtime/saved-views";
 
 import type { SavedView, SavedViewsKind } from "../SavedViewsMenu";
@@ -29,11 +30,10 @@ export const PULL_REQUEST_SAVED_VIEWS = {
     Schema.Struct({ ...SavedViewIdentity.fields, preferences: PullRequestListPreferencesSchema }),
   ),
   empty: [],
-  noun: "pull request",
-  shortNoun: "PR",
-  placeholder: "PRs Requesting My Review",
+  list: "pullRequest",
+  placeholder: msg("PRs Requesting My Review"),
   suggestedName: (preferences) =>
-    preferences.involvement === "reviewing" ? "PRs Requesting My Review" : "",
+    preferences.involvement === "reviewing" ? msg("PRs Requesting My Review") : "",
   normalize: pullRequestListPreferences,
   matches: pullRequestViewMatches,
 } as const satisfies SavedViewsKind<

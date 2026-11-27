@@ -1,4 +1,8 @@
-import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import {
+  ChatAttachmentId,
+  ComposerContextId,
+  type PreviewAnnotationPayload,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ComposerImageAttachment } from "../../composerDraftStore";
@@ -37,7 +41,7 @@ const annotation = {
 } satisfies PreviewAnnotationPayload;
 
 function retention(): RetainedAttachmentContextPayloads {
-  return { files: new Map(), previewAnnotations: new Map() };
+  return { files: new Map(), previewAnnotations: new Map(), restoredQueuedImageIds: new Set() };
 }
 
 describe("reconcileAttachmentContextReferences", () => {
@@ -87,5 +91,66 @@ describe("reconcileAttachmentContextReferences", () => {
         attachmentId: "uploaded-screenshot",
       }),
     ]);
+  });
+
+  it("drops a queued file with its chip, keeps a queued image, and lets undo and redo restore and remove either", () => {
+    const file = {
+      attachment: {
+        type: "file" as const,
+        id: ChatAttachmentId.make("server-file"),
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 12,
+      },
+      contextIds: [ComposerContextId.make("file_local")],
+    };
+    const queuedImage = {
+      attachment: {
+        type: "image" as const,
+        id: ChatAttachmentId.make("server-image"),
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 67,
+      },
+      contextIds: [ComposerContextId.make("image_local")],
+    };
+    const base = { files: [], images: [], previewAnnotations: [], retained: retention() };
+
+    const deleted = reconcileAttachmentContextReferences({
+      ...base,
+      referencedContextIds: new Set(),
+      queuedAttachments: [file, queuedImage],
+    });
+    expect(deleted.queuedAttachmentIdsToRemove).toEqual([file.attachment.id]);
+
+    const undone = reconcileAttachmentContextReferences({
+      ...base,
+      referencedContextIds: new Set(["file_local", "image_local"]),
+      removedQueuedAttachments: [file, queuedImage],
+    });
+    expect(undone.queuedAttachmentsToRestore).toEqual([file.attachment, queuedImage.attachment]);
+
+    const redone = reconcileAttachmentContextReferences({
+      ...base,
+      referencedContextIds: new Set(),
+      queuedAttachments: [file, queuedImage],
+      fromHistory: true,
+    });
+    expect(redone.queuedAttachmentIdsToRemove).toEqual([
+      file.attachment.id,
+      queuedImage.attachment.id,
+    ]);
+
+    reconcileAttachmentContextReferences({
+      ...base,
+      referencedContextIds: new Set(["image_local"]),
+      removedQueuedAttachments: [queuedImage],
+    });
+    const backspaced = reconcileAttachmentContextReferences({
+      ...base,
+      referencedContextIds: new Set(),
+      queuedAttachments: [queuedImage],
+    });
+    expect(backspaced.queuedAttachmentIdsToRemove).toEqual([]);
   });
 });

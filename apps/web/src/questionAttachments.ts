@@ -15,6 +15,11 @@ import type {
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import { DraftId, useComposerDraftStore } from "./composerDraftStore";
+import {
+  cancelPreparingComposerImages,
+  countPreparingComposerImages,
+  movePreparingComposerImagesToThread,
+} from "./components/chat/preparingComposerImages";
 import { releaseDraftAttachments } from "./lib/attachmentUploadQueue";
 import {
   carryDisplacedCustomAnswerIntoPrompt,
@@ -99,16 +104,23 @@ export function changeQuestionAttachmentPreparation(key: DraftId, delta: number)
   );
 }
 
-export function clearQuestionAttachmentDraft(key: DraftId): void {
+/** Releases the draft's attachments except `keepIds`, which have moved to another draft. */
+export function clearQuestionAttachmentDraft(
+  key: DraftId,
+  keepIds: ReadonlySet<string> = new Set(),
+): void {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(key);
   if (draft) {
-    releaseDraftAttachments([...draft.images, ...draft.files]);
+    releaseDraftAttachments([...draft.images, ...draft.files].filter(({ id }) => !keepIds.has(id)));
     for (const image of draft.images) {
-      if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
+      if (!keepIds.has(image.id) && image.previewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(image.previewUrl);
+      }
     }
   }
   store.clearComposerContent(key);
+  if (countPreparingComposerImages(key) > 0) cancelPreparingComposerImages(key);
   useQuestionAttachmentPreparation.setState(({ counts }) => {
     const next = { ...counts };
     delete next[key];
@@ -135,7 +147,8 @@ function pruneResolvedQuestionAttachmentDrafts(
 /**
  * Stop cancels an open question and a provider timeout expires it; neither sent
  * the typed answers, so they move to the thread's own draft (not a queued-message
- * edit the composer may be showing) with the thread chips they reference.
+ * edit the composer may be showing) with the thread chips they reference and
+ * every file or image attached to them.
  */
 function returnUnsentAnswersToThreadDraft(
   environmentId: EnvironmentId,
@@ -165,9 +178,41 @@ function returnUnsentAnswersToThreadDraft(
       );
     }
   }
-  if (prompt === currentPrompt) return;
-  store.setPrompt(target, prompt);
-  store.addThreadContexts(target, threadContexts, { appendReference: false });
+  if (prompt !== currentPrompt) {
+    store.setPrompt(target, prompt);
+    store.addThreadContexts(target, threadContexts, { appendReference: false });
+  }
+
+  const threadPrefix = questionAttachmentDraftPrefix(environmentId, threadId);
+  const preparingKeys = Object.keys(useQuestionAttachmentPreparation.getState().counts);
+  const otherRequestKeys = new Set(
+    resolvedQuestionDraftKeys(
+      [...preparingKeys, ...Object.keys(store.draftsByThreadKey)],
+      threadPrefix,
+      unansweredRequestIds,
+    ),
+  );
+  const wasUnanswered = (key: string) => key.startsWith(threadPrefix) && !otherRequestKeys.has(key);
+  for (const key of preparingKeys.filter(wasUnanswered)) {
+    movePreparingComposerImagesToThread(key, target);
+  }
+  const questionDrafts = Object.entries(store.draftsByThreadKey).filter(([key]) =>
+    wasUnanswered(key),
+  );
+  const images = questionDrafts.flatMap(([, draft]) => draft.images);
+  const files = questionDrafts.flatMap(([, draft]) => draft.files);
+  if (images.length === 0 && files.length === 0) return;
+  store.addImages(target, images);
+  store.addFiles(target, files);
+  const moved = useComposerDraftStore.getState().getComposerDraft(target);
+  const movedIds = new Set([...(moved?.images ?? []), ...(moved?.files ?? [])].map(({ id }) => id));
+  // Only a mounted composer re-serializes images, so carry their saved copies for a reload.
+  void store.appendPersistedAttachments(
+    target,
+    images,
+    questionDrafts.flatMap(([, draft]) => draft.persistedAttachments),
+  );
+  for (const [key] of questionDrafts) clearQuestionAttachmentDraft(DraftId.make(key), movedIds);
 }
 
 // Resolution can come from anywhere: another device, an interrupt, the turn

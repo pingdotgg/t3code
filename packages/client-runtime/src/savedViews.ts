@@ -1,4 +1,6 @@
 import * as Schema from "effect/Schema";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export const SAVED_VIEW_NAME_MAX_LENGTH = 80;
 
@@ -11,15 +13,16 @@ export function savedViewNameError(
   name: string,
   views: ReadonlyArray<typeof SavedViewIdentity.Type>,
   editingId?: string,
+  resolve: MFunctionType = mFallback,
 ): string | null {
   const trimmed = name.trim();
-  if (!trimmed) return "Enter a name for this view.";
+  if (!trimmed) return resolve(msg("Enter a name for this view."));
   if (trimmed.length > SAVED_VIEW_NAME_MAX_LENGTH) {
-    return `Use ${SAVED_VIEW_NAME_MAX_LENGTH} characters or fewer.`;
+    return resolve(msg("Use {max} characters or fewer.", { max: SAVED_VIEW_NAME_MAX_LENGTH }));
   }
   return views.some(
     (view) => view.id !== editingId && view.name.toLowerCase() === trimmed.toLowerCase(),
   )
-    ? "A view with this name already exists."
+    ? resolve(msg("A view with this name already exists."))
     : null;
 }

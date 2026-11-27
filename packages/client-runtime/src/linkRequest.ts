@@ -1,9 +1,11 @@
+import { errorDisplayMessage } from "./errors/translatable.ts";
 import {
   type AuthMcpClientAccess,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type OrchestrationV2TurnItem,
   type PeerLinkRequestAnswerInput,
+  type PeerLinkName,
   type PeerLinkSummary,
   resolveEnvironmentMachineKind,
   type ServerConfig,
@@ -14,6 +16,8 @@ import * as Option from "effect/Option";
 import type { EnvironmentPresentation } from "./connection/presentation.ts";
 import { connectionRoutes, routeHttpBaseUrl } from "./connection/routes.ts";
 import type { RelayDiscoveredEnvironment } from "./relay/discovery.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type LinkRequestItem = Extract<OrchestrationV2TurnItem, { readonly type: "link_request" }>;
 
@@ -24,11 +28,11 @@ export const offersLinkedEnvironments = (
   config?.environment.capabilities.peerLinks === true && config.settings.linkedEnvironmentsEnabled;
 
 /**
- * The machines an environment's agents can work on, by name: its links that have not
- * expired, named as this client names them, else as the link does.
+ * The machines an environment's agents can work on, by name: its unexpired links (the server
+ * leaves out expired ones), named as this client names them, else as the link does.
  */
 export function linkedEnvironmentNames(input: {
-  readonly links: ReadonlyArray<Pick<PeerLinkSummary, "environmentId" | "label" | "status">>;
+  readonly links: ReadonlyArray<PeerLinkName>;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly label: string;
@@ -38,10 +42,8 @@ export function linkedEnvironmentNames(input: {
     input.environments.map((environment) => [environment.environmentId, environment.label]),
   );
   return new Map(
-    input.links.flatMap((link) =>
-      link.status === "expired"
-        ? []
-        : [[link.environmentId, names.get(link.environmentId) ?? link.label] as const],
+    input.links.map(
+      (link) => [link.environmentId, names.get(link.environmentId) ?? link.label] as const,
     ),
   );
 }
@@ -69,8 +71,10 @@ const originOf = (url: string) => {
 export const linkDestination = (address: string): string => originOf(address) ?? address.trim();
 
 /** What the card calls the other environment: where the address asked for leads, never a name it answers with. */
-export const linkRequestTargetName = (item: Pick<LinkRequestItem, "url">): string =>
-  item.url === undefined ? "a machine" : linkDestination(item.url);
+export const linkRequestTargetName = (
+  item: Pick<LinkRequestItem, "url">,
+  resolve: MFunctionType = mFallback,
+): string => (item.url === undefined ? resolve(msg("a machine")) : linkDestination(item.url));
 
 /** A machine the user could link a thread's environment to. */
 export interface LinkableMachine {
@@ -107,7 +111,8 @@ export function linkableMachines(input: {
   readonly environments: ReadonlyArray<
     EnvironmentPresentation & { readonly environmentId: EnvironmentId }
   >;
-  readonly threadEnvironmentId: EnvironmentId;
+  /** Null lists every machine, for a view that is not about one environment. */
+  readonly threadEnvironmentId: EnvironmentId | null;
   readonly links: ReadonlyArray<Pick<PeerLinkSummary, "environmentId" | "status">>;
   readonly connect: ReadonlyMap<string, RelayDiscoveredEnvironment>;
 }): ReadonlyArray<LinkableMachine> {
@@ -244,6 +249,7 @@ export function linkRequestTarget(
   item: Pick<LinkRequestItem, "environmentId" | "url">,
   machines: ReadonlyArray<LinkableMachine>,
   choice: string | null,
+  resolve: MFunctionType = mFallback,
 ): LinkRequestTarget {
   const asked = item.url === undefined ? undefined : originOf(item.url);
   // Two machines on separate networks can share a private address.
@@ -263,7 +269,7 @@ export function linkRequestTarget(
   return {
     kind: "machine",
     environmentId: machine?.environmentId ?? (chosen as EnvironmentId),
-    label: machine?.label ?? linkRequestTargetName(item),
+    label: machine?.label ?? linkRequestTargetName(item, resolve),
     urls: machine?.urls ?? [],
     linked: machine?.linked ?? false,
   };
@@ -288,30 +294,46 @@ export function linkRequestDisplay(
   item: Pick<LinkRequestItem, "linkStatus" | "url" | "linkedLabel" | "linkedAccess" | "failure">,
   visibility: "local" | "inherited" | "synthetic",
   accessLabel: (access: AuthMcpClientAccess) => string,
+  resolve: MFunctionType = mFallback,
 ): LinkRequestDisplay {
   switch (item.linkStatus) {
     case "pending":
       return visibility === "local"
         ? { kind: "pending" }
-        : { kind: "pending-elsewhere", label: "Waiting for an answer in the original thread" };
-    case "linked":
+        : {
+            kind: "pending-elsewhere",
+            label: resolve(msg("Waiting for an answer in the original thread")),
+          };
+    case "linked": {
+      const target =
+        item.linkedLabel ?? (item.url === undefined ? undefined : linkDestination(item.url));
+      const access = item.linkedAccess === undefined ? undefined : accessLabel(item.linkedAccess);
       return {
         kind: "answered",
         outcome: "linked",
-        label: `Linked ${item.linkedLabel ?? linkRequestTargetName(item)}${
-          item.linkedAccess === undefined ? "" : ` · ${accessLabel(item.linkedAccess)}`
-        }`,
+        label:
+          access === undefined
+            ? target === undefined
+              ? resolve(msg("Linked a machine"))
+              : resolve(msg("Linked {target}", { target }))
+            : target === undefined
+              ? resolve(msg("Linked a machine · {access}", { access }))
+              : resolve(msg("Linked {target} · {access}", { target, access })),
       };
+    }
     case "declined":
-      return { kind: "answered", outcome: "declined", label: "Declined" };
+      return { kind: "answered", outcome: "declined", label: resolve(msg("Declined")) };
     case "failed":
       return {
         kind: "answered",
         outcome: "failed",
-        label: `Could not link: ${item.failure ?? "the other environment refused"}`,
+        label:
+          item.failure === undefined
+            ? resolve(msg("Could not link: the other environment refused"))
+            : resolve(msg("Could not link: {failure}", { failure: item.failure })),
       };
     case "cancelled":
-      return { kind: "answered", outcome: "ended", label: "Request ended" };
+      return { kind: "answered", outcome: "ended", label: resolve(msg("Request ended")) };
   }
 }
 
@@ -371,7 +393,10 @@ const USER_FACING_FAILURE_TAGS = new Set([
  * through: anything else (transport or encoding failures) gets the generic
  * copy, so the pairing code can never surface in the UI.
  */
-export function linkRequestFailureMessage(failure: unknown): string {
+export function linkRequestFailureMessage(
+  failure: unknown,
+  resolve: MFunctionType = mFallback,
+): string {
   if (
     typeof failure === "object" &&
     failure !== null &&
@@ -382,7 +407,7 @@ export function linkRequestFailureMessage(failure: unknown): string {
     typeof failure.message === "string" &&
     failure.message.trim().length > 0
   ) {
-    return failure.message;
+    return errorDisplayMessage(failure, resolve) ?? failure.message;
   }
-  return "Could not answer the request. Try again.";
+  return resolve(msg("Could not answer the request. Try again."));
 }

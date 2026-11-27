@@ -1,10 +1,10 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import type { VisitThreadInput } from "../operations/commands.ts";
-import type { AtomCommandResult } from "./runtime.ts";
 import { claimThreadOpen } from "./threadSearch.ts";
 import { createThreadVisitTracker, VISIT_DISPATCH_THROTTLE_MS } from "./threadVisits.ts";
 
@@ -35,7 +35,7 @@ function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> 
   const visits: Array<VisitThreadInput> = [];
   const localVisits: Array<string> = [];
   let online = true;
-  let pendingResult: Promise<AtomCommandResult<void, string>> | undefined;
+  let pendingResult: Effect.Effect<void, string> | undefined;
   const attempts: Array<VisitThreadInput> = [];
   const sessionGenerationAtom = Atom.make(1);
   const tracker = createThreadVisitTracker({
@@ -43,15 +43,16 @@ function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> 
     sessionGenerationAtom: () => sessionGenerationAtom,
     visit: {
       label: "test-visit",
-      run: async (_registry, value) => {
-        attempts.push(value.input);
-        const pending = pendingResult;
-        pendingResult = undefined;
-        if (online) visits.push(value.input);
-        if (pending) return pending;
-        if (!online) return AsyncResult.failure(Cause.fail("disconnected"));
-        return AsyncResult.success(undefined);
-      },
+      run: (_registry, value) =>
+        Effect.suspend(() => {
+          attempts.push(value.input);
+          const pending = pendingResult;
+          pendingResult = undefined;
+          if (online) visits.push(value.input);
+          if (pending) return pending;
+          if (!online) return Effect.fail("disconnected");
+          return Effect.void;
+        }),
     },
     markLocalVisit: (_ref, visitedAt) => localVisits.push(visitedAt),
   });
@@ -62,9 +63,9 @@ function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> 
     localVisits,
     attempts,
     deferNextVisit: () => {
-      const deferred = Promise.withResolvers<AtomCommandResult<void, string>>();
-      pendingResult = deferred.promise;
-      return () => deferred.resolve(AsyncResult.failure(Cause.fail("disconnected")));
+      const deferred = Deferred.makeUnsafe<void, string>();
+      pendingResult = Deferred.await(deferred);
+      return () => Deferred.doneUnsafe(deferred, Effect.fail("disconnected"));
     },
     reconnect: () => registry.set(sessionGenerationAtom, registry.get(sessionGenerationAtom) + 1),
     mount: () => registry.mount(tracker(ref)),

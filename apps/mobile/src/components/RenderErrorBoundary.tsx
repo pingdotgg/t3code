@@ -1,10 +1,12 @@
 import { Observe } from "expo-observe";
+import { T, useGT } from "gt-react-native";
 import { Component, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
 import { Button } from "./ui/Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { errorDetailsPreview } from "./RenderErrorBoundary.logic";
 
 interface RenderErrorBoundaryProps {
   readonly children: ReactNode;
@@ -24,6 +26,8 @@ export interface RenderFailureProps {
   readonly retry: () => void;
 }
 
+const COMPONENT_STACK_HEADING = "Component stack:";
+
 function errorDetails(error: unknown, componentStack?: string): string {
   let description: string;
   try {
@@ -31,7 +35,9 @@ function errorDetails(error: unknown, componentStack?: string): string {
   } catch {
     description = "Unknown render error";
   }
-  return componentStack ? `${description}\nComponent stack:\n${componentStack}` : description;
+  return componentStack
+    ? `${description}\n${COMPONENT_STACK_HEADING}\n${componentStack}`
+    : description;
 }
 
 export class RenderErrorBoundary extends Component<
@@ -90,7 +96,8 @@ export function RenderFailureView(
     readonly exit?: { readonly label: string; readonly onPress: () => void };
   },
 ) {
-  const title = props.title ?? "This screen couldn't be displayed";
+  const gt = useGT();
+  const title = props.title ?? gt("This screen couldn't be displayed");
   return (
     <ScrollView
       className="flex-1 bg-screen"
@@ -103,15 +110,15 @@ export function RenderFailureView(
         {title}
       </Text>
       <Text className="text-center text-sm text-foreground-muted">
-        Try again. If it keeps happening, copy the details for a bug report.
+        <T>Try again. If it keeps happening, copy the details for a bug report.</T>
       </Text>
       <Text selectable className="text-center font-mono text-xs text-danger-foreground">
-        {props.details.split("\n", 1)[0]?.slice(0, 300)}
+        {errorDetailsPreview(props.details)}
       </Text>
       <View className="w-full max-w-xs gap-2">
-        <Button label="Try again" onPress={props.retry} tone="primary" fullWidth />
+        <Button label={gt("Try again")} onPress={props.retry} tone="primary" fullWidth />
         <Button
-          label="Copy details"
+          label={gt("Copy details")}
           onPress={() => copyTextWithHaptic(props.details, { target: "error details" })}
           fullWidth
         />

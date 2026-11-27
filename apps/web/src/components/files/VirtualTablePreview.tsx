@@ -1,8 +1,12 @@
 /* oxlint-disable react/no-array-index-key -- Positions identify source rows and columns. */
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
+import { createPositionMemory, PreviewPositionKey } from "./previewPosition";
+
+const savedFirstRows = createPositionMemory<number>();
 
 export default function VirtualTablePreview(props: {
   readonly name: string;
@@ -72,6 +76,7 @@ export default function VirtualTablePreview(props: {
   );
   const offset = (column: number) => offsets[column]!;
   const tableWidth = props.source ? "100%" : Math.max(width, offset(props.columns) + rowHeader);
+  const hasHorizontalOverflow = !props.source && offset(props.columns) + rowHeader > width;
   return (
     <div
       ref={ref}
@@ -139,21 +144,20 @@ export default function VirtualTablePreview(props: {
               <div className="sticky left-0 z-10 w-14 shrink-0 border-r border-border bg-background" />
               <div style={{ width: offset(firstColumn), flexShrink: 0 }} />
               {columns.map((column) => (
-                <Tooltip key={column}>
-                  <TooltipTrigger
-                    render={
-                      <div
-                        role="columnheader"
-                        aria-colindex={column + 1}
-                        className="shrink-0 overflow-hidden border-r border-border/40 px-3 py-1.5 text-ellipsis whitespace-pre"
-                        style={{ width: sizes[column] }}
-                      >
-                        {props.header?.[column] ?? columnLabel(column)}
-                      </div>
-                    }
-                  />
-                  <TooltipPopup>{props.header?.[column] ?? columnLabel(column)}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  key={column}
+                  render={
+                    <div
+                      role="columnheader"
+                      aria-colindex={column + 1}
+                      className="shrink-0 overflow-hidden border-r border-border/40 px-3 py-1.5 text-ellipsis whitespace-pre"
+                      style={{ width: sizes[column] }}
+                    >
+                      {props.header?.[column] ?? columnLabel(column)}
+                    </div>
+                  }
+                  label={props.header?.[column] ?? columnLabel(column)}
+                />
               ))}
             </div>
           ) : null}
@@ -161,6 +165,7 @@ export default function VirtualTablePreview(props: {
             {...props}
             columnsVisible={columns}
             sizes={sizes}
+            hasHorizontalOverflow={hasHorizontalOverflow}
             rowHeader={rowHeader}
             firstColumn={firstColumn}
             viewportHeight={size.height - (props.source ? 0 : 29)}
@@ -175,6 +180,7 @@ function RowPage(
     page: number;
     columnsVisible: number[];
     sizes: number[];
+    rowHeights?: ReadonlyMap<number, number> | undefined;
     rowHeader: number;
     firstColumn: number;
     viewportHeight: number;
@@ -197,6 +203,7 @@ function RowPage(
         const row = rows?.[local];
         const index = start + local;
         if (props.header && index === 0) return null;
+        const rowMinHeight = !props.source && row ? props.rowHeights?.get(index) : undefined;
         return (
           <div
             key={local}
@@ -208,6 +215,7 @@ function RowPage(
                 ? `flex min-h-[29px] font-mono ${props.revealLine != null && Math.min(props.count, Math.max(1, props.revealLine)) === index + 1 ? "bg-primary/10" : ""}`
                 : `flex min-h-[29px] border-b border-border/60 ${(index - (props.header ? 1 : 0)) % 2 ? "bg-muted/30" : ""}`
             }
+            style={rowMinHeight ? { minHeight: rowMinHeight } : undefined}
             data-preview-reveal={
               props.revealLine != null &&
               Math.min(props.count, Math.max(1, props.revealLine)) === index + 1
@@ -255,14 +263,33 @@ function RowPage(
   );
 }
 
-function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
+function ScaledRows(
+  props: Omit<Parameters<typeof RowPage>[0], "page" | "rowHeights"> & {
+    hasHorizontalOverflow: boolean;
+  },
+) {
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const rowProbeRef = useRef<HTMLDivElement>(null);
+  const rowHeightCacheRef = useRef<{
+    key: string;
+    entries: Map<number, CachedRowHeight>;
+  }>({ key: "", entries: new Map() });
+  const [rowHeights, setRowHeights] = useState<{
+    key: string;
+    heights: ReadonlyMap<number, number>;
+  }>({ key: "", heights: new Map() });
+  const [, setRowMeasureTick] = useState(0);
+  const typographyKey = useClientSettings(
+    (settings) => `${settings.fontFamilySans}:${settings.fontSizeInterface}`,
+  );
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
   const [top, setTop] = useState(0);
   const handledReveal = useRef<string | null>(null);
   const pendingReveal = useRef<{ row: number; attempts: number } | null>(null);
   const pendingEnd = useRef(false);
+  const positionKey = useContext(PreviewPositionKey);
+  const pendingRestore = useRef(savedFirstRows.get(positionKey));
   const position = { top, height: props.viewportHeight };
   const scrollHeight = Math.min(8_000_000, props.count * 29);
   // Chromium caps a scroll surface at 33 million pixels. Scale the track for
@@ -321,6 +348,18 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     pendingReveal.current = { row, attempts: 0 };
     handledReveal.current = key;
   }, [props.revealLine, props.revealRequestId, props.count, headerRows, scale]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened file to its saved row once that row has streamed in.
+  useLayoutEffect(() => {
+    const row = pendingRestore.current;
+    const node = ref.current;
+    if (row === undefined || !node || (props.revealLine == null && row >= props.count)) return;
+    pendingRestore.current = undefined;
+    // A pending line reveal owns the scroll position.
+    if (props.revealLine != null) return;
+    node.scrollTop = Math.max(0, (row - headerRows) * 29) * scale;
+    setTop(node.scrollTop);
+    pendingReveal.current = { row, attempts: 0 };
+  }, [props.revealLine, props.count, headerRows, scale]);
   const atStart = position.top === 0;
   const rowHeight = () =>
     contentRef.current?.querySelector<HTMLElement>(`[data-preview-row="${first}"]`)?.offsetHeight ||
@@ -347,6 +386,87 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
   }, []);
   const page = Math.floor(first / PREVIEW_PAGE_ROWS);
   const visibleEnd = (first % PREVIEW_PAGE_ROWS) + Math.ceil(position.height / 29) + 1;
+  const sizesKey = `${props.sizes.join(",")}|${typographyKey}`;
+  const pageCount = Math.min(
+    Math.ceil(visibleEnd / PREVIEW_PAGE_ROWS),
+    Math.ceil(props.count / PREVIEW_PAGE_ROWS) - page,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure mounted rows across all columns before paint so horizontal column virtualization keeps row heights and vertical scroll position stable.
+  useLayoutEffect(() => {
+    const probe = rowProbeRef.current;
+    if (!props.hasHorizontalOverflow || !probe) return;
+    const probeStyle = getComputedStyle(probe);
+    const cacheKey = `${sizesKey}|${probeStyle.font}`;
+    if (rowHeightCacheRef.current.key !== cacheKey) {
+      rowHeightCacheRef.current = { key: cacheKey, entries: new Map() };
+    }
+    const cache = rowHeightCacheRef.current.entries;
+    const mountedIndices: number[] = [];
+    const uncached: Array<{ index: number; row: readonly string[] }> = [];
+    for (let pageOffset = 0; pageOffset < pageCount; pageOffset++) {
+      const currentPage = page + pageOffset;
+      const rows = props.getRows(currentPage);
+      if (!rows) continue;
+      const start = currentPage * PREVIEW_PAGE_ROWS;
+      const limit = visibleEnd - pageOffset * PREVIEW_PAGE_ROWS;
+      const count = Math.min(PREVIEW_PAGE_ROWS, props.count - start, limit);
+      for (let local = 0; local < count; local++) {
+        const index = start + local;
+        if (props.header && index === 0) continue;
+        const row = rows[local];
+        if (!row) continue;
+        mountedIndices.push(index);
+        const existing = cache.get(index);
+        if (existing && (existing.row === row || sameRowCells(existing.row, row))) {
+          existing.row = row;
+        } else {
+          uncached.push({ index, row });
+        }
+      }
+    }
+    let hasRemainingUncached = false;
+    if (uncached.length > 0) {
+      const fontSize = Number.parseFloat(probeStyle.fontSize) || 12;
+      const lineHeight = Number.parseFloat(probeStyle.lineHeight) || fontSize * 1.333;
+      const { measured, remaining } = measureRowsFullHeight(
+        probe,
+        uncached,
+        props.columns,
+        props.sizes,
+        fontSize,
+        lineHeight,
+        MAX_SYNC_SCAN_CHARS,
+      );
+      hasRemainingUncached = remaining;
+      for (const [index, entry] of measured) cache.set(index, entry);
+      if (cache.size > MAX_CACHED_ROW_HEIGHTS) {
+        const keep = new Set(mountedIndices);
+        for (const key of cache.keys()) {
+          if (cache.size <= MAX_CACHED_ROW_HEIGHTS) break;
+          if (!keep.has(key)) cache.delete(key);
+        }
+      }
+    }
+    const next = new Map<number, number>();
+    for (const index of mountedIndices) {
+      const height = cache.get(index)?.height;
+      if (height && height > BASE_ROW_HEIGHT) next.set(index, height);
+    }
+    setRowHeights((old) =>
+      old.key === cacheKey && sameRowHeightMap(old.heights, next)
+        ? old
+        : { key: cacheKey, heights: next },
+    );
+    if (hasRemainingUncached) {
+      const frameId = requestAnimationFrame(() => setRowMeasureTick((tick) => tick + 1));
+      return () => cancelAnimationFrame(frameId);
+    }
+    return undefined;
+  });
+  const activeRowHeights =
+    props.hasHorizontalOverflow && rowHeights.key.startsWith(`${sizesKey}|`)
+      ? rowHeights.heights
+      : undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure mounted row offsets and observe content resizes to position the virtual rows against the scroll track.
   useLayoutEffect(() => {
     if (atStart) return;
@@ -459,9 +579,24 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
           setTop(node.scrollTop);
         }
       }}
-      onScroll={(event) => setTop(event.currentTarget.scrollTop)}
+      onScroll={(event) => {
+        const scrolled = event.currentTarget.scrollTop;
+        setTop(scrolled);
+        pendingRestore.current = undefined;
+        savedFirstRows.set(
+          positionKey,
+          Math.min(maxFirst, Math.floor(scrolled / scale / 29)) + headerRows,
+        );
+      }}
     >
       <div className="relative" style={{ height: scrollHeight }}>
+        {!props.source ? (
+          <div
+            ref={rowProbeRef}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute top-0 left-0 h-0 w-0 overflow-hidden"
+          />
+        ) : null}
         <div
           ref={contentRef}
           className="absolute inset-x-0"
@@ -477,26 +612,221 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
                       : -layout.offset - ((position.top / scale / 29) % 1) * layout.rowHeight),
           }}
         >
-          {Array.from(
-            {
-              length: Math.min(
-                Math.ceil(visibleEnd / PREVIEW_PAGE_ROWS),
-                Math.ceil(props.count / PREVIEW_PAGE_ROWS) - page,
-              ),
-            },
-            (_, offset) => (
-              <RowPage
-                key={page + offset}
-                {...props}
-                page={page + offset}
-                limit={visibleEnd - offset * PREVIEW_PAGE_ROWS}
-              />
-            ),
-          )}
+          {Array.from({ length: pageCount }, (_, offset) => (
+            <RowPage
+              key={page + offset}
+              {...props}
+              page={page + offset}
+              rowHeights={activeRowHeights}
+              limit={visibleEnd - offset * PREVIEW_PAGE_ROWS}
+            />
+          ))}
         </div>
       </div>
     </div>
   );
+}
+
+const BASE_ROW_HEIGHT = 29;
+const CELL_HORIZONTAL_INSET = 25;
+const CELL_VERTICAL_INSET = 13;
+const MAX_MEASURED_CELLS_PER_ROW = 16;
+// Wider than any common glyph, so estimates never undercount lines.
+const MAX_GLYPH_WIDTH_EM = 1.35;
+const MAX_CACHED_ROW_HEIGHTS = 512;
+const MAX_SYNC_SCAN_CHARS = 128_000;
+const PROBE_CELL_CLASS_NAME =
+  "box-border border-r border-b border-transparent px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums";
+
+interface CachedRowHeight {
+  row: readonly string[];
+  height: number;
+}
+
+interface RowCellCandidate {
+  readonly column: number;
+  readonly text: string;
+  readonly upperLines: number;
+}
+
+/** Conservative greedy word-wrap upper bound on rendered lines without native text shaping. */
+function estimateUpperLines(text: string, innerWidth: number, fontSize: number): number {
+  const length = text.length;
+  let lines = 1;
+  let lineWidth = 0;
+  let wordWidth = 0;
+  for (let index = 0; index < length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 10 || code === 13) {
+      if (code === 13 && index + 1 < length && text.charCodeAt(index + 1) === 10) index++;
+      if (wordWidth > 0) {
+        if (lineWidth > 0 && lineWidth + wordWidth > innerWidth) lines++;
+        wordWidth = 0;
+      }
+      lines++;
+      lineWidth = 0;
+      continue;
+    }
+    if (code === 32 || code === 9) {
+      const spaceWidth = (code === 9 ? 4.5 : 0.38) * fontSize;
+      if (wordWidth > 0) {
+        if (lineWidth > 0 && lineWidth + wordWidth > innerWidth) {
+          lines++;
+          lineWidth = wordWidth;
+        } else {
+          lineWidth += wordWidth;
+        }
+        wordWidth = 0;
+      }
+      lineWidth += spaceWidth;
+      if (lineWidth > innerWidth) {
+        lines++;
+        lineWidth = 0;
+      }
+      continue;
+    }
+    const charWidth = MAX_GLYPH_WIDTH_EM * fontSize;
+    wordWidth += charWidth;
+    if (wordWidth > innerWidth) {
+      if (lineWidth > 0) {
+        lines++;
+        lineWidth = 0;
+      }
+      lines++;
+      wordWidth = charWidth;
+    }
+  }
+  if (wordWidth > 0 && lineWidth > 0 && lineWidth + wordWidth > innerWidth) lines++;
+  return lines;
+}
+
+function collectRowHeightCandidates(
+  row: readonly string[],
+  columns: number,
+  sizes: readonly number[],
+  fontSize: number,
+): { candidates: RowCellCandidate[]; scannedChars: number } {
+  const candidates: RowCellCandidate[] = [];
+  const limit = Math.min(columns, row.length);
+  const maxGlyphWidth = fontSize * MAX_GLYPH_WIDTH_EM;
+  let scannedChars = 0;
+  for (let column = 0; column < limit; column++) {
+    const text = row[column];
+    if (!text) continue;
+    const width = sizes[column];
+    if (!width) continue;
+    const innerWidth = Math.max(1, width - CELL_HORIZONTAL_INSET);
+    const hasControlWhitespace = text.includes("\n") || text.includes("\r") || text.includes("\t");
+    if (!hasControlWhitespace && text.length * maxGlyphWidth <= innerWidth) continue;
+    scannedChars += text.length;
+    const upperLines = estimateUpperLines(text, innerWidth, fontSize);
+    if (!hasControlWhitespace && upperLines <= 1) continue;
+    candidates.push({ column, text, upperLines });
+  }
+  if (candidates.length > MAX_MEASURED_CELLS_PER_ROW) {
+    candidates.sort((left, right) => right.upperLines - left.upperLines);
+  }
+  return { candidates, scannedChars };
+}
+
+function measureProbeEntries(
+  probe: HTMLElement,
+  entries: ReadonlyArray<{ index: number; column: number; text: string }>,
+  sizes: readonly number[],
+  results: Map<number, CachedRowHeight>,
+): void {
+  if (entries.length === 0) return;
+  const fragment = document.createDocumentFragment();
+  const nodes: Array<{ index: number; node: HTMLDivElement }> = [];
+  for (const entry of entries) {
+    const node = document.createElement("div");
+    node.className = PROBE_CELL_CLASS_NAME;
+    node.style.width = `${sizes[entry.column]}px`;
+    node.textContent = entry.text;
+    fragment.append(node);
+    nodes.push({ index: entry.index, node });
+  }
+  probe.replaceChildren(fragment);
+  for (const { index, node } of nodes) {
+    const height = node.getBoundingClientRect().height;
+    const current = results.get(index);
+    if (current && height > current.height) current.height = height;
+  }
+  probe.replaceChildren();
+}
+
+function measureRowsFullHeight(
+  probe: HTMLElement,
+  rows: ReadonlyArray<{ index: number; row: readonly string[] }>,
+  columns: number,
+  sizes: readonly number[],
+  fontSize: number,
+  lineHeight: number,
+  maxScanChars: number,
+): { measured: Map<number, CachedRowHeight>; remaining: boolean } {
+  const measured = new Map<number, CachedRowHeight>();
+  const firstPassEntries: Array<{ index: number; column: number; text: string }> = [];
+  const overflowRows: Array<{ index: number; candidates: RowCellCandidate[] }> = [];
+  let scannedChars = 0;
+  let remaining = false;
+  for (const { index, row } of rows) {
+    if (measured.size > 0 && scannedChars >= maxScanChars) {
+      remaining = true;
+      break;
+    }
+    const collected = collectRowHeightCandidates(row, columns, sizes, fontSize);
+    scannedChars += collected.scannedChars;
+    measured.set(index, { row, height: BASE_ROW_HEIGHT });
+    const firstBatchCount = Math.min(collected.candidates.length, MAX_MEASURED_CELLS_PER_ROW);
+    for (let candidateIndex = 0; candidateIndex < firstBatchCount; candidateIndex++) {
+      const candidate = collected.candidates[candidateIndex]!;
+      firstPassEntries.push({ index, column: candidate.column, text: candidate.text });
+    }
+    if (collected.candidates.length > MAX_MEASURED_CELLS_PER_ROW) {
+      overflowRows.push({ index, candidates: collected.candidates });
+    }
+  }
+  measureProbeEntries(probe, firstPassEntries, sizes, measured);
+  if (overflowRows.length > 0) {
+    const secondPassEntries: Array<{ index: number; column: number; text: string }> = [];
+    for (const { index, candidates } of overflowRows) {
+      const bestHeight = measured.get(index)?.height ?? BASE_ROW_HEIGHT;
+      const measuredLines = Math.max(
+        1,
+        Math.floor((bestHeight - CELL_VERTICAL_INSET + 0.5) / lineHeight),
+      );
+      for (
+        let candidateIndex = MAX_MEASURED_CELLS_PER_ROW;
+        candidateIndex < candidates.length;
+        candidateIndex++
+      ) {
+        const candidate = candidates[candidateIndex]!;
+        if (candidate.upperLines <= measuredLines) break;
+        secondPassEntries.push({ index, column: candidate.column, text: candidate.text });
+      }
+    }
+    measureProbeEntries(probe, secondPassEntries, sizes, measured);
+  }
+  return { measured, remaining };
+}
+
+function sameRowCells(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function sameRowHeightMap(
+  left: ReadonlyMap<number, number>,
+  right: ReadonlyMap<number, number>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [index, height] of left) {
+    if (right.get(index) !== height) return false;
+  }
+  return true;
 }
 
 function columnLabel(index: number): string {
