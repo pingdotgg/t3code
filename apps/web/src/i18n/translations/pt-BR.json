@@ -13021,5 +13021,10 @@
   ],
   "0b20ecfdf1b9ac73": "Observação: {note}",
   "d865ea8ac59c1d59": "Adicione uma observação à sua escolha ou deixe em branco",
-  "8ae0538527e29cae": "Digite sua própria resposta, ou digite uma observação e depois escolha uma opção"
+  "8ae0538527e29cae": "Digite sua própria resposta, ou digite uma observação e depois escolha uma opção",
+  "13f348d3738113c2": "Digite sua própria resposta ou marque algumas opções",
+  "ae6db246d49b3b02": "Adicionar uma observação a {option}",
+  "db68e0100a788e81": "Adicionar observação · Shift+{key}",
+  "3c0f7b24ac041b05": "Adicionar observação",
+  "f0883a3e04c944fc": "Escolha uma opção e depois envie sua observação"
 }

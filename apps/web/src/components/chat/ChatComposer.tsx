@@ -2558,6 +2558,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
+  const focusComposerAtEndStable = useStableCallback(() => {
+    composerEditorRef.current?.focusAtEnd();
+  });
 
   // Escape dismisses the suggestion so Tab moves focus again.
   const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
@@ -3730,6 +3733,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
+                    onFocusComposer={focusComposerAtEndStable}
                   />
                 ) : null}
               </ComposerBanner.Root>
@@ -3985,9 +3989,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               : activePendingProgress.activeQuestion?.supportsNote === true
                                 ? activePendingProgress.selectedOptionValues.length > 0
                                   ? gt("Add a note to your choice, or leave this blank")
-                                  : gt(
-                                      "Type your own answer, or type a note and then pick an option",
-                                    )
+                                  : activePendingProgress.activeQuestion.multiSelect
+                                    ? gt("Type your own answer, or tick some options")
+                                    : gt(
+                                        "Type your own answer, or type a note and then pick an option",
+                                      )
                                 : gt(
                                     "Type your own answer, or leave this blank to use the selected option",
                                   )

@@ -2,7 +2,7 @@
 
 When an agent asks you to pick from options, you can pick and also add a note, such as "Option B, but keep the old endpoint for one release". The agent gets the option you picked and your note together.
 
-- **Web and desktop**: Type the note in the composer, then pick the option. Picking a single-choice option moves to the next question, or sends your answers on the last one, so type first. For a multiple-choice question, or one you went back to, the note can come after the pick.
+- **Web and desktop**: Clicking a single-choice option moves to the next question, or sends your answers on the last one. To add a note, hover the option and click its note button (or press Shift and the option's number); it picks the option without sending, so you can type and press Enter. On a touch screen, tap **Add a note** under the options first. Typing the note before you click also works. Multiple-choice options never send on click, so tick, type and press Enter in any order.
 - **Mobile**: Pick the option, type in the answer field, then tap **Submit answers**.
 
 ## Behavior
