@@ -465,7 +465,10 @@ export async function openEpub(archive: JSZip): Promise<OfficeWorkerResult> {
     const entry = path ? archive.file(path) : null;
     if (!entry || !path) continue;
     const chapter = parseXml(await entry.async("string"));
-    const title = text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter).trim();
+    const headings = [...find(chapter, "title"), ...find(chapter, "h1")].map((node) =>
+      text(node).trim(),
+    );
+    const title = headings.length ? (headings.find(Boolean) ?? "") : text(chapter).trim();
     const last = title.charCodeAt(119);
     pages.push({
       title: title.slice(0, last >= 0xd800 && last <= 0xdbff ? 119 : 120) || undefined,
@@ -530,7 +533,12 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
           const plain = terminalOutputPlainText(
-            notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
+            notebookText(
+              output.text ??
+                data["text/plain"] ??
+                data["text/markdown"] ??
+                tracebackLines(output.traceback),
+            ),
           );
           const text =
             output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;

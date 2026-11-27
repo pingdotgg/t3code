@@ -20,7 +20,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
+import { checkTriggers, daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signalAll, start, withdraw } from "./stepServices.ts";
 import {
@@ -2397,6 +2397,57 @@ it("every accepts bigint nanoseconds and names short ones in its error", () => {
   assert.throws(() => every(1_000n), /^every\(1000n\) is shorter than the shortest, one minute\.$/);
 });
 
+it("a workflow refuses two daily schedules that fire at the same times", () => {
+  const twice = /^workflow\("standup"\) lists the same schedule twice\. List it once\.$/;
+  const refused = (...triggers: ReadonlyArray<ReturnType<typeof daily>>) =>
+    assert.throws(() => checkTriggers("standup", triggers), twice);
+  refused(daily("9:00"), daily("09:00"));
+  refused(daily("09:00"), daily("09:00", { weekdays: [] }));
+  refused(daily("09:00"), daily("09:00", { weekdays: [6, 5, 4, 3, 2, 1, 0] }));
+  refused(daily("09:00", { weekdays: [3, 1, 1] }), daily("09:00", { weekdays: [1, 3] }));
+  checkTriggers("standup", [daily("09:00", { weekdays: [1] }), daily("09:00")]);
+});
+
+it.effect("a daily schedule written another way after a restart keeps its next time and runs", () =>
+  Effect.gen(function* () {
+    const { boot, database } = yield* harness();
+    const db = <A, E>(query: (sql: SqlClient.SqlClient) => Effect.Effect<A, E>) =>
+      Effect.flatMap(SqlClient.SqlClient, query).pipe(Effect.provide(database));
+    const standup = (...written: Parameters<typeof daily>) =>
+      [
+        workflow(
+          "standup",
+          { version: 1, payload: Tick, triggers: [daily(...written)] },
+          () => Effect.void,
+        ),
+      ] as never;
+    const swept = Effect.flatMap(Workflows.Workflows, (workflows) => workflows.sweep).pipe(
+      Effect.andThen(
+        db((sql) => sql<{ idempotency_key: string }>`SELECT idempotency_key FROM workflow_runs`),
+      ),
+      Effect.map((runs) => runs.map((run) => run.idempotency_key)),
+    );
+    const saved = db(
+      (sql) => sql<{ trigger_id: string; next_at: string }>`SELECT * FROM workflow_triggers`,
+    );
+    // Saved by a server from before ids stopped following the spelling.
+    assert.deepStrictEqual(yield* boot(swept, standup("09:00")), []);
+    const [first] = yield* saved;
+    yield* db((sql) => sql`UPDATE workflow_triggers SET trigger_id = 'standup/daily:9:00:all'`);
+    // Down until a minute past the time, which is within what a daily schedule catches up on.
+    yield* TestClock.setTime(Date.parse(first!.next_at) + 60_000);
+    const key = `trigger:standup/daily:9:00:all:${first!.next_at}`;
+    assert.deepStrictEqual(yield* boot(swept, standup("09:00")), [key]);
+    const [moved, ...others] = yield* saved;
+    assert.deepStrictEqual(others, []);
+    assert.equal(moved!.trigger_id, "standup/daily:9:00:all");
+    assert.isAbove(Date.parse(moved!.next_at), Date.parse(first!.next_at));
+    // A crash between the start and moving on left the time it had started: not started again.
+    yield* db((sql) => sql`UPDATE workflow_triggers SET next_at = ${first!.next_at}`);
+    assert.deepStrictEqual(yield* boot(swept, standup(" 9:00", { weekdays: [] })), [key]);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("the sweep deletes skipped runs past the number the settings keep", () =>
   Effect.gen(function* () {
     const exposed = exposedStore();
@@ -2749,6 +2800,82 @@ it.effect("a step of a paused run waits for the resume, even when the engine rep
         yield* workflows.resume(runId);
         assert.equal((yield* workflows.waitFor(runId, status("completed"))).status, "completed");
         assert.equal((yield* Ref.get(counts)).take, 1);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("about keeps the waiting run when 500 newer skipped runs are about the same item", () =>
+  Effect.gen(function* () {
+    const { boot, database } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const issue = {
+          projectId: "p1",
+          tracker: "github",
+          host: "github.com",
+          scope: "acme/app",
+          key: "412",
+          title: "Crash on save",
+          url: "https://github.com/acme/app/issues/412",
+        };
+        const target = yield* workflows.start(
+          "about",
+          { subjects: [issue] },
+          { idempotencyKey: "t" },
+        );
+        yield* workflows.waitFor(target.runId, status("waiting"));
+        // Skipped runs about the same issue, all newer than the waiting one.
+        yield* Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) => sql`
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+            INSERT INTO workflow_runs (run_id, workflow, version, engine_tag, idempotency_key,
+              title, status, pauses, started_at, updated_at, ended_at, held, tags_json,
+              subject_kind, subject_key, subject_url, subject_json)
+            SELECT 'skip-' || i, workflow, version, engine_tag, 'skip-' || i, title, 'skipped',
+              0, '2999-01-01T00:00:00.000Z', '2999-01-01T00:00:00.000Z',
+              '2999-01-01T00:00:00.000Z', 0, tags_json,
+              subject_kind, subject_key, subject_url, subject_json
+            FROM n, workflow_runs WHERE run_id = ${target.runId}
+          `,
+        ).pipe(Effect.provide(database));
+        const about = yield* workflows.about({ subject: issue.url });
+        assert.include(
+          about.runs.map((run) => run.runId),
+          target.runId,
+        );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a list by tag keeps the runs that did something apart from skipped ones", () =>
+  Effect.gen(function* () {
+    const { boot, database } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const run = yield* workflows.start("sorter", { tags: ["pr"] }, { idempotencyKey: "kept" });
+        yield* workflows.waitFor(run.runId, status("waiting"));
+        // A trigger that skips most of what it brings: 500 newer skipped runs with the same tag.
+        yield* Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) => sql`
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+            INSERT INTO workflow_runs (run_id, workflow, version, engine_tag, idempotency_key,
+              title, status, pauses, started_at, updated_at, ended_at, held, tags_json)
+            SELECT 'skip-' || i, workflow, version, engine_tag, 'skip-' || i, title, 'skipped',
+              0, '2999-01-01T00:00:00.000Z', '2999-01-01T00:00:00.000Z',
+              '2999-01-01T00:00:00.000Z', 0, tags_json
+            FROM n, workflow_runs WHERE run_id = ${run.runId}
+          `,
+        ).pipe(Effect.provide(database));
+        assert.include(
+          (yield* workflows.list({ tag: "pr" })).map((listed) => listed.runId),
+          run.runId,
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

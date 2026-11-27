@@ -1,7 +1,11 @@
 import { workspaceRelativeFilePath } from "./path.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
-import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
+import {
+  extractInlineCodeSpans,
+  extractMarkdownLinkHrefs,
+  resolveMarkdownFileLinkTarget,
+} from "./markdownLinks.ts";
 
 import {
   inlineCodeFilePathCandidate,
@@ -17,6 +21,15 @@ describe("isMarkdownFileLinkLabel", () => {
     ["example.ts:99", "/repo/src/example.ts:12", false],
     ["example.ts:12-20", "/repo/src/example.ts:12-20", true],
     ["example.ts:12-20", "/repo/src/example.ts:12", false],
+    ["src/main.ts#L10-L20", "/repo/src/main.ts#L10-L20", true],
+    ["main.ts#L42C7", "/repo/src/main.ts:42:7", true],
+    ["src/main.ts#L10-L20", "/repo/src/main.ts#L10", false],
+    ["src/main.ts:10#L20", "/repo/src/main.ts:10", false],
+    ["C#/Program.cs#L10", "./C%23/Program.cs#L10", true],
+    ["src/main.ts#L10", "./src/main.ts%23L10", true],
+    ["draft.md ", "/tmp/draft.md%20", true],
+    [" draft.md  ", "./%20draft.md%20%20", true],
+    [" draft.md ", "/tmp/draft.md", true],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
@@ -63,6 +76,13 @@ describe("inlineCodeFilePathCandidate", () => {
     ["/bin/echo hello world.txt", null],
     ["~/bin/run tests.sh", null],
     ["/Users/me/notes with spaces.md", "/Users/me/notes with spaces.md"],
+    [
+      "\\\\server\\share\\Project\\Guide Notes.md:10-20",
+      "\\\\server\\share\\Project\\Guide Notes.md:10-20",
+    ],
+    ["\\\\server\\Shared Docs\\Guide.md", "\\\\server\\Shared Docs\\Guide.md"],
+    ["\\\\server name\\share\\Guide Notes.md", null],
+    ["\\\\server\\Guide Notes.md", null],
     ["~/Videos/clips/<thread-slug>/shot.png", null],
     ["clips/<name>.mp4", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
@@ -125,8 +145,24 @@ describe("parseMarkdownFileLink", () => {
     "/tmp/claude-1000/....:12",
     "/tmp/claude-1000/%2E%2E%2E",
     "\\foo.ts",
+    "sandbox://server/share/notes.txt",
+    "sandbox:/%2Fserver/share/notes.txt",
+    "sandbox:/%5Cserver/share/notes.txt",
+    "sandbox:/tmp/bad%00name.txt",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
+  });
+
+  it("resolves a sandbox link as an absolute host path, even outside the workspace", () => {
+    const href = "Sandbox:/Users/me/agent-output/example/brief%20%23final.txt#L3C2";
+    expect(parseMarkdownFileLink(href)).toEqual({
+      path: "/Users/me/agent-output/example/brief #final.txt",
+      line: 3,
+      column: 2,
+    });
+    expect(resolveMarkdownFileLinkTarget(href, "/Users/me/repo")).toBe(
+      "/Users/me/agent-output/example/brief #final.txt:3:2",
+    );
   });
 
   it("recognizes a relative folder that ends in a slash", () => {
@@ -187,11 +223,29 @@ describe("workspaceRelativeFilePath", () => {
   });
 });
 
+describe("extractInlineCodeSpans", () => {
+  it.each([
+    ["``./a/shared.ts`` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["``a ` b`` and `./b/shared.ts`", ["a ` b", "./b/shared.ts"]],
+    ["``unclosed and `./b/shared.ts`", ["./b/shared.ts"]],
+    ["\\``./a/shared.ts` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["`a\\` and `./b/shared.ts`", ["a\\", "./b/shared.ts"]],
+    ["`unclosed\n`./b/shared.ts`", ["./b/shared.ts"]],
+  ])("matches complete backtick delimiter runs in %s", (markdown, spans) => {
+    expect(extractInlineCodeSpans(markdown)).toEqual(spans);
+  });
+});
+
 describe("extractMarkdownLinkHrefs", () => {
   it.each([
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    [
+      "[![a](a.png)](src/index.ts) [![b](b.png)](lib/index.ts)",
+      ["a.png", "src/index.ts", "b.png", "lib/index.ts"],
+    ],
+    [String.raw`[\![a](a.png)](src/index.ts) [label!](ok)`, ["a.png", "ok"]],
     ["See [the [docs] guide](docs/guide.md) and [[1]](src/a.ts)", ["docs/guide.md", "src/a.ts"]],
     ["[a [b](x) [c \\[d](y) [e\\]](z)", ["x", "y", "z"]],
     ["[a [b]\n\nc](src/a.ts) [outer [inner]()](src/b.ts)", []],
@@ -202,10 +256,31 @@ describe("extractMarkdownLinkHrefs", () => {
 
   it.each([
     [
+      String.raw`[one](<./a/doc\> final.ts>) [two](<./b/doc\> final.ts>)`,
+      [String.raw`./a/doc\> final.ts`, String.raw`./b/doc\> final.ts`],
+    ],
+    [
+      String.raw`[one](<./a/doc\\> "title") [two](<./b/doc\\> (title))`,
+      [String.raw`./a/doc\\`, String.raw`./b/doc\\`],
+    ],
+    [
+      String.raw`[bad](<./x/dir\> text) [one](<./a/doc\\\> final.ts> "title") [two](<./b/doc\< final.ts>)`,
+      [String.raw`./a/doc\\\> final.ts`, String.raw`./b/doc\< final.ts`],
+    ],
+    [
       "[a](/x/app/(a)/page.tsx) [b](/x/app/(b)/page.tsx)",
       ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
     ],
     ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
+    ["[a.ts](a/a.ts (first)) [a.ts](b/a.ts (second))", ["a/a.ts", "b/a.ts"]],
+    [
+      String.raw`[a](<a/a.ts> (escaped \(first\) and \\)) [b](b/a.ts (second))`,
+      ["a/a.ts", "b/a.ts"],
+    ],
+    [
+      "[a](a.ts (nested (title))) [b](b.ts (missing close) [c](c.ts (blank\n\nline)) [d](ok)",
+      ["ok"],
+    ],
     [`[a](a.ts "it's a title") [b](b.ts 'a "quoted" title') [c](ok)`, ["a.ts", "b.ts", "ok"]],
     [`[a.ts](src/a.ts "say \\"hello\\"") [a.ts](lib/a.ts)`, ["src/a.ts", "lib/a.ts"]],
     [`[a](a.ts 'it\\'s') [b](b.ts "ends in \\\\") [c](ok)`, ["a.ts", "b.ts", "ok"]],

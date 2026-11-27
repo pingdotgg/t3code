@@ -37,7 +37,7 @@ import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
 // The provider turn waits on the baseline, so a workspace too slow for this starts without one.
-// It bounds only the snapshot: waiting on the lock lets an in-flight capture finish the same ref.
+// It bounds a copy and the snapshot each; waiting on the lock lets a capture finish the same ref.
 const BASELINE_CAPTURE_BUDGET = "5 seconds";
 // Git processes are already capped server-wide; this keeps one thread from taking every slot.
 const REPOSITORY_SCOPE_CONCURRENCY = 6;
@@ -197,6 +197,8 @@ export interface CheckpointServiceV2Shape {
   readonly captureBaseline: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
+    /** An earlier checkpoint that still holds this baseline: no run since it has run. */
+    readonly sourceOrdinalWithinScope?: number | undefined;
     /**
      * Also baselines the tracked repositories this thread reaches, a few at a time and all within
      * one budget, so many repositories delay a turn no longer than one. A repository that misses
@@ -477,6 +479,7 @@ export const layer: Layer.Layer<
     const captureScopeBaseline = (input: {
       readonly scope: OrchestrationV2CheckpointScope;
       readonly ordinalWithinScope: number;
+      readonly sourceOrdinalWithinScope?: number | undefined;
       readonly excludePaths: ReadonlyArray<string> | undefined;
     }) =>
       withWorkspaceLock(
@@ -497,6 +500,22 @@ export const layer: Layer.Layer<
           if (exists) {
             return;
           }
+          const copied =
+            input.sourceOrdinalWithinScope !== undefined &&
+            (yield* checkpointStore
+              .copyCheckpointRef({
+                cwd: input.scope.cwd,
+                fromCheckpointRef: yield* checkpointRefFor({
+                  scopeId: input.scope.id,
+                  ordinalWithinScope: input.sourceOrdinalWithinScope,
+                }),
+                toCheckpointRef: checkpointRef,
+              })
+              .pipe(
+                Effect.timeout(BASELINE_CAPTURE_BUDGET),
+                Effect.orElseSucceed(() => false),
+              ));
+          if (copied) return;
 
           const timeouts = yield* Cache.getOption(captureTimeouts, input.scope.cwd);
           if (Option.isSome(timeouts) && timeouts.value >= 2) {

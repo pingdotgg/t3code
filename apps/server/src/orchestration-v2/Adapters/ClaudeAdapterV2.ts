@@ -194,6 +194,7 @@ import {
   type CompiledClaudeModelSelection,
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
+import { NativeTelemetryClient } from "../../resourceTelemetry/NativeTelemetryClient.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -489,25 +490,32 @@ interface ClaudeProcessRow {
   readonly pid: number;
   readonly ppid: number;
   readonly pgid: number;
-  readonly started: string;
+  readonly startTimeSeconds: number;
+  readonly startTimeMicros?: number;
 }
 
-/** Parses `ps -A -o pid=,ppid=,pgid=,lstart=`; pid plus start time tells a process from a reused pid. */
+const isClaudeProcessRow = Schema.is(
+  Schema.Struct({
+    pid: Schema.Int,
+    ppid: Schema.Int,
+    pgid: Schema.Int,
+    startTimeSeconds: Schema.Int,
+  }),
+);
+
+/** Parses the C-locale, UTC output of `ps -A -o pid=,ppid=,pgid=,lstart=`. */
 function parseClaudeProcessTable(table: string): ReadonlyArray<ClaudeProcessRow> {
   return table.split("\n").flatMap((line) => {
     const [pid, ppid, pgid, ...started] = line.trim().split(/\s+/);
+    const start = DateTime.make(started.join(" ") + " GMT");
+    if (Option.isNone(start)) return [];
     const row = {
       pid: Number(pid),
       ppid: Number(ppid),
       pgid: Number(pgid),
-      started: started.join(" "),
+      startTimeSeconds: DateTime.toEpochSeconds(start.value),
     };
-    return Number.isSafeInteger(row.pid) &&
-      Number.isSafeInteger(row.ppid) &&
-      Number.isSafeInteger(row.pgid) &&
-      row.started
-      ? [row]
-      : [];
+    return isClaudeProcessRow(row) ? [row] : [];
   });
 }
 
@@ -519,11 +527,19 @@ function killClaudeDescendant(row: ClaudeProcessRow) {
   } catch {}
 }
 
+function indexClaudeProcessTable(rows: ReadonlyArray<ClaudeProcessRow>) {
+  return {
+    byPid: new Map(rows.map((row) => [row.pid, row] as const)),
+    children: Map.groupBy(rows, (row) => row.ppid),
+  };
+}
+
+type ClaudeProcessTable = ReturnType<typeof indexClaudeProcessTable>;
+
 function claudeDescendants(
-  rows: ReadonlyArray<ClaudeProcessRow>,
+  { children }: ClaudeProcessTable,
   rootPids: ReadonlyArray<number>,
 ): ReadonlyArray<ClaudeProcessRow> {
-  const children = Map.groupBy(rows, (row) => row.ppid);
   const found: Array<ClaudeProcessRow> = [];
   const seen = new Set<number>(rootPids);
   const pending = [...rootPids];
@@ -538,25 +554,34 @@ function claudeDescendants(
   return found;
 }
 
-const processIdentity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
-
-/** What one CLI started, by pid and start time, recorded from each process table read while it runs. */
+/** What one CLI started, validated by pid and start time on every successful read. */
 function makeClaudeDescendantTracker(cliPid: number) {
-  const tracked = new Map<string, ClaudeProcessRow>();
-  // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
-  const record = (rows: ReadonlyArray<ClaudeProcessRow>, cliRunning: boolean) => {
-    const running = new Set(rows.map(processIdentity));
-    // `ps -A` lists itself, so no rows is a failed read.
-    if (rows.length === 0) return running;
+  const tracked = new Map<number, ClaudeProcessRow>();
+  const record = (table: ClaudeProcessTable, cliRunning: boolean) => {
+    // An empty table means the read failed. Keep the previous observations for a later read.
+    if (table.byPid.size === 0) return;
     const roots = cliRunning ? [cliPid] : [];
-    for (const [key, row] of tracked) {
-      if (running.has(key)) roots.push(row.pid);
-      else tracked.delete(key);
+    for (const [pid, row] of tracked) {
+      const current = table.byPid.get(pid);
+      if (
+        current?.startTimeSeconds === row.startTimeSeconds &&
+        (current.startTimeMicros === undefined ||
+          row.startTimeMicros === undefined ||
+          current.startTimeMicros === row.startTimeMicros)
+      ) {
+        roots.push(pid);
+        // Preserve the finer identity across an intervening ps fallback.
+        tracked.set(
+          pid,
+          current.startTimeMicros === undefined && row.startTimeMicros !== undefined
+            ? { ...current, startTimeMicros: row.startTimeMicros }
+            : current,
+        );
+      } else tracked.delete(pid);
     }
-    for (const row of claudeDescendants(rows, roots)) tracked.set(processIdentity(row), row);
-    return running;
+    for (const row of claudeDescendants(table, roots)) tracked.set(row.pid, row);
   };
-  return { tracked: tracked as ReadonlyMap<string, ClaudeProcessRow>, record };
+  return { tracked: tracked as ReadonlyMap<number, ClaudeProcessRow>, record };
 }
 
 /**
@@ -571,8 +596,9 @@ export function makeClaudeDescendantPoll(
   // Polls, session closes and exits read one at a time, so each table is newer than all recorded,
   // and a pid and start time it no longer lists never run again.
   const reading = Semaphore.makeUnsafe(1);
-  const read = <A>(apply: (rows: ReadonlyArray<ClaudeProcessRow>) => A) =>
-    reading.withPermits(1)(readProcessTable.pipe(Effect.map(apply)));
+  const indexedTable = readProcessTable.pipe(Effect.map(indexClaudeProcessTable));
+  const read = <A>(apply: (table: ClaudeProcessTable) => A) =>
+    reading.withPermits(1)(indexedTable.pipe(Effect.map(apply)));
   return {
     // A table read before a CLI started may list an older process under its pid, so a poll records
     // only into the CLIs working when its read began.
@@ -583,7 +609,7 @@ export function makeClaudeDescendantPoll(
             .withPermits(1)(
               Effect.suspend(() => {
                 const working = [...live];
-                return readProcessTable.pipe(
+                return indexedTable.pipe(
                   Effect.map((rows) => {
                     for (const tracker of working)
                       if (live.has(tracker)) tracker.record(rows, true);
@@ -596,7 +622,7 @@ export function makeClaudeDescendantPoll(
     track: (cliPid: number) => {
       const tracker = makeClaudeDescendantTracker(cliPid);
       let exited = false;
-      const refresh = read((rows) => void tracker.record(rows, true));
+      const refresh = read((rows) => void tracker.record(rows, !exited));
       return {
         tracked: tracker.tracked,
         refresh,
@@ -615,10 +641,8 @@ export function makeClaudeDescendantPoll(
         }).pipe(
           Effect.andThen(
             read((rows) => {
-              const running = tracker.record(rows, false);
-              return [...tracker.tracked.values()].filter((row) =>
-                running.has(processIdentity(row)),
-              );
+              tracker.record(rows, false);
+              return rows.byPid.size === 0 ? [] : [...tracker.tracked.values()];
             }),
           ),
         ),
@@ -1644,12 +1668,40 @@ export const layerQueryRunner: Layer.Layer<
     const hostEnvironment = yield* HostProcess.Environment;
     const portDiscovery = yield* PortScanner.PortDiscovery;
     const processRunner = yield* ProcessRunner.make();
-    const readProcessTable = processRunner
-      .run({ command: "ps", args: ["-A", "-o", "pid=,ppid=,pgid=,lstart="], timeout: "5 seconds" })
+    const psProcessTable = processRunner
+      .run({
+        command: "ps",
+        args: ["-A", "-o", "pid=,ppid=,pgid=,lstart="],
+        env: { LC_ALL: "C", TZ: "UTC0" },
+        timeout: "5 seconds",
+      })
       .pipe(
         Effect.map((result) => (result.code === 0 ? parseClaudeProcessTable(result.stdout) : [])),
         Effect.orElseSucceed(() => []),
       );
+    const monitor = Option.getOrUndefined(yield* Effect.serviceOption(NativeTelemetryClient));
+    const nativeTable = platform === "darwin" ? monitor?.processIdentities : undefined;
+    // Both readers use epoch seconds so a sidecar restart preserves tracked orphans.
+    const readProcessTable =
+      nativeTable === undefined
+        ? psProcessTable
+        : nativeTable.pipe(
+            Effect.flatMap((rows) => {
+              const table: ClaudeProcessRow[] = [];
+              for (const { pid, ppid, pgid, startTimeMicros } of rows) {
+                if (pgid === undefined || startTimeMicros === undefined) return psProcessTable;
+                table.push({
+                  pid,
+                  ppid,
+                  pgid,
+                  startTimeSeconds: Math.floor(startTimeMicros / 1_000_000),
+                  startTimeMicros,
+                });
+              }
+              return table.length === 0 ? psProcessTable : Effect.succeed(table);
+            }),
+            Effect.catch(() => psProcessTable),
+          );
     // Without an agent scope, a job that left the CLI's group escapes the group kill and is
     // re-parented once the CLI exits. So the CLI's tree is recorded while it runs, and what is
     // still the same process (pid and start time) is stopped after it exits.
@@ -6580,6 +6632,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const wakeEligibleBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
         );
+        // Claude folds a notice into the running turn only between tool rounds; one that arrives
+        // after the last round reaches the model in a wake turn Claude starts after `result`.
+        // When that turn ends its tasks become wake-eligible again until a later turn carries them.
+        const heldTurnNotificationsByNativeThread = new Map<
+          string,
+          {
+            readonly turn: ActiveClaudeTurnContext;
+            readonly tasks: Map<string, OrchestrationV2PendingBackgroundTask>;
+          }
+        >();
         const opaqueBackgroundTaskReplayTombstonesByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
         );
@@ -7342,6 +7404,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             taskId,
           );
 
+        const releaseHeldTurnNotifications = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const held = heldTurnNotificationsByNativeThread.get(nativeThreadId);
+          if (held === undefined) return;
+          heldTurnNotificationsByNativeThread.delete(nativeThreadId);
+          for (const taskId of held.tasks.keys()) {
+            yield* clearTaskIdFromNativeThreadSet(
+              wakeEligibleBackgroundTasksByNativeThread,
+              nativeThreadId,
+              taskId,
+            );
+          }
+        });
+
         // Untraced with roster emission: this runs for each streamed roster update.
         const owedWakeTasksForNativeThread = Effect.fnUntraced(function* (nativeThreadId: string) {
           const previous = (yield* Ref.get(lastProviderThreadByNativeThread)).get(nativeThreadId);
@@ -7350,8 +7425,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
           );
           const tasks: OrchestrationV2PendingBackgroundTask[] = [];
-          for (const task of previous?.pendingBackgroundTasks ?? []) {
+          const held =
+            heldTurnNotificationsByNativeThread.get(nativeThreadId)?.tasks.values() ?? [];
+          for (const task of [...(previous?.pendingBackgroundTasks ?? []), ...held]) {
             if (
+              !tasks.some((owed) => owed.taskId === task.taskId) &&
               !roster.has(task.taskId) &&
               (yield* isKnownOpaqueBackgroundTaskOnNativeThread(nativeThreadId, task.taskId))
             )
@@ -7665,6 +7743,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : [];
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
           possibleEarlyWakeNativeThreads.delete(nativeThreadId);
+          heldTurnNotificationsByNativeThread.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
           yield* clearNativeThreadTaskIdSet(
             wakeEligibleBackgroundTasksByNativeThread,
@@ -10452,7 +10531,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   !liveQuery.stopping &&
                   liveQuery.lastTurn === input.context;
                 if (nativeThreadId !== null) {
+                  const held = heldTurnNotificationsByNativeThread.get(nativeThreadId);
+                  if (held !== undefined && held.turn !== input.context) {
+                    yield* releaseHeldTurnNotifications(nativeThreadId);
+                  } else if (held !== undefined) {
+                    yield* markWakeEligibleOpaqueBackgroundTasks(nativeThreadId, [
+                      ...held.tasks.keys(),
+                    ]);
+                  }
                   if (input.status !== "completed" && !processKeepsTasks) {
+                    heldTurnNotificationsByNativeThread.delete(nativeThreadId);
                     // Stop cancels Claude's wakeup and an exited process loses it; a failed
                     // turn on a live process leaves it pending. Process exits null the query first.
                     if (input.status !== "failed" || liveQuery === null) {
@@ -11055,6 +11143,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             yield* clearOpaqueBackgroundTaskReplayTombstone(nativeThreadId, taskId);
           }
+          if (
+            heldTurnNotificationsByNativeThread.get(nativeThreadId)?.turn !==
+            (yield* Ref.get(activeTurn))
+          ) {
+            yield* releaseHeldTurnNotifications(nativeThreadId);
+          }
           yield* endClaudeMonitorTasks((taskId) => retiredTaskIds.has(taskId));
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
             nativeThreadId,
@@ -11315,6 +11409,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(message.task_id);
               return updated;
             });
+            const turn = input.activeContext;
+            const notifiedTask =
+              turn !== null &&
+              turn === (yield* Ref.get(activeTurn)) &&
+              (yield* isWakeEligibleOpaqueBackgroundTaskOnNativeThread(
+                input.nativeThreadId,
+                message.task_id,
+              ))
+                ? (rosterForNativeThread(
+                    yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                    input.nativeThreadId,
+                  ).get(message.task_id) ??
+                  (yield* Ref.get(lastProviderThreadByNativeThread))
+                    .get(input.nativeThreadId)
+                    ?.pendingBackgroundTasks?.find((task) => task.taskId === message.task_id))
+                : undefined;
             const removed = yield* clearPendingBackgroundTask(
               input.nativeThreadId,
               message.task_id,
@@ -11324,6 +11434,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.nativeThreadId,
               message.task_id,
             );
+            if (turn !== null && notifiedTask !== undefined) {
+              const held = heldTurnNotificationsByNativeThread.get(input.nativeThreadId);
+              if (held?.turn === turn) held.tasks.set(notifiedTask.taskId, notifiedTask);
+              else {
+                yield* releaseHeldTurnNotifications(input.nativeThreadId);
+                heldTurnNotificationsByNativeThread.set(input.nativeThreadId, {
+                  turn,
+                  tasks: new Map([[notifiedTask.taskId, notifiedTask]]),
+                });
+              }
+            }
             rosterChanged = removed;
           }
 
@@ -11589,6 +11710,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (context === (yield* Ref.get(activeTurn))) {
+            // The next tool round's request carries every notice held so far.
+            if (
+              message.type === "user" &&
+              message.parent_tool_use_id == null &&
+              claudeToolResultBlocksFromUserMessage(message).length > 0 &&
+              heldTurnNotificationsByNativeThread.get(liveQuery.nativeThreadId)?.turn === context
+            ) {
+              heldTurnNotificationsByNativeThread.delete(liveQuery.nativeThreadId);
+            }
             const lifecycle = claudePromptLifecycle(message);
             if (
               (message.type === "system" &&
@@ -15266,7 +15396,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           backgroundTasksEndWithProcess: true,
           hasPendingBackgroundWork: Effect.gen(function* () {
             // A wakeup can be up to an hour out, past the idle timeout, and dies with the process.
-            if (scheduledWakeupsByNativeThread.size > 0) {
+            if (
+              scheduledWakeupsByNativeThread.size > 0 ||
+              heldTurnNotificationsByNativeThread.size > 0
+            ) {
               return true;
             }
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {
@@ -15309,6 +15442,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               )
                 return true;
             }
+            if (heldTurnNotificationsByNativeThread.has(nativeThreadId)) return true;
             return (
               rosterForNativeThread(
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
