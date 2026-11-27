@@ -65,7 +65,12 @@ export class SourceControlProviderRegistry extends Context.Service<
       SourceControlProvider.SourceControlProvider["Service"],
       SourceControlProviderError
     >;
-    readonly discover: Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>;
+    readonly discover: (
+      projectRemotes?: Effect.Effect<ReadonlyArray<string>>,
+    ) => Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>;
+    readonly discoverForProject: (
+      cwd: string,
+    ) => Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>;
   }
 >()("t3/sourceControl/SourceControlProviderRegistry") {}
 
@@ -354,6 +359,25 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         }),
       );
 
+    const probeProviders = (cwd: string, projectRemotes?: Effect.Effect<ReadonlyArray<string>>) =>
+      Effect.forEach(
+        discoverySpecs,
+        (spec) => probeSourceControlProvider({ spec, process, cwd, projectRemotes }),
+        { concurrency: "unbounded" },
+      );
+
+    const discover = (projectRemotes?: Effect.Effect<ReadonlyArray<string>>) =>
+      probeProviders(config.cwd, projectRemotes).pipe(
+        // A CLI installed or signed in since the last check may claim a remote no forge claimed.
+        Effect.tap((items) => {
+          const fingerprint = discoveryFingerprint(items);
+          if (fingerprint === lastDiscovery) return Effect.void;
+          const changed = lastDiscovery !== undefined;
+          lastDiscovery = fingerprint;
+          return changed ? Cache.invalidateAll(unknownRemoteCache) : Effect.void;
+        }),
+      );
+
     return SourceControlProviderRegistry.of({
       resolveLink: (input) => {
         if (input.url.protocol !== "https:" || input.url.username || input.url.password) {
@@ -367,24 +391,10 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       resolve: Effect.fn("SourceControlProviderRegistry.resolve")(function (input) {
         return resolveHandle(input).pipe(Effect.map((handle) => handle.provider));
       }),
-      discover: Effect.forEach(
-        discoverySpecs,
-        (spec) =>
-          probeSourceControlProvider({
-            spec,
-            process,
-            cwd: config.cwd,
-          }),
-        { concurrency: "unbounded" },
-      ).pipe(
-        // A CLI installed or signed in since the last check may claim a remote no forge claimed.
-        Effect.tap((items) => {
-          const fingerprint = discoveryFingerprint(items);
-          if (fingerprint === lastDiscovery) return Effect.void;
-          const changed = lastDiscovery !== undefined;
-          lastDiscovery = fingerprint;
-          return changed ? Cache.invalidateAll(unknownRemoteCache) : Effect.void;
-        }),
+      discover,
+      // Project scans skip the fingerprint so they cannot churn the environment's unknown-remote cache.
+      discoverForProject: Effect.fn("SourceControlProviderRegistry.discoverForProject")((cwd) =>
+        probeProviders(cwd),
       ),
     });
   },

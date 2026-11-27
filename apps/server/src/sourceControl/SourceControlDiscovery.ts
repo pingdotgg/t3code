@@ -1,5 +1,7 @@
 import {
+  type ProjectId,
   type SourceControlDiscoveryResult,
+  type SourceControlProviderDiscoveryItem,
   type VcsDiscoveryItem,
   type VcsDriverKind,
 } from "@t3tools/contracts";
@@ -11,6 +13,8 @@ import * as Option from "effect/Option";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import { refreshPathFromLoginShell } from "../os-jank.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
@@ -68,7 +72,10 @@ const VCS_PROBES: ReadonlyArray<VcsProbe> = [
 export class SourceControlDiscovery extends Context.Service<
   SourceControlDiscovery,
   {
-    readonly discover: Effect.Effect<SourceControlDiscoveryResult>;
+    /** A project scopes provider sign-in to its checkout; without one, registered remotes inform it. */
+    readonly discover: (input: {
+      readonly projectId?: ProjectId;
+    }) => Effect.Effect<SourceControlDiscoveryResult>;
   }
 >()("t3/sourceControl/SourceControlDiscovery") {}
 
@@ -78,6 +85,8 @@ export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   // Discovery re-reads the login shell so a tool installed since launch
   // resolves here and in every later spawn. Thread views, the palette and
   // mobile also run discovery, so one interactive shell serves a short window.
@@ -136,8 +145,8 @@ export const make = Effect.gen(function* () {
       );
   };
 
-  return SourceControlDiscovery.of({
-    discover: Effect.andThen(
+  const scan = (providers: Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>) =>
+    Effect.andThen(
       refreshPath,
       Effect.all({
         versionControlSystems: Effect.all(
@@ -159,9 +168,37 @@ export const make = Effect.gen(function* () {
           ) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
           { concurrency: "unbounded" },
         ),
-        sourceControlProviders: sourceControlProviders.discover,
+        sourceControlProviders: providers,
       }),
+    );
+
+  // Only evaluated by a provider that needs a scheme its stored login omits.
+  const registeredRemotes = projectStore.listShells().pipe(
+    Effect.orElseSucceed(() => []),
+    Effect.flatMap((projects) =>
+      Effect.forEach(
+        projects.filter((project) => project.archivedAt === null),
+        (project) => projectEnrichment.readRepositoryIdentity(project.workspaceRoot),
+        { concurrency: 4 },
+      ),
     ),
+    Effect.map((identities) => identities.flatMap((identity) => identity?.locator.remoteUrl ?? [])),
+  );
+
+  return SourceControlDiscovery.of({
+    discover: Effect.fn("SourceControlDiscovery.discover")(function* (input) {
+      const project =
+        input.projectId === undefined
+          ? Option.none()
+          : yield* projectStore
+              .get(input.projectId)
+              .pipe(Effect.orElseSucceed(() => Option.none()));
+      return yield* scan(
+        Option.isSome(project)
+          ? sourceControlProviders.discoverForProject(project.value.workspaceRoot)
+          : sourceControlProviders.discover(registeredRemotes),
+      );
+    }),
   });
 });
 

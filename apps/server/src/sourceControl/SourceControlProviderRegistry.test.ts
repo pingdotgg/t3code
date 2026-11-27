@@ -497,14 +497,14 @@ it.effect("asks again once discovery finds a new sign-in, not on every discovery
         );
       },
     });
-    yield* registry.discover;
+    yield* registry.discover();
     assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
-    yield* registry.discover;
+    yield* registry.discover();
     assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "unknown");
     assert.strictEqual(refinements, 1);
 
     signedIn = true;
-    yield* registry.discover;
+    yield* registry.discover();
     assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "gitlab");
     assert.strictEqual(refinements, 2);
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
@@ -525,7 +525,7 @@ it.effect("answers discovery without waiting on a hosting API that stalls", () =
         },
       ],
     });
-    const discovering = yield* registry.discover.pipe(Effect.forkChild);
+    const discovering = yield* registry.discover().pipe(Effect.forkChild);
     yield* TestClock.adjust("3 seconds");
     const items = yield* Fiber.join(discovering);
     const bitbucket = items.find((item) => item.kind === "bitbucket");

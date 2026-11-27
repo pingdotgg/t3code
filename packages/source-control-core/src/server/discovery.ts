@@ -70,7 +70,10 @@ export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
 
 export type SourceControlManagedCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "managed-cli";
-  readonly probe: (cwd: string) => Effect.Effect<SourceControlProviderDiscoveryItem>;
+  readonly probe: (
+    cwd: string,
+    projectRemotes?: Effect.Effect<ReadonlyArray<string>>,
+  ) => Effect.Effect<SourceControlProviderDiscoveryItem>;
   /** Null includes missing CLIs. Failure means unknown and must not be cached by the registry. */
   readonly refineUnknownRemote: (input: {
     readonly cwd: string;
@@ -261,8 +264,9 @@ export function probeSourceControlProvider(input: {
   readonly spec: SourceControlProviderDiscoverySpec;
   readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
   readonly cwd: string;
+  readonly projectRemotes?: Effect.Effect<ReadonlyArray<string>> | undefined;
 }): Effect.Effect<SourceControlProviderDiscoveryItem> {
-  if (input.spec.type === "managed-cli") return input.spec.probe(input.cwd);
+  if (input.spec.type === "managed-cli") return input.spec.probe(input.cwd, input.projectRemotes);
   if (input.spec.type === "api") {
     return input.spec.probeAuth.pipe(
       Effect.timeoutOption(API_PROBE_TIMEOUT),

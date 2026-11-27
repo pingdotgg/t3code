@@ -109,6 +109,24 @@ export const discovery = {
     "Install `fj` 0.6 or later from https://codeberg.org/forgejo-contrib/forgejo-cli and run `fj --host <server-url> auth add-token`, or install `gt` 2.0 or later from https://gitea.com/gitea/cli and run `gt auth login --host <server-url>` for each Forgejo or Gitea server.",
 } satisfies SourceControlCliDiscoverySpec;
 
+const projectForgejoLoginUrl = Effect.fn("ForgejoSourceControlProvider.projectLoginUrl")(function* (
+  loginUrl: string,
+  projectRemotes: Effect.Effect<ReadonlyArray<string>>,
+) {
+  const login = URL.parse(loginUrl);
+  if (login === null || !["localhost", "127.0.0.1", "[::1]"].includes(login.hostname)) {
+    return loginUrl;
+  }
+  let httpOrigin: string | undefined;
+  for (const remoteUrl of yield* projectRemotes) {
+    const remote = URL.parse(remoteUrl);
+    if (remote?.host !== login.host) continue;
+    if (remote.protocol === "https:") return loginUrl;
+    if (remote.protocol === "http:") httpOrigin = remote.origin;
+  }
+  return httpOrigin ?? loginUrl;
+});
+
 export const makeDiscovery = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -119,7 +137,10 @@ export const makeDiscovery = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("forgejo"),
     label: discovery.label,
     installHint: discovery.installHint,
-    probe: Effect.fn("ForgejoSourceControlProvider.discovery")(function* (cwd: string) {
+    probe: Effect.fn("ForgejoSourceControlProvider.discovery")(function* (
+      cwd: string,
+      projectRemotes?: Effect.Effect<ReadonlyArray<string>>,
+    ) {
       const remoteUrl = yield* process
         .run({
           operation: "source-control.discovery.remote",
@@ -137,10 +158,16 @@ export const makeDiscovery = Effect.gen(function* () {
       const credentials = yield* Effect.result(listLogins({ cwd, command: "fj", remoteUrl }));
       const logins = Result.isSuccess(credentials) ? credentials.success : [];
       const remote = ForgejoCli.parseForgejoRemote(remoteUrl);
+      const remoteLogin = remote && ForgejoCli.matchForgejoLogin(logins, remote);
+      const defaultLogin = logins.find((entry) => entry.default === "true") ?? logins[0];
       const login =
-        (remote && ForgejoCli.matchForgejoLogin(logins, remote)) ||
-        logins.find((entry) => entry.default === "true") ||
-        logins[0];
+        remoteLogin ||
+        (defaultLogin && projectRemotes
+          ? {
+              ...defaultLogin,
+              url: yield* projectForgejoLoginUrl(defaultLogin.url, projectRemotes),
+            }
+          : defaultLogin);
       const fj = yield* probeSourceControlProvider({
         // fj reads the cwd repository even with --host and fails on an unborn branch.
         cwd: yield* HostProcess.HomeDirectory,

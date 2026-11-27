@@ -2872,7 +2872,7 @@ it.effect.each([
     ),
 );
 
-it.effect("does not call a valid fj login on an HTTP-only server unauthenticated", () =>
+it.effect("uses an explicit matching loopback project remote for environment discovery", () =>
   Effect.gen(function* () {
     const spec = yield* ForgejoSourceControlProvider.makeDiscovery.pipe(
       Effect.provide(ForgejoCli.layer),
@@ -2881,7 +2881,24 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
     if (spec.type !== "managed-cli") return;
     const result = yield* spec.probe("/repo");
     assert.strictEqual(result.executable, "fj");
-    assert.notStrictEqual(result.auth.status, "unauthenticated");
+    assert.strictEqual(result.auth.status, "unknown");
+
+    const http = "http://localhost:3000/maria/project.git";
+    const withProject = yield* spec.probe("/repo", Effect.succeed([http]));
+    assert.strictEqual(withProject.auth.status, "authenticated");
+    assert.deepStrictEqual(withProject.auth.account, Option.some("maria"));
+
+    const conflicting = yield* spec.probe(
+      "/repo",
+      Effect.succeed([http, "https://localhost:3000/maria/other.git"]),
+    );
+    assert.strictEqual(conflicting.auth.status, "unknown");
+
+    const wrongPort = yield* spec.probe(
+      "/repo",
+      Effect.succeed(["http://localhost:3001/maria/project.git"]),
+    );
+    assert.strictEqual(wrongPort.auth.status, "unknown");
   }).pipe(
     Effect.provideService(SpawnExecutableResolution, onPath),
     Effect.provideService(
@@ -2892,7 +2909,7 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
         readFileString: () =>
           Effect.succeed(
             encodeJson({
-              hosts: { "forgejo.local:3000": { type: "Application", token: "test-token" } },
+              hosts: { "localhost:3000": { type: "Application", token: "test-token" } },
             }),
           ),
       }),
@@ -2932,7 +2949,7 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
             const host = input.args[input.args.indexOf("--host") + 1] ?? "";
             return Effect.succeed(
               host.startsWith("http://")
-                ? processOutput("currently signed into maria@forgejo.local:3000")
+                ? processOutput("currently signed into maria@localhost:3000")
                 : processOutput("", {
                     exitCode: ChildProcessSpawner.ExitCode(1),
                     stderr: `Error: error sending request for url (${host}/api/v1/user?)\nCaused by:\n   0: client error (Connect)\n   1: received corrupt message of type InvalidContentType`,
