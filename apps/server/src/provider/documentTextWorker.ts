@@ -1418,22 +1418,21 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
     if (extension === ".docx") {
       const main = mainPart("word/document.xml");
       const rels = partRels(main);
-      const target = has(rels)
-        ? all(read(rels), "Relationship").find(
-            (rel) => rel.attrs.Type?.endsWith("/styles") && rel.attrs.TargetMode !== "External",
-          )?.attrs.Target
-        : undefined;
+      const mainRelations = has(rels) ? [...all(read(rels), "Relationship")] : [];
+      const relationTarget = (type: string) =>
+        mainRelations.find(
+          (rel) => rel.attrs.Type?.endsWith(`/${type}`) && rel.attrs.TargetMode !== "External",
+        )?.attrs.Target;
       const dir = `/${NodePath.posix.dirname(main)}`;
-      const stylesPath = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
+      const stylesPath = NodePath.posix
+        .resolve(dir, relationTarget("styles") || "styles.xml")
+        .slice(1);
       const styles = has(stylesPath) ? read(stylesPath) : undefined;
       const styleRunHidden = styles && wordCharacterStyleVisibility(styles);
       const doc = read(main, styleRunHidden);
       // Footnotes and endnotes live in their own parts; put each inline where it is referenced.
-      const noteRelations = has(rels) ? [...all(read(rels), "Relationship")] : [];
       for (const kind of ["footnote", "endnote"]) {
-        const noteTarget = noteRelations.find(
-          (rel) => rel.attrs.Type?.endsWith(`/${kind}s`) && rel.attrs.TargetMode !== "External",
-        )?.attrs.Target;
+        const noteTarget = relationTarget(`${kind}s`);
         const notePath = noteTarget && NodePath.posix.resolve(dir, noteTarget).slice(1);
         if (!notePath || !has(notePath)) continue;
         const bodies = new Map<string, string>();
