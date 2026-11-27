@@ -15,11 +15,9 @@ function createColumn(maximizedAway: boolean, scrollRef: RefObject<HTMLDivElemen
       refreshing={false}
       onRefresh={() => {}}
       searchValue=""
-      involvement="all"
       state="open"
       host={undefined}
       hostMenuOptions={[]}
-      onInvolvement={() => {}}
       onState={() => {}}
       onHost={() => {}}
       searchInput={<input aria-label="Search pull requests" />}
@@ -77,11 +75,9 @@ function CondensedSearchColumn({
         refreshing={false}
         onRefresh={() => {}}
         searchValue={query}
-        involvement="all"
         state="open"
         host={undefined}
         hostMenuOptions={[]}
-        onInvolvement={() => {}}
         onState={() => {}}
         onHost={() => {}}
         searchInput={
@@ -128,11 +124,8 @@ describe("PullRequestsColumn condensed search", () => {
         },
       ),
     );
-    scrollRef.current?.scrollTo({ top: 1000 });
-    const searches = page.getByRole("searchbox", { name: "Search pull requests" });
-    // The topbar copy comes first and mounts once the header condenses.
-    await expect.element(searches.nth(1)).toBeInTheDocument();
-    const search = searches.nth(0);
+    // L3 keeps a single header search input without a condensed duplicate.
+    const search = page.getByRole("searchbox", { name: "Search pull requests" });
     // Safari ends the composition just before the confirming keydown, reporting only keyCode 229.
     const pressDuringComposition = (key: string) =>
       act(() => {

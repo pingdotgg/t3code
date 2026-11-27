@@ -4,6 +4,7 @@ import {
   SourceControlProviderKind,
   type PullRequestDetail,
 } from "@t3tools/contracts";
+import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -58,17 +59,25 @@ const detail: PullRequestDetail = {
   },
 };
 
+function ControlledTitleEditor() {
+  const [value, setValue] = useState<string | null>(null);
+  return (
+    <PullRequestTitleEditor
+      environmentId={EnvironmentId.make("environment")}
+      reference={{ projectId: detail.projectId, repository: "owner/repo", number: 1 }}
+      detail={detail}
+      canWriteSourceControl
+      value={value}
+      onValueChange={setValue}
+    />
+  );
+}
+
 it("Escape cancels the title edit without closing the right panel sheet", async () => {
   const onCloseSheet = vi.fn();
   await using _screen = await render(
     <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
-      <PullRequestTitleEditor
-        environmentId={EnvironmentId.make("environment")}
-        reference={{ projectId: detail.projectId, repository: "owner/repo", number: 1 }}
-        pullRequestKey="owner/repo#1"
-        detail={detail}
-        canWriteSourceControl
-      />
+      <ControlledTitleEditor />
     </RightPanelSheet>,
   );
   await act(() =>
