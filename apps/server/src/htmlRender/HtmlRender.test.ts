@@ -63,7 +63,7 @@ describe("HtmlRender", () => {
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-images-" });
       const png = path.join(directory, "shot.png");
       const svg = path.join(directory, "logo.svg");
-      const commented = `<!-- <img src="/t3-missing/shot.png"> -->`;
+      const commented = `<!-- 📸\r\n<img src="/t3-missing/shot.png"> -->`;
       yield* fileSystem.writeFile(png, PNG_BYTES);
       yield* fileSystem.writeFileString(svg, "<svg/>");
       const kept = [
