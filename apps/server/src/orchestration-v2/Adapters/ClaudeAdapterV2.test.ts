@@ -4166,6 +4166,218 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  describe("Claude final answer phases", () => {
+    it.effect.each([
+      "streamed",
+      "snapshot",
+      "late snapshot",
+      "repeated snapshot",
+      "result only",
+    ] as const)("preserves confirmed final-answer intent from %s delivery", (delivery) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`answer-phase-${delivery}`),
+            text: "Explain the result, then check your work.",
+            attachments: [],
+          }),
+        );
+        const snapshot = (id: string, value: string, stopReason: string | null, suffix = "") =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: `${id}-snapshot${suffix}`,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id,
+              model: "claude-sonnet-4-6",
+              stop_reason: stopReason,
+              content: value ? [{ type: "text", text: value }] : [],
+            },
+          });
+        const stream = (event: unknown) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "answer-phase-stream",
+          });
+        if (delivery !== "result only") {
+          yield* harness.offerAndWait(snapshot("progress", "Checking.", "tool_use"));
+          if (delivery === "streamed") {
+            yield* harness.offerAndWait(
+              stream({ type: "message_start", message: { id: "answer" } }),
+            );
+            yield* harness.offerAndWait(
+              stream({
+                type: "content_block_start",
+                index: 0,
+                content_block: { type: "text", text: "" },
+              }),
+            );
+            yield* harness.offerAndWait(
+              stream({
+                type: "content_block_delta",
+                index: 0,
+                delta: { type: "text_delta", text: "The complete answer." },
+              }),
+            );
+            yield* harness.offerAndWait(stream({ type: "content_block_stop", index: 0 }));
+          }
+          yield* harness.offerAndWait(
+            snapshot("answer", "The complete answer.", delivery === "snapshot" ? "end_turn" : null),
+          );
+          if (delivery === "streamed") {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "stream_event",
+                event: { type: "message_delta", delta: { stop_reason: "end_turn" } },
+                parent_tool_use_id: "unrelated-subagent",
+                session_id: WAKE_NATIVE_SESSION,
+                uuid: "nested-completion",
+                api_message_id: "answer",
+              }),
+            );
+            yield* harness.until(() =>
+              harness.events.some(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "assistant_message" &&
+                  event.turnItem.text === "The complete answer.",
+              ),
+            );
+            const beforeRootCompletion = harness.events
+              .flatMap((event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                  ? [event.turnItem]
+                  : [],
+              )
+              .findLast((item) => item.text === "The complete answer.");
+            assert.isDefined(beforeRootCompletion);
+            assert.equal(beforeRootCompletion?.phase, undefined);
+            yield* harness.offerAndWait(
+              stream({ type: "message_start", message: { id: "next-message" } }),
+            );
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "stream_event",
+                event: { type: "message_delta", delta: { stop_reason: "end_turn" } },
+                parent_tool_use_id: null,
+                session_id: WAKE_NATIVE_SESSION,
+                uuid: "late-completion",
+                api_message_id: "answer",
+              }),
+            );
+          } else if (delivery === "late snapshot" || delivery === "repeated snapshot") {
+            yield* harness.offerAndWait(
+              delivery === "late snapshot"
+                ? snapshot("answer", "", "end_turn", "-metadata")
+                : snapshot("answer", "The complete answer.", "end_turn"),
+            );
+          }
+          yield* harness.offerAndWait(
+            snapshot("later-answer", "Verification finished.", "end_turn"),
+          );
+        }
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "answer-phase-result",
+            result: delivery === "result only" ? "The complete answer." : "Verification finished.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const assistantItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem]
+            : [],
+        );
+        const answers = assistantItems.filter((item) => item.text === "The complete answer.");
+        assert.equal(new Set(answers.map((item) => item.id)).size, 1);
+        assert.equal(answers.at(-1)?.phase, "final_answer");
+        if (delivery !== "result only") {
+          const progress = assistantItems.findLast((item) => item.text === "Checking.");
+          assert.isDefined(progress);
+          assert.equal(progress?.phase, undefined);
+          assert.equal(
+            assistantItems.findLast((item) => item.text === "Verification finished.")?.phase,
+            "final_answer",
+          );
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect.each(["tool_use", "max_tokens", "stop_sequence", null] as const)(
+      "does not confirm a reply that ended with %s",
+      (stopReason) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("unconfirmed-answer-phase"),
+              text: "Explain the result.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              uuid: "unconfirmed-answer",
+              session_id: WAKE_NATIVE_SESSION,
+              parent_tool_use_id: null,
+              message: {
+                id: "unconfirmed-message",
+                model: "claude-sonnet-4-6",
+                stop_reason: stopReason,
+                content: [{ type: "text", text: "Unconfirmed text." }],
+              },
+            }),
+          );
+          yield* harness.offerAndWait(makeResultFrame({ uuid: "unconfirmed-result", result: "" }));
+          yield* Queue.take(harness.terminalReceipts);
+          const reply = harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text === "Unconfirmed text.",
+          );
+          assert.isDefined(reply);
+          assert.isTrue(
+            reply?.type === "turn_item.updated" &&
+              reply.turnItem.type === "assistant_message" &&
+              reply.turnItem.phase === undefined,
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+  });
+
   describe("ClaudeAdapterV2 session title sync", () => {
     type TitleSyncHarness = Effect.Success<ReturnType<typeof makeWakeHarnessWithOptions>>;
     const startTurn = Effect.fnUntraced(function* (
@@ -18232,6 +18444,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.lengthOf(harness.continuationRequests, 0);
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
 
+      if (wakeAssistant.type !== "assistant") throw new Error("Expected assistant fixture.");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "stream_event",
+          event: { type: "message_start", message: { id: wakeAssistant.message.id } },
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "wake-answer-start",
+        }),
+      );
+      assert.lengthOf(harness.continuationRequests, 0);
       yield* Queue.offer(harness.sdkMessages, wakeAssistant);
       yield* harness.awaitContinuation(1);
       assert.equal(harness.continuationRequests[0]?.threadId, harness.threadId);
@@ -18239,10 +18462,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(harness.continuationRequests[0]?.driver, ClaudeAdapterV2.CLAUDE_PROVIDER);
       assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
 
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "stream_event",
+          event: { type: "message_delta", delta: { stop_reason: "end_turn" } },
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "wake-answer-end",
+        }),
+      );
       yield* harness.offerAndWait(wakeResult);
       assert.lengthOf(harness.continuationRequests, 1);
       assert.lengthOf(harness.terminalEvents(), 1);
       assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-wake-buffered-answer"),
+          text: "Background task completed.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        }),
+      );
+      yield* harness.awaitTerminal(2);
+      const reply = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.text === WAKE_ASSISTANT_TEXT,
+      );
+      assert.equal(
+        reply?.type === "turn_item.updated" && reply.turnItem.type === "assistant_message"
+          ? reply.turnItem.phase
+          : undefined,
+        "final_answer",
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
