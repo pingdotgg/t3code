@@ -1025,7 +1025,11 @@ export function resolveThreadTeamId(input: {
   for (const state of input.teamStates.values()) {
     if (state.team === null) continue;
     const attribution = state.attributionByThreadId.get(input.threadId);
-    if (attribution?.isLocalSynced === true) {
+    if (
+      attribution?.isLocalSynced === true &&
+      (attribution.executionEnvironmentId == null ||
+        attribution.executionEnvironmentId === input.environmentId)
+    ) {
       return attribution.teamId;
     }
   }

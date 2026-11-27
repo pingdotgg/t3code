@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   listConnectedTeams,
   resolveTeamNotificationSoundPreset,
@@ -13,6 +14,7 @@ import { msg, T, useGT, useMessages } from "gt-react";
 import { PlayIcon } from "lucide-react";
 
 import { persistClientSettingsUpdate, useClientSettings } from "../../hooks/useSettings";
+import { m as resolveMessage } from "../../i18n/messages";
 import { useTeamStatesByEnvironment } from "../../state/team";
 import { hasNotificationSound, previewTeamNotificationSound } from "../../threadNotifications";
 import { SettingResetButton, SettingsRow } from "../settings/settingsLayout";
@@ -20,6 +22,7 @@ import { useSearchableSetting } from "../settings/settingsSearch";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { SelectButton } from "../ui/select";
+import { toastManager } from "../ui/toast";
 
 const soundOptionRowClassName = "grid grid-cols-[1fr_auto]";
 
@@ -34,6 +37,15 @@ const SOUND_PRESET_LABELS: Readonly<Record<TeamNotificationSoundPreset, string>>
   off: msg("Off", { $context: "team notification sound turned off" }),
 };
 
+function reportTeamNotificationSoundSaveFailure(error: unknown): void {
+  const title = resolveMessage(msg("Setting not saved"));
+  toastManager.add({
+    type: "error",
+    title,
+    description: thrownErrorMessage(error, resolveMessage) ?? title,
+  });
+}
+
 function saveTeamNotificationSoundPreset(
   teamId: TeamId,
   preset: TeamNotificationSoundPreset,
@@ -44,7 +56,7 @@ function saveTeamNotificationSoundPreset(
       ...current.teamNotificationSounds,
       [teamId]: preset,
     },
-  }));
+  })).catch(reportTeamNotificationSoundSaveFailure);
 }
 
 function resetTeamNotificationSoundPreset(teamId: TeamId): void {
@@ -56,7 +68,7 @@ function resetTeamNotificationSoundPreset(teamId: TeamId): void {
       ...current,
       teamNotificationSounds: nextSounds,
     };
-  });
+  }).catch(reportTeamNotificationSoundSaveFailure);
 }
 
 function TeamSoundPresetLabel({
@@ -287,13 +299,22 @@ export function ConnectedTeamsNotificationSoundSettings() {
             teamId: team.id,
             teamNotificationSounds,
           });
+          const isCustomized = preset !== DEFAULT_TEAM_NOTIFICATION_SOUND;
           return (
             <div
               key={team.id}
               className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 px-3 py-2"
             >
-              <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <p className="truncate text-sm font-medium text-foreground">{team.name}</p>
+                {isCustomized ? (
+                  <SettingResetButton
+                    ariaLabel={gt("Reset {team} notification sound to default", {
+                      team: team.name,
+                    })}
+                    onClick={() => resetTeamNotificationSoundPreset(team.id)}
+                  />
+                ) : null}
               </div>
               <TeamNotificationSoundControl
                 team={team}

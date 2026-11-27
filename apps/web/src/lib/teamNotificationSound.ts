@@ -301,15 +301,14 @@ function synthesizeNotificationBuffer(context: AudioContext, spec: PresetSynthSp
   const tailFadeSeconds = 0.015;
   const twoPi = Math.PI * 2;
 
-  let maxAbs = 0;
   for (const tone of spec.tones) {
-    const startFrame = Math.max(0, Math.floor(tone.startSeconds * sampleRate));
+    const startFrame = Math.max(0, Math.ceil(tone.startSeconds * sampleRate));
     const endFrame = Math.min(
       frameCount,
       Math.ceil((tone.startSeconds + tone.durationSeconds) * sampleRate),
     );
     for (let frame = startFrame; frame < endFrame; frame += 1) {
-      const elapsed = frame / sampleRate - tone.startSeconds;
+      const elapsed = Math.max(0, frame / sampleRate - tone.startSeconds);
       const remaining = tone.durationSeconds - elapsed;
       const attack =
         tone.attackSeconds > 0 && elapsed < tone.attackSeconds
@@ -328,11 +327,15 @@ function synthesizeNotificationBuffer(context: AudioContext, spec: PresetSynthSp
           partial.gain * decay * Math.sin(twoPi * tone.frequencyHz * partial.ratio * elapsed);
       }
 
-      const next = (samples[frame] ?? 0) + value * tone.amplitude * attack * release * modulation;
-      samples[frame] = next;
-      const abs = Math.abs(next);
-      if (abs > maxAbs) maxAbs = abs;
+      samples[frame] =
+        (samples[frame] ?? 0) + value * tone.amplitude * attack * release * modulation;
     }
+  }
+
+  let maxAbs = 0;
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const abs = Math.abs(samples[frame] ?? 0);
+    if (abs > maxAbs) maxAbs = abs;
   }
 
   if (maxAbs > 0) {
@@ -399,11 +402,11 @@ export function playPreviewAudioBuffer(context: AudioContext, buffer: AudioBuffe
   const source = context.createBufferSource();
   source.buffer = buffer;
   source.connect(context.destination);
-  activePreviewSource = source;
   source.onended = () => {
     if (activePreviewSource === source) {
       activePreviewSource = null;
     }
   };
   source.start();
+  activePreviewSource = source;
 }

@@ -45,6 +45,7 @@ import {
   canCurrentMemberToggleThreadLock,
   countFollowedTeamThreads,
   EMPTY_TEAM_ENVIRONMENT_STATE,
+  type TeamEnvironmentState,
   filterProviderEntriesForTeamProject,
   formatTeamThreadTitle,
   hasActiveTeamEnvironment,
@@ -1801,7 +1802,7 @@ describe("team client-runtime state and presentation", () => {
       updatedAt: now,
     };
     const syncedLocalThreadId = ThreadId.make("thread-local-synced");
-    const teamAState = {
+    const teamAState: TeamEnvironmentState = {
       ...EMPTY_TEAM_ENVIRONMENT_STATE,
       team: {
         id: teamAId,
@@ -1884,6 +1885,7 @@ describe("team client-runtime state and presentation", () => {
     ).toBe(teamAId);
 
     // 3. Local-synced thread without repositoryIdentity -> resolves via isLocalSynced attribution fallback
+    // only when executionEnvironmentId matches (or is unset).
     expect(
       resolveThreadTeamId({
         environmentId: localEnvId,
@@ -1892,6 +1894,47 @@ describe("team client-runtime state and presentation", () => {
         teamStates,
       }),
     ).toBe(teamAId);
+
+    const otherLocalEnvId = EnvironmentId.make("env-other-local");
+    const pinnedSyncedThreadId = ThreadId.make("thread-local-synced-pinned");
+    const teamStatesWithPinned = new Map(teamStates);
+    teamStatesWithPinned.set(teamAEnvId, {
+      ...teamAState,
+      attributionByThreadId: new Map([
+        ...teamAState.attributionByThreadId,
+        [
+          pinnedSyncedThreadId,
+          {
+            threadId: pinnedSyncedThreadId,
+            teamId: teamAId,
+            creatorMemberId: aliceId,
+            creatorPseudo: "alice" as TeamPseudo,
+            viewId: viewAId,
+            locked: false,
+            lockedByMemberId: null,
+            executionEnvironmentId: localEnvId,
+            isLocalSynced: true,
+            createdAt: now,
+          },
+        ],
+      ]),
+    });
+    expect(
+      resolveThreadTeamId({
+        environmentId: localEnvId,
+        threadId: pinnedSyncedThreadId,
+        project: { id: ProjectId.make("proj-uncorrelated"), environmentId: localEnvId },
+        teamStates: teamStatesWithPinned,
+      }),
+    ).toBe(teamAId);
+    expect(
+      resolveThreadTeamId({
+        environmentId: otherLocalEnvId,
+        threadId: pinnedSyncedThreadId,
+        project: { id: ProjectId.make("proj-uncorrelated"), environmentId: otherLocalEnvId },
+        teamStates: teamStatesWithPinned,
+      }),
+    ).toBeNull();
 
     // 4. Personal local thread -> null
     expect(

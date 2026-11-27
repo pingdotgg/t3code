@@ -9375,10 +9375,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quiconque l’exécute obtient cet accès"
-      ]
+      "c": [" ", "· quiconque l’exécute obtient cet accès"]
     }
   ],
   "b2ece956b72c4a48": "Sous-modules",
@@ -11018,10 +11015,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "sur l’ordinateur qui a ouvert cette page"
-      ]
+      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
     }
   ],
   "d1259290b8c63577": "Renommer le fil",

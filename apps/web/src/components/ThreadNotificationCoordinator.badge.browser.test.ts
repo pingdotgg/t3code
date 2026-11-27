@@ -1149,7 +1149,8 @@ it("plays per-team sound presets for remote Team Server threads and local team-p
   });
   expect(state.sound).toHaveBeenLastCalledWith("completion", expect.any(Function), "marimba");
 
-  // 3. Setting team sound to "off" suppresses sound while still showing the desktop notification.
+  // 3. Setting team sound to "off" suppresses sound while still showing the desktop notification
+  // (including for queued-message notifications).
   state.teamNotificationSounds = { [teamId]: "off" };
   const callsBeforeOff = state.sound.mock.calls.length;
   const notificationsBeforeOff = TestNotification.sent.length;
@@ -1167,4 +1168,22 @@ it("plays per-team sound presets for remote Team Server threads and local team-p
   );
   expect(state.sound).toHaveBeenCalledTimes(callsBeforeOff);
   expect(TestNotification.sent).toHaveLength(notificationsBeforeOff + 1);
+
+  state.teamStates.set("one", {
+    ...teamState,
+    queuedMessageNotifications: [
+      {
+        threadId: remoteThreadId,
+        queuedRunId: "run-queued-off-1" as never,
+        senderMemberId: TeamMemberId.make("member-colleague-sound"),
+        senderPseudo: "bob" as TeamPseudo,
+        recipientMemberIds: [aliceId],
+        messagePreview: "Quiet queued alert",
+        createdAt: "2026-09-13T07:03:30.000Z",
+      },
+    ],
+  });
+  expect(state.sound).toHaveBeenCalledTimes(callsBeforeOff);
+  expect(TestNotification.sent).toHaveLength(notificationsBeforeOff + 2);
+  expect(TestNotification.sent.at(-1)?.options.silent).toBe(true);
 });

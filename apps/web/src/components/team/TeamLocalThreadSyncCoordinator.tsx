@@ -621,17 +621,22 @@ export function TeamLocalThreadSyncCoordinator() {
             typeof Notification !== "undefined" &&
             Notification.permission === "granted"
           ) {
-            const desktopNotification = new Notification(title, {
-              body: bodyPreview,
-              tag: `team-note:${note.id}`,
-            });
-            desktopNotification.onclick = () => {
-              window.focus();
-              void router.navigate({
-                to: "/$environmentId/$threadId",
-                params: { environmentId: targetEnvId, threadId: threadId as ThreadId },
+            try {
+              const desktopNotification = new Notification(title, {
+                body: bodyPreview,
+                tag: `team-note:${note.id}`,
+                silent: true,
               });
-            };
+              desktopNotification.onclick = () => {
+                window.focus();
+                void router.navigate({
+                  to: "/$environmentId/$threadId",
+                  params: { environmentId: targetEnvId, threadId: threadId as ThreadId },
+                });
+              };
+            } catch {
+              // Some browsers expose Notification but reject desktop presentation.
+            }
           }
         }
       }

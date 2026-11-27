@@ -184,16 +184,24 @@ function loadNotificationBuffer(context: AudioContext, url: string): Promise<Aud
   return buffer;
 }
 
-/** Called from a gesture so browsers allow later background playback. */
-export function unlockNotificationAudio() {
+function ensureUnlockedNotificationAudio(): Promise<void> | null {
   const firstUnlock = audioContext === undefined;
   audioContext ??= new AudioContext();
-  void audioContext.resume().catch(() => undefined);
-  if (!firstUnlock) return;
+  const resumePromise = audioContext.state === "running" ? null : audioContext.resume();
+  if (resumePromise) {
+    void resumePromise.catch(() => undefined);
+  }
+  if (!firstUnlock) return resumePromise;
   // Fetch and decode during interaction so the first alert is ready when the thread finishes.
   for (const url of [completionUrl, inputUrl]) {
     void loadNotificationBuffer(audioContext, url).catch(() => undefined);
   }
+  return resumePromise;
+}
+
+/** Called from a gesture so browsers allow later background playback. */
+export function unlockNotificationAudio() {
+  void ensureUnlockedNotificationAudio();
 }
 
 let previewGeneration = 0;
@@ -204,12 +212,12 @@ export async function previewTeamNotificationSound(
 ) {
   if (preset === "off" || typeof AudioContext === "undefined") return;
   const generation = ++previewGeneration;
-  unlockNotificationAudio();
-  const context = audioContext;
-  if (!context) return;
   try {
-    if (context.state !== "running") {
-      await context.resume();
+    const resumePromise = ensureUnlockedNotificationAudio();
+    const context = audioContext;
+    if (!context) return;
+    if (resumePromise) {
+      await resumePromise;
     }
     if (generation !== previewGeneration || context.state !== "running") return;
     const buffer =

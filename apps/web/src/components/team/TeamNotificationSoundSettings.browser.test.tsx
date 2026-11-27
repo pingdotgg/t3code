@@ -37,6 +37,8 @@ const mockState = vi.hoisted(() => ({
   previewSound: vi.fn(),
   unlockAudio: vi.fn(),
   updateScopedSettings: vi.fn(),
+  setClientSettingsError: null as Error | null,
+  toastAdd: vi.fn(),
 }));
 
 vi.mock(import("../../state/team"), async (original) => ({
@@ -57,12 +59,27 @@ vi.mock(import("../settings/useScopedSettings"), async (original) => ({
   useUpdateScopedSettings: () => mockState.updateScopedSettings,
 }));
 
+vi.mock(import("../ui/toast"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    toastManager: {
+      ...actual.toastManager,
+      add: mockState.toastAdd as never,
+    },
+  };
+});
+
 vi.mock(import("../../localApi"), async (original) => ({
   ...(await original()),
   ensureLocalApi: (() => ({
     persistence: {
       getClientSettings: async () => getClientSettings(),
-      setClientSettings: async () => undefined,
+      setClientSettings: async () => {
+        if (mockState.setClientSettingsError) {
+          throw mockState.setClientSettingsError;
+        }
+      },
     },
   })) as never,
 }));
@@ -72,10 +89,12 @@ function setup(
     readonly teamStates?: ReadonlyArray<readonly [EnvironmentId, TeamEnvironmentState]>;
     readonly notificationMode?: (typeof DEFAULT_CLIENT_SETTINGS)["notificationMode"];
     readonly teamNotificationSounds?: (typeof DEFAULT_CLIENT_SETTINGS)["teamNotificationSounds"];
+    readonly setClientSettingsError?: Error | null;
   } = {},
 ) {
   vi.clearAllMocks();
   mockState.teamStates = new Map(overrides.teamStates ?? []);
+  mockState.setClientSettingsError = overrides.setClientSettingsError ?? null;
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     notificationMode: overrides.notificationMode ?? "notifications-and-sound",
@@ -84,6 +103,7 @@ function setup(
   return {
     [Symbol.dispose]() {
       mockState.teamStates = new Map();
+      mockState.setClientSettingsError = null;
       __resetClientSettingsPersistenceForTests();
     },
   };
@@ -156,6 +176,13 @@ describe("TeamNotificationSoundSettings", () => {
 
     await screen.getByTestId(`notification-team-sound-preview-${teamBId}`).click();
     expect(mockState.previewSound).toHaveBeenCalledWith("pulse");
+
+    // Multi-team rows expose a reset button for customized teams and delete the override key.
+    await screen.getByLabelText("Reset Platform Ops notification sound to default").click();
+    await expect
+      .element(screen.getByTestId(`notification-team-sound-select-${teamBId}`))
+      .toHaveTextContent("Chime (Default)");
+    expect(Object.hasOwn(getClientSettings().teamNotificationSounds, teamBId)).toBe(false);
   });
 
   it("renders TeamNotificationSoundRow for Settings -> Teams with preview and persistence", async () => {
@@ -174,5 +201,28 @@ describe("TeamNotificationSoundSettings", () => {
     await screen.getByTestId("team-settings-sound-option-bell").click();
     await expect.element(trigger).toHaveTextContent("Bell");
     expect(getClientSettings().teamNotificationSounds[teamAId]).toBe("bell");
+  });
+
+  it("reports a toast error when persisting a team notification sound change fails", async () => {
+    using _env = setup({
+      setClientSettingsError: new Error("Disk full"),
+    });
+    await using screen = await render(
+      <TeamNotificationSoundRow team={{ id: teamAId, name: "Acme Core" }} />,
+    );
+
+    await screen.getByTestId(`team-settings-sound-select-${teamAId}`).click();
+    await screen.getByTestId("team-settings-sound-option-marimba").click();
+
+    await vi.waitFor(() => {
+      expect(mockState.toastAdd).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "error",
+          title: "Setting not saved",
+          description: "Disk full",
+        }),
+      );
+    });
+    expect(getClientSettings().teamNotificationSounds[teamAId]).toBeUndefined();
   });
 });

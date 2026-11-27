@@ -212,7 +212,7 @@ describe("playNotificationSound", () => {
     expect(audio.resumed).toBe(0);
 
     await previewTeamNotificationSound("chime");
-    expect(audio.resumed).toBeGreaterThanOrEqual(1);
+    expect(audio.resumed).toBe(1);
     expect(audio.started).toBe(1);
     expect(audio.stopped).toBe(0);
 
@@ -225,6 +225,43 @@ describe("playNotificationSound", () => {
     await previewTeamNotificationSound("classic");
     expect(audio.stopped).toBe(2);
     expect(audio.started).toBe(3);
+  });
+
+  it("handles AudioContext construction failures and ignores stale async preview completions", async () => {
+    vi.stubGlobal("AudioContext", function ThrowingAudioContext() {
+      throw new Error("AudioContext limit reached");
+    });
+    const failingModule = await import("./threadNotifications");
+    await expect(failingModule.previewTeamNotificationSound("chime")).resolves.toBeUndefined();
+
+    // Verify generation guard: a slow classic fetch resolving after a newer bell preview does not play.
+    vi.resetModules();
+    audio.started = 0;
+    audio.stopped = 0;
+    audio.resumed = 0;
+    audio.initialState = "running";
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const pendingFetches: Array<(value: { arrayBuffer: () => Promise<ArrayBuffer> }) => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }>((resolve) => {
+            pendingFetches.push(resolve);
+          }),
+      ),
+    );
+    const notifications = await import("./threadNotifications");
+    const classicPromise = notifications.previewTeamNotificationSound("classic");
+    const bellPromise = notifications.previewTeamNotificationSound("bell");
+    await bellPromise;
+    expect(audio.started).toBe(1);
+
+    for (const resolve of pendingFetches) {
+      resolve({ arrayBuffer: async () => new ArrayBuffer(0) });
+    }
+    await classicPromise;
+    expect(audio.started).toBe(1);
   });
 });
 
