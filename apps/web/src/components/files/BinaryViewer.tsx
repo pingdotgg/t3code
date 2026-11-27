@@ -59,7 +59,7 @@ function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<
   const [url, setUrl] = useState<string | null>(null);
   const kind = filePreviewKind({ name: props.path });
   const text = (() => {
-    if (!["text", "markdown", "html", "mermaid"].includes(kind)) return null;
+    if (!["text", "markdown", "html", "mermaid", "unsupported"].includes(kind)) return null;
     try {
       return decodeFilePreviewText(props.bytes);
     } catch {
