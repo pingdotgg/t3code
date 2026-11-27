@@ -1752,7 +1752,13 @@ export function useComposerSend(input: ComposerSendInput) {
               children: m(msg("Restore failed draft")),
               onClick: () => {
                 const liveTarget = resolveLiveComposerDraftTarget(composerDraftTarget);
-                if (liveTarget === null) return;
+                if (liveTarget === null) {
+                  toastManager.add({
+                    type: "info",
+                    title: m(msg("The original draft was discarded.")),
+                  });
+                  return;
+                }
                 // A local draft prepares images under its draft id and sends under its thread key.
                 const localDraft =
                   typeof liveTarget === "string"
