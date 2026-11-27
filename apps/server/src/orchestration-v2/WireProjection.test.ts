@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import { coalesceLiveUpdatedEvents } from "./ThreadLiveEventCoalescer.ts";
 import {
   makeLiveBodyDeduper,
+  projectThreadProjectionForWire,
   projectTurnItemForWire,
   projectTurnItemForDetail,
   projectDomainEventForWire,
@@ -420,6 +421,44 @@ describe("orchestration V2 wire projection", () => {
       },
     };
     expect(projectStoredEventForWire(detached)).toBe(detached);
+  });
+
+  it("strips internal sentFrom notes from wire messages and snapshots", () => {
+    const message = {
+      id: MessageId.make("m-1"),
+      threadId: base.threadId,
+      runId: null,
+      nodeId: null,
+      role: "user" as const,
+      text: "hello",
+      attachments: [],
+      streaming: false,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      sentFrom: "User sent this message from a web browser to this machine.",
+      createdAt: base.updatedAt,
+      updatedAt: base.updatedAt,
+    };
+    const event: OrchestrationV2DomainEvent = {
+      id: EventId.make("message-event"),
+      type: "message.updated",
+      threadId: base.threadId,
+      occurredAt: base.updatedAt,
+      payload: message,
+    };
+    const projectedEvent = projectDomainEventForWire(event);
+    expect(projectedEvent.type === "message.updated" ? projectedEvent.payload.sentFrom : null).toBe(
+      undefined,
+    );
+    const projectedSnapshot = projectThreadProjectionForWire({
+      messages: [message],
+      checkpoints: [],
+      contextHandoffs: [],
+      turnItems: [],
+      visibleTurnItems: [],
+    } as unknown as OrchestrationV2ThreadProjection);
+    expect(projectedSnapshot.messages[0]?.sentFrom).toBeUndefined();
+    expect(projectedSnapshot.messages[0]?.text).toBe("hello");
   });
 });
 

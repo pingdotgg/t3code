@@ -3,6 +3,7 @@ import type {
   MessageId,
   NodeId,
   OrchestrationV2Checkpoint,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
   OrchestrationV2ContextHandoff,
   OrchestrationV2StoredEvent,
@@ -301,6 +302,14 @@ export function projectContextHandoffForWire(
   return { ...projected, summaryText: "" };
 }
 
+function projectMessageForWire(
+  message: OrchestrationV2ConversationMessage,
+): OrchestrationV2ConversationMessage {
+  if (message.sentFrom === undefined) return message;
+  const { sentFrom: _sentFrom, ...projected } = message;
+  return projected;
+}
+
 export function projectThreadProjectionForWire(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection {
@@ -315,6 +324,7 @@ export function projectThreadProjectionForWire(
   };
   return {
     ...projection,
+    messages: projection.messages.map(projectMessageForWire),
     checkpoints: projection.checkpoints.map(capCheckpointFiles),
     contextHandoffs: projection.contextHandoffs.map(projectContextHandoffForWire),
     turnItems: projection.turnItems.map(project),
@@ -328,6 +338,10 @@ export function projectThreadProjectionForWire(
 export function projectDomainEventForWire(
   event: OrchestrationV2DomainEvent,
 ): OrchestrationV2DomainEvent {
+  if (event.type === "message.updated") {
+    const payload = projectMessageForWire(event.payload);
+    return payload === event.payload ? event : { ...event, payload };
+  }
   return event.type === "turn-item.updated"
     ? { ...event, payload: projectTurnItemForWire(event.payload) }
     : event.type === "context-handoff.updated"

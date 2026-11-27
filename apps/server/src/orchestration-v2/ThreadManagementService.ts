@@ -84,12 +84,17 @@ export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 export interface ThreadManagementProvenance {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  readonly sentFrom?: string | undefined;
 }
 
 export function withCreationProvenance(
   command: OrchestrationV2Command,
   provenance: ThreadManagementProvenance,
 ): OrchestrationV2Command {
+  const creation = {
+    createdBy: provenance.createdBy,
+    creationSource: provenance.creationSource,
+  };
   switch (command.type) {
     case "thread.create": {
       // Only the server stamps a link's origin or folds in a first message, so a client cannot.
@@ -100,13 +105,18 @@ export function withCreationProvenance(
         workflowRun: _workflowRun,
         ...rest
       } = command;
-      return { ...rest, ...provenance };
+      return { ...rest, ...creation };
     }
-    case "message.dispatch":
+    case "message.dispatch": {
+      // Only the server stamps the sending connection; never stamp guest-authored messages.
+      const { sentFrom: _clientSentFrom, ...rest } = command;
+      const sentFrom = command.guestMessageId === undefined ? provenance.sentFrom : undefined;
+      return { ...rest, ...creation, ...(sentFrom === undefined ? {} : { sentFrom }) };
+    }
     case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":
-      return { ...command, ...provenance };
+      return { ...command, ...creation };
     default:
       return command;
   }

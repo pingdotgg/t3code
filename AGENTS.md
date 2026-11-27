@@ -71,6 +71,7 @@ See [00_development.md](docs/operations/00_development.md) for setup, ports, see
 
 - **Worktree setup:** Wait while `.t3/setup-running` names a live PID; do not run `vp i` concurrently. If no `.t3/setup-*` marker exists, run `vp i` yourself.
 - **Process lifecycle:** Start dev servers, Metro, and builds from your own shell so they exit with your session—never detach with `systemd-run`, `nohup`, `setsid`, or `tmux` unless asked. Stop background tasks with your harness's own stop (`vp` does not forward SIGTERM to child Vite/server processes).
+- **Dev ports and URLs:** While `vp run dev` is running, read `.t3/dev-runner.json` (or `<home-dir>/dev-runner.json`, `~/.t3/dev/dev-runner.json` in the main checkout) for its ports and local/tailnet URLs instead of polling logs. When a user prompt begins with a `[T3 Code: User sent this message from ...]` remote note, hand them tailnet (`--share`) links, not `localhost`.
 - **Sharing (`vp run dev --share`):** Wait for `pairingUrl:` and hand the full URL to the user. Never wire `tailscale serve` by hand, open the URL yourself, or consume the user's one-time pairing link. Mint another with `node apps/server/src/bin.ts pair` if needed.
 - **Test data:** Always copy in (never symlink) and refresh `statev2.sqlite`, not `state.sqlite`. Bring `secrets` / `settings.json` only if the flow under test needs them.
 - **Extra checkouts:** Put `git worktree add` next to this worktree, not in `/tmp`, and remove it when done.

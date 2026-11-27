@@ -63,7 +63,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { Headers, HttpRouter, HttpServer } from "effect/http";
+import { Headers, HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
 import * as Context from "effect/Context";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -195,7 +195,9 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
+  formatClientSentFrom,
   layerWsRpc,
+  readClientSentFrom,
   resolveOpenDiscoveryForConfig,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
@@ -210,6 +212,60 @@ const settingsUpdated = (settings: object): ServerConfigStreamEvent => ({
   version: 1,
   type: "settingsUpdated",
   payload: { settings: settings as ServerConfig["settings"] },
+});
+
+it("reads and formats client sentFrom across local, remote, relay, and SSH connections", () => {
+  const mobileRelay = readClientSentFrom(
+    HttpServerRequest.fromWeb(
+      new Request(
+        "http://127.0.0.1:3773/ws?clientSurface=mobile&clientOs=iOS&clientDeviceType=phone&connectionMethod=relay",
+        { headers: { host: "127.0.0.1:3773" } },
+      ),
+    ),
+  );
+  assert.deepEqual(mobileRelay, {
+    surface: "mobile",
+    os: "iOS",
+    deviceType: "phone",
+    connectionMethod: "relay",
+    host: "127.0.0.1:3773",
+  });
+  const relayText = formatClientSentFrom(mobileRelay!, "Mainbook");
+  assert.equal(
+    relayText,
+    "User sent this message from T3 Code mobile on iOS (phone) to this machine (Mainbook) via T3 Connect. The user is remote, so localhost URLs will not work for them.",
+  );
+  assert.notInclude(relayText!, "127.0.0.1");
+
+  const sshText = formatClientSentFrom({ connectionMethod: "ssh", host: "127.0.0.1:3773" });
+  assert.include(sshText!, "via an SSH tunnel");
+  assert.notInclude(sshText!, "127.0.0.1");
+
+  assert.equal(
+    formatClientSentFrom(
+      { surface: "desktop", os: "macOS", connectionMethod: "direct", host: "127.0.0.1:3773" },
+      "Mainbook",
+    ),
+    "User sent this message from T3 Code desktop on macOS to this machine (Mainbook) at 127.0.0.1:3773. The user is at this machine, so localhost URLs work.",
+  );
+  assert.include(
+    formatClientSentFrom({ host: "[::1]:3773" })!,
+    "The user is at this machine, so localhost URLs work.",
+  );
+  assert.include(
+    formatClientSentFrom({ surface: "web", host: "mainbook.example.ts.net:5733" })!,
+    "use mainbook.example.ts.net instead of localhost",
+  );
+
+  // Unknown query values and unsafe Host headers are dropped.
+  const unsafe = readClientSentFrom(
+    HttpServerRequest.fromWeb(
+      new Request("http://127.0.0.1:3773/ws?clientOs=unknown&clientDeviceType=unknown", {
+        headers: { host: "evil]injected" },
+      }),
+    ),
+  );
+  assert.isUndefined(unsafe);
 });
 
 it.effect("resends late editors without rolling back updates already sent", () =>

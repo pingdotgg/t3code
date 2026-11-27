@@ -1307,3 +1307,36 @@ it.effect(
       }).pipe(Effect.provide(layerTest));
     }),
 );
+
+it("withCreationProvenance replaces client sentFrom and leaves guest messages unstamped", () => {
+  const base = {
+    type: "message.dispatch" as const,
+    commandId: CommandId.make("cmd:sent-from"),
+    threadId: ThreadId.make("thread:sent-from"),
+    messageId: MessageId.make("msg:sent-from"),
+    text: "hi",
+    attachments: [],
+    dispatchMode: { type: "start_immediately" as const },
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    sentFrom: "client-spoofed",
+  };
+  const stamped = ThreadManagementService.withCreationProvenance(base, {
+    createdBy: "user",
+    creationSource: "mobile",
+    sentFrom: "server-stamped",
+  });
+  expect(stamped.type === "message.dispatch" ? stamped.sentFrom : undefined).toBe("server-stamped");
+
+  const stripped = ThreadManagementService.withCreationProvenance(base, {
+    createdBy: "user",
+    creationSource: "web",
+  });
+  expect(stripped.type === "message.dispatch" ? stripped.sentFrom : "unexpected").toBeUndefined();
+
+  const guest = ThreadManagementService.withCreationProvenance(
+    { ...base, guestMessageId: "guest:1" as never },
+    { createdBy: "user", creationSource: "web", sentFrom: "server-stamped" },
+  );
+  expect(guest.type === "message.dispatch" ? guest.sentFrom : "unexpected").toBeUndefined();
+});
