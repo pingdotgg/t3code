@@ -12,6 +12,7 @@ const MAX_EXPANDED = 32 * 1024 * 1024;
 const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
+const RTF_NESTED_CELL_END = Symbol("rtf-nested-cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
 const PRESENTATIONML_NAMESPACES = new Set([
@@ -36,6 +37,7 @@ type TextPart =
   | string
   | typeof CELL_START
   | typeof CELL_END
+  | typeof RTF_NESTED_CELL_END
   | typeof LINE_START
   | typeof THEMATIC_BREAK
   | { columnGap: number }
@@ -908,7 +910,7 @@ function rtfUnicodeDestination(
   if (end !== undefined) return { body, end };
 }
 
-function* rtf(source: string): Generator<string, void> {
+function* rtf(source: string): Generator<string | typeof RTF_NESTED_CELL_END, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
     skip: false,
@@ -1071,6 +1073,7 @@ function* rtf(source: string): Generator<string, void> {
         // Table structure survives tracked deletions; only the deleted cell text is dropped.
         else if (!state.skip && control === "row") yield "\n";
         else if (!state.skip && control === "cell") yield "\t";
+        else if (!state.skip && control === "nestcell") yield RTF_NESTED_CELL_END;
         else if (!hidden() && symbols.has(control)) yield symbols.get(control)!;
       } else {
         i++;
@@ -1402,6 +1405,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let space = false;
   let midLine = false;
   let pendingThematicBreak: string | undefined;
+  let afterNestedRtfCell = false;
   let endsWithWord = false;
   let afterImageDescription = false;
   let truncated = false;
@@ -1413,6 +1417,17 @@ export async function extractDocumentText(path: string, extension: string): Prom
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
     for await (let part of document(path, extension)) {
+      if (part === RTF_NESTED_CELL_END) {
+        afterNestedRtfCell = true;
+        continue;
+      }
+      if (afterNestedRtfCell && typeof part === "string") {
+        const first = /[^\0]/u.exec(part)?.[0];
+        if (first) {
+          if (/\S/u.test(result.at(-1) ?? "") && /\S/u.test(first)) part = " " + part;
+          afterNestedRtfCell = false;
+        }
+      }
       if (part === CELL_START) {
         if (cellDepth++ === 0) {
           started = false;
