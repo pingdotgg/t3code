@@ -91,7 +91,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const gt = useGT();
   const inputRef = useRef<TextInputInstance>(null);
-  const { themeAppearance, themeId } = useAppearancePreferences();
+  const { themeAppearance, themeId, monoFontFamily } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const statusLabel = props.readOnly
     ? gt("Viewing terminal output.")
@@ -145,7 +145,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
             selectable
             style={{
               color: theme.foreground,
-              fontFamily: "Menlo",
+              fontFamily: monoFontFamily,
               fontSize,
               lineHeight: Math.round(fontSize * 1.35),
             }}
@@ -173,7 +173,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
           style={{
             color: theme.foreground,
             flex: 1,
-            fontFamily: "Menlo",
+            fontFamily: monoFontFamily,
             padding: 0,
           }}
           onSubmitEditing={(event) => {
@@ -220,7 +220,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
   ...props
 }: ReadyTerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
-  const { themeAppearance, themeId } = useAppearancePreferences();
+  const { themeAppearance, themeId, monoFontFamily } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
@@ -295,6 +295,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
           terminalKey={props.terminalKey}
           initialBuffer={streaming ? "" : props.buffer}
           fontSize={fontSize}
+          fontFamily={monoFontFamily}
           sharedGrid={sharedGrid}
           style={{ flex: 1 }}
           themeConfig={buildGhosttyThemeConfig(theme)}

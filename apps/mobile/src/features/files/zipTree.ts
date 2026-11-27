@@ -148,8 +148,9 @@ export function zipDownloadTimeLeft(
         ),
       )
     : resolve(
-        msg("{minutes, plural, other {About {minutes} minutes left}}", {
-          minutes: Math.ceil(seconds / 60),
-        }),
+        msg(
+          "{minutes, plural, one {About {minutes} minute left} other {About {minutes} minutes left}}",
+          { minutes: Math.ceil(seconds / 60) },
+        ),
       );
 }
