@@ -89,6 +89,7 @@ See [00_development.md](docs/operations/00_development.md) for setup, ports, see
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.
+- Default to PRs against the current fork (`origin`). Never open a PR against `upstream` unless the developer explicitly asks for it.
 - `origin` is not always GitHub. Check `git remote get-url origin` before your first forge command and use that forge's CLI and skill. See [Forge mirror](docs/operations/00_development.md#forge-mirror-optional).
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
