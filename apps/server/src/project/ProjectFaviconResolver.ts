@@ -232,14 +232,16 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
 
-  const resolveIconHref = (href: string): ReadonlyArray<string> => {
+  const resolveIconHref = (href: string, sourceFile: string): ReadonlyArray<string> => {
     // `data:`, `https:` and `//host` icons name no project file, and a long data URL fails `stat`.
     if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href.trim())) return [];
     // Browsers strip surrounding whitespace from URL attributes; file paths keep theirs.
     const clean = safeDecodeURIComponent(href.trim().replace(/^\//, ""));
     // A decoded NUL fails `stat` instead of missing.
     if (clean.includes("\0")) return [];
-    return [path.join("public", clean), clean];
+    const dir = sourceFile.endsWith(".html") ? path.dirname(sourceFile) : ".";
+    if (dir === "." || href.trim().startsWith("/")) return [path.join("public", clean), clean];
+    return Array.from(new Set([path.join("public", clean), clean, path.join(dir, clean)]));
   };
 
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
@@ -342,7 +344,8 @@ export const make = Effect.gen(function* () {
       return null;
     }
     const hrefs = Array.from(extractIconHrefs(new TextDecoder().decode(source.value.value)));
-    return yield* findExistingFile(projectCwd, hrefs.flatMap(resolveIconHref), "workspace");
+    const candidates = hrefs.flatMap((href) => resolveIconHref(href, sourceFile));
+    return yield* findExistingFile(projectCwd, candidates, "workspace");
   });
 
   // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.

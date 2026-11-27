@@ -316,6 +316,24 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         expect(yield* resolver.resolvePath(malformedCwd)).toBe(
           (yield* Path.Path).join(malformedCwd, "public", "100%.svg"),
         );
+
+        const path = yield* Path.Path;
+        const srcHtmlCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          srcHtmlCwd,
+          "src/index.html",
+          '<link rel="icon" href="/brand/root.svg"><link rel="icon" type="image/png" href="assets/brand/icon.png">',
+        );
+        yield* writeTextFile(srcHtmlCwd, "src/brand/root.svg", "<svg>src</svg>");
+        yield* writeTextFile(srcHtmlCwd, "src/assets/brand/icon.png", "png");
+        expect(yield* resolver.resolvePath(srcHtmlCwd)).toBe(
+          path.join(srcHtmlCwd, "src", "assets", "brand", "icon.png"),
+        );
+        yield* writeTextFile(srcHtmlCwd, "public/assets/brand/icon.png", "public");
+        yield* resolver.invalidate(srcHtmlCwd);
+        expect(yield* resolver.resolvePath(srcHtmlCwd)).toBe(
+          path.join(srcHtmlCwd, "public", "assets", "brand", "icon.png"),
+        );
       }),
     );
 
@@ -410,6 +428,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
           "index.html",
           '<link rel="icon" href="../../outside.svg"><link rel="icon" href="/%2e%2e%2f%2e%2e%2foutside.svg">',
         );
+        yield* writeTextFile(cwd, "src/index.html", '<link rel="icon" href="../../outside.svg">');
 
         const resolved = yield* resolver.resolvePath(cwd);
 
