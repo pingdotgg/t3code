@@ -69,10 +69,7 @@ export function parseGrepOutput(
       continue;
     }
     // A bare path with spaces needs a following ripgrep line to distinguish it from prose.
-    if (
-      !/\s/.test(line.trimEnd()) ||
-      (/^\S/.test(line) && RIPGREP_NUMBERED_LINE.test(lines[index + 1] ?? ""))
-    ) {
+    if (!/\s/.test(line.trimEnd()) || RIPGREP_NUMBERED_LINE.test(lines[index + 1] ?? "")) {
       file = line;
       continue;
     }
