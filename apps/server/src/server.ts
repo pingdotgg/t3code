@@ -53,6 +53,8 @@ import * as ProcessLauncher from "./process/ProcessLauncher.ts";
 import * as SpawnWorker from "./process/SpawnWorker.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
+import * as PreviewHttp from "./preview/http.ts";
+import * as ThreadBrowser from "./preview/ThreadBrowser.ts";
 import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
 import * as SpeechService from "./speech/SpeechService.ts";
 import * as CloudSpeech from "./speech/CloudSpeech.ts";
@@ -912,6 +914,11 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(CloudHttp.layer),
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
+      Layer.provide(
+        PreviewHttp.layer.pipe(
+          Layer.provide(ThreadBrowser.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+        ),
+      ),
       Layer.provide(ProjectHttp.layer),
       Layer.provide(speechHttpApiLayer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),

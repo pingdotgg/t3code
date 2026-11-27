@@ -155,6 +155,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_thread_snapshot_failed",
   "orchestration_thread_bounded_snapshot_failed",
   "orchestration_thread_history_failed",
+  "preview_open_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -846,6 +847,37 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+/** A page the thread's browser can show: only http(s), never a scheme that launches an app. */
+export const EnvironmentPreviewOpenUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(2048),
+  Schema.makeFilter((value) => {
+    try {
+      const { protocol } = new URL(value);
+      return protocol === "http:" || protocol === "https:";
+    } catch {
+      return false;
+    }
+  }),
+);
+
+export const EnvironmentPreviewOpenRequest = Schema.Struct({
+  threadId: ThreadId,
+  url: EnvironmentPreviewOpenUrl,
+});
+export type EnvironmentPreviewOpenRequest = typeof EnvironmentPreviewOpenRequest.Type;
+
+class EnvironmentPreviewHttpApi extends HttpApiGroup.make("preview").add(
+  HttpApiEndpoint.post("open", "/api/preview/open", {
+    headers: OptionalBearerHeaders,
+    payload: EnvironmentPreviewOpenRequest,
+    error: [
+      EnvironmentScopeRequiredError,
+      EnvironmentResourceNotFoundError,
+      EnvironmentInternalError,
+    ],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<EnvironmentVoiceBodyLimit>()(
   "EnvironmentVoiceBodyLimit",
   { error: EnvironmentRequestInvalidError },
@@ -1106,6 +1138,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMcpOAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentPreviewHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)

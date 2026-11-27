@@ -8,6 +8,7 @@ T3 Code includes a built-in preview browser beside your conversation so you and 
 - **Local vs. remote**: On the desktop app, tabs for your local environment run natively. On web, mobile, or remote environments, tabs stream from the host's headless Chromium (~120 MB one-time download; see [Browser host setup](./remote-access.md#browser-host-setup)). On desktop, tabs you open for a remote environment can also load locally over the [preview tunnel](./remote-access.md#browser-on-a-remote-environment).
 - **Find on page**: Press `mod+f` inside a desktop browser tab (or use its **⋮** menu if the page intercepts `mod+f`).
 - **Default browser (macOS)**: You can set the desktop app as your [default web browser](./default-browser.md).
+- **From the terminal**: Pages that commands in a thread's terminal open, like sign-in links, open as tabs here ([details](./terminal.md#links-that-open-a-browser)).
 
 ## Profiles, viewports, and settings
 

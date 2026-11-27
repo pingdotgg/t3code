@@ -1,6 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import type { ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -13,7 +16,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
-import { browserCommand } from "./browser.ts";
+import { browserCommand, openBrowserUrl } from "./browser.ts";
 
 const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 const BROWSER_ROOT = "/home/me/.t3/tools/chrome-headless-shell";
@@ -98,7 +101,14 @@ const runSetupAsRoot = (input: { readonly profile: string | undefined }) => {
     Effect.provideService(HostProcess.Environment, { SUDO_USER: "me" }),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, Layer.fresh(TestConsole.layer))),
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        Layer.fresh(TestConsole.layer),
+      ),
+    ),
   );
 };
 
@@ -136,4 +146,77 @@ it.effect.each([
     expect(result.output).toContain(input.said);
     expect(result.output).toContain("This host is ready for T3's browser.");
   }),
+);
+
+const OAUTH_URL = "https://github.com/login/device?code=AB&next=/";
+
+it.effect.each([
+  {
+    label: "opens a web page in the terminal's thread",
+    env: { T3CODE_THREAD_ID: "thread-1", BROWSER: "/t3/bin/t3-browser" },
+    url: OAUTH_URL,
+    threadFails: false,
+    hostFails: false,
+    expected: { thread: [OAUTH_URL], host: [], printed: [] },
+  },
+  {
+    label: "opens on this host when T3 cannot",
+    env: { T3CODE_THREAD_ID: "thread-1", BROWSER: "/t3/bin/t3-browser", Browser: "x" },
+    url: OAUTH_URL,
+    threadFails: true,
+    hostFails: false,
+    expected: { thread: [OAUTH_URL], host: [OAUTH_URL], printed: [] },
+  },
+  {
+    label: "opens on this host outside a thread's terminal",
+    env: { BROWSER: "/t3/bin/t3-browser" },
+    url: OAUTH_URL,
+    threadFails: false,
+    hostFails: false,
+    expected: { thread: [], host: [OAUTH_URL], printed: [] },
+  },
+  ...["file:///tmp/report.html", "javascript:alert(1)", "example.com"].map((url) => ({
+    label: `leaves ${url} to this host`,
+    env: { T3CODE_THREAD_ID: "thread-1" },
+    url,
+    threadFails: false,
+    hostFails: false,
+    expected: { thread: [], host: [url], printed: [] },
+  })),
+  {
+    label: "prints the URL when no browser can open it",
+    env: { T3CODE_THREAD_ID: "thread-1" },
+    url: OAUTH_URL,
+    threadFails: true,
+    hostFails: true,
+    expected: { thread: [OAUTH_URL], host: [OAUTH_URL], printed: [OAUTH_URL] },
+  },
+])("t3 browser open $label", (input) =>
+  Effect.gen(function* () {
+    const thread: Array<string> = [];
+    const host: Array<string> = [];
+    yield* openBrowserUrl({
+      url: input.url,
+      openInThread: (threadId: ThreadId, url) =>
+        Effect.suspend(() => {
+          expect(threadId).toBe("thread-1");
+          thread.push(url);
+          return input.threadFails ? Effect.fail("unreachable") : Effect.void;
+        }),
+      openOnHost: (url) =>
+        Effect.gen(function* () {
+          // The host opener must not hand the URL back to this command through $BROWSER.
+          const env = yield* HostProcess.Environment;
+          expect(Object.keys(env).filter((key) => key.toUpperCase() === "BROWSER")).toEqual([]);
+          host.push(url);
+          if (input.hostFails) return yield* Effect.fail("no opener");
+        }),
+    }).pipe(Effect.provideService(HostProcess.Environment, input.env));
+    const errors = (yield* TestConsole.errorLines).join("\n");
+    expect({
+      thread,
+      host,
+      printed: input.expected.printed.filter((url) => errors.includes(url)),
+    }).toEqual(input.expected);
+  }).pipe(Effect.provide(Layer.fresh(TestConsole.layer))),
 );
