@@ -7123,6 +7123,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect(
+      "marks a master created outside T3 Code as default before the snapshot refreshes",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* commitInitialRepo(cwd, ["--initial-branch=feature"]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.listRefs({ cwd });
+          yield* git(cwd, ["checkout", "-b", "master"]);
+
+          const master = (yield* driver.listRefs({ cwd })).refs.find(
+            (ref) => ref.name === "master",
+          );
+          assert.isTrue(master?.current);
+          assert.isTrue(master?.isDefault);
+        }),
+    );
+
     it.effect("preserves exact custom names and refuses collisions without a suffix", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

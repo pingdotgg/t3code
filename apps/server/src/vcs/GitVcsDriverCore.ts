@@ -154,6 +154,11 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   SSH_ASKPASS_REQUIRE: "never",
 } satisfies NodeJS.ProcessEnv);
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
+
+// Status treats main or master as the default when no remote names one.
+const isDefaultLocalBranch = (name: string, defaultBranch: string | null) =>
+  name === defaultBranch ||
+  (defaultBranch === null && DEFAULT_BASE_BRANCH_CANDIDATES.some((base) => base === name));
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
   isRepo: false,
@@ -6145,10 +6150,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ? originDefaultBranch
         : yield* resolveDefaultBranchName(fetchCwd, fallbackRemoteName, gitDirArgs);
     const defaultRemoteName = fallbackRemoteName ?? "origin";
-    // Status treats main or master as the default when no remote names one.
-    const isDefaultLocalBranch = (name: string) =>
-      name === defaultBranch ||
-      (defaultBranch === null && DEFAULT_BASE_BRANCH_CANDIDATES.some((base) => base === name));
     const localBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
     const remoteBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
 
@@ -6166,7 +6167,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             name,
             current: false,
             isRemote: false,
-            isDefault: isDefaultLocalBranch(name),
+            isDefault: isDefaultLocalBranch(name, defaultBranch),
             worktreePath: worktrees?.paths.get(name) ?? null,
             ...(upstreamRef ? { upstreamRef } : {}),
           },
@@ -6389,7 +6390,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 name: currentBranch,
                 current: true,
                 isRemote: false,
-                isDefault: currentBranch === snapshot.defaultBranch,
+                isDefault: isDefaultLocalBranch(currentBranch, snapshot.defaultBranch),
                 worktreePath: worktreeRoot,
               },
             ]
