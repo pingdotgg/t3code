@@ -29,6 +29,7 @@ import {
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
+  projectScriptIdsInEnvironment,
   releaseClaimedRoles,
 } from "../../projectScripts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -196,17 +197,12 @@ export function useProjectScriptEditing(input: {
     if (!project) {
       return AsyncResult.success(undefined);
     }
-    // Shortcuts are keyed by script id per environment, so a new id must not match another
-    // project's script, as Settings does.
     const nextId = nextProjectScriptId(input.name, [
       ...scripts.map((script) => script.id),
-      ...settings.defaultProjectScripts.map((script) => script.id),
-      ...Object.values(settings.projectSettingsOverrides).flatMap(
-        (entry) => entry.defaultProjectScripts?.map((script) => script.id) ?? [],
+      ...projectScriptIdsInEnvironment(
+        settings,
+        allProjects.filter((other) => other.environmentId === environmentId),
       ),
-      ...allProjects
-        .filter((other) => other.environmentId === environmentId)
-        .flatMap((other) => resolveProjectScripts(settings, other).map((script) => script.id)),
     ]);
     const nextScript = buildProjectScript(nextId, input);
     const nextScripts = [
