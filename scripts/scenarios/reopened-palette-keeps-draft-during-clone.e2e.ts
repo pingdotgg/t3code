@@ -18,31 +18,20 @@ test(
       if (!address || typeof address === "string") throw new Error("No Git fixture port");
       await browser.addInitScript((title) => {
         let holdProjectWait = false;
-        const shortWaits = new Map<number, () => void>();
-        document.addEventListener("hold-project-wait", () => {
+        document.addEventListener("hold-clone-project-wait", () => {
           holdProjectWait = true;
         });
-        document.addEventListener("expire-short-project-wait", () => {
-          const waits = [...shortWaits];
-          shortWaits.clear();
-          for (const [id, run] of waits) {
-            window.clearTimeout(id);
-            run();
-          }
-        });
+        // Keep the project waiter pending while driving the replacement palette. Leave
+        // unrelated timers and the waiter's normal clearTimeout cancellation alone.
         window.setTimeout = new Proxy(window.setTimeout, {
           apply(target, receiver, [handler, delay, ...args]) {
-            if (
-              !holdProjectWait ||
-              typeof handler !== "function" ||
-              (delay !== 3_000 && delay !== 6_000)
-            ) {
-              return Reflect.apply(target, receiver, [handler, delay, ...args]);
+            if (holdProjectWait && new Error().stack?.includes("at waitForProject (")) {
+              holdProjectWait = false;
+              const id: number = Reflect.apply(target, receiver, [handler, 60_000, ...args]);
+              document.documentElement.dataset.cloneProjectWait = "pending";
+              return id;
             }
-            const id: number = Reflect.apply(target, receiver, [handler, 60_000, ...args]);
-            if (delay === 3_000) shortWaits.set(id, () => handler(...args));
-            document.documentElement.dataset.projectWait = "pending";
-            return id;
+            return Reflect.apply(target, receiver, [handler, delay, ...args]);
           },
         });
         const listen = WebSocket.prototype.addEventListener;
@@ -116,17 +105,13 @@ test(
       await screen.getByRole("button", "Continue (Enter)").tap();
       await palette.getByRole("combobox").fill(`${project}/${name}`);
       await browser.evaluate(() => {
-        document.dispatchEvent(new Event("hold-project-wait"));
+        document.dispatchEvent(new Event("hold-clone-project-wait"));
         return null;
       });
       await palette.getByRole("button", /^(?:Create & )?Clone \(/).tap();
       await browser.locator("html[data-cloned-project=held]").waitFor();
       await palette.waitFor({ state: "hidden" });
-      await browser.locator("html[data-project-wait=pending]").waitFor();
-      await browser.evaluate(() => {
-        document.dispatchEvent(new Event("expire-short-project-wait"));
-        return null;
-      });
+      await browser.locator("html[data-clone-project-wait=pending]").waitFor();
       await browser.keyboard.press("Control+k");
       await palette.getByRole("combobox").fill("Keep this draft");
       await browser.keyboard.press("Escape");
