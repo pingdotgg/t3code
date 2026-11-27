@@ -65,15 +65,19 @@ export function ttmlCaptions(root: XmlNode) {
   const subFrameRateText = parameter("subFrameRate") ?? "1";
   const subFrameRate = /^\d+$/.test(subFrameRateText) ? Number(subFrameRateText) : NaN;
   const timeBase = parameter("timeBase") ?? "media";
+  const continuousSmpte = timeBase === "smpte" && parameter("markerMode") === "continuous";
+  const dropMode = parameter("dropMode") ?? "nonDrop";
 
   function captionTime(value: string | undefined) {
     const time = value?.trim() ?? "";
     const offset = /^(\d+(?:\.\d+)?)f$/.exec(time);
-    const clock = /^(\d{2,}:[0-5]\d:[0-5]\d):(\d{2,})(?:\.(\d+))?$/.exec(time);
+    const clockMatch = /^(\d{2,}:[0-5]\d:[0-5]\d)(?::(\d{2,})(?:\.(\d+))?)?$/.exec(time);
+    const clock = continuousSmpte || clockMatch?.[2] !== undefined ? clockMatch : null;
     if (!offset && !clock) return mediaTime(value);
-    if (timeBase !== "media" || !Number.isFinite(frameRate) || frameRate <= 0) return;
+    if (timeBase !== "media" && !(continuousSmpte && clock)) return;
+    if (!Number.isFinite(frameRate) || frameRate <= 0) return;
 
-    const frames = Number(clock?.[2] ?? offset?.[1]);
+    const frames = Number(clock?.[2] ?? offset?.[1] ?? 0);
     if (clock && frames >= nominalFrameRate) return;
     let fractionalFrame = 0;
     if (clock?.[3] !== undefined) {
@@ -82,7 +86,24 @@ export function ttmlCaptions(root: XmlNode) {
       fractionalFrame = subFrames / subFrameRate;
     }
     const clockSeconds = clock ? (mediaTime(clock[1]) ?? NaN) : 0;
-    const seconds = clockSeconds + (frames + fractionalFrame) / frameRate;
+    let seconds = clockSeconds + (frames + fractionalFrame) / frameRate;
+    if (continuousSmpte) {
+      const minutes = Math.floor(clockSeconds / 60);
+      const atMinuteStart = clockSeconds % 60 === 0;
+      let droppedFrames = 0;
+      // TTML §N.3 counts skipped labels before applying the effective frame rate.
+      if (dropMode === "dropNTSC") {
+        if (atMinuteStart && minutes % 10 !== 0 && frames < 2) return;
+        droppedFrames = (minutes - Math.floor(minutes / 10)) * 2;
+      } else if (dropMode === "dropPAL") {
+        if (atMinuteStart && minutes % 2 === 0 && minutes % 20 !== 0 && frames < 4) return;
+        droppedFrames = (Math.floor(minutes / 2) - Math.floor(minutes / 20)) * 4;
+      } else if (dropMode !== "nonDrop") {
+        return;
+      }
+      seconds =
+        (clockSeconds * nominalFrameRate + frames - droppedFrames + fractionalFrame) / frameRate;
+    }
     if (Number.isFinite(seconds * 1000)) return seconds;
   }
 

@@ -5,6 +5,8 @@ import { ttmlCaptions } from "./epubMedia";
 
 const ttml = "http://www.w3.org/ns/ttml";
 const dfxp = "http://www.w3.org/2006/04/ttaf1";
+const smpte = 'p:timeBase="smpte" p:markerMode="continuous"';
+const ntscRate = 'p:frameRate="30" p:frameRateMultiplier="1000 1001"';
 
 it.each([
   ["frame clock times", ttml, "", "00:01:01:15", "00:01:03:00", "00:01:01.500 --> 00:01:03.000"],
@@ -31,6 +33,38 @@ it.each([
     "00:00:01:12.1",
     "00:00:02:00.0",
     "00:00:01.521 --> 00:00:02.000",
+  ],
+  [
+    "continuous non-drop SMPTE timecodes",
+    ttml,
+    `${smpte} p:dropMode="nonDrop" p:frameRate="25"`,
+    "00:00:01:12",
+    "00:00:02:00",
+    "00:00:01.480 --> 00:00:02.000",
+  ],
+  [
+    "continuous SMPTE timecodes at a fractional rate",
+    ttml,
+    `${smpte} ${ntscRate}`,
+    "00:00:01:00",
+    "00:00:02",
+    "00:00:01.001 --> 00:00:02.002",
+  ],
+  [
+    "continuous SMPTE NTSC drop-frame timecodes",
+    ttml,
+    `${smpte} ${ntscRate} p:dropMode="dropNTSC"`,
+    "00:00:59:29",
+    "00:01:00:02",
+    "00:01:00.027 --> 00:01:00.060",
+  ],
+  [
+    "continuous SMPTE PAL drop-frame timecodes",
+    ttml,
+    `${smpte} ${ntscRate} p:dropMode="dropPAL"`,
+    "00:01:59:29",
+    "00:02:00:04",
+    "00:02:00.087 --> 00:02:00.120",
   ],
 ])("keeps captions using %s", (_label, namespace, parameters, begin, end, timing) => {
   const captions = parseXml(`
