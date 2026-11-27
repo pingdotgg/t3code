@@ -1471,6 +1471,7 @@ describe("question answer paths", () => {
               '<w:p><w:r><w:rPr><w:rStyle w:val="Retired"/><w:vanish w:val="0"/></w:rPr><w:t>Bring your badge.</w:t></w:r></w:p>',
               '<w:p><w:pPr><w:pStyle w:val="WithToggle"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Both style levels toggle</w:t></w:r></w:p>',
               '<w:p><w:r><w:rPr><w:rStyle w:val="CycleA"/></w:rPr><w:t>Unresolved cycle</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="DoubleToggle"/></w:rPr><w:t>Inherited toggles cancel</w:t></w:r></w:p>',
               '<w:tbl><w:tblPr><w:tblStyle w:val="ToggleTable"/></w:tblPr><w:tr><w:tc><w:p><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Table style combination</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
               "</w:body></w:document>",
             ].join(""),
@@ -1484,13 +1485,14 @@ describe("question answer paths", () => {
               '<w:style w:type="paragraph" w:styleId="WithToggle"><w:rPr><w:vanish/></w:rPr></w:style>',
               '<w:style w:type="character" w:styleId="CycleA"><w:basedOn w:val="CycleB"/></w:style>',
               '<w:style w:type="character" w:styleId="CycleB"><w:basedOn w:val="CycleA"/></w:style>',
+              '<w:style w:type="character" w:styleId="DoubleToggle"><w:basedOn w:val="Retired"/><w:rPr><w:vanish/></w:rPr></w:style>',
               '<w:style w:type="table" w:styleId="ToggleTable"><w:rPr><w:vanish/></w:rPr></w:style>',
               "</w:styles>",
             ].join(""),
           },
           expected: [],
           exact:
-            "Current instructions\nBring your badge.\nBoth style levels toggle\nUnresolved cycle\nTable style combination",
+            "Current instructions\nBring your badge.\nBoth style levels toggle\nUnresolved cycle\nInherited toggles cancel\nTable style combination",
         },
         {
           ext: "docx",

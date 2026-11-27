@@ -539,21 +539,40 @@ function hasXstringText(node: XmlNode): boolean {
   return false;
 }
 
-function wordStyleProperty<Value extends number | boolean>(
-  styles: Map<string, Value | string | undefined>,
+function wordStyleOutlineLevel(
+  outlines: Map<string, number | string | undefined>,
   id: string,
-): Value | undefined {
-  let value = styles.get(id);
-  if (typeof value !== "string") return value;
+): number | undefined {
+  let outline = outlines.get(id);
+  if (typeof outline !== "string") return outline;
   const visited = new Set<string>();
-  while (typeof value === "string" && !visited.has(id)) {
+  while (typeof outline === "string" && !visited.has(id)) {
     visited.add(id);
-    id = value;
-    value = styles.get(id);
+    id = outline;
+    outline = outlines.get(id);
   }
-  const resolved = typeof value === "string" ? undefined : value;
-  for (const styleId of visited) styles.set(styleId, resolved);
-  return resolved;
+  const level = typeof outline === "number" ? outline : undefined;
+  for (const styleId of visited) outlines.set(styleId, level);
+  return level;
+}
+
+type WordStyleToggle = { vanish: boolean | undefined; basedOn: string | undefined };
+
+// Each true vanish along a basedOn chain toggles the inherited state. A false value or a
+// cycle leaves the outcome uncertain, so the caller keeps the text.
+function wordStyleToggled(styles: Map<string, WordStyleToggle>, id: string): boolean | undefined {
+  let toggled = false;
+  const visited = new Set<string>();
+  for (let current: string | undefined = id; current !== undefined;) {
+    if (visited.has(current)) return;
+    visited.add(current);
+    const style = styles.get(current);
+    if (!style) break;
+    if (style.vanish === false) return;
+    if (style.vanish) toggled = !toggled;
+    current = style.basedOn;
+  }
+  return toggled;
 }
 
 function wordVanish(property: XmlNode | undefined): boolean | undefined {
@@ -567,8 +586,8 @@ function wordCharacterStyleVisibility(styles: XmlNode): WordStyleRunHidden | und
   const definitions = childNamed(styles, "styles");
   const runDefaults = childNamed(childNamed(definitions, "docDefaults"), "rPrDefault");
   if (wordVanish(childNamed(childNamed(runDefaults, "rPr"), "vanish"))) return;
-  const character = new Map<string, boolean | string | undefined>();
-  const paragraph = new Map<string, boolean | string | undefined>();
+  const character = new Map<string, WordStyleToggle>();
+  const paragraph = new Map<string, WordStyleToggle>();
   let defaultParagraph: string | undefined;
   let tableCanToggle = false;
   for (const style of children(definitions)) {
@@ -578,24 +597,25 @@ function wordCharacterStyleVisibility(styles: XmlNode): WordStyleRunHidden | und
       tableCanToggle ||= [...all(style, "vanish", ["rPrChange"])].some(wordVanish);
       continue;
     }
-    const defined =
-      wordVanish(childNamed(childNamed(style, "rPr"), "vanish")) ??
-      childNamed(style, "basedOn")?.attrs.val;
+    const defined = {
+      vanish: wordVanish(childNamed(childNamed(style, "rPr"), "vanish")),
+      basedOn: childNamed(style, "basedOn")?.attrs.val,
+    };
     if (type === "character") character.set(styleId, defined);
     else if ((type ?? "paragraph") === "paragraph") {
       paragraph.set(styleId, defined);
       if (["true", "1", "on"].includes(style.attrs.default ?? "")) defaultParagraph = styleId;
     }
   }
-  if (![...character.values()].includes(true)) return;
+  if (![...character.values()].some((style) => style.vanish)) return;
   return (id, ancestors) => {
-    if (!wordStyleProperty(character, id)) return false;
-    // A true value toggles the other style levels. Leave table formatting to the editor.
+    if (!wordStyleToggled(character, id)) return false;
+    // Table styles also toggle; leave those combinations to the editor.
     if (tableCanToggle && ancestors.some((ancestor) => ancestor.name === "tbl")) return false;
     const owner = ancestors.findLast((ancestor) => ancestor.name === "p");
     const named = childNamed(childNamed(owner, "pPr"), "pStyle")?.attrs.val;
     const paragraphId = named && paragraph.has(named) ? named : defaultParagraph;
-    return paragraphId === undefined || wordStyleProperty(paragraph, paragraphId) !== true;
+    return paragraphId === undefined || wordStyleToggled(paragraph, paragraphId) === false;
   };
 }
 
@@ -1343,7 +1363,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         if (outlines.size || headings.size)
           for (const pStyle of all(doc, "pStyle", ["pPrChange"])) {
             const id = pStyle.attrs.val ?? "";
-            const outline = wordStyleProperty(outlines, id);
+            const outline = wordStyleOutlineLevel(outlines, id);
             if (outline !== undefined) pStyle.wordOutlineHeadingLevel = outline;
             else {
               const heading = headings.get(id);
