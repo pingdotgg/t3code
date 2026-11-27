@@ -35,12 +35,16 @@ const state = vi.hoisted(() => ({
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  unsettleValue: undefined as unknown,
   heldActions: new Map<string, Promise<void>>(),
 }));
 
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useRef: (current: unknown) => ({ current }),
+}));
+vi.mock("../../lib/useStableCallback", () => ({
+  useStableCallback: (callback: unknown) => callback,
 }));
 vi.mock("react-native", () => ({
   Alert: {
@@ -66,6 +70,8 @@ vi.mock("../archive/useArchivedThreadSnapshots", () => ({
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
+  readEnvironmentScopeDenied: (environmentId: string, scope: string) =>
+    state.scopes.get(environmentId)?.has(scope) !== true,
 }));
 vi.mock("../../state/presentation", () => ({
   connectedEnvironmentIdsAtom: "connected-environments",
@@ -88,7 +94,7 @@ vi.mock("../../state/atom-registry", async () => {
             ? state.holdingRows
             : atom === "thread-shells"
               ? state.shells
-              : atom === "queued-thread-keys"
+              : atom === "queued-thread-keys" || atom === "pending-sync"
                 ? new Set<string>()
                 : new Map(
                     [...state.scopes.keys()].map((environmentId) => [
@@ -145,39 +151,48 @@ vi.mock("../../state/threads", () => ({
   environmentThreadShells: { threadShellsAtom: "thread-shells" },
   steadyNavigationThreadShellsAtom: "thread-shells",
   steadyShellsHoldingAtom: "steady-shells-holding",
-  threadEnvironment: Object.fromEntries(
-    [
-      "archive",
-      "unarchive",
-      "delete",
-      "settle",
-      "unsettle",
-      "snooze",
-      "unsnooze",
-      "pin",
-      "unpin",
-      "reorderPin",
-      "reorderActive",
-      "updateMetadata",
-      "regenerateTitle",
-    ].map((action) => [
-      action,
-      async (request: {
-        environmentId: string;
-        input: { threadId: string; orderKey?: string };
-      }) => {
-        state.requests.push({ action, ...request });
-        await state.heldActions.get(action);
-        if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
-          return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
-        }
-        if (action === state.failedAction)
-          return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
-        state.afterRequest?.();
-        return AsyncResult.success(action === "regenerateTitle" ? state.titleOutcome : undefined);
-      },
-    ]),
-  ),
+  threadEnvironment: {
+    pendingSyncAtom: () => "pending-sync",
+    ...Object.fromEntries(
+      [
+        "archive",
+        "unarchive",
+        "delete",
+        "settle",
+        "unsettle",
+        "snooze",
+        "unsnooze",
+        "pin",
+        "unpin",
+        "reorderPin",
+        "reorderActive",
+        "updateMetadata",
+        "regenerateTitle",
+      ].map((action) => [
+        action,
+        async (request: {
+          environmentId: string;
+          input: { threadId: string; orderKey?: string };
+        }) => {
+          state.requests.push({ action, ...request });
+          await state.heldActions.get(action);
+          if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
+            return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
+          }
+          if (action === state.failedAction)
+            return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
+          state.afterRequest?.();
+          return AsyncResult.success(
+            action === "regenerateTitle"
+              ? state.titleOutcome
+              : action === "unsettle"
+                ? state.unsettleValue
+                : undefined,
+          );
+        },
+      ]),
+    ),
+  },
 }));
 
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -228,6 +243,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.unsettleValue = undefined;
   state.heldActions = new Map();
 });
 
@@ -448,6 +464,19 @@ describe("thread action undo", () => {
       expect(state.requests.map(({ action }) => action)).toEqual([action, inverse]);
     },
   );
+
+  it("re-snoozes a thread whose queued snooze an offline settle replaced", async () => {
+    const snoozedUntil = "2099-01-01T09:00:00.000Z";
+    const thread = makeThread({ pinnedAt: "2026-01-01T00:00:00.000Z", snoozedUntil });
+    state.shells = [thread];
+    await useThreadListActions().settleThread(thread);
+    // Cancelling the queued settle also drops the snooze it replaced on the device.
+    state.shells = [{ ...thread, snoozedUntil: null }];
+    state.unsettleValue = { sequence: 0, cancelledOnDevice: true };
+    await readThreadUndoNotice()!.undo();
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "snooze"]);
+    expect(state.requests[2]?.input.snoozedUntil).toBe(snoozedUntil);
+  });
 
   it("keeps the latest unpin undo after concurrent unpin requests", async () => {
     const actions = useThreadListActions();
