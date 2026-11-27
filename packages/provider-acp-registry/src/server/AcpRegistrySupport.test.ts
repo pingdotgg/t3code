@@ -594,7 +594,7 @@ describe("AcpRegistrySupport", () => {
       const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
       expect(npmCommands.match(/^install --global /gmu)).toHaveLength(1);
       expect(npmCommands).toContain(
-        `install --global --prefix ${cacheDir}/tools/example-agent/1.2.3/npm @example/acp@V1.2.3`,
+        `install --global @example/acp@V1.2.3 --prefix ${cacheDir}/tools/example-agent/1.2.3/npm`,
       );
 
       // A missing npm bin link must not select an unrelated command from the user's PATH.

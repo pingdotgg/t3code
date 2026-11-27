@@ -2310,9 +2310,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           distribution: "local",
           spawn: {
             command: absoluteCommand,
-            args: settings.commandArgs,
+            ...acpLaunchOptions("", executable, settings.commandArgs, env),
             cwd,
-            env,
             shell: false,
           },
         } satisfies ResolvedAcpRegistryAgent;
