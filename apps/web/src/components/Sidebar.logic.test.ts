@@ -1206,6 +1206,31 @@ describe("Working shelf (beta)", () => {
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
     });
 
+    it("keeps Working out of pinned and active orders when Working is above Active", () => {
+      const topWorkingItems: readonly SidebarListItem[] = [
+        marker("pinned-header"),
+        row("p1", "pinned"),
+        marker("working-header"),
+        row("w1", "working"),
+        marker("pinned-divider"),
+        row("a1", "active"),
+        row("a2", "active"),
+        marker("settled-header"),
+        row("s1", "settled"),
+      ];
+      expect(resolveSidebarDropTarget(topWorkingItems, "a1", "w1")).toBeNull();
+      expect(resolveSidebarDropTarget(topWorkingItems, "p1", "a2")).toEqual({
+        section: "active",
+        pinnedOrder: [],
+        activeOrder: ["a1", "a2", "p1"],
+      });
+      expect(resolveSidebarDropTarget(topWorkingItems, "a2", "p1")).toEqual({
+        section: "pinned",
+        pinnedOrder: ["a2", "p1"],
+        activeOrder: ["a1"],
+      });
+    });
+
     it.each([
       ["pinned", "p1"],
       ["active", "a2"],

@@ -530,6 +530,27 @@ describe("sidebar drag projection", () => {
     expect(byTime.get("w")).toEqual(stationary);
   });
 
+  it("keeps Working above Active during drag previews when placed at the top", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      marker("working-header"),
+      thread("w", "working"),
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const input = { items, settledOrder: [], settledExpanded: false };
+    const byTime = preview({ ...input, activeOrder: ["a1", "a2", "p"] }, "p", "a1");
+    expect(byTime.get(sidebarMarkerId("working-header"))?.y).toBe(-83);
+    expect(byTime.get("w")?.y).toBe(-83);
+    expect(byTime.get("a1")?.y).toBe(-83);
+    expect(byTime.get("a2")?.y).toBe(-83);
+    expect(byTime.get(sidebarMarkerId("settled-header"))).toEqual(stationary);
+  });
+
   it("updates the projection when the target or measured geometry changes", () => {
     const strategy = createSidebarSortingStrategy({
       items: pinned,

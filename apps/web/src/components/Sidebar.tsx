@@ -461,6 +461,8 @@ function useSidebarThreads(input: {
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
     useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null;
+  const workingShelfPosition = useClientSettings((s) => s.sidebarWorkingShelfPosition);
+  const workingShelfAtTop = workingShelfEnabled && workingShelfPosition === "top";
   const inboxReturnsVersion = useSyncExternalStore(
     inboxReturns.subscribe,
     inboxReturns.getSnapshot,
@@ -564,10 +566,11 @@ function useSidebarThreads(input: {
         });
   const orderedThreads = [
     ...pinnedThreads,
+    ...(workingShelfAtTop ? visibleWorkingThreads : EMPTY_THREADS),
     ...(projectFolders === null
       ? activeThreads
       : projectFolders.flatMap((folder) => folder.threads)),
-    ...visibleWorkingThreads,
+    ...(workingShelfAtTop ? EMPTY_THREADS : visibleWorkingThreads),
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
   ];
@@ -585,6 +588,7 @@ function useSidebarThreads(input: {
     ...partition,
     threads,
     workingShelfEnabled,
+    workingShelfAtTop,
     searchableThreads: [
       ...pinnedThreads,
       ...activeThreads,
@@ -1334,6 +1338,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const {
     workingShelfEnabled,
+    workingShelfAtTop,
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
@@ -2016,11 +2021,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
+    if (workingShelfAtTop && workingThreads.length > 0) {
+      items.push({ kind: "marker", marker: "working-header" });
+      items.push(...rowsOf(visibleWorkingThreads, "working"));
+    }
     items.push({ kind: "marker", marker: "pinned-divider" });
     const activeRows = rowsOf(activeThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
-    if (workingThreads.length > 0) {
+    if (!workingShelfAtTop && workingThreads.length > 0) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
     }
@@ -3712,7 +3721,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             <SidebarSectionHeader
                               key="working-shelf-header"
                               marker="working-header"
-                              className="mt-auto"
+                              className={cn(!workingShelfAtTop && "mt-auto")}
                               label={gt("Working", { $context: "sidebar section" })}
                               count={workingThreads.length}
                               toggle={{
@@ -3727,7 +3736,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             <SidebarSectionHeader
                               key="snoozed-shelf-header"
                               marker="snoozed-header"
-                              className={cn(workingThreads.length === 0 && "mt-auto")}
+                              className={cn(
+                                (workingShelfAtTop || workingThreads.length === 0) && "mt-auto",
+                              )}
                               label={gt("Snoozed", { $context: "sidebar section" })}
                               count={snoozedThreads.length}
                               toggle={{
@@ -3743,7 +3754,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               key="settled-shelf-header"
                               marker="settled-header"
                               className={cn(
-                                workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                (workingShelfAtTop || workingThreads.length === 0) &&
+                                  snoozedThreads.length === 0 &&
+                                  "mt-auto",
                               )}
                               label={gt("Settled", { $context: "sidebar section" })}
                               count={settledCount}

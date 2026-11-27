@@ -13036,5 +13036,11 @@
   "717c1c47a852a1a5": "Mettre la narration en pause",
   "0eceb5780908eb6c": "Lire à voix haute",
   "3ee98da81538c6de": "Impossible de lire la narration.",
-  "95435f0b59cb2193": "Aperçu audio"
+  "95435f0b59cb2193": "Aperçu audio",
+  "7ee43363a970faab": "Sous Actifs",
+  "6726bdf98ba298ce": "Au-dessus d’Actifs",
+  "0a973722bb73e9b8": "Position de la section En cours",
+  "2b7462827a9f25eb": "Réinitialiser la position de la section En cours à la valeur par défaut",
+  "892bc98db9abf8f2": "Affiche la section En cours au-dessus ou en dessous des fils actifs.",
+  "f314ec74a9be97e8": "section en cours position haut bas au-dessus en dessous actifs ordre barre latérale"
 }
