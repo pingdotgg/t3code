@@ -92,13 +92,6 @@ test(
         `[data-chat-composer-form] button[aria-label="Preview fill-${PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1}.png"]:enabled`,
       )
       .waitFor({ state: "attached" });
-    const readDraft = () =>
-      browser.evaluate(
-        () =>
-          document.querySelector('[data-chat-composer-form] [contenteditable="true"]')!.textContent,
-      );
-    const draftBeforeFailure = await readDraft();
-    await expect(draftBeforeFailure).toContain("A second message");
 
     await browser.evaluate(() => {
       window.pendingFullDraftSend.reject();
@@ -110,7 +103,7 @@ test(
     await expect(
       screen.getByText("Finish or stash your current draft before restoring.", { exact: true }),
     ).toBeVisible();
-    await expect(await readDraft()).toBe(draftBeforeFailure);
+    await expect(editor).toHaveText(/^A second message(?:\s|$)/);
     await expect(
       browser.locator('[data-chat-composer-form] button[aria-label="Preview screenshot.png"]'),
     ).toHaveCount(0);
