@@ -1028,6 +1028,9 @@ function CheckoutGitActionsControl({
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const [featureCommitSelection, setFeatureCommitSelection] = useState<{
+    readonly createdBranch: string | null;
+  } | null>(null);
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
@@ -1109,9 +1112,17 @@ function CheckoutGitActionsControl({
     : null;
 
   const [selectionBranch, setSelectionBranch] = useState(gitStatusForActions?.refName ?? null);
-  if (gitStatusForActions && selectionBranch !== gitStatusForActions.refName) {
+  // Status can announce the checkout before the commit action reports its outcome.
+  if (
+    gitStatusForActions &&
+    selectionBranch !== gitStatusForActions.refName &&
+    featureCommitSelection?.createdBranch !== null
+  ) {
     setSelectionBranch(gitStatusForActions.refName);
-    setExcludedFiles(new Set());
+    setFeatureCommitSelection(null);
+    if (featureCommitSelection?.createdBranch !== gitStatusForActions.refName) {
+      setExcludedFiles(new Set());
+    }
   }
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   // Changed-file paths are repository-relative, so they must resolve against
@@ -1240,6 +1251,10 @@ function CheckoutGitActionsControl({
 
     const scopedToastData = threadToastData ? { ...threadToastData } : undefined;
     const actionId = randomUUID();
+    const submittedSelection =
+      action === "commit" && featureBranch && filePaths ? { createdBranch: null } : null;
+    let createdBranch: string | undefined;
+    if (submittedSelection) setFeatureCommitSelection(submittedSelection);
 
     const result = await runImmediateGitAction.run({
       actionId,
@@ -1249,7 +1264,20 @@ function CheckoutGitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       ...(owner?.threadId ? { threadId: owner.threadId } : {}),
       ...(owner?.projectId ? { projectId: owner.projectId } : {}),
+      onProgress: (event) => {
+        if (event.kind === "action_failed") createdBranch = event.createdBranch;
+      },
     });
+
+    if (submittedSelection) {
+      setFeatureCommitSelection((current) =>
+        current === submittedSelection
+          ? createdBranch === undefined
+            ? null
+            : { createdBranch }
+          : current,
+      );
+    }
 
     if (result._tag === "Failure") {
       if (isAtomCommandInterrupted(result)) {
