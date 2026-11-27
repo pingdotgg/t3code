@@ -124,8 +124,14 @@ const FileRow = memo(function FileRow(props: {
       accessibilityRole="button"
       accessibilityLabel={
         props.viewed
-          ? gt("View diff for {path}, {additions} additions, {deletions} deletions, viewed", values)
-          : gt("View diff for {path}, {additions} additions, {deletions} deletions", values)
+          ? gt(
+              "View diff for {path}, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}, viewed",
+              values,
+            )
+          : gt(
+              "View diff for {path}, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}",
+              values,
+            )
       }
       onPress={() => props.onPress(file.path)}
       className="min-h-14 flex-row items-center gap-3 border-b border-border-subtle py-3 active:opacity-70"
