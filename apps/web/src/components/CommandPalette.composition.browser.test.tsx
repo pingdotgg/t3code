@@ -338,7 +338,7 @@ it.each(["Local folder", "Git URL"])(
     }
     page
       .getByRole("button", { name: /^Open in / })
-      .element<HTMLButtonElement>()
+      .element()
       .focus();
     await userEvent.keyboard("{Enter}");
     expect(pickFolder).toHaveBeenCalledOnce();
