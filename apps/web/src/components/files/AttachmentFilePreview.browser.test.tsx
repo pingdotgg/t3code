@@ -85,7 +85,7 @@ import { decodeImagePreview } from "./decodeImagePreview";
 import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
-import type { OfficeWorkerResult } from "./officePreviewProtocol";
+import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
 import { previewErrorText } from "./previewFailureMessages";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
@@ -2139,6 +2139,22 @@ it.each(["odt", "odp"] as const)("preserves rendered %s spaces and tabs", async 
   }
 });
 
+function officeWorkerReply(
+  worker: Worker,
+  request: OfficeWorkerRequest,
+  transfer: Transferable[] = [],
+) {
+  const response = new Promise<OfficeWorkerResult>((resolve) =>
+    worker.addEventListener(
+      "message",
+      (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
+      { once: true },
+    ),
+  );
+  worker.postMessage(request, transfer);
+  return response;
+}
+
 it.each(["rtf", "epub", "ods"] as const)(
   "preserves %s document text through the worker and attachment viewer",
   async (kind) => {
@@ -2173,32 +2189,20 @@ it.each(["rtf", "epub", "ods"] as const)(
       type: "module",
     });
     try {
-      const result = await new Promise<OfficeWorkerResult>((resolve) => {
-        worker.addEventListener(
-          "message",
-          (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
-          { once: true },
-        );
-        worker.postMessage({ type: "open", kind, bytes }, [bytes]);
-      });
+      const result = await officeWorkerReply(worker, { type: "open", kind, bytes }, [bytes]);
       if (kind === "ods") {
         expect(result.type).toBe("ods");
         if (result.type !== "ods") throw new Error("Expected spreadsheet");
         expect(result.sheets[0]!.rows).toEqual([["North", "150"]]);
-      } else {
+      } else if (kind !== "epub") {
         expect(result.type).toBe("document");
         if (result.type !== "document") throw new Error("Expected document");
         const body = new DOMParser().parseFromString(result.pages[0]!.html, "text/html").body;
-        if (kind === "epub") {
-          expect(body.querySelectorAll("br")).toHaveLength(2);
-          expect(body.querySelectorAll("hr")).toHaveLength(1);
-        } else {
-          expect(body.textContent).toContain("10–20 —•‘a’“b”");
-          expect(body.textContent).toContain("Name\tValue\t12\t34\t");
-          expect(body.textContent).toContain("Unicode:–end");
-          expect(body.textContent).not.toContain("hidden");
-          expect(body.querySelectorAll("br")).toHaveLength(3);
-        }
+        expect(body.textContent).toContain("10–20 —•‘a’“b”");
+        expect(body.textContent).toContain("Name\tValue\t12\t34\t");
+        expect(body.textContent).toContain("Unicode:–end");
+        expect(body.textContent).not.toContain("hidden");
+        expect(body.querySelectorAll("br")).toHaveLength(3);
       }
     } finally {
       worker.terminate();
@@ -2232,6 +2236,205 @@ it.each(["rtf", "epub", "ods"] as const)(
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   },
 );
+
+it("renders EPUB publisher styles and follows an anchored link to a fixed-layout section", async () => {
+  const archive = new JSZip()
+    .file("META-INF/container.xml", '<container><rootfile full-path="OPS/book.opf"/></container>')
+    .file(
+      "OPS/book.opf",
+      `<package xmlns="http://www.idpf.org/2007/opf">
+      <manifest>
+        <item id="front" href="front.xhtml" media-type="application/xhtml+xml"/>
+        <item id="art" href="art.xhtml" media-type="application/xhtml+xml"/>
+        <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+        <item id="poster" href="illustration.svg" media-type="image/svg+xml"/>
+      </manifest>
+      <spine page-progression-direction="rtl">
+        <itemref idref="front"/><itemref idref="art" properties="rendition:layout-pre-paginated"/>
+        <itemref idref="poster"/>
+      </spine>
+    </package>`,
+    )
+    .file(
+      "OPS/nav.xhtml",
+      `<html xmlns:epub="http://www.idpf.org/2007/ops"><body>
+      <nav epub:type="toc"><ol><li><a href="art.xhtml#figure">Illustration</a></li></ol></nav>
+    </body></html>`,
+    )
+    .file(
+      "OPS/front.xhtml",
+      `<!DOCTYPE html []><html xmlns:epub="http://www.idpf.org/2007/ops"><head>
+      <link rel="stylesheet" href="styles/book.css"/>
+    </head><body dir="rtl"><section epub:type="chapter">
+      <p id="opening"><span id="pagebreak"/>Opening</p><pre>
+      <code>npm test</code></pre><a href="art.xhtml#figure">See illustration</a>
+      <a href="https://example.invalid/">External</a><a href="javascript:alert(1)">Unsafe</a><a href="ftp://example.invalid/book">Legacy link</a>
+      <p id="caption"><a href="#opening"><big>Figure</big> <a href="art.xhtml#figure">See table</a> for details.</a></p>
+      <math xmlns="http://www.w3.org/1998/Math/MathML"><mfrac><mi>x</mi><mn>2</mn></mfrac></math>
+      <math xmlns="http://www.w3.org/1998/Math/MathML"><mfenced id="interval" open="[" close="]" separators=" ; "><mi>a</mi>
+        <mi>b</mi><mi>c</mi></mfenced></math>
+      <math xmlns="http://www.w3.org/1998/Math/MathML"><mfenced id="tuple" open="⟨" close="⟩"><mi>x</mi></mfenced></math>
+      <video autoplay=""></video><video preload="metadata"></video>
+      <object id="illustrated-object" type="image/svg+xml" data="illustration.svg" width="200" height="100">Illustration</object>
+      <object type="application/x-example" data="illustration.svg"><p id="object-fallback">Fallback text</p></object>
+      <form id="workbook" action="https://example.invalid/submit" onsubmit="return false">
+        <fieldset><legend>Worksheet</legend>
+          <label for="answer">Answer</label><input id="answer" type="checkbox" checked="" autofocus=""/>
+          <textarea rows="5" cols="30">\nExample</textarea>
+          <select><option>First</option><option selected="">Second</option></select>
+          <button type="submit" formaction="https://example.invalid/submit">Submit</button>
+          <input type="image" src="illustration.svg" width="100" height="50" alt="Submit illustration"/>
+          <meter min="0" max="100" value="75"/>
+        </fieldset>
+      </form>
+      <table border="0" cellpadding="0" cellspacing="0"><tr><td align="center" valign="top">Value</td></tr></table>
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+        <style>#swatch { fill: red; }</style><rect id="swatch" width="20" height="20"/>
+      </svg>
+      <style>#swatch { fill: blue; }</style>
+    </section></body></html>`,
+    )
+    .file(
+      "OPS/styles/book.css",
+      `@import "accent.css";
+      @namespace epub "http://www.idpf.org/2007/ops";
+      section[epub|type="chapter"] { background-image: url("../illustration.svg"); }
+      #opening { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="); }`,
+    )
+    .file("OPS/styles/accent.css", "\uFEFF#opening { color: rgb(30, 45, 60); }")
+    .file(
+      "OPS/illustration.svg",
+      `<?xml-stylesheet href="styles/poster.css" type="text/css"?>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+          <defs><marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" />
+          </marker></defs>
+          <rect id="poster" width="200" height="100"/>
+          <line x1="10" y1="10" x2="100" y2="10" stroke="black" marker-end="url(#arrow)"/>
+        </svg>`,
+    )
+    .file("OPS/styles/poster.css", "#poster { fill: rgb(230, 200, 12); }")
+    .file(
+      "OPS/art.xhtml",
+      `<html><head><meta name="viewport" content="width=1000,height=500"/><base href="https://publisher.example/edition/"/></head>
+      <body><svg xmlns="http://www.w3.org/2000/svg" id="figure" viewBox="0 0 200 100"><rect width="200" height="100" fill="gold"/></svg>
+      <a href="/illustrations">More illustrations</a></body></html>`,
+    );
+  const file = await archive.generateAsync({ type: "blob" });
+  await using screen = await render(
+    <div style={{ display: "flex", height: 400, width: 600 }}>
+      <AttachmentFilePreview
+        name="illustrated.epub"
+        mimeType="application/epub+zip"
+        sizeBytes={file.size}
+        file={file}
+      />
+    </div>,
+  );
+  function frame() {
+    return screen.container.querySelector("iframe");
+  }
+  await vi.waitFor(() => {
+    const doc = frame()?.contentDocument;
+    expect(doc?.body.dir).toBe("rtl");
+    expect(doc?.querySelector("pre")?.textContent).toBe("\n      npm test");
+    expect(doc?.getElementById("pagebreak")?.textContent).toBe("");
+    const caption = doc?.querySelector("#caption > a");
+    expect(caption?.textContent).toBe("Figure See table for details.");
+    expect(caption?.querySelector("big")?.textContent).toBe("Figure");
+    expect(caption?.querySelector("a")?.getAttribute("data-epub-anchor")).toBe("figure");
+    expect(doc?.querySelector('a[href="#"][aria-disabled="true"]')?.textContent).toBe(
+      "Legacy link",
+    );
+    const table = doc?.querySelector("table");
+    const cell = table?.querySelector("td");
+    expect(table?.querySelector(":scope > tr > td")).toBe(cell);
+    expect(doc!.defaultView!.getComputedStyle(table!).borderSpacing).toBe("0px");
+    const cellStyle = doc!.defaultView!.getComputedStyle(cell!);
+    expect(cellStyle.paddingTop).toBe("0px");
+    expect(cellStyle.textAlign).toMatch(/center$/);
+    expect(cellStyle.verticalAlign).toBe("top");
+    expect(doc?.querySelector("mfrac")?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(
+      Array.from(doc?.querySelectorAll("#interval mo") ?? [], (operator) => operator.textContent),
+    ).toEqual(["[", ";", ";", "]"]);
+    const tupleFences = Array.from(doc?.querySelectorAll("#tuple > mo") ?? []);
+    expect(tupleFences.map((operator) => operator.textContent)).toEqual(["⟨", "⟩"]);
+    for (const fence of tupleFences) expect(fence.getBoundingClientRect().width).toBeGreaterThan(0);
+    const videos = doc?.querySelectorAll("video");
+    expect(videos?.[0]?.getAttribute("preload")).toBeNull();
+    expect(videos?.[0]?.autoplay).toBe(false);
+    expect(videos?.[1]?.preload).toBe("metadata");
+    expect(doc?.querySelector("object")).toBeNull();
+    expect(doc?.querySelector("#object-fallback")?.textContent).toBe("Fallback text");
+    const illustration = doc?.querySelector<HTMLImageElement>("img#illustrated-object");
+    expect(illustration?.alt).toBe("Illustration");
+    expect(illustration?.naturalWidth).toBeGreaterThan(0);
+    const workbook = doc?.querySelector<HTMLFormElement>("#workbook");
+    expect(workbook?.querySelector("legend")?.textContent).toBe("Worksheet");
+    expect(workbook?.hasAttribute("action")).toBe(false);
+    expect(workbook?.hasAttribute("onsubmit")).toBe(false);
+    const answer = workbook?.querySelector<HTMLInputElement>("#answer");
+    expect(answer?.labels?.[0]?.textContent).toBe("Answer");
+    expect(answer?.checked).toBe(true);
+    expect(answer?.autofocus).toBe(false);
+    expect(workbook?.querySelector("textarea")?.value).toBe("\nExample");
+    expect(workbook?.querySelector("select")?.value).toBe("Second");
+    expect(workbook?.querySelector("button")?.hasAttribute("formaction")).toBe(false);
+    expect(workbook?.querySelector<HTMLInputElement>('input[type="image"]')?.src).toMatch(/^blob:/);
+    expect(workbook?.querySelector("meter")?.value).toBe(75);
+    expect(
+      workbook?.querySelectorAll(
+        "input:disabled, textarea:disabled, select:disabled, button:disabled",
+      ),
+    ).toHaveLength(5);
+    expect(doc?.querySelector('a[data-epub-external][href="#"]')?.textContent).toBe("External");
+    expect(
+      doc?.querySelector('a[href="https://example.invalid/"],a[href^="javascript:"]'),
+    ).toBeNull();
+    expect(doc!.defaultView!.getComputedStyle(doc!.querySelector("#opening")!).color).toBe(
+      "rgb(30, 45, 60)",
+    );
+    expect(
+      doc!.defaultView!.getComputedStyle(doc!.querySelector("#opening")!).backgroundImage,
+    ).toContain("blob:");
+    expect(doc!.defaultView!.getComputedStyle(doc!.querySelector("#swatch")!).fill).toBe(
+      "rgb(0, 0, 255)",
+    );
+    expect(
+      doc!.defaultView!.getComputedStyle(doc!.querySelector("section")!).backgroundImage,
+    ).toContain("blob:");
+  });
+  const link = frame()!.contentDocument!.querySelector<HTMLAnchorElement>("a[href]")!;
+  link.click();
+  await vi.waitFor(() => {
+    const doc = frame()?.contentDocument;
+    expect(doc?.querySelector("svg#figure rect")).toBeTruthy();
+    expect(doc?.querySelector("base")).toBeNull();
+    expect(doc?.querySelector('a[href="#"]')?.getAttribute("data-epub-external")).toBe(
+      "https://publisher.example/illustrations",
+    );
+    expect(frame()?.contentWindow?.innerWidth).toBe(1000);
+    expect(frame()?.getBoundingClientRect().width).toBeGreaterThan(0);
+    expect(frame()?.getBoundingClientRect().width).toBeLessThan(1000);
+  });
+  await screen.getByRole("button", { name: "Next chapter" }).click();
+  await vi.waitFor(() => {
+    const doc = frame()?.contentDocument;
+    const poster = doc?.querySelector("#poster");
+    expect(poster).toBeTruthy();
+    expect(doc!.defaultView!.getComputedStyle(poster!).fill).toBe("rgb(230, 200, 12)");
+    expect(doc?.querySelector("marker#arrow")?.getAttribute("orient")).toBe("auto");
+    expect(doc?.querySelector("line")?.getAttribute("marker-end")).toBe("url(#arrow)");
+    expect(doc?.scrollingElement?.scrollHeight).toBe(100);
+  });
+  await screen.getByRole("button", { name: "Previous chapter" }).click();
+  await vi.waitFor(() =>
+    expect(frame()?.contentDocument?.querySelector("svg#figure")).toBeTruthy(),
+  );
+  await screen.getByRole("button", { name: "Previous chapter" }).click();
+  await vi.waitFor(() => expect(frame()?.contentDocument?.querySelector("#opening")).toBeTruthy());
+});
 
 it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
   "bounds %s image pixels before returning browser markup",
@@ -2294,21 +2497,15 @@ it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
         type: "module",
       });
       try {
-        const result = await new Promise<OfficeWorkerResult>((resolve) => {
-          worker.addEventListener(
-            "message",
-            (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
-            { once: true },
-          );
-          worker.postMessage(
-            {
-              type: "open",
-              kind: kind === "html" || kind === "encoded-html" ? "ipynb" : kind,
-              bytes,
-            },
-            [bytes],
-          );
-        });
+        const result = await officeWorkerReply(
+          worker,
+          {
+            type: "open",
+            kind: kind === "html" || kind === "encoded-html" ? "ipynb" : kind,
+            bytes,
+          },
+          [bytes],
+        );
         if (result.type === "notebook") {
           const output = result.cells[0]!.outputs[0]!;
           expect(output.kind).toBe(
@@ -2324,10 +2521,21 @@ it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
           }
           if (width !== 2) expect(result.cells[0]!.outputs[0]!.text).toBe("retained caption");
         } else {
-          expect(result.type).toBe("document");
-          if (result.type !== "document") throw new Error("Expected document");
-          expect(result.pages[0]!.html.includes("<img")).toBe(width === 2);
-          expect(result.pages[0]!.html).toContain("retained caption");
+          let html: string;
+          if (result.type === "epub") {
+            const page = await officeWorkerReply(worker, {
+              type: "epub-page",
+              index: result.first,
+            });
+            if (page.type !== "epub-page" || !("html" in page.result))
+              throw new Error("Expected EPUB chapter");
+            html = page.result.html;
+          } else {
+            if (result.type !== "document") throw new Error("Expected document");
+            html = result.pages[0]!.html;
+          }
+          expect(html.includes("<img")).toBe(width === 2);
+          expect(html).toContain("retained caption");
         }
       } finally {
         worker.terminate();
