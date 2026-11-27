@@ -57,7 +57,6 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
       xai: true,
       openrouter: false,
       custom: false,
-      customEndpoint: "",
     });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
@@ -212,58 +211,39 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
   }),
 );
 
+const customPcm = () => new Uint8Array(new Float32Array([0, 0.5]).buffer);
+
+function customStack(baseUrl: string) {
+  return CloudSpeech.layer.pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(
+      ServerSettings.ServerSettingsService.layerTest({ cloudSpeechCustomBaseUrl: baseUrl }),
+    ),
+    Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+  );
+}
+
 it.effect("sends to a configured custom OpenAI-compatible endpoint as multipart", () =>
   Effect.gen(function* () {
     const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
-    const stack = (baseUrl: string | undefined) =>
-      CloudSpeech.layer.pipe(
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(
-          ServerSettings.ServerSettingsService.layerTest(
-            baseUrl === undefined ? {} : { cloudSpeechCustomBaseUrl: baseUrl },
-          ),
-        ),
-        Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
-      );
     const service = yield* CloudSpeech.CloudSpeech.pipe(
-      Effect.provide(yield* Layer.build(stack("http://localhost:8080/v1"))),
+      Effect.provide(yield* Layer.build(customStack("http://localhost:8080/v1"))),
     );
-    // Builds a separate stack for a different endpoint configuration.
-    const attempt = (baseUrl: string | undefined, model: string | undefined) =>
-      Effect.gen(function* () {
-        const context = yield* Layer.build(stack(baseUrl));
-        const scoped = yield* CloudSpeech.CloudSpeech.pipe(Effect.provide(context));
-        yield* scoped.setKey("custom", Redacted.make("custom-key"));
-        return yield* scoped
-          .transcribe(
-            "custom",
-            new Uint8Array(new Float32Array([0, 0.5]).buffer),
-            { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "en" },
-            model,
-            baseUrl,
-          )
-          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
-      });
     yield* service.setKey("custom", Redacted.make("custom-key"));
-    const pcm = new Uint8Array(new Float32Array([0, 0.5]).buffer);
     const transcribe = (model: string | undefined, endpoint = "http://localhost:8080/v1") =>
       service
         .transcribe(
           "custom",
-          pcm,
+          customPcm(),
           { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "en" },
           model,
           endpoint,
         )
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
-    expect(yield* Effect.flip(attempt(undefined, "whisper-1"))).toMatchObject({
-      provider: "custom",
-      reason: "model-unavailable",
-    });
-    expect(upstream).not.toHaveBeenCalled();
     expect(yield* Effect.flip(transcribe(undefined))).toMatchObject({
       reason: "model-unavailable",
     });
+    // A grant for another URL is void: the saved setting is what the server uploads to.
     expect(yield* Effect.flip(transcribe("whisper-1", "http://localhost:9090/v1"))).toMatchObject({
       reason: "model-unavailable",
     });
@@ -277,19 +257,138 @@ it.effect("sends to a configured custom OpenAI-compatible endpoint as multipart"
     expect(form.get("model")).toBe("whisper-1");
     expect(form.get("language")).toBe("en");
     expect([...form.keys()].at(-1)).toBe("file");
-    expect(yield* Effect.flip(attempt("http://example.com/v1", "whisper-1"))).toMatchObject({
-      reason: "model-unavailable",
-    });
-    expect(yield* Effect.flip(attempt("ftp://localhost/v1", "whisper-1"))).toMatchObject({
-      reason: "model-unavailable",
-    });
-    expect(yield* Effect.flip(attempt(undefined, "whisper-1"))).toMatchObject({
-      reason: "model-unavailable",
-    });
     expect(upstream).toHaveBeenCalledTimes(1);
     yield* service.setKey("custom", null);
     expect((yield* service.configured).custom).toBe(false);
     expect(yield* Effect.flip(transcribe("whisper-1"))).toMatchObject({ reason: "missing-key" });
     expect(upstream).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.effect.each([
+  {
+    baseUrl: "https://api.example.com/v1",
+    expected: "https://api.example.com/v1/audio/transcriptions",
+  },
+  {
+    baseUrl: "https://api.example.com/v1/",
+    expected: "https://api.example.com/v1/audio/transcriptions",
+  },
+  {
+    baseUrl: "https://api.example.com/v1//",
+    expected: "https://api.example.com/v1/audio/transcriptions",
+  },
+  {
+    baseUrl: "https://api.example.com",
+    expected: "https://api.example.com/audio/transcriptions",
+  },
+  // The base URL is a URL, not a string prefix: a path-less host keeps its origin.
+  {
+    baseUrl: "HTTPS://api.example.com/v1",
+    expected: "https://api.example.com/v1/audio/transcriptions",
+  },
+  {
+    baseUrl: "http://192.168.1.5:8000/v1",
+    expected: "http://192.168.1.5:8000/v1/audio/transcriptions",
+  },
+  {
+    baseUrl: "http://[::1]:8080/v1",
+    expected: "http://[::1]:8080/v1/audio/transcriptions",
+  },
+])("joins a custom base URL: $baseUrl", ({ baseUrl, expected }) =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(yield* Layer.build(customStack(baseUrl))),
+    );
+    yield* service.setKey("custom", Redacted.make("custom-key"));
+    expect(
+      yield* service
+        .transcribe(
+          "custom",
+          customPcm(),
+          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          "whisper-1",
+          baseUrl,
+        )
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+    ).toBe("hello");
+    expect(String(upstream.mock.calls[0]![0])).toBe(expected);
+  }),
+);
+
+it.effect.each([{ baseUrl: "" }])("refuses an empty custom base URL: $baseUrl", ({ baseUrl }) =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(yield* Layer.build(customStack(baseUrl))),
+    );
+    yield* service.setKey("custom", Redacted.make("custom-key"));
+    expect(
+      yield* Effect.flip(
+        service
+          .transcribe(
+            "custom",
+            customPcm(),
+            DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+            "whisper-1",
+            baseUrl,
+          )
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+      ),
+    ).toMatchObject({ provider: "custom", reason: "model-unavailable" });
+    expect(upstream).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect("a URL change while the key is being read prevents the upload", () =>
+  Effect.gen(function* () {
+    const uploads: string[] = [];
+    const upstream: typeof fetch = async (input) => {
+      uploads.push(String(input));
+      return Response.json({ text: "unexpected" });
+    };
+    const settings = yield* ServerSettings.ServerSettingsService.pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({
+          cloudSpeechCustomBaseUrl: "https://one.example/v1",
+        }),
+      ),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(Layer.succeed(ServerSettings.ServerSettingsService, settings)),
+          Layer.provide(
+            Layer.mock(SecretResolver.SecretResolver)({
+              // The settings change lands while the server is still reading the key.
+              read: () =>
+                settings
+                  .updateSettings({ cloudSpeechCustomBaseUrl: "https://two.example/v1" })
+                  .pipe(Effect.orDie, Effect.as(["custom-key"])),
+              invalidate: () => Effect.void,
+            }),
+          ),
+        ),
+      ),
+    );
+    yield* service.setKey("custom", {
+      provider: SecretProviderId.make("work"),
+      reference: "op://Work/Voice/key",
+    });
+    const exit = yield* Effect.exit(
+      service
+        .transcribe(
+          "custom",
+          customPcm(),
+          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          "whisper-1",
+          "https://one.example/v1",
+        )
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+    );
+    expect(uploads).toEqual([]);
+    expect(exit._tag).toBe("Failure");
   }),
 );

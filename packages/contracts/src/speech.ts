@@ -1,11 +1,37 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 
 export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isMaxLength(4096),
   Schema.isPattern(/^(?![a-z][a-z\d+.-]*:\/\/)[!-~]+$/i),
+);
+
+/**
+ * The base URL of an OpenAI-compatible transcription server: empty until one is set, otherwise an
+ * http(s) URL with no credentials, query, or hash. The server joins its /audio/transcriptions route.
+ */
+export const CloudSpeechCustomBaseUrl = TrimmedString.check(
+  Schema.isMaxLength(2048),
+  Schema.makeFilter(
+    (value) => {
+      if (value === "") return true;
+      try {
+        const url = new URL(value);
+        return (
+          (url.protocol === "http:" || url.protocol === "https:") &&
+          !url.username &&
+          !url.password &&
+          !url.search &&
+          !url.hash
+        );
+      } catch {
+        return false;
+      }
+    },
+    { expected: "an http or https URL without credentials, a query, or a hash" },
+  ),
 );
 
 export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter", "custom"]);
@@ -28,8 +54,6 @@ export const CloudSpeechKeys = Schema.Struct({
   xai: Schema.Boolean,
   openrouter: Schema.optionalKey(Schema.Boolean),
   custom: Schema.optionalKey(Schema.Boolean),
-  /** The configured custom endpoint base URL, for disclosure; empty until one is set. */
-  customEndpoint: Schema.optionalKey(Schema.String),
 });
 export type CloudSpeechKeys = typeof CloudSpeechKeys.Type;
 

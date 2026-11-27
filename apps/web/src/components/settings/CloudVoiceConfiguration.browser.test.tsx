@@ -350,10 +350,11 @@ it("configures a custom OpenAI-compatible endpoint with its URL, model, and key"
           await dialog
             .getByLabelText("Custom endpoint API key", { exact: true })
             .fill("custom-key");
-          await dialog.getByRole("textbox", { name: "Transcription model" }).fill("whisper-1");
-          const endpoint = dialog.getByRole("textbox", { name: "Endpoint base URL" });
-          await endpoint.fill("http://insecure.example.com/v1");
+          await dialog.getByLabelText("Model").fill("whisper-1");
+          const endpoint = dialog.getByLabelText("Endpoint URL");
+          await endpoint.fill("not-a-url");
           await expect.element(save).toBeDisabled();
+          await expect.element(dialog.getByText("Enter an http or https URL.")).toBeVisible();
           await endpoint.fill("https://stt.example.com/v1");
           await expect
             .element(dialog.getByText("your endpoint at stt.example.com", { exact: false }))
@@ -361,19 +362,89 @@ it("configures a custom OpenAI-compatible endpoint with its URL, model, and key"
           await userEvent.keyboard("{Enter}");
           await expect.element(dialog).not.toBeInTheDocument();
           await expect.element(destination).toHaveTextContent("Custom endpoint via Laptop");
+          // The URL and the key are one consent: one settings write, no separate key request.
           expect(persistedSettings).toEqual([
             {
               environmentId: id,
-              input: { patch: { cloudSpeechCustomBaseUrl: "https://stt.example.com/v1" } },
+              input: {
+                patch: {
+                  cloudSpeechCustomBaseUrl: "https://stt.example.com/v1",
+                  cloudSpeechCredentials: { custom: "custom-key" },
+                },
+              },
             },
           ]);
-          expect(writes).toEqual([{ key: "custom-key" }]);
+          expect(writes).toEqual([]);
           expect(grantDestination()).toMatchObject({
             provider: "custom",
             environmentId: "voice-host",
             model: "whisper-1",
             endpoint: "https://stt.example.com/v1",
           });
+        },
+      );
+    },
+  );
+});
+
+it("a grant for another endpoint asks for approval and writes no settings", async () => {
+  setup();
+  configuredEndpoint = "https://stt.example.com/v1";
+  chooseAudioDestination({
+    kind: "cloud",
+    environmentId: EnvironmentId.make("voice-host"),
+    provider: "custom",
+    model: "whisper-1",
+    endpoint: "https://old.example.com/v1",
+  });
+  const id = EnvironmentId.make("voice-host");
+  const target = new PrimaryConnectionTarget({
+    environmentId: id,
+    label: "Laptop",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = Option.some({
+    ...target,
+    target,
+    socketUrl: target.wsBaseUrl,
+    httpAuthorization: null,
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((request, init) => {
+    const url = new URL(request instanceof Request ? request.url : request, window.location.href);
+    if (url.pathname === "/api/voice/cloud/keys")
+      return Promise.resolve(Response.json({ openai: true, xai: true, custom: true }));
+    return fetch(request, init);
+  });
+  await vi.mocked(useEnvironmentScope).withImplementation(
+    () => true,
+    async () => {
+      await vi.mocked(usePreparedConnection).withImplementation(
+        () => prepared,
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          await destination.click();
+          await page.getByRole("option", { name: "Custom endpoint via Laptop" }).click();
+          const dialog = page.getByRole("dialog");
+          await expect
+            .element(dialog.getByText("Use Custom endpoint for dictation?"))
+            .toBeVisible();
+          const endpoint = dialog.getByLabelText("Endpoint URL");
+          await expect.element(endpoint).toHaveValue("https://stt.example.com/v1");
+          // Re-approving binds the device to the saved endpoint, and moves no server setting.
+          await dialog.getByRole("button", { name: "Save and enable" }).click();
+          await expect.element(dialog).not.toBeInTheDocument();
+          expect(persistedSettings).toEqual([]);
+          const raw = window.localStorage.getItem("t3code:voice-audio-grant:v1");
+          expect(raw).toContain("https://stt.example.com/v1");
         },
       );
     },

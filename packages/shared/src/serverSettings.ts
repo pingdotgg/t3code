@@ -660,6 +660,18 @@ export function applyServerSettingsPatch(
   const nextWithReplacements = {
     ...withIdleCompaction(nextWithReplacementsBase, patchedIdleCompaction(current, patch)),
     ...deriveLegacyProjectOverrides(nextWithReplacementsBase),
+    // A custom endpoint key belongs to the URL it was saved for. Clearing it here keeps a
+    // settings-only session from pointing a saved key (including a vault reference) at a new host.
+    ...(patch.cloudSpeechCustomBaseUrl !== undefined &&
+    patch.cloudSpeechCustomBaseUrl !== current.cloudSpeechCustomBaseUrl &&
+    patch.cloudSpeechCredentials?.custom === undefined
+      ? {
+          cloudSpeechCredentials: {
+            ...nextWithReplacementsBase.cloudSpeechCredentials,
+            custom: "",
+          },
+        }
+      : {}),
     backgroundActivity: normalizedBackgroundActivity,
     automaticGitFetchInterval: resolvedBackgroundActivity.automaticGitFetchInterval,
     providerHealthRefreshInterval: resolvedBackgroundActivity.providerHealthRefreshInterval,

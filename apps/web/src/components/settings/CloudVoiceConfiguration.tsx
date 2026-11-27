@@ -16,6 +16,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   CloudSpeechApiKey,
+  CloudSpeechCustomBaseUrl,
   CloudSpeechModelId,
   CLOUD_SPEECH_LABELS,
   CLOUD_SPEECH_PROVIDER_NAMES,
@@ -89,20 +90,7 @@ function useCloudRead<A, E>(
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
 const isCustomModelId = Schema.is(SpeechModelId);
-/** Mirror of the server check: https, or plain http only for loopback hosts. */
-function isCustomEndpoint(value: string) {
-  let url: URL;
-  try {
-    url = new URL(value.trim());
-  } catch {
-    return false;
-  }
-  if (url.search || url.hash || url.username || url.password) return false;
-  const host = url.hostname.toLowerCase();
-  const loopback =
-    host === "localhost" || host === "[::1]" || host === "127.0.0.1" || host.endsWith(".localhost");
-  return url.protocol === "https:" || (url.protocol === "http:" && loopback);
-}
+const isCustomBaseUrl = Schema.is(CloudSpeechCustomBaseUrl);
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
 
 function ModelPicker({
@@ -215,7 +203,9 @@ export function CloudVoiceConfiguration({
     reportFailure: false,
   });
   const savedEndpoint = environment.serverConfig?.settings?.cloudSpeechCustomBaseUrl ?? "";
-  const [endpoint, setEndpoint] = useState(savedEndpoint);
+  // Null until edited, so a URL saved elsewhere shows up instead of being overwritten by a draft.
+  const [endpointDraft, setEndpointDraft] = useState<string | null>(null);
+  const endpoint = endpointDraft ?? savedEndpoint;
   const endpointChanged = custom && endpoint.trim() !== savedEndpoint;
   // A custom grant bound to another URL is void, so it must be approved again.
   const active =
@@ -223,7 +213,7 @@ export function CloudVoiceConfiguration({
     (grant?.destination.kind !== "cloud" ||
       grant.destination.provider !== "custom" ||
       grant.destination.endpoint === savedEndpoint);
-  const endpointReady = !custom || isCustomEndpoint(endpoint);
+  const endpointReady = !custom || (endpoint.trim() !== "" && isCustomBaseUrl(endpoint.trim()));
   const [remove, setRemove] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -300,40 +290,60 @@ export function CloudVoiceConfiguration({
     }
     setBusy(false);
   };
+  // The URL and its key are one consent, so they are saved in one settings patch: a failed write
+  // never leaves a saved key pointed at a URL nobody approved.
+  const saveCustom = async (
+    patch: {
+      cloudSpeechCustomBaseUrl?: string;
+      cloudSpeechCredentials?: { custom: SettingsSecretValue };
+    },
+    commit: (() => void) | null,
+  ) => {
+    if (!connected || !canManage || busy) return;
+    setError("");
+    setBusy(true);
+    try {
+      const result = await updateSettings({ environmentId: id, input: { patch } });
+      setBusy(false);
+      if (result._tag !== "Success") {
+        setError(gt("Couldn’t save this change. Check your connection and try again."));
+        return;
+      }
+      refresh();
+      commit?.();
+      close();
+    } catch {
+      setBusy(false);
+      setError(gt("Couldn’t save this change. Check your connection and try again."));
+    }
+  };
+  const customPatch = () => ({
+    ...(endpointChanged ? { cloudSpeechCustomBaseUrl: endpoint.trim() } : {}),
+    ...(credential !== undefined && keyChanged
+      ? { cloudSpeechCredentials: { custom: credential } }
+      : {}),
+  });
   const submit = async () => {
     if (!canSubmit || busy) return;
     const grantChanges = !active || modelChanged || endpointChanged;
     // Created before the first await so an Off chosen elsewhere during the save
     // is never overwritten by this submission's commit.
     const commit = grantChanges ? pendingCloudAudioChoice(destination()) : null;
-    if (endpointChanged) {
-      setError("");
-      setBusy(true);
-      try {
-        const result = await updateSettings({
-          environmentId: id,
-          input: { patch: { cloudSpeechCustomBaseUrl: endpoint.trim() } },
-        });
-        setBusy(false);
-        if (result._tag !== "Success") {
-          setError(gt("Couldn’t save the endpoint URL. Check your connection and try again."));
-          return;
-        }
-      } catch {
-        setBusy(false);
-        setError(gt("Couldn’t save the endpoint URL. Check your connection and try again."));
+    if (custom) {
+      const patch = customPatch();
+      if (
+        patch.cloudSpeechCustomBaseUrl === undefined &&
+        patch.cloudSpeechCredentials === undefined
+      ) {
+        if (commit) enable();
+        close();
         return;
       }
+      return void saveCustom(patch, commit);
     }
-    if (credential !== undefined && (!routed || keyChanged))
-      return void saveKey(credential, commit);
+    if (credential !== undefined && keyChanged) return void saveKey(credential, commit);
     // Model-only changes never write to the environment.
-    if (commit) {
-      // The endpoint save awaited above, so this acknowledges the choice created
-      // before it; without that await, choosing directly is equally safe.
-      if (endpointChanged) commit();
-      else enable();
-    }
+    if (commit) enable();
     close();
   };
 
@@ -413,7 +423,9 @@ export function CloudVoiceConfiguration({
         <DialogHeader>
           <DialogTitle>
             {remove
-              ? gt("Remove the {company} key?", { company })
+              ? custom
+                ? gt("Remove custom dictation?")
+                : gt("Remove the {company} key?", { company })
               : active
                 ? routed
                   ? custom
@@ -424,10 +436,15 @@ export function CloudVoiceConfiguration({
           </DialogTitle>
           <DialogDescription>
             {remove
-              ? gt("Everyone using {name} for dictation on {environment} will lose access.", {
-                  name,
-                  environment: environment.label,
-                })
+              ? custom
+                ? gt(
+                    "Removes the endpoint URL and key on {environment}. Everyone using it for dictation loses access.",
+                    { environment: environment.label },
+                  )
+                : gt("Everyone using {name} for dictation on {environment} will lose access.", {
+                    name,
+                    environment: environment.label,
+                  })
               : active && !routed
                 ? gt("Anyone with dictation access to {environment} can use this API key.", {
                     environment: environment.label,
@@ -482,24 +499,29 @@ export function CloudVoiceConfiguration({
                       </Label>
                       <Input
                         id="voice-cloud-endpoint"
-                        aria-label={gt("Endpoint base URL")}
                         placeholder="https://example.com/v1"
                         value={endpoint}
                         disabled={busy || !canManage}
                         autoComplete="off"
                         spellCheck={false}
-                        onChange={(event) => setEndpoint(event.target.value)}
+                        aria-invalid={endpoint.trim() !== "" && !endpointReady}
+                        aria-describedby="voice-cloud-endpoint-help voice-cloud-endpoint-error"
+                        onChange={(event) => setEndpointDraft(event.target.value)}
                       />
-                      <p className="text-sm text-muted-foreground">
+                      <p id="voice-cloud-endpoint-help" className="text-sm text-muted-foreground">
                         <T>
                           Base URL of an OpenAI-compatible server, including the version path. Audio
-                          is sent to its /audio/transcriptions route. Plain http is only allowed for
-                          localhost.
+                          is sent to its /audio/transcriptions route. Use https unless the endpoint
+                          is on a network you trust.
                         </T>
                       </p>
                       {endpoint.trim() && !endpointReady ? (
-                        <p className="text-sm text-destructive" role="alert">
-                          <T>Enter an https URL, or plain http for localhost.</T>
+                        <p
+                          id="voice-cloud-endpoint-error"
+                          className="text-sm text-destructive"
+                          role="alert"
+                        >
+                          <T>Enter an http or https URL.</T>
                         </p>
                       ) : null}
                     </div>
@@ -509,7 +531,6 @@ export function CloudVoiceConfiguration({
                       </Label>
                       <Input
                         id="voice-cloud-model"
-                        aria-label={gt("Transcription model")}
                         placeholder="whisper-1"
                         value={model}
                         disabled={busy}
@@ -613,7 +634,14 @@ export function CloudVoiceConfiguration({
                 size="sm"
                 variant="destructive"
                 disabled={busy}
-                onClick={() => void saveKey(null, null)}
+                onClick={() =>
+                  void (custom
+                    ? saveCustom(
+                        { cloudSpeechCustomBaseUrl: "", cloudSpeechCredentials: { custom: "" } },
+                        null,
+                      )
+                    : saveKey(null, null))
+                }
               >
                 <T>Remove key</T>
               </Button>

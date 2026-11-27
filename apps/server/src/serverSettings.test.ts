@@ -2151,6 +2151,57 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("clears the custom speech key when its endpoint changes without a new key", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://one.example/v1",
+        cloudSpeechCredentials: { custom: "first-key" },
+      });
+      // Pointing the saved key at another host is exactly what a URL-only change must not do.
+      const moved = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://two.example/v1",
+      });
+      assert.equal(moved.cloudSpeechCustomBaseUrl, "https://two.example/v1");
+      assert.equal(moved.cloudSpeechCredentials.custom, "");
+      const both = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://three.example/v1",
+        cloudSpeechCredentials: { custom: "second-key" },
+      });
+      assert.equal(both.cloudSpeechCredentials.custom, "second-key");
+      const unchanged = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://three.example/v1",
+      });
+      assert.equal(unchanged.cloudSpeechCredentials.custom, "second-key");
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("rejects a malformed custom speech endpoint when the patch is decoded", () =>
+    Effect.gen(function* () {
+      for (const value of [
+        "ftp://host/v1",
+        "https://user:pass@host/v1",
+        "https://host/v1?key=1",
+        "https://host/v1#fragment",
+        "host/v1",
+      ]) {
+        const exit = yield* Effect.exit(
+          decodeServerSettingsPatch({ cloudSpeechCustomBaseUrl: value }),
+        );
+        assert.equal(exit._tag, "Failure");
+      }
+      const decoded = yield* decodeServerSettingsPatch({
+        cloudSpeechCustomBaseUrl: "  https://host/v1  ",
+      });
+      assert.equal(decoded.cloudSpeechCustomBaseUrl, "https://host/v1");
+      assert.equal(
+        (yield* decodeServerSettingsPatch({ cloudSpeechCustomBaseUrl: "" }))
+          .cloudSpeechCustomBaseUrl,
+        "",
+      );
+    }),
+  );
+
   it.effect("knows every strictly decoded field that can hold a secret reference", () =>
     Effect.sync(() => {
       // Shipped clients decode these as strings. Each must be covered by the older-client case above.

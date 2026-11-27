@@ -55,6 +55,7 @@ import {
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
+  CloudSpeechCustomBaseUrl,
   CloudSpeechModelId,
   SpeechAcceleration,
   SpeechCorrectionCue,
@@ -1460,7 +1461,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "", custom: "" })),
   ),
   /** Base URL of the OpenAI-compatible transcription endpoint, including the version path (e.g. `https://host/v1`). */
-  cloudSpeechCustomBaseUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  cloudSpeechCustomBaseUrl: CloudSpeechCustomBaseUrl.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
@@ -1936,7 +1939,7 @@ export const ServerSettingsPatch = Schema.Struct({
       custom: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
-  cloudSpeechCustomBaseUrl: Schema.optionalKey(Schema.String),
+  cloudSpeechCustomBaseUrl: Schema.optionalKey(CloudSpeechCustomBaseUrl),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),

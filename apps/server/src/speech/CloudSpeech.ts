@@ -113,16 +113,11 @@ function customTranscriptionsUrl(baseUrl: string) {
     return null;
   }
   if (url.search || url.hash || url.username || url.password) return null;
-  const hostname = url.hostname.toLowerCase();
-  const host =
-    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  const local =
-    host === "localhost" || host === "::1" || host === "127.0.0.1" || host.endsWith(".localhost");
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return null;
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}/audio/transcriptions`;
 }
 
-/** The generic multipart body every OpenAI-compatible transcription server accepts. */
+/** The multipart body an OpenAI-compatible transcription server accepts. */
 function customBody(model: string, audio: ArrayBuffer, language: string) {
   const form = new FormData();
   form.set("model", model);
@@ -166,7 +161,6 @@ export const layer = Layer.effect(
         xai: Boolean(value.cloudSpeechCredentials.xai),
         openrouter: Boolean(value.cloudSpeechCredentials.openrouter),
         custom: Boolean(value.cloudSpeechCredentials.custom),
-        customEndpoint: value.cloudSpeechCustomBaseUrl,
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -278,7 +272,7 @@ export const layer = Layer.effect(
                 ? "rate-limit"
                 : [401, 402, 403].includes(response.status)
                   ? "rejected-key"
-                  : response.status === 404 && provider === "openrouter"
+                  : response.status === 404 && (provider === "openrouter" || provider === "custom")
                     ? "model-unavailable"
                     : "unavailable",
           });

@@ -55,6 +55,7 @@ import {
 } from "./baseSchemas.ts";
 import {
   CloudSpeechApiKey,
+  CloudSpeechCustomBaseUrl,
   CloudSpeechError,
   CloudSpeechKeys,
   CloudSpeechModels,
@@ -886,7 +887,7 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       params: Schema.Struct({ provider: CloudSpeechProvider }),
       query: Schema.Struct({
         model: Schema.optionalKey(SpeechModelId),
-        endpoint: Schema.optionalKey(Schema.String),
+        endpoint: Schema.optionalKey(CloudSpeechCustomBaseUrl),
       }),
       payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
       success: EnvironmentSpeechTranscriptionResult,
