@@ -575,7 +575,7 @@ function ScaledRows(
   useLayoutEffect(() => {
     const node = ref.current;
     const content = contentRef.current;
-    if (!node || pendingEnd.current === null) return;
+    if (!node) return;
     pendingEnd.current = pendingEndAt(node, pendingEnd.current);
     if (pendingEnd.current === null || !nativeTail || !content || !props.count) return;
     const last = props.count - 1;
