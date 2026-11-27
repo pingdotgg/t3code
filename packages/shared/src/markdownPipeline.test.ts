@@ -10,6 +10,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  chatMarkdownImageSources,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -578,6 +579,38 @@ it("keeps uppercase HTTP(S) link and image URLs by lowercasing the scheme before
     { src: "https://Example.com/Shot.png", alt: "shot", dataStandalone: true },
     { src: "http://Example.com/Light.png", dataDarkSrc: "https://Example.com/Dark.png" },
   ]);
+});
+
+it("keeps uppercase FILE link and image URLs by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: object; children?: Node[] };
+  const elements = (node: Node): Node[] => [
+    ...(node.tagName === "a" || node.tagName === "img" ? [node] : []),
+    ...(node.children ?? []).flatMap(elements),
+  ];
+  const markdown = [
+    '[upper](FILE:///tmp/A.md) <a href="FiLe:///C:/Demo%20A.md">raw</a>',
+    "",
+    "![shot](FILE:///tmp/Shot.png)",
+    "",
+    '<picture><source media="(prefers-color-scheme: dark)" srcset="FILE:///tmp/Dark.png"><source media="(prefers-color-scheme: light)" srcset="FILE:///tmp/Light.png"><img src="FILE://host/tmp/Fallback.png"></picture>',
+  ].join("\n");
+  const tree = processor.runSync(processor.parse(markdown)) as Node;
+  expect(elements(tree).map((node) => node.properties)).toEqual([
+    { href: "file:///tmp/A.md" },
+    { href: "file:///C:/Demo%20A.md" },
+    { src: "file:///tmp/Shot.png", alt: "shot", dataStandalone: true },
+    {
+      src: "file://host/tmp/Fallback.png",
+      dataDarkSrc: "file:///tmp/Dark.png",
+      dataLightSrc: "file:///tmp/Light.png",
+    },
+  ]);
+  expect(chatMarkdownImageSources(markdown)).toHaveLength(4);
 });
 
 it("keeps raw and percent-encoded Windows drive file links through the shared Markdown sanitizer", () => {
