@@ -173,7 +173,9 @@ export function resolveAddressBarInput(
     const authority = trimmed.split(/[/?#]/, 1)[0] ?? "";
     const host = authority.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
     const hasPort = host.length < authority.replace(/^[^@]*@/, "").length;
-    if (hasPort || ADDRESS_HOST_PATTERN.test(host) || /^[^.]+(?:\.[^.]+)+\.?$/.test(host)) {
+    // No top-level domain is all digits, so "3.14" is a number to search, not the address 3.0.0.14.
+    const domain = /^[^.]+(?:\.[^.]+)+\.?$/.test(host) && !/\.\d+\.?$/.test(host);
+    if (hasPort || ADDRESS_HOST_PATTERN.test(host) || domain) {
       try {
         return normalizePreviewUrl(trimmed);
       } catch {}
