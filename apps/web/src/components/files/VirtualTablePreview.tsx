@@ -374,6 +374,7 @@ function ScaledRows(
       event.deltaY * (event.deltaMode === 1 ? 29 : event.deltaMode === 2 ? node.clientHeight : 1);
     if (!delta) return;
     event.preventDefault();
+    pendingRestore.current = undefined;
     pendingEnd.current = false;
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / rowHeight());
   });
@@ -558,6 +559,11 @@ function ScaledRows(
       ref={ref}
       tabIndex={0}
       className="min-h-0 flex-1 overflow-auto"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget || event.pointerType === "touch") {
+          pendingRestore.current = undefined;
+        }
+      }}
       onKeyDown={(event) => {
         const node = event.currentTarget;
         const delta =
@@ -571,11 +577,13 @@ function ScaledRows(
                   ? -node.clientHeight
                   : null;
         if (delta !== null) {
+          pendingRestore.current = undefined;
           pendingEnd.current = false;
           event.preventDefault();
           node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / rowHeight());
         } else if (event.key === "Home" || event.key === "End") {
           event.preventDefault();
+          pendingRestore.current = undefined;
           pendingEnd.current = event.key === "End";
           pendingReveal.current = null;
           node.scrollTop = event.key === "Home" ? 0 : node.scrollHeight;

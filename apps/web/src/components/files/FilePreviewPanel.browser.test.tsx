@@ -1193,11 +1193,15 @@ describe("large text scroll position", () => {
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
   });
 
-  it.each([1505, 66000])(
-    "restores the exact reading row with %i rows available on return",
-    async (count) => {
+  it.each([
+    { count: 1505, scroll: false },
+    { count: 66000, scroll: false },
+    { count: 1505, scroll: true },
+  ])(
+    "keeps the reading row with $count rows available on return (user scroll: $scroll)",
+    async ({ count, scroll }) => {
       using _style = withPreviewAppCss();
-      const key = `cited-log-${count}`;
+      const key = `cited-log-${count}-${scroll}`;
       {
         await using _screen = await render(opened(key, log(66000, false, 1000), 608));
         await vi.waitFor(() => expect(firstVisibleRow()).toBe(999));
@@ -1208,12 +1212,20 @@ describe("large text scroll position", () => {
       await using screen = await render(
         opened(key, log(count, count < 66000, count === 66000 ? 1000 : undefined), 608),
       );
+      let readingRow = 1499;
       if (count < 66000) {
         expect(firstVisibleRow()).toBe(0);
-        scroller().dispatchEvent(new Event("scroll"));
+        if (scroll) {
+          scroller().focus();
+          await userEvent.keyboard("{PageDown}");
+          await vi.waitFor(() => expect(firstVisibleRow()).toBeGreaterThan(0));
+          readingRow = firstVisibleRow();
+        } else {
+          scroller().dispatchEvent(new Event("scroll"));
+        }
         await screen.rerender(opened(key, log(66000, false, 1000), 608));
       }
-      await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(readingRow));
     },
   );
 });
