@@ -337,7 +337,10 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
     options.filePath,
     options.maxFiles,
   );
-  let ready = yield* rotation.recover.pipe(Effect.orElseSucceed(() => false));
+  let needsRecovery = yield* rotation.recover.pipe(
+    Effect.orElseSucceed(() => false),
+    Effect.map((ready) => !ready),
+  );
   const pruneOverflowBackups = Effect.gen(function* () {
     for (const entry of yield* fs.readDirectory(directory)) {
       if (!entry.startsWith(`${basename}.`)) continue;
@@ -348,7 +351,7 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
       yield* fs.remove(path.join(directory, entry), { force: true });
     }
   }).pipe(Effect.mapError(failure("prune")));
-  if (ready) yield* pruneOverflowBackups;
+  if (!needsRecovery) yield* pruneOverflowBackups;
   const readSize = fs.stat(options.filePath).pipe(
     Effect.map((stat) => Number(stat.size)),
     Effect.catch((cause) =>
@@ -362,7 +365,7 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
       Effect.mapError(failure("rotate")),
       Effect.tapError(() =>
         Effect.sync(() => {
-          ready = false;
+          needsRecovery = true;
         }),
       ),
     );
@@ -372,14 +375,14 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
         Effect.gen(function* () {
           const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
           if (buffer.length === 0) return;
-          if (!ready) {
+          if (needsRecovery) {
             const recovered = yield* runRotation(rotation.recover);
             if (recovered) yield* pruneOverflowBackups;
             currentSize = yield* readSize;
-            ready = recovered;
+            needsRecovery = !recovered;
           }
-          if (ready && currentSize > 0 && currentSize + buffer.length > options.maxBytes) {
-            ready = yield* runRotation(rotation.rotate);
+          if (!needsRecovery && currentSize > 0 && currentSize + buffer.length > options.maxBytes) {
+            needsRecovery = !(yield* runRotation(rotation.rotate));
             currentSize = 0;
           }
           yield* fs
