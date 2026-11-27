@@ -408,6 +408,7 @@ function scopeFromRemoteUrl(remote: string) {
         if (!organization) return null;
         if (parts[0]?.toLowerCase() === "defaultcollection") parts.shift();
       }
+      if (parts.length === 2 && parts[0] === "_git" && parts[1]) parts.unshift(parts[1]);
       if (parts.length !== 3 || parts[1] !== "_git") return null;
       parts.splice(1, 1);
     } else return null;
