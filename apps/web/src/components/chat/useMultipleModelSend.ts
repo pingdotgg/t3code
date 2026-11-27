@@ -140,8 +140,6 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
       const context = buildOutgoingMessageContext(
         boundAttachmentIds(attachments, attachmentsSnapshot),
       );
-      // Context IDs survive draft restoration and attachment re-uploads.
-      const contextIds = context?.records.map((record) => record.contextId) ?? [];
       const title = deriveComposerSendTitle(sendSnapshot);
       clearComposerDraftContent(composerDraftTarget);
       if (currentRouteThreadKeyRef.current === routeThreadKey) {
@@ -168,7 +166,8 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
               target.selection.instanceId,
               target.selection.model,
               sendSnapshot.messageText,
-              contextIds,
+              // Context IDs survive draft restoration and attachment re-uploads.
+              context?.records.map((record) => record.contextId) ?? [],
             ]),
             model: target.selection.model,
             uncertainSubmissions: uncertainSubmissionsRef.current,
