@@ -764,6 +764,24 @@ Third}`;
     );
   });
 
+  it.each([
+    { styleStart: "5", itemStart: undefined, expected: '<ol start="5"><li>' },
+    { styleStart: "0", itemStart: "4", expected: '<ol start="0"><li value="4">' },
+    { styleStart: "7", itemStart: "1.5", expected: '<ol start="7"><li>' },
+  ])(
+    "keeps ODT list numbers for style start $styleStart and item start $itemStart",
+    async ({ styleStart, itemStart, expected }) => {
+      const item = itemStart === undefined ? "" : ` text:start-value="${itemStart}"`;
+      const content =
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">' +
+        `<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="1" text:start-value="${styleStart}"/></text:list-style></office:automatic-styles>` +
+        `<office:body><office:text><text:list text:style-name="Steps"><text:list-item${item}><text:p>Review</text:p></text:list-item><text:list-item><text:p>Send</text:p></text:list-item></text:list></office:text></office:body></office:document-content>`;
+      const result = await openDocument(new JSZip().file("content.xml", content), "odt");
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages[0]!.html).toBe(`${expected}<p>Review</p></li><li><p>Send</p></li></ol>`);
+    },
+  );
+
   // LibreOffice writes every index as the templates it was built from, then the built index.
   const indexes = [
     "table-of-content",
@@ -1022,6 +1040,36 @@ Third}`;
     expect(html).not.toContain("feImage");
     expect(html).toContain('filter="url(#tint)"');
     expect((await book.page(1)).html).toContain('<feDropShadow dx="2">');
+  });
+
+  it("keeps the RGB channel adjustments in EPUB SVG artwork", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="poster" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="poster"/></spine></package>',
+      )
+      .file(
+        "poster.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="tint"><feComponentTransfer>
+            <feFuncR type="linear" slope="0.5"/>
+            <feFuncG type="discrete" tableValues="0 0.5 1"/>
+            <feFuncB type="gamma" amplitude="2" exponent="3"/>
+          </feComponentTransfer></filter>
+          <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html.match(/<feFunc[RGB][^>]*>/g) ?? []).toEqual([
+      '<feFuncR type="linear" slope="0.5">',
+      '<feFuncG type="discrete" tableValues="0 0.5 1">',
+      '<feFuncB type="gamma" amplitude="2" exponent="3">',
+    ]);
   });
 
   it("keeps embedded raster images in EPUB SVG artwork", async () => {
