@@ -53,23 +53,35 @@ function codeSpan(code: string): string {
 
 const ATTACHMENT = "_(attachment, open in Jira to view)_";
 
+/** A link destination markdown reads back whole: parentheses escaped, spaces in angle brackets. */
+function linked(text: string, marks: NonNullable<AdfNode["marks"]>): string {
+  const href = marks.find((mark) => mark.type === "link")?.attrs?.["href"];
+  if (typeof href !== "string") return text;
+  const escaped = href.replace(/[\\()]/g, "\\$&");
+  return `[${text}](${/\s/u.test(href) ? `<${href.replace(/[<>]/g, "\\$&")}>` : escaped})`;
+}
+
 function inline(node: AdfNode): string {
   switch (node.type) {
     case "text": {
       const marks = node.marks ?? [];
-      let text = marks.some((mark) => mark.type === "code")
-        ? codeSpan(node.text ?? "")
-        : escape(node.text ?? "");
+      const raw = node.text ?? "";
+      if (marks.some((mark) => mark.type === "code")) {
+        return linked(codeSpan(raw), marks);
+      }
+      // A delimiter beside whitespace does not close, so edge spaces stay outside the marks.
+      const [, before = "", core = "", after = ""] = /^(\s*)(.*?)(\s*)$/su.exec(raw) ?? [];
+      if (core.length === 0) return raw;
+      let text = escape(core);
       for (const mark of marks) {
         if (mark.type === "strong") text = `**${text}**`;
         else if (mark.type === "em") text = `*${text}*`;
         else if (mark.type === "strike") text = `~~${text}~~`;
       }
-      const href = marks.find((mark) => mark.type === "link")?.attrs?.["href"];
-      return typeof href === "string" ? `[${text}](${href})` : text;
+      return `${before}${linked(text, marks)}${after}`;
     }
     case "hardBreak":
-      return "\n";
+      return "\\\n";
     case "mention":
       return attr(node, "text") ?? "@someone";
     case "emoji":
@@ -104,7 +116,14 @@ function list(node: AdfNode, marker: (index: number) => string): string {
   return children(node)
     .map((item, index) => {
       const lead = marker(index);
-      const body = blocks(children(item), "\n");
+      // Paragraphs keep a blank line between them, or they read back as one.
+      const body = children(item)
+        .map((child, at, all) => {
+          const text = block(child);
+          const next = all[at + 1];
+          return next === undefined ? text : `${text}${next.type === "paragraph" ? "\n\n" : "\n"}`;
+        })
+        .join("");
       return lead + indent(body, " ".repeat(lead.length)).slice(lead.length);
     })
     .join("\n");
@@ -113,7 +132,10 @@ function list(node: AdfNode, marker: (index: number) => string): string {
 function table(node: AdfNode): string {
   const rows = children(node).map((row) =>
     children(row).map((cell) =>
-      blocks(children(cell), " ").replaceAll("\n", " ").replaceAll("|", "\\|"),
+      blocks(children(cell), " ")
+        .replaceAll("\\\n", " ")
+        .replaceAll("\n", " ")
+        .replaceAll("|", "\\|"),
     ),
   );
   // Merged cells leave rows of different lengths; the widest row sets the column count.
@@ -131,7 +153,8 @@ function block(node: AdfNode): string {
       return escapeLineStarts(inlines(node));
     case "heading": {
       const level = Math.min(6, Math.max(1, Number(node.attrs?.["level"]) || 1));
-      return `${"#".repeat(level)} ${inlines(node)}`;
+      // A trailing `#` would read as the heading's closing sequence.
+      return `${"#".repeat(level)} ${inlines(node).replace(/#+$/, "\\$&")}`;
     }
     case "bulletList":
       return list(node, () => "- ");
@@ -218,6 +241,9 @@ export function hasUnwritableContent(document: unknown): boolean {
   return (
     UNWRITABLE.has(document.type) ||
     merged(document) ||
+    // A table cell is written back as one paragraph.
+    ((document.type === "tableCell" || document.type === "tableHeader") &&
+      children(document).length > 1) ||
     // A checklist is written back flat, so one nested in another would be lost.
     (document.type === "taskList" &&
       children(document).some((child) => child.type === "taskList")) ||

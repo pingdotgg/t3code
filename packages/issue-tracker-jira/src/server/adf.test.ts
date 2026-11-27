@@ -9,6 +9,9 @@ const MARKDOWN = [
   "```ts\nconst a = 1;\n```",
   "> quoted",
   "- [x] shipped\n- [ ] review",
+  "## Release \\#",
+  "Line one\\\nline two, [go](https://a.test/a\\)b) and [docs](<https://a.test/a b>)",
+  "- first\n\n  second",
   "| a | b |\n| --- | --- |\n| 1 | 2 |",
   "---",
   // Jira text that only looks like markdown stays literal.
@@ -82,6 +85,34 @@ describe("adf", () => {
         ],
       },
     ]);
+  });
+
+  // https://github.com/pingdotgg/t3code/pull/38003#discussion_r4717362382
+  it("keeps edge spaces outside marks and table cells it cannot rewrite", () => {
+    const text = (value: string, marks?: ReadonlyArray<{ type: string }>) => ({
+      type: "text",
+      text: value,
+      ...(marks ? { marks } : {}),
+    });
+    const document = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [text("bold ", [{ type: "strong" }]), text("next")] },
+      ],
+    };
+    expect(adfToMarkdown(document)).toBe("**bold** next");
+    expect(markdownToAdf(adfToMarkdown(document)).content?.[0]?.content?.[0]).toMatchObject({
+      text: "bold",
+      marks: [{ type: "strong" }],
+    });
+    const paragraph = (value: string) => ({ type: "paragraph", content: [text(value)] });
+    const cell = (...content: ReadonlyArray<unknown>) => ({ type: "tableCell", content });
+    const table = (first: unknown) => ({
+      type: "doc",
+      content: [{ type: "table", content: [{ type: "tableRow", content: [first] }] }],
+    });
+    expect(hasUnwritableContent(table(cell(paragraph("alpha"))))).toBe(false);
+    expect(hasUnwritableContent(table(cell(paragraph("alpha"), paragraph("beta"))))).toBe(true);
   });
 
   it("writes a reference link as the inline link its first definition names", () => {

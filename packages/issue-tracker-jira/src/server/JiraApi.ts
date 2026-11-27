@@ -2,6 +2,7 @@
  * Jira Cloud's REST API (v3), signed with the account email and API token saved in Settings and
  * sent to the site saved beside them. Jira writes its refusals for people, so they pass through.
  */
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -305,31 +306,40 @@ export const make = Effect.gen(function* () {
         value === undefined ? [] : [[key, String(value)] as const],
       ),
     }).pipe(HttpClientRequest.acceptJson, HttpClientRequest.basicAuth(site.email, site.token));
-    const response = yield* httpClient
-      .execute(
-        request.body === undefined
-          ? base
-          : base.pipe(HttpClientRequest.bodyJsonUnsafe(request.body)),
-      )
-      .pipe(
-        Effect.timeout(REQUEST_TIMEOUT),
+    const unreachable = (cause: unknown) =>
+      fail(operation, "failed", "Jira could not be reached.", { cause });
+    // The deadline covers the body too: a site can send its headers and then stall.
+    return yield* Effect.gen(function* () {
+      const response = yield* httpClient
+        .execute(
+          request.body === undefined
+            ? base
+            : base.pipe(HttpClientRequest.bodyJsonUnsafe(request.body)),
+        )
+        .pipe(Effect.mapError(unreachable));
+      if (response.status < 200 || response.status >= 300) {
+        return yield* refusal(operation, response);
+      }
+      // A write answers 204 with no body; `Schema.Void` reads nothing.
+      if (response.status === 204) return undefined as S["Type"];
+      return yield* HttpClientResponse.schemaBodyJson(schema)(response).pipe(
         Effect.mapError((cause) =>
-          fail(operation, "failed", "Jira could not be reached.", { cause }),
+          fail(operation, "failed", "Jira returned an unexpected body.", { cause }),
         ),
       );
-    if (response.status < 200 || response.status >= 300) return yield* refusal(operation, response);
-    // A write answers 204 with no body; `Schema.Void` reads nothing.
-    if (response.status === 204) return undefined as S["Type"];
-    return yield* HttpClientResponse.schemaBodyJson(schema)(response).pipe(
-      Effect.mapError((cause) =>
-        fail(operation, "failed", "Jira returned an unexpected body.", { cause }),
-      ),
+    }).pipe(
+      Effect.timeout(REQUEST_TIMEOUT),
+      Effect.mapError((error) => (Cause.isTimeoutError(error) ? unreachable(error) : error)),
     );
   });
 
-  /** Reads `startAt` pages until Jira has no more or the cap is reached. */
+  /**
+   * Reads `startAt` pages until Jira has no more or the cap is reached. A `filtered` endpoint
+   * drops entries after paging, so only an empty page ends it.
+   */
   const paged = Effect.fn("JiraApi.paged")(function* <A>(
     read: (startAt: number) => Effect.Effect<ReadonlyArray<A>, IssueTrackerError>,
+    filtered = false,
   ): Effect.fn.Return<
     { readonly items: ReadonlyArray<A>; readonly truncated: boolean },
     IssueTrackerError
@@ -338,7 +348,7 @@ export const make = Effect.gen(function* () {
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const batch = yield* read(page * PAGE);
       items.push(...batch);
-      if (batch.length < PAGE) return { items, truncated: false };
+      if (filtered ? batch.length === 0 : batch.length < PAGE) return { items, truncated: false };
     }
     return { items, truncated: true };
   });
@@ -498,12 +508,15 @@ export const make = Effect.gen(function* () {
   ).pipe(Effect.map((page) => ({ names: page.items, truncated: page.truncated })));
 
   const assignable: JiraApi["Service"]["assignable"] = (project) =>
-    paged((startAt) =>
-      send("assignable", Schema.Array(User), {
-        method: "GET",
-        path: "/rest/api/3/user/assignable/search",
-        query: { project, startAt, maxResults: PAGE },
-      }),
+    paged(
+      (startAt) =>
+        send("assignable", Schema.Array(User), {
+          method: "GET",
+          path: "/rest/api/3/user/assignable/search",
+          query: { project, startAt, maxResults: PAGE },
+        }),
+      // Jira drops users the caller may not see after paging, so a short page is not the last.
+      true,
     ).pipe(Effect.map((page) => ({ users: page.items, truncated: page.truncated })));
 
   const findUsers: JiraApi["Service"]["findUsers"] = (query) =>
