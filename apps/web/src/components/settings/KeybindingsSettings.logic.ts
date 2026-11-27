@@ -258,7 +258,15 @@ const KEYBINDING_GROUPS = [
   {
     id: "navigation",
     title: msg("Navigation"),
-    prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
+    prefixes: [
+      "navigation",
+      "sidebar",
+      "rightPanel",
+      "commandPalette",
+      "filePicker",
+      "projectSearch",
+      "editor",
+    ],
   },
   { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
   { id: "composer", title: msg("Composer"), prefixes: ["composer", "modelPicker"] },
@@ -583,6 +591,10 @@ function recordedLayoutShortcutKey(
   const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
+  // A non-Latin letter (Cyrillic, Greek, ...) stops matching once the user switches to a Latin layout.
+  if (/^\p{L}$/u.test(layoutKey) && !/\p{Script=Latin}/u.test(layoutKey)) {
+    return /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : physicalKey;
+  }
   // Normalize only US shifted glyphs at their US position. Other layouts can
   // produce the same glyph without Shift or at a different position.
   const unshiftedKey = event.shiftKey ? US_SHIFTED_TO_UNSHIFTED_KEYS.get(layoutKey) : undefined;

@@ -1396,14 +1396,13 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     runId: RunId | null,
   ) {
+    // Hold before forking, so a message sent once the launch returns sees the pending worktree.
+    const releaseWorkspace =
+      input.workspaceStrategy.type === "worktree"
+        ? yield* setupTracker.holdWorkspace(threadId)
+        : Effect.void;
     const preparation = Effect.gen(function* () {
-      const prepare = Effect.acquireUseRelease(
-        input.workspaceStrategy.type === "worktree"
-          ? setupTracker.holdWorkspace(threadId)
-          : Effect.succeed(Effect.void),
-        (release) => prepareInBackground(input, threadId, runId, release),
-        (release) => release,
-      );
+      const prepare = prepareInBackground(input, threadId, runId, releaseWorkspace);
       if (
         runId === null ||
         (input.workspaceStrategy.type !== "worktree" && input.reusedWorktree === undefined)
@@ -1438,7 +1437,7 @@ const make = Effect.gen(function* () {
         ),
       ),
       Effect.ignoreCause,
-      Effect.ensuring(releasePreparation(input.commandId)),
+      Effect.ensuring(Effect.andThen(releaseWorkspace, releasePreparation(input.commandId))),
       Effect.forkIn(preparationScope),
     );
   });

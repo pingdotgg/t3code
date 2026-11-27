@@ -1578,6 +1578,8 @@
   "737d3c6bec93f9e6": "Elige archivos para la página",
   "e6a3fa7cfc14f86a": "Cuadro de diálogo del navegador",
   "61a552a67e9e3eac": "Respuesta al cuadro de diálogo",
+  "cb5c27218e96e407": "Nombre de usuario",
+  "182a659d70f8ea72": "Contraseña",
   "3d000b56e95f3150": "Ceder el control",
   "0633c3bcdcb95b2f": "Tomar el control",
   "b8ba763621bcdd70": "El navegador del servidor cargó esta página, pero no la está dibujando. Prueba a recargarla o abre la página en un navegador de este ordenador.",
@@ -4234,6 +4236,7 @@
   "ac242b57dbfa5259": "Gestionar tareas programadas",
   "d93c0db04f4c8e46": "Editar automatización",
   "3fe420ed9b5bdb75": "Ejecutar ahora",
+  "fdf273ca647a967f": "Eliminar",
   "0c433351a8606e50": [
     "No se pudieron cargar las automatizaciones: ",
     {
@@ -5367,7 +5370,9 @@
   "4cb21672153c1f18": "No se encontraron simuladores ni emuladores en este entorno.",
   "c82410197256eb53": "Simuladores de iOS",
   "31a71fec6b5f2bf3": "Dispositivos Android",
+  "1bd21d5284dc2d8e": "Dispositivos iOS",
   "ac18a5e35195a258": "Emuladores de Android",
+  "f28d1d2b5f30a8cd": "Físico",
   "94215375ea2558b8": "En ejecución",
   "f8a65d4d662389b0": "Detenido",
   "b1687c7b2b91e569": "Abrir {name}",
@@ -8721,7 +8726,7 @@
   "a6a6dc235b108747": "Permite que los agentes usen el navegador compartido. Los proyectos pueden anularlo.",
   "ea5fed973bfc1aca": "Restablecer el acceso predeterminado al navegador al valor predeterminado",
   "19e1f74805f4a1fb": "Acceso de agentes al navegador",
-  "b395b88284e3bca2": "Muestra la vista previa flotante cuando un agente abre un navegador o dispositivo, salvo que el agente indique lo contrario.",
+  "d6ccca83a1676fcb": "Muestra la vista previa flotante cuando un agente abre un navegador o dispositivo, salvo que el agente indique lo contrario, y cuando cierras el panel derecho.",
   "6aadfd59cf60b4b5": "Restablecer mostrar automáticamente la vista previa flotante al valor predeterminado",
   "e4a7ec61190bc1f9": "Mostrar automáticamente la vista previa flotante",
   "3705c53cb3e76a28": "No se pudieron borrar los datos de {name}",
@@ -13037,5 +13042,7 @@
   "95435f0b59cb2193": "Vista previa de audio",
   "4a12506938295127": "Introduce primero {field}.",
   "5807c08e225c6b3d": "Descargar",
-  "0d50b5bfe7151ece": "No se pudo descargar el archivo"
+  "0d50b5bfe7151ece": "No se pudo descargar el archivo",
+  "eb1fd384ad5919dd": "Nota interna",
+  "b45f0b467e9406d0": "Responder al cliente"
 }

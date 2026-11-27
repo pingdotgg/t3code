@@ -1578,6 +1578,8 @@
   "737d3c6bec93f9e6": "Choisir des fichiers pour la page",
   "e6a3fa7cfc14f86a": "Boîte de dialogue du navigateur",
   "61a552a67e9e3eac": "Réponse à la boîte de dialogue",
+  "cb5c27218e96e407": "Nom d’utilisateur",
+  "182a659d70f8ea72": "Mot de passe",
   "3d000b56e95f3150": "Rendre le contrôle",
   "0633c3bcdcb95b2f": "Prendre le contrôle",
   "b8ba763621bcdd70": "Le navigateur du serveur a chargé cette page mais ne l'affiche pas. Essayez de la recharger ou ouvrez la page dans un navigateur sur cet ordinateur.",
@@ -4235,6 +4237,7 @@
   "ac242b57dbfa5259": "Gérer les tâches planifiées",
   "d93c0db04f4c8e46": "Modifier l’automatisation",
   "3fe420ed9b5bdb75": "Exécuter maintenant",
+  "fdf273ca647a967f": "Supprimer",
   "0c433351a8606e50": [
     "Impossible de charger les automatisations : ",
     {
@@ -5368,7 +5371,9 @@
   "4cb21672153c1f18": "Aucun simulateur ni émulateur trouvé dans cet environnement.",
   "c82410197256eb53": "Simulateurs iOS",
   "31a71fec6b5f2bf3": "Appareils Android",
+  "1bd21d5284dc2d8e": "Appareils iOS",
   "ac18a5e35195a258": "Émulateurs Android",
+  "f28d1d2b5f30a8cd": "Physique",
   "94215375ea2558b8": "En cours",
   "f8a65d4d662389b0": "Arrêté",
   "b1687c7b2b91e569": "Ouvrir {name}",
@@ -8722,7 +8727,7 @@
   "a6a6dc235b108747": "Autorise les agents à utiliser le navigateur partagé. Les projets peuvent remplacer ce paramètre.",
   "ea5fed973bfc1aca": "Réinitialiser l’accès par défaut au navigateur à la valeur par défaut",
   "19e1f74805f4a1fb": "Accès des agents au navigateur",
-  "b395b88284e3bca2": "Affiche l’aperçu flottant quand un agent ouvre un navigateur ou un appareil, sauf si l’agent indique le contraire.",
+  "d6ccca83a1676fcb": "Affiche l’aperçu flottant quand un agent ouvre un navigateur ou un appareil, sauf si l’agent indique le contraire, et quand vous fermez le panneau de droite.",
   "6aadfd59cf60b4b5": "Réinitialiser l’affichage automatique de l’aperçu flottant à la valeur par défaut",
   "e4a7ec61190bc1f9": "Afficher automatiquement l’aperçu flottant",
   "3705c53cb3e76a28": "Impossible d’effacer les données de {name}",
@@ -13042,5 +13047,7 @@
   "95435f0b59cb2193": "Aperçu audio",
   "4a12506938295127": "Saisissez d’abord {field}.",
   "5807c08e225c6b3d": "Télécharger",
-  "0d50b5bfe7151ece": "Impossible de télécharger le fichier"
+  "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
+  "eb1fd384ad5919dd": "Note interne",
+  "b45f0b467e9406d0": "Répondre au client"
 }

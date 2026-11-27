@@ -4,9 +4,10 @@ import {
   AuthTerminalOperateScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
+import { useClosedViewStore } from "../closedViewStore";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
 import { m } from "../i18n/messages";
@@ -20,7 +21,7 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
-import { readThreadShell } from "../state/entities";
+import { readThreadShell, waitForThreadShellRemoval } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { threadEnvironment } from "../state/threads";
@@ -77,10 +78,24 @@ export function useRightPanelSurfaceClose(input: {
         true &&
       readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
     ) {
-      // The server keeps a side chat with a run or message. Reopen skips one it deleted.
+      const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
+      // The server keeps a side chat with a run or message. Reopen cannot tell one it deleted from
+      // an idle subagent the shell leaves out, so forget the tab once the server has removed it.
       void deleteThread({
         environmentId: ref.environmentId,
         input: { threadId: surface.threadId, onlyIfUnused: true },
+      }).then(async (result) => {
+        if (result._tag !== "Success" || !(await waitForThreadShellRemoval(sideChatRef))) return;
+        const closedViews = useClosedViewStore.getState();
+        for (const entry of closedViews.entries) {
+          if (
+            entry.kind === "panel-tab" &&
+            entry.surface.id === surface.id &&
+            scopedThreadKey(entry.threadRef) === scopedThreadKey(ref)
+          ) {
+            closedViews.remove(entry.id);
+          }
+        }
       });
     }
   };
