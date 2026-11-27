@@ -34,6 +34,7 @@ const reactTests = [
   "src/features/pull-requests/usePullRequestList.test.tsx",
   "src/features/pull-requests/PullRequestInlineCommentScreen.test.tsx",
   "src/features/pull-requests/PullRequestFilterSearchScreen.test.tsx",
+  "src/features/issues/IssuesScreen.test.tsx",
   "src/components/ui/AppBar.android.test.tsx",
   "src/components/ui/AndroidAnchoredMenu.android.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
