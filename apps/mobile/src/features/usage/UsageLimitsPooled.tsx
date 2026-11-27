@@ -8,6 +8,7 @@ import {
   collectLimitAccounts,
   collectLimitPools,
   displayLimitWindows,
+  formatSpend,
   paceRemainingPercent,
   remainingPercent,
   type LimitAccount,
@@ -197,6 +198,13 @@ function PoolWindowCard({
   const inlineReset = wide && segmentWidth >= 150;
   const inlineName = wide && segmentWidth >= 220;
   const nextRefill = pool.resets.find((reset) => reset.at > now && reset.restoresPercent > 0);
+  // With several accounts, each account screen carries its own amounts.
+  const spent = pool.columns.length === 1 ? formatSpend(pool.members[0]!.window) : null;
+  const spentLine = spent ? (
+    <Text className="text-xs tabular-nums text-foreground-muted">
+      {gt("{spent} spent", { spent })}
+    </Text>
+  ) : null;
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsUsageAccount", {
       accountKey: account.key,
@@ -452,6 +460,7 @@ function PoolWindowCard({
         <View className="w-44 gap-1">{summary}</View>
         <View className="min-w-0 flex-1 gap-1">
           {bar}
+          {spentLine}
           {inlineLabels ? null : legend}
         </View>
       </View>
@@ -461,6 +470,7 @@ function PoolWindowCard({
     <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
       {summary}
       {bar}
+      {spentLine}
       {legend}
     </View>
   );
@@ -687,6 +697,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   <Var>{remainingPercent(window)}</Var>% left
                 </T>
               </Text>
+              {window.spend ? (
+                <Text selectable className="text-sm tabular-nums text-foreground-muted">
+                  {gt("{spent} spent", { spent: formatSpend(window) ?? "" })}
+                </Text>
+              ) : null}
               {window.resetsAt ? (
                 <Text selectable className="text-sm text-foreground-muted">
                   <T>
