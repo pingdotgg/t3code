@@ -78,6 +78,8 @@
         "@t3tools/web",
         "ffi-rs",
         "transcribe-cpp",
+        // Resolved on disk to read and copy its prebuilt files.
+        "@openuidev/browser-bundle",
       ],
     },
     "apps/desktop": {

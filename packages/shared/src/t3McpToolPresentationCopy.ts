@@ -118,6 +118,7 @@ const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
   ["Send attachments", msg("Send attachments")],
   ["Preview an HTML page", msg("Preview an HTML page")],
   ["Render an HTML page", msg("Render an HTML page")],
+  ["Read the OpenUI guide", msg("Read the OpenUI guide")],
   ["Send a message", msg("Send a message")],
 ]);
 

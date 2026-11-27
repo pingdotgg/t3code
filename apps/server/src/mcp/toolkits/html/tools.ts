@@ -24,6 +24,10 @@ const HtmlPath = Schema.String.annotate({
   description: "Absolute .html file path.",
 });
 
+const OpenUi = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100_000)).annotate({
+  description: "OpenUI Lang program, instead of html or path. Read openui_guide first.",
+});
+
 const PAGE_RULES =
   "Self-contained: inline <style> and <script>. Local images as absolute paths are inlined. Remote URLs load as-is.";
 
@@ -32,6 +36,7 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
   parameters: Schema.Struct({
     path: Schema.optional(HtmlPath),
     html: Schema.optional(Html),
+    openui: Schema.optional(OpenUi),
     width: Schema.optional(
       Schema.Int.annotate({
         description: `CSS pixels, 240 to 1600. Default ${HTML_RENDER_COLUMN_WIDTH}. Use about 390 for phones.`,
@@ -77,10 +82,11 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
 
 // This affects only the caller's thread, not its workspace, so read-only sandboxes and plan mode may use it.
 const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
-  description: `Show a finished HTML page (chart, diagram, mockup) inline in this thread, above your final reply. Do not announce or restate the page. Frame fits height to ${HTML_RENDER_MAX_FIT_HEIGHT}px. On mobile, content past the given height scrolls. ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
+  description: `Show a finished HTML page (chart, diagram, mockup) inline in this thread, above your final reply. For cards, tables, and standard charts, openui is shorter than HTML. Do not announce or restate the page. Frame fits height to ${HTML_RENDER_MAX_FIT_HEIGHT}px. On mobile, content past the given height scrolls. ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
   parameters: Schema.Struct({
     path: Schema.optional(HtmlPath),
     html: Schema.optional(Html),
+    openui: Schema.optional(OpenUi),
     title: Schema.String.check(
       Schema.isMinLength(1),
       Schema.isMaxLength(HTML_RENDER_MAX_TITLE_LENGTH),
@@ -113,8 +119,25 @@ const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
   .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
+const OpenUiGuideTool = Tool.make("openui_guide", {
+  description:
+    "Read how to write an OpenUI Lang program for the openui parameter of html_preview and html_render: syntax and components.",
+  success: Schema.Struct({ guide: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
+})
+  .annotate(Tool.Title, "OpenUI guide")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
 export const HtmlPreviewToolkit = Toolkit.make(HtmlPreviewTool);
 
-export const HtmlRenderToolkit = Toolkit.make(HtmlRenderTool);
+export const HtmlRenderToolkit = Toolkit.make(HtmlRenderTool, OpenUiGuideTool);
 
-export const HtmlToolkit = Toolkit.make(HtmlPreviewTool, HtmlRenderTool);
+export const HtmlToolkit = Toolkit.make(HtmlPreviewTool, HtmlRenderTool, OpenUiGuideTool);

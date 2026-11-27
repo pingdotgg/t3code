@@ -73,6 +73,7 @@ import {
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
 import { isProviderCommand, outputInstructions } from "./runOutput.ts";
+import { withVisualReplyInstructions } from "./visualReply.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1256,12 +1257,15 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const messageText = withMessageSenderNote(
+      const messageText = withVisualReplyInstructions(
         providerMessage,
-        projectComposerContextForProvider({
-          text: providerMessage.text,
-          records: providerMessage.context?.records ?? [],
-        }),
+        withMessageSenderNote(
+          providerMessage,
+          projectComposerContextForProvider({
+            text: providerMessage.text,
+            records: providerMessage.context?.records ?? [],
+          }),
+        ),
       );
       const slashCommand = isSlashCommandMessage(providerMessage);
       const goalDriver =

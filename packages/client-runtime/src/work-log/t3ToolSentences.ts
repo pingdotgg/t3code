@@ -866,6 +866,14 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
+    "Read\nReading\nRead\nthe OpenUI guide",
+    {
+      detail: msg(
+        "{status, select, inProgress {Reading the OpenUI guide} completed {Read the OpenUI guide} failed {Failed to read the OpenUI guide} declined {Declined to read the OpenUI guide} stopped {Stopped reading the OpenUI guide} other {Reading the OpenUI guide}}",
+      ),
+    },
+  ],
+  [
     "Send\nSending\nSent\na message",
     {
       detail: msg(

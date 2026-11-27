@@ -23,6 +23,8 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
+  # Its postinstall only sends install telemetry.
+  "@openuidev/lang-core": false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.19-9a8bc858.tgz": true
   sharp: true
   utf-8-validate: false

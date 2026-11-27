@@ -31,6 +31,7 @@ import {
 } from "./ComposerModelEffort";
 import type { useComposerProviderModel } from "./useComposerProviderModel";
 import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
+import { ComposerVisualReplyToggle } from "./ComposerVisualReplyToggle";
 
 /**
  * The composer footer controls: the model picker (which also holds effort, speed and
@@ -266,6 +267,12 @@ export function ComposerControlsBar(props: {
   ) : (
     <>
       {composerModelPicker}
+
+      <ComposerVisualReplyToggle
+        environmentId={environmentId}
+        size={controlSize}
+        hidden={composerControlsHidden}
+      />
 
       <>
         {restingBlockDefs.map((def, index) => {

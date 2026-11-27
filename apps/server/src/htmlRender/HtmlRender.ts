@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Finds the OpenUI package in a source checkout.
+import * as NodeModule from "node:module";
+
 import type { ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -36,6 +39,7 @@ import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
+import { OPENUI_ASSET_FILES, openUiPage, openUiProblems } from "./openUi.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 
@@ -129,13 +133,40 @@ export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreErro
   }
 }
 
+export class HtmlRenderOpenUiError extends Schema.TaggedError<HtmlRenderOpenUiError>()(
+  "HtmlRenderOpenUiError",
+  { problems: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `The OpenUI program does not render as written. ${this.problems.join(" ")} openui_guide lists the syntax and components.`;
+  }
+}
+
+export class HtmlRenderOpenUiUnavailableError extends Schema.TaggedError<HtmlRenderOpenUiUnavailableError>()(
+  "HtmlRenderOpenUiUnavailableError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "This T3 Code install is missing the OpenUI renderer. Pass html instead.";
+  }
+}
+
 export type HtmlRenderPrepareError =
   | HtmlRenderImagesNotFoundError
   | HtmlRenderImageTooLargeError
   | HtmlRenderPageTooLargeError
   | HtmlRenderViewportHeightError;
 
-export type HtmlRenderSource = { readonly html: string } | { readonly path: string };
+export type HtmlRenderSource =
+  | { readonly html: string }
+  | { readonly path: string }
+  | { readonly openui: string };
+
+type HtmlRenderSourceError =
+  | HtmlRenderFileError
+  | HtmlRenderFileTooLargeError
+  | HtmlRenderOpenUiError
+  | HtmlRenderOpenUiUnavailableError;
 
 export interface HtmlPreview {
   readonly png: string;
@@ -158,10 +189,7 @@ export class HtmlRender extends Context.Service<
       },
     ) => Effect.Effect<
       HtmlRenderReference,
-      | HtmlRenderFileError
-      | HtmlRenderFileTooLargeError
-      | HtmlRenderPrepareError
-      | HtmlRenderStoreError
+      HtmlRenderSourceError | HtmlRenderPrepareError | HtmlRenderStoreError
     >;
     readonly preview: (
       input: HtmlRenderSource & {
@@ -170,8 +198,7 @@ export class HtmlRender extends Context.Service<
       },
     ) => Effect.Effect<
       HtmlPreview,
-      | HtmlRenderFileError
-      | HtmlRenderFileTooLargeError
+      | HtmlRenderSourceError
       | Exclude<HtmlRenderPrepareError, HtmlRenderImagesNotFoundError>
       | PreviewBrowser.PreviewBrowserInstallError
       | PreviewBrowser.PreviewBrowserInstallingError
@@ -499,8 +526,40 @@ const make = Effect.gen(function* () {
     return HTML_DOCUMENT_START.test(html) ? html : yield* unreadable;
   });
 
+  // A built server ships the renderer beside itself; a source checkout has the package.
+  const readOpenUiAssets = Effect.gen(function* () {
+    const bundled = path.join(import.meta.dirname, "openui");
+    const directory = (yield* fileSystem.exists(path.join(bundled, OPENUI_ASSET_FILES.script)))
+      ? bundled
+      : path.dirname(
+          yield* Effect.try({
+            try: () =>
+              NodeModule.createRequire(import.meta.url).resolve("@openuidev/browser-bundle"),
+            catch: (cause) => new HtmlRenderOpenUiUnavailableError({ cause }),
+          }),
+        );
+    return yield* Effect.all({
+      script: fileSystem.readFileString(path.join(directory, OPENUI_ASSET_FILES.script)),
+      styles: fileSystem.readFileString(path.join(directory, OPENUI_ASSET_FILES.styles)),
+    });
+  }).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) => Effect.fail(new HtmlRenderOpenUiUnavailableError({ cause })),
+    }),
+  );
+
+  const buildOpenUiPage = Effect.fn("HtmlRender.buildOpenUiPage")(function* (program: string) {
+    const problems = openUiProblems(program);
+    if (problems.length > 0) return yield* new HtmlRenderOpenUiError({ problems });
+    return openUiPage(program, yield* readOpenUiAssets);
+  });
+
   const readSource = (input: HtmlRenderSource) =>
-    "path" in input ? readPageFile(input.path) : Effect.succeed(input.html);
+    "path" in input
+      ? readPageFile(input.path)
+      : "openui" in input
+        ? buildOpenUiPage(input.openui)
+        : Effect.succeed(input.html);
 
   // The bootstrap goes in first so its head scan never runs over inlined image data.
   const inline = (html: string) =>
@@ -554,7 +613,8 @@ const make = Effect.gen(function* () {
           .recordHtmlRender(
             input.threadId,
             {
-              html: source,
+              // A lost tool result is matched to its page by the input the agent passed.
+              ...("openui" in input ? { openui: input.openui } : { html: source }),
               path: "path" in input ? input.path : undefined,
               title: input.title,
               height: input.height,
