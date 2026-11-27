@@ -914,7 +914,7 @@
   "1c7254ae11bf7cdc": "{days} j",
   "352655bb7a196642": "{kind, select, sideChat {{need, select, input {La discussion annexe attend une réponse} approval {La discussion annexe attend une approbation} other {La discussion annexe a besoin de vous}}} other {{need, select, input {Le sous-agent attend une réponse} approval {Le sous-agent attend une approbation} other {Le sous-agent a besoin de vous}}}}",
   "e931fd397ade526b": "{kind, select, sideChat {{need, select, input {{count} discussions annexes attendent une réponse} approval {{count} discussions annexes attendent une approbation} other {{count} discussions annexes ont besoin de vous}}} subagent {{need, select, input {{count} sous-agents attendent une réponse} approval {{count} sous-agents attendent une approbation} other {{count} sous-agents ont besoin de vous}}} other {{need, select, input {{count} fils attendent une réponse} approval {{count} fils attendent une approbation} other {{count} fils ont besoin de vous}}}}",
-  "4bed196a655ab14f": "{live} agents sur {total} en cours",
+  "f7b40089dae502b6": "{total, plural, one {{live} agent sur {total} en cours} other {{live} agents sur {total} en cours}}",
   "ba1727ddc7a0a0b6": "{count, plural, one {{count} agent terminé} other {{count} agents terminés}}",
   "4dd09c829329a994": "Message en file d’attente",
   "3f0b962160edbe6d": "Impossible de synchroniser le fil.",

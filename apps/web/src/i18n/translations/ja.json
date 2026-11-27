@@ -914,7 +914,7 @@
   "1c7254ae11bf7cdc": "{days}日",
   "352655bb7a196642": "{kind, select, sideChat {{need, select, input {サイドチャットが入力を求めています} approval {サイドチャットが承認を求めています} other {サイドチャットが対応を求めています}}} other {{need, select, input {サブエージェントが入力を求めています} approval {サブエージェントが承認を求めています} other {サブエージェントが対応を求めています}}}}",
   "e931fd397ade526b": "{kind, select, sideChat {{need, select, input {{count} 件のサイドチャットが入力を求めています} approval {{count} 件のサイドチャットが承認を求めています} other {{count} 件のサイドチャットが対応を求めています}}} subagent {{need, select, input {{count} 個のサブエージェントが入力を求めています} approval {{count} 個のサブエージェントが承認を求めています} other {{count} 個のサブエージェントが対応を求めています}}} other {{need, select, input {{count} 件のスレッドが入力を求めています} approval {{count} 件のスレッドが承認を求めています} other {{count} 件のスレッドが対応を求めています}}}}",
-  "4bed196a655ab14f": "{total} 個中 {live} 個のエージェントが作業中",
+  "f7b40089dae502b6": "{total} 個中 {live} 個のエージェントが作業中",
   "ba1727ddc7a0a0b6": "{count, plural, other {{count} 個のエージェントが完了}}",
   "4dd09c829329a994": "キュー内のメッセージ",
   "3f0b962160edbe6d": "スレッドを同期できませんでした。",

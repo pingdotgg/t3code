@@ -913,7 +913,7 @@
   "1c7254ae11bf7cdc": "{days}d",
   "352655bb7a196642": "{kind, select, sideChat {{need, select, input {Side chat needs input} approval {Side chat needs approval} other {Side chat needs you}}} other {{need, select, input {Subagent needs input} approval {Subagent needs approval} other {Subagent needs you}}}}",
   "e931fd397ade526b": "{kind, select, sideChat {{need, select, input {{count} side chats need input} approval {{count} side chats need approval} other {{count} side chats need you}}} subagent {{need, select, input {{count} subagents need input} approval {{count} subagents need approval} other {{count} subagents need you}}} other {{need, select, input {{count} threads need input} approval {{count} threads need approval} other {{count} threads need you}}}}",
-  "4bed196a655ab14f": "{live} of {total} agents working",
+  "f7b40089dae502b6": "{total, plural, one {{live} of {total} agent working} other {{live} of {total} agents working}}",
   "ba1727ddc7a0a0b6": "{count, plural, one {{count} agent done} other {{count} agents done}}",
   "4dd09c829329a994": "Queued message",
   "3f0b962160edbe6d": "Could not synchronize the thread.",

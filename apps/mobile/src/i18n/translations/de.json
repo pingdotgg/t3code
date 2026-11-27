@@ -913,7 +913,7 @@
   "1c7254ae11bf7cdc": "{days} T.",
   "352655bb7a196642": "{kind, select, sideChat {{need, select, input {Nebenchat wartet auf Eingabe} approval {Nebenchat wartet auf Genehmigung} other {Nebenchat braucht dich}}} other {{need, select, input {Subagent wartet auf Eingabe} approval {Subagent wartet auf Genehmigung} other {Subagent braucht dich}}}}",
   "e931fd397ade526b": "{kind, select, sideChat {{need, select, input {{count} Nebenchats warten auf Eingabe} approval {{count} Nebenchats warten auf Genehmigung} other {{count} Nebenchats brauchen dich}}} subagent {{need, select, input {{count} Subagenten warten auf Eingabe} approval {{count} Subagenten warten auf Genehmigung} other {{count} Subagenten brauchen dich}}} other {{need, select, input {{count} Threads warten auf Eingabe} approval {{count} Threads warten auf Genehmigung} other {{count} Threads brauchen dich}}}}",
-  "4bed196a655ab14f": "{live} von {total} Agenten arbeiten",
+  "f7b40089dae502b6": "{total, plural, one {{live} von {total} Agenten arbeitet} other {{live} von {total} Agenten arbeiten}}",
   "ba1727ddc7a0a0b6": "{count, plural, one {{count} Agent fertig} other {{count} Agenten fertig}}",
   "4dd09c829329a994": "Eingereihte Nachricht",
   "3f0b962160edbe6d": "Der Thread konnte nicht synchronisiert werden.",
