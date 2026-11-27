@@ -9656,7 +9656,7 @@
   "42828d2fd1f35806": "驻留内存",
   "e97f1b37426da9ff": "进程峰值合计 {bytes}",
   "3dd6eb5644a6ed8b": "进程数",
-  "85f0adb1de45cbc1": "启动 {processStarts} 次 · 退出 {processExits} 次",
+  "57320c95780c065c": "启动 {processStarts} 次 · 退出 {processExits} 次",
   "0f0ae2813abd70e4": "读取吞吐量",
   "dc52330df5cc4586": "已观测 {bytes}",
   "d032b2addb6f00dc": "写入吞吐量",

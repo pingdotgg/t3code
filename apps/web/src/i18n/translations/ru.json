@@ -9641,7 +9641,7 @@
   "42828d2fd1f35806": "Резидентная память",
   "e97f1b37426da9ff": "{bytes} суммарных пиков процессов",
   "3dd6eb5644a6ed8b": "Число процессов",
-  "85f0adb1de45cbc1": "{processStarts} запусков · {processExits} завершений",
+  "57320c95780c065c": "{processStarts, plural, one {{processStarts} запуск} few {{processStarts} запуска} many {{processStarts} запусков} other {{processStarts} запуска}} · {processExits, plural, one {{processExits} завершение} few {{processExits} завершения} many {{processExits} завершений} other {{processExits} завершения}}",
   "0f0ae2813abd70e4": "Скорость чтения",
   "dc52330df5cc4586": "Наблюдалось {bytes}",
   "d032b2addb6f00dc": "Скорость записи",
