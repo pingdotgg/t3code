@@ -125,16 +125,19 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     yield* secureStorage.setItem(key, encoded);
   });
 
-  const loadOrCreateAgentAwarenessDeviceId = Effect.gen(function* () {
-    const existing = yield* secureStorage.getItem(AGENT_AWARENESS_DEVICE_ID_KEY);
+  const loadOrCreateRandomId = Effect.fn("MobileStorage.loadOrCreateRandomId")(function* (
+    key: string,
+  ) {
+    const existing = yield* secureStorage.getItem(key);
     if (existing?.trim()) return existing;
-    const deviceId = yield* Effect.tryPromise({
+    const created = yield* Effect.tryPromise({
       try: () => import("../lib/uuid").then(({ uuidv4 }) => uuidv4()),
       catch: (cause) => new MobileDeviceIdGenerationError({ cause }),
     });
-    yield* secureStorage.setItem(AGENT_AWARENESS_DEVICE_ID_KEY, deviceId);
-    return deviceId;
-  }).pipe(deviceIdLock.withPermits(1));
+    yield* secureStorage.setItem(key, created);
+    return created;
+  }, deviceIdLock.withPermits(1));
+  const loadOrCreateAgentAwarenessDeviceId = loadOrCreateRandomId(AGENT_AWARENESS_DEVICE_ID_KEY);
 
   const loadAgentAwarenessDeviceId = secureStorage
     .getItem(AGENT_AWARENESS_DEVICE_ID_KEY)

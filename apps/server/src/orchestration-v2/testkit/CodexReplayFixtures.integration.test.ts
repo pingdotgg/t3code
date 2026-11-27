@@ -51,6 +51,33 @@ describe("Codex replay fixtures", () => {
           }),
     }),
   );
+
+  it.effect.each([true, false])("records prompt delivery after Stop (received: %s)", (received) =>
+    Effect.gen(function* () {
+      const fixture = findReplayFixture("turn_interrupt")!;
+      const driver = fixture.providers.find((provider) => provider.driver === "codex")!;
+      const result = yield* runReplayFixture({
+        fixtureName: fixture.name,
+        buildInput: fixture.buildInput,
+        driver,
+        harness: CodexOrchestratorReplayHarness,
+        materializeWorkspace: (transcript, workspace) =>
+          Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
+        // In the early-Stop trace Codex sends the same terminal notification without the user item.
+        transformTranscript: (transcript) => ({
+          ...transcript,
+          entries: transcript.entries.filter(
+            (entry) =>
+              received ||
+              entry.type !== "emit_inbound" ||
+              (entry.label !== "item/started" && entry.label !== "item/completed"),
+          ),
+        }),
+      });
+      const projection = [...result.projections.values()][0];
+      assert.equal(projection?.providerTurns[0]?.promptDropped, received ? undefined : true);
+    }),
+  );
 });
 
 it.effect(

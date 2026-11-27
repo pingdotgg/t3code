@@ -109,6 +109,7 @@ import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
 import { installAppUpdateChecks } from "./features/updates/app-updates";
 import { publishAppLockStrings } from "./features/app-lock/appLock";
+import { perfProbe } from "./features/development/perf-probe-hooks";
 
 import "../global.css";
 
@@ -309,7 +310,12 @@ function AppContent() {
       <AppLockLanguage />
       <SubscriptionUsageCoordinator />
       <ConnectDeviceApprovalCoordinator />
-      <GestureHandlerRootView className="flex-1">
+      <GestureHandlerRootView
+        className="flex-1"
+        onTouchStartCapture={perfProbe?.touchStart}
+        onTouchEndCapture={perfProbe?.touchEnd}
+        onTouchCancelCapture={perfProbe?.touchEnd}
+      >
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>
             <StatusBar barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"} />

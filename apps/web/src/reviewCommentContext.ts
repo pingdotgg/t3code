@@ -440,7 +440,7 @@ function formatDiffReviewRangeLabel(lines: ReadonlyArray<DiffReviewLine>): strin
   if (!firstLine || !lastLine) return "line";
   const firstNumber = firstLine.newLineNumber ?? firstLine.oldLineNumber;
   const lastNumber = lastLine.newLineNumber ?? lastLine.oldLineNumber;
-  if (firstNumber === null || lastNumber === null) {
+  if (firstNumber === null || lastNumber === null || firstNumber > lastNumber) {
     return lines.length === 1 ? "line" : `${lines.length} lines`;
   }
 

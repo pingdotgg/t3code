@@ -7,15 +7,14 @@ import {
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { importPastedComposerText, readPastedComposerClipboard } from "./composerInlineTokenPaste";
 
 const thread = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
 };
-const clipboard = (data: Record<string, string>) => ({
-  getData: (type: string) => data[type] ?? "",
-});
+const clipboard = (data: Record<string, string>) =>
+  readPastedComposerClipboard({ getData: (type) => data[type] ?? "" });
 const chip = (title: string) =>
   `[${title}](t3-context://v1/thread/${threadContextRecord(thread, title).contextId})`;
 
@@ -48,6 +47,10 @@ describe("importPastedComposerText", () => {
       importAll([]),
     );
     expect(text).toBe(chip("Login"));
+    const withBrackets = clipboard({
+      "text/plain": String.raw`[Fix \[login\]](https://app.t3.codes/threads/env-1/thread-1)`,
+    });
+    expect(importPastedComposerText(withBrackets, importAll([]))).toBe(chip("Fix login"));
   });
 
   it("keeps the link when the composer cannot take the thread", () => {
@@ -55,6 +58,15 @@ describe("importPastedComposerText", () => {
     expect(importPastedComposerText(clipboard({ "text/plain": pasted }), () => new Map())).toBe(
       pasted,
     );
+  });
+
+  it("drops a leading BOM so a fenced link example stays literal and the link after it a chip", () => {
+    const fenced = "~~~\n<t3-thread://v2/env-1/thread-1>\n~~~";
+    const text = importPastedComposerText(
+      clipboard({ "text/plain": `\uFEFF${fenced}\n<t3-thread://v2/env-1/thread-1>` }),
+      importAll([]),
+    );
+    expect(text).toBe(`${fenced}\n${chip("Thread")}`);
   });
 
   it("imports CRLF and CR clipboard text with LF line breaks", () => {

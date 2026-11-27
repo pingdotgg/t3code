@@ -265,13 +265,17 @@ export const make = Effect.gen(function* () {
 
     getIssue: Effect.fn("GitHubIssueTracker.getIssue")(function* (input) {
       const { owner, name, number } = yield* issue(input, "getIssue");
-      const [result, statusRead] = yield* Effect.all(
-        [
-          client.IssueDetail({ owner, name, number }).pipe(graphql(input.host, "getIssue")),
-          issueStatuses(input, owner, name, number, "getIssue"),
-        ],
-        { concurrency: 2 },
+      const legacy = client.IssueDetail({ owner, name, number }).pipe(
+        graphql(input.host, "getIssue"),
+        Effect.map((result) => ({ result, statusRead: null })),
       );
+      const { result, statusRead } = yield* asksStatuses(input.host)
+        ? client.IssueDetailWithStatus({ owner, name, number }).pipe(
+            graphql(input.host, "getIssue"),
+            Effect.map((result) => ({ result, statusRead: result.repository })),
+            Effect.catchIf(statusesRefused, () => legacy),
+          )
+        : legacy;
       const repository = result.repository;
       const raw = repository?.issue;
       if (repository == null || raw == null) return yield* notFound("getIssue");

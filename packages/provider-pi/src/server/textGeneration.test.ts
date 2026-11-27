@@ -199,6 +199,34 @@ it.effect("reports Pi's turn error when the reply is empty", () =>
   }),
 );
 
+it.effect("reports a provider failure when Pi has already streamed valid commit text", () =>
+  Effect.gen(function* () {
+    const reply = JSON.stringify({ subject: "Update README", body: "" });
+    const result = yield* generateCommitMessage(
+      [
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: reply }],
+            stopReason: "error",
+            errorMessage: "Stream ended without finish_reason",
+          },
+        },
+      ],
+      reply,
+    ).pipe(Effect.result);
+
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(
+        result.failure.detail,
+        "Pi could not generate text: the model provider reported an error.",
+      );
+    }
+  }),
+);
+
 it.effect("keeps Pi's raw error text out of the error", () =>
   Effect.gen(function* () {
     const error = yield* generateCommitMessage([

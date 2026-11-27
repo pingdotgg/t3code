@@ -1,0 +1,161 @@
+diff --git a/ios/Fabric/ExpoFabricView.swift b/ios/Fabric/ExpoFabricView.swift
+index f30fc12f39fc97612a818046559362a247119049..a69264456bb86e18894ed19f7a43f18d6a577357 100644
+--- a/ios/Fabric/ExpoFabricView.swift
++++ b/ios/Fabric/ExpoFabricView.swift
+@@ -193,8 +193,16 @@ open class ExpoFabricView: ExpoFabricViewObjC, AnyExpoView {
+   internal static func injectInitializer(appContext: AppContext, moduleName: String, viewName: String, toViewClass viewClass: AnyClass) {
+     // The default initializer for native views. It will be called by Fabric.
+     let newBlock: @convention(block) () -> Any = {[weak appContext] in
+-      guard let appContext, let moduleHolder = appContext.moduleRegistry.get(moduleHolderForName: moduleName) else {
+-        fatalError(Exceptions.AppContextLost().reason)
++      guard let appContext else {
++        // A transaction from an outgoing surface can drain after its runtime is gone.
++        // Runtime-scoped class names keep this inert teardown view out of the new host.
++        log.warn("Ignoring a view mount after its app context was released: \(moduleName).\(viewName)")
++        let view = ExpoFabricView(appContext: nil)
++        _ = Unmanaged.passRetained(view)
++        return view
++      }
++      guard let moduleHolder = appContext.moduleRegistry.get(moduleHolderForName: moduleName) else {
++        fatalError("Cannot find module '\(moduleName)' in its app context")
+       }
+       guard let view = moduleHolder.definition.views[viewName]?.createView(appContext: appContext) else {
+         fatalError("Cannot create a view '\(viewName)' from module '\(moduleName)'")
+diff --git a/ios/Legacy/Services/Permissions/EXPermissionsService.m b/ios/Legacy/Services/Permissions/EXPermissionsService.m
+index 28c983d6552cff7462e9b0df7fd4925051a6ceed..8b8ef70a2ae1a93b63ba4334717b02d5c1911961 100644
+--- a/ios/Legacy/Services/Permissions/EXPermissionsService.m
++++ b/ios/Legacy/Services/Permissions/EXPermissionsService.m
+@@ -32,8 +32,11 @@ NSString * const EXPermissionExpiresNever = @"never";
+ 
+ - (void)registerRequesters:(NSArray<id<EXPermissionsRequester>> *)newRequesters {
+   for (id<EXPermissionsRequester> requester in newRequesters) {
+-    [_requesters setObject:requester forKey:[[requester class] permissionType]];
+-    [_requestersByClass setObject:requester forKey:[requester class]];
++    NSString *permissionType = [[requester class] permissionType];
++    @synchronized (self) {
++      [_requesters setObject:requester forKey:permissionType];
++      [_requestersByClass setObject:requester forKey:[requester class]];
++    }
+   }
+ }
+ 
+@@ -162,12 +165,16 @@ NSString * const EXPermissionExpiresNever = @"never";
+ 
+ - (id<EXPermissionsRequester>)getPermissionRequesterForType:(NSString *)type
+ {
+-  return _requesters[type];
++  @synchronized (self) {
++    return _requesters[type];
++  }
+ }
+ 
+ - (id<EXPermissionsRequester>)getPermissionRequesterForClass:(Class)requesterClass
+ {
+-  return [_requestersByClass objectForKey:requesterClass];
++  @synchronized (self) {
++    return [_requestersByClass objectForKey:requesterClass];
++  }
+ }
+ 
+ @end
+diff --git a/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt b/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
+index c732ab419395526d42a51df664e63afe88a79302..2e3f40e1f966167584ceb853faad8f84889a9b74 100644
+--- a/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
++++ b/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
+@@ -3,6 +3,7 @@ package expo.modules.kotlin.views
+ import android.content.Context
+ import android.graphics.Canvas
+ import android.widget.LinearLayout
++import androidx.core.view.OneShotPreDrawListener
+ import androidx.annotation.UiThread
+ import com.facebook.react.uimanager.BackgroundStyleApplicator
+ import com.facebook.react.uimanager.StateWrapper
+@@ -47,12 +48,27 @@ abstract class ExpoView(
+     layout(left, top, right, bottom)
+   }
+ 
++  private var isLayoutScheduled = false
++
+   override fun requestLayout() {
+     super.requestLayout()
+-    if (shouldUseAndroidLayout) {
++    if (shouldUseAndroidLayout && !isLayoutScheduled) {
+       // We need to force measure and layout, because React Native doesn't do it for us.
+-      post { measureAndLayout() }
++      // A posted layout runs after the frame being prepared is drawn, so a view that changes in a
++      // mount would show unlaid-out content for a frame. The pre-draw listener lays it out before
++      // that frame instead; the post covers a request that no frame follows.
++      isLayoutScheduled = true
++      OneShotPreDrawListener.add(this) { runScheduledLayout() }
++      post { runScheduledLayout() }
++    }
++  }
++
++  private fun runScheduledLayout() {
++    if (!isLayoutScheduled) {
++      return
+     }
++    isLayoutScheduled = false
++    measureAndLayout()
+   }
+ 
+   override fun forceLayout() {
+diff --git a/android/src/main/java/expo/modules/kotlin/activityresult/AppContextActivityResultRegistry.kt b/android/src/main/java/expo/modules/kotlin/activityresult/AppContextActivityResultRegistry.kt
+index 4955e93..fbb8a52 100644
+--- a/android/src/main/java/expo/modules/kotlin/activityresult/AppContextActivityResultRegistry.kt
++++ b/android/src/main/java/expo/modules/kotlin/activityresult/AppContextActivityResultRegistry.kt
+@@ -231,7 +231,9 @@ class AppContextActivityResultRegistry(
+         launchedKeys.add(key)
+ 
+         try {
+-          onLaunch(requestCode, contract, input)
++          // Starting an Activity walks the window's views, which races the UI thread when run from
++          // the module's IO dispatcher (a view removed mid-walk throws a NullPointerException).
++          runOnMainThread { onLaunch(requestCode, contract, input) }
+         } catch (e: Exception) {
+           launchedKeys.remove(key)
+           throw e
+@@ -255,24 +257,28 @@ class AppContextActivityResultRegistry(
+     fallbackCallback: AppContextActivityResultFallbackCallback<I, O>
+   ): Int? {
+     val liveActivity = activity
++    runOnMainThread { register(key, liveActivity, contract, fallbackCallback) }
++    return keyToRequestCode[key]
++  }
++
++  private fun runOnMainThread(block: () -> Unit) {
+     if (Looper.myLooper() == Looper.getMainLooper()) {
+-      register(key, liveActivity, contract, fallbackCallback)
+-    } else {
+-      val registered = CountDownLatch(1)
+-      var failure: Throwable? = null
+-      Handler(Looper.getMainLooper()).post {
+-        try {
+-          register(key, liveActivity, contract, fallbackCallback)
+-        } catch (e: Throwable) {
+-          failure = e
+-        } finally {
+-          registered.countDown()
+-        }
++      block()
++      return
++    }
++    val done = CountDownLatch(1)
++    var failure: Throwable? = null
++    Handler(Looper.getMainLooper()).post {
++      try {
++        block()
++      } catch (e: Throwable) {
++        failure = e
++      } finally {
++        done.countDown()
+       }
+-      registered.await()
+-      failure?.let { throw it }
+     }
+-    return keyToRequestCode[key]
++    done.await()
++    failure?.let { throw it }
+   }
+ 
+   /**

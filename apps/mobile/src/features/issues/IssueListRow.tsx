@@ -47,7 +47,7 @@ export const IssueListRow = memo(function IssueListRow(props: {
           gt("by {author}", { author: item.author?.login ?? gt("unknown author") }),
           item.labels.length ? item.labels.map((label) => label.name).join(", ") : null,
           item.commentCount
-            ? gt("{count, plural, other {{count} comments}}", {
+            ? gt("{count, plural, one {{count} comment} other {{count} comments}}", {
                 count: item.commentCount,
               })
             : null,

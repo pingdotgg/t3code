@@ -670,6 +670,10 @@ export interface ProviderSettingsFormAnnotation {
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
+  /** Shows the field only while the named select field holds one of these values. */
+  readonly visibleWhen?:
+    | { readonly field: string; readonly values: ReadonlyArray<string> }
+    | undefined;
 }
 
 export function secretSettingsFields(schema: {
@@ -897,6 +901,10 @@ export const AntigravityAuthMethod = Schema.Literals(
   ANTIGRAVITY_AUTH_METHODS.map((method) => method.value),
 );
 export type AntigravityAuthMethod = typeof AntigravityAuthMethod.Type;
+const antigravityGcpFieldVisibility = {
+  field: "authMethod",
+  values: ["oauth-business", "agent-platform"],
+} satisfies ProviderSettingsFormAnnotation["visibleWhen"];
 
 export const AntigravitySettings = makeProviderSettingsSchema(
   {
@@ -909,7 +917,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Sign-in method",
         description:
-          "Google accounts use your subscription; API keys and Agent Platform bill usage.",
+          "Google account and Gemini Enterprise use your existing plan. Gemini API key and Agent Platform charge per use to your key or Google Cloud project.",
         providerSettingsForm: {
           control: "select",
           options: ANTIGRAVITY_AUTH_METHODS,
@@ -927,6 +935,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
           control: "password",
           placeholder: "Optional",
           clearWhenEmpty: "omit",
+          visibleWhen: { field: "authMethod", values: ["gemini-api-key", "agent-platform"] },
         },
       }),
     ),
@@ -936,7 +945,11 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         title: "GCP project",
         description:
           "Required for Gemini Enterprise. Agent Platform uses it when no API key is set.",
-        providerSettingsForm: { placeholder: "my-project-id", clearWhenEmpty: "omit" },
+        providerSettingsForm: {
+          placeholder: "my-project-id",
+          clearWhenEmpty: "omit",
+          visibleWhen: antigravityGcpFieldVisibility,
+        },
       }),
     ),
     gcpLocation: TrimmedString.pipe(
@@ -944,7 +957,11 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "GCP location",
         description: "Region for Gemini Enterprise or Agent Platform.",
-        providerSettingsForm: { placeholder: "us-central1", clearWhenEmpty: "omit" },
+        providerSettingsForm: {
+          placeholder: "us-central1",
+          clearWhenEmpty: "omit",
+          visibleWhen: antigravityGcpFieldVisibility,
+        },
       }),
     ),
     binaryPath: TrimmedString.pipe(
@@ -1382,6 +1399,12 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT = 500;
+export const MAX_WORKFLOW_SKIPPED_RUNS_KEPT = 10_000;
+const WorkflowSkippedRunsKept = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: MAX_WORKFLOW_SKIPPED_RUNS_KEPT }),
+);
+
 const UsageHistoryRetentionDays = Schema.Union([
   Schema.Int.check(Schema.isGreaterThan(0)),
   Schema.Literal("unlimited"),
@@ -1519,6 +1542,10 @@ export const ServerSettings = Schema.Struct({
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Beta: durable workflows from the workflows folder of the T3 home. Off runs none of them. */
   workflowsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Skipped top-level runs kept per workflow; older ones are deleted. */
+  workflowSkippedRunsKept: WorkflowSkippedRunsKept.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT)),
+  ),
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
@@ -1956,6 +1983,7 @@ export const ServerSettingsPatch = Schema.Struct({
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   workflowsEnabled: Schema.optionalKey(Schema.Boolean),
+  workflowSkippedRunsKept: Schema.optionalKey(WorkflowSkippedRunsKept),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({

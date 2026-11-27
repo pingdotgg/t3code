@@ -8,5 +8,5 @@ export type UsageLimitSourceId = typeof UsageLimitSourceId.Type;
  * Picks the poller and response shape: `cliproxy` reads a CLIProxyAPI hub (one entry per pooled
  * auth file); `aiusage` reads a dashboard that polls vendors for accounts not signed in here.
  */
-export const UsageLimitSourceKind = Schema.Literals(["cliproxy", "aiusage"]);
+export const UsageLimitSourceKind = Schema.Literals(["cliproxy", "aiusage", "http"]);
 export type UsageLimitSourceKind = typeof UsageLimitSourceKind.Type;

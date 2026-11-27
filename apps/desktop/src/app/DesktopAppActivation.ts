@@ -377,9 +377,11 @@ export const make = Effect.gen(function* () {
           if (event.isMainFrame && !event.isSameDocument) clearRegisteredRenderer();
         };
         webContents.on("did-start-navigation", onNavigation);
+        webContents.on("render-process-gone", onUnavailable);
         webContents.once("destroyed", onUnavailable);
         detachRendererListeners = () => {
           webContents.removeListener("did-start-navigation", onNavigation);
+          webContents.removeListener("render-process-gone", onUnavailable);
           webContents.removeListener("destroyed", onUnavailable);
         };
       }

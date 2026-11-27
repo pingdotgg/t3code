@@ -318,6 +318,29 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
   Effect.orDie,
 );
 
+// Variables CI services set on their runners. `CI=false` or `CI=0` means not CI.
+const CI_VARIABLES = [
+  "CI",
+  "GITHUB_ACTIONS",
+  "GITLAB_CI",
+  "CIRCLECI",
+  "TRAVIS",
+  "BUILDKITE",
+  "JENKINS_URL",
+  "TEAMCITY_VERSION",
+  "TF_BUILD",
+  "BITBUCKET_BUILD_NUMBER",
+  "CODEBUILD_BUILD_ID",
+  "DRONE",
+  "APPVEYOR",
+] as const;
+
+export const isCiEnvironment = (env: Readonly<Record<string, string | undefined>>) =>
+  CI_VARIABLES.some((name) => {
+    const value = env[name]?.trim().toLowerCase();
+    return value !== undefined && value !== "" && value !== "false" && value !== "0";
+  });
+
 export type SignalName = "traces" | "metrics" | "logs";
 
 export interface SignalEndpoint {

@@ -20,6 +20,7 @@ import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts
 import {
   type FrameDetachWatch,
   type PointerRoute,
+  routeKeysToFrame,
   routeMouseToFrame,
   sendPageCommand,
 } from "./GuestInput.ts";
@@ -500,6 +501,7 @@ export const make = Effect.gen(function* () {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
     const routeHidden = routeMouseToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
+    const routeKeys = routeKeysToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
     // Read when the pointer queue reaches the event: a guest the window shows routes its own input.
     const routeMouse: PointerRoute = (params) =>
       shownTabs.get(keyOf(tab.key)) === true ? Promise.resolve(null) : routeHidden(params);
@@ -521,6 +523,7 @@ export const make = Effect.gen(function* () {
         sessionId,
         routeMouse,
         refuseAnnotated,
+        routeKeys,
       );
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
