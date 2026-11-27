@@ -626,14 +626,16 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const { doc } = editor.state;
     const hasSpace = doc.textBetween(end, end + 1) === " ";
     const blockEnd = doc.resolve(end).end();
+    const hasSecondSpace = end + 1 < blockEnd && /\s/.test(doc.textBetween(end + 1, end + 2));
     // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
     // Mid-text, skipping the space would glue them to the next word instead.
-    const caret = hasSpace && blockEnd === end + 1 ? end + 1 : end;
+    const caret =
+      hasSpace && (blockEnd === end + 1 || (action === "saved" && hasSecondSpace)) ? end + 1 : end;
     // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
     editor
       .chain()
       .setMeta(SILENT_SELECTION_META, sent)
-      .setMeta(citationResumeKey, action === "saved" && hasSpace && end + 1 < blockEnd ? end : null)
+      .setMeta(citationResumeKey, action === "saved" && hasSpace && caret === end ? end : null)
       .focus(caret)
       .run();
   };

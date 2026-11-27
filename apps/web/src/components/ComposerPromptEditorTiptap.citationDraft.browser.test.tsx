@@ -175,6 +175,13 @@ it.each(["blocked", "refusedLater"] as const)(
 it.each([
   { input: "typing", text: "x", expected: " x world", blocked: false },
   { input: "pasting", text: "hello", expected: " hello world", blocked: false },
+  {
+    input: "pasting paragraphs",
+    text: "hello\n\nthere",
+    expected: "\nhello\n\nthere\n world",
+    blocked: false,
+  },
+  { input: "typing", text: "x", expected: " x world", blocked: false, trailing: "  world" },
   { input: "composing", text: "あ", expected: " あ world", blocked: false },
   { input: "leaving the composer", text: "", expected: " world", blocked: false },
   { input: "typing punctuation", text: ",", expected: ", world", blocked: false },
@@ -182,9 +189,9 @@ it.each([
   { input: "typing", text: "x", expected: " x world", blocked: true },
 ] as const)(
   "keeps citation spacing when $input after saving (send blocked: $blocked)",
-  async ({ input, text, expected, blocked }) => {
+  async ({ input, text, expected, blocked, ...row }) => {
     const editorRef = createRef<ComposerPromptEditorHandle>();
-    const promptMidText = `See ${serializeAssistantCitation(citation)} world`;
+    const promptMidText = `See ${serializeAssistantCitation(citation)}${"trailing" in row ? row.trailing : " world"}`;
     await using screen = await render(
       <Composer
         question={false}
@@ -225,7 +232,8 @@ it.each([
         await userEvent.keyboard("{ArrowLeft>6/}");
         await userEvent.keyboard(text);
         break;
-      case "pasting": {
+      case "pasting":
+      case "pasting paragraphs": {
         const clipboardData = new DataTransfer();
         clipboardData.setData("text/plain", text);
         composer
