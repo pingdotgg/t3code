@@ -974,6 +974,9 @@ it.live("a later run that completes, started by another agent, stops the card as
           yield* a.orchestrator.getThreadProjection(threadId),
         ).pendingRuntimeRequest,
       ).toBeNull();
+      expect(
+        (yield* a.projections.getSettlementCandidates(threadId)).map((thread) => thread.id),
+      ).toEqual([threadId]);
     }),
   ),
 );
