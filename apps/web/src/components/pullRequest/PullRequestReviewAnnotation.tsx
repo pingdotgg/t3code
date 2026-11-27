@@ -8,6 +8,7 @@ import type {
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   CheckIcon,
@@ -27,6 +28,7 @@ import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button, InlineButton } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
@@ -41,6 +43,7 @@ import {
 import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
+import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
 import {
@@ -259,6 +262,7 @@ export function ReviewThreadCard({
   canResolve,
   canReact,
   environmentId,
+  threadRef = null,
   reference,
   completionScope,
   pending,
@@ -286,6 +290,7 @@ export function ReviewThreadCard({
   canResolve: boolean;
   canReact: boolean;
   environmentId: EnvironmentId;
+  threadRef?: ScopedThreadRef | null;
   reference: PullRequestRef;
   completionScope: PullRequestCompletionScope | null;
   pending: boolean;
@@ -487,6 +492,15 @@ export function ReviewThreadCard({
           >
             {loadingMore ? gt("Loading...") : gt("Load more comments")}
           </Button>
+        ) : commentCount > comments.length ? (
+          <div className="mt-2">
+            <PullRequestMoreReplies
+              moreReplies={commentCount - comments.length}
+              hasMoreReplies
+              url={comments.find((comment) => comment.url !== null)?.url ?? null}
+              threadRef={threadRef}
+            />
+          </div>
         ) : null}
         {canReply || canResolve || onFix ? (
           <div className="mt-3 flex min-w-0 items-start gap-2">

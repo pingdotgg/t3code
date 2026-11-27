@@ -401,21 +401,19 @@ function PullRequestRowImpl({
                 labelClassName="sr-only @3xl/pr-row-meta:not-sr-only @3xl/pr-row-meta:truncate"
               />
 
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="min-w-12 truncate font-mono text-caption text-dim-foreground" />
-                  }
-                >
-                  {entry.headBranch}
-                </TooltipTrigger>
-                <TooltipPopup>
+              <SharedTooltipTrigger
+                render={
+                  <span className="min-w-12 truncate font-mono text-caption text-dim-foreground" />
+                }
+                label={
                   <span className="flex flex-col gap-0.5">
                     {showProjectTitle ? <span>{entry.repository}</span> : null}
                     <span>{entry.headBranch}</span>
                   </span>
-                </TooltipPopup>
-              </Tooltip>
+                }
+              >
+                {entry.headBranch}
+              </SharedTooltipTrigger>
               {environmentLabel ? (
                 <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
               ) : null}
