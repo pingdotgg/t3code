@@ -30,6 +30,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 import * as DateTime from "effect/DateTime";
@@ -4286,6 +4287,56 @@ describe("OrchestratorMcpService provider resolution", () => {
           Effect.provide(service([timer], null, upserted, hook)),
         );
         assert.equal(converted.webhookUrl, undefined);
+      }),
+    );
+
+    it.effect("lets only a full-access caller give a fallback the agent's own mode", () =>
+      Effect.gen(function* () {
+        const upserted = yield* Ref.make(0);
+        const timer = task({ schedule: { type: "interval", everyMs: 3_600_000 } });
+        const fallbackModelSelections = [
+          {
+            instanceId: ProviderInstanceId.make("claude"),
+            model: "sonnet",
+            options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: "bypassPermissions" }],
+          },
+        ];
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service([timer], null, upserted)),
+        );
+        const created = yield* mcp
+          .scheduleTask(supervisedClient, {
+            projectId,
+            prompt: timer.prompt,
+            schedule: timer.schedule,
+            fallbackModelSelections,
+          })
+          .pipe(Effect.flip);
+        assert.equal(created.code, "runtime_mode_escalation_denied");
+        const updated = yield* mcp
+          .updateScheduledTask(supervisedClient, {
+            scheduledTaskId: timer.id,
+            fallbackModelSelections,
+          })
+          .pipe(Effect.flip);
+        assert.equal(updated.code, "runtime_mode_escalation_denied");
+        assert.equal(yield* Ref.get(upserted), 0);
+
+        const fullAccessClient: McpInvocationScope = {
+          ...supervisedClient,
+          client: { ...supervisedClient.client!, access: "full-access" },
+        };
+        yield* mcp.scheduleTask(fullAccessClient, {
+          projectId,
+          prompt: timer.prompt,
+          schedule: timer.schedule,
+          fallbackModelSelections,
+        });
+        yield* mcp.updateScheduledTask(fullAccessClient, {
+          scheduledTaskId: timer.id,
+          fallbackModelSelections,
+        });
+        assert.equal(yield* Ref.get(upserted), 2);
       }),
     );
 

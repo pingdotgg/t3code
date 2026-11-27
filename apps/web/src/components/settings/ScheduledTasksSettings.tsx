@@ -4,6 +4,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
 import {
+  ArrowDownIcon,
+  ArrowUpIcon,
   ChevronDownIcon,
   Clock3Icon,
   CopyIcon,
@@ -18,6 +20,7 @@ import {
 import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
+  ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   ScheduledTask,
@@ -25,7 +28,9 @@ import type {
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
+  ServerProvider,
   ThreadId,
+  UnifiedSettings,
 } from "@t3tools/contracts";
 import {
   DEFAULT_WEBHOOK_PROMPT,
@@ -38,11 +43,15 @@ import {
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import {
+  MAX_SCHEDULED_TASK_FALLBACK_FAMILIES,
+  MAX_SCHEDULED_TASK_FALLBACK_MODELS,
+  MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
+  scheduledTaskFallbackModelIssue,
   scheduledTaskThreadMode,
 } from "@t3tools/contracts";
 import {
@@ -55,7 +64,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance, selectsPlanAgent } from "../../modelSelection";
-import { providerInstanceEntriesFor } from "../../providerInstances";
+import { providerInstanceEntriesFor, type ProviderInstanceEntry } from "../../providerInstances";
 import { usePrimaryCloudLinkState } from "../../cloud/cloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
@@ -96,7 +105,11 @@ import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from ".
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
+  fallbackModelDisabledReason,
   moveDraftToThread,
+  moveFallbackModel,
+  nextScheduledTaskFallbackModel,
+  pruneFallbackMatchingPrimary,
   scheduleDraftErrors,
   scheduledTaskDestinationThreads,
   toDateTimeLocalValue,
@@ -203,6 +216,7 @@ const EMPTY_DRAFT: DraftState = {
   startFromOrigin: true,
   existingWorktreePath: "",
   modelSelection: null,
+  fallbackModelSelections: [],
   runtimeMode: "full-access",
   interactionMode: "default",
   signatureEnabled: false,
@@ -315,6 +329,170 @@ function WebhookFiltersField({
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function FallbackModelsField({
+  environmentId,
+  primarySelection,
+  fallbacks,
+  instanceEntries,
+  settings,
+  providers,
+  disabled,
+  onChange,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly primarySelection: ModelSelection | null;
+  readonly fallbacks: ReadonlyArray<ModelSelection>;
+  readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly settings: UnifiedSettings;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly disabled: boolean;
+  readonly onChange: (fallbacks: ReadonlyArray<ModelSelection>) => void;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const nextCandidate = nextScheduledTaskFallbackModel(
+    instanceEntries,
+    primarySelection,
+    fallbacks,
+    getCustomModelOptionsByInstance(settings, providers),
+  );
+  const updateAt = (index: number, nextSelection: ModelSelection) =>
+    onChange(fallbacks.map((entry, at) => (at === index ? nextSelection : entry)));
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 space-y-1">
+          <Label>
+            <T>Fallback models</T>
+          </Label>
+          <p className="text-sm text-muted-foreground">
+            {gt(
+              "Optional. Tried in order if the primary model hits a rate limit or fails (up to {maxModels} models across {maxFamilies} families, {maxPerFamily} per family).",
+              {
+                maxModels: MAX_SCHEDULED_TASK_FALLBACK_MODELS,
+                maxFamilies: MAX_SCHEDULED_TASK_FALLBACK_FAMILIES,
+                maxPerFamily: MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
+              },
+            )}
+          </p>
+        </div>
+        <div className="shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            disabled={
+              disabled ||
+              fallbacks.length >= MAX_SCHEDULED_TASK_FALLBACK_MODELS ||
+              nextCandidate === null
+            }
+            onClick={() => {
+              if (nextCandidate) onChange([...fallbacks, nextCandidate]);
+            }}
+          >
+            <PlusIcon />
+            <T>Add fallback</T>
+          </Button>
+        </div>
+      </div>
+      {fallbacks.map((fallback, index) => {
+        const entry = instanceEntries.find((item) => item.instanceId === fallback.instanceId);
+        const optionsByInstance = getCustomModelOptionsByInstance(
+          settings,
+          providers,
+          fallback.instanceId,
+          fallback.model,
+        );
+        return (
+          <div
+            key={`${fallback.instanceId}:${fallback.model}`}
+            className="flex flex-wrap items-center gap-1.5"
+          >
+            <span className="w-5 shrink-0 text-xs tabular-nums text-muted-foreground">
+              {index + 1}.
+            </span>
+            <ProviderModelPicker
+              environmentId={environmentId}
+              disabled={disabled}
+              activeInstanceId={fallback.instanceId}
+              model={fallback.model}
+              lockedProvider={null}
+              instanceEntries={instanceEntries}
+              modelOptionsByInstance={optionsByInstance}
+              isComposerOwned={false}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              triggerAriaLabel={gt("Fallback model {number}", { number: index + 1 })}
+              getModelDisabledReason={(instanceId, model) =>
+                fallbackModelDisabledReason(
+                  { instanceId, model },
+                  primarySelection,
+                  fallbacks,
+                  index,
+                  messages,
+                )
+              }
+              onInstanceModelChange={(instanceId, model) => {
+                if (instanceId === fallback.instanceId && model === fallback.model) return;
+                updateAt(index, createModelSelection(instanceId, model));
+              }}
+            />
+            {entry ? (
+              <TraitsPicker
+                provider={entry.driverKind}
+                models={entry.models}
+                model={fallback.model}
+                modelOptions={fallback.options ?? []}
+                allowPromptInjectedEffort={false}
+                includePlanAgent={selectsPlanAgent(fallback.options)}
+                disabled={disabled}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onModelOptionsChange={(options) =>
+                  updateAt(
+                    index,
+                    createModelSelection(fallback.instanceId, fallback.model, options),
+                  )
+                }
+              />
+            ) : null}
+            <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                disabled={disabled || index === 0}
+                aria-label={gt("Move fallback {number} up", { number: index + 1 })}
+                onClick={() => onChange(moveFallbackModel(fallbacks, index, -1))}
+              >
+                <ArrowUpIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                disabled={disabled || index === fallbacks.length - 1}
+                aria-label={gt("Move fallback {number} down", { number: index + 1 })}
+                onClick={() => onChange(moveFallbackModel(fallbacks, index, 1))}
+              >
+                <ArrowDownIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                disabled={disabled}
+                aria-label={gt("Remove fallback {number}", { number: index + 1 })}
+                onClick={() => onChange(fallbacks.filter((_, at) => at !== index))}
+              >
+                <Trash2Icon />
+              </Button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -890,6 +1068,14 @@ function ScheduledTaskRow({
             ) : (
               gt("Not scheduled")
             )}
+            {task.fallbackModelSelections && task.fallbackModelSelections.length > 0 ? (
+              <>
+                {" · "}
+                {gt("{count, plural, one {{count} fallback} other {{count} fallbacks}}", {
+                  count: task.fallbackModelSelections.length,
+                })}
+              </>
+            ) : null}
           </span>
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>
@@ -1515,6 +1701,8 @@ function ScheduledTaskEditorForm({
     task?.schedule.type === "once";
   const offersThreadModes =
     environment?.serverConfig?.environment.capabilities.scheduledTaskThreadModes === true;
+  const offersFallbackModels =
+    environment?.serverConfig?.environment.capabilities.scheduledTaskFallbackModels === true;
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1694,6 +1882,33 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
+    if (offersFallbackModels) {
+      const fallbackIssue = scheduledTaskFallbackModelIssue(
+        draft.fallbackModelSelections,
+        draft.threadId ? null : selection,
+      );
+      if (fallbackIssue !== null) {
+        reportFailure(
+          gt("Invalid fallback models"),
+          fallbackIssue === "duplicate_primary"
+            ? gt("A fallback model cannot match the primary model.")
+            : fallbackIssue === "duplicate_fallback"
+              ? gt("Fallback models must be distinct.")
+              : fallbackIssue === "too_many_models"
+                ? gt("Up to {max} fallback models are allowed.", {
+                    max: MAX_SCHEDULED_TASK_FALLBACK_MODELS,
+                  })
+                : fallbackIssue === "too_many_families"
+                  ? gt("Up to {max} fallback model families are allowed.", {
+                      max: MAX_SCHEDULED_TASK_FALLBACK_FAMILIES,
+                    })
+                  : gt("Up to {max} fallback models per family are allowed.", {
+                      max: MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
+                    }),
+        );
+        return;
+      }
+    }
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1716,6 +1931,7 @@ function ScheduledTaskEditorForm({
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy,
       modelSelection: selection,
+      ...(offersFallbackModels ? { fallbackModelSelections: draft.fallbackModelSelections } : {}),
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
       runtimeMode:
         clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
@@ -1770,6 +1986,7 @@ function ScheduledTaskEditorForm({
                   ...unbindDraftFromThread(current),
                   projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
                   modelSelection: null,
+                  fallbackModelSelections: [],
                   baseRef: "",
                   startFromOrigin: true,
                   existingWorktreePath: "",
@@ -1989,6 +2206,10 @@ function ScheduledTaskEditorForm({
                   setDraft((current) => ({
                     ...current,
                     modelSelection: createModelSelection(instanceId, model),
+                    fallbackModelSelections: pruneFallbackMatchingPrimary(
+                      current.fallbackModelSelections,
+                      { instanceId, model },
+                    ),
                   }));
                 }}
               />
@@ -2012,6 +2233,23 @@ function ScheduledTaskEditorForm({
               ) : null}
             </div>
           </Field>
+
+          {offersFallbackModels ? (
+            <FallbackModelsField
+              environmentId={environmentId}
+              primarySelection={
+                draft.threadId ? (boundThread?.modelSelection ?? null) : activeSelection
+              }
+              fallbacks={draft.fallbackModelSelections}
+              instanceEntries={instanceEntries}
+              settings={settings}
+              providers={providers}
+              disabled={saving || !connected}
+              onChange={(fallbackModelSelections) =>
+                setDraft((current) => ({ ...current, fallbackModelSelections }))
+              }
+            />
+          ) : null}
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&

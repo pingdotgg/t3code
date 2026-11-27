@@ -238,6 +238,69 @@ export function scheduledTaskThreadMode(
   return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
 }
 
+export const MAX_SCHEDULED_TASK_FALLBACK_MODELS = 6;
+export const MAX_SCHEDULED_TASK_FALLBACK_FAMILIES = 3;
+export const MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY = 2;
+
+export type ScheduledTaskFallbackModelIssue =
+  | "too_many_models"
+  | "too_many_families"
+  | "too_many_in_family"
+  | "duplicate_primary"
+  | "duplicate_fallback";
+
+export function scheduledTaskFallbackModelKey(
+  selection: Pick<ModelSelection, "instanceId" | "model">,
+): string {
+  return `${selection.instanceId}\u0000${selection.model}`;
+}
+
+export function scheduledTaskFallbackModelIssue(
+  fallbacks: ReadonlyArray<Pick<ModelSelection, "instanceId" | "model">>,
+  primary?: Pick<ModelSelection, "instanceId" | "model"> | null,
+): ScheduledTaskFallbackModelIssue | null {
+  if (fallbacks.length > MAX_SCHEDULED_TASK_FALLBACK_MODELS) return "too_many_models";
+  const primaryKey = primary ? scheduledTaskFallbackModelKey(primary) : null;
+  const seen = new Set<string>();
+  const familyCounts = new Map<string, number>();
+  for (const fallback of fallbacks) {
+    const key = scheduledTaskFallbackModelKey(fallback);
+    if (primaryKey !== null && key === primaryKey) return "duplicate_primary";
+    if (seen.has(key)) return "duplicate_fallback";
+    seen.add(key);
+    const nextFamilyCount = (familyCounts.get(fallback.instanceId) ?? 0) + 1;
+    if (nextFamilyCount > MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY)
+      return "too_many_in_family";
+    familyCounts.set(fallback.instanceId, nextFamilyCount);
+    if (familyCounts.size > MAX_SCHEDULED_TASK_FALLBACK_FAMILIES) return "too_many_families";
+  }
+  return null;
+}
+
+export const ScheduledTaskFallbackModelSelections = Schema.Array(ModelSelection)
+  .check(
+    Schema.makeFilter((fallbacks) => {
+      const issue = scheduledTaskFallbackModelIssue(fallbacks);
+      if (issue === null) return true;
+      switch (issue) {
+        case "too_many_models":
+          return `At most ${MAX_SCHEDULED_TASK_FALLBACK_MODELS} fallback models are allowed.`;
+        case "too_many_families":
+          return `At most ${MAX_SCHEDULED_TASK_FALLBACK_FAMILIES} fallback model families are allowed.`;
+        case "too_many_in_family":
+          return `At most ${MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY} fallback models per family are allowed.`;
+        case "duplicate_fallback":
+        case "duplicate_primary":
+          return "Fallback models must be distinct.";
+      }
+    }),
+  )
+  .annotate({
+    description:
+      "Optional ordered fallback models tried if the primary model hits a rate limit or fails. Max 6 total, up to 3 families and 2 per family. Omitted keeps stored; [] clears.",
+  });
+export type ScheduledTaskFallbackModelSelections = typeof ScheduledTaskFallbackModelSelections.Type;
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -249,6 +312,7 @@ export const ScheduledTask = Schema.Struct({
   threadMode: Schema.optional(ScheduledTaskThreadMode),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
+  fallbackModelSelections: Schema.optional(ScheduledTaskFallbackModelSelections),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: OrchestrationV2Actor,
@@ -296,6 +360,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   threadMode: Schema.optional(ScheduledTaskThreadMode),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
+  /** Omitted: keep stored fallbacks. [] clears. */
+  fallbackModelSelections: Schema.optional(ScheduledTaskFallbackModelSelections),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),

@@ -1,4 +1,8 @@
-import { isWebhookDedupeTemplate, scheduledTaskThreadMode } from "@t3tools/contracts";
+import {
+  isWebhookDedupeTemplate,
+  scheduledTaskFallbackModelKey,
+  scheduledTaskThreadMode,
+} from "@t3tools/contracts";
 import type {
   ModelSelection,
   ServerConfig,
@@ -206,6 +210,7 @@ export type ScheduledTaskDraft = {
   readonly threadId: ThreadId | null;
   readonly modelSelection: ModelSelection | null;
   readonly modelSelectionIsExplicit: boolean;
+  readonly fallbackModelSelections: ReadonlyArray<ModelSelection>;
   readonly schedule: ScheduleDraft;
   readonly threadMode: ScheduledTaskThreadMode;
   readonly workspace: Workspace;
@@ -227,6 +232,13 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     [...(draft.modelSelection?.options ?? [])]
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((option) => [option.id, option.value]),
+    draft.fallbackModelSelections.map((selection) => [
+      selection.instanceId,
+      selection.model,
+      [...(selection.options ?? [])]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((option) => [option.id, option.value]),
+    ]),
     draft.schedule.mode,
     draft.schedule.timeOfDay,
     draft.schedule.runAt,
@@ -286,6 +298,30 @@ export function changeDraftProject(
   return { ...unbindDraftFromThread(draft), projectId, baseRef: "", checkoutPath: "" };
 }
 
+export function pruneFallbackMatchingPrimary(
+  fallbacks: ReadonlyArray<ModelSelection>,
+  primary: Pick<ModelSelection, "instanceId" | "model"> | null,
+): ReadonlyArray<ModelSelection> {
+  if (primary === null) return fallbacks;
+  const primaryKey = scheduledTaskFallbackModelKey(primary);
+  return fallbacks.filter((candidate) => scheduledTaskFallbackModelKey(candidate) !== primaryKey);
+}
+
+export function moveFallbackModel(
+  fallbacks: ReadonlyArray<ModelSelection>,
+  index: number,
+  delta: -1 | 1,
+): ReadonlyArray<ModelSelection> {
+  const target = index + delta;
+  if (target < 0 || target >= fallbacks.length || index < 0 || index >= fallbacks.length) {
+    return fallbacks;
+  }
+  const next = [...fallbacks];
+  const [moved] = next.splice(index, 1);
+  if (moved !== undefined) next.splice(target, 0, moved);
+  return next;
+}
+
 export function createDraft(
   projectId: ProjectId | null,
   modelSelection: ModelSelection | null,
@@ -298,6 +334,7 @@ export function createDraft(
     threadId: null,
     modelSelection,
     modelSelectionIsExplicit: false,
+    fallbackModelSelections: [],
     schedule: DEFAULT_SCHEDULE,
     threadMode: "new_thread",
     workspace: "worktree",
@@ -318,6 +355,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     threadId: task.threadId,
     modelSelection: task.modelSelection,
     modelSelectionIsExplicit: true,
+    fallbackModelSelections: task.fallbackModelSelections ?? [],
     schedule: scheduleDraftForTask(task),
     threadMode: scheduledTaskThreadMode(task),
     workspace: task.workspaceStrategy.type,

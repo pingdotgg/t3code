@@ -16,9 +16,13 @@ import type {
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
 import {
+  MAX_SCHEDULED_TASK_FALLBACK_FAMILIES,
+  MAX_SCHEDULED_TASK_FALLBACK_MODELS,
+  MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
+  scheduledTaskFallbackModelIssue,
   scheduledTaskThreadMode,
 } from "@t3tools/contracts";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -80,6 +84,7 @@ import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-en
 import {
   changeDraftProject,
   editDraft,
+  moveFallbackModel,
   parseIntervalMinutes,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
@@ -95,6 +100,7 @@ import {
 import {
   discardScheduledTaskEditor,
   markScheduledTaskEditorSaved,
+  setScheduledTaskModelPickerTarget,
 } from "./scheduled-task-editor-state";
 import {
   formatNextScheduledTaskRun,
@@ -804,6 +810,8 @@ function TaskForm({
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
+  const offersFallbackModels =
+    config?.environment.capabilities.scheduledTaskFallbackModels === true;
   const save = async () => {
     const current = readEditor();
     if (!current || current.environmentId !== environmentId) return;
@@ -879,12 +887,46 @@ function TaskForm({
       Dialog.alert(gt("Project unavailable"), gt("Choose a project in this environment."));
       return;
     }
+    if (offersFallbackModels) {
+      const fallbackIssue = scheduledTaskFallbackModelIssue(
+        draft.fallbackModelSelections,
+        draft.threadId === null ? draft.modelSelection : null,
+      );
+      if (fallbackIssue !== null) {
+        Dialog.alert(
+          gt("Invalid fallback models"),
+          fallbackIssue === "duplicate_primary"
+            ? gt("A fallback model cannot match the primary model.")
+            : fallbackIssue === "duplicate_fallback"
+              ? gt("Fallback models must be distinct.")
+              : fallbackIssue === "too_many_models"
+                ? gt("Up to {max} fallback models are allowed.", {
+                    max: MAX_SCHEDULED_TASK_FALLBACK_MODELS,
+                  })
+                : fallbackIssue === "too_many_families"
+                  ? gt("Up to {max} fallback model families are allowed.", {
+                      max: MAX_SCHEDULED_TASK_FALLBACK_FAMILIES,
+                    })
+                  : gt("Up to {max} fallback models per family are allowed.", {
+                      max: MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
+                    }),
+        );
+        return;
+      }
+    }
     const input: ScheduledTaskUpsertInput = {
       ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
       modelSelection: withImplicitFastModeSelection(draft.modelSelection, config?.providers ?? []),
+      ...(offersFallbackModels
+        ? {
+            fallbackModelSelections: draft.fallbackModelSelections.map((selection) =>
+              withImplicitFastModeSelection(selection, config?.providers ?? []),
+            ),
+          }
+        : {}),
       schedule,
       enabled: draft.enabled,
       threadId: draft.threadId,
@@ -1025,13 +1067,107 @@ function TaskForm({
               shownSelection?.model ??
               (modelOptions.length ? gt("Choose model") : gt("No models available"))
             }
-            onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
+            onPress={() => {
+              setScheduledTaskModelPickerTarget({ kind: "primary" });
+              navigation.navigate("SettingsScheduledTaskModel");
+            }}
             // The saved selection only seeds new threads; bound runs ignore it.
             disabled={
               saving || dictationPending || environmentUnavailable || draft.threadId !== null
             }
           />
         </SettingsSection>
+
+        {offersFallbackModels ? (
+          <SettingsSection
+            title={gt("Fallback models")}
+            footer={gt(
+              "Optional. Tried in order if the primary model hits a rate limit or fails. Up to {maxModels} models across {maxFamilies} families ({maxPerFamily} per family).",
+              {
+                maxModels: MAX_SCHEDULED_TASK_FALLBACK_MODELS,
+                maxFamilies: MAX_SCHEDULED_TASK_FALLBACK_FAMILIES,
+                maxPerFamily: MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
+              },
+            )}
+          >
+            {draft.fallbackModelSelections.map((fallback, index) => {
+              const fallbackLabel =
+                modelOptions.find(
+                  (option) =>
+                    option.selection.instanceId === fallback.instanceId &&
+                    option.selection.model === fallback.model,
+                )?.label ?? fallback.model;
+              const actions: MenuAction[] = [
+                { id: "edit", title: gt("Change model") },
+                ...(index > 0 ? [{ id: "up", title: gt("Move up") }] : []),
+                ...(index < draft.fallbackModelSelections.length - 1
+                  ? [{ id: "down", title: gt("Move down") }]
+                  : []),
+                { id: "remove", title: gt("Remove"), attributes: { destructive: true } },
+              ];
+              return (
+                <SelectRow
+                  key={`${fallback.instanceId}:${fallback.model}`}
+                  label={gt("Fallback {number}", { number: index + 1 })}
+                  value={fallbackLabel}
+                  borderTop={index > 0}
+                  actions={saving || dictationPending || environmentUnavailable ? [] : actions}
+                  onSelect={(id) => {
+                    if (id === "edit") {
+                      setScheduledTaskModelPickerTarget({ kind: "fallback", index });
+                      navigation.navigate("SettingsScheduledTaskModel");
+                    } else if (id === "up") {
+                      setDraft((current) => ({
+                        ...current,
+                        fallbackModelSelections: moveFallbackModel(
+                          current.fallbackModelSelections,
+                          index,
+                          -1,
+                        ),
+                      }));
+                    } else if (id === "down") {
+                      setDraft((current) => ({
+                        ...current,
+                        fallbackModelSelections: moveFallbackModel(
+                          current.fallbackModelSelections,
+                          index,
+                          1,
+                        ),
+                      }));
+                    } else if (id === "remove") {
+                      setDraft((current) => ({
+                        ...current,
+                        fallbackModelSelections: current.fallbackModelSelections.filter(
+                          (_, at) => at !== index,
+                        ),
+                      }));
+                    }
+                  }}
+                />
+              );
+            })}
+            {draft.fallbackModelSelections.length < MAX_SCHEDULED_TASK_FALLBACK_MODELS ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={saving || dictationPending || environmentUnavailable}
+                onPress={() => {
+                  setScheduledTaskModelPickerTarget({ kind: "add_fallback" });
+                  navigation.navigate("SettingsScheduledTaskModel");
+                }}
+                className={
+                  draft.fallbackModelSelections.length > 0
+                    ? "min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70 disabled:opacity-50"
+                    : "min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70 disabled:opacity-50"
+                }
+              >
+                <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+                  <T>Add fallback model</T>
+                </Text>
+                <SymbolView name="plus" size={16} tintColorClassName="accent-icon" />
+              </Pressable>
+            ) : null}
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection
           title={gt("Destination")}

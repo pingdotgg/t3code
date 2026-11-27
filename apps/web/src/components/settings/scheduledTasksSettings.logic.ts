@@ -1,13 +1,19 @@
 import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
+  MAX_SCHEDULED_TASK_FALLBACK_FAMILIES,
+  MAX_SCHEDULED_TASK_FALLBACK_MODELS,
+  MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
+  type ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
   type ScheduledTaskSchedule,
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertSchedule,
+  scheduledTaskFallbackModelIssue,
+  scheduledTaskFallbackModelKey,
   scheduledTaskThreadMode,
   type ModelSelection,
   type RuntimeMode,
@@ -137,6 +143,7 @@ export interface DraftState {
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
   readonly modelSelection: ModelSelection | null;
+  readonly fallbackModelSelections: ReadonlyArray<ModelSelection>;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly signatureEnabled: boolean;
@@ -343,6 +350,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         ? task.workspaceStrategy.worktreePath
         : "",
     modelSelection: task.modelSelection,
+    fallbackModelSelections: task.fallbackModelSelections ?? [],
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
     ...(schedule.type === "webhook" && schedule.signature !== null
@@ -454,6 +462,97 @@ export function scheduledTaskDefaultModel(
   );
   const fallback = models.find(({ model }) => model.isDefault) ?? models[0];
   return fallback ? { instanceId: fallback.instanceId, model: fallback.model.slug } : null;
+}
+
+export function pruneFallbackMatchingPrimary(
+  fallbacks: ReadonlyArray<ModelSelection>,
+  primary: Pick<ModelSelection, "instanceId" | "model"> | null,
+): ReadonlyArray<ModelSelection> {
+  if (primary === null) return fallbacks;
+  const primaryKey = scheduledTaskFallbackModelKey(primary);
+  return fallbacks.filter((candidate) => scheduledTaskFallbackModelKey(candidate) !== primaryKey);
+}
+
+export function moveFallbackModel(
+  fallbacks: ReadonlyArray<ModelSelection>,
+  index: number,
+  delta: -1 | 1,
+): ReadonlyArray<ModelSelection> {
+  const target = index + delta;
+  if (target < 0 || target >= fallbacks.length || index < 0 || index >= fallbacks.length) {
+    return fallbacks;
+  }
+  const next = [...fallbacks];
+  const [moved] = next.splice(index, 1);
+  if (moved !== undefined) next.splice(target, 0, moved);
+  return next;
+}
+
+export function fallbackModelDisabledReason(
+  candidate: Pick<ModelSelection, "instanceId" | "model">,
+  primary: Pick<ModelSelection, "instanceId" | "model"> | null,
+  fallbacks: ReadonlyArray<ModelSelection>,
+  editingIndex: number,
+  resolve: MessageResolver = m,
+): string | null {
+  const next = fallbacks.map((item, at) => (at === editingIndex ? candidate : item));
+  const issue = scheduledTaskFallbackModelIssue(next, primary);
+  switch (issue) {
+    case null:
+      return null;
+    case "duplicate_primary":
+      return resolve(msg("Already selected as the primary model"));
+    case "duplicate_fallback":
+      return resolve(msg("Already in the fallback list"));
+    case "too_many_in_family":
+      return resolve(
+        msg("Up to {max} fallback models per family", {
+          max: MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
+        }),
+      );
+    case "too_many_families":
+      return resolve(
+        msg("Up to {max} fallback model families", {
+          max: MAX_SCHEDULED_TASK_FALLBACK_FAMILIES,
+        }),
+      );
+    case "too_many_models":
+      return resolve(
+        msg("Up to {max} fallback models", {
+          max: MAX_SCHEDULED_TASK_FALLBACK_MODELS,
+        }),
+      );
+  }
+}
+
+export function nextScheduledTaskFallbackModel(
+  entries: readonly ProviderInstanceEntry[],
+  primary: Pick<ModelSelection, "instanceId" | "model"> | null,
+  existing: ReadonlyArray<ModelSelection>,
+  modelOptionsByInstance?: ReadonlyMap<
+    ProviderInstanceId,
+    ReadonlyArray<{ readonly slug: string; readonly isLegacy?: boolean | undefined }>
+  >,
+): ModelSelection | null {
+  if (existing.length >= MAX_SCHEDULED_TASK_FALLBACK_MODELS) return null;
+  const available = entries.filter(
+    (entry) =>
+      entry.enabled &&
+      entry.installed &&
+      entry.isAvailable &&
+      entry.snapshot.auth.status !== "unauthenticated",
+  );
+  const pool = available.length > 0 ? available : entries.filter((entry) => entry.enabled);
+  for (const entry of pool) {
+    for (const model of modelOptionsByInstance?.get(entry.instanceId) ?? entry.models) {
+      if (model.isLegacy) continue;
+      const candidate: ModelSelection = { instanceId: entry.instanceId, model: model.slug };
+      if (scheduledTaskFallbackModelIssue([...existing, candidate], primary) === null) {
+        return candidate;
+      }
+    }
+  }
+  return null;
 }
 
 /**

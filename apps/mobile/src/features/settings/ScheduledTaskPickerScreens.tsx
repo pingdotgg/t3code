@@ -1,9 +1,10 @@
+import { useAtomValue } from "@effect/atom-react";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
-import { isListedThreadLineage } from "@t3tools/contracts";
+import { isListedThreadLineage, scheduledTaskFallbackModelIssue } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 import { Platform } from "react-native";
@@ -27,8 +28,17 @@ import {
   NEW_THREAD_DESTINATION_LABEL,
   useScheduledTaskDestinationLabel,
   useScheduledTaskEditor,
+  useScheduledTaskThread,
 } from "./scheduled-task-editor";
-import { moveDraftToThread, unbindDraftFromThread } from "./scheduledTaskDraft";
+import {
+  scheduledTaskModelPickerTargetAtom,
+  setScheduledTaskModelPickerTarget,
+} from "./scheduled-task-editor-state";
+import {
+  moveDraftToThread,
+  pruneFallbackMatchingPrimary,
+  unbindDraftFromThread,
+} from "./scheduledTaskDraft";
 
 function MissingTaskDraft() {
   const gt = useGT();
@@ -44,13 +54,38 @@ function MissingTaskDraft() {
 export function ScheduledTaskModelPickerRouteScreen() {
   const navigation = useNavigation();
   const { editor, setEditor } = useScheduledTaskEditor();
+  const pickerTarget = useAtomValue(scheduledTaskModelPickerTargetAtom);
   const config = useEnvironmentServerConfig(editor?.environmentId ?? null);
-  const selectedModel = editor?.draft.modelSelection ?? null;
+  const boundThread = useScheduledTaskThread(
+    editor?.environmentId ?? null,
+    editor?.draft.threadId ?? null,
+  );
+  const primaryModel =
+    editor?.draft.threadId !== null
+      ? (boundThread?.modelSelection ?? null)
+      : (editor?.draft.modelSelection ?? null);
+  const fallbacks = editor?.draft.fallbackModelSelections ?? [];
+  const selectedModel =
+    pickerTarget.kind === "primary"
+      ? (editor?.draft.modelSelection ?? null)
+      : pickerTarget.kind === "fallback"
+        ? (fallbacks[pickerTarget.index] ?? null)
+        : null;
   const projectId = editor?.draft.projectId ?? null;
-  const models = useMemo(
+  const allModels = useMemo(
     () => buildModelOptions(config, selectedModel, undefined, projectId),
     [config, selectedModel, projectId],
   );
+  const models = useMemo(() => {
+    if (pickerTarget.kind === "primary") return allModels;
+    return allModels.filter((option) => {
+      const nextFallbacks =
+        pickerTarget.kind === "add_fallback"
+          ? [...fallbacks, option.selection]
+          : fallbacks.map((entry, at) => (at === pickerTarget.index ? option.selection : entry));
+      return scheduledTaskFallbackModelIssue(nextFallbacks, primaryModel) === null;
+    });
+  }, [allModels, fallbacks, pickerTarget, primaryModel]);
   const providerGroups = useMemo(() => groupByProvider(models), [models]);
   const selectedOption = models.find(
     (option) =>
@@ -75,41 +110,101 @@ export function ScheduledTaskModelPickerRouteScreen() {
       cwd={null}
       providerGroups={providerGroups}
       selectedModel={selectedModel}
-      prompt={editor.draft.prompt}
-      onPromptChange={(prompt) =>
+      // The prompt is shared by the whole chain; only the primary may let it control effort.
+      prompt={pickerTarget.kind === "primary" ? editor.draft.prompt : ""}
+      onPromptChange={(prompt) => {
+        if (pickerTarget.kind !== "primary") return;
         setEditor((current) =>
           current ? { ...current, draft: { ...current.draft, prompt } } : current,
-        )
-      }
-      onSelectModel={(option) =>
+        );
+      }}
+      onSelectModel={(option) => {
+        if (pickerTarget.kind === "primary") {
+          setEditor((current) =>
+            current
+              ? {
+                  ...current,
+                  draft: {
+                    ...current.draft,
+                    modelSelection: option.selection,
+                    modelSelectionIsExplicit: true,
+                    fallbackModelSelections: pruneFallbackMatchingPrimary(
+                      current.draft.fallbackModelSelections,
+                      option.selection,
+                    ),
+                  },
+                }
+              : current,
+          );
+          return;
+        }
+        if (pickerTarget.kind === "add_fallback") {
+          const nextIndex = editor.draft.fallbackModelSelections.length;
+          setEditor((current) =>
+            current
+              ? {
+                  ...current,
+                  draft: {
+                    ...current.draft,
+                    fallbackModelSelections: [
+                      ...current.draft.fallbackModelSelections,
+                      option.selection,
+                    ],
+                  },
+                }
+              : current,
+          );
+          setScheduledTaskModelPickerTarget({ kind: "fallback", index: nextIndex });
+          return;
+        }
         setEditor((current) =>
           current
             ? {
                 ...current,
                 draft: {
                   ...current.draft,
-                  modelSelection: option.selection,
-                  modelSelectionIsExplicit: true,
+                  fallbackModelSelections: current.draft.fallbackModelSelections.map((entry, at) =>
+                    at === pickerTarget.index ? option.selection : entry,
+                  ),
                 },
               }
             : current,
-        )
-      }
+        );
+      }}
       optionDescriptors={optionDescriptors}
-      onUpdateOptionSelections={(options) =>
-        setEditor((current) =>
-          current?.draft.modelSelection
-            ? {
-                ...current,
-                draft: {
-                  ...current.draft,
-                  modelSelection: { ...current.draft.modelSelection, options },
-                  modelSelectionIsExplicit: true,
-                },
-              }
-            : current,
-        )
-      }
+      onUpdateOptionSelections={(options) => {
+        if (pickerTarget.kind === "primary") {
+          setEditor((current) =>
+            current?.draft.modelSelection
+              ? {
+                  ...current,
+                  draft: {
+                    ...current.draft,
+                    modelSelection: { ...current.draft.modelSelection, options },
+                    modelSelectionIsExplicit: true,
+                  },
+                }
+              : current,
+          );
+          return;
+        }
+        if (pickerTarget.kind === "fallback") {
+          setEditor((current) => {
+            if (!current) return current;
+            const target = current.draft.fallbackModelSelections[pickerTarget.index];
+            if (!target) return current;
+            return {
+              ...current,
+              draft: {
+                ...current.draft,
+                fallbackModelSelections: current.draft.fallbackModelSelections.map((entry, at) =>
+                  at === pickerTarget.index ? { ...target, options } : entry,
+                ),
+              },
+            };
+          });
+        }
+      }}
       runtimeMode={editor.draft.runtimeMode}
       onUpdateRuntimeMode={(runtimeMode) =>
         setEditor((current) =>

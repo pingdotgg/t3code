@@ -3,9 +3,12 @@ import * as Schema from "effect/Schema";
 
 import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  ScheduledTaskFallbackModelSelections,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
+  scheduledTaskFallbackModelIssue,
 } from "./scheduledTask.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeSchedule = Schema.decodeUnknownSync(ScheduledTaskSchedule);
 const decodeUpsertSchedule = Schema.decodeUnknownSync(ScheduledTaskUpsertSchedule);
@@ -72,5 +75,58 @@ describe("webhook filters", () => {
     expect(accepts([{ path: "body.label.name", op: "in", value: ["needs review"] }])).toBe(true);
     expect(accepts([{ path: "body.action", op: "equals" }])).toBe(false);
     expect(accepts([{ path: "body.action", op: "matches", value: "^opened$" }])).toBe(false);
+  });
+});
+
+describe("ScheduledTaskFallbackModelSelections", () => {
+  const decodeFallbacks = Schema.decodeUnknownSync(ScheduledTaskFallbackModelSelections);
+  const model = (instance: string, slug: string) => ({
+    instanceId: ProviderInstanceId.make(instance),
+    model: slug,
+  });
+
+  it("accepts up to 6 models across 3 families with up to 2 per family", () => {
+    const chain = [
+      model("claudeAgent", "claude-opus-5-5"),
+      model("claudeAgent", "claude-sonnet-5-5"),
+      model("codex", "gpt-6-astra"),
+      model("codex", "gpt-5.6-sol"),
+      model("antigravity", "gemini-4-neon"),
+      model("antigravity", "gemini-4-flash"),
+    ];
+    expect(decodeFallbacks(chain)).toEqual(chain);
+    expect(scheduledTaskFallbackModelIssue(chain, model("claudeAgent", "claude-fable"))).toBeNull();
+  });
+
+  it("enforces family, per-family, total, and uniqueness constraints", () => {
+    const primary = model("claudeAgent", "claude-fable");
+    expect(scheduledTaskFallbackModelIssue([primary], primary)).toBe("duplicate_primary");
+    expect(
+      scheduledTaskFallbackModelIssue([
+        model("codex", "gpt-6-astra"),
+        model("codex", "gpt-6-astra"),
+      ]),
+    ).toBe("duplicate_fallback");
+    expect(
+      scheduledTaskFallbackModelIssue([
+        model("codex", "gpt-6-astra"),
+        model("codex", "gpt-5.6-sol"),
+        model("codex", "gpt-5.6-terra"),
+      ]),
+    ).toBe("too_many_in_family");
+    expect(
+      scheduledTaskFallbackModelIssue([
+        model("claudeAgent", "claude-opus-5-5"),
+        model("codex", "gpt-6-astra"),
+        model("antigravity", "gemini-4-neon"),
+        model("cursor", "auto"),
+      ]),
+    ).toBe("too_many_families");
+    expect(() =>
+      decodeFallbacks([model("codex", "a"), model("codex", "b"), model("codex", "c")]),
+    ).toThrow();
+    expect(() =>
+      decodeFallbacks([model("a", "1"), model("b", "1"), model("c", "1"), model("d", "1")]),
+    ).toThrow();
   });
 });

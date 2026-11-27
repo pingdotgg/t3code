@@ -20,6 +20,19 @@ type ScheduledTaskEditorSession = {
   readonly saving: boolean;
 };
 
+export type ScheduledTaskModelPickerTarget =
+  | { readonly kind: "primary" }
+  | { readonly kind: "fallback"; readonly index: number }
+  | { readonly kind: "add_fallback" };
+
+export const scheduledTaskModelPickerTargetAtom = Atom.make<ScheduledTaskModelPickerTarget>({
+  kind: "primary",
+}).pipe(Atom.keepAlive);
+
+export function setScheduledTaskModelPickerTarget(target: ScheduledTaskModelPickerTarget): void {
+  appAtomRegistry.set(scheduledTaskModelPickerTargetAtom, target);
+}
+
 export const scheduledTaskEditorSessionAtom = Atom.make<ScheduledTaskEditorSession | null>(
   null,
 ).pipe(Atom.keepAlive);

@@ -1,5 +1,4 @@
 {
-  "035aab5e99159bd8": "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
   "4bcfa3b976a421cf": "Side chat",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread on {machine}",
@@ -30,6 +29,7 @@
   "986b0873f913a840": "{organization}'s policy does not allow webhook tasks.",
   "eebc538e25b09fe2": "{organization}'s policy does not allow importing browser cookies.",
   "7642a133db05f164": "{organization}'s policy does not allow opening this machine's local servers on other devices.",
+  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands.",
   "39f6771b49f9b3b6": "Use default",
   "45bb0e90e1c42046": "When you return",
   "d8fa0a55446bbb0d": "Before the cache expires (beta)",
@@ -76,6 +76,7 @@
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Turn {turn} · {what}",
   "dfdaa6255a416140": "Outline of {turns, plural, one {{turns} recent turn} other {{turns} recent turns}}, {textTurns, plural, =0 {no message text} one {message text of the last turn} other {message text of the last {textTurns} turns}}{truncated, select, yes {, shortened to fit} other {}}",
+  "260c6b45f52d2f27": "Adds the text of your messages and the agent's replies in the last {textTurns, plural, one {turn} other {{textTurns} turns}}.",
   "afac52a5cc2dc801": "Could not send your answer. Try again.",
   "79d776428f4d0650": "The file could not be loaded. Reconnect and try again.",
   "3ea34cbb1ca5ba9b": "Preview cancelled.",
@@ -409,6 +410,7 @@
   "834ca879c14c167b": "Working",
   "582d6df7dfab86fb": "Paused",
   "ea6583ce92507ee3": "Sleeping",
+  "7150557773b3818b": "Queued",
   "7ea8cb8af281ce93": "Waiting",
   "1347868f2523140e": "Done",
   "57d76c4614054271": "Stopped",
@@ -420,6 +422,7 @@
   "d3890f4eb1508781": "Running its own steps",
   "3e7ced10c9482af0": "{step} is working",
   "237e1bcb1cf1bdec": "Sleeping at {step}",
+  "efbeb3993ee2c3f5": "Queued for {pool}",
   "3f7b17ac5a20c8d2": "Runs {run}",
   "0306f5f324b8aaa5": "{count} runs under way",
   "e8fd779b84a202a2": "Waiting",
@@ -1973,6 +1976,7 @@
   "4d1f68ef069c7a0b": "New tab",
   "9c149c8c50e58e4c": "Refresh environments",
   "d81626aad3a95cb2": "Sign in to your T3 account to set up {product}.",
+  "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
   "a1b125c5ff7c2dd3": "Don't show this again",
   "b28a147f66b0e088": "Link date unavailable",
   "6f0589fb1a5e38a9": "Linked {date}",
@@ -2031,6 +2035,9 @@
   "782a518513f0777a": "Enable {environment}",
   "a35685d9ad9de747": "Loading linked cloud environments.",
   "91ca3ba7b2f9d6b6": "No additional linked cloud environments.",
+  "89bf40eb2503b6c5": "New device signed in to {environment}",
+  "c94b5fe9ef372bc0": "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
+  "bec67d0ed485f885": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
   "190165d4fad2f072": "Request no longer waiting",
   "c403db0535205f50": "It expired or was answered elsewhere.",
   "4e3abf0ba32ed1d6": "The request is still waiting. Try again.",
@@ -2209,6 +2216,8 @@
   "f4a6fe781a07f2aa": "Copy crash report",
   "13c5214251f7d058": "Crash reports",
   "b3f6c24b0bf18cfb": "Send crash reports",
+  "18c30aa94d0a807f": "Connection diagnostics",
+  "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
   "93eb8ae0bf209025": "Reading crash log…",
   "4429ccae147b2b2f": "Paste the report into a GitHub issue. It contains the app version, the JavaScript error message, and the component stack. Error messages can quote values from the app, so read it over before sharing.",
   "58df920ec2681250": "When the app crashes or hits an error, it sends the error message, the stack trace, the app version, and the device model and OS version to the T3 Code team. Each launch also sends startup timings. Reports carry a random ID for this install.",
@@ -2471,6 +2480,7 @@
   "a6eeff30440d26a2": "Issue {key}",
   "c0e2d952114e7d59": "by {author}",
   "2195cdd7774c1c23": "unknown author",
+  "4276743ee60a3c62": "{count, plural, one {{count} comment} other {{count} comments}}",
   "217e1e7b60469736": "Issue state, {state}",
   "5fd6c9c736b80b62": "Issue state",
   "a749275f1ad66618": "Unknown author",
@@ -2607,6 +2617,7 @@
   "1e726fbe61076269": "Make pane wider",
   "4af8c6ef39e00592": "Make pane narrower",
   "54940a3e03ca7fc7": "{width} points wide",
+  "eb287395a09cd288": "Send connection traces",
   "b1043ff2793170eb": "Project already exists",
   "34d24b23043908f5": "{title} is still archived. Try again later.",
   "cc5e0eb3b8d438e5": "Project not added",
@@ -2859,6 +2870,7 @@
   "dff9e061996e7b1d": "Enable auto-merge?",
   "dafc4bac6e5e37b0": "Disable auto-merge?",
   "88c7a80c40bbfe56": "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}}. Layers above #{number} stay open.",
+  "892f08d21b8e48a9": "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} once their requirements are met. This may happen immediately.",
   "700223fdcaa96bb7": "Merge #{number} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} when its requirements are met. This may happen immediately.",
   "de93a05a4db7ab76": "Stop the provider from automatically merging this {term, select, mr {merge request} cr {change request} other {pull request}}.",
   "385ba70d2783260b": "Merge #{number} into {branch} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}}.",
@@ -3137,7 +3149,6 @@
   "fa9012d7acfe1205": "Resolve conflicts",
   "6e45b380d5850b5c": "Watch {term, select, mr {MR} cr {change request} other {PR}}",
   "77c61ac22770f619": "Video",
-  "4276743ee60a3c62": "{count, plural, one {{count} comment} other {{count} comments}}",
   "a5b611e6548652c1": "Old line {line}",
   "e4bc1643eb024e23": "Line {line}",
   "b29eea552b16d20a": "{count, plural, one {{count} comment · Tap to open} other {{count} comments · Tap to open}}",
@@ -3655,6 +3666,12 @@
   "d6ff9c3accc17c2e": "Add a name, prompt, project, model, valid schedule, and checkout path if needed.",
   "46ea6572900b7903": "Project unavailable",
   "6e4e06011b106d5e": "Choose a project in this environment.",
+  "7e40df7c620be4c7": "Invalid fallback models",
+  "19d3e1f5b1b34f3f": "A fallback model cannot match the primary model.",
+  "316d9bceaca4dc37": "Fallback models must be distinct.",
+  "0a2295ea8daff78c": "Up to {max} fallback models are allowed.",
+  "cb9f30e039422784": "Up to {max} fallback model families are allowed.",
+  "5a5b35116eedb99f": "Up to {max} fallback models per family are allowed.",
   "6e84e13468a04640": "Could not save task",
   "adeba4f2153a83d7": "Runs on",
   "09dd16bcf8dda706": "Task",
@@ -3663,6 +3680,12 @@
   "4c7bb162684a9bda": "Context",
   "1e524ff0f6b9d306": "No projects available",
   "8f3889069b27fd26": "No models available",
+  "a0fb6ce14295b802": "Fallback models",
+  "f10e3f4f83ca53b5": "Optional. Tried in order if the primary model hits a rate limit or fails. Up to {maxModels} models across {maxFamilies} families ({maxPerFamily} per family).",
+  "07008cf8449ab4ac": "Change model",
+  "035b0115bf807d00": "Move up",
+  "2b6c4d8b81e325b5": "Move down",
+  "76c3bfab087b04f9": "Fallback {number}",
   "0011bc7d5aa906e6": "Each run starts a new thread.",
   "e954af2f07e5b53b": "Runs continue one conversation. The first run starts the thread. Deleting it also deletes this task.",
   "1de09cfe757e196d": "Runs continue one conversation. Deleting it also deletes this task.",
@@ -3733,6 +3756,7 @@
   "3c5185df378edef9": "Runs only when every filter matches. Other requests are logged as filtered. Separate “is one of” values with commas; a value can't contain a comma.",
   "d1a74724f70edb0b": "This task no longer exists.",
   "c191069dded46bcc": "This environment is disconnected. Reconnect before saving.",
+  "47f33ea20cb99b12": "Add fallback model",
   "0d15db4c81851479": "Requests with the same key run only once within 7 days.",
   "a5bbe09b0c89d86c": "Coalescing runs the latest payload when the window from the first delivery closes. Empty keys run normally.",
   "0e2233fb297f7c07": "Intervals must be at least 1 minute. Update this interval before saving.",
@@ -3815,6 +3839,8 @@
   "b239ba3ce2899a3e": "Or use your own credentials",
   "f0e6397ab4de588e": "Token",
   "ed83b25c71c98a20": "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one unless asked for another.",
+  "99d51127f573296b": "Another account",
+  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
   "ce2136b36f87b655": "Connect this environment to change its settings.",
   "a90a441fd0e08de7": "This environment",
   "32fb83554cfd85b4": "Transcription models",
@@ -4234,7 +4260,6 @@
   "4e0710d19dfc2e7e": "Send this report to the T3 team?",
   "bddfc683c21e1362": "This is everything that leaves your machine. Nothing is sent unless you tap Send.",
   "bf19826f81484328": "Include the conversation",
-  "260c6b45f52d2f27": "Adds the text of your messages and the agent's replies in the last {textTurns, plural, one {turn} other {{textTurns} turns}}.",
   "ddb7e6f8ce99e657": "Only someone who can run agents on this machine can send or decline it.",
   "433e4a9af4b69ebb": "Your next message starts a fresh session. The agent won't see earlier messages in this thread.",
   "e1189d2e582b008d": "Keep the current session",
@@ -4351,15 +4376,6 @@
     },
     " app was closed"
   ],
-  "705cf2b2ee4e0e42": [
-    "The ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " app left its page and was stopped"
-  ],
   "796b81c4875c4feb": [
     "The ",
     {
@@ -4374,6 +4390,15 @@
       "v": "v"
     },
     " server on this environment. Update the server to use it."
+  ],
+  "705cf2b2ee4e0e42": [
+    "The ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " app left its page and was stopped"
   ],
   "5ef18e4d39b398bf": [
     "Unable to load the ",
@@ -4477,6 +4502,7 @@
   "1d160d4ad1e53219": "Allow once",
   "fb7f5d610fdf9a08": "Allow session",
   "d13cbdad4a0e38e9": "Decline",
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
   "3554fbab5a8480ce": "Approval needed",
   "a5060e6a344b5097": "The provider process for this request is no longer available. Interrupt or restart the run to continue.",
   "72eea7fa7943b0d7": "This connection cannot respond to approvals.",
@@ -4578,8 +4604,6 @@
   "a53406007341d1ce": "Settled",
   "f8cd3addbee28231": "Reorder {title}",
   "b41a0050a71cc60d": "Move up and Move down reorder within this section. Other actions move between sections.",
-  "035b0115bf807d00": "Move up",
-  "2b6c4d8b81e325b5": "Move down",
   "f47d1d92b1e89544": "Arrange threads",
   "d11c7b34e5513d6f": "Close arrange threads",
   "8b34459f5f5a4d00": "Loading",
@@ -4824,10 +4848,10 @@
   "c11a66f71057f074": "Your prompt contains \"ultrathink\" in the text. Remove it to change this option.",
   "b589c01784b9a88c": "Find a model",
   "9b0277205d8a9b04": "All providers",
-  "72ae7e7c5ca1c5fc": "Favorites only",
   "279ab25bdca98778": "Thread settings",
   "0ef86daa831dde67": "Cancel thread settings",
   "cb27bc9ea63671c0": "Model filters",
+  "72ae7e7c5ca1c5fc": "Favorites only",
   "441bfc4afe4b5760": "Provider",
   "33c68c5151a81e31": "Show legacy models",
   "ce9438608fd47e03": "Save",
@@ -4995,6 +5019,7 @@
   "5a2d803b3ea43f18": "Usage limit reached.",
   "d5365c5e28a18442": "{summary}: {message}",
   "bff5692f10fc10b0": "Long press to copy.",
+  "1a1beecff68a6e61": "Verify Google account",
   "a1984c617f973156": "{preview}, tool call failed",
   "38574c0d1e49b278": "{preview}, signed in",
   "fd0d04d5a6627f70": "Opens this agent's thread. Long press to copy.",
@@ -5292,6 +5317,8 @@
   "cd5d90cbbfae32f6": "Recording {time}",
   "6236e2f587bc4eb4": "Transcribing",
   "4e430d5ea01c249b": "Could not send the answer",
+  "a3c43735e1a81498": "Reason for {title}",
+  "bfad234f016cfa3f": "Why, in a sentence. It goes with whichever answer you pick.",
   "e721a8b98f44d5f7": "Ask the agent first",
   "e39f89c909df4db0": "Could not resume the run",
   "28c9dd162825c117": "Cancel this run?",
@@ -5318,6 +5345,14 @@
       "v": "v"
     }
   ],
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " needs a reason."
+  ],
   "9de4e24c9273b496": "This connection can read runs but not answer them.",
   "6dac41769b114edf": [
     {
@@ -5333,21 +5368,62 @@
       "v": "v"
     }
   ],
+  "46d614fa7b4bf1e5": "Workflow runs",
   "204e2afe64cae32b": "Working",
   "abd6c3f4734b9f97": "Failed",
   "59a3213338779c6e": "Done",
   "5a3b1fe78182d8dc": "Answered {choice}",
   "b17bd06e3b1ec0d2": "Answered {choice}: {reason}",
+  "99451a5d2d40440f": "Withdrawn by {by}.",
+  "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "89102905bf09b0e8": "Watch live",
   "eea0013efc9e4339": "Transcript",
   "ba8337dca3232880": "Open run",
+  "235902a19e95833b": [
+    "by you,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "3759768c5d342c22": [
+    "answered",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "by ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
   "cab70ed0237438ef": "Loading the step…",
   "30a5be40eb956663": "working",
   "edc8f6e9720f4eda": "sleeping",
   "0684698b49273da5": "waiting",
+  "0398ca6c1d24b92d": "queued, next in line",
+  "0af6d5ffd5166214": "{count, plural, one {queued, {count} ahead} other {queued, {count} ahead}}",
   "063173aa16052cb9": "under way",
   "3ba4cf953dd20f22": "failed",
+  "0f93532dd76391fc": "You answered {choice}",
+  "7e1fd2eb570a372b": "{who} answered {choice}",
   "e777db2880f53a46": "nobody answered",
+  "201490988858b511": "withdrawn by {by}",
   "34f59bbbead0b97f": "{names} and {count} more",
   "ac1556f6ce89a5ea": "{count} in parallel",
   "e197c4963bacc746": "{count} running",
@@ -5360,6 +5436,7 @@
   "f25af5332ffc3734": "Nothing waits on you.",
   "c3f0119b8d6231f8": "Nothing is running.",
   "33028dfc1229eaa6": "No runs yet.",
+  "e4d1316c85ed7066": "No questions of this kind wait on you.",
   "156ff7b625287a1e": "Hide skipped",
   "69b985b97ab45e6b": "Show {count} skipped",
   "8f6589c9e0ac5d4e": "No environment connected",
@@ -5367,8 +5444,8 @@
   "b9aae2f7cdb1a379": "No workflow runs yet",
   "ace8fc1c643cf9f6": "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one on your computer, under Workflows, then Definitions.",
   "fc9c3a00cfc18b55": "All kinds",
-  "e4d1316c85ed7066": "No questions of this kind wait on you.",
   "45a94c724845ec1d": "Other",
+  "fceb81aa6685fb47": "Chats",
   "86798f07ba2d7f4d": "Search issues",
   "484cd83bb303bab8": "Search pull requests",
   "75ed31fcea4f741a": "Filter issues",
@@ -5402,7 +5479,6 @@
   "f03ba5bbef74ca6d": "Issues",
   "ee0df48be7144de4": "Workflows",
   "724eacadecd3a4cf": "Usage",
-  "fceb81aa6685fb47": "Chats",
   "f1bb8f9323639c63": "PRs",
   "a3bd0ffad2733714": "Review guide",
   "399447461c149bb1": "Reconnect or ask someone with write access to retry.",
@@ -5659,70 +5735,5 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
-  "99d51127f573296b": "Another account",
-  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
-  "892f08d21b8e48a9": "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} once their requirements are met. This may happen immediately.",
-  "89bf40eb2503b6c5": "New device signed in to {environment}",
-  "c94b5fe9ef372bc0": "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
-  "bec67d0ed485f885": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
-  "18c30aa94d0a807f": "Connection diagnostics",
-  "eb287395a09cd288": "Send connection traces",
-  "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
-  "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
-  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands.",
-  "7150557773b3818b": "Queued",
-  "efbeb3993ee2c3f5": "Queued for {pool}",
-  "0398ca6c1d24b92d": "queued, next in line",
-  "0af6d5ffd5166214": "{count, plural, one {queued, {count} ahead} other {queued, {count} ahead}}",
-  "e114d37b32ab0dc7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " needs a reason."
-  ],
-  "7e1fd2eb570a372b": "{who} answered {choice}",
-  "a3c43735e1a81498": "Reason for {title}",
-  "bfad234f016cfa3f": "Why, in a sentence. It goes with whichever answer you pick.",
-  "3759768c5d342c22": [
-    "answered",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "8afa4fbe16f95bcf": [
-    "by ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ",",
-    " ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
-  "0f93532dd76391fc": "You answered {choice}",
-  "235902a19e95833b": [
-    "by you,",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "1a1beecff68a6e61": "Verify Google account",
-  "99451a5d2d40440f": "Withdrawn by {by}.",
-  "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
-  "201490988858b511": "withdrawn by {by}",
-  "46d614fa7b4bf1e5": "Workflow runs"
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
 }

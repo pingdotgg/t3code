@@ -12,6 +12,9 @@ import {
   changeDraftProject,
   createDraft,
   editDraft,
+  hasScheduledTaskDraftChanges,
+  moveFallbackModel,
+  pruneFallbackMatchingPrimary,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
@@ -244,6 +247,20 @@ describe("scheduled task worktree base", () => {
       editDraft({ ...rootTask, workspaceStrategy: { type: "worktree", baseRef: "release" } })
         .baseRef,
     ).toBe("release");
+  });
+
+  it("tracks fallback model edits, reordering, and primary pruning in drafts", () => {
+    const opus = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+    const astra = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" };
+    const initial = editDraft({ ...rootTask, fallbackModelSelections: [opus, astra] });
+    expect(hasScheduledTaskDraftChanges(initial, initial)).toBe(false);
+    const reordered = {
+      ...initial,
+      fallbackModelSelections: moveFallbackModel(initial.fallbackModelSelections, 1, -1),
+    };
+    expect(reordered.fallbackModelSelections).toEqual([astra, opus]);
+    expect(hasScheduledTaskDraftChanges(initial, reordered)).toBe(true);
+    expect(pruneFallbackMatchingPrimary(reordered.fallbackModelSelections, astra)).toEqual([opus]);
   });
 
   it("clears the old project's base branch and checkout when the project changes", () => {

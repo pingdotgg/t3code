@@ -21,6 +21,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
+  ScheduledTaskFallbackModelSelections,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
@@ -740,6 +741,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "Runs share one thread but each starts a fresh session. Unbound: the first run makes the thread.",
     }),
   ),
+  fallbackModelSelections: Schema.optional(ScheduledTaskFallbackModelSelections),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -762,6 +764,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
   freshSession: Schema.Boolean,
+  fallbackModelSelections: Schema.optional(ScheduledTaskFallbackModelSelections),
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
@@ -806,6 +809,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
   freshSession: Schema.optional(Schema.Boolean),
+  fallbackModelSelections: Schema.optional(ScheduledTaskFallbackModelSelections),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
