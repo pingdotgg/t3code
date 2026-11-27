@@ -274,19 +274,20 @@ export function ThreadDetailsContext({
             <span className="min-w-0 truncate">
               {gt("Context", { $context: "context window row label" })}
             </span>
-            <span className="ms-auto inline-flex shrink-0 items-center gap-1.5 tabular-nums">
-              {maxTokensFormatted !== null ? (
-                <span className="text-caption text-muted-foreground">
-                  {gt("{used} / {max}", { used: usedTokens, max: maxTokensFormatted })}
-                </span>
-              ) : (
-                <span className="text-caption text-muted-foreground">{usedTokens}</span>
-              )}
+            <span className="flex flex-1 items-center gap-1.5">
               {used !== null ? (
-                <Text variant="meta" tone="strong" numeric emphasis>
-                  {Math.round(used)}%
-                </Text>
+                <span className="min-w-12 flex-1">
+                  <ContextWindowSegments usage={usage} minSegmentWidth={2} />
+                </span>
               ) : null}
+              <span
+                className={cn(
+                  "shrink-0 text-end tabular-nums text-muted-foreground",
+                  used === null && "ms-auto",
+                )}
+              >
+                {used !== null ? `${Math.round(used)}%` : usedTokens}
+              </span>
             </span>
           </CollapsibleTrigger>
           {onCompact ? (
@@ -312,11 +313,6 @@ export function ThreadDetailsContext({
         </div>
         <CollapsiblePanel>
           <div className="ps-2.5 pe-1">
-            {used !== null ? (
-              <div className="pt-2 pb-0.5">
-                <ContextWindowSegments usage={usage} minSegmentWidth={2} />
-              </div>
-            ) : null}
             <dl className="text-meta">
               {contextWindowSegments(usage, m).map((segment) => (
                 <div key={segment.label} className="flex h-8 items-center justify-between gap-2">
