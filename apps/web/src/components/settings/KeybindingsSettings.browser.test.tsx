@@ -316,10 +316,10 @@ it.each([
       keys: ["⌃", "⌥", "["],
     },
     editQueued: {
-      ariaLabel: "Edit shortcut for Queue: Edit Last Queued Message: ⌥Up",
+      ariaLabel: "Edit shortcut for Edit last queued message: ⌥Up",
       keys: ["⌥", "Up"],
     },
-    focusNext: { ariaLabel: "Edit shortcut for Focus Next Workspace Area: F6", keys: ["F6"] },
+    focusNext: { ariaLabel: "Edit shortcut for Focus next workspace area: F6", keys: ["F6"] },
   },
   {
     name: "Linux",
@@ -333,18 +333,20 @@ it.each([
       keys: ["Ctrl", "Alt", "["],
     },
     editQueued: {
-      ariaLabel: "Edit shortcut for Queue: Edit Last Queued Message: Alt+Up",
+      ariaLabel: "Edit shortcut for Edit last queued message: Alt+Up",
       keys: ["Alt", "Up"],
     },
-    focusNext: { ariaLabel: "Edit shortcut for Focus Next Workspace Area: F6", keys: ["F6"] },
+    focusNext: { ariaLabel: "Edit shortcut for Focus next workspace area: F6", keys: ["F6"] },
   },
 ])(
   "renders platform modifier symbols and formatted key labels in shortcut pills on $name",
-  async ({ platform, terminalPreviousMac, terminalPreviousCtrl, editQueued, focusNext }) => {
+  async ({ name, platform, terminalPreviousMac, terminalPreviousCtrl, editQueued, focusNext }) => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
     await using screen = await render(<KeybindingsSettingsPanel />);
+    // The list leaves out a binding whose condition cannot hold on this platform.
+    const terminalPrevious = name === "macOS" ? terminalPreviousMac : terminalPreviousCtrl;
 
-    for (const expected of [terminalPreviousMac, terminalPreviousCtrl, editQueued, focusNext]) {
+    for (const expected of [terminalPrevious, editQueued, focusNext]) {
       const button = screen.getByRole("button", { name: expected.ariaLabel, exact: true });
       await expect.element(button).toBeVisible();
       const kbdTexts = Array.from(

@@ -95,9 +95,8 @@ it.each([{ isComposing: true }, { keyCode: 229 }, { repeat: true }])(
     await using dialog = await openDialog();
 
     await act(() => dialog.input.element().dispatchEvent(enterEvent(ignoredEnter)));
-    await expect
-      .element(page.getByText("Paste a pull request URL or enter 123 / #123."))
-      .not.toBeInTheDocument();
+    // The description repeats this hint, so only a validation alert would show the Enter landed.
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
     expect(linking.changeLink).not.toHaveBeenCalled();
 
     await dialog.input.fill(PR_URL);

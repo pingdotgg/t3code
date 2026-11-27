@@ -165,7 +165,7 @@ it("saves a typed default viewport size on Enter", async () => {
     { router: "/settings/browser" },
   );
 
-  await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  // The viewport size row is not behind an Advanced section here.
   const width = screen.getByRole("textbox", { name: "Default viewport width" });
   await userEvent.clear(width);
   await userEvent.type(width, "1440");

@@ -480,7 +480,7 @@ describe("KeybindingsSettings.logic", () => {
       "Linux x86_64",
     );
 
-    expect(rows.map((row) => row.conflicts)).toEqual([["Chat: New Local"], ["Chat: New"]]);
+    expect(rows.map((row) => row.conflicts)).toEqual([["New local thread"], ["New thread"]]);
   });
 
   it("keeps mod and ctrl shortcuts apart when their when contexts differ", () => {
