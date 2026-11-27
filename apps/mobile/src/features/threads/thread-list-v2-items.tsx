@@ -14,6 +14,7 @@ import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import type { ThreadMoveDestination } from "./threadOrder";
@@ -948,7 +949,31 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
   );
-  const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
+  const cancelSettleWhenDone = useAtomCommand(threadEnvironment.cancelSettleWhenDone);
+  const handleSettle = useCallback(async () => {
+    if (thread.settleWhenDone != null) {
+      const result = await cancelSettleWhenDone({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id },
+      });
+      return result._tag === "Success";
+    }
+    return onSettleThread(thread);
+  }, [cancelSettleWhenDone, onSettleThread, thread]);
+  const settleWhenDoneSupported =
+    useAtomValue(environmentServerConfigsAtom).get(thread.environmentId)?.environment.capabilities
+      .threadSettleWhenDone === true;
+  const settleAction: MenuAction = {
+    id: "settle",
+    title:
+      thread.settleWhenDone != null
+        ? gt("Cancel settle when done")
+        : thread.runtime?.activeRunId != null
+          ? gt("Settle when done")
+          : gt("Settle", { $context: "verb, thread action" }),
+    image: "checkmark",
+    attributes: { disabled: thread.runtime?.activeRunId != null && !settleWhenDoneSupported },
+  };
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
   // Recycling changes identity without remounting; clear local UI directly because equality may skip the render closure.
   const rowIdentity = `${thread.environmentId}:${thread.id}`;
@@ -1181,7 +1206,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         nested,
         direct: [
           ...direct,
-          localized(CARD_MENU_ACTIONS[0]!),
+          settleAction,
           ...(swipeActions.secondary === "snooze"
             ? [
                 {
@@ -1205,6 +1230,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       m,
     );
   }, [
+    settleAction,
     autoSettleMenuItems,
     canShareWithGuest,
     canUnsettle,
@@ -1338,14 +1364,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           onPress: handleUnsettle,
         }
       : {
-          accessibilityLabel: gt("Settle {title}", { title: thread.title }),
+          accessibilityLabel:
+            thread.settleWhenDone != null
+              ? gt("Cancel settle when done for {title}", { title: thread.title })
+              : thread.runtime?.activeRunId != null
+                ? gt("Settle {title} when done", { title: thread.title })
+                : gt("Settle {title}", { title: thread.title }),
           icon: "checkmark" as const,
-          label: gt("Settle", { $context: "verb, thread action" }),
+          label: settleAction.title,
           swipeHint: gt("Opens the thread. Swipe left to settle."),
           swipeSnoozeHint: gt("Opens the thread. Swipe left for settle and snooze actions."),
           onPress: handleSettle,
         };
   }, [
+    settleAction.title,
     gt,
     handleArchive,
     handleSettle,
@@ -1353,6 +1385,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     handleUnsnooze,
     swipeActions.primary,
     thread.title,
+    thread.settleWhenDone,
+    thread.runtime?.activeRunId,
   ]);
   const secondaryAction = useMemo(
     () =>
@@ -1371,8 +1405,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const canSwipe =
+  const canUseMenu =
     canOperateThread || (triageOnly && TRIAGE_MENU_ACTION_IDS.has(swipeActions.primary));
+  const canSwipe =
+    canUseMenu &&
+    !(
+      swipeActions.primary === "settle" &&
+      thread.runtime?.activeRunId != null &&
+      !settleWhenDoneSupported
+    );
   const swipeAccessibilityHint = !canSwipe
     ? gt("Opens the thread")
     : secondaryAction === null
@@ -1419,6 +1460,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {thread.title}
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
+          {thread.settleWhenDone != null ? (
+            <Text
+              className="text-xs text-secondary-label"
+              accessibilityLabel={gt("Settle when done")}
+            >
+              {gt("Settle when done")}
+            </Text>
+          ) : null}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
             <SymbolView
@@ -1751,6 +1800,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {thread.settleWhenDone != null ? (
+            <Text
+              className="text-xs text-secondary-label"
+              accessibilityLabel={gt("Settle when done")}
+            >
+              {gt("Settle when done")}
+            </Text>
+          ) : null}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           <Text
             className={cn(
@@ -1771,8 +1828,27 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
+  const rowWithMenu = (close: () => void) => (
+    <Menu
+      accessibilityLabel={rowAccessibilityLabel}
+      actions={
+        triageOnly
+          ? menuActions.filter((action) => TRIAGE_MENU_ACTION_IDS.has(action.id ?? ""))
+          : menuActions
+      }
+      onPressAction={handleMenuAction}
+      shouldOpenOnLongPress
+    >
+      {rowContent(close)}
+    </Menu>
+  );
+
   if (!canSwipe)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <View style={rowAppearance.swipeContainerStyle}>
+        {canUseMenu ? rowWithMenu(() => {}) : rowContent(() => {})}
+      </View>
+    );
 
   return (
     <View collapsable={false}>
@@ -1798,20 +1874,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         simultaneousWith={props.simultaneousSwipeGesture}
         threadTitle={thread.title}
       >
-        {(close) => (
-          <Menu
-            accessibilityLabel={rowAccessibilityLabel}
-            actions={
-              triageOnly
-                ? menuActions.filter((action) => TRIAGE_MENU_ACTION_IDS.has(action.id ?? ""))
-                : menuActions
-            }
-            onPressAction={handleMenuAction}
-            shouldOpenOnLongPress
-          >
-            {rowContent(close)}
-          </Menu>
-        )}
+        {rowWithMenu}
       </ThreadSwipeable>
     </View>
   );

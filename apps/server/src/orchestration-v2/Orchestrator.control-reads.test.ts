@@ -2930,6 +2930,17 @@ it.effect("queued-message commands read a long thread's history without walking 
       }),
     );
     walks.push(...(yield* historyWalks("queued-run.edit")));
+    const queuedInput = yield* orchestrator
+      .dispatch({
+        type: "thread.settle-when-done.set",
+        commandId: CommandId.make("settle-before-steer:long-history-reads"),
+        threadId,
+        enabled: true,
+        runId: activeRun.id,
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(queuedInput));
+    assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
     yield* observed(
       orchestrator.dispatch({
         type: "queued-message.promote-to-steer",
@@ -2940,6 +2951,7 @@ it.effect("queued-message commands read a long thread's history without walking 
       }),
     );
     walks.push(...(yield* historyWalks("queued-message.promote-to-steer")));
+    assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
     yield* dispatch("cancelled");
     const cancelledRun = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
     assert.equal(cancelledRun.status, "queued");
@@ -3283,4 +3295,459 @@ it.each([
     assert.strictEqual(turn, findsFirstLegacy ? providerTurns[size - 2] : undefined);
     assert.isAtMost(reads.count, 2 * (size + size));
   },
+);
+
+it.effect.each([
+  { status: "completed", followup: "none" },
+  { status: "failed", followup: "none" },
+  { status: "interrupted", followup: "none" },
+  { status: "completed", followup: "delegated" },
+  { status: "completed", followup: "older-delivery" },
+  { status: "completed", followup: "native-answer" },
+  { status: "completed", followup: "new-watch" },
+  { status: "completed", followup: "compaction" },
+  { status: "completed", followup: "held-wake" },
+  { status: "failed", followup: "held-wake" },
+  { status: "completed", followup: "cancelled-wake" },
+  { status: "completed", followup: "cancelled-input" },
+  { status: "cancelled", followup: "restart" },
+] as const)(
+  "settle when done persists and completes its work ($status, $followup)",
+  ({ status, followup }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make(`thread:settle-when-done:${status}`);
+      const runId = RunId.make(`run:settle-when-done:${status}`);
+      const now = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${status}`),
+        threadId,
+        projectId: ProjectId.make("project:settle-when-done"),
+        title: "Settle when done",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const providerThreadId = ProviderThreadId.make(`provider-thread:settle-when-done:${status}`);
+      yield* projections.apply({
+        id: EventId.make("provider-thread:settle-when-done"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          pendingBackgroundTasks: [],
+        },
+      });
+      const run: OrchestrationV2Run = {
+        id: runId,
+        threadId,
+        ordinal: followup === "older-delivery" ? 2 : 1,
+        providerInstanceId: instanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make(`message:${status}`),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      yield* projections.apply({
+        id: EventId.make(`run:${status}`),
+        type: "run.created",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: run,
+      });
+      if (followup === "older-delivery") {
+        yield* projections.apply({
+          id: EventId.make("older-reserved-run"),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...run,
+            id: RunId.make("older-reserved-run"),
+            ordinal: 1,
+            status: "completed",
+            completedAt: now,
+            delegatedCompletion: {
+              disposition: "open",
+              nextGeneration: 2,
+              delivery: {
+                generation: 1,
+                messageId: MessageId.make("older-reserved-message"),
+                taskIds: [NodeId.make("older-reserved-task")],
+              },
+            },
+          },
+        });
+      }
+      let cancelledInputId: RunId | undefined;
+      if (followup === "cancelled-input") {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queue-input-before-settle"),
+          threadId,
+          messageId: MessageId.make("queue-input-before-settle"),
+          text: "A discarded follow-up",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        cancelledInputId = (yield* projections.getThreadRecords(threadId, ["runs"])).runs.at(
+          -1,
+        )!.id;
+        yield* orchestrator.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make("cancel-input-before-settle"),
+          threadId,
+          runId: cancelledInputId,
+        });
+      }
+      const enable = (suffix: string) =>
+        orchestrator.dispatch({
+          type: "thread.settle-when-done.set",
+          commandId: CommandId.make(`enable:${status}:${suffix}`),
+          threadId,
+          enabled: true,
+          runId,
+        });
+      yield* enable("first");
+      const first = (yield* projections.getThread(threadId)).settleWhenDone;
+      assert.deepEqual(first, { runId, requestedAt: DateTime.formatIso(now) });
+      yield* TestClock.adjust("1 second");
+      yield* enable("idempotent");
+      assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, first);
+      assert.deepEqual((yield* projections.getThreadShell(threadId))?.settleWhenDone, first);
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(threadId)).thread.settleWhenDone,
+        first,
+      );
+      // A manually active, pinned thread still participates in explicit completion settlement.
+      yield* orchestrator.dispatch({
+        type: "thread.pin",
+        commandId: CommandId.make(`pin:${status}`),
+        threadId,
+      });
+      assert.equal(
+        (yield* projections.getSettlementCandidates(threadId))[0]?.settleWhenDone?.runId,
+        runId,
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.settle-when-done.set",
+        commandId: CommandId.make(`cancel:${status}`),
+        threadId,
+        enabled: false,
+      });
+      assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+      yield* TestClock.adjust("1 second");
+      yield* enable("second");
+      const intent = (yield* projections.getThread(threadId)).settleWhenDone!;
+      if (followup === "native-answer") {
+        const sessionId = ProviderSessionId.make("settle-native-answer-session");
+        const requestId = RuntimeRequestId.make("settle-native-answer-request");
+        yield* projections.apply({
+          id: EventId.make("settle-native-answer-session"),
+          type: "provider-session.attached",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: sessionId,
+            driver: adapter.driver,
+            providerInstanceId: instanceId,
+            status: "ready",
+            cwd: "/repo",
+            model: modelSelection.model,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+        });
+        yield* projections.apply({
+          id: EventId.make("settle-native-answer-request"),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: requestId,
+            nodeId: NodeId.make("settle-native-answer-request"),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "live", providerSessionId: sessionId },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+        yield* orchestrator.dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("settle-native-answer"),
+          threadId,
+          requestId,
+          answers: { question: "Keep working" },
+        });
+        assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+        return;
+      }
+      if (followup === "new-watch") {
+        const key = { host: "github.com", repository: "example/project", number: 1 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("settle-new-watch"),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/example/project/pull/1", source: "manual" },
+        });
+        assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("settle-remove-new-watch"),
+          threadId,
+          ...key,
+          watching: false,
+        });
+        assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+        return;
+      }
+      yield* orchestrator.dispatch({
+        type: "thread.settle-when-done.set",
+        commandId: CommandId.make(`stale-cancel:${status}`),
+        threadId,
+        enabled: false,
+        expected: first!,
+      });
+      assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+      const end = yield* DateTime.now;
+      yield* projections.apply({
+        id: EventId.make(`end:${status}`),
+        type: "run.updated",
+        threadId,
+        runId,
+        occurredAt: end,
+        payload: {
+          ...run,
+          status,
+          completedAt: end,
+          ...(followup === "delegated"
+            ? {
+                delegatedCompletion: {
+                  disposition: "open",
+                  nextGeneration: 2,
+                  delivery: {
+                    generation: 1,
+                    messageId: MessageId.make(`followup:${followup}`),
+                    taskIds: [NodeId.make("task:completion")],
+                  },
+                },
+              }
+            : {}),
+        },
+      });
+      if (status === "failed") {
+        yield* projections.apply({
+          id: EventId.make("failed-response-question"),
+          type: "runtime-request.updated",
+          threadId,
+          runId,
+          occurredAt: end,
+          payload: {
+            id: RuntimeRequestId.make("failed-response-question"),
+            nodeId: NodeId.make("failed-response-question"),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: end,
+            resolvedAt: null,
+          },
+        });
+      }
+      let latestRunId = cancelledInputId ?? runId;
+      if (followup === "delegated" || followup === "older-delivery") {
+        const beforeDelivery = yield* orchestrator
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("settle-before-completion-delivery"),
+            threadId,
+            expectedSettleWhenDone: intent,
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(beforeDelivery));
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+        if (followup === "older-delivery") return;
+      }
+      if (followup === "restart") {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        yield* outbox.enqueue([
+          {
+            id: `effect:restart-continuation:${runId}`,
+            commandId: CommandId.make("restart-recovery"),
+            threadId,
+            request: { type: "provider-runtime.continue", sourceRunId: runId },
+          },
+        ]);
+        const duringRestart = yield* orchestrator
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("settle-during-restart"),
+            threadId,
+            expectedLatestRunId: runId,
+            expectedSettleWhenDone: intent,
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(duringRestart));
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+      }
+      if (followup !== "none" && followup !== "cancelled-input") {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`followup:${followup}`),
+          threadId,
+          messageId: MessageId.make(`followup:${followup}`),
+          text: followup === "compaction" ? "/compact" : "Continue the same work",
+          attachments: [],
+          dispatchMode: {
+            type: followup === "restart" ? "start_immediately" : "queue_after_active",
+          },
+          createdBy: "agent",
+          creationSource: "server",
+          ...(followup === "restart" ? { restartContinuationOfRunId: runId } : {}),
+          ...(followup === "delegated"
+            ? {
+                delegatedCompletion: {
+                  parentRunId: runId,
+                  generation: 1,
+                  taskIds: [NodeId.make("task:completion")],
+                },
+              }
+            : followup === "compaction"
+              ? {}
+              : {
+                  notification: {
+                    source: { kind: "system" },
+                    outcome: "updated",
+                    summary: "Work completed",
+                    detail: "Continue",
+                  },
+                }),
+        });
+        const next = (yield* projections.getThreadRecords(threadId, ["runs"])).runs.at(-1)!;
+        assert.notEqual(next.id, runId);
+        latestRunId = next.id;
+        yield* projections.apply({
+          id: EventId.make(`followup-end:${followup}`),
+          type: "run.updated",
+          threadId,
+          runId: next.id,
+          occurredAt: end,
+          payload: {
+            ...next,
+            status:
+              followup === "held-wake"
+                ? "queued"
+                : followup === "cancelled-wake"
+                  ? "cancelled"
+                  : "completed",
+            ...(followup === "held-wake" ? { queueHeld: true } : {}),
+            startedAt: followup === "cancelled-wake" ? null : end,
+            completedAt: end,
+          },
+        });
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+      }
+      const succeeds = status === "completed" || followup === "restart";
+      const result = yield* orchestrator
+        .dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make(`finish:${status}`),
+          threadId,
+          ...(followup === "compaction" ? {} : { expectedLatestRunId: latestRunId }),
+          expectedSettleWhenDone: intent,
+        })
+        .pipe(Effect.exit);
+      if (status === "completed" && followup === "held-wake") {
+        assert.isTrue(Exit.isFailure(result));
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+        return;
+      }
+      assert.isTrue(Exit.isSuccess(result));
+      assert.equal(
+        (yield* projections.getThread(threadId)).settledOverride,
+        succeeds ? "settled" : null,
+      );
+      assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+      if (status === "completed" && followup === "none") {
+        yield* orchestrator.dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make("unsettle:race"),
+          threadId,
+          reason: "user",
+        });
+        // The turn can finish between opening its menu and the server receiving the request.
+        yield* enable("completion-race");
+        assert.equal((yield* projections.getThread(threadId)).settleWhenDone?.runId, runId);
+        const pending = (yield* projections.getThread(threadId)).settleWhenDone!;
+        // Input can arrive in the same millisecond as the request; timestamps alone cannot cancel it.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("new-input:same-tick"),
+          threadId,
+          messageId: MessageId.make("new-input:same-tick"),
+          text: "Keep working",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        assert.equal(DateTime.formatIso(yield* DateTime.now), pending.requestedAt);
+        assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+        assert.isNull((yield* projections.getThreadShell(threadId))?.settleWhenDone);
+        const stale = yield* orchestrator
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("stale-finish:same-tick"),
+            threadId,
+            expectedLatestRunId: runId,
+            expectedSettleWhenDone: pending,
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(stale));
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+      }
+    }).pipe(Effect.provide(layerTest)),
 );

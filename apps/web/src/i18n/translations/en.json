@@ -13030,5 +13030,11 @@
       "v": "v"
     },
     " more in Linked items"
-  ]
+  ],
+  "a4a17a76fdfdd63a": "Connect to this environment to settle a running thread when done.",
+  "15b65e06186977de": "Update this environment's server to settle a running thread when done.",
+  "53e5eaf0be838e68": "Cancel settle when done",
+  "d57765280bbd2dfc": "Settle when done",
+  "f608874d2e4f182f": "Cancel settle when done",
+  "c271bd3ac5ac9ff3": "Settle when done"
 }

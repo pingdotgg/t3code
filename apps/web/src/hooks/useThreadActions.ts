@@ -846,6 +846,18 @@ export function useThreadActions() {
     return result;
   };
 
+  const cancelSettleWhenDoneMutation = useOrchestrationCommand(
+    threadEnvironment.cancelSettleWhenDone,
+    {
+      reportFailure: false,
+    },
+  );
+  const cancelSettleWhenDone = (target: ScopedThreadRef) =>
+    cancelSettleWhenDoneMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId },
+    });
+
   const settleThread = async (target: ScopedThreadRef) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
@@ -858,6 +870,12 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
+    if (resolved?.thread.settleWhenDone != null || resolved?.thread.runtime?.activeRunId != null) {
+      return settleThreadMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId },
+      });
+    }
     const nowIso = new Date().toISOString();
     const wokeAt = resolved ? threadWokeAt(resolved.thread, { now: nowIso }) : null;
     const undoPlan = ThreadUndo.planThreadUndo("settle", resolved?.thread);
@@ -1064,6 +1082,7 @@ export function useThreadActions() {
     deleteThread,
     confirmAndDeleteThread,
     settleThread,
+    cancelSettleWhenDone,
     unsettleThread,
     snoozeThread,
     unsnoozeThread,

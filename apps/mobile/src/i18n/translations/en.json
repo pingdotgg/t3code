@@ -5709,5 +5709,11 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
-  "46d614fa7b4bf1e5": "Workflow runs"
+  "46d614fa7b4bf1e5": "Workflow runs",
+  "a4a17a76fdfdd63a": "Connect to this environment to settle a running thread when done.",
+  "15b65e06186977de": "Update this environment's server to settle a running thread when done.",
+  "53e5eaf0be838e68": "Cancel settle when done",
+  "d57765280bbd2dfc": "Settle when done",
+  "c2792e9899751ddd": "Cancel settle when done for {title}",
+  "207f2a4cc2e91157": "Settle {title} when done"
 }

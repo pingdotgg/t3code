@@ -106,6 +106,7 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
   readonly loadEarlier?: () => Effect.Effect<ThreadHistoryController.ThreadHistoryLoadEarlierResult>;
   readonly reconcilePendingWork?: (threadId: ThreadId) => Effect.Effect<void>;
   readonly connected?: boolean;
+  readonly settleWhenDoneSupported?: boolean;
   /** Shared between harnesses to stand in for a restart. */
   readonly storage?: { value: string | null };
 }) {
@@ -115,6 +116,11 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
   }>();
   const reconciled = yield* Queue.unbounded<ThreadId>();
   const liveSession = Option.some({
+    initialConfig: Effect.succeed({
+      environment: {
+        capabilities: { threadSettleWhenDone: options?.settleWhenDoneSupported === true },
+      },
+    }),
     client: {
       [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
         Effect.gen(function* () {
@@ -502,6 +508,65 @@ describe("remote thread lifecycle commands", () => {
         expect(h.registry.get(source)).toBe(initial);
         yield* Deferred.fail(request.reply, new Error("Remote rejected the action"));
         expect((yield* Fiber.join(result))._tag).toBe("Failure");
+        expect(h.registry.get(h.visibleAtom)).toBe(initial);
+      }),
+  );
+
+  it.effect.each([
+    { pending: false, active: true },
+    { pending: true, active: true },
+    { pending: true, active: false },
+  ])(
+    "keeps a row visible while idempotently requesting completion settlement ($pending, $active)",
+    ({ pending, active }) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ settleWhenDoneSupported: true });
+        const runId = RunId.make("working");
+        const initial = {
+          ...SNAPSHOT,
+          threads: [
+            {
+              ...SNAPSHOT.threads[0]!,
+              activeRunId: active ? runId : null,
+              latestRunId: runId,
+              status: active ? ("running" as const) : ("completed" as const),
+              settleWhenDone: pending ? { runId, requestedAt: DateTime.formatIso(NOW) } : null,
+            },
+          ],
+        };
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), initial);
+        const result = yield* Effect.forkChild(
+          h.commands.settle.run(h.registry, {
+            environmentId: ENVIRONMENT_ID,
+            input: { threadId: THREAD_ID },
+          }),
+          { startImmediately: true },
+        );
+        const request = yield* Queue.take(h.requests);
+        expect(request.command).toMatchObject({
+          type: "thread.settle-when-done.set",
+          threadId: THREAD_ID,
+          enabled: true,
+          ...(active ? { runId } : {}),
+        });
+        expect(h.registry.get(h.visibleAtom)).toBe(initial);
+        yield* Deferred.succeed(request.reply, { sequence: 2 });
+        yield* Fiber.join(result);
+        expect(h.registry.get(h.visibleAtom)).toBe(initial);
+        const cancel = yield* Effect.forkChild(
+          h.commands.cancelSettleWhenDone.run(h.registry, {
+            environmentId: ENVIRONMENT_ID,
+            input: { threadId: THREAD_ID },
+          }),
+          { startImmediately: true },
+        );
+        const cancellation = yield* Queue.take(h.requests);
+        expect(cancellation.command).toMatchObject({
+          type: "thread.settle-when-done.set",
+          enabled: false,
+        });
+        yield* Deferred.succeed(cancellation.reply, { sequence: 3 });
+        yield* Fiber.join(cancel);
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
       }),
   );

@@ -5707,5 +5707,11 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
-  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen",
+  "a4a17a76fdfdd63a": "Verbinde dich mit dieser Umgebung, um einen laufenden Thread nach Abschluss zu erledigen.",
+  "15b65e06186977de": "Aktualisiere den Server dieser Umgebung, um einen laufenden Thread nach Abschluss zu erledigen.",
+  "53e5eaf0be838e68": "Erledigen nach Abschluss aufheben",
+  "d57765280bbd2dfc": "Nach Abschluss erledigen",
+  "c2792e9899751ddd": "Erledigen nach Abschluss für {title} aufheben",
+  "207f2a4cc2e91157": "{title} nach Abschluss erledigen"
 }

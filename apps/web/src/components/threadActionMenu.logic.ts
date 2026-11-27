@@ -12,6 +12,7 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "pin"
   | "unpin"
+  | "cancel-settle-when-done"
   | "settle"
   | "unsettle"
   | "auto-settle"
@@ -107,16 +108,19 @@ export interface ThreadActionMenuState {
   } | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
+  readonly settleWhenDone?: boolean;
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
+  readonly hasActiveResponse?: boolean;
   /** The server marks unread against the latest run's completion, so in-flight runs cannot be. */
   readonly hasCompletedRun: boolean;
   readonly supports: {
     readonly settlement: boolean;
+    readonly settleWhenDone?: boolean;
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
     readonly pinning: boolean;
@@ -187,7 +191,18 @@ export function buildThreadActionMenuItems(
                 label: resolve(msg("Un-settle thread")),
                 icon: "circle-check",
               }
-            : { id: "settle" as const, label: resolve(msg("Settle thread")), icon: "circle-check" },
+            : {
+                id: state.settleWhenDone
+                  ? ("cancel-settle-when-done" as const)
+                  : ("settle" as const),
+                label: state.settleWhenDone
+                  ? resolve(msg("Cancel settle when done"))
+                  : state.hasActiveResponse
+                    ? resolve(msg("Settle when done"))
+                    : resolve(msg("Settle thread")),
+                icon: state.hasActiveResponse || state.settleWhenDone ? "timer" : "circle-check",
+                disabled: state.hasActiveResponse === true && !state.supports.settleWhenDone,
+              },
         ]
       : []),
     ...(state.supports.snooze

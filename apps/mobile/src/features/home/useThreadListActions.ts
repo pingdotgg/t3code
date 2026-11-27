@@ -172,34 +172,34 @@ function useThreadActionExecutor(
       }
       if (action === "unsettle") ThreadUndo.invalidate("settle", key);
       onStarted?.();
-      const result = await withThreadDismissal(
-        key,
-        async () =>
-          action === "unsettle"
-            ? // reason "user" pins the thread active: auto-settle stays
-              // suppressed until real activity clears the pin server-side.
-              await unsettleMutation({
-                environmentId: thread.environmentId,
-                input: {
-                  threadId: thread.id,
-                  reason: "user",
-                  ...(restoreUnsettledAt === undefined ? {} : { restoreUnsettledAt }),
-                },
-              })
-            : await (
-                action === "settle"
-                  ? settleMutation
-                  : action === "archive"
-                    ? archiveMutation
-                    : action === "unarchive"
-                      ? unarchiveMutation
-                      : deleteMutation
-              )({
-                environmentId: thread.environmentId,
-                input: { threadId: thread.id },
-              }),
-        (result) => result._tag === "Success",
-      );
+      const run = async () =>
+        action === "unsettle"
+          ? // reason "user" pins the thread active: auto-settle stays
+            // suppressed until real activity clears the pin server-side.
+            await unsettleMutation({
+              environmentId: thread.environmentId,
+              input: {
+                threadId: thread.id,
+                reason: "user",
+                ...(restoreUnsettledAt === undefined ? {} : { restoreUnsettledAt }),
+              },
+            })
+          : await (
+              action === "settle"
+                ? settleMutation
+                : action === "archive"
+                  ? archiveMutation
+                  : action === "unarchive"
+                    ? unarchiveMutation
+                    : deleteMutation
+            )({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id },
+            });
+      const result = await (action === "settle" &&
+      (thread.settleWhenDone != null || thread.runtime?.activeRunId != null)
+        ? run()
+        : withThreadDismissal(key, run, (result) => result._tag === "Success"));
       if (result._tag === "Failure") {
         Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
         return false;
@@ -353,6 +353,9 @@ export function useThreadListActions(): {
       },
     });
   const settleThread = async (thread: EnvironmentThreadShell) => {
+    if (thread.settleWhenDone != null || thread.runtime?.activeRunId != null) {
+      return executeAction("settle", thread);
+    }
     const key = scopedThreadKey(thread.environmentId, thread.id);
     const plan = ThreadUndo.planThreadUndo("settle", thread);
     let claim: ReturnType<typeof ThreadUndo.begin> | undefined;

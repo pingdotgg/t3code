@@ -485,6 +485,10 @@ describe("autoSettlementSettingsKey", () => {
 });
 
 type AutoSettleCommand = Extract<OrchestrationV2Command, { readonly type: "thread.auto-settle" }>;
+type PendingSettleCommand = Extract<
+  OrchestrationV2Command,
+  { readonly type: "thread.settle" | "thread.settle-when-done.set" }
+>;
 
 const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 
@@ -609,6 +613,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
   const pullRequestRefreshes = yield* PubSub.unbounded<number>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
+  const pendingCommands = yield* Ref.make<ReadonlyArray<PendingSettleCommand>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
   >([]);
@@ -664,6 +669,11 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     });
 
   const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) => {
+    if (command.type === "thread.settle" || command.type === "thread.settle-when-done.set") {
+      return Ref.update(pendingCommands, (recorded) => [...recorded, command]).pipe(
+        Effect.as({ sequence: 1, storedEvents: [] }),
+      );
+    }
     if (command.type !== "thread.auto-settle") {
       return Effect.die(new Error(`Unexpected command: ${command.type}`));
     }
@@ -734,6 +744,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       },
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
+      getThreadEventSequence: () => Effect.succeed(1),
       streamDomainEvents: Stream.fromPubSub(domainEvents).pipe(
         Stream.tap((event) => Queue.offer(observedEvents, event.id)),
       ),
@@ -790,6 +801,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshotReads,
     candidateReads,
     commands,
+    pendingCommands,
     branchCalls,
     summaryCalls,
     summaryRecovery,
@@ -2650,3 +2662,118 @@ describe("isSnoozed", () => {
     ).toBeNull();
   });
 });
+
+it.effect.each([
+  { name: "completed response", status: "completed" as const, action: "thread.settle" },
+  { name: "running response", status: "running" as const, action: null },
+  { name: "held automatic followup", status: "queued" as const, action: "thread.settle" },
+  { name: "failed response", status: "failed" as const, action: "thread.settle" },
+  {
+    name: "interrupted response",
+    status: "interrupted" as const,
+    action: "thread.settle",
+  },
+  {
+    name: "automatic followup",
+    status: "completed" as const,
+    newerRun: true,
+    action: "thread.settle",
+  },
+  {
+    name: "new input",
+    status: "completed" as const,
+    newInput: true,
+    action: "thread.settle-when-done.set",
+  },
+  {
+    name: "awaited background work",
+    status: "completed" as const,
+    awaited: true,
+    action: null,
+  },
+  {
+    name: "failed response with background work",
+    status: "failed" as const,
+    awaited: true,
+    action: "thread.settle",
+  },
+  { name: "guest message", status: "completed" as const, guest: true, action: null },
+  {
+    name: "new pull request watch",
+    status: "completed" as const,
+    watch: true,
+    action: "thread.settle-when-done.set",
+  },
+])("settle when done recovers $name without automatic settlement", (scenario) =>
+  Effect.gen(function* () {
+    const runId = RunId.make("requested-run");
+    const intent = { runId, requestedAt: NOW };
+    const thread = makeThread("explicit-pending", {
+      settledOverride: "active",
+      pinnedAt: DateTime.makeUnsafe(NOW),
+      autoSettleDisabledAt: DateTime.makeUnsafe(NOW),
+      status: scenario.status,
+      latestRunId: scenario.newerRun ? RunId.make("newer-run") : runId,
+      settleWhenDone: intent,
+      ...(scenario.newInput
+        ? { latestResumingMessageAt: DateTime.add(DateTime.makeUnsafe(NOW), { seconds: 1 }) }
+        : {}),
+      ...(scenario.awaited
+        ? {
+            pendingBackgroundTasks: [
+              { taskId: "awaited", kind: "command", description: "working", awaited: true },
+            ],
+          }
+        : {}),
+      ...(scenario.guest ? { pendingGuestMessageCount: 1 } : {}),
+      ...(scenario.watch
+        ? {
+            pullRequests: [
+              {
+                ...persistedLink("open", DateTime.makeUnsafe(NOW)),
+                watch: {
+                  startedAt: NOW,
+                  headSha: null,
+                  failedChecks: [],
+                  passed: false,
+                  passedChecks: [],
+                  remarksThrough: NOW,
+                  remarkIds: [],
+                  conflicting: false,
+                  wakes: 0,
+                },
+              },
+            ],
+          }
+        : {}),
+    });
+    const h = yield* makeHarness({
+      snapshot: makeSnapshot([thread]),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        sidebarAutoSettleAfterDays: null,
+        sidebarAutoSettleOnMerge: false,
+      },
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+      yield* startHarness(service, h.activation, h.snapshotReads);
+      const commands = yield* Ref.get(h.pendingCommands);
+      assert.equal(commands[0]?.type ?? null, scenario.action);
+      if (commands[0]?.type === "thread.settle-when-done.set") {
+        assert.isFalse(commands[0].enabled);
+        assert.deepEqual(commands[0].expected, intent);
+      }
+      assert.isEmpty(yield* Ref.get(h.commands));
+      assert.isEmpty(yield* Ref.get(h.branchCalls));
+      if (scenario.name === "completed response") {
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(h.snapshotReads);
+        yield* service.drain;
+        const repeated = yield* Ref.get(h.pendingCommands);
+        assert.equal(repeated.length, 2);
+        assert.equal(repeated[0]?.commandId, repeated[1]?.commandId);
+      }
+    }).pipe(Effect.provide(h.layer));
+  }),
+);

@@ -28,6 +28,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  idleCompactionOf,
   isDeliveredProviderTurn,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -659,6 +660,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.unsettle":
     case "thread.snooze":
     case "thread.unsnooze":
+    case "thread.settle-when-done.set":
     case "thread.auto-settle.set":
     case "thread.pin":
     case "thread.unpin":
@@ -4468,6 +4470,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unsettle"
           | "thread.snooze"
           | "thread.unsnooze"
+          | "thread.settle-when-done.set"
           | "thread.auto-settle.set"
           | "thread.pin"
           | "thread.unpin"
@@ -4631,6 +4634,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.unsettle" ||
         command.type === "thread.snooze" ||
         command.type === "thread.unsnooze" ||
+        command.type === "thread.settle-when-done.set" ||
         command.type === "thread.auto-settle.set" ||
         command.type === "thread.pin" ||
         command.type === "thread.unpin" ||
@@ -4699,6 +4703,71 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    let settleWhenDone = thread.settleWhenDone ?? null;
+    if (command.type === "thread.settle-when-done.set") {
+      if (
+        command.expected !== undefined &&
+        (settleWhenDone?.runId !== command.expected.runId ||
+          settleWhenDone.requestedAt !== command.expected.requestedAt)
+      )
+        return;
+      if (command.enabled && settleWhenDone !== null) return;
+      if (command.enabled) {
+        const shell = yield* projectionStore
+          .getThreadShell(command.threadId)
+          .pipe(mapDispatchError(command));
+        const runId =
+          shell?.activeRunId ??
+          (shell?.status === "completed" && shell.latestRunId === command.runId
+            ? command.runId
+            : undefined);
+        if (runId == null || (command.runId !== undefined && runId !== command.runId)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The response has ended. Settle the thread instead.",
+          });
+        }
+        const { runs, turnItems } = yield* loadProjectionForCommand(
+          command,
+          ["runs", "turnItems"],
+          {
+            turnItemTypes: ["user_message"],
+            turnItemStatuses: ["pending"],
+          },
+        );
+        const queued = runs.filter((run) => run.status === "queued");
+        const messages = yield* projectionStore
+          .getMessagesById(
+            command.threadId,
+            queued.map((run) => run.userMessageId),
+          )
+          .pipe(mapDispatchError(command));
+        if (
+          queued.some((run) => {
+            const message = messages.get(run.userMessageId);
+            return (
+              message?.notification === undefined && message?.delegatedCompletion === undefined
+            );
+          }) ||
+          turnItems.some(
+            (item) =>
+              item.type === "user_message" &&
+              (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer"),
+          )
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "The thread has queued input. Send it or remove it before requesting Settle when done.",
+          });
+        }
+        settleWhenDone = { runId, requestedAt: DateTime.formatIso(yield* DateTime.now) };
+      } else {
+        settleWhenDone = null;
+      }
+    }
     if (command.type === "thread.settle") {
       const projection = yield* loadProjectionForCommand(
         command,
@@ -4720,6 +4789,108 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: "The thread received another run before settlement.",
         });
+      }
+      if (command.expectedSettleWhenDone !== undefined) {
+        const expected = command.expectedSettleWhenDone;
+        const shell = yield* projectionStore
+          .getThreadShell(command.threadId)
+          .pipe(mapDispatchError(command));
+        const requestedRun = projection.runs.find((run) => run.id === expected.runId);
+        const work = projection.runs.filter(
+          (run) => requestedRun !== undefined && run.ordinal >= requestedRun.ordinal,
+        );
+        const following = work.filter((run) => run.id !== expected.runId);
+        const messages = yield* projectionStore
+          .getMessagesById(command.threadId, [
+            ...following.map((run) => run.userMessageId),
+            ...projection.runs.flatMap((run) =>
+              run.delegatedCompletion?.delivery == null
+                ? []
+                : [run.delegatedCompletion.delivery.messageId],
+            ),
+          ])
+          .pipe(mapDispatchError(command));
+        const newWork = following.some((run) => {
+          const message = messages.get(run.userMessageId);
+          return (
+            !cancelledBeforeStart(run) &&
+            run.restartContinuationOfRunId === undefined &&
+            (message === undefined || idleCompactionOf(message) === undefined) &&
+            message?.notification === undefined &&
+            message?.delegatedCompletion === undefined
+          );
+        });
+        if (
+          thread.settleWhenDone?.runId !== expected.runId ||
+          thread.settleWhenDone.requestedAt !== expected.requestedAt ||
+          requestedRun === undefined ||
+          newWork ||
+          (shell?.latestUserAuthoredMessageAt != null &&
+            DateTime.toEpochMillis(shell.latestUserAuthoredMessageAt) >
+              Date.parse(expected.requestedAt)) ||
+          threadPullRequestsOf(thread).some(
+            (link) =>
+              link.watch !== undefined &&
+              Date.parse(link.watch.startedAt) >= Date.parse(expected.requestedAt),
+          )
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The response or its settlement request changed before completion.",
+          });
+        }
+        const continuedRunIds = new Set(work.map((run) => run.restartContinuationOfRunId));
+        const unsuccessful = work.filter(
+          (run) =>
+            run.status !== "completed" &&
+            run.status !== "queued" &&
+            !isActiveRun(run) &&
+            !(run.id !== expected.runId && cancelledBeforeStart(run)) &&
+            !continuedRunIds.has(run.id),
+        );
+        if (unsuccessful.length > 0) {
+          // Startup persists this outbox entry before publishing the interrupted run.
+          if (
+            (yield* Effect.forEach(unsuccessful, awaitsRestartContinuation).pipe(
+              mapDispatchError(command),
+            )).some(Boolean)
+          )
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "The response is waiting for its restart continuation.",
+            });
+          const now = yield* DateTime.now;
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: { ...thread, settleWhenDone: null, updatedAt: now },
+          });
+          return;
+        }
+        if (
+          projection.runs.some(
+            (run) =>
+              run.status === "queued" ||
+              (run.delegatedCompletion?.disposition === "open" &&
+                run.delegatedCompletion.delivery != null &&
+                !messages.has(run.delegatedCompletion.delivery.messageId)),
+          ) ||
+          shell?.pendingRuntimeRequest != null ||
+          (shell?.pendingGuestMessageCount ?? 0) > 0 ||
+          backgroundWorkHoldsCompletion(shell?.pendingBackgroundTasks ?? [])
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The thread is still waiting for work or input before settlement.",
+          });
+        }
       }
       const queuedMessages = yield* projectionStore
         .getMessagesById(
@@ -5058,6 +5229,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.archive":
           return {
             ...thread,
+            settleWhenDone: null,
             archivedAt: now,
             titleRegeneration: null,
             guestShare: null,
@@ -5073,6 +5245,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             settledOverride: "settled",
+            settleWhenDone: null,
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
             // Settled threads refuse recovery, so an armed resume would stay hidden until un-settled.
             limitRecovery: thread.limitRecovery
@@ -5096,6 +5269,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             settledOverride: "active",
+            settleWhenDone: null,
             settledAt: null,
             unsettledAt: alreadyPinnedActive
               ? (thread.unsettledAt ?? null)
@@ -5125,6 +5299,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
         }
+        case "thread.settle-when-done.set":
+          return { ...thread, settleWhenDone, updatedAt: now };
         case "thread.auto-settle.set": {
           const unchanged = command.enabled === (thread.autoSettleDisabledAt == null);
           return {
@@ -5519,6 +5695,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : undefined;
           return {
             ...thread,
+            settleWhenDone:
+              command.type === "thread.pull-request.watch" &&
+              command.watching &&
+              existing.watch === undefined
+                ? null
+                : thread.settleWhenDone,
             pullRequests: links.map((link) =>
               link === existing
                 ? withPullRequestWatch(final ? { ...link, watch: final } : link, watch)
@@ -5657,6 +5839,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.tags-updated" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
+        case "thread.settle-when-done.set":
         case "thread.metadata.update":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
@@ -7469,16 +7652,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // since makes the thread busy, and that turn refreshes the cache anyway.
     if (
       command.idleCompaction === "beforeCacheExpires" &&
-      projection.runs.some(
-        (run) =>
-          run.status === "queued" ||
-          isActiveRun(run) ||
-          (run.delegatedCompletion?.disposition === "open" &&
-            run.delegatedCompletion.delivery !== null &&
-            !projection.messages.some(
-              (message) => message.id === run.delegatedCompletion?.delivery?.messageId,
-            )),
-      )
+      (projection.thread.settleWhenDone != null ||
+        projection.runs.some(
+          (run) =>
+            run.status === "queued" ||
+            isActiveRun(run) ||
+            (run.delegatedCompletion?.disposition === "open" &&
+              run.delegatedCompletion.delivery !== null &&
+              !projection.messages.some(
+                (message) => message.id === run.delegatedCompletion?.delivery?.messageId,
+              )),
+        ))
     ) {
       yield* emit(
         events,
@@ -7490,6 +7674,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: projection.thread,
       });
       return;
+    }
+
+    if (
+      projection.thread.settleWhenDone != null &&
+      (command.createdBy === "user" || command.creationSource === "mcp")
+    ) {
+      const now = yield* DateTime.now;
+      const event = yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: { ...projection.thread, settleWhenDone: null, updatedAt: now },
+      });
+      projection = applyToProjection(projection, event);
     }
 
     if (projection.thread.lastVisitedAt === null && !isNativeMaintenanceCommand(command)) {
@@ -11802,6 +12003,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(answers === undefined ? {} : { answers }),
       };
       const emitEvent = emit(events, command);
+      if (runtimeRequest.kind === "user_input" || command.feedback !== undefined) {
+        const thread = yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(mapDispatchError(command));
+        if (thread.settleWhenDone != null) {
+          yield* emitEvent({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: { ...thread, settleWhenDone: null, updatedAt: now },
+          });
+        }
+      }
       const requestNode = context.node;
       if (command.feedback !== undefined) {
         const messageId = MessageId.make(`approval-feedback:${command.requestId}`);
@@ -12126,7 +12340,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    const projection = yield* loadProjectionForCommand(
+    let projection = yield* loadProjectionForCommand(
       command,
       [
         "runs",
@@ -12193,6 +12407,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
+    if (projection.thread.settleWhenDone != null) {
+      const event = yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: { ...projection.thread, settleWhenDone: null, updatedAt: now },
+      });
+      projection = applyToProjection(projection, event);
+    }
     // A scheduled delivery steers on the thread's current pick, so /goal must suit that provider.
     const modelSelection = queuedRunModelSelection(projection, queuedRun);
     const parsedGoalCommand = parseGoalCommand(queuedMessage);
@@ -16226,6 +16449,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.unsettle":
       case "thread.snooze":
       case "thread.unsnooze":
+      case "thread.settle-when-done.set":
       case "thread.auto-settle.set":
       case "thread.pin":
       case "thread.unpin":
@@ -16636,6 +16860,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planned.events.length > 0 ||
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
+          command.type === "thread.settle-when-done.set" ||
           // A stale visit changes no read state.
           command.type === "thread.visit" ||
           // A read can answer a watch again before a push's reopen lands; nothing is left to clear.

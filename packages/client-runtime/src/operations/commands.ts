@@ -111,7 +111,10 @@ export interface DeleteThreadInput extends ThreadCommandInput {
 }
 export type ArchiveThreadInput = ThreadCommandInput;
 export type UnarchiveThreadInput = ThreadCommandInput;
-export type SettleThreadInput = ThreadCommandInput;
+export interface SettleThreadInput extends ThreadCommandInput {
+  readonly whenDone?: boolean;
+  readonly runId?: RunId;
+}
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
@@ -597,6 +600,35 @@ export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(
 export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
   input: SettleThreadInput,
 ) {
+  if (input.whenDone !== undefined) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const config = yield* getInitialServerConfig().pipe(
+      Effect.mapError(
+        () =>
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            ...translatableMessage(
+              msg("Connect to this environment to settle a running thread when done."),
+            ),
+          }),
+      ),
+    );
+    if (config.environment.capabilities.threadSettleWhenDone !== true) {
+      return yield* new EnvironmentRpcUnavailableError({
+        environmentId: supervisor.target.environmentId,
+        ...translatableMessage(
+          msg("Update this environment's server to settle a running thread when done."),
+        ),
+      });
+    }
+    return yield* dispatch({
+      type: "thread.settle-when-done.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      enabled: input.whenDone,
+      ...(input.runId === undefined ? {} : { runId: input.runId }),
+    });
+  }
   return yield* simpleThreadCommand("thread.settle", input);
 });
 

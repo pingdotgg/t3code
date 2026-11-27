@@ -49,12 +49,14 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 
 > Tip: If a scheduled task targets a thread, settle it instead of archiving—archiving causes scheduled runs to fail.
 
+While a response is running, choose **Settle when done** to move the thread to Settled after the response and its delegated follow-up work finish. A clock beside the thread shows the pending request. Choose **Cancel settle when done** to keep it active. A failed, stopped, or rolled-back response cancels the request, as does a new PR watch. New input also cancels it, including question answers, approval feedback, messages from agents, and an agent's continuation after a workspace change. Request it again after sending input if you still want the thread to settle. Delegated completion messages and server restart recovery keep the request. Send or remove queued input before enabling it.
+
 ### Settlement rules and hooks
 
 - **Automatic settlement**: By default, environments settle threads after 7 days of inactivity or when their linked PR merges/closes (even while your apps are closed). Active work, pending questions/approvals, and waited-on background work block auto-settlement. Configure rules in **Settings → Threads** (per environment or **All environments**), including **Keep threads with a PR**.
 - **Per-thread override**: Open a thread's menu → **Auto-settle behavior → Never** to exempt a single thread.
 - **Drag-to-settle** (web/desktop): Press and drag down/up from a thread's **Settle**, **Un-settle**, or **Wake** button to act on a contiguous range (`Esc` cancels).
-- **Offline settle/snooze**: Queues locally (**Pending** / **Waiting to sync**) and syncs on reconnect; remote changes take precedence if the thread changed in the meantime.
+- **Offline settle/snooze**: Queues locally (**Pending** / **Waiting to sync**) and syncs on reconnect; remote changes take precedence if the thread changed in the meantime. **Settle when done** and its cancellation require a connection and an up-to-date server.
 - **Worktree cleanup on settle**: Enable **Run in the thread's worktree when the thread settles** on a project action (or `"runOnSettle": true` in `t3.json`), e.g. `cargo clean`, to reclaim disk space automatically in worktree threads.
 
 ### Snooze options

@@ -1,3 +1,5 @@
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentServerConfigsAtom } from "../state/server";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
@@ -84,6 +86,7 @@ export function useThreadActionMenu(input: {
   });
   const {
     settleThread,
+    cancelSettleWhenDone,
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
@@ -126,6 +129,9 @@ export function useThreadActionMenu(input: {
     const configLoaded = readEnvironmentServerConfigLoaded(threadRef.environmentId);
     const supports = {
       settlement: configLoaded,
+      settleWhenDone:
+        appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId)?.environment
+          .capabilities.threadSettleWhenDone === true,
       autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
       snooze: configLoaded,
       pinning: configLoaded,
@@ -142,11 +148,13 @@ export function useThreadActionMenu(input: {
       projectFilter: null,
       isPinned: thread.pinnedAt != null,
       isSettled: supports.settlement && thread.settledOverride === "settled",
+      settleWhenDone: thread.settleWhenDone != null,
       autoSettleEnabled: thread.autoSettleDisabledAt == null,
       isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
       canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
       isRegeneratingTitle,
       isRunning: !threadRuntimeCanArchive(thread.runtime),
+      hasActiveResponse: thread.runtime?.activeRunId != null,
       hasCompletedRun: thread.latestRun?.completedAt != null,
       supports,
       snoozePresets,
@@ -227,6 +235,11 @@ export function useThreadActionMenu(input: {
           }
           return;
         }
+        case "cancel-settle-when-done":
+          await reportFailure(m(msg("Failed to settle thread")), () =>
+            cancelSettleWhenDone(threadRef),
+          );
+          return;
         case "settle":
           await reportFailure(m(msg("Failed to settle thread")), () => settleThread(threadRef));
           return;

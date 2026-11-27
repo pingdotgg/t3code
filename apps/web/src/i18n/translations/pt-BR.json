@@ -13022,5 +13022,11 @@
       "v": "v"
     },
     " mais em Itens vinculados"
-  ]
+  ],
+  "a4a17a76fdfdd63a": "Conecte-se a este ambiente para concluir uma thread em execução quando ela terminar.",
+  "15b65e06186977de": "Atualize o servidor deste ambiente para concluir uma thread em execução quando ela terminar.",
+  "53e5eaf0be838e68": "Cancelar conclusão ao terminar",
+  "d57765280bbd2dfc": "Concluir ao terminar",
+  "f608874d2e4f182f": "Cancelar conclusão ao terminar",
+  "c271bd3ac5ac9ff3": "Concluir ao terminar"
 }

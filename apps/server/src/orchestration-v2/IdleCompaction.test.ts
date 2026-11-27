@@ -183,6 +183,12 @@ describe("idleCompactionWindow", () => {
     const archived = records(cache);
     archived.thread = { ...archived.thread, archivedAt: at() };
     expect(idleCompactionWindow(archived, NOW_MS)).toBeNull();
+    const settling = records(cache);
+    settling.thread = {
+      ...settling.thread,
+      settleWhenDone: { runId, requestedAt: DateTime.formatIso(at()) },
+    };
+    expect(idleCompactionWindow(settling, NOW_MS)).toBeNull();
     const sideChat = records(cache);
     expect(idleCompactionWindow(sideChat, NOW_MS)).not.toBeNull();
     sideChat.thread = {
